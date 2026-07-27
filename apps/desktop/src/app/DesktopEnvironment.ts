@@ -9,6 +9,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -77,6 +78,65 @@ export class DesktopEnvironment extends Context.Service<
 >()("@t3tools/desktop/app/DesktopEnvironment") {}
 
 const APP_BASE_NAME = "T3 Code";
+const DESKTOP_SERVER_ENTRY = "apps/server/dist/bin.mjs";
+
+function unique<T>(values: Iterable<T>): T[] {
+  const seen = new Set<T>();
+  const next: T[] = [];
+  for (const value of values) {
+    if (seen.has(value)) {
+      continue;
+    }
+
+    seen.add(value);
+    next.push(value);
+  }
+
+  return next;
+}
+
+function resolvePackedAppRootCandidates(input: {
+  readonly appPath: string;
+  readonly resourcesPath: string;
+  readonly path: Path.Path;
+}) {
+  return unique([
+    input.appPath,
+    input.path.join(input.appPath, "..", "app"),
+    input.path.join(input.resourcesPath, "app"),
+    input.path.join(input.resourcesPath, "app.asar"),
+    input.path.join(input.resourcesPath, "app.asar.unpacked"),
+    input.path.join(input.resourcesPath, "app.asar.unpacked", "app"),
+  ]);
+}
+
+const resolveDesktopAppRoot = Effect.fn("desktop.environment.resolveDesktopAppRoot")(
+  function* (input: {
+    readonly appPath: string;
+    readonly resourcesPath: string;
+    readonly rootDir: string;
+    readonly path: Path.Path;
+  }): Effect.fn.Return<string, never, FileSystem.FileSystem> {
+    const candidates = [
+      ...resolvePackedAppRootCandidates(input),
+      input.rootDir,
+      input.path.dirname(input.appPath),
+    ];
+
+    const fileSystem = yield* FileSystem.FileSystem;
+    for (const candidate of candidates) {
+      const entryPath = input.path.join(candidate, DESKTOP_SERVER_ENTRY);
+      const hasBackendEntry = yield* fileSystem
+        .exists(entryPath)
+        .pipe(Effect.orElseSucceed(() => false));
+      if (hasBackendEntry) {
+        return input.path.resolve(candidate);
+      }
+    }
+
+    return input.path.resolve(input.appPath);
+  },
+);
 
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
@@ -133,7 +193,11 @@ function resolveDesktopRuntimeInfo(input: {
 
 const make = Effect.fn("desktop.environment.make")(function* (
   input: MakeDesktopEnvironmentInput,
-): Effect.fn.Return<DesktopEnvironment["Service"], Config.ConfigError, Path.Path> {
+): Effect.fn.Return<
+  DesktopEnvironment["Service"],
+  Config.ConfigError,
+  Path.Path | FileSystem.FileSystem
+> {
   const path = yield* Path.Path;
   const config = yield* DesktopConfig.DesktopConfig;
   const homeDirectory = input.homeDirectory;
@@ -149,15 +213,42 @@ const make = Effect.fn("desktop.environment.make")(function* (
         : Option.getOrElse(config.xdgConfigHome, () => path.join(homeDirectory, ".config"));
   const baseDir = Option.getOrElse(config.t3Home, () => path.join(homeDirectory, ".t3"));
   const rootDir = path.resolve(input.dirname, "../../..");
-  const appRoot = input.isPackaged ? input.appPath : rootDir;
+  const appRoot =
+    input.isPackaged === true
+      ? yield* resolveDesktopAppRoot({
+          appPath: input.appPath,
+          resourcesPath: input.resourcesPath,
+          rootDir,
+          path,
+        })
+      : rootDir;
   const branding = resolveDesktopAppBranding({
     isDevelopment,
     appVersion: input.appVersion,
   });
-  const displayName = branding.displayName;
+  const displayName = Option.getOrElse(
+    config.desktopDisplayNameOverride,
+    () => branding.displayName,
+  );
+  const effectiveBranding = Option.isSome(config.desktopDisplayNameOverride)
+    ? {
+        ...branding,
+        displayName,
+      }
+    : branding;
   const stateDir = path.join(baseDir, isDevelopment ? "dev" : "userdata");
-  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
-  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+  const userDataDirName = Option.getOrElse(config.desktopUserDataDirNameOverride, () =>
+    isDevelopment ? "t3code-dev" : "t3code",
+  );
+  const legacyUserDataDirName = Option.getOrElse(config.desktopLegacyUserDataDirNameOverride, () =>
+    isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)",
+  );
+  const linuxDesktopEntryName = Option.getOrElse(config.desktopLinuxEntryNameOverride, () =>
+    isDevelopment ? "t3code-dev.desktop" : "t3code.desktop",
+  );
+  const linuxWmClass = Option.getOrElse(config.desktopLinuxWmClassOverride, () =>
+    isDevelopment ? "t3code-dev" : "t3code",
+  );
   const resourcesPath = input.resourcesPath;
 
   return DesktopEnvironment.of({
@@ -182,7 +273,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     browserArtifactsDir: path.join(stateDir, "browser-artifacts"),
     rootDir,
     appRoot,
-    backendEntryPath: path.join(appRoot, "apps/server/dist/bin.mjs"),
+    backendEntryPath: path.join(appRoot, DESKTOP_SERVER_ENTRY),
     backendCwd: input.isPackaged ? homeDirectory : appRoot,
     preloadPath: path.join(input.dirname, "preload.cjs"),
     appUpdateYmlPath: input.isPackaged
@@ -194,13 +285,13 @@ const make = Effect.fn("desktop.environment.make")(function* (
     commitHashOverride: config.commitHashOverride,
     otlpTracesUrl: config.otlpTracesUrl,
     otlpExportIntervalMs: config.otlpExportIntervalMs,
-    branding,
+    branding: effectiveBranding,
     displayName,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
       isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
     ),
-    linuxDesktopEntryName: isDevelopment ? "t3code-dev.desktop" : "t3code.desktop",
-    linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
+    linuxDesktopEntryName,
+    linuxWmClass,
     userDataDirName,
     legacyUserDataDirName,
     defaultDesktopSettings: DesktopAppSettings.resolveDefaultDesktopSettings(input.appVersion),

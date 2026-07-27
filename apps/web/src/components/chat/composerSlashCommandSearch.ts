@@ -5,13 +5,23 @@ import {
 } from "@t3tools/shared/searchRanking";
 
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
+import { formatProviderSkillDisplayName } from "~/providerSkillPresentation";
 
 function scoreSlashCommandItem(
-  item: Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>,
+  item: Extract<
+    ComposerCommandItem,
+    { type: "slash-command" | "provider-slash-command" | "skill" }
+  >,
   query: string,
 ): number | null {
   const primaryValue =
-    item.type === "slash-command" ? item.command.toLowerCase() : item.command.name.toLowerCase();
+    item.type === "slash-command"
+      ? item.command.toLowerCase()
+      : item.type === "provider-slash-command"
+        ? item.command.name.toLowerCase()
+        : item.skill.name.toLowerCase();
+  const label =
+    item.type === "skill" ? formatProviderSkillDisplayName(item.skill).toLowerCase() : "";
   const description = item.description.toLowerCase();
 
   const scores = [
@@ -24,6 +34,15 @@ function scoreSlashCommandItem(
       includesBase: 6,
       fuzzyBase: 100,
       boundaryMarkers: ["-", "_", "/"],
+    }),
+    scoreQueryMatch({
+      value: label,
+      query,
+      exactBase: 1,
+      prefixBase: 3,
+      boundaryBase: 5,
+      includesBase: 7,
+      fuzzyBase: 110,
     }),
     scoreQueryMatch({
       value: description,
@@ -44,17 +63,22 @@ function scoreSlashCommandItem(
 
 export function searchSlashCommandItems(
   items: ReadonlyArray<
-    Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>
+    Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" | "skill" }>
   >,
   query: string,
-): Array<Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>> {
+): Array<
+  Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" | "skill" }>
+> {
   const normalizedQuery = normalizeSearchQuery(query, { trimLeadingPattern: /^\/+/ });
   if (!normalizedQuery) {
     return [...items];
   }
 
   const ranked: Array<{
-    item: Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>;
+    item: Extract<
+      ComposerCommandItem,
+      { type: "slash-command" | "provider-slash-command" | "skill" }
+    >;
     score: number;
     tieBreaker: string;
   }> = [];
@@ -73,7 +97,9 @@ export function searchSlashCommandItems(
         tieBreaker:
           item.type === "slash-command"
             ? `0\u0000${item.command}`
-            : `1\u0000${item.command.name}\u0000${item.provider}`,
+            : item.type === "provider-slash-command"
+              ? `1\u0000${item.command.name}\u0000${item.provider}`
+              : `2\u0000${item.skill.name}\u0000${item.provider}`,
       },
       Number.POSITIVE_INFINITY,
     );

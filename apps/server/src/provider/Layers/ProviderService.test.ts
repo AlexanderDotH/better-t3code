@@ -56,7 +56,6 @@ import {
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMock.ts";
 
 const defaultServerSettingsLayer = ServerSettings.ServerSettingsService.layerTest();
@@ -292,7 +291,6 @@ function makeProviderServiceLayer() {
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
         Layer.provide(defaultServerSettingsLayer),
-        Layer.provideMerge(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
             ProviderEventLoggers.ProviderEventLoggers,
@@ -343,7 +341,6 @@ it.effect("ProviderServiceLive catches stopAll failures during shutdown", () =>
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
         Layer.provide(defaultServerSettingsLayer),
-        Layer.provideMerge(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
             ProviderEventLoggers.ProviderEventLoggers,
@@ -402,7 +399,6 @@ it.effect("ProviderServiceLive rejects new sessions for disabled providers", () 
       Layer.provide(providerAdapterLayer),
       Layer.provide(directoryLayer),
       Layer.provide(defaultServerSettingsLayer),
-      Layer.provide(AnalyticsService.layerTest),
       Layer.provide(
         Layer.succeed(
           ProviderEventLoggers.ProviderEventLoggers,
@@ -486,7 +482,6 @@ it.effect(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
         Layer.provide(serverSettingsLayer),
-        Layer.provide(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
             ProviderEventLoggers.ProviderEventLoggers,
@@ -556,7 +551,6 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
       Layer.provide(providerAdapterLayer),
       Layer.provide(directoryLayer),
       Layer.provide(defaultServerSettingsLayer),
-      Layer.provide(AnalyticsService.layerTest),
       Layer.provide(
         Layer.succeed(
           ProviderEventLoggers.ProviderEventLoggers,
@@ -611,7 +605,6 @@ it.effect("ProviderServiceLive writes canonical events to the emitting thread se
       Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
       Layer.provide(directoryLayer),
       Layer.provide(defaultServerSettingsLayer),
-      Layer.provide(AnalyticsService.layerTest),
       Layer.provide(
         Layer.succeed(
           ProviderEventLoggers.ProviderEventLoggers,
@@ -671,7 +664,6 @@ it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", (
       Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
       Layer.provide(directoryLayer),
       Layer.provide(defaultServerSettingsLayer),
-      Layer.provide(AnalyticsService.layerTest),
       Layer.provide(
         Layer.succeed(
           ProviderEventLoggers.ProviderEventLoggers,
@@ -737,7 +729,6 @@ it.effect(
         ),
         Layer.provide(firstDirectoryLayer),
         Layer.provide(defaultServerSettingsLayer),
-        Layer.provide(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
             ProviderEventLoggers.ProviderEventLoggers,
@@ -796,7 +787,6 @@ it.effect(
         ),
         Layer.provide(secondDirectoryLayer),
         Layer.provide(defaultServerSettingsLayer),
-        Layer.provide(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
             ProviderEventLoggers.ProviderEventLoggers,
@@ -1307,7 +1297,6 @@ routing.layer("ProviderServiceLive routing", (it) => {
         ),
         Layer.provide(firstDirectoryLayer),
         Layer.provide(defaultServerSettingsLayer),
-        Layer.provide(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
             ProviderEventLoggers.ProviderEventLoggers,
@@ -1345,7 +1334,6 @@ routing.layer("ProviderServiceLive routing", (it) => {
         ),
         Layer.provide(secondDirectoryLayer),
         Layer.provide(defaultServerSettingsLayer),
-        Layer.provide(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
             ProviderEventLoggers.ProviderEventLoggers,
@@ -1387,6 +1375,34 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("does not recover a persisted cursor for a fresh session", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      routing.codex.startSession.mockClear();
+
+      const threadId = asThreadId("thread-fresh-session");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      routing.codex.startSession.mockClear();
+
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        freshSession: true,
+        runtimeMode: "full-access",
+      });
+
+      const freshInput = routing.codex.startSession.mock.calls[0]?.[0];
+      assert.equal(freshInput?.freshSession, true);
+      assert.equal(freshInput !== undefined && "resumeCursor" in freshInput, false);
+    }),
+  );
+
   it.effect(
     "reuses persisted cwd when startSession resumes a claude session without cwd input",
     () =>
@@ -1413,7 +1429,6 @@ routing.layer("ProviderServiceLive routing", (it) => {
           ),
           Layer.provide(firstDirectoryLayer),
           Layer.provide(defaultServerSettingsLayer),
-          Layer.provide(AnalyticsService.layerTest),
           Layer.provide(
             Layer.succeed(
               ProviderEventLoggers.ProviderEventLoggers,
@@ -1446,7 +1461,6 @@ routing.layer("ProviderServiceLive routing", (it) => {
           ),
           Layer.provide(secondDirectoryLayer),
           Layer.provide(defaultServerSettingsLayer),
-          Layer.provide(AnalyticsService.layerTest),
           Layer.provide(
             Layer.succeed(
               ProviderEventLoggers.ProviderEventLoggers,

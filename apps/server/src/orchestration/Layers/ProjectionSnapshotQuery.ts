@@ -9,6 +9,7 @@ import {
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
   OrchestrationThread,
+  OrchestrationThreadDetailSnapshot,
   ProjectScript,
   TurnId,
   type OrchestrationCheckpointSummary,
@@ -762,6 +763,36 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         WHERE thread_id = ${threadId}
           AND deleted_at IS NULL
           AND archived_at IS NULL
+        LIMIT 1
+      `,
+  });
+
+  const getRetainedThreadRowById = SqlSchema.findOneOption({
+    Request: ThreadIdLookupInput,
+    Result: ProjectionThreadDbRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          project_id AS "projectId",
+          title,
+          model_selection_json AS "modelSelection",
+          runtime_mode AS "runtimeMode",
+          interaction_mode AS "interactionMode",
+          branch,
+          worktree_path AS "worktreePath",
+          latest_turn_id AS "latestTurnId",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          archived_at AS "archivedAt",
+          latest_user_message_at AS "latestUserMessageAt",
+          pending_approval_count AS "pendingApprovalCount",
+          pending_user_input_count AS "pendingUserInputCount",
+          has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          deleted_at AS "deletedAt"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+          AND deleted_at IS NULL
         LIMIT 1
       `,
   });
@@ -1905,7 +1936,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         latestTurnRow,
         sessionRow,
       ] = yield* Effect.all([
-        getActiveThreadRowById({ threadId }).pipe(
+        getRetainedThreadRowById({ threadId }).pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
               "ProjectionSnapshotQuery.getThreadDetailById:getThread:query",
@@ -2033,6 +2064,35 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       );
     });
 
+  const getThreadDetailSnapshot: ProjectionSnapshotQueryShape["getThreadDetailSnapshot"] = (
+    threadId,
+  ) =>
+    // Read the thread detail and the snapshot sequence within a single
+    // transaction so the sequence is consistent with the returned state; a
+    // projector update landing between two separate reads could otherwise return
+    // a sequence ahead of the thread detail, causing the client to resume from
+    // too far and drop events.
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const thread = yield* getThreadDetailById(threadId);
+          if (Option.isNone(thread)) {
+            return Option.none<OrchestrationThreadDetailSnapshot>();
+          }
+          const { snapshotSequence } = yield* getSnapshotSequence();
+          return Option.some({ snapshotSequence, thread: thread.value });
+        }),
+      )
+      .pipe(
+        Effect.mapError((error) =>
+          isPersistenceError(error)
+            ? error
+            : toPersistenceSqlError("ProjectionSnapshotQuery.getThreadDetailSnapshot:transaction")(
+                error,
+              ),
+        ),
+      );
+
   return {
     getCommandReadModel,
     getSnapshot,
@@ -2047,6 +2107,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getFullThreadDiffContext,
     getThreadShellById,
     getThreadDetailById,
+    getThreadDetailSnapshot,
   } satisfies ProjectionSnapshotQueryShape;
 });
 

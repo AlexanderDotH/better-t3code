@@ -32,6 +32,8 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import type { ClaudeDiscoveredModel } from "../Drivers/ClaudeDiscoveredModels.ts";
+import type { ClaudeGatewayCatalog } from "../Drivers/ClaudeGatewayCatalog.ts";
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./ProviderInstanceRegistryHydration.ts";
@@ -43,6 +45,7 @@ import {
   selectProvidersByKind,
 } from "./ProviderRegistry.ts";
 import * as ServerConfig from "../../config.ts";
+import { NoOpMcpConfigEngineLayer } from "../../mcp/testUtils.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
 import { readProviderStatusCache, resolveProviderStatusCachePath } from "../providerStatusCache.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
@@ -101,6 +104,7 @@ type TestClaudeCapabilities = {
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly models: ReadonlyArray<ClaudeDiscoveredModel>;
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
@@ -110,9 +114,31 @@ function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
       subscriptionType: undefined,
       tokenSource: undefined,
       slashCommands: [],
+      models: [],
       ...overrides,
     });
 }
+
+const testClaudeGatewayCatalog: ClaudeGatewayCatalog = {
+  profiles: [
+    {
+      canonicalModelId: "gpt-5.6-sol",
+      baseModelId: "claude-codex-gpt-5.6-sol",
+      fastModelId: "claude-codex-gpt-5.6-sol-fast",
+      aliases: ["claude-codex-gpt-5.6-sol"],
+      defaultEffort: "low",
+      capabilities: createModelCapabilities({
+        optionDescriptors: [
+          selectDescriptor("effort", "Reasoning", [
+            { id: "low", label: "Low", isDefault: true },
+            { id: "high", label: "High" },
+          ]),
+          booleanDescriptor("fastMode", "Fast Mode"),
+        ],
+      }),
+    },
+  ],
+};
 
 const noClaudeCapabilities = () =>
   Effect.sync(() => undefined as TestClaudeCapabilities | undefined);
@@ -1103,7 +1129,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
-            Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+            Layer.provideMerge(
+              ProviderInstanceRegistryHydrationLive.pipe(Layer.provide(NoOpMcpConfigEngineLayer)),
+            ),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
@@ -1195,7 +1223,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
-            Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+            Layer.provideMerge(
+              ProviderInstanceRegistryHydrationLive.pipe(Layer.provide(NoOpMcpConfigEngineLayer)),
+            ),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
@@ -1316,7 +1346,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
-            Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+            Layer.provideMerge(
+              ProviderInstanceRegistryHydrationLive.pipe(Layer.provide(NoOpMcpConfigEngineLayer)),
+            ),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
@@ -1377,7 +1409,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             const scope = yield* Scope.make();
             yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
             const providerRegistryLayer = ProviderRegistryLive.pipe(
-              Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+              Layer.provideMerge(
+                ProviderInstanceRegistryHydrationLive.pipe(Layer.provide(NoOpMcpConfigEngineLayer)),
+              ),
               Layer.provideMerge(
                 Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
               ),
@@ -1487,6 +1521,103 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   code: 0,
                 };
               throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("includes catalog-derived GPT capabilities in the provider snapshot", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({
+              models: [
+                {
+                  value: "claude-codex-gpt-5.6-sol",
+                  displayName: "GPT 5.6 Sol",
+                },
+              ],
+            }),
+            undefined,
+            () => Effect.succeed(testClaudeGatewayCatalog),
+          );
+
+          const model = status.models.find(
+            (candidate) => candidate.slug === "claude-codex-gpt-5.6-sol",
+          );
+          assert.deepStrictEqual(
+            model?.capabilities,
+            testClaudeGatewayCatalog.profiles[0]?.capabilities,
+          );
+          assert.strictEqual(status.auth.status, "authenticated");
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              if (args.join(" ") === "--version") {
+                return { stdout: "2.1.169\n", stderr: "", code: 0 };
+              }
+              throw new Error(`Unexpected args: ${args.join(" ")}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("keeps the provider usable when the gateway catalog probe fails", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({
+              models: [
+                {
+                  value: "claude-codex-gpt-5.6-sol",
+                  displayName: "GPT 5.6 Sol",
+                },
+              ],
+            }),
+            undefined,
+            () => Effect.fail(new Error("catalog unavailable")),
+          );
+
+          const model = status.models.find(
+            (candidate) => candidate.slug === "claude-codex-gpt-5.6-sol",
+          );
+          assert.deepStrictEqual(model?.capabilities.optionDescriptors, []);
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.status, "authenticated");
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              if (args.join(" ") === "--version") {
+                return { stdout: "2.1.169\n", stderr: "", code: 0 };
+              }
+              throw new Error(`Unexpected args: ${args.join(" ")}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("does not treat a catalog-only result as authenticated", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            noClaudeCapabilities,
+            undefined,
+            () => Effect.succeed(testClaudeGatewayCatalog),
+          );
+
+          assert.strictEqual(status.status, "warning");
+          assert.strictEqual(status.auth.status, "unknown");
+          assert.strictEqual(
+            status.message,
+            "Could not verify Claude authentication status from initialization result.",
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              if (args.join(" ") === "--version") {
+                return { stdout: "2.1.169\n", stderr: "", code: 0 };
+              }
+              throw new Error(`Unexpected args: ${args.join(" ")}`);
             }),
           ),
         ),

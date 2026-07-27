@@ -19,6 +19,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
+  sidebarOlderProjectsExpanded?: boolean;
   threadLastVisitedAtById?: Record<string, string>;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
@@ -30,6 +31,7 @@ export interface PersistedUiState {
 export interface UiProjectState {
   projectExpandedById: Record<string, boolean>;
   projectOrder: string[];
+  sidebarOlderProjectsExpanded: boolean;
 }
 
 export interface UiThreadState {
@@ -46,6 +48,7 @@ export interface UiState extends UiProjectState, UiThreadState, UiEndpointState 
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
+  sidebarOlderProjectsExpanded: false,
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -123,6 +126,10 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   return {
     projectExpandedById,
     projectOrder,
+    sidebarOlderProjectsExpanded:
+      typeof parsed.sidebarOlderProjectsExpanded === "boolean"
+        ? parsed.sidebarOlderProjectsExpanded
+        : false,
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById: sanitizePersistedThreadChangedFilesExpanded(
       parsed.threadChangedFilesExpandedById,
@@ -208,6 +215,7 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         projectExpandedById,
         projectOrder: state.projectOrder,
+        sidebarOlderProjectsExpanded: state.sidebarOlderProjectsExpanded,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpandedById,
@@ -367,6 +375,16 @@ export function setProjectExpanded(
   };
 }
 
+export function setSidebarOlderProjectsExpanded(state: UiState, expanded: boolean): UiState {
+  if (state.sidebarOlderProjectsExpanded === expanded) {
+    return state;
+  }
+  return {
+    ...state,
+    sidebarOlderProjectsExpanded: expanded,
+  };
+}
+
 export function reorderProjects(
   state: UiState,
   currentProjectOrder: readonly string[],
@@ -417,6 +435,7 @@ interface UiStateStore extends UiState {
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
+  setSidebarOlderProjectsExpanded: (expanded: boolean) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
     draggedProjectIds: readonly string[],
@@ -436,6 +455,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
+  setSidebarOlderProjectsExpanded: (expanded) =>
+    set((state) => setSidebarOlderProjectsExpanded(state, expanded)),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>
     set((state) =>
       reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),

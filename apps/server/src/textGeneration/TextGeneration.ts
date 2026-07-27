@@ -67,6 +67,26 @@ export interface ThreadTitleGenerationResult {
   title: string;
 }
 
+export interface TranscriptTranslationInput {
+  cwd: string;
+  text: string;
+  modelSelection: ModelSelection;
+}
+
+export interface TranscriptTranslationResult {
+  text: string;
+}
+
+export interface PromptImprovementInput {
+  cwd: string;
+  text: string;
+  modelSelection: ModelSelection;
+}
+
+export interface PromptImprovementResult {
+  text: string;
+}
+
 export interface TextGenerationService {
   generateCommitMessage(
     input: CommitMessageGenerationInput,
@@ -74,6 +94,10 @@ export interface TextGenerationService {
   generatePrContent(input: PrContentGenerationInput): Promise<PrContentGenerationResult>;
   generateBranchName(input: BranchNameGenerationInput): Promise<BranchNameGenerationResult>;
   generateThreadTitle(input: ThreadTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
+  translateTranscriptToEnglish(
+    input: TranscriptTranslationInput,
+  ): Promise<TranscriptTranslationResult>;
+  improvePrompt(input: PromptImprovementInput): Promise<PromptImprovementResult>;
 }
 
 /**
@@ -109,6 +133,14 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+    readonly translateTranscriptToEnglish: (
+      input: TranscriptTranslationInput,
+    ) => Effect.Effect<TranscriptTranslationResult, TextGenerationError>;
+
+    readonly improvePrompt: (
+      input: PromptImprovementInput,
+    ) => Effect.Effect<PromptImprovementResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -119,7 +151,9 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "translateTranscriptToEnglish"
+  | "improvePrompt";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -158,6 +192,18 @@ export const makeTextGenerationFromRegistry = (
     generateThreadTitle: (input) =>
       resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
+      ),
+    translateTranscriptToEnglish: (input) =>
+      resolveInstance(
+        registry,
+        "translateTranscriptToEnglish",
+        input.modelSelection.instanceId,
+      ).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.translateTranscriptToEnglish(input)),
+      ),
+    improvePrompt: (input) =>
+      resolveInstance(registry, "improvePrompt", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.improvePrompt(input)),
       ),
   });
 

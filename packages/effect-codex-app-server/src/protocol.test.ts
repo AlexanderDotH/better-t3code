@@ -23,6 +23,7 @@ const decodeJson = Schema.decodeEffect(Schema.UnknownFromJsonString);
 const decodeAccountTokenUsageResponse = Schema.decodeUnknownEffect(
   CodexRpc.CLIENT_REQUEST_RESPONSES["account/usage/read"],
 );
+const decodeModelListResponse = Schema.decodeUnknownEffect(CodexSchema.V2ModelListResponse);
 
 it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
   it.effect("maps account usage responses to the upstream token usage schema", () =>
@@ -202,6 +203,55 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
           },
         });
       }),
+  );
+
+  it.effect("accepts max reasoning effort in model/list responses", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({ stdio });
+
+      const pendingModels = yield* transport.request("model/list", {}).pipe(Effect.forkScoped);
+      assert.deepEqual(yield* decodeJson(yield* Queue.take(output)), {
+        id: 1,
+        method: "model/list",
+        params: {},
+      });
+
+      yield* Queue.offer(
+        input,
+        encodeJsonl({
+          id: 1,
+          result: {
+            data: [
+              {
+                defaultReasoningEffort: "max",
+                description: "Maximum reasoning model",
+                displayName: "GPT Max",
+                hidden: false,
+                id: "gpt-max",
+                isDefault: true,
+                model: "gpt-max",
+                supportedReasoningEfforts: [
+                  {
+                    description: "Maximum reasoning",
+                    reasoningEffort: "max",
+                  },
+                ],
+              },
+            ],
+            nextCursor: null,
+          },
+        }),
+      );
+
+      const response = yield* Fiber.join(pendingModels);
+      const decodedResponse = yield* decodeModelListResponse(response);
+      assert.equal(String(decodedResponse.data[0]?.defaultReasoningEffort), "max");
+      assert.equal(
+        String(decodedResponse.data[0]?.supportedReasoningEfforts[0]?.reasoningEffort),
+        "max",
+      );
+    }),
   );
 
   it.effect("surfaces JSON encoding failures as protocol parse errors", () =>

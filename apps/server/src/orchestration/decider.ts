@@ -313,11 +313,17 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.meta.update": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const branch =
+        command.branch !== undefined &&
+        command.expectedBranch !== undefined &&
+        thread.branch !== command.expectedBranch
+          ? thread.branch
+          : command.branch;
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -333,7 +339,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.modelSelection !== undefined
             ? { modelSelection: command.modelSelection }
             : {}),
-          ...(command.branch !== undefined ? { branch: command.branch } : {}),
+          ...(branch !== undefined ? { branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
           updatedAt: occurredAt,
         },
@@ -650,6 +656,36 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           streaming: false,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.message.import": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.message.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.message.id,
+          role: command.message.role,
+          text: command.message.text,
+          ...(command.message.attachments !== undefined
+            ? { attachments: command.message.attachments }
+            : {}),
+          turnId: command.message.turnId,
+          streaming: false,
+          createdAt: command.message.createdAt,
+          updatedAt: command.message.updatedAt,
         },
       };
     }

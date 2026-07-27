@@ -72,11 +72,13 @@ const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
 import * as ServerConfig from "./config.ts";
 import { makeRoutesLayer } from "./server.ts";
+import { NoOpMcpConfigEngineLayer } from "./mcp/testUtils.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
+import { ThreadTranscriptExport } from "./orchestration/Services/ThreadTranscriptExport.ts";
 import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
@@ -86,6 +88,8 @@ import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/provid
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import { AssemblyAiStreamingToken } from "./speech/Layers/AssemblyAiStreamingToken.ts";
+import { NoOpSkillEngineLayer } from "./skills/testUtils/NoOpSkillEngine.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -524,6 +528,18 @@ const buildAppUnderTest = (options?: {
       disableListenLog: true,
       disableLogger: true,
     }).pipe(
+      Layer.provide(NoOpMcpConfigEngineLayer),
+      Layer.provide(NoOpSkillEngineLayer),
+      Layer.provide(
+        Layer.mock(ThreadTranscriptExport)({
+          exportThread: () => Effect.die("ThreadTranscriptExport not stubbed in this test"),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(AssemblyAiStreamingToken)({
+          create: () => Effect.die("AssemblyAiStreamingToken not stubbed in this test"),
+        }),
+      ),
       Layer.provide(
         Layer.mock(Keybindings.Keybindings)({
           loadConfigState: Effect.succeed({
@@ -702,6 +718,7 @@ const buildAppUnderTest = (options?: {
           getProjectShellById: () => Effect.succeed(Option.none()),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
           getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
@@ -1699,7 +1716,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("rejects managed cloud link proofs for manual endpoint providers", () =>
+  it.effect("rejects cloud link proofs for unsupported endpoint providers", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
@@ -1720,7 +1737,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             wsBaseUrl: linkProofUrl
               .replace("http://", "ws://")
               .replace("/api/connect/link-proof", "/ws"),
-            providerKind: "manual",
+            // "manual" and "cloudflare_tunnel" are supported; "t3_relay" is not.
+            providerKind: "t3_relay",
           },
           origin: {
             localHttpHost: "127.0.0.1",

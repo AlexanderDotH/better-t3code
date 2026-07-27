@@ -3,9 +3,11 @@ import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { McpSettings, McpServerDefinition } from "./mcp.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
+import { SkillSettings } from "./skills.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -38,6 +40,9 @@ export const SidebarThreadPreviewCount = Schema.Int.check(
 );
 export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
 export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
+
+export const VoiceInputOutputLanguage = Schema.Literals(["native", "english"]);
+export type VoiceInputOutputLanguage = typeof VoiceInputOutputLanguage.Type;
 
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -91,6 +96,10 @@ export const ClientSettingsSchema = Schema.Struct({
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
+  voiceInputOutputLanguage: VoiceInputOutputLanguage.pipe(
+    Schema.withDecodingDefault(Effect.succeed("native" as const)),
+  ),
+  improvePromptBeforeSend: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
@@ -361,6 +370,25 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+export const SecretSettingValue = Schema.Struct({
+  value: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  valueRedacted: Schema.optional(Schema.Boolean),
+});
+export type SecretSettingValue = typeof SecretSettingValue.Type;
+
+export const AssemblyAiSpeechTranscriptionSettings = Schema.Struct({
+  apiKey: SecretSettingValue.pipe(Schema.withDecodingDefault(Effect.succeed({ value: "" }))),
+});
+export type AssemblyAiSpeechTranscriptionSettings =
+  typeof AssemblyAiSpeechTranscriptionSettings.Type;
+
+export const SpeechTranscriptionSettings = Schema.Struct({
+  assemblyAi: AssemblyAiSpeechTranscriptionSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+});
+export type SpeechTranscriptionSettings = typeof SpeechTranscriptionSettings.Type;
+
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
 export const ServerSettings = Schema.Struct({
@@ -409,6 +437,11 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  speechTranscription: SpeechTranscriptionSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  mcp: McpSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  skills: SkillSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -501,6 +534,11 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const SecretSettingValuePatch = Schema.Struct({
+  value: Schema.optionalKey(TrimmedString),
+  valueRedacted: Schema.optionalKey(Schema.Boolean),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
@@ -514,6 +552,25 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  speechTranscription: Schema.optionalKey(
+    Schema.Struct({
+      assemblyAi: Schema.optionalKey(
+        Schema.Struct({
+          apiKey: Schema.optionalKey(SecretSettingValuePatch),
+        }),
+      ),
+    }),
+  ),
+  mcp: Schema.optionalKey(
+    Schema.Struct({
+      servers: Schema.optionalKey(Schema.Array(McpServerDefinition)),
+    }),
+  ),
+  skills: Schema.optionalKey(
+    Schema.Struct({
+      disabledSkillIds: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
     }),
   ),
   providers: Schema.optionalKey(
@@ -567,6 +624,8 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  voiceInputOutputLanguage: Schema.optionalKey(VoiceInputOutputLanguage),
+  improvePromptBeforeSend: Schema.optionalKey(Schema.Boolean),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

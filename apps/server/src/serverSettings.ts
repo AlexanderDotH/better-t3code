@@ -16,6 +16,10 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
   isProviderDriverKind,
+  type McpEnvironment,
+  type McpHeaders,
+  type McpSecretValue,
+  type McpServerDefinition,
   type ModelSelection,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
@@ -57,6 +61,20 @@ const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
+const secretSettingsErrorOperation = (detail: string) => {
+  if (detail.includes("read")) return "read-secret" as const;
+  if (detail.includes("remove stale")) return "remove-stale-secret" as const;
+  if (detail.includes("remove")) return "remove-secret" as const;
+  return "write-secret" as const;
+};
+
+const toSettingsError = (detail: string, cause: unknown) =>
+  new ServerSettingsError({
+    settingsPath: "<secret-store>",
+    operation: secretSettingsErrorOperation(detail),
+    cause,
+  });
+
 const normalizeServerSettings = (
   settings: ServerSettings,
 ): Effect.Effect<ServerSettings, ServerSettingsError> =>
@@ -79,6 +97,16 @@ function providerEnvironmentSecretName(input: {
   return `provider-env-${Buffer.from(input.instanceId, "utf8").toString("base64url")}-${Buffer.from(input.name, "utf8").toString("base64url")}`;
 }
 
+function mcpSecretName(input: {
+  readonly serverId: string;
+  readonly kind: "env" | "header";
+  readonly name: string;
+}): string {
+  return `mcp-${input.kind}-${Buffer.from(input.serverId, "utf8").toString("base64url")}-${Buffer.from(input.name, "utf8").toString("base64url")}`;
+}
+
+const ASSEMBLY_AI_API_KEY_SECRET_NAME = "speech-transcription-assembly-ai-api-key";
+
 function redactProviderEnvironmentVariable(
   variable: ProviderInstanceEnvironmentVariable,
 ): ProviderInstanceEnvironmentVariable {
@@ -90,6 +118,50 @@ function redactProviderEnvironmentVariable(
     ...variable,
     value: "",
     ...(variable.value.length > 0 || variable.valueRedacted ? { valueRedacted: true } : {}),
+  };
+}
+
+function redactMcpSecretValue(value: McpSecretValue): McpSecretValue {
+  if (!value.sensitive) {
+    const { valueRedacted: _omit, ...rest } = value;
+    return rest;
+  }
+  return {
+    ...value,
+    value: "",
+    ...(value.value.length > 0 || value.valueRedacted ? { valueRedacted: true } : {}),
+  };
+}
+
+function redactMcpSecretMap<T extends Record<string, McpSecretValue>>(values: T): T {
+  return Object.fromEntries(
+    Object.entries(values).map(([name, value]) => [name, redactMcpSecretValue(value)]),
+  ) as T;
+}
+
+function redactMcpServerDefinition(server: McpServerDefinition): McpServerDefinition {
+  switch (server.transport) {
+    case "stdio":
+      return { ...server, env: redactMcpSecretMap(server.env) };
+    case "sse":
+    case "http":
+      return { ...server, headers: redactMcpSecretMap(server.headers) };
+  }
+}
+
+function redactSpeechTranscriptionSettings(
+  settings: ServerSettings["speechTranscription"],
+): ServerSettings["speechTranscription"] {
+  const apiKey = settings.assemblyAi.apiKey;
+  return {
+    ...settings,
+    assemblyAi: {
+      ...settings.assemblyAi,
+      apiKey: {
+        value: "",
+        ...(apiKey.value.length > 0 || apiKey.valueRedacted ? { valueRedacted: true } : {}),
+      },
+    },
   };
 }
 
@@ -105,7 +177,15 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
         : instance,
     ]),
   );
-  return { ...settings, providerInstances };
+  return {
+    ...settings,
+    providerInstances,
+    mcp: {
+      ...settings.mcp,
+      servers: settings.mcp.servers.map(redactMcpServerDefinition),
+    },
+    speechTranscription: redactSpeechTranscriptionSettings(settings.speechTranscription),
+  };
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -132,6 +212,8 @@ export class ServerSettingsService extends Context.Service<
   /** @deprecated Import and use `layerTest` from this module. */
   static readonly layerTest = (overrides: DeepPartial<ServerSettings> = {}) => layerTest(overrides);
 }
+
+export type ServerSettingsShape = ServerSettingsService["Service"];
 
 const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
   Effect.gen(function* () {
@@ -363,6 +445,113 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const materializeMcpSecretValues = (
+    settings: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      const materializeSecretMap = (input: {
+        readonly serverId: string;
+        readonly kind: "env" | "header";
+        readonly values: Record<string, McpSecretValue>;
+      }): Effect.Effect<Record<string, McpSecretValue>, ServerSettingsError> =>
+        Effect.gen(function* () {
+          const values: Record<string, McpSecretValue> = {};
+          for (const [name, value] of Object.entries(input.values)) {
+            if (!value.sensitive || !value.valueRedacted) {
+              values[name] = value;
+              continue;
+            }
+            const secret = yield* secretStore
+              .get(mcpSecretName({ serverId: input.serverId, kind: input.kind, name }))
+              .pipe(
+                Effect.mapError((cause) =>
+                  toSettingsError(`failed to read MCP ${input.kind} secret ${name}`, cause),
+                ),
+              );
+            values[name] = {
+              ...value,
+              value: Option.match(secret, {
+                onNone: () => "",
+                onSome: (bytes) => textDecoder.decode(bytes),
+              }),
+            };
+          }
+          return values;
+        });
+
+      const materializeServer = (
+        server: McpServerDefinition,
+      ): Effect.Effect<McpServerDefinition, ServerSettingsError> => {
+        switch (server.transport) {
+          case "stdio":
+            return materializeSecretMap({
+              serverId: server.id,
+              kind: "env",
+              values: server.env,
+            }).pipe(
+              Effect.map(
+                (env) => ({ ...server, env: env as McpEnvironment }) satisfies McpServerDefinition,
+              ),
+            );
+          case "sse":
+          case "http":
+            return materializeSecretMap({
+              serverId: server.id,
+              kind: "header",
+              values: server.headers,
+            }).pipe(
+              Effect.map(
+                (headers) =>
+                  ({ ...server, headers: headers as McpHeaders }) satisfies McpServerDefinition,
+              ),
+            );
+        }
+      };
+
+      const servers = yield* Effect.forEach(settings.mcp.servers, materializeServer);
+
+      return {
+        ...settings,
+        mcp: {
+          ...settings.mcp,
+          servers,
+        },
+      };
+    });
+
+  const materializeSpeechTranscriptionSecrets = (
+    settings: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      const apiKey = settings.speechTranscription.assemblyAi.apiKey;
+      if (!apiKey.valueRedacted) {
+        return settings;
+      }
+      const secret = yield* secretStore
+        .get(ASSEMBLY_AI_API_KEY_SECRET_NAME)
+        .pipe(
+          Effect.mapError((cause) =>
+            toSettingsError("failed to read AssemblyAI API key secret", cause),
+          ),
+        );
+      return {
+        ...settings,
+        speechTranscription: {
+          ...settings.speechTranscription,
+          assemblyAi: {
+            ...settings.speechTranscription.assemblyAi,
+            apiKey: {
+              ...apiKey,
+              value: Option.match(secret, {
+                onNone: () => "",
+                onSome: (bytes) => textDecoder.decode(bytes),
+              }),
+            },
+          },
+        },
+      };
+    });
+
   const persistProviderEnvironmentSecrets = (
     current: ServerSettings,
     next: ServerSettings,
@@ -464,6 +653,187 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const persistMcpSecretValues = (
+    current: ServerSettings,
+    next: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      const nextSecretKeys = new Set<string>();
+      const persistSecretMap = (input: {
+        readonly serverId: string;
+        readonly kind: "env" | "header";
+        readonly values: Record<string, McpSecretValue>;
+      }): Effect.Effect<Record<string, McpSecretValue>, ServerSettingsError> =>
+        Effect.gen(function* () {
+          const values: Record<string, McpSecretValue> = {};
+          for (const [name, value] of Object.entries(input.values)) {
+            const secretName = mcpSecretName({
+              serverId: input.serverId,
+              kind: input.kind,
+              name,
+            });
+            if (!value.sensitive) {
+              yield* secretStore
+                .remove(secretName)
+                .pipe(
+                  Effect.mapError((cause) =>
+                    toSettingsError(`failed to remove MCP ${input.kind} secret ${name}`, cause),
+                  ),
+                );
+              values[name] = redactMcpSecretValue(value);
+              continue;
+            }
+
+            nextSecretKeys.add(secretName);
+            if (!value.valueRedacted) {
+              if (value.value.length > 0) {
+                yield* secretStore
+                  .set(secretName, textEncoder.encode(value.value))
+                  .pipe(
+                    Effect.mapError((cause) =>
+                      toSettingsError(`failed to persist MCP ${input.kind} secret ${name}`, cause),
+                    ),
+                  );
+                values[name] = { ...value, value: "", valueRedacted: true };
+              } else {
+                yield* secretStore
+                  .remove(secretName)
+                  .pipe(
+                    Effect.mapError((cause) =>
+                      toSettingsError(`failed to remove MCP ${input.kind} secret ${name}`, cause),
+                    ),
+                  );
+                const { valueRedacted: _omit, ...rest } = value;
+                values[name] = rest;
+              }
+              continue;
+            }
+
+            values[name] = redactMcpSecretValue(value);
+          }
+          return values;
+        });
+
+      const persistServer = (
+        server: McpServerDefinition,
+      ): Effect.Effect<McpServerDefinition, ServerSettingsError> => {
+        switch (server.transport) {
+          case "stdio":
+            return persistSecretMap({
+              serverId: server.id,
+              kind: "env",
+              values: server.env,
+            }).pipe(
+              Effect.map(
+                (env) => ({ ...server, env: env as McpEnvironment }) satisfies McpServerDefinition,
+              ),
+            );
+          case "sse":
+          case "http":
+            return persistSecretMap({
+              serverId: server.id,
+              kind: "header",
+              values: server.headers,
+            }).pipe(
+              Effect.map(
+                (headers) =>
+                  ({
+                    ...server,
+                    headers: headers as McpHeaders,
+                  }) satisfies McpServerDefinition,
+              ),
+            );
+        }
+      };
+
+      const servers = yield* Effect.forEach(next.mcp.servers, persistServer);
+
+      for (const server of current.mcp.servers) {
+        const staleValues =
+          server.transport === "stdio"
+            ? Object.entries(server.env).map(([name, value]) => ({
+                kind: "env" as const,
+                name,
+                value,
+              }))
+            : Object.entries(server.headers).map(([name, value]) => ({
+                kind: "header" as const,
+                name,
+                value,
+              }));
+
+        for (const { kind, name, value } of staleValues) {
+          if (!value.sensitive) continue;
+          const secretName = mcpSecretName({ serverId: server.id, kind, name });
+          if (nextSecretKeys.has(secretName)) continue;
+          yield* secretStore
+            .remove(secretName)
+            .pipe(
+              Effect.mapError((cause) =>
+                toSettingsError(`failed to remove stale MCP ${kind} secret ${name}`, cause),
+              ),
+            );
+        }
+      }
+
+      return {
+        ...next,
+        mcp: {
+          ...next.mcp,
+          servers,
+        },
+      };
+    });
+
+  const persistSpeechTranscriptionSecrets = (
+    next: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      const apiKey = next.speechTranscription.assemblyAi.apiKey;
+      if (apiKey.value.length > 0) {
+        yield* secretStore
+          .set(ASSEMBLY_AI_API_KEY_SECRET_NAME, textEncoder.encode(apiKey.value))
+          .pipe(
+            Effect.mapError((cause) =>
+              toSettingsError("failed to persist AssemblyAI API key secret", cause),
+            ),
+          );
+        return {
+          ...next,
+          speechTranscription: redactSpeechTranscriptionSettings({
+            ...next.speechTranscription,
+            assemblyAi: {
+              ...next.speechTranscription.assemblyAi,
+              apiKey: { value: apiKey.value, valueRedacted: true },
+            },
+          }),
+        };
+      }
+      if (apiKey.valueRedacted) {
+        return {
+          ...next,
+          speechTranscription: redactSpeechTranscriptionSettings(next.speechTranscription),
+        };
+      }
+      yield* secretStore
+        .remove(ASSEMBLY_AI_API_KEY_SECRET_NAME)
+        .pipe(
+          Effect.mapError((cause) =>
+            toSettingsError("failed to remove AssemblyAI API key secret", cause),
+          ),
+        );
+      return {
+        ...next,
+        speechTranscription: {
+          ...next.speechTranscription,
+          assemblyAi: {
+            ...next.speechTranscription.assemblyAi,
+            apiKey: { value: "" },
+          },
+        },
+      };
+    });
+
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
       const sparseSettingsJson = yield* encodeServerSettingsJson(
@@ -561,21 +931,31 @@ const make = Effect.gen(function* () {
     ready: Deferred.await(startedDeferred),
     getSettings: getSettingsFromCache.pipe(
       Effect.flatMap(materializeProviderEnvironmentSecrets),
+      Effect.flatMap(materializeMcpSecretValues),
+      Effect.flatMap(materializeSpeechTranscriptionSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
     updateSettings: (patch) =>
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* getSettingsFromCache;
-          const nextPersisted = yield* persistProviderEnvironmentSecrets(
+          const nextWithProviderSecrets = yield* persistProviderEnvironmentSecrets(
             current,
             applyServerSettingsPatch(current, patch),
           );
+          const nextWithMcpSecrets = yield* persistMcpSecretValues(
+            current,
+            nextWithProviderSecrets,
+          );
+          const nextPersisted = yield* persistSpeechTranscriptionSecrets(nextWithMcpSecrets);
           const next = yield* normalizeServerSettings(nextPersisted);
           yield* writeSettingsAtomically(next);
           yield* Cache.set(settingsCache, cacheKey, next);
           yield* emitChange(next);
-          const materialized = yield* materializeProviderEnvironmentSecrets(next);
+          const materialized = yield* materializeProviderEnvironmentSecrets(next).pipe(
+            Effect.flatMap(materializeMcpSecretValues),
+            Effect.flatMap(materializeSpeechTranscriptionSecrets),
+          );
           return resolveTextGenerationProvider(materialized);
         }),
       ),
@@ -583,6 +963,8 @@ const make = Effect.gen(function* () {
       return Stream.fromPubSub(changesPubSub).pipe(
         Stream.mapEffect((settings) =>
           materializeProviderEnvironmentSecrets(settings).pipe(
+            Effect.flatMap(materializeMcpSecretValues),
+            Effect.flatMap(materializeSpeechTranscriptionSecrets),
             Effect.catch((error: ServerSettingsError) =>
               Effect.logWarning("failed to materialize provider environment secrets", {
                 operation: error.operation,

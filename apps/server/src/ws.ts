@@ -30,6 +30,8 @@ import {
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
+  type OrchestrationShellStreamItem,
+  type OrchestrationThreadStreamItem,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
@@ -68,6 +70,7 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ThreadTranscriptExport } from "./orchestration/Services/ThreadTranscriptExport.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
@@ -99,6 +102,12 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
+import { McpConfigEngine } from "./mcp/McpConfigEngine.ts";
+import { SkillEngine } from "./skills/Services/SkillEngine.ts";
+import { makeT3ChatImport } from "./t3ChatImport.ts";
+import { AssemblyAiStreamingToken } from "./speech/Layers/AssemblyAiStreamingToken.ts";
+import * as ProjectSpeechProfiles from "./speech/ProjectSpeechProfiles.ts";
+import * as ProjectTextTransforms from "./speech/ProjectTextTransforms.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
@@ -273,11 +282,11 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
 }
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
-
 const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.dispatchCommand, AuthOrchestrationOperateScope],
   [ORCHESTRATION_WS_METHODS.getTurnDiff, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getFullThreadDiff, AuthOrchestrationReadScope],
+  [ORCHESTRATION_WS_METHODS.exportThreadTranscript, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.replayEvents, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.subscribeShell, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot, AuthOrchestrationReadScope],
@@ -289,6 +298,13 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverRemoveKeybinding, AuthOrchestrationOperateScope],
   [WS_METHODS.serverGetSettings, AuthOrchestrationReadScope],
   [WS_METHODS.serverUpdateSettings, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverCreateAssemblyAiStreamingToken, AuthOrchestrationOperateScope],
+  [WS_METHODS.speechGetProjectProfile, AuthOrchestrationReadScope],
+  [WS_METHODS.speechListProjectProfiles, AuthOrchestrationReadScope],
+  [WS_METHODS.speechIndexProject, AuthOrchestrationOperateScope],
+  [WS_METHODS.speechCreateBasicProjectProfile, AuthOrchestrationOperateScope],
+  [WS_METHODS.speechTranslateTranscript, AuthOrchestrationOperateScope],
+  [WS_METHODS.promptImprove, AuthOrchestrationOperateScope],
   [WS_METHODS.serverDiscoverSourceControl, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetTraceDiagnostics, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessDiagnostics, AuthOrchestrationReadScope],
@@ -296,6 +312,26 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverSignalProcess, AuthOrchestrationOperateScope],
   [WS_METHODS.cloudGetRelayClientStatus, AuthRelayWriteScope],
   [WS_METHODS.cloudInstallRelayClient, AuthRelayWriteScope],
+  [WS_METHODS.chatImportDiscover, AuthOrchestrationReadScope],
+  [WS_METHODS.chatImportRun, AuthOrchestrationOperateScope],
+  [WS_METHODS.skillsList, AuthOrchestrationReadScope],
+  [WS_METHODS.skillsDiscoverImportSources, AuthOrchestrationReadScope],
+  [WS_METHODS.skillsImportSources, AuthOrchestrationOperateScope],
+  [WS_METHODS.skillsCreate, AuthOrchestrationOperateScope],
+  [WS_METHODS.skillsUpdate, AuthOrchestrationOperateScope],
+  [WS_METHODS.skillsRename, AuthOrchestrationOperateScope],
+  [WS_METHODS.skillsDelete, AuthOrchestrationOperateScope],
+  [WS_METHODS.skillsSetEnabled, AuthOrchestrationOperateScope],
+  [WS_METHODS.mcpList, AuthOrchestrationReadScope],
+  [WS_METHODS.mcpDiscoverImportSources, AuthOrchestrationReadScope],
+  [WS_METHODS.mcpCreate, AuthOrchestrationOperateScope],
+  [WS_METHODS.mcpUpdate, AuthOrchestrationOperateScope],
+  [WS_METHODS.mcpDelete, AuthOrchestrationOperateScope],
+  [WS_METHODS.mcpSetEnabled, AuthOrchestrationOperateScope],
+  [WS_METHODS.mcpImportCursorJson, AuthOrchestrationOperateScope],
+  [WS_METHODS.mcpImportSources, AuthOrchestrationOperateScope],
+  [WS_METHODS.mcpExportCursorJson, AuthOrchestrationReadScope],
+  [WS_METHODS.mcpProviderStatus, AuthOrchestrationReadScope],
   [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
   [WS_METHODS.sourceControlCloneRepository, AuthOrchestrationOperateScope],
   [WS_METHODS.sourceControlPublishRepository, AuthOrchestrationOperateScope],
@@ -397,6 +433,7 @@ const makeWsRpcLayer = (
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
+      const threadTranscriptExport = yield* ThreadTranscriptExport;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
       const review = yield* ReviewService.ReviewService;
@@ -419,6 +456,12 @@ const makeWsRpcLayer = (
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+      const assemblyAiStreamingToken = yield* AssemblyAiStreamingToken;
+      const projectSpeechProfiles = yield* ProjectSpeechProfiles.make;
+      const projectTextTransforms = yield* ProjectTextTransforms.make;
+      const mcpConfigEngine = yield* McpConfigEngine;
+      const skillEngine = yield* SkillEngine;
+      const t3ChatImport = yield* makeT3ChatImport();
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map((settings) => settings.automaticGitFetchInterval),
         Effect.catch((cause) =>
@@ -1036,6 +1079,12 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "orchestration" },
           ),
+        [ORCHESTRATION_WS_METHODS.exportThreadTranscript]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.exportThreadTranscript,
+            threadTranscriptExport.exportThread(input.threadId),
+            { "rpc.aggregate": "orchestration" },
+          ),
         [ORCHESTRATION_WS_METHODS.replayEvents]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.replayEvents,
@@ -1059,10 +1108,54 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "orchestration" },
           ),
-        [ORCHESTRATION_WS_METHODS.subscribeShell]: (_input) =>
+        [ORCHESTRATION_WS_METHODS.subscribeShell]: (input) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeShell,
             Effect.gen(function* () {
+              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
+                Stream.mapEffect(toShellStreamEvent),
+                Stream.flatMap((event) =>
+                  Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty,
+                ),
+              );
+
+              // When the client already holds a shell snapshot (cached, or loaded
+              // over HTTP) it passes that snapshot's sequence, and we resume by
+              // replaying shell events after it instead of re-sending the whole
+              // projects/threads list over the socket. As in the thread path, the
+              // live subscription is attached (into a scope-bound buffer) before
+              // draining the catch-up replay so no event published during the
+              // replay window is lost; overlapping events are deduped by sequence
+              // on the client. The full range is read (not the store's default
+              // page limit) since the shell filter runs after reading.
+              if (input.afterSequence !== undefined) {
+                const afterSequence = input.afterSequence;
+                return Stream.unwrap(
+                  Effect.gen(function* () {
+                    const liveBuffer = yield* Queue.unbounded<OrchestrationShellStreamItem>();
+                    yield* Effect.forkScoped(
+                      liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
+                    );
+                    const catchUpStream = orchestrationEngine
+                      .readEvents(afterSequence, Number.MAX_SAFE_INTEGER)
+                      .pipe(
+                        Stream.mapEffect(toShellStreamEvent),
+                        Stream.flatMap((event) =>
+                          Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty,
+                        ),
+                        Stream.mapError(
+                          (cause) =>
+                            new OrchestrationGetSnapshotError({
+                              message: "Failed to replay orchestration shell events",
+                              cause,
+                            }),
+                        ),
+                      );
+                    return Stream.concat(catchUpStream, Stream.fromQueue(liveBuffer));
+                  }),
+                );
+              }
+
               const snapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
                 Effect.tapError((cause) =>
                   Effect.logError("orchestration shell snapshot load failed", { cause }),
@@ -1073,13 +1166,6 @@ const makeWsRpcLayer = (
                       message: "Failed to load orchestration shell snapshot",
                       cause,
                     }),
-                ),
-              );
-
-              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
-                Stream.mapEffect(toShellStreamEvent),
-                Stream.flatMap((event) =>
-                  Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty,
                 ),
               );
 
@@ -1114,8 +1200,65 @@ const makeWsRpcLayer = (
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
             Effect.gen(function* () {
-              const [threadDetail, snapshotSequence] = yield* Effect.all([
-                projectionSnapshotQuery.getThreadDetailById(input.threadId).pipe(
+              const isThisThreadDetailEvent = (event: OrchestrationEvent) =>
+                event.aggregateKind === "thread" &&
+                event.aggregateId === input.threadId &&
+                isThreadDetailEvent(event);
+
+              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
+                Stream.filter(isThisThreadDetailEvent),
+                Stream.map((event) => ({
+                  kind: "event" as const,
+                  event,
+                })),
+              );
+
+              // When the client already loaded the snapshot over HTTP it passes
+              // that snapshot's sequence, and we resume the live subscription by
+              // replaying persisted events after it instead of re-sending the
+              // (potentially multi-KB) snapshot frame over the socket.
+              //
+              // The live PubSub subscription must be attached *before* draining
+              // the catch-up replay, otherwise events published during the replay
+              // window are dropped (they are past the persisted tail the replay
+              // read, but the live stream is not yet subscribed). So fork the
+              // live stream into a buffer bound to this stream's scope, then emit
+              // catch-up followed by the buffered/ongoing live events. Overlapping
+              // events are deduped by sequence on the client.
+              //
+              // Read the full range after the cursor (not the store's default
+              // page-bounded limit): the range is normally tiny (a fresh HTTP
+              // snapshot sequence) and the per-thread filter runs after reading,
+              // so a global cap could otherwise omit this thread's events.
+              if (input.afterSequence !== undefined) {
+                const afterSequence = input.afterSequence;
+                return Stream.unwrap(
+                  Effect.gen(function* () {
+                    const liveBuffer = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+                    yield* Effect.forkScoped(
+                      liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
+                    );
+                    const catchUpStream = orchestrationEngine
+                      .readEvents(afterSequence, Number.MAX_SAFE_INTEGER)
+                      .pipe(
+                        Stream.filter(isThisThreadDetailEvent),
+                        Stream.map((event) => ({ kind: "event" as const, event })),
+                        Stream.mapError(
+                          (cause) =>
+                            new OrchestrationGetSnapshotError({
+                              message: `Failed to replay thread ${input.threadId} events`,
+                              cause,
+                            }),
+                        ),
+                      );
+                    return Stream.concat(catchUpStream, Stream.fromQueue(liveBuffer));
+                  }),
+                );
+              }
+
+              const snapshot = yield* projectionSnapshotQuery
+                .getThreadDetailSnapshot(input.threadId)
+                .pipe(
                   Effect.mapError(
                     (cause) =>
                       new OrchestrationGetSnapshotError({
@@ -1123,46 +1266,19 @@ const makeWsRpcLayer = (
                         cause,
                       }),
                   ),
-                ),
-                projectionSnapshotQuery.getSnapshotSequence().pipe(
-                  Effect.map(({ snapshotSequence }) => snapshotSequence),
-                  Effect.mapError(
-                    (cause) =>
-                      new OrchestrationGetSnapshotError({
-                        message: "Failed to load orchestration snapshot sequence",
-                        cause,
-                      }),
-                  ),
-                ),
-              ]);
+                );
 
-              if (Option.isNone(threadDetail)) {
+              if (Option.isNone(snapshot)) {
                 return yield* new OrchestrationGetSnapshotError({
                   message: `Thread ${input.threadId} was not found`,
                   cause: input.threadId,
                 });
               }
 
-              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
-                Stream.filter(
-                  (event) =>
-                    event.aggregateKind === "thread" &&
-                    event.aggregateId === input.threadId &&
-                    isThreadDetailEvent(event),
-                ),
-                Stream.map((event) => ({
-                  kind: "event" as const,
-                  event,
-                })),
-              );
-
               return Stream.concat(
                 Stream.make({
                   kind: "snapshot" as const,
-                  snapshot: {
-                    snapshotSequence,
-                    thread: threadDetail.value,
-                  },
+                  snapshot: snapshot.value,
                 }),
                 liveStream,
               );
@@ -1228,6 +1344,48 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.serverCreateAssemblyAiStreamingToken]: ({ projectId }) =>
+          observeRpcEffect(
+            WS_METHODS.serverCreateAssemblyAiStreamingToken,
+            projectSpeechProfiles
+              .contextForProject(projectId)
+              .pipe(Effect.flatMap(assemblyAiStreamingToken.create)),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.speechGetProjectProfile]: ({ projectId }) =>
+          observeRpcEffect(
+            WS_METHODS.speechGetProjectProfile,
+            projectSpeechProfiles.get(projectId).pipe(Effect.map(Option.getOrNull)),
+            { "rpc.aggregate": "speech" },
+          ),
+        [WS_METHODS.speechListProjectProfiles]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.speechListProjectProfiles,
+            projectSpeechProfiles.list().pipe(Effect.map((profiles) => ({ profiles }))),
+            { "rpc.aggregate": "speech" },
+          ),
+        [WS_METHODS.speechIndexProject]: ({ projectId }) =>
+          observeRpcEffect(WS_METHODS.speechIndexProject, projectSpeechProfiles.index(projectId), {
+            "rpc.aggregate": "speech",
+          }),
+        [WS_METHODS.speechCreateBasicProjectProfile]: ({ projectId }) =>
+          observeRpcEffect(
+            WS_METHODS.speechCreateBasicProjectProfile,
+            projectSpeechProfiles.createBasic(projectId),
+            { "rpc.aggregate": "speech" },
+          ),
+        [WS_METHODS.speechTranslateTranscript]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.speechTranslateTranscript,
+            projectTextTransforms.translateTranscript(input),
+            { "rpc.aggregate": "speech" },
+          ),
+        [WS_METHODS.promptImprove]: (input) =>
+          observeRpcEffect(WS_METHODS.promptImprove, projectTextTransforms.improvePrompt(input), {
+            "rpc.aggregate": "prompt",
+          }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverDiscoverSourceControl,
@@ -1295,6 +1453,110 @@ const makeWsRpcLayer = (
                   ),
             ),
             { "rpc.aggregate": "cloud" },
+          ),
+        [WS_METHODS.chatImportDiscover]: (_input) =>
+          observeRpcEffect(WS_METHODS.chatImportDiscover, t3ChatImport.discover, {
+            "rpc.aggregate": "chatImport",
+          }),
+        [WS_METHODS.chatImportRun]: (input) =>
+          observeRpcEffect(WS_METHODS.chatImportRun, t3ChatImport.importSource(input), {
+            "rpc.aggregate": "chatImport",
+          }),
+        [WS_METHODS.skillsList]: (input) =>
+          observeRpcEffect(WS_METHODS.skillsList, skillEngine.list(input), {
+            "rpc.aggregate": "skills",
+          }),
+        [WS_METHODS.skillsDiscoverImportSources]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.skillsDiscoverImportSources,
+            skillEngine.discoverImportSources,
+            {
+              "rpc.aggregate": "skills",
+            },
+          ),
+        [WS_METHODS.skillsImportSources]: (input) =>
+          observeRpcEffect(WS_METHODS.skillsImportSources, skillEngine.importSources(input), {
+            "rpc.aggregate": "skills",
+          }),
+        [WS_METHODS.skillsCreate]: (input) =>
+          observeRpcEffect(WS_METHODS.skillsCreate, skillEngine.create(input), {
+            "rpc.aggregate": "skills",
+          }),
+        [WS_METHODS.skillsUpdate]: (input) =>
+          observeRpcEffect(WS_METHODS.skillsUpdate, skillEngine.update(input), {
+            "rpc.aggregate": "skills",
+          }),
+        [WS_METHODS.skillsRename]: (input) =>
+          observeRpcEffect(WS_METHODS.skillsRename, skillEngine.rename(input), {
+            "rpc.aggregate": "skills",
+          }),
+        [WS_METHODS.skillsDelete]: (input) =>
+          observeRpcEffect(WS_METHODS.skillsDelete, skillEngine.delete(input), {
+            "rpc.aggregate": "skills",
+          }),
+        [WS_METHODS.skillsSetEnabled]: (input) =>
+          observeRpcEffect(WS_METHODS.skillsSetEnabled, skillEngine.setEnabled(input), {
+            "rpc.aggregate": "skills",
+          }),
+        [WS_METHODS.mcpList]: (_input) =>
+          observeRpcEffect(WS_METHODS.mcpList, mcpConfigEngine.list, {
+            "rpc.aggregate": "mcp",
+          }),
+        [WS_METHODS.mcpDiscoverImportSources]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpDiscoverImportSources,
+            mcpConfigEngine.discoverImportSources,
+            {
+              "rpc.aggregate": "mcp",
+            },
+          ),
+        [WS_METHODS.mcpCreate]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpCreate, mcpConfigEngine.create(input.server), {
+            "rpc.aggregate": "mcp",
+          }),
+        [WS_METHODS.mcpUpdate]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpUpdate, mcpConfigEngine.update(input.server), {
+            "rpc.aggregate": "mcp",
+          }),
+        [WS_METHODS.mcpDelete]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpDelete, mcpConfigEngine.delete(input.id), {
+            "rpc.aggregate": "mcp",
+          }),
+        [WS_METHODS.mcpSetEnabled]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpSetEnabled,
+            mcpConfigEngine.setEnabled(input.id, input.enabled),
+            {
+              "rpc.aggregate": "mcp",
+            },
+          ),
+        [WS_METHODS.mcpImportCursorJson]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpImportCursorJson,
+            mcpConfigEngine.importCursorJson(input),
+            {
+              "rpc.aggregate": "mcp",
+            },
+          ),
+        [WS_METHODS.mcpImportSources]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpImportSources, mcpConfigEngine.importSources(input), {
+            "rpc.aggregate": "mcp",
+          }),
+        [WS_METHODS.mcpExportCursorJson]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpExportCursorJson,
+            mcpConfigEngine.exportCursorJson(input),
+            {
+              "rpc.aggregate": "mcp",
+            },
+          ),
+        [WS_METHODS.mcpProviderStatus]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpProviderStatus,
+            providerRegistry.getProviders.pipe(Effect.flatMap(mcpConfigEngine.providerStatus)),
+            {
+              "rpc.aggregate": "mcp",
+            },
           ),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           observeRpcEffect(

@@ -55,6 +55,41 @@ function selections(
   return entries.map(([id, value]) => ({ id, value }));
 }
 
+const GPT_56_SOL_DESCRIPTORS: ReadonlyArray<ProviderOptionDescriptor> = [
+  {
+    id: "effort",
+    label: "Reasoning",
+    type: "select",
+    options: [
+      { id: "low", label: "Low", isDefault: true },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High" },
+      { id: "xhigh", label: "Extra High" },
+      { id: "max", label: "Max" },
+    ],
+  },
+  { id: "fastMode", label: "Fast Mode", type: "boolean", currentValue: false },
+];
+
+const GPT_54_DESCRIPTORS: ReadonlyArray<ProviderOptionDescriptor> = [
+  {
+    id: "effort",
+    label: "Reasoning",
+    type: "select",
+    options: [
+      { id: "low", label: "Low" },
+      { id: "medium", label: "Medium", isDefault: true },
+      { id: "high", label: "High" },
+      { id: "xhigh", label: "Extra High" },
+    ],
+  },
+  { id: "fastMode", label: "Fast Mode", type: "boolean", currentValue: false },
+];
+
+const GPT_54_MINI_DESCRIPTORS = GPT_54_DESCRIPTORS.filter(
+  (descriptor) => descriptor.id !== "fastMode",
+);
+
 const ULTRATHINK_FRAME_CLASSES = {
   composerFrameClassName: "ultrathink-frame",
   composerSurfaceClassName: "shadow-[0_0_0_1px_rgba(255,255,255,0.07)_inset]",
@@ -86,6 +121,62 @@ describe("getComposerProviderState", () => {
       provider: PROVIDER,
       promptEffort: "high",
       modelOptionsForDispatch: selections(["effort", "high"]),
+    });
+  });
+
+  it("uses gateway GPT reasoning and Normal inference defaults and preserves explicit choices", () => {
+    const defaults = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith(GPT_56_SOL_DESCRIPTORS),
+      modelOptions: undefined,
+    });
+    const persisted = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith(GPT_56_SOL_DESCRIPTORS),
+      modelOptions: selections(["effort", "high"], ["fastMode", true]),
+    });
+
+    expect(defaults).toMatchObject({
+      promptEffort: "low",
+      modelOptionsForDispatch: selections(["effort", "low"], ["fastMode", false]),
+    });
+    expect(persisted).toMatchObject({
+      promptEffort: "high",
+      modelOptionsForDispatch: selections(["effort", "high"], ["fastMode", true]),
+    });
+  });
+
+  it("drops stale GPT options when the next model does not advertise them", () => {
+    const miniState = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith(GPT_54_MINI_DESCRIPTORS),
+      modelOptions: selections(["effort", "high"], ["fastMode", true]),
+    });
+    const nonReasoningState = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([]),
+      modelOptions: selections(["effort", "high"], ["fastMode", true]),
+    });
+
+    expect(miniState.modelOptionsForDispatch).toEqual(selections(["effort", "high"]));
+    expect(nonReasoningState.modelOptionsForDispatch).toBeUndefined();
+  });
+
+  it("uses the next GPT model default when its reasoning ladder no longer supports max", () => {
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith(GPT_54_DESCRIPTORS),
+      modelOptions: selections(["effort", "max"], ["fastMode", true]),
+    });
+
+    expect(state).toMatchObject({
+      promptEffort: "medium",
+      modelOptionsForDispatch: selections(["effort", "medium"], ["fastMode", true]),
     });
   });
 

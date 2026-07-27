@@ -157,7 +157,8 @@ describe("ProviderSessionReaper", () => {
       respondToUserInput: () => unsupported(),
       stopSession,
       listSessions: () => Effect.succeed([]),
-      getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
+      getCapabilities: () =>
+        Effect.succeed({ sessionModelSwitch: "in-session", mcp: "unsupported" }),
       getInstanceInfo: (instanceId) => {
         const driverKind = ProviderDriverKind.make(String(instanceId));
         return Effect.succeed({
@@ -209,6 +210,7 @@ describe("ProviderSessionReaper", () => {
                 : Option.none(),
             ),
           getThreadDetailById: () => Effect.die("unused"),
+          getThreadDetailSnapshot: () => Effect.die("unused"),
         }),
       ),
       Layer.provideMerge(NodeServices.layer),

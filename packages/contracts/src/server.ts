@@ -20,6 +20,7 @@ import { EditorId } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerSettings } from "./settings.ts";
+import { AssemblyAiSpeechContext } from "./speech.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.malformed-config"),
@@ -550,6 +551,29 @@ export const ServerProviderUpdatedPayload = Schema.Struct({
   providers: ServerProviders,
 });
 export type ServerProviderUpdatedPayload = typeof ServerProviderUpdatedPayload.Type;
+
+export const AssemblyAiStreamingTokenResult = Schema.Struct({
+  token: TrimmedNonEmptyString,
+  websocketUrl: TrimmedNonEmptyString,
+  expiresInSeconds: PositiveInt,
+  sampleRate: PositiveInt,
+  encoding: TrimmedNonEmptyString,
+  speechModel: TrimmedNonEmptyString,
+  context: AssemblyAiSpeechContext,
+});
+export type AssemblyAiStreamingTokenResult = typeof AssemblyAiStreamingTokenResult.Type;
+
+export class AssemblyAiStreamingTokenError extends Schema.TaggedErrorClass<AssemblyAiStreamingTokenError>()(
+  "AssemblyAiStreamingTokenError",
+  {
+    reason: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `AssemblyAI streaming token error: ${this.reason}`;
+  }
+}
 
 export const ServerProviderUpdateInput = Schema.Struct({
   provider: ProviderDriverKind,

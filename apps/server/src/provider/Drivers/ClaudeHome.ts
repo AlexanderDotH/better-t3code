@@ -6,6 +6,8 @@ import * as Path from "effect/Path";
 
 import { expandHomePath } from "../../pathExpansion.ts";
 
+const DEFAULT_CLAUDE_CODE_MAX_OUTPUT_TOKENS = "128000";
+
 export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function* (
   config: Pick<ClaudeSettings, "homePath">,
 ): Effect.fn.Return<string, never, Path.Path> {
@@ -19,11 +21,16 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
   baseEnv?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<NodeJS.ProcessEnv, never, Path.Path> {
   const resolvedBaseEnv = baseEnv ?? process.env;
+  const environment = {
+    ...resolvedBaseEnv,
+    CLAUDE_CODE_MAX_OUTPUT_TOKENS:
+      resolvedBaseEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS ?? DEFAULT_CLAUDE_CODE_MAX_OUTPUT_TOKENS,
+  };
   const homePath = config.homePath.trim();
-  if (homePath.length === 0) return resolvedBaseEnv;
+  if (homePath.length === 0) return environment;
   const resolvedHomePath = yield* resolveClaudeHomePath(config);
   return {
-    ...resolvedBaseEnv,
+    ...environment,
     HOME: resolvedHomePath,
   };
 });

@@ -62,13 +62,13 @@ export interface AcpSessionRuntimeOptions {
   readonly resumeSessionId?: string;
   readonly sessionLoadTimeout?: Duration.Input;
   readonly sessionLoadReplayIdleGap?: Duration.Input;
+  readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly clientCapabilities?: EffectAcpSchema.InitializeRequest["clientCapabilities"];
   readonly clientInfo: {
     readonly name: string;
     readonly version: string;
   };
   readonly authMethodId: string;
-  readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
@@ -540,6 +540,7 @@ export const make = (
       );
 
       let sessionId: string;
+      const mcpServers = options.mcpServers ?? [];
       let sessionSetupResult:
         | EffectAcpSchema.LoadSessionResponse
         | EffectAcpSchema.NewSessionResponse
@@ -615,13 +616,12 @@ export const make = (
               }),
             ),
           );
-
           return loaded;
         }).pipe(Effect.ensuring(Ref.set(sessionLoadGateRef, Option.none())));
       } else {
         const createPayload = {
           cwd: options.cwd,
-          mcpServers: options.mcpServers ?? [],
+          mcpServers,
         } satisfies EffectAcpSchema.NewSessionRequest;
         const created = yield* runLoggedRequest(
           "session/new",

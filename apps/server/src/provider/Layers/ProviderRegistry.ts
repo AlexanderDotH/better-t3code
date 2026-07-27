@@ -55,6 +55,8 @@ import type { ProviderInstance } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import type { ProviderSnapshotSource } from "../builtInProviderCatalog.ts";
 
+const BACKGROUND_PROVIDER_REFRESH_START_DELAY = "5 seconds";
+
 const loadProviders = (
   providerSources: ReadonlyArray<ProviderSnapshotSource>,
 ): Effect.Effect<ReadonlyArray<ServerProvider>> =>
@@ -501,6 +503,17 @@ export const ProviderRegistryLive = Layer.effect(
      * on this layer's construction path. Consumers see cached or pending
      * snapshots immediately, then receive live probe results through the
      * already-attached change stream.
+     *   - seed each newly-added/rebuilt instance from its current snapshot
+     *     so the UI can render immediately;
+     *   - start the force-refresh for each newly-added/rebuilt instance in
+     *     the background and feed the result directly into `providersRef`,
+     *     bypassing the PubSub attachment race that otherwise drops the
+     *     initial probe;
+     *   - prune `providersRef` of instances that no longer exist.
+     *
+     * Initial refreshes are not awaited. Provider probes can spawn external
+     * tools and run model-capability discovery, so waiting here would put
+     * slow provider health checks on the HTTP server startup path.
      *
      * Per-instance subscription fibers are not tracked explicitly. When
      * a rebuilt instance's old child scope closes, its PubSub shuts
@@ -569,6 +582,35 @@ export const ProviderRegistryLive = Layer.effect(
             }).pipe(Effect.ignoreCause({ log: true })),
           { concurrency: "unbounded", discard: true },
         );
+        if (newlyAdded.length > 0) {
+          yield* Effect.yieldNow;
+        }
+
+        const newSources = newlyAdded.map(([, instance]) => buildSnapshotSource(instance));
+        const currentSnapshots = yield* loadProviders(newSources).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logError("provider registry initial snapshot load failed", {
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.as([] as ReadonlyArray<ServerProvider>)),
+          ),
+        );
+        yield* upsertProviders(currentSnapshots, {
+          persist: false,
+        });
+
+        // Force-refresh every new/rebuilt instance in parallel, but keep
+        // those probes off the server startup path. The refresh result is
+        // still piped directly into `syncProvider`, so the first completed
+        // probe updates the aggregator even if no stream subscriber sees the
+        // provider's internal PubSub event.
+        for (const source of newSources) {
+          yield* Effect.sleep(BACKGROUND_PROVIDER_REFRESH_START_DELAY).pipe(
+            Effect.flatMap(() => refreshOneSource(source)),
+            Effect.ignoreCause({ log: true }),
+            Effect.forkScoped,
+          );
+        }
+
         yield* upsertProviders(unavailableProviders, {
           persist: false,
           replace: true,
@@ -581,7 +623,7 @@ export const ProviderRegistryLive = Layer.effect(
         yield* Ref.set(liveSubsRef, nextSubs);
 
         // Drop aggregator state for instances that have disappeared —
-        // otherwise the UI would keep rendering ghosts.
+        // otherwise the UI would keep rendering stale providers.
         const [previousProviders, providers] = yield* Ref.modify(
           providersRef,
           (previousProviders) => {
@@ -660,6 +702,9 @@ export const ProviderRegistryLive = Layer.effect(
     // Initial sync attaches subscriptions and snapshots current state for
     // every instance present at boot. Provider probes are already running in
     // their managed background fibers and never block this layer.
+    // Initial sync: subscribe + kick off background refreshes for every
+    // instance present at boot. The sync itself returns after publishing
+    // current snapshots; provider probes complete asynchronously.
     yield* syncLiveSources;
     // React to registry mutations — instance added / removed / rebuilt.
     // `Stream.fromSubscription` builds a stream over the pre-acquired

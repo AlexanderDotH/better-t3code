@@ -1,13 +1,23 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as Schema from "effect/Schema";
 
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildPromptImprovementPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildTranscriptTranslationPrompt,
+  PromptImprovementOutputSchema,
+  TranscriptTranslationOutputSchema,
 } from "./TextGenerationPrompts.ts";
 import { normalizeCliError, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
 import { TextGenerationError } from "@t3tools/contracts";
+
+const decodePromptImprovementOutput = Schema.decodeUnknownSync(PromptImprovementOutputSchema);
+const decodeTranscriptTranslationOutput = Schema.decodeUnknownSync(
+  TranscriptTranslationOutputSchema,
+);
 
 describe("buildCommitMessagePrompt", () => {
   it("includes staged patch and summary in the prompt", () => {
@@ -133,6 +143,37 @@ describe("buildThreadTitlePrompt", () => {
     expect(result.prompt).toContain("thread.png");
     expect(result.prompt).toContain("image/png");
     expect(result.prompt).toContain("67890 bytes");
+  });
+});
+
+describe("buildTranscriptTranslationPrompt", () => {
+  it("requires faithful concise English while preserving code identifiers", () => {
+    const result = buildTranscriptTranslationPrompt({
+      text: "Actualiza `useThreadOutbox` sin cambiar drainQueue.",
+    });
+
+    expect(result.prompt).toContain("faithful, concise English");
+    expect(result.prompt).toContain("Preserve code identifiers");
+    expect(result.prompt).toContain("Actualiza `useThreadOutbox` sin cambiar drainQueue.");
+    expect(decodeTranscriptTranslationOutput({ text: "Update `useThreadOutbox`." })).toEqual({
+      text: "Update `useThreadOutbox`.",
+    });
+  });
+});
+
+describe("buildPromptImprovementPrompt", () => {
+  it("preserves language, requirements, identifiers, and scope", () => {
+    const result = buildPromptImprovementPrompt({
+      text: "Corrige reconnectSession, no cambies el contrato RPC.",
+    });
+
+    expect(result.prompt).toContain("Keep the same language");
+    expect(result.prompt).toContain("Preserve the original intent and every requirement");
+    expect(result.prompt).toContain("Do not add scope");
+    expect(result.prompt).toContain("Corrige reconnectSession, no cambies el contrato RPC.");
+    expect(decodePromptImprovementOutput({ text: "Corrige `reconnectSession`." })).toEqual({
+      text: "Corrige `reconnectSession`.",
+    });
   });
 });
 

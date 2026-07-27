@@ -24,12 +24,17 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
+export type ProviderMcpSupportMode = "unsupported" | "sessionConfig" | "nativeConfig";
 
 export interface ProviderAdapterCapabilities {
   /**
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+  /**
+   * Declares how this adapter consumes T3-owned MCP server settings.
+   */
+  readonly mcp: ProviderMcpSupportMode;
 }
 
 export interface ProviderThreadTurnSnapshot {
