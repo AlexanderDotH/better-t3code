@@ -51,6 +51,12 @@ export const PROVIDER_OPTIONS: Array<{
     available: true,
     pickerSidebarBadge: "new",
   },
+  {
+    value: ProviderDriverKind.make("hyperagent"),
+    label: "Hyperagent (MCP Proxy)",
+    available: true,
+    pickerSidebarBadge: "new",
+  },
 ];
 
 export type WorkLogToolLifecycleStatus =
@@ -682,7 +688,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const commandPreview = extractToolCommand(payload);
   const changedFiles = extractChangedFiles(payload);
   const title = extractToolTitle(payload);
-  const isTaskActivity = activity.kind === "task.progress" || activity.kind === "task.completed";
+  const isReasoningActivity = activity.kind.startsWith("reasoning.");
+  const isTaskActivity =
+    activity.kind === "task.progress" || activity.kind === "task.completed" || isReasoningActivity;
   const taskSummary =
     isTaskActivity && typeof payload?.summary === "string" && payload.summary.length > 0
       ? payload.summary
@@ -695,14 +703,18 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       ? payload.detail
       : null;
   const taskLabel = taskSummary || taskDetailAsLabel;
-  const detail = isTaskActivity
-    ? !taskDetailAsLabel &&
-      payload &&
-      typeof payload.detail === "string" &&
-      payload.detail.length > 0
-      ? stripTrailingExitCode(payload.detail).output
+  const detail = isReasoningActivity
+    ? typeof payload?.text === "string" && payload.text.length > 0
+      ? payload.text
       : null
-    : extractToolDetail(payload, title ?? activity.summary);
+    : isTaskActivity
+      ? !taskDetailAsLabel &&
+        payload &&
+        typeof payload.detail === "string" &&
+        payload.detail.length > 0
+        ? stripTrailingExitCode(payload.detail).output
+        : null
+      : extractToolDetail(payload, title ?? activity.summary);
   const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
@@ -710,7 +722,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     turnId: activity.turnId,
     label: taskLabel || activity.summary,
     tone:
-      activity.kind === "task.progress"
+      activity.kind === "task.progress" || isReasoningActivity
         ? "thinking"
         : activity.tone === "approval"
           ? "info"

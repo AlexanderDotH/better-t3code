@@ -2,6 +2,7 @@ import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
   CommandId,
+  EventId,
   MessageId,
   type OrchestrationEvent,
   type OrchestrationMessage,
@@ -83,6 +84,23 @@ interface AssistantSegmentState {
   activeMessageId: MessageId | null;
 }
 
+type ContentDeltaRuntimeEvent = Extract<ProviderRuntimeEvent, { type: "content.delta" }>;
+
+interface BufferedContentStream {
+  readonly key: string;
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId | null;
+  readonly itemId: string | null;
+  readonly streamKind: ContentDeltaRuntimeEvent["payload"]["streamKind"];
+  readonly contentIndex: number | null;
+  readonly summaryIndex: number | null;
+  readonly firstEventId: EventId;
+  readonly firstCreatedAt: string;
+  segmentIndex: number;
+  text: string;
+  lastEvent: ProviderRuntimeEvent;
+}
+
 const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
 const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(120);
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
@@ -92,6 +110,8 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const TASK_DESCRIPTION_BY_TASK_CACHE_CAPACITY = 10_000;
 const TASK_DESCRIPTION_BY_TASK_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
+const MAX_BUFFERED_CONTENT_STREAM_CHARS = 64_000;
+const MAX_BUFFERED_CONTENT_STREAMS = 20_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
 type TurnStartRequestedDomainEvent = Extract<
@@ -686,6 +706,94 @@ export function runtimeEventToActivities(
   return [];
 }
 
+function asUnknownRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function enrichActivityWithRuntimeContext(
+  event: ProviderRuntimeEvent,
+  activity: OrchestrationThreadActivity,
+): OrchestrationThreadActivity {
+  const payload = asUnknownRecord(activity.payload);
+  return {
+    ...activity,
+    payload: {
+      ...payload,
+      eventId: event.eventId,
+      provider: event.provider,
+      providerInstanceId: event.providerInstanceId ?? null,
+      itemId: event.itemId ?? null,
+      requestId: event.requestId ?? null,
+      providerRefs: event.providerRefs ?? null,
+      canonicalPayload: payload.canonicalPayload ?? event.payload,
+    },
+  };
+}
+
+function contentStreamKey(event: ContentDeltaRuntimeEvent, threadId: ThreadId): string {
+  return [
+    threadId,
+    event.turnId ?? "no-turn",
+    event.itemId ?? "no-item",
+    event.payload.streamKind,
+    event.payload.contentIndex ?? "no-content-index",
+    event.payload.summaryIndex ?? "no-summary-index",
+  ].join(":");
+}
+
+function contentStreamActivityKind(
+  streamKind: ContentDeltaRuntimeEvent["payload"]["streamKind"],
+): string {
+  switch (streamKind) {
+    case "reasoning_text":
+      return "reasoning.text";
+    case "reasoning_summary_text":
+      return "reasoning.summary";
+    case "plan_text":
+      return "stream.plan";
+    case "command_output":
+      return "stream.command-output";
+    case "file_change_output":
+      return "stream.file-change-output";
+    case "unknown":
+      return "stream.unknown";
+    case "assistant_text":
+      return "stream.assistant";
+  }
+}
+
+function contentStreamActivitySummary(
+  streamKind: ContentDeltaRuntimeEvent["payload"]["streamKind"],
+): string {
+  switch (streamKind) {
+    case "reasoning_text":
+      return "Thinking";
+    case "reasoning_summary_text":
+      return "Thinking summary";
+    case "plan_text":
+      return "Plan output";
+    case "command_output":
+      return "Command output";
+    case "file_change_output":
+      return "File-change output";
+    case "unknown":
+      return "Provider output";
+    case "assistant_text":
+      return "Assistant output";
+  }
+}
+
+function safeContentStreamSplitIndex(value: string, requestedIndex: number): number {
+  if (requestedIndex <= 0 || requestedIndex >= value.length) return requestedIndex;
+  const before = value.charCodeAt(requestedIndex - 1);
+  const after = value.charCodeAt(requestedIndex);
+  const splitsSurrogatePair =
+    before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;
+  return splitsSurrogatePair ? requestedIndex - 1 : requestedIndex;
+}
+
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngineService;
@@ -745,6 +853,159 @@ const make = Effect.gen(function* () {
         Option.filter(description, (value) => value.length > 0).pipe(Option.getOrUndefined),
       ),
     );
+
+  const bufferedContentStreams = new Map<string, BufferedContentStream>();
+
+  const persistContentStreamSegment = Effect.fn("persistContentStreamSegment")(function* (input: {
+    readonly stream: BufferedContentStream;
+    readonly text: string;
+    readonly complete: boolean;
+    readonly flushReason: string;
+  }) {
+    if (input.text.length === 0) return;
+    const eventWithSequence = input.stream.lastEvent as ProviderRuntimeEvent & {
+      readonly sessionSequence?: number;
+    };
+    const canonicalPayload = {
+      streamKind: input.stream.streamKind,
+      contentIndex: input.stream.contentIndex,
+      summaryIndex: input.stream.summaryIndex,
+      text: input.text,
+      segmentIndex: input.stream.segmentIndex,
+      complete: input.complete,
+      flushReason: input.flushReason,
+    };
+    const activity = enrichActivityWithRuntimeContext(input.stream.lastEvent, {
+      id: EventId.make(
+        `content-stream:${input.stream.firstEventId}:segment:${input.stream.segmentIndex}`,
+      ),
+      createdAt: input.stream.firstCreatedAt,
+      tone: "info",
+      kind: contentStreamActivityKind(input.stream.streamKind),
+      summary: contentStreamActivitySummary(input.stream.streamKind),
+      payload: {
+        streamKind: input.stream.streamKind,
+        contentIndex: input.stream.contentIndex,
+        summaryIndex: input.stream.summaryIndex,
+        text: input.text,
+        segmentIndex: input.stream.segmentIndex,
+        complete: input.complete,
+        flushReason: input.flushReason,
+        firstEventId: input.stream.firstEventId,
+        lastEventId: input.stream.lastEvent.eventId,
+        canonicalPayload,
+      },
+      turnId: input.stream.turnId,
+      ...(eventWithSequence.sessionSequence !== undefined
+        ? { sequence: eventWithSequence.sessionSequence }
+        : {}),
+    });
+    yield* orchestrationEngine.dispatch({
+      type: "thread.activity.append",
+      commandId: yield* providerCommandId(input.stream.lastEvent, "content-stream-append"),
+      threadId: input.stream.threadId,
+      activity,
+      createdAt: activity.createdAt,
+    });
+  });
+
+  const spillOldestContentStream = Effect.fn("spillOldestContentStream")(function* () {
+    const oldest = bufferedContentStreams.entries().next().value as
+      | readonly [string, BufferedContentStream]
+      | undefined;
+    if (!oldest) return;
+    const [key, stream] = oldest;
+    yield* persistContentStreamSegment({
+      stream,
+      text: stream.text,
+      complete: false,
+      flushReason: "buffer-capacity",
+    });
+    bufferedContentStreams.delete(key);
+  });
+
+  const appendContentStreamDelta = Effect.fn("appendContentStreamDelta")(function* (
+    event: ContentDeltaRuntimeEvent,
+    threadId: ThreadId,
+  ) {
+    if (event.payload.streamKind === "assistant_text" || event.payload.delta.length === 0) return;
+    const key = contentStreamKey(event, threadId);
+    let stream = bufferedContentStreams.get(key);
+    if (!stream) {
+      if (bufferedContentStreams.size >= MAX_BUFFERED_CONTENT_STREAMS) {
+        yield* spillOldestContentStream();
+      }
+      stream = {
+        key,
+        threadId,
+        turnId: toTurnId(event.turnId) ?? null,
+        itemId: event.itemId ?? null,
+        streamKind: event.payload.streamKind,
+        contentIndex: event.payload.contentIndex ?? null,
+        summaryIndex: event.payload.summaryIndex ?? null,
+        firstEventId: event.eventId,
+        firstCreatedAt: event.createdAt,
+        segmentIndex: 0,
+        text: "",
+        lastEvent: event,
+      };
+      bufferedContentStreams.set(key, stream);
+    }
+    stream.text += event.payload.delta;
+    stream.lastEvent = event;
+
+    while (stream.text.length >= MAX_BUFFERED_CONTENT_STREAM_CHARS) {
+      const splitIndex = safeContentStreamSplitIndex(
+        stream.text,
+        MAX_BUFFERED_CONTENT_STREAM_CHARS,
+      );
+      const segment = stream.text.slice(0, splitIndex);
+      yield* persistContentStreamSegment({
+        stream,
+        text: segment,
+        complete: false,
+        flushReason: "spill",
+      });
+      stream.text = stream.text.slice(splitIndex);
+      stream.segmentIndex += 1;
+    }
+  });
+
+  const flushContentStreams = Effect.fn("flushContentStreams")(function* (
+    event: ProviderRuntimeEvent,
+    threadId: ThreadId,
+  ) {
+    const eventTurnId = toTurnId(event.turnId) ?? null;
+    const eventItemId = event.itemId ?? null;
+    const shouldFlush = (stream: BufferedContentStream): boolean => {
+      if (stream.threadId !== threadId) return false;
+      switch (event.type) {
+        case "item.completed":
+          return eventItemId !== null && stream.itemId === eventItemId;
+        case "turn.completed":
+        case "turn.aborted":
+          return eventTurnId === null || stream.turnId === eventTurnId;
+        case "runtime.error":
+          return eventTurnId === null || stream.turnId === eventTurnId;
+        case "session.exited":
+          return true;
+        default:
+          return false;
+      }
+    };
+
+    for (const [key, stream] of bufferedContentStreams.entries()) {
+      if (!shouldFlush(stream)) continue;
+      stream.lastEvent = event;
+      yield* persistContentStreamSegment({
+        stream,
+        text: stream.text,
+        complete: true,
+        flushReason: event.type,
+      });
+      bufferedContentStreams.delete(key);
+    }
+  });
 
   const resolveThreadDetail = Effect.fn("resolveThreadDetail")(function* (threadId: ThreadId) {
     return yield* projectionSnapshotQuery
@@ -1460,6 +1721,10 @@ const make = Effect.gen(function* () {
       const proposedPlanDelta =
         event.type === "turn.proposed.delta" ? event.payload.delta : undefined;
 
+      if (event.type === "content.delta" && event.payload.streamKind !== "assistant_text") {
+        yield* appendContentStreamDelta(event, thread.id);
+      }
+
       if (assistantDelta && assistantDelta.length > 0) {
         const turnId = toTurnId(event.turnId);
         const assistantMessageId = yield* getOrCreateAssistantMessageId({
@@ -1764,7 +2029,19 @@ const make = Effect.gen(function* () {
         }
       }
 
-      const activities = runtimeEventToActivities(event, taskTitle);
+      if (
+        event.type === "item.completed" ||
+        event.type === "turn.completed" ||
+        event.type === "turn.aborted" ||
+        event.type === "runtime.error" ||
+        event.type === "session.exited"
+      ) {
+        yield* flushContentStreams(event, thread.id);
+      }
+
+      const activities = runtimeEventToActivities(event, taskTitle).map((activity) =>
+        enrichActivityWithRuntimeContext(event, activity),
+      );
       yield* Effect.forEach(activities, (activity) =>
         providerCommandId(event, "thread-activity-append").pipe(
           Effect.flatMap((commandId) =>

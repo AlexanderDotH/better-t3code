@@ -71,6 +71,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
+import type { ClaudeGatewayModelProfile } from "../Drivers/ClaudeGatewayCatalog.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
   getClaudeModelCapabilities,
@@ -216,6 +217,12 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
 export interface ClaudeAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly resolveMcpServers?: (input: {
+    readonly cwd: string;
+  }) => Effect.Effect<NonNullable<ClaudeQueryOptions["mcpServers"]>>;
+  readonly resolveGatewayProfile?: (
+    modelId: string | null | undefined,
+  ) => Effect.Effect<ClaudeGatewayModelProfile | undefined>;
   readonly createQuery?: (input: {
     readonly prompt: AsyncIterable<SDKUserMessage>;
     readonly options: ClaudeQueryOptions;
@@ -272,9 +279,21 @@ function normalizeClaudeStreamMessages(
 function getEffectiveClaudeAgentEffort(
   effort: string | null | undefined,
   model: string | null | undefined,
+  capabilities?: ClaudeGatewayModelProfile["capabilities"],
 ): ClaudeSdkEffort | null {
-  const normalized = normalizeClaudeCliEffort(effort, model);
+  const normalized = normalizeClaudeCliEffort(effort, model, capabilities);
   return normalized ? (normalized as ClaudeSdkEffort) : null;
+}
+
+function resolveClaudeGatewayApiModelId(
+  profile: ClaudeGatewayModelProfile,
+  requestedFastMode: boolean | undefined,
+): string {
+  const fastModeDescriptor = profile.capabilities.optionDescriptors?.find(
+    (descriptor) => descriptor.id === "fastMode" && descriptor.type === "boolean",
+  );
+  const fastMode = requestedFastMode ?? fastModeDescriptor?.currentValue ?? false;
+  return fastMode && profile.fastModelId ? profile.fastModelId : profile.baseModelId;
 }
 
 function isClaudeInterruptedMessage(message: string): boolean {
@@ -3489,10 +3508,21 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const extraArgs = parseCliArgs(claudeSettings.launchArgs).flags;
       const modelSelection =
         input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
-      const caps = getClaudeModelCapabilities(modelSelection?.model);
+      const gatewayProfile = options?.resolveGatewayProfile
+        ? yield* options.resolveGatewayProfile(modelSelection?.model)
+        : undefined;
+      const caps =
+        gatewayProfile?.capabilities ?? getClaudeModelCapabilities(modelSelection?.model);
       const descriptors = getProviderOptionDescriptors({ caps });
-      const apiModelId = modelSelection ? resolveClaudeApiModelId(modelSelection) : undefined;
-      const initialContextWindow = selectedClaudeContextWindow(modelSelection);
+      const requestedFastMode = getModelSelectionBooleanOptionValue(modelSelection, "fastMode");
+      const apiModelId = gatewayProfile
+        ? resolveClaudeGatewayApiModelId(gatewayProfile, requestedFastMode)
+        : modelSelection
+          ? resolveClaudeApiModelId(modelSelection)
+          : undefined;
+      const initialContextWindow = gatewayProfile
+        ? undefined
+        : selectedClaudeContextWindow(modelSelection);
       const rawEffort = getModelSelectionStringOptionValue(modelSelection, "effort");
       const effort = resolveClaudeEffort(caps, rawEffort) ?? null;
       const fastModeSupported = descriptors.some(
@@ -3501,14 +3531,22 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const thinkingSupported = descriptors.some(
         (descriptor) => descriptor.type === "boolean" && descriptor.id === "thinking",
       );
-      const fastMode =
-        getModelSelectionBooleanOptionValue(modelSelection, "fastMode") === true &&
-        fastModeSupported;
+      const nativeFastMode =
+        !gatewayProfile && fastModeSupported && typeof requestedFastMode === "boolean"
+          ? requestedFastMode
+          : undefined;
+      const gatewayFastMode =
+        gatewayProfile && requestedFastMode === true && gatewayProfile.fastModelId !== undefined;
+      const configuredFastMode = gatewayProfile ? gatewayFastMode : nativeFastMode;
       const thinking = thinkingSupported
         ? getModelSelectionBooleanOptionValue(modelSelection, "thinking")
         : undefined;
       const ultracode = isClaudeUltracodeEffort(effort);
-      const effectiveEffort = getEffectiveClaudeAgentEffort(effort, modelSelection?.model);
+      const effectiveEffort = getEffectiveClaudeAgentEffort(
+        effort,
+        modelSelection?.model,
+        gatewayProfile?.capabilities,
+      );
       const runtimeModeToPermission: Record<string, PermissionMode> = {
         "auto-accept-edits": "acceptEdits",
         auto: "auto",
@@ -3517,10 +3555,27 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const permissionMode = runtimeModeToPermission[input.runtimeMode];
       const settings = {
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
-        ...(fastMode ? { fastMode: true } : {}),
+        ...(typeof nativeFastMode === "boolean" ? { fastMode: nativeFastMode } : {}),
         ...(ultracode ? { ultracode: true } : {}),
       };
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+      const mcpServers = options?.resolveMcpServers
+        ? yield* options.resolveMcpServers({ cwd: input.cwd ?? serverConfig.cwd })
+        : {};
+      const effectiveMcpServers: NonNullable<ClaudeQueryOptions["mcpServers"]> = {
+        ...mcpServers,
+        ...(mcpSession
+          ? {
+              "t3-code": {
+                type: "http",
+                url: mcpSession.endpoint,
+                headers: {
+                  Authorization: mcpSession.authorizationHeader,
+                },
+              },
+            }
+          : {}),
+      };
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
@@ -3546,19 +3601,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         env: claudeEnvironment,
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
-        ...(mcpSession
-          ? {
-              mcpServers: {
-                "t3-code": {
-                  type: "http",
-                  url: mcpSession.endpoint,
-                  headers: {
-                    Authorization: mcpSession.authorizationHeader,
-                  },
-                },
-              },
-            }
-          : {}),
+        ...(Object.keys(effectiveMcpServers).length > 0 ? { mcpServers: effectiveMcpServers } : {}),
       };
 
       yield* Effect.annotateCurrentSpan({
@@ -3583,6 +3626,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.setting_sources": [...CLAUDE_SETTING_SOURCES],
         "claude.query.settings_json": encodeJsonStringForDiagnostics(settings) ?? "",
         "claude.query.extra_args_json": encodeJsonStringForDiagnostics(extraArgs) ?? "",
+        "claude.query.mcp_server_count": Object.keys(effectiveMcpServers).length,
         "claude.query.path_to_executable": claudeBinaryPath,
       });
 
@@ -3669,7 +3713,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ...(input.cwd ? { cwd: input.cwd } : {}),
             ...(effectiveEffort ? { effort: effectiveEffort } : {}),
             ...(permissionMode ? { permissionMode } : {}),
-            ...(fastMode ? { fastMode: true } : {}),
+            ...(typeof configuredFastMode === "boolean" ? { fastMode: configuredFastMode } : {}),
           },
         },
         providerRefs: {},
@@ -3738,7 +3782,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (modelSelection?.model) {
-      const apiModelId = resolveClaudeApiModelId(modelSelection);
+      const gatewayProfile = options?.resolveGatewayProfile
+        ? yield* options.resolveGatewayProfile(modelSelection.model)
+        : undefined;
+      const apiModelId = gatewayProfile
+        ? resolveClaudeGatewayApiModelId(
+            gatewayProfile,
+            getModelSelectionBooleanOptionValue(modelSelection, "fastMode"),
+          )
+        : resolveClaudeApiModelId(modelSelection);
       if (context.currentApiModelId !== apiModelId) {
         yield* Effect.tryPromise({
           try: () => context.query.setModel(apiModelId),
@@ -3932,6 +3984,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      mcp: "sessionConfig",
     },
     startSession,
     sendTurn,

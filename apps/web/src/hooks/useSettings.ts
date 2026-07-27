@@ -196,10 +196,86 @@ function useClientSettingsValue(): ClientSettings {
 }
 
 export function mergeEnvironmentSettings(
-  serverSettings: ServerSettings,
+  serverSettings: ServerSettings | Partial<ServerSettings>,
   clientSettings: ClientSettings,
 ): UnifiedSettings {
-  return { ...serverSettings, ...clientSettings };
+  const providerSettings = serverSettings.providers;
+  const backgroundActivity = serverSettings.backgroundActivity;
+  const sourceControlWritingStyle = serverSettings.sourceControlWritingStyle;
+  const speechTranscription = serverSettings.speechTranscription;
+  const assemblyAi = speechTranscription?.assemblyAi;
+
+  return {
+    ...DEFAULT_SERVER_SETTINGS,
+    ...serverSettings,
+    backgroundActivity: {
+      ...DEFAULT_SERVER_SETTINGS.backgroundActivity,
+      ...backgroundActivity,
+      overrides: {
+        ...DEFAULT_SERVER_SETTINGS.backgroundActivity.overrides,
+        ...backgroundActivity?.overrides,
+      },
+    },
+    textGenerationModelSelection: {
+      ...DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+      ...serverSettings.textGenerationModelSelection,
+    },
+    sourceControlWritingStyle: {
+      ...DEFAULT_SERVER_SETTINGS.sourceControlWritingStyle,
+      ...sourceControlWritingStyle,
+    },
+    providers: {
+      ...DEFAULT_SERVER_SETTINGS.providers,
+      ...providerSettings,
+      codex: {
+        ...DEFAULT_SERVER_SETTINGS.providers.codex,
+        ...providerSettings?.codex,
+      },
+      claudeAgent: {
+        ...DEFAULT_SERVER_SETTINGS.providers.claudeAgent,
+        ...providerSettings?.claudeAgent,
+      },
+      cursor: {
+        ...DEFAULT_SERVER_SETTINGS.providers.cursor,
+        ...providerSettings?.cursor,
+      },
+      grok: {
+        ...DEFAULT_SERVER_SETTINGS.providers.grok,
+        ...providerSettings?.grok,
+      },
+      opencode: {
+        ...DEFAULT_SERVER_SETTINGS.providers.opencode,
+        ...providerSettings?.opencode,
+      },
+    },
+    providerInstances:
+      serverSettings.providerInstances ?? DEFAULT_SERVER_SETTINGS.providerInstances,
+    observability: {
+      ...DEFAULT_SERVER_SETTINGS.observability,
+      ...serverSettings.observability,
+    },
+    speechTranscription: {
+      ...DEFAULT_SERVER_SETTINGS.speechTranscription,
+      ...speechTranscription,
+      assemblyAi: {
+        ...DEFAULT_SERVER_SETTINGS.speechTranscription.assemblyAi,
+        ...assemblyAi,
+        apiKey: {
+          ...DEFAULT_SERVER_SETTINGS.speechTranscription.assemblyAi.apiKey,
+          ...assemblyAi?.apiKey,
+        },
+      },
+    },
+    mcp: {
+      ...DEFAULT_SERVER_SETTINGS.mcp,
+      ...serverSettings.mcp,
+    },
+    skills: {
+      ...DEFAULT_SERVER_SETTINGS.skills,
+      ...serverSettings.skills,
+    },
+    ...clientSettings,
+  };
 }
 
 function useMergedSettings<T>(

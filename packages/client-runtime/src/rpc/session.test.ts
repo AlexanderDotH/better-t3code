@@ -110,6 +110,7 @@ const SERVER_CONFIG: ServerConfigType = {
     capabilities: {
       repositoryIdentity: true,
       connectionProbe: true,
+      midChatProviderSwitching: false,
     },
   },
   auth: {

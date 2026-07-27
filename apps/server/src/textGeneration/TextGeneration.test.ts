@@ -21,6 +21,9 @@ const makeStubTextGeneration = (
     generatePrContent: () => Effect.die("generatePrContent stub not configured for this test"),
     generateBranchName: () => Effect.die("generateBranchName stub not configured for this test"),
     generateThreadTitle: () => Effect.die("generateThreadTitle stub not configured for this test"),
+    translateTranscriptToEnglish: () =>
+      Effect.die("translateTranscriptToEnglish stub not configured for this test"),
+    improvePrompt: () => Effect.die("improvePrompt stub not configured for this test"),
     ...overrides,
   });
 
@@ -92,6 +95,52 @@ describe("makeTextGenerationFromRegistry", () => {
 
       expect(result.branch).toBe("personal-branch");
       expect(personalCalls).toEqual(["Refactor the routing layer"]);
+    }),
+  );
+
+  it.effect("routes transcript translation and prompt improvement to the selected instance", () =>
+    Effect.gen(function* () {
+      const personalId = ProviderInstanceId.make("claude_personal");
+      const calls: string[] = [];
+      const personal = makeStubInstance(
+        personalId,
+        makeStubTextGeneration({
+          translateTranscriptToEnglish: (input) => {
+            calls.push(`translate:${input.text}`);
+            return Effect.succeed({ text: "Update useThreadOutbox." });
+          },
+          improvePrompt: (input) => {
+            calls.push(`improve:${input.text}`);
+            return Effect.succeed({ text: "Clarify the reconnect requirements." });
+          },
+        }),
+      );
+      const work = makeStubInstance(
+        ProviderInstanceId.make("claude_work"),
+        makeStubTextGeneration({
+          translateTranscriptToEnglish: () => Effect.succeed({ text: "wrong instance" }),
+          improvePrompt: () => Effect.succeed({ text: "wrong instance" }),
+        }),
+      );
+      const textGeneration = TextGeneration.makeTextGenerationFromRegistry(
+        makeStubRegistry([personal, work]),
+      );
+      const modelSelection = createModelSelection(personalId, "claude-sonnet-4-6");
+
+      const translated = yield* textGeneration.translateTranscriptToEnglish({
+        cwd: process.cwd(),
+        text: "Actualiza useThreadOutbox.",
+        modelSelection,
+      });
+      const improved = yield* textGeneration.improvePrompt({
+        cwd: process.cwd(),
+        text: "Clarify reconnect.",
+        modelSelection,
+      });
+
+      expect(translated).toEqual({ text: "Update useThreadOutbox." });
+      expect(improved).toEqual({ text: "Clarify the reconnect requirements." });
+      expect(calls).toEqual(["translate:Actualiza useThreadOutbox.", "improve:Clarify reconnect."]);
     }),
   );
 

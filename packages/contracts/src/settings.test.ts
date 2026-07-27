@@ -111,6 +111,25 @@ describe("ClientSettings sidebar v2", () => {
   });
 });
 
+describe("ClientSettings prompt processing", () => {
+  it("uses backward-compatible defaults", () => {
+    const settings = decodeClientSettings({});
+
+    expect(settings.voiceInputOutputLanguage).toBe("native");
+    expect(settings.improvePromptBeforeSend).toBe(false);
+  });
+
+  it("accepts English voice output and prompt improvement", () => {
+    const settings = decodeClientSettings({
+      voiceInputOutputLanguage: "english",
+      improvePromptBeforeSend: true,
+    });
+
+    expect(settings.voiceInputOutputLanguage).toBe("english");
+    expect(settings.improvePromptBeforeSend).toBe(true);
+  });
+});
+
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {
     expect(DEFAULT_SERVER_SETTINGS.providerInstances).toEqual({});

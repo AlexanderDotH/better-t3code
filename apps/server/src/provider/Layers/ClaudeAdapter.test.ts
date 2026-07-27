@@ -14,6 +14,7 @@ import type {
 import {
   ApprovalRequestId,
   ClaudeSettings,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderItemId,
   ProviderRuntimeEvent,
@@ -21,7 +22,7 @@ import {
   ThreadId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -34,7 +35,9 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import type { ClaudeGatewayModelProfile } from "../Drivers/ClaudeGatewayCatalog.ts";
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
@@ -156,6 +159,8 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
+  readonly resolveMcpServers?: ClaudeAdapterLiveOptions["resolveMcpServers"];
+  readonly resolveGatewayProfile?: ClaudeAdapterLiveOptions["resolveGatewayProfile"];
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -167,6 +172,10 @@ function makeHarness(config?: {
 
   const adapterOptions: ClaudeAdapterLiveOptions = {
     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
+    ...(config?.resolveMcpServers ? { resolveMcpServers: config.resolveMcpServers } : {}),
+    ...(config?.resolveGatewayProfile
+      ? { resolveGatewayProfile: config.resolveGatewayProfile }
+      : {}),
     createQuery: (input) => {
       createInput = input;
       return query;
@@ -266,6 +275,93 @@ async function readFirstPromptMessage(
 
 const THREAD_ID = ThreadId.make("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
+
+const GPT_5_4_GATEWAY_PROFILE: ClaudeGatewayModelProfile = {
+  canonicalModelId: "gpt-5.4",
+  baseModelId: "claude-codex-gpt-5.4",
+  fastModelId: "claude-codex-gpt-5.4-fast",
+  aliases: ["gpt-5.4", "claude-codex-gpt-5.4", "claude-fable-5-dd-test"],
+  defaultEffort: "medium",
+  capabilities: createModelCapabilities({
+    optionDescriptors: [
+      {
+        id: "effort",
+        label: "Reasoning",
+        type: "select",
+        options: [
+          { id: "low", label: "Low" },
+          { id: "medium", label: "Medium", isDefault: true },
+          { id: "high", label: "High" },
+          { id: "xhigh", label: "Extra High" },
+        ],
+      },
+      {
+        id: "fastMode",
+        label: "Fast Mode",
+        type: "boolean",
+        currentValue: false,
+      },
+    ],
+  }),
+};
+
+const GPT_5_6_SOL_GATEWAY_PROFILE: ClaudeGatewayModelProfile = {
+  canonicalModelId: "gpt-5.6-sol",
+  baseModelId: "claude-codex-gpt-5.6-sol",
+  fastModelId: "claude-codex-gpt-5.6-sol-fast",
+  aliases: ["gpt-5.6-sol", "claude-codex-gpt-5.6-sol"],
+  defaultEffort: "low",
+  capabilities: createModelCapabilities({
+    optionDescriptors: [
+      {
+        id: "effort",
+        label: "Reasoning",
+        type: "select",
+        options: [
+          { id: "low", label: "Low", isDefault: true },
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+          { id: "xhigh", label: "Extra High" },
+          { id: "max", label: "Max" },
+        ],
+      },
+      {
+        id: "fastMode",
+        label: "Fast Mode",
+        type: "boolean",
+        currentValue: false,
+      },
+    ],
+  }),
+};
+
+const GPT_5_6_SOL_FORCED_FAST_GATEWAY_PROFILE: ClaudeGatewayModelProfile = {
+  ...GPT_5_6_SOL_GATEWAY_PROFILE,
+  aliases: ["claude-codex-gpt-5.6-sol-xhigh-fast", "claude-fable-5-dd-forced-fast"],
+  defaultEffort: "xhigh",
+  capabilities: createModelCapabilities({
+    optionDescriptors: [
+      {
+        id: "effort",
+        label: "Reasoning",
+        type: "select",
+        options: [
+          { id: "low", label: "Low" },
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+          { id: "xhigh", label: "Extra High", isDefault: true },
+          { id: "max", label: "Max" },
+        ],
+      },
+      {
+        id: "fastMode",
+        label: "Fast Mode",
+        type: "boolean",
+        currentValue: true,
+      },
+    ],
+  }),
+};
 
 describe("ClaudeAdapterLive", () => {
   it.effect("returns validation error for non-claude provider on startSession", () => {
@@ -390,6 +486,89 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(createInput?.options.permissionMode, undefined);
       assert.equal(createInput?.options.allowDangerouslySkipPermissions, undefined);
     }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("passes resolved MCP servers to Claude SDK sessions", () => {
+    const harness = makeHarness({
+      resolveMcpServers: () =>
+        Effect.succeed({
+          docs: {
+            type: "http",
+            url: "https://example.com/mcp",
+            headers: { Authorization: "Bearer token" },
+          },
+        }),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "approval-required",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.deepEqual(createInput?.options.mcpServers, {
+        docs: {
+          type: "http",
+          url: "https://example.com/mcp",
+          headers: { Authorization: "Bearer token" },
+        },
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("keeps configured MCP servers alongside the internal T3 server", () => {
+    const harness = makeHarness({
+      resolveMcpServers: () =>
+        Effect.succeed({
+          docs: {
+            type: "http",
+            url: "https://example.com/mcp",
+            headers: { Authorization: "Bearer token" },
+          },
+        }),
+    });
+    return Effect.gen(function* () {
+      yield* Effect.sync(() =>
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make("environment-mcp-coexistence"),
+          threadId: THREAD_ID,
+          providerSessionId: "provider-session-mcp-coexistence",
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          endpoint: "http://127.0.0.1:3000/mcp",
+          authorizationHeader: "Bearer test-token",
+        }),
+      );
+
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "approval-required",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.deepEqual(createInput?.options.mcpServers, {
+        docs: {
+          type: "http",
+          url: "https://example.com/mcp",
+          headers: { Authorization: "Bearer token" },
+        },
+        "t3-code": {
+          type: "http",
+          url: "http://127.0.0.1:3000/mcp",
+          headers: { Authorization: "Bearer test-token" },
+        },
+      });
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(THREAD_ID))),
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );
@@ -666,6 +845,179 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(createInput?.options.settings, {
         fastMode: true,
       });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("forwards an explicit disabled Claude fast mode into SDK settings", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-opus-4-6",
+          [{ id: "fastMode", value: false }],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.deepEqual(createInput?.options.settings, {
+        fastMode: false,
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("maps an obfuscated gateway model to its stable base alias", () => {
+    const harness = makeHarness({
+      resolveGatewayProfile: () => Effect.succeed(GPT_5_4_GATEWAY_PROFILE),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-fable-5-dd-test",
+          [
+            { id: "effort", value: "xhigh" },
+            { id: "fastMode", value: false },
+            { id: "contextWindow", value: "1m" },
+          ],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.model, "claude-codex-gpt-5.4");
+      assert.equal(createInput?.options.effort, "xhigh");
+      assert.equal(createInput?.options.settings, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  for (const effort of ["low", "medium", "high", "xhigh", "max"] as const) {
+    it.effect(`preserves gateway ${effort} effort for GPT-5.6 Sol`, () => {
+      const harness = makeHarness({
+        resolveGatewayProfile: () => Effect.succeed(GPT_5_6_SOL_GATEWAY_PROFILE),
+      });
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("claudeAgent"),
+            "claude-codex-gpt-5.6-sol",
+            [{ id: "effort", value: effort }],
+          ),
+          runtimeMode: "full-access",
+        });
+
+        const createInput = harness.getLastCreateQueryInput();
+        assert.equal(createInput?.options.effort, effort);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    });
+  }
+
+  it.effect("uses a gateway fast alias while preserving the catalog effort default", () => {
+    const harness = makeHarness({
+      resolveGatewayProfile: () => Effect.succeed(GPT_5_4_GATEWAY_PROFILE),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-codex-gpt-5.4",
+          [
+            { id: "effort", value: "max" },
+            { id: "fastMode", value: true },
+          ],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.model, "claude-codex-gpt-5.4-fast");
+      assert.equal(createInput?.options.effort, "medium");
+      assert.equal(createInput?.options.settings, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("preserves forced-fast gateway defaults without explicit selections", () => {
+    const harness = makeHarness({
+      resolveGatewayProfile: () => Effect.succeed(GPT_5_6_SOL_FORCED_FAST_GATEWAY_PROFILE),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-fable-5-dd-forced-fast",
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.model, "claude-codex-gpt-5.6-sol-fast");
+      assert.equal(createInput?.options.effort, "xhigh");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("ignores a stale gateway fast selection when no fast alias is verified", () => {
+    const profile: ClaudeGatewayModelProfile = {
+      ...GPT_5_4_GATEWAY_PROFILE,
+      fastModelId: undefined,
+      capabilities: createModelCapabilities({
+        optionDescriptors: GPT_5_4_GATEWAY_PROFILE.capabilities.optionDescriptors.filter(
+          (descriptor) => descriptor.id !== "fastMode",
+        ),
+      }),
+    };
+    const harness = makeHarness({
+      resolveGatewayProfile: () => Effect.succeed(profile),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-codex-gpt-5.4",
+          [{ id: "fastMode", value: true }],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.model, "claude-codex-gpt-5.4");
+      assert.equal(createInput?.options.settings, undefined);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -1874,6 +2226,57 @@ describe("ClaudeAdapterLive", () => {
       );
       assert.equal(heartbeat?.type, "session.state.changed");
       runtimeEventsFiber.interruptUnsafe();
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("ignores task_updated bookkeeping before the task notification", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      const nextEventsFiber = yield* Stream.take(adapter.streamEvents, 2).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_updated",
+        task_id: "task-subagent-updated",
+        patch: {
+          status: "failed",
+          end_time: 1_784_291_102_582,
+          error: "Agent output exceeded the configured token limit.",
+        },
+        session_id: "sdk-session-task-updated",
+        uuid: "task-updated-1",
+      } as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "task-subagent-updated",
+        status: "failed",
+        output_file: "/tmp/task-subagent-updated.output",
+        summary: "Agent output exceeded the configured token limit.",
+        session_id: "sdk-session-task-updated",
+        uuid: "task-notification-1",
+      } as SDKMessage);
+
+      const nextEvents = Array.from(yield* Fiber.join(nextEventsFiber));
+      assert.deepEqual(
+        nextEvents.map((event) => event.type),
+        ["thread.started", "task.completed"],
+      );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

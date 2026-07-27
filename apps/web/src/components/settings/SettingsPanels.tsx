@@ -616,6 +616,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Delete confirmation"]
         : []),
       ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
+      ...(settings.improvePromptBeforeSend !== DEFAULT_UNIFIED_SETTINGS.improvePromptBeforeSend
+        ? ["Prompt improvement"]
+        : []),
     ],
     [
       isTextGenerationModelDirty,
@@ -632,6 +635,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.enableAssistantStreaming,
       settings.enableProviderUpdateChecks,
       settings.sidebarProjectGroupingMode,
+      settings.improvePromptBeforeSend,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
       settings.wordWrap,
@@ -670,6 +674,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
+      improvePromptBeforeSend: DEFAULT_UNIFIED_SETTINGS.improvePromptBeforeSend,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
     });
     onRestored?.();
@@ -1593,7 +1598,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           title="Text generation model"
-          description="Default model for generated text like thread titles and source control content. Source control settings can override it with a dedicated source control writer model."
+          description="Default model for generated text like thread titles, source control content, voice translation, and prompt improvement. Source control settings can override it with a dedicated source control writer model."
           resetAction={
             isTextGenerationModelDirty ? (
               <SettingResetButton
@@ -1662,6 +1667,33 @@ export function GeneralSettingsPanel() {
                 }}
               />
             </div>
+          }
+        />
+
+        <SettingsRow
+          title="Prompt improvement"
+          description="Improve the wording and structure of normal chat prompts before they are sent, without changing their language or scope."
+          resetAction={
+            settings.improvePromptBeforeSend !==
+            DEFAULT_UNIFIED_SETTINGS.improvePromptBeforeSend ? (
+              <SettingResetButton
+                label="prompt improvement"
+                onClick={() =>
+                  updateSettings({
+                    improvePromptBeforeSend: DEFAULT_UNIFIED_SETTINGS.improvePromptBeforeSend,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.improvePromptBeforeSend}
+              onCheckedChange={(checked) =>
+                updateSettings({ improvePromptBeforeSend: Boolean(checked) })
+              }
+              aria-label="Improve prompts before sending"
+            />
           }
         />
       </SettingsSection>
@@ -1857,8 +1889,9 @@ export function ProviderSettingsPanel() {
     const driver = providerSettings.provider;
     const defaultInstanceId = defaultInstanceIdForDriver(driver);
     const explicitInstance = settings.providerInstances?.[defaultInstanceId];
-    const legacyConfig = legacyProviders[providerSettings.provider]!;
-    const defaultLegacyConfig = defaultLegacyProviders[providerSettings.provider]!;
+    const legacyConfig = legacyProviders[driver] ?? defaultLegacyProviders[driver];
+    const defaultLegacyConfig = defaultLegacyProviders[driver];
+    if (legacyConfig === undefined || defaultLegacyConfig === undefined) continue;
     const effectiveInstance: ProviderInstanceConfig =
       explicitInstance ??
       ({
@@ -1901,16 +1934,15 @@ export function ProviderSettingsPanel() {
       >[0]["textGenerationModelSelection"];
     },
   ) => {
-    updateSettings(
-      buildProviderInstanceUpdatePatch({
-        settings,
-        instanceId: row.instanceId,
-        instance: next,
-        driver: row.driver,
-        isDefault: row.isDefault,
-        textGenerationModelSelection: options?.textGenerationModelSelection,
-      }),
-    );
+    const patch = buildProviderInstanceUpdatePatch({
+      settings,
+      instanceId: row.instanceId,
+      instance: next,
+      driver: row.driver,
+      isDefault: row.isDefault,
+      textGenerationModelSelection: options?.textGenerationModelSelection,
+    });
+    updateSettings(patch as Parameters<typeof updateSettings>[0]);
   };
 
   const deleteProviderInstance = (id: ProviderInstanceId) => {

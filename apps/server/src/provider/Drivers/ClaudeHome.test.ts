@@ -18,9 +18,24 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const resolved = path.resolve(NodeOS.homedir());
+        const environment = yield* makeClaudeEnvironment({ homePath: "" }, { HOME: resolved });
 
         expect(yield* resolveClaudeHomePath({ homePath: "" })).toBe(resolved);
-        expect(yield* makeClaudeEnvironment({ homePath: "" })).toBe(process.env);
+        expect(environment).toEqual({
+          HOME: resolved,
+          CLAUDE_CODE_MAX_OUTPUT_TOKENS: "128000",
+        });
+      }),
+    );
+
+    it.effect("preserves an explicit Claude output-token limit", () =>
+      Effect.gen(function* () {
+        const environment = yield* makeClaudeEnvironment(
+          { homePath: "" },
+          { CLAUDE_CODE_MAX_OUTPUT_TOKENS: "64000" },
+        );
+
+        expect(environment.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe("64000");
       }),
     );
 

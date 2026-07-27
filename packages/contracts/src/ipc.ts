@@ -31,6 +31,23 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project.ts";
+import type { ProviderInstanceId } from "./providerInstance.ts";
+import type {
+  AssemblyAiStreamingTokenResult,
+  ServerConfig,
+  ServerProcessDiagnosticsResult,
+  ServerProcessResourceHistoryInput,
+  ServerProcessResourceHistoryResult,
+  ServerProviderUpdateInput,
+  ServerProviderUpdatedPayload,
+  ServerRemoveKeybindingInput,
+  ServerRemoveKeybindingResult,
+  ServerSignalProcessInput,
+  ServerSignalProcessResult,
+  ServerTraceDiagnosticsResult,
+  ServerUpsertKeybindingInput,
+  ServerUpsertKeybindingResult,
+} from "./server.ts";
 import type {
   TerminalAttachInput,
   TerminalAttachStreamEvent,
@@ -75,6 +92,8 @@ import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
+  OrchestrationExportThreadTranscriptInput,
+  OrchestrationThreadTranscriptExport,
   OrchestrationGetTurnDiffInput,
   OrchestrationGetTurnDiffResult,
   OrchestrationShellSnapshot,
@@ -86,15 +105,61 @@ import { EnvironmentId } from "./baseSchemas.ts";
 import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
-import type { ClientSettings } from "./settings.ts";
+import type { ClientSettings, ServerSettings, ServerSettingsPatch } from "./settings.ts";
+import type {
+  ImprovePromptInput,
+  ProjectSpeechProfile,
+  ProjectSpeechProfileInput,
+  ProjectSpeechProfileListResult,
+  ProjectTextTransformResult,
+  TranslateTranscriptInput,
+} from "./speech.ts";
 import type {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
+  SourceControlDiscoveryResult,
   SourceControlPublishRepositoryInput,
   SourceControlPublishRepositoryResult,
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
+import type {
+  SkillCreateInput,
+  SkillDeleteInput,
+  SkillDiscoverImportSourcesInput,
+  SkillDiscoverImportSourcesResult,
+  SkillImportSourcesInput,
+  SkillImportSourcesResult,
+  SkillListInput,
+  SkillListResult,
+  SkillMutationResult,
+  SkillRenameInput,
+  SkillSetEnabledInput,
+  SkillUpdateInput,
+} from "./skills.ts";
+import type {
+  McpCreateInput,
+  McpCursorJsonResult,
+  McpDeleteInput,
+  McpDiscoverImportSourcesInput,
+  McpDiscoverImportSourcesResult,
+  McpExportCursorJsonInput,
+  McpImportCursorJsonInput,
+  McpImportSourcesInput,
+  McpListInput,
+  McpListResult,
+  McpMutationResult,
+  McpProviderStatusInput,
+  McpProviderStatusResult,
+  McpSetEnabledInput,
+  McpUpdateInput,
+} from "./mcp.ts";
+import type {
+  T3ChatImportDiscoverInput,
+  T3ChatImportDiscoverResult,
+  T3ChatImportRunInput,
+  T3ChatImportRunResult,
+} from "./t3ChatImport.ts";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -1167,6 +1232,72 @@ export interface EnvironmentApi {
   assets: {
     createUrl: (input: AssetCreateUrlInput) => Promise<AssetCreateUrlResult>;
   };
+  server: {
+    getConfig: () => Promise<ServerConfig>;
+    /**
+     * Refresh provider snapshots. When `input.instanceId` is supplied only that
+     * configured instance is probed; otherwise every configured instance is
+     * refreshed.
+     */
+    refreshProviders: (input?: {
+      readonly instanceId?: ProviderInstanceId;
+    }) => Promise<ServerProviderUpdatedPayload>;
+    updateProvider: (input: ServerProviderUpdateInput) => Promise<ServerProviderUpdatedPayload>;
+    upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+    removeKeybinding: (input: ServerRemoveKeybindingInput) => Promise<ServerRemoveKeybindingResult>;
+    getSettings: () => Promise<ServerSettings>;
+    updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
+    createAssemblyAiStreamingToken: (
+      input: ProjectSpeechProfileInput,
+    ) => Promise<AssemblyAiStreamingTokenResult>;
+    discoverSourceControl: () => Promise<SourceControlDiscoveryResult>;
+    getTraceDiagnostics: () => Promise<ServerTraceDiagnosticsResult>;
+    getProcessDiagnostics: () => Promise<ServerProcessDiagnosticsResult>;
+    getProcessResourceHistory: (
+      input: ServerProcessResourceHistoryInput,
+    ) => Promise<ServerProcessResourceHistoryResult>;
+    signalProcess: (input: ServerSignalProcessInput) => Promise<ServerSignalProcessResult>;
+  };
+  speech: {
+    getProjectProfile: (input: ProjectSpeechProfileInput) => Promise<ProjectSpeechProfile | null>;
+    listProjectProfiles: () => Promise<ProjectSpeechProfileListResult>;
+    indexProject: (input: ProjectSpeechProfileInput) => Promise<ProjectSpeechProfile>;
+    createBasicProjectProfile: (input: ProjectSpeechProfileInput) => Promise<ProjectSpeechProfile>;
+    translateTranscript: (input: TranslateTranscriptInput) => Promise<ProjectTextTransformResult>;
+  };
+  prompt: {
+    improve: (input: ImprovePromptInput) => Promise<ProjectTextTransformResult>;
+  };
+  chatImport: {
+    discover: (input?: T3ChatImportDiscoverInput) => Promise<T3ChatImportDiscoverResult>;
+    run: (input: T3ChatImportRunInput) => Promise<T3ChatImportRunResult>;
+  };
+  skills: {
+    list: (input: SkillListInput) => Promise<SkillListResult>;
+    discoverImportSources: (
+      input?: SkillDiscoverImportSourcesInput,
+    ) => Promise<SkillDiscoverImportSourcesResult>;
+    importSources: (input: SkillImportSourcesInput) => Promise<SkillImportSourcesResult>;
+    create: (input: SkillCreateInput) => Promise<SkillMutationResult>;
+    update: (input: SkillUpdateInput) => Promise<SkillMutationResult>;
+    rename: (input: SkillRenameInput) => Promise<SkillMutationResult>;
+    delete: (input: SkillDeleteInput) => Promise<SkillListResult>;
+    setEnabled: (input: SkillSetEnabledInput) => Promise<SkillMutationResult>;
+  };
+  mcp: {
+    list: (input?: McpListInput) => Promise<McpListResult>;
+    discoverImportSources: (
+      input?: McpDiscoverImportSourcesInput,
+    ) => Promise<McpDiscoverImportSourcesResult>;
+    create: (input: McpCreateInput) => Promise<McpMutationResult>;
+    update: (input: McpUpdateInput) => Promise<McpMutationResult>;
+    delete: (input: McpDeleteInput) => Promise<McpMutationResult>;
+    setEnabled: (input: McpSetEnabledInput) => Promise<McpMutationResult>;
+    importCursorJson: (input: McpImportCursorJsonInput) => Promise<McpMutationResult>;
+    importSources: (input: McpImportSourcesInput) => Promise<McpMutationResult>;
+    exportCursorJson: (input?: McpExportCursorJsonInput) => Promise<McpCursorJsonResult>;
+    providerStatus: (input?: McpProviderStatusInput) => Promise<McpProviderStatusResult>;
+  };
   sourceControl: {
     lookupRepository: (
       input: SourceControlRepositoryLookupInput,
@@ -1210,6 +1341,9 @@ export interface EnvironmentApi {
     getFullThreadDiff: (
       input: OrchestrationGetFullThreadDiffInput,
     ) => Promise<OrchestrationGetFullThreadDiffResult>;
+    exportThreadTranscript: (
+      input: OrchestrationExportThreadTranscriptInput,
+    ) => Promise<OrchestrationThreadTranscriptExport>;
     getArchivedShellSnapshot: () => Promise<OrchestrationShellSnapshot>;
     subscribeShell: (
       callback: (event: OrchestrationShellStreamItem) => void,

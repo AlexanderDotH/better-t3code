@@ -20,8 +20,10 @@ import * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildPromptImprovementPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildTranscriptTranslationPrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   normalizeCliError,
@@ -32,6 +34,7 @@ import {
 } from "./TextGenerationUtils.ts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
+import { codexExecArgs } from "../provider/CodexProcessArgs.ts";
 
 const CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT = "low";
 const CODEX_TIMEOUT_MS = 180_000;
@@ -98,7 +101,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "translateTranscriptToEnglish"
+      | "improvePrompt",
     value: unknown,
   ): Effect.Effect<string, TextGenerationError> =>
     encodeJsonString(value).pipe(
@@ -117,7 +122,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "translateTranscriptToEnglish"
+      | "improvePrompt",
     attachments: TextGeneration.BranchNameGenerationInput["attachments"],
   ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> {
     if (!attachments || attachments.length === 0) {
@@ -159,7 +166,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "translateTranscriptToEnglish"
+      | "improvePrompt";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -182,8 +191,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const serviceTier = getCodexServiceTierOptionValue(modelSelection);
       const spawnCommand = yield* resolveSpawnCommand(
         codexConfig.binaryPath || "codex",
-        [
-          "exec",
+        codexExecArgs([
           ...codexExecLaunchArgs(launchArgs),
           "--ephemeral",
           "--skip-git-repo-check",
@@ -200,7 +208,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           outputPath,
           ...imagePaths.flatMap((imagePath) => ["--image", imagePath]),
           "-",
-        ],
+        ]),
         { env: resolvedEnvironment },
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
@@ -402,10 +410,41 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const translateTranscriptToEnglish: TextGeneration.TextGeneration["Service"]["translateTranscriptToEnglish"] =
+    Effect.fn("CodexTextGeneration.translateTranscriptToEnglish")(function* (input) {
+      const { prompt, outputSchema } = buildTranscriptTranslationPrompt({ text: input.text });
+      const generated = yield* runCodexJson({
+        operation: "translateTranscriptToEnglish",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return { text: generated.text.trim() };
+    });
+
+  const improvePrompt: TextGeneration.TextGeneration["Service"]["improvePrompt"] = Effect.fn(
+    "CodexTextGeneration.improvePrompt",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildPromptImprovementPrompt({ text: input.text });
+    const generated = yield* runCodexJson({
+      operation: "improvePrompt",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return { text: generated.text.trim() };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    translateTranscriptToEnglish,
+    improvePrompt,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

@@ -22,8 +22,10 @@ import * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildPromptImprovementPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildTranscriptTranslationPrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   normalizeCliError,
@@ -44,8 +46,15 @@ import {
   resolveClaudeEffort,
 } from "../provider/Layers/ClaudeProvider.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
+import type { ClaudeGatewayModelProfile } from "../provider/Drivers/ClaudeGatewayCatalog.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
+
+export interface ClaudeTextGenerationOptions {
+  readonly resolveGatewayModelProfile?: (
+    modelId: string | null | undefined,
+  ) => Effect.Effect<ClaudeGatewayModelProfile | undefined>;
+}
 
 /**
  * Schema for the wrapper JSON returned by `claude -p --output-format json`.
@@ -61,6 +70,7 @@ const decodeClaudeOutputEnvelope = Schema.decodeEffect(Schema.fromJsonString(Cla
 export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(function* (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
+  options?: ClaudeTextGenerationOptions,
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
@@ -85,7 +95,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "translateTranscriptToEnglish"
+      | "improvePrompt",
     value: unknown,
     detail: string,
   ): Effect.Effect<string, TextGenerationError> =>
@@ -115,7 +127,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "translateTranscriptToEnglish"
+      | "improvePrompt";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -126,15 +140,19 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       toJsonSchemaObject(outputSchemaJson),
       "Failed to encode structured output schema.",
     );
-    const caps = getClaudeModelCapabilities(modelSelection.model);
+    const gatewayProfile = options?.resolveGatewayModelProfile
+      ? yield* options.resolveGatewayModelProfile(modelSelection.model)
+      : undefined;
+    const caps = gatewayProfile?.capabilities ?? getClaudeModelCapabilities(modelSelection.model);
     const descriptors = getProviderOptionDescriptors({
       caps,
       selections: modelSelection.options,
     });
     const findDescriptor = (id: string) => descriptors.find((descriptor) => descriptor.id === id);
     const rawEffortSelection = getModelSelectionStringOptionValue(modelSelection, "effort");
-    const resolvedEffort = resolveClaudeEffort(caps, rawEffortSelection);
-    const cliEffort = normalizeClaudeCliEffort(resolvedEffort, modelSelection.model);
+    const resolvedEffort =
+      resolveClaudeEffort(caps, rawEffortSelection) ?? gatewayProfile?.defaultEffort;
+    const cliEffort = normalizeClaudeCliEffort(resolvedEffort, modelSelection.model, caps);
     const ultracode = isClaudeUltracodeEffort(resolvedEffort);
     const thinkingDescriptor = findDescriptor("thinking");
     const fastModeDescriptor = findDescriptor("fastMode");
@@ -144,7 +162,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
     const settings = {
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
-      ...(fastMode ? { fastMode: true } : {}),
+      ...(!gatewayProfile && typeof fastMode === "boolean" ? { fastMode } : {}),
       ...(ultracode ? { ultracode: true } : {}),
     };
     const settingsJson =
@@ -166,7 +184,11 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           "--json-schema",
           jsonSchemaStr,
           "--model",
-          resolveClaudeApiModelId(modelSelection),
+          gatewayProfile
+            ? fastMode === true && gatewayProfile.fastModelId
+              ? gatewayProfile.fastModelId
+              : gatewayProfile.baseModelId
+            : resolveClaudeApiModelId(modelSelection),
           ...(cliEffort ? ["--effort", cliEffort] : []),
           ...(settingsJson ? ["--settings", settingsJson] : []),
           "--dangerously-skip-permissions",
@@ -359,10 +381,41 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       };
     });
 
+  const translateTranscriptToEnglish: TextGeneration.TextGeneration["Service"]["translateTranscriptToEnglish"] =
+    Effect.fn("ClaudeTextGeneration.translateTranscriptToEnglish")(function* (input) {
+      const { prompt, outputSchema } = buildTranscriptTranslationPrompt({ text: input.text });
+      const generated = yield* runClaudeJson({
+        operation: "translateTranscriptToEnglish",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return { text: generated.text.trim() };
+    });
+
+  const improvePrompt: TextGeneration.TextGeneration["Service"]["improvePrompt"] = Effect.fn(
+    "ClaudeTextGeneration.improvePrompt",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildPromptImprovementPrompt({ text: input.text });
+    const generated = yield* runClaudeJson({
+      operation: "improvePrompt",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return { text: generated.text.trim() };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    translateTranscriptToEnglish,
+    improvePrompt,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

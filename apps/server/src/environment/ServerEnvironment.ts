@@ -147,6 +147,7 @@ export const make = Effect.gen(function* () {
       ...(serverSelfUpdate === "boot-service" || serverSelfUpdate === "respawn"
         ? { serverSelfUpdateProgress: true }
         : {}),
+      midChatProviderSwitching: true,
     },
   };
 

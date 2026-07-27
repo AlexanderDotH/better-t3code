@@ -21,6 +21,17 @@ function getOptionValue(
 }
 
 describe("ProviderSessionStartInput", () => {
+  it("accepts an optional freshSession flag", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-fresh",
+      providerInstanceId: "codex",
+      freshSession: true,
+      runtimeMode: "full-access",
+    });
+
+    expect(parsed.freshSession).toBe(true);
+  });
+
   it("accepts codex-compatible payloads", () => {
     const parsed = decodeProviderSessionStartInput({
       threadId: "thread-1",

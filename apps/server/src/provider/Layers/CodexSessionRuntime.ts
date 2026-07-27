@@ -4,6 +4,7 @@ import {
   EventId,
   ProviderDriverKind,
   ProviderItemId,
+  type McpServerDefinition,
   type ProviderInstanceId,
   type ProviderApprovalDecision,
   type ProviderEvent,
@@ -39,6 +40,7 @@ import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
+import { codexManagedFeatureArgs } from "../CodexProcessArgs.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
 
 const PROVIDER = ProviderDriverKind.make("codex");
@@ -106,6 +108,7 @@ export interface CodexSessionRuntimeOptions {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
+  readonly mcpServers?: ReadonlyArray<McpServerDefinition>;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -297,18 +300,57 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
   }
 }
 
+function secretValuesToPlainRecord(values: Record<string, { readonly value: string }>) {
+  return Object.fromEntries(Object.entries(values).map(([name, value]) => [name, value.value]));
+}
+
+function codexMcpServerConfig(server: McpServerDefinition): Record<string, unknown> {
+  switch (server.transport) {
+    case "stdio":
+      return {
+        command: server.command,
+        args: server.args,
+        ...(server.cwd ? { cwd: server.cwd } : {}),
+        env: secretValuesToPlainRecord(server.env),
+      };
+    case "sse":
+    case "http":
+      return {
+        transport: server.transport,
+        url: server.url,
+        headers: secretValuesToPlainRecord(server.headers),
+      };
+  }
+}
+
+function codexThreadMcpConfig(
+  servers: ReadonlyArray<McpServerDefinition> | undefined,
+): Record<string, unknown> | undefined {
+  if (!servers || servers.length === 0) {
+    return undefined;
+  }
+  return {
+    mcp_servers: Object.fromEntries(
+      servers.map((server) => [server.id, codexMcpServerConfig(server)]),
+    ),
+  };
+}
+
 function buildThreadStartParams(input: {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
+  readonly mcpServers?: ReadonlyArray<McpServerDefinition>;
 }): EffectCodexSchema.V2ThreadStartParams {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
+  const mcpConfig = codexThreadMcpConfig(input.mcpServers);
   return {
     cwd: input.cwd,
     approvalPolicy: config.approvalPolicy,
     sandbox: config.sandbox,
     approvalsReviewer: config.approvalsReviewer,
+    ...(mcpConfig ? { config: mcpConfig } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
   };
@@ -462,6 +504,7 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
+  readonly mcpServers?: ReadonlyArray<McpServerDefinition>;
 }): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
@@ -469,6 +512,7 @@ export const openCodexThread = (input: {
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
     serviceTier: input.serviceTier,
+    ...(input.mcpServers ? { mcpServers: input.mcpServers } : {}),
   });
 
   if (resumeThreadId === undefined) {
@@ -734,7 +778,10 @@ export const makeCodexSessionRuntime = (
       ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
     };
     const extendEnv = options.environment === undefined;
-    const appServerArgs = codexSessionAppServerArgs(options.appServerArgs, options.launchArgs);
+    const appServerArgs = codexSessionAppServerArgs(
+      [...codexManagedFeatureArgs(), ...(options.appServerArgs ?? [])],
+      options.launchArgs,
+    );
     const spawnCommand = yield* resolveSpawnCommand(options.binaryPath, appServerArgs, {
       env,
       extendEnv,
@@ -754,7 +801,7 @@ export const makeCodexSessionRuntime = (
         Effect.mapError(
           (cause) =>
             new CodexErrors.CodexAppServerSpawnError({
-              command: `${options.binaryPath} app-server`,
+              command: `${options.binaryPath} ${appServerArgs.join(" ")}`,
               cause,
             }),
         ),
@@ -1227,6 +1274,7 @@ export const makeCodexSessionRuntime = (
         requestedModel,
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+        ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
       });
 
       const providerThreadId = opened.thread.id;

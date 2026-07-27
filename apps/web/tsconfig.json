@@ -25,5 +25,6 @@
       }
     ]
   },
-  "include": ["src", "vite.config.ts", "vercel.ts", "test", "../../scripts/lib/public-config.ts"]
+  "include": ["src", "vite.config.ts", "vercel.ts", "test", "../../scripts/lib/public-config.ts"],
+  "exclude": ["src/**/*.browser.tsx"]
 }

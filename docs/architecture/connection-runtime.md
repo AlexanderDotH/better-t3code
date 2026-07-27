@@ -89,7 +89,7 @@ Web and mobile provide:
 - device identity;
 - platform registrations;
 - persistent catalog, credential, shell, and thread stores;
-- HTTP, crypto, and telemetry layers.
+- HTTP and crypto layers.
 
 Platform layers adapt operating-system capabilities. They do not implement
 connection policy.

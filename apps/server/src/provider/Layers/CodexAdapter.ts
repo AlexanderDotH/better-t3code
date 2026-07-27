@@ -12,6 +12,7 @@ import {
   type CanonicalRequestType,
   type CodexSettings,
   ProviderDriverKind,
+  type McpServerDefinition,
   type ProviderEvent,
   ProviderInstanceId,
   type ProviderRuntimeEvent,
@@ -83,6 +84,9 @@ export interface CodexAdapterLiveOptions {
   >;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly resolveMcpServers?: (input: {
+    readonly cwd: string;
+  }) => Effect.Effect<ReadonlyArray<McpServerDefinition>>;
 }
 
 interface CodexAdapterSessionContext {
@@ -1160,6 +1164,29 @@ function mapToRuntimeEvents(
     ];
   }
 
+  if (event.method === "mcpServer/startupStatus/updated") {
+    const payload = readPayload(
+      EffectCodexSchema.V2McpServerStatusUpdatedNotification,
+      event.payload,
+    );
+    if (!payload) {
+      return [];
+    }
+    return [
+      {
+        type: "mcp.status.updated",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          status: {
+            name: payload.name,
+            status: payload.status,
+            ...(trimText(payload.error) ? { error: trimText(payload.error) } : {}),
+          },
+        },
+      },
+    ];
+  }
+
   if (event.method === "thread/realtime/started") {
     const payload = readPayload(
       EffectCodexSchema.V2ThreadRealtimeStartedNotification,
@@ -1424,6 +1451,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                   'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
                 ],
               }
+            : {}),
+          ...(options?.resolveMcpServers
+            ? { mcpServers: yield* options.resolveMcpServers({ cwd: input.cwd ?? process.cwd() }) }
             : {}),
         };
         const sessionScope = yield* Scope.make("sequential");
@@ -1703,6 +1733,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      mcp: "nativeConfig",
     },
     startSession,
     sendTurn,

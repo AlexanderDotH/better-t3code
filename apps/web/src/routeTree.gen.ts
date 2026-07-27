@@ -15,8 +15,11 @@ import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
+import { Route as SettingsSkillsRouteImport } from './routes/settings.skills'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
+import { Route as SettingsMcpRouteImport } from './routes/settings.mcp'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
+import { Route as SettingsImportChatsRouteImport } from './routes/settings.import-chats'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
@@ -56,14 +59,29 @@ const SettingsSourceControlRoute = SettingsSourceControlRouteImport.update({
   path: '/source-control',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
+  id: '/skills',
+  path: '/skills',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsProvidersRoute = SettingsProvidersRouteImport.update({
   id: '/providers',
   path: '/providers',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsMcpRoute = SettingsMcpRouteImport.update({
+  id: '/mcp',
+  path: '/mcp',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsKeybindingsRoute = SettingsKeybindingsRouteImport.update({
   id: '/keybindings',
   path: '/keybindings',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsImportChatsRoute = SettingsImportChatsRouteImport.update({
+  id: '/import-chats',
+  path: '/import-chats',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
@@ -125,8 +143,11 @@ export interface FileRoutesByFullPath {
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/import-chats': typeof SettingsImportChatsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/mcp': typeof SettingsMcpRoute
   '/settings/providers': typeof SettingsProvidersRoute
+  '/settings/skills': typeof SettingsSkillsRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -142,8 +163,11 @@ export interface FileRoutesByTo {
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/import-chats': typeof SettingsImportChatsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/mcp': typeof SettingsMcpRoute
   '/settings/providers': typeof SettingsProvidersRoute
+  '/settings/skills': typeof SettingsSkillsRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -162,8 +186,11 @@ export interface FileRoutesById {
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/import-chats': typeof SettingsImportChatsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/mcp': typeof SettingsMcpRoute
   '/settings/providers': typeof SettingsProvidersRoute
+  '/settings/skills': typeof SettingsSkillsRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -183,8 +210,11 @@ export interface FileRouteTypes {
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
+    | '/settings/import-chats'
     | '/settings/keybindings'
+    | '/settings/mcp'
     | '/settings/providers'
+    | '/settings/skills'
     | '/settings/source-control'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
@@ -200,8 +230,11 @@ export interface FileRouteTypes {
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
+    | '/settings/import-chats'
     | '/settings/keybindings'
+    | '/settings/mcp'
     | '/settings/providers'
+    | '/settings/skills'
     | '/settings/source-control'
     | '/'
     | '/$environmentId/$threadId'
@@ -219,8 +252,11 @@ export interface FileRouteTypes {
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
+    | '/settings/import-chats'
     | '/settings/keybindings'
+    | '/settings/mcp'
     | '/settings/providers'
+    | '/settings/skills'
     | '/settings/source-control'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
@@ -279,6 +315,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsSourceControlRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/skills': {
+      id: '/settings/skills'
+      path: '/skills'
+      fullPath: '/settings/skills'
+      preLoaderRoute: typeof SettingsSkillsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/providers': {
       id: '/settings/providers'
       path: '/providers'
@@ -286,11 +329,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsProvidersRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/mcp': {
+      id: '/settings/mcp'
+      path: '/mcp'
+      fullPath: '/settings/mcp'
+      preLoaderRoute: typeof SettingsMcpRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/keybindings': {
       id: '/settings/keybindings'
       path: '/keybindings'
       fullPath: '/settings/keybindings'
       preLoaderRoute: typeof SettingsKeybindingsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/import-chats': {
+      id: '/settings/import-chats'
+      path: '/import-chats'
+      fullPath: '/settings/import-chats'
+      preLoaderRoute: typeof SettingsImportChatsRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/general': {
@@ -380,8 +437,11 @@ interface SettingsRouteChildren {
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
+  SettingsImportChatsRoute: typeof SettingsImportChatsRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
+  SettingsMcpRoute: typeof SettingsMcpRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
+  SettingsSkillsRoute: typeof SettingsSkillsRoute
   SettingsSourceControlRoute: typeof SettingsSourceControlRoute
 }
 
@@ -392,8 +452,11 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
+  SettingsImportChatsRoute: SettingsImportChatsRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
+  SettingsMcpRoute: SettingsMcpRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
+  SettingsSkillsRoute: SettingsSkillsRoute,
   SettingsSourceControlRoute: SettingsSourceControlRoute,
 }
 

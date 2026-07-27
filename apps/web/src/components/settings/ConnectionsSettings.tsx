@@ -137,6 +137,7 @@ import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { ServerUpdateAction, ServerUpdateProgress } from "../ServerUpdateAction";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
+import { VoiceInputSettings } from "./VoiceInputSettings";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
@@ -2995,6 +2996,8 @@ export function ConnectionsSettings() {
 
   return (
     <SettingsPageContainer>
+      <VoiceInputSettings />
+
       {canManageLocalBackend ? (
         <>
           <SettingsSection title="This environment">

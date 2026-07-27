@@ -59,6 +59,8 @@ const runtimeMock = {
     startCalls: [] as string[],
     sessionCreateUrls: [] as string[],
     sessionCreateInputs: [] as Array<Record<string, unknown>>,
+    connectMcpServers: [] as Array<unknown>,
+    mcpAddCalls: [] as Array<unknown>,
     authHeaders: [] as Array<string | null>,
     abortCalls: [] as string[],
     closeCalls: [] as string[],
@@ -79,6 +81,8 @@ const runtimeMock = {
     this.state.startCalls.length = 0;
     this.state.sessionCreateUrls.length = 0;
     this.state.sessionCreateInputs.length = 0;
+    this.state.connectMcpServers.length = 0;
+    this.state.mcpAddCalls.length = 0;
     this.state.authHeaders.length = 0;
     this.state.abortCalls.length = 0;
     this.state.closeCalls.length = 0;
@@ -115,11 +119,14 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         exitCode: Effect.never,
       };
     }),
-  connectToOpenCodeServer: ({ serverUrl }) =>
+  connectToOpenCodeServer: ({ serverUrl, mcpServers }) =>
     Effect.gen(function* () {
       const url = serverUrl ?? "http://127.0.0.1:4301";
-      // Always register a finalizer so the closeCalls/closeError probes fire;
-      // production attaches none for external servers.
+      runtimeMock.state.connectMcpServers.push(mcpServers ?? {});
+      // Unconditionally register a scope finalizer for test observability —
+      // preserves the `closeCalls` / `closeError` probes that the existing
+      // suites rely on. Production code never attaches a finalizer to an
+      // external server (it simply returns `Effect.succeed(...)`).
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           runtimeMock.state.closeCalls.push(url);
@@ -211,6 +218,12 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             }
           })(),
         }),
+      },
+      mcp: {
+        add: async (input: unknown) => {
+          runtimeMock.state.mcpAddCalls.push(input);
+          return { data: {} };
+        },
       },
     }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
   loadOpenCodeInventory: () =>
@@ -582,6 +595,112 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(result.failure.threadId, "thread-opencode-missing-stop");
     }),
   );
+
+  it.effect("registers resolved MCP servers with external OpenCode servers", () => {
+    const layer = Layer.effect(
+      OpenCodeAdapter,
+      makeOpenCodeAdapter(openCodeAdapterTestSettings, {
+        resolveMcpServers: () =>
+          Effect.succeed({
+            docs: {
+              type: "remote",
+              url: "https://example.com/mcp",
+              headers: { Authorization: "Bearer token" },
+              enabled: true,
+            },
+          }),
+      }),
+    ).pipe(
+      Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId: asThreadId("thread-opencode-mcp"),
+        runtimeMode: "full-access",
+      });
+
+      NodeAssert.deepEqual(runtimeMock.state.connectMcpServers, [
+        {
+          docs: {
+            type: "remote",
+            url: "https://example.com/mcp",
+            headers: { Authorization: "Bearer token" },
+            enabled: true,
+          },
+        },
+      ]);
+      NodeAssert.deepEqual(runtimeMock.state.mcpAddCalls, [
+        {
+          directory: process.cwd(),
+          name: "docs",
+          config: {
+            type: "remote",
+            url: "https://example.com/mcp",
+            headers: { Authorization: "Bearer token" },
+            enabled: true,
+          },
+        },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("supports an MCP-capable compatibility provider identity", () => {
+    const hyperagent = ProviderDriverKind.make("hyperagent");
+    const layer = Layer.effect(
+      OpenCodeAdapter,
+      makeOpenCodeAdapter(openCodeAdapterTestSettings, {
+        provider: hyperagent,
+        resolveMcpServers: () =>
+          Effect.succeed({
+            docs: {
+              type: "remote",
+              url: "https://example.com/mcp",
+              enabled: true,
+            },
+          }),
+      }),
+    ).pipe(
+      Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-hyperagent-mcp-proxy");
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        provider: hyperagent,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+
+      NodeAssert.equal(adapter.provider, "hyperagent");
+      NodeAssert.equal(session.provider, "hyperagent");
+      NodeAssert.deepEqual(
+        events.map((event) => event.provider),
+        ["hyperagent", "hyperagent"],
+      );
+      NodeAssert.equal(runtimeMock.state.mcpAddCalls.length, 1);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("stops a configured-server session without trying to own server lifecycle", () =>
     Effect.gen(function* () {

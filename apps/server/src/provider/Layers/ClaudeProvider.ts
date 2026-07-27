@@ -40,6 +40,11 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
+import {
+  resolveClaudeDiscoveredModels,
+  type ClaudeDiscoveredModel,
+} from "../Drivers/ClaudeDiscoveredModels.ts";
+import type { ClaudeGatewayCatalog } from "../Drivers/ClaudeGatewayCatalog.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 
@@ -399,6 +404,7 @@ export function resolveClaudeEffort(
 export function normalizeClaudeCliEffort(
   effort: string | null | undefined,
   model: string | null | undefined,
+  capabilities?: ModelCapabilities,
 ): string | undefined {
   if (!effort || effort === "ultrathink") {
     return undefined;
@@ -413,6 +419,16 @@ export function normalizeClaudeCliEffort(
     model !== "claude-opus-4-8" &&
     model !== "claude-sonnet-5"
   ) {
+    const isBuiltInModel = BUILT_IN_MODELS.some((candidate) => candidate.slug === model);
+    const advertisesXHigh = capabilities?.optionDescriptors?.some(
+      (descriptor) =>
+        descriptor.id === "effort" &&
+        descriptor.type === "select" &&
+        descriptor.options.some((option) => option.id === "xhigh"),
+    );
+    if (!isBuiltInModel && advertisesXHigh) {
+      return "xhigh";
+    }
     return "max";
   }
   if (effort === "max" && model === "claude-sonnet-4-6") {
@@ -605,6 +621,58 @@ function nonEmptyProbeString(value: string): string | undefined {
   return candidate ? candidate : undefined;
 }
 
+function optionalProbeString(value: unknown): string | undefined {
+  return typeof value === "string" ? nonEmptyProbeString(value) : undefined;
+}
+
+function parseSupportedEffortLevels(value: unknown): ReadonlyArray<string> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.flatMap((effort) => {
+    const parsed = optionalProbeString(effort);
+    return parsed ? [parsed] : [];
+  });
+}
+
+function parseClaudeInitializationModel(value: unknown): ClaudeDiscoveredModel | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const model = value as Record<string, unknown>;
+  const modelId = optionalProbeString(model.value);
+  const displayName = optionalProbeString(model.displayName);
+  if (!modelId || !displayName) return undefined;
+
+  const resolvedModel = optionalProbeString(model.resolvedModel);
+  const description = optionalProbeString(model.description);
+  const supportedEffortLevels = parseSupportedEffortLevels(model.supportedEffortLevels);
+
+  return {
+    value: modelId,
+    displayName,
+    ...(resolvedModel ? { resolvedModel } : {}),
+    ...(description ? { description } : {}),
+    ...(typeof model.supportsEffort === "boolean" ? { supportsEffort: model.supportsEffort } : {}),
+    ...(supportedEffortLevels ? { supportedEffortLevels } : {}),
+    ...(typeof model.supportsAdaptiveThinking === "boolean"
+      ? { supportsAdaptiveThinking: model.supportsAdaptiveThinking }
+      : {}),
+    ...(typeof model.supportsFastMode === "boolean"
+      ? { supportsFastMode: model.supportsFastMode }
+      : {}),
+    ...(typeof model.supportsAutoMode === "boolean"
+      ? { supportsAutoMode: model.supportsAutoMode }
+      : {}),
+  };
+}
+
+export function parseClaudeInitializationModels(
+  value: unknown,
+): ReadonlyArray<ClaudeDiscoveredModel> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((model) => {
+    const parsed = parseClaudeInitializationModel(model);
+    return parsed ? [parsed] : [];
+  });
+}
+
 type ClaudeCapabilitiesProbe = {
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
@@ -616,6 +684,7 @@ type ClaudeCapabilitiesProbe = {
    */
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly models: ReadonlyArray<ClaudeDiscoveredModel>;
 };
 
 function parseClaudeInitializationCommands(
@@ -745,6 +814,7 @@ const probeClaudeCapabilities = (
         tokenSource: account?.tokenSource,
         apiProvider: account?.apiProvider,
         slashCommands: parseClaudeInitializationCommands(init.commands),
+        models: parseClaudeInitializationModels(init.models),
       } satisfies ClaudeCapabilitiesProbe;
     });
   }).pipe(
@@ -785,6 +855,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined>,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
+  resolveGatewayCatalog?: (
+    claudeSettings: ClaudeSettings,
+  ) => Effect.Effect<ClaudeGatewayCatalog | undefined, Error>,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -882,11 +955,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const models = providerModelsFromSettings(
-    getBuiltInClaudeModelsForVersion(parsedVersion),
-    claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
-  );
+  const builtInModels = getBuiltInClaudeModelsForVersion(parsedVersion);
   const versionUpgradeMessage = supportsClaudeOpus5(parsedVersion)
     ? undefined
     : supportsClaudeFable5(parsedVersion)
@@ -897,9 +966,22 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
           ? formatClaudeOpus48UpgradeMessage(parsedVersion)
           : formatClaudeOpus47UpgradeMessage(parsedVersion);
 
-  const capabilities = resolveCapabilities
-    ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
-    : undefined;
+  const { capabilities, gatewayCatalog } = yield* Effect.all(
+    {
+      capabilities: resolveCapabilities
+        ? resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
+        : Effect.succeed(undefined),
+      gatewayCatalog: resolveGatewayCatalog
+        ? resolveGatewayCatalog(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
+        : Effect.succeed(undefined),
+    },
+    { concurrency: "unbounded" },
+  );
+  const models = providerModelsFromSettings(
+    resolveClaudeDiscoveredModels(builtInModels, capabilities?.models ?? [], gatewayCatalog),
+    claudeSettings.customModels,
+    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+  );
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
   const slashCommands = capabilities?.slashCommands ?? [];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);

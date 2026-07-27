@@ -19,6 +19,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import {
   ApprovalRequestId,
   CursorSettings,
+  EnvironmentId,
   ProviderDriverKind,
   type ProviderRuntimeEvent,
   ThreadId,
@@ -26,6 +27,7 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { makeCursorAdapter } from "./CursorAdapter.ts";
@@ -1429,4 +1431,86 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       }).pipe(Effect.provide(customAdapterLayer));
     },
   );
+
+  it.effect("keeps configured MCP servers alongside the internal T3 server", () => {
+    const mcpAdapterLayer = Layer.effect(
+      CursorAdapter,
+      Effect.gen(function* () {
+        const cursorConfig = decodeCursorSettings({});
+        const resolveSettings = yield* makeResolveCursorSettings;
+        return yield* makeCursorAdapter(cursorConfig, {
+          resolveSettings,
+          resolveMcpServers: () =>
+            Effect.succeed([
+              {
+                type: "http" as const,
+                name: "docs",
+                url: "https://example.com/mcp",
+                headers: [],
+              },
+            ]),
+        });
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "t3code-cursor-adapter-mcp-coexistence-",
+        }),
+      ),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    const threadId = ThreadId.make("cursor-mcp-coexistence");
+    return Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath),
+      );
+      yield* serverSettings.updateSettings({
+        providers: { cursor: { binaryPath: wrapperPath } },
+      });
+      yield* Effect.sync(() =>
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make("environment-mcp-coexistence"),
+          threadId,
+          providerSessionId: "provider-session-mcp-coexistence",
+          providerInstanceId: ProviderInstanceId.make("cursor"),
+          endpoint: "http://127.0.0.1:3000/mcp",
+          authorizationHeader: "Bearer test-token",
+        }),
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const sessionNew = requests.find((entry) => entry.method === "session/new");
+      const mcpServers = (
+        sessionNew?.params as
+          | { readonly mcpServers?: ReadonlyArray<{ readonly name?: unknown }> }
+          | undefined
+      )?.mcpServers;
+      assert.deepStrictEqual(
+        mcpServers?.map((server) => server.name),
+        ["docs", "t3-code"],
+      );
+
+      yield* adapter.stopSession(threadId);
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+      Effect.provide(mcpAdapterLayer),
+    );
+  });
 });

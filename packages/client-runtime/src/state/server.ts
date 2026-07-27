@@ -672,6 +672,38 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    createAssemblyAiStreamingToken: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:create-assembly-ai-streaming-token",
+      tag: WS_METHODS.serverCreateAssemblyAiStreamingToken,
+    }),
+    getProjectSpeechProfile: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:get-project-profile",
+      tag: WS_METHODS.speechGetProjectProfile,
+    }),
+    listProjectSpeechProfiles: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:list-project-profiles",
+      tag: WS_METHODS.speechListProjectProfiles,
+    }),
+    indexProjectSpeechProfile: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:index-project",
+      tag: WS_METHODS.speechIndexProject,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.projectId}`,
+      },
+    }),
+    createBasicProjectSpeechProfile: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:create-basic-project-profile",
+      tag: WS_METHODS.speechCreateBasicProjectProfile,
+    }),
+    translateSpeechTranscript: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:translate-transcript",
+      tag: WS_METHODS.speechTranslateTranscript,
+    }),
+    improvePrompt: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:prompt:improve",
+      tag: WS_METHODS.promptImprove,
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,

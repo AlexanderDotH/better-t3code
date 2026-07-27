@@ -28,7 +28,6 @@ import {
 } from "./thread-outbox";
 import {
   isQueuedThreadCreationSendable,
-  modelSelectionsEqual,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxFailureAction,
   resolveQueuedThreadSettings,
@@ -87,9 +86,6 @@ function settingsCommandId(message: QueuedThreadMessage, setting: string): Comma
 
 export function useThreadOutboxDrain(): void {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
-  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
-    reportFailure: false,
-  });
   const setThreadRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, {
     reportFailure: false,
   });
@@ -170,21 +166,6 @@ export function useThreadOutboxDrain(): void {
       const settings = resolveQueuedThreadSettings(queuedMessage, thread);
       const { reportFailure, completeDelivery } = makeDeliveryHelpers(queuedMessage);
 
-      if (!modelSelectionsEqual(settings.modelSelection, thread.modelSelection)) {
-        const updateResult = await updateThreadMetadata({
-          environmentId: queuedMessage.environmentId,
-          input: {
-            commandId: settingsCommandId(queuedMessage, "model-selection"),
-            threadId: queuedMessage.threadId,
-            modelSelection: settings.modelSelection,
-          },
-        });
-        if (AsyncResult.isFailure(updateResult)) {
-          reportFailure(updateResult, "settings-sync");
-          return false;
-        }
-      }
-
       if (settings.runtimeMode !== thread.runtimeMode) {
         const runtimeResult = await setThreadRuntimeMode({
           environmentId: queuedMessage.environmentId,
@@ -236,13 +217,7 @@ export function useThreadOutboxDrain(): void {
       });
       return completeDelivery(deliveryResult);
     },
-    [
-      makeDeliveryHelpers,
-      setThreadInteractionMode,
-      setThreadRuntimeMode,
-      startTurn,
-      updateThreadMetadata,
-    ],
+    [makeDeliveryHelpers, setThreadInteractionMode, setThreadRuntimeMode, startTurn],
   );
 
   const sendQueuedCreation = useCallback(

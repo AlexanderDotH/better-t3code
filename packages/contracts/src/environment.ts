@@ -57,6 +57,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server can stream self-update progress before acknowledging the
       restart. Clients fall back to server.updateServer when absent. */
   serverSelfUpdateProgress: Schema.optionalKey(Schema.Boolean),
+  midChatProviderSwitching: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

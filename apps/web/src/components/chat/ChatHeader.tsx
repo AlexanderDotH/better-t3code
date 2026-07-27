@@ -19,6 +19,7 @@ import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { cn } from "~/lib/utils";
+import { ChatTranscriptCopyButton } from "./ChatTranscriptCopyButton";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -35,6 +36,9 @@ interface ChatHeaderProps {
   rightPanelOpen: boolean;
   gitCwd: string | null;
   onNewThreadInProject: () => void;
+  transcriptAvailable: boolean;
+  activeTurnInProgress: boolean;
+  environmentUnavailable: boolean;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
@@ -71,6 +75,9 @@ export const ChatHeader = memo(function ChatHeader({
   rightPanelOpen,
   gitCwd,
   onNewThreadInProject,
+  transcriptAvailable,
+  activeTurnInProgress,
+  environmentUnavailable,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -165,6 +172,14 @@ export const ChatHeader = memo(function ChatHeader({
             gitCwd={gitCwd}
             activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
             {...(draftId ? { draftId } : {})}
+          />
+        )}
+        {transcriptAvailable && (
+          <ChatTranscriptCopyButton
+            environmentId={activeThreadEnvironmentId}
+            threadId={activeThreadId}
+            activeTurnInProgress={activeTurnInProgress}
+            environmentUnavailable={environmentUnavailable}
           />
         )}
       </div>

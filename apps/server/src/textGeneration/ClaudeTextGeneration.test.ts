@@ -6,13 +6,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import { sanitizeThreadTitle } from "./TextGenerationUtils.ts";
 import { makeClaudeTextGeneration } from "./ClaudeTextGeneration.ts";
+import type { ClaudeGatewayModelProfile } from "../provider/Drivers/ClaudeGatewayCatalog.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const ClaudeTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
@@ -78,6 +79,7 @@ function withFakeClaudeEnv<A, E, R>(
     stdinMustContain?: string;
     configDirMustBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
+    gatewayProfile?: ClaudeGatewayModelProfile;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
@@ -184,7 +186,14 @@ function withFakeClaudeEnv<A, E, R>(
     );
 
     const config = decodeClaudeSettings(input.claudeConfig ?? {});
-    const textGeneration = yield* makeClaudeTextGeneration(config);
+    const textGeneration = yield* makeClaudeTextGeneration(config, undefined, {
+      resolveGatewayModelProfile: (modelId) =>
+        Effect.succeed(
+          input.gatewayProfile?.aliases.includes(modelId?.trim() ?? "") === true
+            ? input.gatewayProfile
+            : undefined,
+        ),
+    });
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
 }
@@ -255,6 +264,162 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     ),
   );
 
+  it.effect("serializes explicit native Claude fast mode off", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            title: "Keep standard inference",
+            body: "Body",
+          },
+        }),
+        argsMustContain: '--settings {"fastMode":false}',
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generatePrContent({
+            cwd: process.cwd(),
+            baseBranch: "main",
+            headBranch: "feature/standard-inference",
+            commitSummary: "Keep standard inference",
+            diffSummary: "1 file changed",
+            diffPatch: "diff --git a/README.md b/README.md",
+            modelSelection: {
+              ...createModelSelection(ProviderInstanceId.make("claudeAgent"), "claude-opus-4-6", [
+                { id: "fastMode", value: false },
+              ]),
+            },
+          });
+
+          expect(generated.title).toBe("Keep standard inference");
+        }),
+    ),
+  );
+
+  it.effect("does not override native Claude fast mode when the thread has no selection", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { title: "Use configured inference" } }),
+        argsMustNotContain: "fastMode",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Keep the configured Claude inference mode.",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              "claude-opus-4-6",
+            ),
+          });
+
+          expect(generated.title).toBe("Use configured inference");
+        }),
+    ),
+  );
+
+  it.effect("uses independent GPT reasoning and fast inference through gateway aliases", () => {
+    const gatewayProfile: ClaudeGatewayModelProfile = {
+      canonicalModelId: "gpt-5.6-sol",
+      baseModelId: "claude-codex-gpt-5.6-sol",
+      fastModelId: "claude-codex-gpt-5.6-sol-fast",
+      aliases: ["claude-fable-5-dd-los-6.5-tpg"],
+      defaultEffort: "low",
+      capabilities: createModelCapabilities({
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Reasoning",
+            type: "select",
+            options: [
+              { id: "low", label: "Low", isDefault: true },
+              { id: "xhigh", label: "Extra High" },
+            ],
+          },
+          { id: "fastMode", label: "Fast Mode", type: "boolean", currentValue: false },
+        ],
+      }),
+    };
+
+    return withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { title: "Use gateway controls" } }),
+        argsMustContain:
+          "--model claude-codex-gpt-5.6-sol-fast --effort xhigh --dangerously-skip-permissions",
+        argsMustNotContain: "fastMode",
+        gatewayProfile,
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Use independent gateway reasoning and fast inference.",
+            modelSelection: {
+              ...createModelSelection(
+                ProviderInstanceId.make("claudeAgent"),
+                "claude-fable-5-dd-los-6.5-tpg",
+                [
+                  { id: "effort", value: "xhigh" },
+                  { id: "fastMode", value: true },
+                  { id: "contextWindow", value: "1m" },
+                ],
+              ),
+            },
+          });
+
+          expect(generated.title).toBe("Use gateway controls");
+        }),
+    );
+  });
+
+  it.effect("uses the GPT profile default and base alias for stale unsupported options", () => {
+    const gatewayProfile: ClaudeGatewayModelProfile = {
+      canonicalModelId: "gpt-5.4-mini",
+      baseModelId: "claude-codex-gpt-5.4-mini",
+      aliases: ["gateway-mini"],
+      defaultEffort: "medium",
+      capabilities: createModelCapabilities({
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Reasoning",
+            type: "select",
+            options: [
+              { id: "low", label: "Low" },
+              { id: "medium", label: "Medium", isDefault: true },
+            ],
+          },
+        ],
+      }),
+    };
+
+    return withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { title: "Use supported defaults" } }),
+        argsMustContain:
+          "--model claude-codex-gpt-5.4-mini --effort medium --dangerously-skip-permissions",
+        argsMustNotContain: "fastMode",
+        gatewayProfile,
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Use the supported gateway defaults.",
+            modelSelection: {
+              ...createModelSelection(ProviderInstanceId.make("claudeAgent"), "gateway-mini", [
+                { id: "effort", value: "max" },
+                { id: "fastMode", value: true },
+                { id: "contextWindow", value: "1m" },
+              ]),
+            },
+          });
+
+          expect(generated.title).toBe("Use supported defaults");
+        }),
+    );
+  });
+
   it.effect("generates thread titles through the Claude provider", () =>
     withFakeClaudeEnv(
       {
@@ -282,6 +447,62 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
               '"Reconnect failures after restart because the session state does not recover"',
             ),
           );
+        }),
+    ),
+  );
+
+  it.effect("translates transcripts through Claude structured output", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            text: "  Update `useThreadOutbox` without changing `drainQueue`.  ",
+          },
+        }),
+        stdinMustContain: "Actualiza `useThreadOutbox` sin cambiar `drainQueue`.",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.translateTranscriptToEnglish({
+            cwd: process.cwd(),
+            text: "Actualiza `useThreadOutbox` sin cambiar `drainQueue`.",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              "claude-sonnet-4-6",
+            ),
+          });
+
+          expect(generated).toEqual({
+            text: "Update `useThreadOutbox` without changing `drainQueue`.",
+          });
+        }),
+    ),
+  );
+
+  it.effect("improves prompts through Claude without changing their language", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            text: "  Corrige `reconnectSession` sin cambiar el contrato RPC.  ",
+          },
+        }),
+        stdinMustContain: "corrige reconnectSession no cambies contrato RPC",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.improvePrompt({
+            cwd: process.cwd(),
+            text: "corrige reconnectSession no cambies contrato RPC",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              "claude-sonnet-4-6",
+            ),
+          });
+
+          expect(generated).toEqual({
+            text: "Corrige `reconnectSession` sin cambiar el contrato RPC.",
+          });
         }),
     ),
   );

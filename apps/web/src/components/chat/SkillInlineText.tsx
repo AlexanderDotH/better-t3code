@@ -10,7 +10,7 @@ import {
 } from "../composerInlineChip";
 import { cn } from "~/lib/utils";
 
-const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
+const SKILL_TOKEN_REGEX = /(^|\s)([$/])([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
 
 type InlineSkill = Pick<ServerProviderSkill, "name" | "displayName">;
 
@@ -20,9 +20,10 @@ export function SkillInlineText(props: { text: string; skills: ReadonlyArray<Inl
 
   for (const match of props.text.matchAll(SKILL_TOKEN_REGEX)) {
     const prefix = match[1] ?? "";
-    const name = match[2] ?? "";
+    const marker = match[2] ?? "$";
+    const name = match[3] ?? "";
     const start = (match.index ?? 0) + prefix.length;
-    const rawText = `$${name}`;
+    const rawText = `${marker}${name}`;
     const skill = props.skills.find((candidate) => candidate.name === name);
     if (!skill) {
       continue;

@@ -15,8 +15,10 @@ import * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildPromptImprovementPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildTranscriptTranslationPrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   sanitizeCommitSubject,
@@ -52,7 +54,9 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "translateTranscriptToEnglish"
+      | "improvePrompt";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -251,10 +255,41 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const translateTranscriptToEnglish: TextGeneration.TextGeneration["Service"]["translateTranscriptToEnglish"] =
+    Effect.fn("GrokTextGeneration.translateTranscriptToEnglish")(function* (input) {
+      const { prompt, outputSchema } = buildTranscriptTranslationPrompt({ text: input.text });
+      const generated = yield* runGrokJson({
+        operation: "translateTranscriptToEnglish",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return { text: generated.text.trim() };
+    });
+
+  const improvePrompt: TextGeneration.TextGeneration["Service"]["improvePrompt"] = Effect.fn(
+    "GrokTextGeneration.improvePrompt",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildPromptImprovementPrompt({ text: input.text });
+    const generated = yield* runGrokJson({
+      operation: "improvePrompt",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return { text: generated.text.trim() };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    translateTranscriptToEnglish,
+    improvePrompt,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

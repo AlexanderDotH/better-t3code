@@ -281,6 +281,22 @@ function stripNullDefaults(value: Schema.Json): Schema.Json {
   ) as Schema.Json;
 }
 
+function addStringEnumVariant(value: Schema.Json, variant: string): Schema.Json {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+
+  const objectValue = value as Record<string, Schema.Json>;
+  const enumValues = objectValue.enum;
+  if (!Array.isArray(enumValues) || !enumValues.every((entry) => typeof entry === "string")) {
+    return value;
+  }
+  if (enumValues.includes(variant)) {
+    return value;
+  }
+  return { ...objectValue, enum: [...enumValues, variant] };
+}
+
 function toPascalCaseMethod(method: string) {
   return method
     .split("/")
@@ -591,6 +607,17 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
     if (!(name in aggregateSchemas)) {
       aggregateSchemas[name] = stripNullDefaults(normalizeNullableTypes(schema));
     }
+  }
+
+  // New Codex builds can advertise `max` from `model/list` before the
+  // pinned protocol schema learns that enum value. Keep response decoding
+  // forward-compatible without widening request-side reasoning enums.
+  const modelListReasoningEffort = aggregateSchemas.V2ModelListResponse__ReasoningEffort;
+  if (modelListReasoningEffort !== undefined) {
+    aggregateSchemas.V2ModelListResponse__ReasoningEffort = addStringEnumVariant(
+      modelListReasoningEffort,
+      "max",
+    );
   }
 
   const generator = makeJsonSchemaGenerator();

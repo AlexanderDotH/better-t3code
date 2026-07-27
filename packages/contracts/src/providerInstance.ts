@@ -41,8 +41,8 @@ const PROVIDER_SLUG_MAX_CHARS = 64;
 /**
  * Slug pattern shared by driver kinds and instance ids — letters, digits,
  * dashes, underscores. The first character must be a letter so slugs remain
- * JS-identifier friendly when used as object keys, log fields, or telemetry
- * attributes. Mixed case is permitted so historical driver kinds (e.g.
+ * JS-identifier friendly when used as object keys or log fields. Mixed case is
+ * permitted so historical driver kinds (e.g.
  * `claudeAgent`) can be used verbatim during the migration and so external
  * fork authors retain reasonable freedom.
  */

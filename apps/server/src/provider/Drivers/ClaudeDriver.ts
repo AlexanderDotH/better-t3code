@@ -27,6 +27,7 @@ import { makeClaudeTextGeneration } from "../../textGeneration/ClaudeTextGenerat
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { McpConfigEngine, toClaudeMcpServers } from "../../mcp/McpConfigEngine.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
 import {
@@ -54,11 +55,47 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
-import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
+import type { ClaudeDiscoveredModel } from "./ClaudeDiscoveredModels.ts";
+import {
+  type ClaudeGatewayCatalog,
+  loadClaudeGatewayCatalog,
+  resolveClaudeGatewayDiscoveredModelProfile,
+  resolveClaudeGatewayModelProfile,
+} from "./ClaudeGatewayCatalog.ts";
+import {
+  makeClaudeCapabilitiesCacheKey,
+  makeClaudeContinuationGroupKey,
+  resolveClaudeHomePath,
+} from "./ClaudeHome.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
+const OPAQUE_GATEWAY_MODEL_IDS = new Set(["default"]);
+
+export function enrichClaudeGatewayCatalogAliases(
+  catalog: ClaudeGatewayCatalog,
+  discoveredModels: ReadonlyArray<ClaudeDiscoveredModel>,
+): ClaudeGatewayCatalog {
+  let changed = false;
+  const profiles = catalog.profiles.map((profile) => {
+    const aliases = new Set(profile.aliases);
+    for (const discovered of discoveredModels) {
+      const value = discovered.value.trim();
+      if (!value || OPAQUE_GATEWAY_MODEL_IDS.has(value)) continue;
+      const resolvedProfile = resolveClaudeGatewayDiscoveredModelProfile(catalog, discovered);
+      if (resolvedProfile !== profile || aliases.has(value)) {
+        continue;
+      }
+      aliases.add(value);
+      changed = true;
+    }
+    return aliases.size === profile.aliases.length
+      ? profile
+      : { ...profile, aliases: [...aliases] };
+  });
+  return changed ? { profiles } : catalog;
+}
 
 function isClaudeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
@@ -87,6 +124,7 @@ export type ClaudeDriverEnv =
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
+  | McpConfigEngine
   | Path.Path
   | ProviderEventLoggers
   | ServerConfig
@@ -125,6 +163,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
+      const mcpConfigEngine = yield* McpConfigEngine;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -143,31 +182,75 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         continuationGroupKey,
       });
 
-      const adapterOptions = {
-        instanceId,
-        environment: processEnv,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      };
-      const adapter = yield* makeClaudeAdapter(effectiveConfig, adapterOptions);
-      const textGeneration = yield* makeClaudeTextGeneration(effectiveConfig, processEnv);
-
-      // Per-instance capabilities cache: keyed on binary + resolved HOME so
-      // account-specific probes never share auth metadata across instances.
-      const capabilitiesProbeCache = yield* Cache.make({
+      // One cache entry owns both discovery sources for this provider instance.
+      // Runtime profile lookups and provider snapshots therefore observe the
+      // same catalog, including aliases learned from the SDK initialization.
+      const resolvedHomePath = yield* resolveClaudeHomePath(effectiveConfig);
+      const combinedProbeCache = yield* Cache.make({
         capacity: 1,
         timeToLive: CAPABILITIES_PROBE_TTL,
         lookup: () =>
-          probeClaudeCapabilities(effectiveConfig, processEnv, cwd).pipe(
-            Effect.provideService(Path.Path, path),
+          Effect.all(
+            {
+              capabilities: probeClaudeCapabilities(effectiveConfig, processEnv, cwd).pipe(
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                Effect.provideService(Path.Path, path),
+              ),
+              gatewayCatalog: loadClaudeGatewayCatalog({
+                environment: processEnv,
+                homePath: resolvedHomePath,
+              }).pipe(
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(HttpClient.HttpClient, httpClient),
+                Effect.provideService(Path.Path, path),
+              ),
+            },
+            { concurrency: "unbounded" },
+          ).pipe(
+            Effect.map(({ capabilities, gatewayCatalog }) => ({
+              capabilities,
+              gatewayCatalog: enrichClaudeGatewayCatalogAliases(
+                gatewayCatalog,
+                capabilities?.models ?? [],
+              ),
+            })),
           ),
       });
-      const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
+      const combinedProbeCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
+      const resolveCombinedProbe = () => Cache.get(combinedProbeCache, combinedProbeCacheKey);
+      const resolveGatewayCatalog = () =>
+        resolveCombinedProbe().pipe(Effect.map(({ gatewayCatalog }) => gatewayCatalog));
+      const resolveGatewayProfile = (modelId: string | null | undefined) =>
+        resolveGatewayCatalog().pipe(
+          Effect.map((catalog) => resolveClaudeGatewayModelProfile(catalog, modelId)),
+        );
+
+      const adapterOptions = {
+        instanceId,
+        environment: processEnv,
+        resolveGatewayProfile,
+        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+        resolveMcpServers: ({ cwd }: { readonly cwd: string }) =>
+          mcpConfigEngine.resolveActiveServers({ cwd }).pipe(
+            Effect.map(toClaudeMcpServers),
+            Effect.catch((cause) =>
+              Effect.logWarning("Failed to resolve MCP servers for Claude session", {
+                detail: cause.detail,
+              }).pipe(Effect.as(toClaudeMcpServers([]))),
+            ),
+          ),
+      };
+      const adapter = yield* makeClaudeAdapter(effectiveConfig, adapterOptions);
+      const textGeneration = yield* makeClaudeTextGeneration(effectiveConfig, processEnv, {
+        resolveGatewayModelProfile: resolveGatewayProfile,
+      });
 
       const checkProvider = checkClaudeProviderStatus(
         effectiveConfig,
-        () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
+        () => resolveCombinedProbe().pipe(Effect.map(({ capabilities }) => capabilities)),
         processEnv,
         cwd,
+        resolveGatewayCatalog,
       ).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

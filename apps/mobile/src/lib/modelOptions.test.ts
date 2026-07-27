@@ -2,9 +2,183 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ProviderInstanceId, type ServerConfig } from "@t3tools/contracts";
 
-import { buildModelOptions } from "./modelOptions";
+import { buildModelOptions, filterStartedThreadModelOptions } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it("normalizes live gateway GPT defaults and preserves persisted per-thread options", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "claudeAgent",
+          driver: "claudeAgent",
+          displayName: "Claude",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "claude-codex-gpt-5.6-sol",
+              name: "GPT-5.6 Sol",
+              isCustom: false,
+              isDefault: true,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "effort",
+                    label: "Reasoning",
+                    type: "select",
+                    options: [
+                      { id: "low", label: "Low", isDefault: true },
+                      { id: "medium", label: "Medium" },
+                      { id: "high", label: "High" },
+                      { id: "xhigh", label: "Extra High" },
+                      { id: "max", label: "Max" },
+                    ],
+                  },
+                  {
+                    id: "fastMode",
+                    label: "Fast Mode",
+                    type: "boolean",
+                    currentValue: false,
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    const [defaults] = buildModelOptions(config, null);
+    const [persisted] = buildModelOptions(config, {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-codex-gpt-5.6-sol",
+      options: [
+        { id: "effort", value: "high" },
+        { id: "fastMode", value: true },
+      ],
+    });
+
+    expect(defaults?.selection.options).toEqual([
+      { id: "effort", value: "low" },
+      { id: "fastMode", value: false },
+    ]);
+    expect(defaults?.isDefault).toBe(true);
+    expect(persisted?.selection.options).toEqual([
+      { id: "effort", value: "high" },
+      { id: "fastMode", value: true },
+    ]);
+  });
+
+  it("keeps started threads locked unless the environment capability is enabled", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "codex",
+          driver: "codex",
+          displayName: "Codex",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [{ slug: "gpt-5.4", name: "GPT-5.4", capabilities: null }],
+        },
+        {
+          instanceId: "claudeAgent",
+          driver: "claudeAgent",
+          displayName: "Claude",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [{ slug: "agent", name: "Agent", capabilities: null }],
+        },
+      ],
+    } as unknown as ServerConfig;
+    const currentSelection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.4",
+    };
+    const options = buildModelOptions(config, currentSelection);
+
+    expect(
+      filterStartedThreadModelOptions({
+        options,
+        currentSelection,
+        hasStarted: true,
+        allowMidChatProviderSwitching: false,
+      }).map((option) => option.selection.instanceId),
+    ).toEqual([ProviderInstanceId.make("codex")]);
+    expect(
+      filterStartedThreadModelOptions({
+        options,
+        currentSelection,
+        hasStarted: true,
+        allowMidChatProviderSwitching: true,
+      }),
+    ).toHaveLength(2);
+  });
+
+  it("keeps started threads within compatible continuation groups and new-thread constraints", () => {
+    const provider = (input: {
+      readonly driver?: string;
+      readonly groupKey: string;
+      readonly instanceId: string;
+      readonly requiresNewThreadForModelChange?: boolean;
+    }) => ({
+      instanceId: input.instanceId,
+      driver: input.driver ?? "codex",
+      displayName: input.instanceId,
+      enabled: true,
+      installed: true,
+      auth: { status: "authenticated" },
+      continuation: { groupKey: input.groupKey },
+      requiresNewThreadForModelChange: input.requiresNewThreadForModelChange ?? false,
+      models: [{ slug: "shared-model", name: input.instanceId, capabilities: null }],
+    });
+    const config = {
+      providers: [
+        provider({ instanceId: "codex_a", groupKey: "codex-compatible" }),
+        provider({ instanceId: "codex_b", groupKey: "codex-compatible" }),
+        provider({ instanceId: "codex_other", groupKey: "other" }),
+        provider({
+          instanceId: "codex_locked",
+          groupKey: "codex-compatible",
+          requiresNewThreadForModelChange: true,
+        }),
+        provider({
+          instanceId: "claude",
+          driver: "claudeAgent",
+          groupKey: "codex-compatible",
+        }),
+      ],
+    } as unknown as ServerConfig;
+    const currentSelection = {
+      instanceId: ProviderInstanceId.make("codex_a"),
+      model: "shared-model",
+    };
+    const options = buildModelOptions(config, currentSelection);
+
+    expect(
+      filterStartedThreadModelOptions({
+        options,
+        currentSelection,
+        hasStarted: true,
+        allowMidChatProviderSwitching: false,
+      }).map((option) => option.providerKey),
+    ).toEqual(["codex_a", "codex_b"]);
+
+    expect(
+      filterStartedThreadModelOptions({
+        options,
+        currentSelection: {
+          instanceId: ProviderInstanceId.make("codex_locked"),
+          model: "shared-model",
+        },
+        hasStarted: true,
+        allowMidChatProviderSwitching: false,
+      }).map((option) => option.providerKey),
+    ).toEqual(["codex_locked"]);
+  });
+
   it("normalizes a legacy fallback selection against current capabilities", () => {
     const config = {
       providers: [

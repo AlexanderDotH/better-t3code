@@ -8,7 +8,10 @@ import {
   KeyboardIcon,
   Link2Icon,
   PaletteIcon,
+  DownloadIcon,
+  PlugZapIcon,
   Settings2Icon,
+  SparklesIcon,
 } from "lucide-react";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 
@@ -28,9 +31,12 @@ export type SettingsSectionPath =
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/providers"
+  | "/settings/skills"
+  | "/settings/mcp"
   | "/settings/source-control"
   | "/settings/connections"
   | "/settings/beta"
+  | "/settings/import-chats"
   | "/settings/archived";
 
 export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
@@ -42,9 +48,12 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   { label: "Appearance", to: "/settings/appearance", icon: PaletteIcon },
   { label: "Keybindings", to: "/settings/keybindings", icon: KeyboardIcon },
   { label: "Providers", to: "/settings/providers", icon: BotIcon },
+  { label: "Skills", to: "/settings/skills", icon: SparklesIcon },
+  { label: "MCP Servers", to: "/settings/mcp", icon: PlugZapIcon },
   { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },
   { label: "Connections", to: "/settings/connections", icon: Link2Icon },
   { label: "Beta", to: "/settings/beta", icon: FlaskConicalIcon },
+  { label: "Import Chats", to: "/settings/import-chats", icon: DownloadIcon },
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
 ];
 

@@ -53,7 +53,11 @@ import {
 import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
-import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
+import {
+  buildModelOptions,
+  filterStartedThreadModelOptions,
+  groupByProvider,
+} from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import {
@@ -583,8 +587,19 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   // ── Model menu ───────────────────────────────────────────
   const modelOptions = useMemo(
-    () => buildModelOptions(props.serverConfig, currentModelSelection),
-    [props.serverConfig, currentModelSelection],
+    () =>
+      filterStartedThreadModelOptions({
+        options: buildModelOptions(props.serverConfig, currentModelSelection),
+        currentSelection: currentModelSelection,
+        currentProviderInstanceId: props.selectedThread.session?.providerInstanceId ?? null,
+        hasStarted:
+          props.selectedThread.session !== null ||
+          props.selectedThread.latestTurn !== null ||
+          props.selectedThread.latestUserMessageAt !== null,
+        allowMidChatProviderSwitching:
+          props.serverConfig?.environment.capabilities.midChatProviderSwitching === true,
+      }),
+    [props.serverConfig, props.selectedThread, currentModelSelection],
   );
   const providerGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
   const currentModelOption =

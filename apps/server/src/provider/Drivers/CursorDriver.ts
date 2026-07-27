@@ -23,6 +23,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { McpConfigEngine, toAcpMcpServers } from "../../mcp/McpConfigEngine.ts";
 import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCursorAdapter } from "../Layers/CursorAdapter.ts";
@@ -70,6 +71,7 @@ export type CursorDriverEnv =
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
+  | McpConfigEngine
   | Path.Path
   | ProviderEventLoggers
   | ServerConfig
@@ -108,6 +110,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
+      const mcpConfigEngine = yield* McpConfigEngine;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -129,6 +132,15 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
+        resolveMcpServers: ({ cwd }) =>
+          mcpConfigEngine.resolveActiveServers({ cwd }).pipe(
+            Effect.map(toAcpMcpServers),
+            Effect.catch((cause) =>
+              Effect.logWarning("Failed to resolve MCP servers for Cursor session", {
+                detail: cause.detail,
+              }).pipe(Effect.as([])),
+            ),
+          ),
       });
       const textGeneration = yield* makeCursorTextGeneration(effectiveConfig, processEnv);
 
@@ -149,18 +161,22 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         initialSnapshot: (settings) =>
           buildInitialCursorProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
-        // Model catalog and capabilities come exclusively from Cursor's
-        // list_available_models extension method during provider checks.
+        // Primary catalog comes from list_available_models; the enrichment hook
+        // can fill capabilities for models that still come back empty.
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
           enrichCursorSnapshot({
             settings: settings.provider,
+            environment: processEnv,
             snapshot: currentSnapshot,
             maintenanceCapabilities,
             enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
             publishSnapshot,
             stampIdentity,
             httpClient,
-          }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+          }).pipe(
+            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          ),
       }).pipe(
         Effect.mapError(
           (cause) =>

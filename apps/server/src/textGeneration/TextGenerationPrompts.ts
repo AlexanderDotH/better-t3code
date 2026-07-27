@@ -271,3 +271,54 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 
   return { prompt, outputSchema };
 }
+
+export const TranscriptTranslationOutputSchema = Schema.Struct({
+  text: Schema.String,
+});
+
+export interface TranscriptTranslationPromptInput {
+  text: string;
+}
+
+export function buildTranscriptTranslationPrompt(input: TranscriptTranslationPromptInput) {
+  const prompt = [
+    "You translate speech transcripts into faithful, concise English.",
+    "Return a JSON object with key: text.",
+    "Rules:",
+    "- Preserve the complete meaning, intent, requirements, constraints, and tone.",
+    "- Preserve code identifiers, commands, file paths, URLs, literals, and technical terms exactly.",
+    "- Do not answer the transcript, add information, omit requirements, or expand its scope.",
+    "- Keep the result concise without removing meaningful details.",
+    "",
+    "Transcript:",
+    limitSection(input.text, 16_000),
+  ].join("\n");
+
+  return { prompt, outputSchema: TranscriptTranslationOutputSchema };
+}
+
+export const PromptImprovementOutputSchema = Schema.Struct({
+  text: Schema.String,
+});
+
+export interface PromptImprovementPromptInput {
+  text: string;
+}
+
+export function buildPromptImprovementPrompt(input: PromptImprovementPromptInput) {
+  const prompt = [
+    "You improve coding prompts for clarity and concision.",
+    "Return a JSON object with key: text.",
+    "Rules:",
+    "- Keep the same language as the original prompt.",
+    "- Preserve the original intent and every requirement, constraint, code identifier, command, file path, URL, literal, and technical term.",
+    "- Do not add scope, requirements, assumptions, solutions, implementation details, or acceptance criteria.",
+    "- Do not answer or carry out the prompt.",
+    "- Improve only wording, grammar, organization, and clarity.",
+    "",
+    "Prompt:",
+    limitSection(input.text, 16_000),
+  ].join("\n");
+
+  return { prompt, outputSchema: PromptImprovementOutputSchema };
+}

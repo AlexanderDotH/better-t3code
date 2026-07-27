@@ -570,6 +570,35 @@ describe("thread outbox", () => {
     expect(isQueuedThreadCreationSendable(base)).toBe(false);
   });
 
+  it("preserves the queued model selection snapshot for turn delivery", () => {
+    const thread = {
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+      },
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+    };
+    const queuedSelection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "agent",
+      options: [{ id: "agent", value: "plan" }],
+    };
+
+    expect(
+      resolveQueuedThreadSettings(
+        {
+          ...queuedMessage({
+            messageId: "message-selection",
+            createdAt: "2026-06-08T10:00:02.000Z",
+          }),
+          modelSelection: queuedSelection,
+        },
+        thread,
+      ).modelSelection,
+    ).toEqual(queuedSelection);
+  });
+
   it("retries transport failures but drops deterministic command failures", () => {
     expect(shouldRetryThreadOutboxDelivery(new Error("Socket is not connected"))).toBe(true);
     expect(

@@ -357,6 +357,40 @@ export function threadHasStarted(thread: Thread | null | undefined): boolean {
   );
 }
 
+export function resolveSpeechEnvironmentId(
+  routeEnvironmentId: EnvironmentId,
+  activeThreadEnvironmentId: EnvironmentId | undefined,
+): EnvironmentId {
+  return activeThreadEnvironmentId ?? routeEnvironmentId;
+}
+
+export function shouldOfferProjectSpeechPreindex(input: {
+  voiceInputConfigured: boolean;
+  routeKind: "server" | "draft";
+  hasProjectSpeechProfile: boolean;
+  hasStartedThread: boolean;
+  prompt: string;
+}): boolean {
+  return (
+    input.voiceInputConfigured &&
+    input.routeKind === "draft" &&
+    !input.hasProjectSpeechProfile &&
+    !input.hasStartedThread &&
+    input.prompt.trim().length === 0
+  );
+}
+
+export async function resolvePromptForSend(input: {
+  prompt: string;
+  improve?: (prompt: string) => Promise<string>;
+}): Promise<string> {
+  const trimmedPrompt = input.prompt.trim();
+  if (!input.improve || trimmedPrompt.length === 0) {
+    return input.prompt;
+  }
+  return await input.improve(trimmedPrompt);
+}
+
 // `threadProvider` is the open branded driver kind carried by the session.
 // Unknown driver kinds degrade to `null` (i.e. "unlocked"), which is the safe
 // rollback / fork behavior — the routing layer is the right place to surface
@@ -373,8 +407,9 @@ export function deriveLockedProvider(input: {
   thread: Thread | null | undefined;
   selectedProvider: string | null;
   threadProvider: string | null;
+  allowMidChatProviderSwitching?: boolean;
 }): ProviderDriverKind | null {
-  if (!threadHasStarted(input.thread)) {
+  if (input.allowMidChatProviderSwitching === true || !threadHasStarted(input.thread)) {
     return null;
   }
   const sessionProvider = input.thread?.session?.providerName ?? null;
@@ -398,8 +433,9 @@ export function getStartedThreadModelChangeBlockReason(input: {
   currentModelSelection: ModelSelection;
   currentProviderInstanceId?: ModelSelection["instanceId"] | null | undefined;
   nextModelSelection: ModelSelection;
+  allowMidChatProviderSwitching?: boolean;
 }): { title: string; description: string } | null {
-  if (!input.hasStartedSession) {
+  if (input.allowMidChatProviderSwitching === true || !input.hasStartedSession) {
     return null;
   }
   const currentModelSelection = {

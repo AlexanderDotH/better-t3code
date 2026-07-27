@@ -72,6 +72,7 @@ import {
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ThreadTranscriptExport } from "./orchestration/Services/ThreadTranscriptExport.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
@@ -106,6 +107,12 @@ import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
+import { McpConfigEngine } from "./mcp/McpConfigEngine.ts";
+import { SkillEngine } from "./skills/Services/SkillEngine.ts";
+import { makeT3ChatImport } from "./t3ChatImport.ts";
+import { AssemblyAiStreamingToken } from "./speech/Layers/AssemblyAiStreamingToken.ts";
+import * as ProjectSpeechProfiles from "./speech/ProjectSpeechProfiles.ts";
+import * as ProjectTextTransforms from "./speech/ProjectTextTransforms.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
@@ -349,6 +356,7 @@ const makeWsRpcLayer = (
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
+      const threadTranscriptExport = yield* ThreadTranscriptExport;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
       const review = yield* ReviewService.ReviewService;
@@ -386,6 +394,12 @@ const makeWsRpcLayer = (
       );
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+      const assemblyAiStreamingToken = yield* AssemblyAiStreamingToken;
+      const projectSpeechProfiles = yield* ProjectSpeechProfiles.make;
+      const projectTextTransforms = yield* ProjectTextTransforms.make;
+      const mcpConfigEngine = yield* McpConfigEngine;
+      const skillEngine = yield* SkillEngine;
+      const t3ChatImport = yield* makeT3ChatImport();
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map(
           (settings) => resolveServerBackgroundActivitySettings(settings).automaticGitFetchInterval,
@@ -1118,6 +1132,12 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "orchestration" },
           ),
+        [ORCHESTRATION_WS_METHODS.exportThreadTranscript]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.exportThreadTranscript,
+            threadTranscriptExport.exportThread(input.threadId),
+            { "rpc.aggregate": "orchestration" },
+          ),
         [ORCHESTRATION_WS_METHODS.subscribeShell]: (input) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeShell,
@@ -1446,6 +1466,48 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.serverCreateAssemblyAiStreamingToken]: ({ projectId }) =>
+          observeRpcEffect(
+            WS_METHODS.serverCreateAssemblyAiStreamingToken,
+            projectSpeechProfiles
+              .contextForProject(projectId)
+              .pipe(Effect.flatMap(assemblyAiStreamingToken.create)),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.speechGetProjectProfile]: ({ projectId }) =>
+          observeRpcEffect(
+            WS_METHODS.speechGetProjectProfile,
+            projectSpeechProfiles.get(projectId).pipe(Effect.map(Option.getOrNull)),
+            { "rpc.aggregate": "speech" },
+          ),
+        [WS_METHODS.speechListProjectProfiles]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.speechListProjectProfiles,
+            projectSpeechProfiles.list().pipe(Effect.map((profiles) => ({ profiles }))),
+            { "rpc.aggregate": "speech" },
+          ),
+        [WS_METHODS.speechIndexProject]: ({ projectId }) =>
+          observeRpcEffect(WS_METHODS.speechIndexProject, projectSpeechProfiles.index(projectId), {
+            "rpc.aggregate": "speech",
+          }),
+        [WS_METHODS.speechCreateBasicProjectProfile]: ({ projectId }) =>
+          observeRpcEffect(
+            WS_METHODS.speechCreateBasicProjectProfile,
+            projectSpeechProfiles.createBasic(projectId),
+            { "rpc.aggregate": "speech" },
+          ),
+        [WS_METHODS.speechTranslateTranscript]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.speechTranslateTranscript,
+            projectTextTransforms.translateTranscript(input),
+            { "rpc.aggregate": "speech" },
+          ),
+        [WS_METHODS.promptImprove]: (input) =>
+          observeRpcEffect(WS_METHODS.promptImprove, projectTextTransforms.improvePrompt(input), {
+            "rpc.aggregate": "prompt",
+          }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverDiscoverSourceControl,
@@ -1553,6 +1615,110 @@ const makeWsRpcLayer = (
                   ),
             ),
             { "rpc.aggregate": "cloud" },
+          ),
+        [WS_METHODS.chatImportDiscover]: (_input) =>
+          observeRpcEffect(WS_METHODS.chatImportDiscover, t3ChatImport.discover, {
+            "rpc.aggregate": "chatImport",
+          }),
+        [WS_METHODS.chatImportRun]: (input) =>
+          observeRpcEffect(WS_METHODS.chatImportRun, t3ChatImport.importSource(input), {
+            "rpc.aggregate": "chatImport",
+          }),
+        [WS_METHODS.skillsList]: (input) =>
+          observeRpcEffect(WS_METHODS.skillsList, skillEngine.list(input), {
+            "rpc.aggregate": "skills",
+          }),
+        [WS_METHODS.skillsDiscoverImportSources]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.skillsDiscoverImportSources,
+            skillEngine.discoverImportSources,
+            {
+              "rpc.aggregate": "skills",
+            },
+          ),
+        [WS_METHODS.skillsImportSources]: (input) =>
+          observeRpcEffect(WS_METHODS.skillsImportSources, skillEngine.importSources(input), {
+            "rpc.aggregate": "skills",
+          }),
+        [WS_METHODS.skillsCreate]: (input) =>
+          observeRpcEffect(WS_METHODS.skillsCreate, skillEngine.create(input), {
+            "rpc.aggregate": "skills",
+          }),
+        [WS_METHODS.skillsUpdate]: (input) =>
+          observeRpcEffect(WS_METHODS.skillsUpdate, skillEngine.update(input), {
+            "rpc.aggregate": "skills",
+          }),
+        [WS_METHODS.skillsRename]: (input) =>
+          observeRpcEffect(WS_METHODS.skillsRename, skillEngine.rename(input), {
+            "rpc.aggregate": "skills",
+          }),
+        [WS_METHODS.skillsDelete]: (input) =>
+          observeRpcEffect(WS_METHODS.skillsDelete, skillEngine.delete(input), {
+            "rpc.aggregate": "skills",
+          }),
+        [WS_METHODS.skillsSetEnabled]: (input) =>
+          observeRpcEffect(WS_METHODS.skillsSetEnabled, skillEngine.setEnabled(input), {
+            "rpc.aggregate": "skills",
+          }),
+        [WS_METHODS.mcpList]: (_input) =>
+          observeRpcEffect(WS_METHODS.mcpList, mcpConfigEngine.list, {
+            "rpc.aggregate": "mcp",
+          }),
+        [WS_METHODS.mcpDiscoverImportSources]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpDiscoverImportSources,
+            mcpConfigEngine.discoverImportSources,
+            {
+              "rpc.aggregate": "mcp",
+            },
+          ),
+        [WS_METHODS.mcpCreate]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpCreate, mcpConfigEngine.create(input.server), {
+            "rpc.aggregate": "mcp",
+          }),
+        [WS_METHODS.mcpUpdate]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpUpdate, mcpConfigEngine.update(input.server), {
+            "rpc.aggregate": "mcp",
+          }),
+        [WS_METHODS.mcpDelete]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpDelete, mcpConfigEngine.delete(input.id), {
+            "rpc.aggregate": "mcp",
+          }),
+        [WS_METHODS.mcpSetEnabled]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpSetEnabled,
+            mcpConfigEngine.setEnabled(input.id, input.enabled),
+            {
+              "rpc.aggregate": "mcp",
+            },
+          ),
+        [WS_METHODS.mcpImportCursorJson]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpImportCursorJson,
+            mcpConfigEngine.importCursorJson(input),
+            {
+              "rpc.aggregate": "mcp",
+            },
+          ),
+        [WS_METHODS.mcpImportSources]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpImportSources, mcpConfigEngine.importSources(input), {
+            "rpc.aggregate": "mcp",
+          }),
+        [WS_METHODS.mcpExportCursorJson]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpExportCursorJson,
+            mcpConfigEngine.exportCursorJson(input),
+            {
+              "rpc.aggregate": "mcp",
+            },
+          ),
+        [WS_METHODS.mcpProviderStatus]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpProviderStatus,
+            providerRegistry.getProviders.pipe(Effect.flatMap(mcpConfigEngine.providerStatus)),
+            {
+              "rpc.aggregate": "mcp",
+            },
           ),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           observeRpcEffect(

@@ -33,6 +33,8 @@ const clientSettings: ClientSettings = {
   sidebarV2Enabled: false,
   sidebarV2ConfiguredByUser: false,
   timestampFormat: "24-hour",
+  voiceInputOutputLanguage: "english",
+  improvePromptBeforeSend: true,
   wordWrap: true,
 };
 

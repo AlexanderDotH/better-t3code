@@ -80,6 +80,11 @@ import {
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
+import {
+  partitionSidebarProjectsByActivity,
+  partitionSidebarThreadsByProjectActivity,
+  resolveSidebarOlderProjectsExpanded,
+} from "../sidebarProjectActivity";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
@@ -167,6 +172,7 @@ import { useComposerDraftStore } from "../composerDraftStore";
 // stays behind an explicit Show more.
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
+const MAX_SIDEBAR_ACTIVITY_TIMEOUT_MS = 2_147_483_647;
 const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
   repository_path: "Group by repository path",
@@ -1071,6 +1077,12 @@ function latestTurnDiff(
 export default function SidebarV2() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
+  const sidebarOlderProjectsExpanded = useUiStateStore(
+    (store) => store.sidebarOlderProjectsExpanded,
+  );
+  const setSidebarOlderProjectsExpanded = useUiStateStore(
+    (store) => store.setSidebarOlderProjectsExpanded,
+  );
   const threads = useThreadShells();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -1204,6 +1216,113 @@ export default function SidebarV2() {
   const projectGroups = useMemo(
     () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
+  );
+  const projectKeyByMemberKey = useMemo(
+    () =>
+      new Map(
+        projectGroups.flatMap((project) =>
+          project.memberProjectRefs.map(
+            (projectRef) =>
+              [`${projectRef.environmentId}:${projectRef.projectId}`, project.projectKey] as const,
+          ),
+        ),
+      ),
+    [projectGroups],
+  );
+  const threadsByProjectKey = useMemo(() => {
+    const groupedThreads = new Map<string, SidebarThreadSummary[]>();
+    for (const thread of threads) {
+      const projectKey = projectKeyByMemberKey.get(`${thread.environmentId}:${thread.projectId}`);
+      if (projectKey === undefined) continue;
+      const projectThreads = groupedThreads.get(projectKey);
+      if (projectThreads) {
+        projectThreads.push(thread);
+      } else {
+        groupedThreads.set(projectKey, [thread]);
+      }
+    }
+    return groupedThreads;
+  }, [projectKeyByMemberKey, threads]);
+  const [sidebarActivityNowMs, setSidebarActivityNowMs] = useState(() => Date.now());
+  const { olderProjects, nextTransitionAtMs } = useMemo(
+    () =>
+      partitionSidebarProjectsByActivity({
+        projects: projectGroups,
+        threadsByProjectKey,
+        nowMs: sidebarActivityNowMs,
+      }),
+    [projectGroups, sidebarActivityNowMs, threadsByProjectKey],
+  );
+  const olderProjectKeys = useMemo(
+    () => new Set(olderProjects.map((project) => project.projectKey)),
+    [olderProjects],
+  );
+  const activeRouteProjectKey = useMemo(() => {
+    if (routeThreadKey === null) return null;
+    const routeThread = threads.find(
+      (thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+    );
+    return routeThread
+      ? (projectKeyByMemberKey.get(`${routeThread.environmentId}:${routeThread.projectId}`) ?? null)
+      : null;
+  }, [projectKeyByMemberKey, routeThreadKey, threads]);
+  const activeRouteProjectIsOlder =
+    activeRouteProjectKey !== null && olderProjectKeys.has(activeRouteProjectKey);
+  const [dismissedOlderProjectAutoRevealKey, setDismissedOlderProjectAutoRevealKey] = useState<
+    string | null
+  >(null);
+  const olderProjectsExpanded = resolveSidebarOlderProjectsExpanded({
+    persistedExpanded: sidebarOlderProjectsExpanded,
+    activeRouteProjectKey,
+    dismissedAutoRevealProjectKey: dismissedOlderProjectAutoRevealKey,
+    olderProjectKeys,
+  });
+
+  useEffect(() => {
+    const refreshActivityClock = () => {
+      setSidebarActivityNowMs(Date.now());
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshActivityClock();
+      }
+    };
+    const timeoutId =
+      nextTransitionAtMs === null
+        ? null
+        : window.setTimeout(
+            refreshActivityClock,
+            Math.max(0, Math.min(MAX_SIDEBAR_ACTIVITY_TIMEOUT_MS, nextTransitionAtMs - Date.now())),
+          );
+
+    window.addEventListener("focus", refreshActivityClock);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+      window.removeEventListener("focus", refreshActivityClock);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [nextTransitionAtMs, sidebarActivityNowMs]);
+
+  const handleOlderProjectsExpandedChange = useCallback(
+    (expanded: boolean) => {
+      setDismissedOlderProjectAutoRevealKey(
+        !expanded && activeRouteProjectIsOlder ? activeRouteProjectKey : null,
+      );
+      if (!expanded) {
+        clearSelection();
+      }
+      setSidebarOlderProjectsExpanded(expanded);
+    },
+    [
+      activeRouteProjectIsOlder,
+      activeRouteProjectKey,
+      clearSelection,
+      setSidebarOlderProjectsExpanded,
+    ],
   );
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const providerEntryByInstanceId = useMemo(
@@ -1519,6 +1638,34 @@ export default function SidebarV2() {
     snoozeWakeTick,
     threads,
   ]);
+  const { recentThreads: recentActiveThreads, olderThreads: olderActiveThreads } = useMemo(
+    () =>
+      partitionSidebarThreadsByProjectActivity({
+        threads: activeThreads,
+        olderProjects,
+      }),
+    [activeThreads, olderProjects],
+  );
+  const olderActiveProjectCount = useMemo(
+    () =>
+      new Set(
+        olderActiveThreads.flatMap((thread) => {
+          const projectKey = projectKeyByMemberKey.get(
+            `${thread.environmentId}:${thread.projectId}`,
+          );
+          return projectKey === undefined ? [] : [projectKey];
+        }),
+      ).size,
+    [olderActiveThreads, projectKeyByMemberKey],
+  );
+  const visibleOlderActiveThreads = useMemo(
+    () => (olderProjectsExpanded ? olderActiveThreads : []),
+    [olderActiveThreads, olderProjectsExpanded],
+  );
+  const renderedActiveThreads = useMemo(
+    () => [...recentActiveThreads, ...visibleOlderActiveThreads],
+    [recentActiveThreads, visibleOlderActiveThreads],
+  );
 
   // Arm a timeout for the earliest upcoming wake so the shelf empties the
   // moment a snooze expires instead of on the next minute tick. Sorted
@@ -1603,8 +1750,8 @@ export default function SidebarV2() {
   }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
   const orderedThreads = useMemo(
-    () => [...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
-    [activeThreads, visibleSnoozedThreads, renderedSettledThreads],
+    () => [...renderedActiveThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
+    [renderedActiveThreads, visibleSnoozedThreads, renderedSettledThreads],
   );
   const orderedThreadKeys = useMemo(
     () =>
@@ -2649,9 +2796,48 @@ export default function SidebarV2() {
                     />
                   );
                 };
-                const items: ReactNode[] = activeThreads.map((thread) =>
+                const items: ReactNode[] = recentActiveThreads.map((thread) =>
                   renderThreadRow(thread, "active"),
                 );
+                if (olderActiveThreads.length > 0) {
+                  items.push(
+                    <li
+                      key="older-projects-header"
+                      data-thread-selection-safe
+                      className="list-none"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleOlderProjectsExpandedChange(!olderProjectsExpanded)}
+                        aria-expanded={olderProjectsExpanded}
+                        title="No work activity for more than 7 days."
+                        data-testid="sidebar-v2-older-projects-toggle"
+                        className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
+                      >
+                        <span className="text-xs font-medium text-muted-foreground/60">
+                          Older projects
+                        </span>
+                        <span
+                          className="text-[10px] tabular-nums text-muted-foreground/45"
+                          aria-label={`${olderActiveProjectCount} older projects`}
+                        >
+                          {olderActiveProjectCount}
+                        </span>
+                        <span className="h-px flex-1 bg-sidebar-border/60" />
+                        <ChevronDownIcon
+                          aria-hidden
+                          className={cn(
+                            "size-3 text-muted-foreground/50 transition-transform",
+                            olderProjectsExpanded && "rotate-180",
+                          )}
+                        />
+                      </button>
+                    </li>,
+                  );
+                  for (const thread of visibleOlderActiveThreads) {
+                    items.push(renderThreadRow(thread, "active"));
+                  }
+                }
                 // Snoozed shelf: between the inbox and Settled — out of the
                 // way, never gone. The header always renders while anything
                 // is snoozed (the count is the whole footprint when

@@ -190,6 +190,12 @@ export function applyServerSettingsPatch(
     ...(patch.sourceControlWriterModelSelection !== undefined
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }
       : {}),
+    ...(patch.mcp?.servers !== undefined
+      ? { mcp: { ...next.mcp, servers: patch.mcp.servers } }
+      : {}),
+    ...(patch.skills?.disabledSkillIds !== undefined
+      ? { skills: { ...next.skills, disabledSkillIds: patch.skills.disabledSkillIds } }
+      : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
     ...(providerHealthRefreshInterval !== undefined ? { providerHealthRefreshInterval } : {}),
   };

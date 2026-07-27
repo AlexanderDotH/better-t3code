@@ -34,6 +34,7 @@ import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneratio
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { McpConfigEngine } from "../../mcp/McpConfigEngine.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
 import { checkCodexProviderStatus, makePendingCodexProvider } from "../Layers/CodexProvider.ts";
@@ -78,6 +79,7 @@ export type CodexDriverEnv =
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
+  | McpConfigEngine
   | Path.Path
   | ProviderEventLoggers
   | ServerConfig
@@ -119,6 +121,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
+      const mcpConfigEngine = yield* McpConfigEngine;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const homeLayout = yield* resolveCodexHomeLayout(config);
       const continuationIdentity = codexContinuationIdentity(homeLayout);
@@ -159,6 +162,14 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         instanceId,
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+        resolveMcpServers: ({ cwd }) =>
+          mcpConfigEngine.resolveActiveServers({ cwd }).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Failed to resolve MCP servers for Codex session", {
+                detail: cause.detail,
+              }).pipe(Effect.as([])),
+            ),
+          ),
       });
       const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv);
 

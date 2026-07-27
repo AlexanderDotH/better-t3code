@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  McpServerId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -511,5 +512,60 @@ describe("serverSettings helpers", () => {
     });
 
     expect(resolved.pauseWhenOnBattery).toBe(false);
+  });
+
+  it("replaces disabled skill ids instead of deep-merging stale values", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      skills: {
+        disabledSkillIds: [
+          "global:/tmp/t3/skills/review/SKILL.md",
+          "project:/tmp/repo/.t3code/skills/test/SKILL.md",
+        ],
+      },
+    };
+
+    expect(
+      applyServerSettingsPatch(current, {
+        skills: {
+          disabledSkillIds: ["global:/tmp/t3/skills/review/SKILL.md"],
+        },
+      }).skills.disabledSkillIds,
+    ).toEqual(["global:/tmp/t3/skills/review/SKILL.md"]);
+  });
+
+  it("replaces MCP server arrays instead of deep-merging stale entries", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      mcp: {
+        servers: [
+          {
+            id: McpServerId.make("old"),
+            scope: "global" as const,
+            name: "old",
+            enabled: true,
+            transport: "stdio" as const,
+            command: "old",
+            args: [],
+            env: {},
+          },
+        ],
+      },
+    };
+
+    const servers = [
+      {
+        id: McpServerId.make("new"),
+        scope: "global" as const,
+        name: "new",
+        enabled: true,
+        transport: "stdio" as const,
+        command: "new",
+        args: [],
+        env: {},
+      },
+    ];
+
+    expect(applyServerSettingsPatch(current, { mcp: { servers } }).mcp.servers).toEqual(servers);
   });
 });

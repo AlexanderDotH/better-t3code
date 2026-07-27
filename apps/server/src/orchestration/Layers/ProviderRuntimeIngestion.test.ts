@@ -106,7 +106,7 @@ function createProviderServiceHarness() {
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
     listSessions: () => Effect.succeed([...runtimeSessions]),
-    getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
+    getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session", mcp: "unsupported" }),
     getInstanceInfo: (instanceId) => {
       const driverKind = ProviderDriverKind.make(String(instanceId));
       return Effect.succeed({
@@ -978,6 +978,117 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
   });
 
+  it("accumulates complete provider reasoning and flushes it when the item completes", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-delta-1"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex-personal"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning"),
+      itemId: asItemId("item-reasoning"),
+      providerRefs: { providerTurnId: "provider-turn-7", providerItemId: "provider-item-8" },
+      payload: {
+        streamKind: "reasoning_text",
+        contentIndex: 2,
+        delta: "Inspect the full ",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-delta-2"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex-personal"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning"),
+      itemId: asItemId("item-reasoning"),
+      providerRefs: { providerTurnId: "provider-turn-7", providerItemId: "provider-item-8" },
+      payload: {
+        streamKind: "reasoning_text",
+        contentIndex: 2,
+        delta: "payload with secret=dummy-secret.",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-reasoning-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex-personal"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning"),
+      itemId: asItemId("item-reasoning"),
+      providerRefs: { providerTurnId: "provider-turn-7", providerItemId: "provider-item-8" },
+      payload: { itemType: "reasoning", status: "completed" },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.kind === "reasoning.text"),
+    );
+    const activity = thread.activities.find((entry) => entry.kind === "reasoning.text");
+    const payload = activity?.payload as Record<string, unknown> | undefined;
+
+    expect(payload?.text).toBe("Inspect the full payload with secret=dummy-secret.");
+    expect(payload?.streamKind).toBe("reasoning_text");
+    expect(payload?.contentIndex).toBe(2);
+    expect(payload?.provider).toBe("codex");
+    expect(payload?.providerInstanceId).toBe("codex-personal");
+    expect(payload?.itemId).toBe("item-reasoning");
+    expect(payload?.providerRefs).toEqual({
+      providerTurnId: "provider-turn-7",
+      providerItemId: "provider-item-8",
+    });
+  });
+
+  it("flushes non-assistant output on interruption without truncating it", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const output = `${"x".repeat(70_000)}\nfinished`;
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-command-output"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-interrupted-output"),
+      itemId: asItemId("item-command-output"),
+      payload: { streamKind: "command_output", delta: output },
+    });
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-output-aborted"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-interrupted-output"),
+      payload: { reason: "interrupted" },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.activities.filter((activity) => activity.kind === "stream.command-output").length >=
+        2,
+    );
+    const persisted = thread.activities
+      .filter((activity) => activity.kind === "stream.command-output")
+      .toSorted((left, right) => {
+        const leftPayload = left.payload as Record<string, unknown>;
+        const rightPayload = right.payload as Record<string, unknown>;
+        return Number(leftPayload.segmentIndex) - Number(rightPayload.segmentIndex);
+      })
+      .map((activity) => (activity.payload as Record<string, unknown>).text)
+      .join("");
+
+    expect(persisted).toBe(output);
+  });
+
   it("preserves completed tool metadata on projected tool activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -986,10 +1097,17 @@ describe("ProviderRuntimeIngestion", () => {
       type: "item.completed",
       eventId: asEventId("evt-tool-completed-with-data"),
       provider: ProviderDriverKind.make("cursor"),
+      providerInstanceId: ProviderInstanceId.make("cursor-work"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-tool-completed"),
       itemId: asItemId("item-tool-completed"),
+      requestId: "request-tool-completed",
+      providerRefs: {
+        providerTurnId: "provider-turn-tool",
+        providerItemId: "provider-item-tool",
+        providerRequestId: "provider-request-tool",
+      },
       payload: {
         itemType: "dynamic_tool_call",
         status: "completed",
@@ -1032,6 +1150,25 @@ describe("ProviderRuntimeIngestion", () => {
     expect(data?.toolCallId).toBe("tool-read-1");
     expect(data?.kind).toBe("read");
     expect(rawOutput?.content).toBe('import * as Effect from "effect/Effect"\n');
+    expect(payload?.provider).toBe("cursor");
+    expect(payload?.providerInstanceId).toBe("cursor-work");
+    expect(payload?.itemId).toBe("item-tool-completed");
+    expect(payload?.requestId).toBe("request-tool-completed");
+    expect(payload?.providerRefs).toEqual({
+      providerTurnId: "provider-turn-tool",
+      providerItemId: "provider-item-tool",
+      providerRequestId: "provider-request-tool",
+    });
+    expect(payload?.canonicalPayload).toEqual({
+      itemType: "dynamic_tool_call",
+      status: "completed",
+      title: "Read file",
+      data: {
+        toolCallId: "tool-read-1",
+        kind: "read",
+        rawOutput: { content: 'import * as Effect from "effect/Effect"\n' },
+      },
+    });
   });
 
   it("normalizes command execution activities to ran-command summaries", async () => {

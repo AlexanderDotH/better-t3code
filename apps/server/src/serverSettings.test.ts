@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  McpServerId,
   ProviderDriverKind,
   ProviderInstanceId,
   ServerSettings,
@@ -19,6 +20,7 @@ import * as Stream from "effect/Stream";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
 import * as ServerSettingsModule from "./serverSettings.ts";
+import { redactServerSettingsForClient, ServerSettingsService } from "./serverSettings.ts";
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
@@ -94,6 +96,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
   it.effect("decodes nested settings patches", () =>
     Effect.gen(function* () {
+      const legacySettings = yield* decodeServerSettings({});
+      assert.deepEqual(legacySettings.speechTranscription, {
+        assemblyAi: { apiKey: { value: "" } },
+      });
+
       assert.deepEqual(
         yield* decodeSettingsPatch({ providers: { codex: { binaryPath: "/tmp/codex" } } }),
         {
@@ -689,6 +696,172 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         roundTripped.providerInstances[instanceId]?.environment?.[0]?.value,
         "sk-or-secret",
       );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("stores sensitive MCP env and header values outside settings.json", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      const next = yield* serverSettings.updateSettings({
+        mcp: {
+          servers: [
+            {
+              id: McpServerId.make("github"),
+              name: "GitHub",
+              enabled: true,
+              scope: "global",
+              transport: "stdio",
+              command: "npx",
+              args: ["-y", "@modelcontextprotocol/server-github"],
+              env: {
+                GITHUB_TOKEN: {
+                  value: "ghp-secret",
+                  sensitive: true,
+                },
+              },
+            },
+            {
+              id: McpServerId.make("remote_docs"),
+              name: "Remote Docs",
+              enabled: true,
+              scope: "global",
+              transport: "http",
+              url: "https://example.com/mcp",
+              headers: {
+                Authorization: {
+                  value: "Bearer secret",
+                  sensitive: true,
+                },
+              },
+            },
+          ],
+        },
+      });
+
+      const github = next.mcp.servers[0];
+      const remoteDocs = next.mcp.servers[1];
+      assert.equal(github?.transport, "stdio");
+      assert.equal(remoteDocs?.transport, "http");
+      if (github?.transport !== "stdio" || remoteDocs?.transport !== "http") {
+        return;
+      }
+      assert.deepEqual(github.env.GITHUB_TOKEN, {
+        value: "ghp-secret",
+        sensitive: true,
+        valueRedacted: true,
+      });
+      assert.deepEqual(remoteDocs.headers.Authorization, {
+        value: "Bearer secret",
+        sensitive: true,
+        valueRedacted: true,
+      });
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(raw, "ghp-secret");
+      assert.notInclude(raw, "Bearer secret");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const persisted = JSON.parse(raw);
+      assert.equal(persisted.mcp.servers[0].env.GITHUB_TOKEN.value, "");
+      assert.equal(persisted.mcp.servers[1].headers.Authorization.value, "");
+
+      const roundTripped = yield* serverSettings.updateSettings({
+        mcp: {
+          servers: [
+            {
+              ...github,
+              env: {
+                GITHUB_TOKEN: {
+                  value: "",
+                  sensitive: true,
+                  valueRedacted: true,
+                },
+              },
+            },
+            {
+              ...remoteDocs,
+              headers: {
+                Authorization: {
+                  value: "",
+                  sensitive: true,
+                  valueRedacted: true,
+                },
+              },
+            },
+          ],
+        },
+      });
+
+      const roundTrippedGithub = roundTripped.mcp.servers[0];
+      const roundTrippedRemoteDocs = roundTripped.mcp.servers[1];
+      assert.equal(roundTrippedGithub?.transport, "stdio");
+      assert.equal(roundTrippedRemoteDocs?.transport, "http");
+      if (
+        roundTrippedGithub?.transport !== "stdio" ||
+        roundTrippedRemoteDocs?.transport !== "http"
+      ) {
+        return;
+      }
+      assert.equal(roundTrippedGithub.env.GITHUB_TOKEN?.value, "ghp-secret");
+      assert.equal(roundTrippedRemoteDocs.headers.Authorization?.value, "Bearer secret");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("stores, preserves, replaces, redacts, and removes the AssemblyAI API key", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      const saved = yield* serverSettings.updateSettings({
+        speechTranscription: {
+          assemblyAi: { apiKey: { value: "assembly-secret-one", valueRedacted: false } },
+        },
+      });
+      assert.deepEqual(saved.speechTranscription.assemblyAi.apiKey, {
+        value: "assembly-secret-one",
+        valueRedacted: true,
+      });
+      assert.deepEqual(redactServerSettingsForClient(saved).speechTranscription.assemblyAi.apiKey, {
+        value: "",
+        valueRedacted: true,
+      });
+
+      const firstRaw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(firstRaw, "assembly-secret-one");
+
+      const preserved = yield* serverSettings.updateSettings({
+        speechTranscription: {
+          assemblyAi: { apiKey: { value: "", valueRedacted: true } },
+        },
+      });
+      assert.equal(preserved.speechTranscription.assemblyAi.apiKey.value, "assembly-secret-one");
+
+      const replaced = yield* serverSettings.updateSettings({
+        speechTranscription: {
+          assemblyAi: { apiKey: { value: "assembly-secret-two", valueRedacted: false } },
+        },
+      });
+      assert.equal(replaced.speechTranscription.assemblyAi.apiKey.value, "assembly-secret-two");
+      const replacedRaw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(replacedRaw, "assembly-secret-one");
+      assert.notInclude(replacedRaw, "assembly-secret-two");
+
+      const reset = yield* serverSettings.updateSettings({
+        speechTranscription: {
+          assemblyAi: { apiKey: { value: "", valueRedacted: false } },
+        },
+      });
+      assert.deepEqual(reset.speechTranscription.assemblyAi.apiKey, { value: "" });
+
+      const afterResetRoundTrip = yield* serverSettings.updateSettings({
+        speechTranscription: {
+          assemblyAi: { apiKey: { value: "", valueRedacted: true } },
+        },
+      });
+      assert.equal(afterResetRoundTrip.speechTranscription.assemblyAi.apiKey.value, "");
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 });

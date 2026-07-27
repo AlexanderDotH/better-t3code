@@ -56,6 +56,10 @@ import {
   OrchestrationDispatchCommandError,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetFullThreadDiffInput,
+  OrchestrationExportThreadTranscriptInput,
+  OrchestrationThreadTranscriptExport,
+  OrchestrationThreadTranscriptExportError,
+  OrchestrationThreadTranscriptNotFoundError,
   OrchestrationGetSnapshotError,
   OrchestrationSearchThreadsError,
   OrchestrationSearchThreadsInput,
@@ -83,6 +87,39 @@ import {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project.ts";
+import {
+  McpConfigError,
+  McpCreateInput,
+  McpCursorJsonResult,
+  McpDeleteInput,
+  McpDiscoverImportSourcesInput,
+  McpDiscoverImportSourcesResult,
+  McpExportCursorJsonInput,
+  McpImportCursorJsonInput,
+  McpImportSourcesInput,
+  McpListInput,
+  McpListResult,
+  McpMutationResult,
+  McpProviderStatusInput,
+  McpProviderStatusResult,
+  McpSetEnabledInput,
+  McpUpdateInput,
+} from "./mcp.ts";
+import {
+  SkillCreateInput,
+  SkillDeleteInput,
+  SkillDiscoverImportSourcesInput,
+  SkillDiscoverImportSourcesResult,
+  SkillEngineError,
+  SkillImportSourcesInput,
+  SkillImportSourcesResult,
+  SkillListInput,
+  SkillListResult,
+  SkillMutationResult,
+  SkillRenameInput,
+  SkillSetEnabledInput,
+  SkillUpdateInput,
+} from "./skills.ts";
 import {
   TerminalAttachInput,
   TerminalAttachStreamEvent,
@@ -121,6 +158,8 @@ import {
 import {
   ServerConfigStreamEvent,
   ServerConfig,
+  AssemblyAiStreamingTokenError,
+  AssemblyAiStreamingTokenResult,
   ServerProviderUpdateError,
   ServerProviderUpdateInput,
   ServerLifecycleStreamEvent,
@@ -148,6 +187,16 @@ import {
 } from "./resourceTelemetry.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 import {
+  ImprovePromptInput,
+  ProjectSpeechProfile,
+  ProjectSpeechProfileError,
+  ProjectSpeechProfileInput,
+  ProjectSpeechProfileListResult,
+  ProjectTextTransformError,
+  ProjectTextTransformResult,
+  TranslateTranscriptInput,
+} from "./speech.ts";
+import {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
   SourceControlDiscoveryResult,
@@ -158,6 +207,13 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  T3ChatImportDiscoverInput,
+  T3ChatImportDiscoverResult,
+  T3ChatImportError,
+  T3ChatImportRunInput,
+  T3ChatImportRunResult,
+} from "./t3ChatImport.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -226,6 +282,13 @@ export const WS_METHODS = {
   serverRemoveKeybinding: "server.removeKeybinding",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
+  serverCreateAssemblyAiStreamingToken: "server.createAssemblyAiStreamingToken",
+  speechGetProjectProfile: "speech.getProjectProfile",
+  speechListProjectProfiles: "speech.listProjectProfiles",
+  speechIndexProject: "speech.indexProject",
+  speechCreateBasicProjectProfile: "speech.createBasicProjectProfile",
+  speechTranslateTranscript: "speech.translateTranscript",
+  promptImprove: "prompt.improve",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
@@ -240,6 +303,32 @@ export const WS_METHODS = {
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
+
+  // Local T3 instance chat import
+  chatImportDiscover: "chatImport.discover",
+  chatImportRun: "chatImport.run",
+
+  // Skills
+  skillsList: "skills.list",
+  skillsDiscoverImportSources: "skills.discoverImportSources",
+  skillsImportSources: "skills.importSources",
+  skillsCreate: "skills.create",
+  skillsUpdate: "skills.update",
+  skillsRename: "skills.rename",
+  skillsDelete: "skills.delete",
+  skillsSetEnabled: "skills.setEnabled",
+
+  // MCP server settings
+  mcpList: "mcp.list",
+  mcpDiscoverImportSources: "mcp.discoverImportSources",
+  mcpCreate: "mcp.create",
+  mcpUpdate: "mcp.update",
+  mcpDelete: "mcp.delete",
+  mcpSetEnabled: "mcp.setEnabled",
+  mcpImportCursorJson: "mcp.importCursorJson",
+  mcpImportSources: "mcp.importSources",
+  mcpExportCursorJson: "mcp.exportCursorJson",
+  mcpProviderStatus: "mcp.providerStatus",
 
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
@@ -331,6 +420,58 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
+export const WsServerCreateAssemblyAiStreamingTokenRpc = Rpc.make(
+  WS_METHODS.serverCreateAssemblyAiStreamingToken,
+  {
+    payload: ProjectSpeechProfileInput,
+    success: AssemblyAiStreamingTokenResult,
+    error: Schema.Union([
+      AssemblyAiStreamingTokenError,
+      ProjectSpeechProfileError,
+      EnvironmentAuthorizationError,
+    ]),
+  },
+);
+
+export const WsSpeechGetProjectProfileRpc = Rpc.make(WS_METHODS.speechGetProjectProfile, {
+  payload: ProjectSpeechProfileInput,
+  success: Schema.NullOr(ProjectSpeechProfile),
+  error: Schema.Union([ProjectSpeechProfileError, EnvironmentAuthorizationError]),
+});
+
+export const WsSpeechListProjectProfilesRpc = Rpc.make(WS_METHODS.speechListProjectProfiles, {
+  payload: Schema.Struct({}),
+  success: ProjectSpeechProfileListResult,
+  error: Schema.Union([ProjectSpeechProfileError, EnvironmentAuthorizationError]),
+});
+
+export const WsSpeechIndexProjectRpc = Rpc.make(WS_METHODS.speechIndexProject, {
+  payload: ProjectSpeechProfileInput,
+  success: ProjectSpeechProfile,
+  error: Schema.Union([ProjectSpeechProfileError, EnvironmentAuthorizationError]),
+});
+
+export const WsSpeechCreateBasicProjectProfileRpc = Rpc.make(
+  WS_METHODS.speechCreateBasicProjectProfile,
+  {
+    payload: ProjectSpeechProfileInput,
+    success: ProjectSpeechProfile,
+    error: Schema.Union([ProjectSpeechProfileError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsSpeechTranslateTranscriptRpc = Rpc.make(WS_METHODS.speechTranslateTranscript, {
+  payload: TranslateTranscriptInput,
+  success: ProjectTextTransformResult,
+  error: Schema.Union([ProjectTextTransformError, EnvironmentAuthorizationError]),
+});
+
+export const WsPromptImproveRpc = Rpc.make(WS_METHODS.promptImprove, {
+  payload: ImprovePromptInput,
+  success: ProjectTextTransformResult,
+  error: Schema.Union([ProjectTextTransformError, EnvironmentAuthorizationError]),
+});
+
 export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
   payload: Schema.Struct({}),
   success: SourceControlDiscoveryResult,
@@ -406,6 +547,126 @@ export const WsServerGetBackgroundPolicyRpc = Rpc.make(WS_METHODS.serverGetBackg
   payload: Schema.Struct({}),
   success: BackgroundPolicySnapshot,
   error: EnvironmentAuthorizationError,
+});
+
+export const WsChatImportDiscoverRpc = Rpc.make(WS_METHODS.chatImportDiscover, {
+  payload: T3ChatImportDiscoverInput,
+  success: T3ChatImportDiscoverResult,
+  error: Schema.Union([T3ChatImportError, EnvironmentAuthorizationError]),
+});
+
+export const WsChatImportRunRpc = Rpc.make(WS_METHODS.chatImportRun, {
+  payload: T3ChatImportRunInput,
+  success: T3ChatImportRunResult,
+  error: Schema.Union([T3ChatImportError, EnvironmentAuthorizationError]),
+});
+
+export const WsSkillsListRpc = Rpc.make(WS_METHODS.skillsList, {
+  payload: SkillListInput,
+  success: SkillListResult,
+  error: Schema.Union([SkillEngineError, EnvironmentAuthorizationError]),
+});
+
+export const WsSkillsDiscoverImportSourcesRpc = Rpc.make(WS_METHODS.skillsDiscoverImportSources, {
+  payload: SkillDiscoverImportSourcesInput,
+  success: SkillDiscoverImportSourcesResult,
+  error: Schema.Union([SkillEngineError, EnvironmentAuthorizationError]),
+});
+
+export const WsSkillsImportSourcesRpc = Rpc.make(WS_METHODS.skillsImportSources, {
+  payload: SkillImportSourcesInput,
+  success: SkillImportSourcesResult,
+  error: Schema.Union([SkillEngineError, EnvironmentAuthorizationError]),
+});
+
+export const WsSkillsCreateRpc = Rpc.make(WS_METHODS.skillsCreate, {
+  payload: SkillCreateInput,
+  success: SkillMutationResult,
+  error: Schema.Union([SkillEngineError, EnvironmentAuthorizationError]),
+});
+
+export const WsSkillsUpdateRpc = Rpc.make(WS_METHODS.skillsUpdate, {
+  payload: SkillUpdateInput,
+  success: SkillMutationResult,
+  error: Schema.Union([SkillEngineError, EnvironmentAuthorizationError]),
+});
+
+export const WsSkillsRenameRpc = Rpc.make(WS_METHODS.skillsRename, {
+  payload: SkillRenameInput,
+  success: SkillMutationResult,
+  error: Schema.Union([SkillEngineError, EnvironmentAuthorizationError]),
+});
+
+export const WsSkillsDeleteRpc = Rpc.make(WS_METHODS.skillsDelete, {
+  payload: SkillDeleteInput,
+  success: SkillListResult,
+  error: Schema.Union([SkillEngineError, EnvironmentAuthorizationError]),
+});
+
+export const WsSkillsSetEnabledRpc = Rpc.make(WS_METHODS.skillsSetEnabled, {
+  payload: SkillSetEnabledInput,
+  success: SkillMutationResult,
+  error: Schema.Union([SkillEngineError, EnvironmentAuthorizationError]),
+});
+
+export const WsMcpListRpc = Rpc.make(WS_METHODS.mcpList, {
+  payload: McpListInput,
+  success: McpListResult,
+  error: Schema.Union([McpConfigError, EnvironmentAuthorizationError]),
+});
+
+export const WsMcpDiscoverImportSourcesRpc = Rpc.make(WS_METHODS.mcpDiscoverImportSources, {
+  payload: McpDiscoverImportSourcesInput,
+  success: McpDiscoverImportSourcesResult,
+  error: Schema.Union([McpConfigError, EnvironmentAuthorizationError]),
+});
+
+export const WsMcpCreateRpc = Rpc.make(WS_METHODS.mcpCreate, {
+  payload: McpCreateInput,
+  success: McpMutationResult,
+  error: Schema.Union([McpConfigError, EnvironmentAuthorizationError]),
+});
+
+export const WsMcpUpdateRpc = Rpc.make(WS_METHODS.mcpUpdate, {
+  payload: McpUpdateInput,
+  success: McpMutationResult,
+  error: Schema.Union([McpConfigError, EnvironmentAuthorizationError]),
+});
+
+export const WsMcpDeleteRpc = Rpc.make(WS_METHODS.mcpDelete, {
+  payload: McpDeleteInput,
+  success: McpMutationResult,
+  error: Schema.Union([McpConfigError, EnvironmentAuthorizationError]),
+});
+
+export const WsMcpSetEnabledRpc = Rpc.make(WS_METHODS.mcpSetEnabled, {
+  payload: McpSetEnabledInput,
+  success: McpMutationResult,
+  error: Schema.Union([McpConfigError, EnvironmentAuthorizationError]),
+});
+
+export const WsMcpImportCursorJsonRpc = Rpc.make(WS_METHODS.mcpImportCursorJson, {
+  payload: McpImportCursorJsonInput,
+  success: McpMutationResult,
+  error: Schema.Union([McpConfigError, EnvironmentAuthorizationError]),
+});
+
+export const WsMcpImportSourcesRpc = Rpc.make(WS_METHODS.mcpImportSources, {
+  payload: McpImportSourcesInput,
+  success: McpMutationResult,
+  error: Schema.Union([McpConfigError, EnvironmentAuthorizationError]),
+});
+
+export const WsMcpExportCursorJsonRpc = Rpc.make(WS_METHODS.mcpExportCursorJson, {
+  payload: McpExportCursorJsonInput,
+  success: McpCursorJsonResult,
+  error: Schema.Union([McpConfigError, EnvironmentAuthorizationError]),
+});
+
+export const WsMcpProviderStatusRpc = Rpc.make(WS_METHODS.mcpProviderStatus, {
+  payload: McpProviderStatusInput,
+  success: McpProviderStatusResult,
+  error: Schema.Union([McpConfigError, EnvironmentAuthorizationError]),
 });
 
 export const WsSourceControlLookupRepositoryRpc = Rpc.make(
@@ -698,6 +959,18 @@ export const WsOrchestrationSearchThreadsRpc = Rpc.make(ORCHESTRATION_WS_METHODS
   error: Schema.Union([OrchestrationSearchThreadsError, EnvironmentAuthorizationError]),
 });
 
+export const WsOrchestrationExportThreadTranscriptRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.exportThreadTranscript,
+  {
+    payload: OrchestrationExportThreadTranscriptInput,
+    success: OrchestrationThreadTranscriptExport,
+    error: Schema.Union([
+      OrchestrationThreadTranscriptNotFoundError,
+      OrchestrationThreadTranscriptExportError,
+      EnvironmentAuthorizationError,
+    ]),
+  },
+);
 export const WsOrchestrationGetArchivedShellSnapshotRpc = Rpc.make(
   ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot,
   {
@@ -784,6 +1057,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsServerCreateAssemblyAiStreamingTokenRpc,
+  WsSpeechGetProjectProfileRpc,
+  WsSpeechListProjectProfilesRpc,
+  WsSpeechIndexProjectRpc,
+  WsSpeechCreateBasicProjectProfileRpc,
+  WsSpeechTranslateTranscriptRpc,
+  WsPromptImproveRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
@@ -796,6 +1076,26 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetBackgroundPolicyRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
+  WsChatImportDiscoverRpc,
+  WsChatImportRunRpc,
+  WsSkillsListRpc,
+  WsSkillsDiscoverImportSourcesRpc,
+  WsSkillsImportSourcesRpc,
+  WsSkillsCreateRpc,
+  WsSkillsUpdateRpc,
+  WsSkillsRenameRpc,
+  WsSkillsDeleteRpc,
+  WsSkillsSetEnabledRpc,
+  WsMcpListRpc,
+  WsMcpDiscoverImportSourcesRpc,
+  WsMcpCreateRpc,
+  WsMcpUpdateRpc,
+  WsMcpDeleteRpc,
+  WsMcpSetEnabledRpc,
+  WsMcpImportCursorJsonRpc,
+  WsMcpImportSourcesRpc,
+  WsMcpExportCursorJsonRpc,
+  WsMcpProviderStatusRpc,
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
@@ -849,6 +1149,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,
   WsOrchestrationSearchThreadsRpc,
+  WsOrchestrationExportThreadTranscriptRpc,
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,

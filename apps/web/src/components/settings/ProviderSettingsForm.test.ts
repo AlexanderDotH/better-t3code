@@ -37,6 +37,18 @@ describe("ProviderSettingsForm helpers", () => {
     });
   });
 
+  it("labels Hyperagent as an OpenCode-backed MCP proxy", () => {
+    const hyperagent = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("hyperagent")];
+
+    expect(hyperagent).toMatchObject({
+      label: "Hyperagent",
+      badgeLabel: "MCP Proxy",
+    });
+    expect(deriveProviderSettingsFields(hyperagent!).map((field) => field.key)).toContain(
+      "serverUrl",
+    );
+  });
+
   it("preserves unknown config keys while omitting empty configurable fields", () => {
     const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")];
     expect(opencode).toBeDefined();

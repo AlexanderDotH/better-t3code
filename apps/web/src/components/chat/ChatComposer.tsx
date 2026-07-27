@@ -18,7 +18,10 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
-import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import {
+  connectionStatusTitle,
+  type EnvironmentConnectionPresentation,
+} from "@t3tools/client-runtime/connection";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
@@ -42,7 +45,11 @@ import {
   replaceTextRange,
   shouldSubmitComposerOnEnter,
 } from "../../composer-logic";
-import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
+import {
+  deriveComposerSendState,
+  readFileAsDataUrl,
+  resolveSpeechEnvironmentId,
+} from "../ChatView.logic";
 import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
@@ -205,6 +212,12 @@ import { formatProviderSkillDisplayName } from "../../providerSkillPresentation"
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
+import { useAssemblyAiDictation } from "../../hooks/useAssemblyAiDictation";
+import {
+  createAssemblyAiStreamingTokenForEnvironment,
+  translateSpeechTranscriptForEnvironment,
+} from "../../environmentApi";
+import { VoiceDictationControl } from "./VoiceDictationControl";
 
 const runtimeModeConfig: Record<
   RuntimeMode,
@@ -577,6 +590,7 @@ export interface ChatComposerProps {
   keybindings: ResolvedKeybindingsConfig;
   terminalOpen: boolean;
   gitCwd: string | null;
+  voiceInputConfigured: boolean;
 
   // Refs the parent needs kept in sync
   promptRef: React.RefObject<string>;
@@ -629,7 +643,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     routeThreadRef,
     draftId,
     activeThreadId,
-    activeThreadEnvironmentId: _activeThreadEnvironmentId,
+    activeThreadEnvironmentId,
     activeThread,
     isServerThread: _isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
@@ -668,6 +682,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     keybindings,
     terminalOpen,
     gitCwd,
+    voiceInputConfigured,
     promptRef,
     composerRef,
     composerImagesRef,
@@ -870,6 +885,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedProviderStatus = useMemo(
     () => selectedProviderEntry?.snapshot ?? null,
     [selectedProviderEntry],
+  );
+  const selectedProviderSkills = useMemo(
+    () => selectedProviderStatus?.skills ?? [],
+    [selectedProviderStatus?.skills],
   );
   const selectedProviderModels = useMemo<ReadonlyArray<ServerProvider["models"][number]>>(
     () => selectedProviderEntry?.models ?? [],
@@ -1094,30 +1113,51 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           description: command.description ?? command.input?.hint ?? "Run provider command",
         }),
       );
+      const skillItems = searchProviderSkills(selectedProviderSkills, composerTrigger.query).map(
+        (skill) => ({
+          id: `skill:${selectedProvider}:${skill.name}`,
+          type: "skill" as const,
+          provider: selectedProvider,
+          skill,
+          label: `/${skill.name}`,
+          description:
+            skill.shortDescription ??
+            skill.description ??
+            `${formatProviderSkillDisplayName(skill)} skill`,
+        }),
+      );
       const query = composerTrigger.query.trim().toLowerCase();
-      const slashCommandItems = [...builtInSlashCommandItems, ...providerSlashCommandItems];
+      const slashCommandItems = [
+        ...builtInSlashCommandItems,
+        ...providerSlashCommandItems,
+        ...skillItems,
+      ];
       if (!query) {
         return slashCommandItems;
       }
       return searchSlashCommandItems(slashCommandItems, query);
     }
     if (composerTrigger.kind === "skill") {
-      return searchProviderSkills(selectedProviderStatus?.skills ?? [], composerTrigger.query).map(
-        (skill) => ({
-          id: `skill:${selectedProvider}:${skill.name}`,
-          type: "skill" as const,
-          provider: selectedProvider,
-          skill,
-          label: formatProviderSkillDisplayName(skill),
-          description:
-            skill.shortDescription ??
-            skill.description ??
-            (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
-        }),
-      );
+      return searchProviderSkills(selectedProviderSkills, composerTrigger.query).map((skill) => ({
+        id: `skill:${selectedProvider}:${skill.name}`,
+        type: "skill" as const,
+        provider: selectedProvider,
+        skill,
+        label: formatProviderSkillDisplayName(skill),
+        description:
+          skill.shortDescription ??
+          skill.description ??
+          (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+      }));
     }
     return [];
-  }, [composerTrigger, selectedProvider, selectedProviderStatus, workspaceEntries.entries]);
+  }, [
+    composerTrigger,
+    selectedProvider,
+    selectedProviderSkills,
+    selectedProviderStatus,
+    workspaceEntries,
+  ]);
 
   const composerMenuOpen = Boolean(composerTrigger);
   const composerMenuSearchKey = composerTrigger
@@ -1731,7 +1771,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       if (item.type === "skill") {
-        const replacement = `$${item.skill.name} `;
+        const replacement =
+          trigger.kind === "slash-command" ? `/${item.skill.name} ` : `$${item.skill.name} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
           trigger.rangeEnd,
@@ -1820,9 +1861,71 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     showPlanFollowUpPrompt,
   ]);
 
+  const voiceLifecycleKey =
+    typeof composerDraftTarget === "string"
+      ? `draft:${composerDraftTarget}`
+      : `thread:${composerDraftTarget.environmentId}:${composerDraftTarget.threadId}`;
+  const voiceEnvironmentId = resolveSpeechEnvironmentId(environmentId, activeThreadEnvironmentId);
+  const getVoiceDraftSnapshot = useCallback(
+    () => ({ text: promptRef.current, cursor: composerCursor }),
+    [composerCursor, promptRef],
+  );
+  const applyVoiceDraftSnapshot = useCallback(
+    ({ text, cursor }: { readonly text: string; readonly cursor: number }) => {
+      const nextCursor = clampCollapsedComposerCursor(text, cursor);
+      onPromptChange(
+        text,
+        nextCursor,
+        expandCollapsedComposerCursor(text, nextCursor),
+        false,
+        composerTerminalContextsRef.current.map((context) => context.id),
+      );
+    },
+    [composerTerminalContextsRef, onPromptChange],
+  );
+  const reportVoiceNotice = useCallback(
+    ({ title, error }: { readonly title: string; readonly error: Error }) => {
+      toastManager.add({ type: "error", title, description: error.message });
+    },
+    [],
+  );
+  const createVoiceStreamingToken = useCallback(() => {
+    if (!activeThread) {
+      return Promise.reject(new Error("Project context is unavailable for voice input."));
+    }
+    return createAssemblyAiStreamingTokenForEnvironment(voiceEnvironmentId, activeThread.projectId);
+  }, [activeThread, voiceEnvironmentId]);
+  const transformVoiceTranscript = useCallback(
+    async (text: string) => {
+      if (!activeThread) {
+        throw new Error("Project context is unavailable for voice translation.");
+      }
+      const result = await translateSpeechTranscriptForEnvironment(voiceEnvironmentId, {
+        projectId: activeThread.projectId,
+        text,
+      });
+      return result.text;
+    },
+    [activeThread, voiceEnvironmentId],
+  );
+  const voiceDictation = useAssemblyAiDictation({
+    configured: voiceInputConfigured,
+    lifecycleKey: voiceLifecycleKey,
+    getDraftSnapshot: getVoiceDraftSnapshot,
+    applyDraftSnapshot: applyVoiceDraftSnapshot,
+    onNotice: reportVoiceNotice,
+    createToken: createVoiceStreamingToken,
+    ...(settings.voiceInputOutputLanguage === "english"
+      ? { transformTranscript: transformVoiceTranscript }
+      : {}),
+  });
+  const voiceRecordingState = voiceDictation.state;
+  const voiceRecordingActive = voiceDictation.active;
+  const startVoiceRecording = voiceDictation.start;
+  const stopVoiceRecording = voiceDictation.stop;
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }) => {
-      if (noProviderAvailable || isSendDisabled) {
+      if (noProviderAvailable || isSendDisabled || voiceRecordingActive) {
         event?.preventDefault();
         return;
       }
@@ -1851,8 +1954,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       noProviderAvailable,
       onSend,
       shouldBlurMobileComposerOnSubmit,
+      voiceRecordingActive,
     ],
   );
+
   const expandMobileComposer = useCallback(() => {
     if (composerBlurFrameRef.current !== null) {
       window.cancelAnimationFrame(composerBlurFrameRef.current);
@@ -2843,7 +2948,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               <button
                 type="button"
                 className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/90 text-primary-foreground disabled:opacity-30"
-                disabled={collapsedComposerPrimaryActionDisabled}
+                disabled={collapsedComposerPrimaryActionDisabled || voiceRecordingActive}
                 aria-label={collapsedComposerPrimaryActionLabel}
                 onPointerDown={(event) => event.preventDefault()}
                 onClick={(event) => {
@@ -3048,7 +3153,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     ? composerTerminalContexts
                     : []
                 }
-                skills={selectedProviderStatus?.skills ?? []}
+                skills={selectedProviderSkills}
                 {...(showMobilePendingAnswerActions ? { className: "max-sm:pb-11" } : {})}
                 onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                 onChange={onPromptChange}
@@ -3065,11 +3170,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           ? "Choose a project above to start a thread"
                           : noProviderAvailable
                             ? "Enable a provider in Settings to send a message"
-                            : phase === "disconnected"
-                              ? "Ask for follow-up changes or attach images"
-                              : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                            : environmentUnavailable
+                              ? `${environmentUnavailable.label}: ${connectionStatusTitle(
+                                  environmentUnavailable.connection,
+                                )}`
+                              : phase === "disconnected"
+                                ? "Ask for follow-up changes or attach images"
+                                : "Ask anything, @tag files/folders, or / for commands and skills"
                 }
-                disabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
+                disabled={
+                  isConnecting ||
+                  voiceRecordingActive ||
+                  isComposerApprovalState ||
+                  projectSelectionRequired ||
+                  (environmentUnavailable !== null && activePendingProgress === null)
+                }
               />
               {showMobilePendingAnswerActions ? (
                 <div
@@ -3119,6 +3234,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-2.5 pb-2.5 sm:px-3 sm:pb-3",
                 pendingUserInputs.length > 0 && "pt-2",
                 isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
+                voiceRecordingActive && "gap-3",
                 showMobilePendingAnswerActions && "hidden sm:flex",
               )}
             >
@@ -3205,6 +3321,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 }
                 className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
               >
+                {voiceInputConfigured || voiceRecordingActive ? (
+                  <VoiceDictationControl
+                    state={voiceRecordingState}
+                    audioWaveform={voiceDictation.audioWaveform}
+                    disabled={
+                      isConnecting ||
+                      isSendBusy ||
+                      isSendDisabled ||
+                      noProviderAvailable ||
+                      projectSelectionRequired ||
+                      phase === "running" ||
+                      isComposerApprovalState ||
+                      environmentUnavailable !== null ||
+                      pendingUserInputs.length > 0
+                    }
+                    onStart={startVoiceRecording}
+                    onStop={stopVoiceRecording}
+                  />
+                ) : null}
                 <ComposerFooterPrimaryActions
                   compact={isComposerPrimaryActionsCompact}
                   activeContextWindow={activeContextWindow}
@@ -3213,7 +3348,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   isRunning={phase === "running"}
                   showPlanFollowUpPrompt={pendingUserInputs.length === 0 && showPlanFollowUpPrompt}
                   promptHasText={prompt.trim().length > 0}
-                  isSendBusy={isSendBusy}
+                  isSendBusy={isSendBusy || voiceRecordingActive}
                   sendDisabledReason={sendDisabledReason}
                   isConnecting={isConnecting}
                   isEnvironmentUnavailable={

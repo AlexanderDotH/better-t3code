@@ -6,6 +6,8 @@ import {
   type Agent,
   type FilePartInput,
   type Model,
+  type McpLocalConfig,
+  type McpRemoteConfig,
   type OpencodeClient,
   type PermissionRuleset,
   type ProviderListResponse,
@@ -40,6 +42,8 @@ const OPENCODE_EMPTY_CONFIG_CONTENT = "{}";
 const OPENCODE_SERVER_READY_PREFIX = "opencode server listening";
 const DEFAULT_OPENCODE_SERVER_TIMEOUT_MS = 30_000;
 const DEFAULT_HOSTNAME = "127.0.0.1";
+type OpenCodeMcpConfig = Record<string, McpLocalConfig | McpRemoteConfig>;
+
 export interface OpenCodeServerProcess {
   readonly url: string;
   readonly exitCode: Effect.Effect<number, never>;
@@ -118,6 +122,7 @@ export interface OpenCodeRuntimeShape {
   readonly startOpenCodeServerProcess: (input: {
     readonly binaryPath: string;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly mcpServers?: OpenCodeMcpConfig;
     readonly port?: number;
     readonly hostname?: string;
     readonly timeoutMs?: number;
@@ -131,6 +136,7 @@ export interface OpenCodeRuntimeShape {
     readonly binaryPath: string;
     readonly serverUrl?: string | null;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly mcpServers?: OpenCodeMcpConfig;
     readonly port?: number;
     readonly hostname?: string;
     readonly timeoutMs?: number;
@@ -453,6 +459,11 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       const timeoutMs = input.timeoutMs ?? DEFAULT_OPENCODE_SERVER_TIMEOUT_MS;
       const args = ["serve", `--hostname=${hostname}`, `--port=${port}`];
       const spawnCommand = yield* resolveCommand(input.binaryPath, args, input.environment);
+      const configContent =
+        input.mcpServers && Object.keys(input.mcpServers).length > 0
+          ? (encodeJsonStringForDiagnostics({ mcp: input.mcpServers }) ??
+            OPENCODE_EMPTY_CONFIG_CONTENT)
+          : OPENCODE_EMPTY_CONFIG_CONTENT;
 
       const child = yield* spawner
         .spawn(
@@ -460,8 +471,8 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
             detached: hostPlatform !== "win32",
             shell: spawnCommand.shell,
             env: {
-              ...input.environment,
-              OPENCODE_CONFIG_CONTENT: OPENCODE_EMPTY_CONFIG_CONTENT,
+              ...(input.environment ?? process.env),
+              OPENCODE_CONFIG_CONTENT: configContent,
             },
             extendEnv: input.environment === undefined,
           }),
@@ -602,6 +613,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     return startOpenCodeServerProcess({
       binaryPath: input.binaryPath,
       ...(input.environment !== undefined ? { environment: input.environment } : {}),
+      ...(input.mcpServers !== undefined ? { mcpServers: input.mcpServers } : {}),
       ...(input.port !== undefined ? { port: input.port } : {}),
       ...(input.hostname !== undefined ? { hostname: input.hostname } : {}),
       ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),

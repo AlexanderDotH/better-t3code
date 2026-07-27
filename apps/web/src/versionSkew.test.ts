@@ -39,6 +39,7 @@ describe("versionSkew", () => {
           serverVersion: "9.9.9",
           capabilities: {
             repositoryIdentity: true,
+            midChatProviderSwitching: false,
           },
         },
       }),
@@ -89,6 +90,7 @@ describe("versionSkew", () => {
           capabilities: {
             repositoryIdentity: true,
             serverSelfUpdate: "desktop-managed",
+            midChatProviderSwitching: false,
           },
         },
       }),

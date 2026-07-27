@@ -26,17 +26,19 @@ import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/co
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import {
+  codexAppServerArgs as codexConfiguredAppServerArgs,
+  resolveCodexLaunchArgs,
+} from "./codexLaunchArgs.ts";
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
+import { codexManagedFeatureArgs } from "../CodexProcessArgs.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
-
-const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
 
 const CODEX_PRESENTATION = {
   displayName: "Codex",
@@ -57,8 +59,8 @@ const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
   medium: "Medium",
   high: "High",
   xhigh: "Extra High",
-  max: "Max",
   ultra: "Ultra",
+  max: "Maximum",
 };
 
 const DEFAULT_SERVICE_TIER_ID = "default";
@@ -326,26 +328,25 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   // "CODEX_HOME points to '~/.codex_work', but that path does not exist".
   // Expand here for parity with `CodexTextGeneration`/`CodexSessionRuntime`.
   const resolvedHomePath = input.homePath ? expandHomePath(input.homePath) : undefined;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const environment = {
     ...input.environment,
     ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
   };
-  const spawnCommand = yield* resolveSpawnCommand(
-    input.binaryPath,
-    codexAppServerArgs(input.launchArgs),
-    {
-      env: environment,
-      extendEnv: true,
-    },
-  );
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const appServerArgs = [
+    ...codexConfiguredAppServerArgs(input.launchArgs),
+    ...codexManagedFeatureArgs(),
+  ];
+  const spawnCommand = yield* resolveSpawnCommand(input.binaryPath, appServerArgs, {
+    env: environment,
+    extendEnv: true,
+  });
   const child = yield* spawner
     .spawn(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         cwd: input.cwd,
         env: environment,
         extendEnv: true,
-        forceKillAfter: CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER,
         shell: spawnCommand.shell,
       }),
     )
@@ -353,7 +354,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       Effect.mapError(
         (cause) =>
           new CodexErrors.CodexAppServerSpawnError({
-            command: `${input.binaryPath} app-server`,
+            command: `${input.binaryPath} ${appServerArgs.join(" ")}`,
             cause,
           }),
       ),
