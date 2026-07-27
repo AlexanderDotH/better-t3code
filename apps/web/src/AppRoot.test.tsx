@@ -1,4 +1,5 @@
 import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -13,8 +14,15 @@ describe("AppRoot", () => {
     const root = AppRoot({ router: {} as AppRouter });
 
     expect(root.type).toBe(AppAtomRegistryProvider);
-    const children = Children.toArray(
+    const rootChildren = Children.toArray(
       (root as ReactElement<{ readonly children: ReactNode }>).props.children,
+    );
+    expect(rootChildren).toHaveLength(1);
+    const provider = rootChildren[0];
+    expect(isValidElement(provider) && provider.type).toBe(QueryClientProvider);
+
+    const children = Children.toArray(
+      (provider as ReactElement<{ readonly children: ReactNode }>).props.children,
     );
     expect(children).toHaveLength(3);
     expect(isValidElement(children[0]) && children[0].type).toBe(RouterProvider);

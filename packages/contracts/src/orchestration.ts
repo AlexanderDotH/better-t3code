@@ -26,6 +26,7 @@ export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
+  exportThreadTranscript: "orchestration.exportThreadTranscript",
   replayEvents: "orchestration.replayEvents",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   subscribeShell: "orchestration.subscribeShell",
@@ -477,6 +478,21 @@ export const OrchestrationSubscribeThreadInput = Schema.Struct({
 });
 export type OrchestrationSubscribeThreadInput = typeof OrchestrationSubscribeThreadInput.Type;
 
+export const OrchestrationExportThreadTranscriptInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationExportThreadTranscriptInput =
+  typeof OrchestrationExportThreadTranscriptInput.Type;
+
+export const OrchestrationThreadTranscriptExport = Schema.Struct({
+  formatVersion: Schema.Literal(1),
+  fileName: TrimmedNonEmptyString,
+  mediaType: Schema.Literal("text/markdown"),
+  generatedAt: IsoDateTime,
+  content: Schema.String,
+});
+export type OrchestrationThreadTranscriptExport = typeof OrchestrationThreadTranscriptExport.Type;
+
 export const OrchestrationThreadDetailSnapshot = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   thread: OrchestrationThread,
@@ -747,6 +763,13 @@ const ThreadMessageAssistantCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadMessageImportCommand = Schema.Struct({
+  type: Schema.Literal("thread.message.import"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  message: OrchestrationMessage,
+});
+
 const ThreadProposedPlanUpsertCommand = Schema.Struct({
   type: Schema.Literal("thread.proposed-plan.upsert"),
   commandId: CommandId,
@@ -789,6 +812,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
+  ThreadMessageImportCommand,
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
@@ -1253,6 +1277,10 @@ export const OrchestrationRpcSchemas = {
     input: OrchestrationGetFullThreadDiffInput,
     output: OrchestrationGetFullThreadDiffResult,
   },
+  exportThreadTranscript: {
+    input: OrchestrationExportThreadTranscriptInput,
+    output: OrchestrationThreadTranscriptExport,
+  },
   replayEvents: {
     input: OrchestrationReplayEventsInput,
     output: OrchestrationReplayEventsResult,
@@ -1297,6 +1325,25 @@ export class OrchestrationGetTurnDiffError extends Schema.TaggedErrorClass<Orche
 
 export class OrchestrationGetFullThreadDiffError extends Schema.TaggedErrorClass<OrchestrationGetFullThreadDiffError>()(
   "OrchestrationGetFullThreadDiffError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+export class OrchestrationThreadTranscriptNotFoundError extends Schema.TaggedErrorClass<OrchestrationThreadTranscriptNotFoundError>()(
+  "OrchestrationThreadTranscriptNotFoundError",
+  {
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return `Thread transcript not found: ${this.threadId}`;
+  }
+}
+
+export class OrchestrationThreadTranscriptExportError extends Schema.TaggedErrorClass<OrchestrationThreadTranscriptExportError>()(
+  "OrchestrationThreadTranscriptExportError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),

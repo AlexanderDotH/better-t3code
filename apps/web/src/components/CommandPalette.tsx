@@ -1,3 +1,4 @@
+/* eslint-disable react/no-unstable-nested-components */
 "use client";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";

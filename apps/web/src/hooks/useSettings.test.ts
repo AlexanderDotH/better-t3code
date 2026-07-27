@@ -34,4 +34,23 @@ describe("mergeEnvironmentSettings", () => {
     expect(settings.providerInstances).toBe(serverSettings.providerInstances);
     expect(settings.favorites).toBe(clientSettings.favorites);
   });
+
+  it("fills default provider settings when persisted server settings only contain provider instances", () => {
+    const hyperagentId = ProviderInstanceId.make("hyperagent");
+    const settings = mergeEnvironmentSettings(
+      {
+        providerInstances: {
+          [hyperagentId]: {
+            driver: ProviderDriverKind.make("hyperagent"),
+            enabled: true,
+          },
+        },
+      },
+      DEFAULT_CLIENT_SETTINGS,
+    );
+
+    expect(settings.providers.codex.enabled).toBe(true);
+    expect(settings.providers.claudeAgent.enabled).toBe(true);
+    expect(settings.providerInstances[hyperagentId]?.enabled).toBe(true);
+  });
 });

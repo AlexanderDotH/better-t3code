@@ -1363,6 +1363,10 @@ export function resolveDesktopProductName(version: string): string {
     : (desktopPackageJson.productName ?? "T3 Code");
 }
 
+export const DESKTOP_BACKEND_ASAR_UNPACK_PATTERNS = ["apps/server/dist/**"] as const;
+export const DESKTOP_MICROPHONE_USAGE_DESCRIPTION =
+  "T3 Code uses the microphone only while you are actively dictating a chat message.";
+
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -1417,6 +1421,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      extendInfo: {
+        NSMicrophoneUsageDescription: DESKTOP_MICROPHONE_USAGE_DESCRIPTION,
+      },
       protocols: [
         {
           name: "T3 Code",

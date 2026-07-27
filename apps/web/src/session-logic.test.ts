@@ -740,6 +740,28 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["task-progress", "task-complete"]);
   });
 
+  it("presents persisted provider reasoning with the existing thinking tone", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "reasoning-segment",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "reasoning.text",
+        summary: "Thinking",
+        tone: "info",
+        payload: { text: "Inspecting the complete provider reasoning." },
+      }),
+    ]);
+
+    expect(entries).toEqual([
+      expect.objectContaining({
+        id: "reasoning-segment",
+        label: "Thinking",
+        tone: "thinking",
+        detail: "Inspecting the complete provider reasoning.",
+      }),
+    ]);
+  });
+
   it("uses payload summary as label for task entries when available", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

@@ -6,6 +6,10 @@ import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 
 describe("searchSlashCommandItems", () => {
   const claudeDriver = ProviderDriverKind.make("claudeAgent");
+  type SlashSearchItem = Extract<
+    ComposerCommandItem,
+    { type: "slash-command" | "provider-slash-command" | "skill" }
+  >;
 
   it("moves exact provider command matches ahead of broader description matches", () => {
     const items = [
@@ -32,9 +36,7 @@ describe("searchSlashCommandItems", () => {
         label: "/frontend-design",
         description: "Create distinctive, production-grade frontend interfaces",
       },
-    ] satisfies Array<
-      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>
-    >;
+    ] satisfies Array<SlashSearchItem>;
 
     expect(searchSlashCommandItems(items, "ui").map((item) => item.id)).toEqual([
       "provider-slash-command:claudeAgent:ui",
@@ -60,12 +62,45 @@ describe("searchSlashCommandItems", () => {
         label: "/github",
         description: "General GitHub help",
       },
-    ] satisfies Array<
-      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>
-    >;
+    ] satisfies Array<SlashSearchItem>;
 
     expect(searchSlashCommandItems(items, "gfc").map((item) => item.id)).toEqual([
       "provider-slash-command:claudeAgent:gh-fix-ci",
+    ]);
+  });
+
+  it("matches skills by command name and display name", () => {
+    const items = [
+      {
+        id: "skill:codex:review-follow-up",
+        type: "skill",
+        provider: ProviderDriverKind.make("codex"),
+        skill: {
+          name: "review-follow-up",
+          displayName: "Review follow-up",
+          description: "Review follow-up changes",
+          path: "/tmp/skills/review-follow-up/SKILL.md",
+          scope: "user",
+          enabled: true,
+        },
+        label: "/review-follow-up",
+        description: "Review follow-up changes",
+      },
+      {
+        id: "provider-slash-command:claudeAgent:review",
+        type: "provider-slash-command",
+        provider: claudeDriver,
+        command: { name: "review" },
+        label: "/review",
+        description: "Run a generic review",
+      },
+    ] satisfies Array<SlashSearchItem>;
+
+    expect(searchSlashCommandItems(items, "rfu").map((item) => item.id)).toEqual([
+      "skill:codex:review-follow-up",
+    ]);
+    expect(searchSlashCommandItems(items, "Review follow").map((item) => item.id)).toEqual([
+      "skill:codex:review-follow-up",
     ]);
   });
 });

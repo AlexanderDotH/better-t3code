@@ -83,6 +83,12 @@ export function applyServerSettingsPatch(
     ...(patch.providerInstances !== undefined
       ? { providerInstances: patch.providerInstances }
       : {}),
+    ...(patch.mcp?.servers !== undefined
+      ? { mcp: { ...next.mcp, servers: patch.mcp.servers } }
+      : {}),
+    ...(patch.skills?.disabledSkillIds !== undefined
+      ? { skills: { ...next.skills, disabledSkillIds: patch.skills.disabledSkillIds } }
+      : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
   };
   if (!selectionPatch) {

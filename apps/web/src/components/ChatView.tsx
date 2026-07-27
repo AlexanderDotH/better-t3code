@@ -66,6 +66,12 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
+import {
+  createBasicProjectSpeechProfileForEnvironment,
+  getProjectSpeechProfileForEnvironment,
+  improvePromptForEnvironment,
+  indexProjectSpeechProfileForEnvironment,
+} from "../environmentApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
   collapseExpandedComposerCursor,
@@ -205,6 +211,10 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
+import {
+  ProjectSpeechPreindexDialog,
+  type ProjectSpeechPreindexDialogState,
+} from "./chat/ProjectSpeechPreindexDialog";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -230,9 +240,12 @@ import {
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  resolvePromptForSend,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
+  shouldOfferProjectSpeechPreindex,
+  threadHasStarted,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -298,6 +311,15 @@ type EnvironmentUnavailableState = {
 };
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
+
+interface ProjectSpeechPreindexDialogModel {
+  readonly draftKey: string;
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly projectTitle: string;
+  readonly state: ProjectSpeechPreindexDialogState;
+  readonly errorMessage?: string;
+}
 
 function eventPathContainsSelector(event: Event, selector: string): boolean {
   const path = event.composedPath();
@@ -1041,6 +1063,9 @@ function ChatViewContent(props: ChatViewProps) {
     routeKind === "server" ? store.threadLastVisitedAtById[routeThreadKey] : undefined,
   );
   const settings = useEnvironmentSettings(environmentId);
+  const assemblyAiApiKey = settings.speechTranscription.assemblyAi.apiKey;
+  const voiceInputConfigured =
+    assemblyAiApiKey.value.trim().length > 0 || assemblyAiApiKey.valueRedacted === true;
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
   );
@@ -1131,6 +1156,10 @@ function ChatViewContent(props: ChatViewProps) {
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
+  const [projectSpeechPreindexDialog, setProjectSpeechPreindexDialog] =
+    useState<ProjectSpeechPreindexDialogModel | null>(null);
+  const skippedSpeechPreindexDraftsRef = useRef(new Set<string>());
+  const [isImprovingPrompt, setIsImprovingPrompt] = useState(false);
   const [terminalUiLaunchContext, setTerminalUiLaunchContext] =
     useState<TerminalLaunchContext | null>(null);
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
@@ -1155,6 +1184,8 @@ function ChatViewContent(props: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightRef = useRef(false);
+  const activeRouteKeyRef = useRef(routeThreadKey);
+  activeRouteKeyRef.current = routeThreadKey;
   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
 
   useLayoutEffect(() => {
@@ -1381,6 +1412,130 @@ function ChatViewContent(props: ChatViewProps) {
     ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
     : null;
   const activeProject = useProject(activeProjectRef);
+  const activeThreadStarted = threadHasStarted(activeThread);
+  const speechPreindexDraftKey =
+    routeKind === "draft" && draftId && activeProject
+      ? `${activeProject.environmentId}:${activeProject.id}:${draftId}`
+      : null;
+  useEffect(() => {
+    if (
+      !activeProject ||
+      !speechPreindexDraftKey ||
+      skippedSpeechPreindexDraftsRef.current.has(speechPreindexDraftKey) ||
+      !shouldOfferProjectSpeechPreindex({
+        voiceInputConfigured,
+        routeKind,
+        hasProjectSpeechProfile: false,
+        hasStartedThread: activeThreadStarted,
+        prompt: promptRef.current,
+      })
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    void getProjectSpeechProfileForEnvironment(activeProject.environmentId, activeProject.id)
+      .then((profile) => {
+        if (
+          cancelled ||
+          skippedSpeechPreindexDraftsRef.current.has(speechPreindexDraftKey) ||
+          !shouldOfferProjectSpeechPreindex({
+            voiceInputConfigured,
+            routeKind,
+            hasProjectSpeechProfile: profile !== null,
+            hasStartedThread: activeThreadStarted,
+            prompt: promptRef.current,
+          })
+        ) {
+          return;
+        }
+        setProjectSpeechPreindexDialog((current) =>
+          current?.draftKey === speechPreindexDraftKey
+            ? current
+            : {
+                draftKey: speechPreindexDraftKey,
+                environmentId: activeProject.environmentId,
+                projectId: activeProject.id,
+                projectTitle: activeProject.title,
+                state: "idle",
+              },
+        );
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProject, activeThreadStarted, routeKind, speechPreindexDraftKey, voiceInputConfigured]);
+
+  const dismissProjectSpeechPreindexDialog = useCallback(() => {
+    if (projectSpeechPreindexDialog) {
+      skippedSpeechPreindexDraftsRef.current.add(projectSpeechPreindexDialog.draftKey);
+    }
+    setProjectSpeechPreindexDialog(null);
+  }, [projectSpeechPreindexDialog]);
+
+  const indexProjectSpeechProfile = useCallback(async () => {
+    const target = projectSpeechPreindexDialog;
+    if (!target || target.state === "indexing" || target.state === "creating-basic") return;
+    setProjectSpeechPreindexDialog((current) =>
+      current?.draftKey === target.draftKey ? { ...current, state: "indexing" } : current,
+    );
+    try {
+      await indexProjectSpeechProfileForEnvironment(target.environmentId, target.projectId);
+      setProjectSpeechPreindexDialog(null);
+    } catch (error) {
+      try {
+        await createBasicProjectSpeechProfileForEnvironment(target.environmentId, target.projectId);
+      } catch (basicError) {
+        setProjectSpeechPreindexDialog((current) =>
+          current?.draftKey === target.draftKey ? { ...current, state: "idle" } : current,
+        );
+        toastManager.add({
+          type: "error",
+          title: "Could not create speech context",
+          description:
+            basicError instanceof Error
+              ? basicError.message
+              : "Basic context could not be created.",
+        });
+        return;
+      }
+      setProjectSpeechPreindexDialog((current) =>
+        current?.draftKey === target.draftKey
+          ? {
+              ...current,
+              state: "error",
+              errorMessage:
+                error instanceof Error ? error.message : "Project indexing could not be completed.",
+            }
+          : current,
+      );
+    }
+  }, [projectSpeechPreindexDialog]);
+
+  const useBasicProjectSpeechProfile = useCallback(async () => {
+    const target = projectSpeechPreindexDialog;
+    if (!target || target.state === "indexing" || target.state === "creating-basic") return;
+    setProjectSpeechPreindexDialog((current) =>
+      current?.draftKey === target.draftKey ? { ...current, state: "creating-basic" } : current,
+    );
+    try {
+      await createBasicProjectSpeechProfileForEnvironment(target.environmentId, target.projectId);
+      setProjectSpeechPreindexDialog((current) =>
+        current?.draftKey === target.draftKey ? { ...current, state: "basic" } : current,
+      );
+    } catch (error) {
+      setProjectSpeechPreindexDialog((current) =>
+        current?.draftKey === target.draftKey ? { ...current, state: "idle" } : current,
+      );
+      toastManager.add({
+        type: "error",
+        title: "Could not create basic context",
+        description: error instanceof Error ? error.message : "Basic context could not be created.",
+      });
+    }
+  }, [projectSpeechPreindexDialog]);
   const activeEnvironmentShell = useEnvironmentQuery(
     activeThread ? environmentShell.stateAtom(activeThread.environmentId) : null,
   );
@@ -1623,16 +1778,19 @@ function ChatViewContent(props: ChatViewProps) {
     activeThread?.modelSelection.instanceId ??
     activeProject?.defaultModelSelection?.instanceId ??
     null;
-  const lockedProvider = deriveLockedProvider({
-    thread: activeThread,
-    selectedProvider: selectedProviderByThreadId,
-    threadProvider,
-  });
   // Once a thread selects an environment, never substitute the primary
   // environment's config while the selected environment is still loading.
   const serverConfig = activeThread
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
+  const allowMidChatProviderSwitching =
+    serverConfig?.environment.capabilities.midChatProviderSwitching === true;
+  const lockedProvider = deriveLockedProvider({
+    thread: activeThread,
+    selectedProvider: selectedProviderByThreadId,
+    threadProvider,
+    allowMidChatProviderSwitching,
+  });
   const versionMismatch = resolveServerConfigVersionMismatch(serverConfig);
   const versionMismatchDismissKey =
     versionMismatch && activeThread
@@ -3086,28 +3244,6 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       let result: AtomCommandResult<void, unknown> = AsyncResult.success(undefined);
-      if (
-        input.modelSelection !== undefined &&
-        (input.modelSelection.model !== serverThread.modelSelection.model ||
-          input.modelSelection.instanceId !== serverThread.modelSelection.instanceId ||
-          JSON.stringify(input.modelSelection.options ?? null) !==
-            JSON.stringify(serverThread.modelSelection.options ?? null))
-      ) {
-        result = mapAtomCommandResult(
-          await updateThreadMetadata({
-            environmentId,
-            input: {
-              threadId: input.threadId,
-              modelSelection: input.modelSelection,
-            },
-          }),
-          () => undefined,
-        );
-        if (result._tag === "Failure") {
-          return result;
-        }
-      }
-
       if (input.runtimeMode !== serverThread.runtimeMode) {
         result = mapAtomCommandResult(
           await setThreadRuntimeMode({
@@ -3140,13 +3276,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
       return result;
     },
-    [
-      environmentId,
-      serverThread,
-      setThreadInteractionMode,
-      setThreadRuntimeMode,
-      updateThreadMetadata,
-    ],
+    [environmentId, serverThread, setThreadInteractionMode, setThreadRuntimeMode],
   );
 
   // Debounce *showing* the scroll-to-bottom pill so it doesn't flash during
@@ -3880,6 +4010,7 @@ function ChatViewContent(props: ChatViewProps) {
     if (
       !activeThread ||
       isSendBusy ||
+      isImprovingPrompt ||
       isConnecting ||
       activeEnvironmentUnavailable ||
       sendInFlightRef.current
@@ -3981,6 +4112,39 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     sendInFlightRef.current = true;
+    let messagePromptForSend = promptForSend;
+    let titlePromptForSend = trimmed;
+    if (settings.improvePromptBeforeSend && trimmed.length > 0) {
+      setIsImprovingPrompt(true);
+      try {
+        messagePromptForSend = await resolvePromptForSend({
+          prompt: trimmed,
+          improve: async (text) =>
+            (
+              await improvePromptForEnvironment(activeThread.environmentId, {
+                projectId: activeThread.projectId,
+                text,
+              })
+            ).text,
+        });
+        titlePromptForSend = messagePromptForSend.trim();
+      } catch (error) {
+        if (activeRouteKeyRef.current === routeThreadKey) {
+          setThreadError(
+            threadIdForSend,
+            error instanceof Error ? error.message : "Could not improve the prompt.",
+          );
+        }
+        sendInFlightRef.current = false;
+        return;
+      } finally {
+        setIsImprovingPrompt(false);
+      }
+      if (activeRouteKeyRef.current !== routeThreadKey || promptRef.current !== promptForSend) {
+        sendInFlightRef.current = false;
+        return;
+      }
+    }
     beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
 
     const composerImagesSnapshot = [...composerImages];
@@ -3989,7 +4153,7 @@ function ChatViewContent(props: ChatViewProps) {
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
     const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
     const messageTextWithContexts = appendElementContextsToPrompt(
-      appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
+      appendTerminalContextsToPrompt(messagePromptForSend, composerTerminalContextsSnapshot),
       composerElementContextsSnapshot,
     );
     const messageTextWithPreviewAnnotations = composerPreviewAnnotationsSnapshot.reduce(
@@ -4078,7 +4242,7 @@ function ChatViewContent(props: ChatViewProps) {
         firstComposerImageName = firstComposerImage.name;
       }
     }
-    let titleSeed = trimmed;
+    let titleSeed = titlePromptForSend;
     if (!titleSeed) {
       if (firstComposerImageName) {
         titleSeed = `Image: ${firstComposerImageName}`;
@@ -4754,10 +4918,11 @@ function ChatViewContent(props: ChatViewProps) {
         currentModelSelection: activeThread.modelSelection,
         currentProviderInstanceId: activeThread.session?.providerInstanceId ?? null,
         nextModelSelection: { instanceId, model },
+        allowMidChatProviderSwitching,
       });
       return reason ? `${reason.description} Start a new thread to use this model.` : null;
     },
-    [activeThread, providerStatuses],
+    [activeThread, allowMidChatProviderSwitching, providerStatuses],
   );
 
   const onProviderModelSelect = useCallback(
@@ -4809,6 +4974,7 @@ function ChatViewContent(props: ChatViewProps) {
         currentModelSelection: activeThread.modelSelection,
         currentProviderInstanceId: activeThread.session?.providerInstanceId ?? null,
         nextModelSelection,
+        allowMidChatProviderSwitching,
       });
       if (modelChangeBlockReason) {
         toastManager.add({
@@ -4828,6 +4994,7 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [
       activeThread,
+      allowMidChatProviderSwitching,
       lockedProvider,
       scheduleComposerFocus,
       setComposerDraftModelSelection,
@@ -5049,6 +5216,8 @@ function ChatViewContent(props: ChatViewProps) {
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
+            transcriptAvailable={isServerThread}
+            activeTurnInProgress={isWorking || !latestTurnSettled}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}
             onUpdateProjectScript={updateProjectScript}
@@ -5155,7 +5324,7 @@ function ChatViewContent(props: ChatViewProps) {
                       isLocalDraftThread={isLocalDraftThread}
                       phase={phase}
                       isConnecting={isConnecting}
-                      isSendBusy={isSendBusy}
+                      isSendBusy={isSendBusy || isImprovingPrompt}
                       isPreparingWorktree={isPreparingWorktree}
                       environmentUnavailable={activeEnvironmentUnavailableState}
                       activePendingApproval={activePendingApproval}
@@ -5185,6 +5354,8 @@ function ChatViewContent(props: ChatViewProps) {
                       keybindings={keybindings}
                       terminalOpen={Boolean(terminalUiState.terminalOpen)}
                       gitCwd={gitCwd}
+                      projectCwd={activeProject?.workspaceRoot ?? null}
+                      voiceInputConfigured={voiceInputConfigured}
                       promptRef={promptRef}
                       composerImagesRef={composerImagesRef}
                       composerTerminalContextsRef={composerTerminalContextsRef}
@@ -5348,6 +5519,23 @@ function ChatViewContent(props: ChatViewProps) {
             {rightPanelContent}
           </RightPanelTabs>
         </RightPanelSheet>
+      ) : null}
+
+      {projectSpeechPreindexDialog ? (
+        <ProjectSpeechPreindexDialog
+          open={projectSpeechPreindexDialog.draftKey === speechPreindexDraftKey}
+          projectTitle={projectSpeechPreindexDialog.projectTitle}
+          state={projectSpeechPreindexDialog.state}
+          {...(projectSpeechPreindexDialog.errorMessage
+            ? { errorMessage: projectSpeechPreindexDialog.errorMessage }
+            : {})}
+          onIndex={() => void indexProjectSpeechProfile()}
+          onUseBasic={() => void useBasicProjectSpeechProfile()}
+          onSkip={dismissProjectSpeechPreindexDialog}
+          onOpenChange={(open) => {
+            if (!open) dismissProjectSpeechPreindexDialog();
+          }}
+        />
       ) : null}
 
       {expandedImage && (

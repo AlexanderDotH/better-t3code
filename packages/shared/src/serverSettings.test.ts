@@ -194,4 +194,24 @@ describe("serverSettings helpers", () => {
       config: { homePath: "~/.codex" },
     });
   });
+
+  it("replaces disabled skill ids instead of deep-merging stale values", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      skills: {
+        disabledSkillIds: [
+          "global:/tmp/t3/skills/review/SKILL.md",
+          "project:/tmp/repo/.t3code/skills/test/SKILL.md",
+        ],
+      },
+    };
+
+    expect(
+      applyServerSettingsPatch(current, {
+        skills: {
+          disabledSkillIds: ["global:/tmp/t3/skills/review/SKILL.md"],
+        },
+      }).skills.disabledSkillIds,
+    ).toEqual(["global:/tmp/t3/skills/review/SKILL.md"]);
+  });
 });

@@ -12,6 +12,7 @@ import {
   reorderProjects,
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
+  setSidebarOlderProjectsExpanded,
   setProjectExpanded,
   setThreadChangedFilesExpanded,
   type UiState,
@@ -21,6 +22,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
+    sidebarOlderProjectsExpanded: false,
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -140,6 +142,16 @@ describe("uiStateStore pure functions", () => {
       defaultAdvertisedEndpointKey: null,
     });
   });
+
+  it("updates the older-projects disclosure immutably and returns the same state for no-ops", () => {
+    const initialState = makeUiState();
+    const expanded = setSidebarOlderProjectsExpanded(initialState, true);
+
+    expect(expanded).not.toBe(initialState);
+    expect(expanded.sidebarOlderProjectsExpanded).toBe(true);
+    expect(initialState.sidebarOlderProjectsExpanded).toBe(false);
+    expect(setSidebarOlderProjectsExpanded(expanded, true)).toBe(expanded);
+  });
 });
 
 describe("parsePersistedState", () => {
@@ -168,6 +180,7 @@ describe("parsePersistedState", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      sidebarOlderProjectsExpanded: false,
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -178,6 +191,20 @@ describe("parsePersistedState", () => {
         },
       },
     });
+  });
+
+  it("hydrates only real older-projects disclosure booleans", () => {
+    expect(parsePersistedState({}).sidebarOlderProjectsExpanded).toBe(false);
+    expect(
+      parsePersistedState({ sidebarOlderProjectsExpanded: "true" as unknown as boolean })
+        .sidebarOlderProjectsExpanded,
+    ).toBe(false);
+    expect(
+      parsePersistedState({ sidebarOlderProjectsExpanded: true }).sidebarOlderProjectsExpanded,
+    ).toBe(true);
+    expect(
+      parsePersistedState({ sidebarOlderProjectsExpanded: false }).sidebarOlderProjectsExpanded,
+    ).toBe(false);
   });
 
   it("migrates legacy CWD project preferences into local alias keys", () => {
@@ -262,6 +289,7 @@ describe("uiStateStore persistence", () => {
         },
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
+      sidebarOlderProjectsExpanded: true,
     });
 
     persistState(state);
@@ -274,6 +302,7 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      sidebarOlderProjectsExpanded: true,
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -292,6 +321,13 @@ describe("uiStateStore persistence", () => {
         },
       },
     });
+
+    const collapsedState = makeUiState({ sidebarOlderProjectsExpanded: false });
+    persistState(collapsedState);
+    expect(
+      JSON.parse(localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}")
+        .sidebarOlderProjectsExpanded,
+    ).toBe(false);
   });
 
   it("drops the temporary expanded-only migration fallback when rewriting state", () => {

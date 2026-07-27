@@ -1,5 +1,5 @@
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { Thread } from "../types";
 import {
@@ -9,11 +9,14 @@ import {
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveLockedProvider,
   getStartedThreadModelChangeBlockReason,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolvePromptForSend,
   resolveSendEnvMode,
+  shouldOfferProjectSpeechPreindex,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
 
@@ -91,6 +94,63 @@ describe("buildThreadTurnInterruptInput", () => {
     expect(buildThreadTurnInterruptInput(makeThread({ session: readySession }))).toEqual({
       threadId,
     });
+  });
+});
+
+describe("shouldOfferProjectSpeechPreindex", () => {
+  const emptyDraft = {
+    voiceInputConfigured: true,
+    routeKind: "draft" as const,
+    hasProjectSpeechProfile: false,
+    hasStartedThread: false,
+    prompt: "",
+  };
+
+  it("offers setup for a configured empty local draft without a profile", () => {
+    expect(shouldOfferProjectSpeechPreindex(emptyDraft)).toBe(true);
+  });
+
+  it("does not offer setup when voice is unavailable or the draft is no longer empty", () => {
+    expect(shouldOfferProjectSpeechPreindex({ ...emptyDraft, voiceInputConfigured: false })).toBe(
+      false,
+    );
+    expect(shouldOfferProjectSpeechPreindex({ ...emptyDraft, routeKind: "server" })).toBe(false);
+    expect(shouldOfferProjectSpeechPreindex({ ...emptyDraft, hasProjectSpeechProfile: true })).toBe(
+      false,
+    );
+    expect(shouldOfferProjectSpeechPreindex({ ...emptyDraft, hasStartedThread: true })).toBe(false);
+    expect(shouldOfferProjectSpeechPreindex({ ...emptyDraft, prompt: "Already typing" })).toBe(
+      false,
+    );
+  });
+});
+
+describe("resolvePromptForSend", () => {
+  it("improves non-empty prompt text when a transform is configured", async () => {
+    const improve = vi.fn(async (prompt: string) => `Improved: ${prompt}`);
+
+    await expect(resolvePromptForSend({ prompt: "  fix the bug  ", improve })).resolves.toBe(
+      "Improved: fix the bug",
+    );
+    expect(improve).toHaveBeenCalledWith("fix the bug");
+  });
+
+  it("preserves the original prompt when improvement is disabled or text is empty", async () => {
+    const improve = vi.fn(async (prompt: string) => prompt);
+
+    await expect(resolvePromptForSend({ prompt: "  keep spacing  " })).resolves.toBe(
+      "  keep spacing  ",
+    );
+    await expect(resolvePromptForSend({ prompt: "   ", improve })).resolves.toBe("   ");
+    expect(improve).not.toHaveBeenCalled();
+  });
+
+  it("propagates improvement failures without returning replacement text", async () => {
+    const error = new Error("model unavailable");
+
+    await expect(
+      resolvePromptForSend({ prompt: "fix the bug", improve: async () => Promise.reject(error) }),
+    ).rejects.toBe(error);
   });
 });
 
@@ -180,6 +240,29 @@ describe("buildExpiredTerminalContextToastCopy", () => {
   });
 });
 
+describe("deriveLockedProvider", () => {
+  it("keeps started threads locked when capability is absent", () => {
+    expect(
+      deriveLockedProvider({
+        thread: makeThread({ session: readySession }),
+        selectedProvider: "codex",
+        threadProvider: "codex",
+      }),
+    ).toBe("codex");
+  });
+
+  it("unlocks started threads when mid-chat switching is supported", () => {
+    expect(
+      deriveLockedProvider({
+        thread: makeThread({ session: readySession }),
+        selectedProvider: "codex",
+        threadProvider: "codex",
+        allowMidChatProviderSwitching: true,
+      }),
+    ).toBeNull();
+  });
+});
+
 describe("getStartedThreadModelChangeBlockReason", () => {
   const providers = [
     {
@@ -221,6 +304,24 @@ describe("getStartedThreadModelChangeBlockReason", () => {
           instanceId: ProviderInstanceId.make("grok"),
           model: "grok-build",
         },
+      }),
+    ).toBeNull();
+  });
+
+  it("allows restricted model changes when mid-chat switching is supported", () => {
+    expect(
+      getStartedThreadModelChangeBlockReason({
+        providers,
+        hasStartedSession: true,
+        currentModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+        },
+        nextModelSelection: {
+          instanceId: ProviderInstanceId.make("grok"),
+          model: "grok-build",
+        },
+        allowMidChatProviderSwitching: true,
       }),
     ).toBeNull();
   });

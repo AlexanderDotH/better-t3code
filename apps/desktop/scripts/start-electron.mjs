@@ -4,8 +4,12 @@ import { desktopDir, resolveElectronLaunchCommand } from "./electron-launcher.mj
 
 const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
+const electronArgs = process.argv.slice(2);
+if (!electronArgs.includes("--no-sandbox") && process.env.T3_NO_SANDBOX === "1") {
+  electronArgs.push("--no-sandbox");
+}
 
-const electronCommand = resolveElectronLaunchCommand(["dist-electron/main.cjs"]);
+const electronCommand = resolveElectronLaunchCommand([...electronArgs, "dist-electron/main.cjs"]);
 const child = NodeChildProcess.spawn(electronCommand.electronPath, electronCommand.args, {
   stdio: "inherit",
   cwd: desktopDir,

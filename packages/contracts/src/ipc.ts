@@ -34,6 +34,7 @@ import type {
 import type { ProviderInstanceId } from "./providerInstance.ts";
 import type {
   ServerConfig,
+  AssemblyAiStreamingTokenResult,
   ServerProcessDiagnosticsResult,
   ServerProcessResourceHistoryInput,
   ServerProcessResourceHistoryResult,
@@ -90,6 +91,8 @@ import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
+  OrchestrationExportThreadTranscriptInput,
+  OrchestrationThreadTranscriptExport,
   OrchestrationGetTurnDiffInput,
   OrchestrationGetTurnDiffResult,
   OrchestrationShellSnapshot,
@@ -104,6 +107,14 @@ import { EditorId } from "./editor.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import type { ClientSettings, ServerSettings, ServerSettingsPatch } from "./settings.ts";
 import type {
+  ImprovePromptInput,
+  ProjectSpeechProfile,
+  ProjectSpeechProfileInput,
+  ProjectSpeechProfileListResult,
+  ProjectTextTransformResult,
+  TranslateTranscriptInput,
+} from "./speech.ts";
+import type {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
   SourceControlDiscoveryResult,
@@ -112,6 +123,43 @@ import type {
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
+import type {
+  SkillCreateInput,
+  SkillDeleteInput,
+  SkillDiscoverImportSourcesInput,
+  SkillDiscoverImportSourcesResult,
+  SkillImportSourcesInput,
+  SkillImportSourcesResult,
+  SkillListInput,
+  SkillListResult,
+  SkillMutationResult,
+  SkillRenameInput,
+  SkillSetEnabledInput,
+  SkillUpdateInput,
+} from "./skills.ts";
+import type {
+  McpCreateInput,
+  McpCursorJsonResult,
+  McpDeleteInput,
+  McpDiscoverImportSourcesInput,
+  McpDiscoverImportSourcesResult,
+  McpExportCursorJsonInput,
+  McpImportCursorJsonInput,
+  McpImportSourcesInput,
+  McpListInput,
+  McpListResult,
+  McpMutationResult,
+  McpProviderStatusInput,
+  McpProviderStatusResult,
+  McpSetEnabledInput,
+  McpUpdateInput,
+} from "./mcp.ts";
+import type {
+  T3ChatImportDiscoverInput,
+  T3ChatImportDiscoverResult,
+  T3ChatImportRunInput,
+  T3ChatImportRunResult,
+} from "./t3ChatImport.ts";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -1088,6 +1136,10 @@ export interface LocalApi {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
     openExternal: (url: string) => Promise<void>;
   };
+  chatImport: {
+    discover: (input?: T3ChatImportDiscoverInput) => Promise<T3ChatImportDiscoverResult>;
+    run: (input: T3ChatImportRunInput) => Promise<T3ChatImportRunResult>;
+  };
   contextMenu: {
     show: <T extends string>(
       items: readonly ContextMenuItem<T>[],
@@ -1113,6 +1165,9 @@ export interface LocalApi {
     removeKeybinding: (input: ServerRemoveKeybindingInput) => Promise<ServerRemoveKeybindingResult>;
     getSettings: () => Promise<ServerSettings>;
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
+    createAssemblyAiStreamingToken: (
+      input: ProjectSpeechProfileInput,
+    ) => Promise<AssemblyAiStreamingTokenResult>;
     discoverSourceControl: () => Promise<SourceControlDiscoveryResult>;
     getTraceDiagnostics: () => Promise<ServerTraceDiagnosticsResult>;
     getProcessDiagnostics: () => Promise<ServerProcessDiagnosticsResult>;
@@ -1120,6 +1175,42 @@ export interface LocalApi {
       input: ServerProcessResourceHistoryInput,
     ) => Promise<ServerProcessResourceHistoryResult>;
     signalProcess: (input: ServerSignalProcessInput) => Promise<ServerSignalProcessResult>;
+  };
+  speech: {
+    getProjectProfile: (input: ProjectSpeechProfileInput) => Promise<ProjectSpeechProfile | null>;
+    listProjectProfiles: () => Promise<ProjectSpeechProfileListResult>;
+    indexProject: (input: ProjectSpeechProfileInput) => Promise<ProjectSpeechProfile>;
+    createBasicProjectProfile: (input: ProjectSpeechProfileInput) => Promise<ProjectSpeechProfile>;
+    translateTranscript: (input: TranslateTranscriptInput) => Promise<ProjectTextTransformResult>;
+  };
+  prompt: {
+    improve: (input: ImprovePromptInput) => Promise<ProjectTextTransformResult>;
+  };
+  skills: {
+    list: (input: SkillListInput) => Promise<SkillListResult>;
+    discoverImportSources: (
+      input?: SkillDiscoverImportSourcesInput,
+    ) => Promise<SkillDiscoverImportSourcesResult>;
+    importSources: (input: SkillImportSourcesInput) => Promise<SkillImportSourcesResult>;
+    create: (input: SkillCreateInput) => Promise<SkillMutationResult>;
+    update: (input: SkillUpdateInput) => Promise<SkillMutationResult>;
+    rename: (input: SkillRenameInput) => Promise<SkillMutationResult>;
+    delete: (input: SkillDeleteInput) => Promise<SkillListResult>;
+    setEnabled: (input: SkillSetEnabledInput) => Promise<SkillMutationResult>;
+  };
+  mcp: {
+    list: (input?: McpListInput) => Promise<McpListResult>;
+    discoverImportSources: (
+      input?: McpDiscoverImportSourcesInput,
+    ) => Promise<McpDiscoverImportSourcesResult>;
+    create: (input: McpCreateInput) => Promise<McpMutationResult>;
+    update: (input: McpUpdateInput) => Promise<McpMutationResult>;
+    delete: (input: McpDeleteInput) => Promise<McpMutationResult>;
+    setEnabled: (input: McpSetEnabledInput) => Promise<McpMutationResult>;
+    importCursorJson: (input: McpImportCursorJsonInput) => Promise<McpMutationResult>;
+    importSources: (input: McpImportSourcesInput) => Promise<McpMutationResult>;
+    exportCursorJson: (input?: McpExportCursorJsonInput) => Promise<McpCursorJsonResult>;
+    providerStatus: (input?: McpProviderStatusInput) => Promise<McpProviderStatusResult>;
   };
 }
 
@@ -1209,6 +1300,9 @@ export interface EnvironmentApi {
     getFullThreadDiff: (
       input: OrchestrationGetFullThreadDiffInput,
     ) => Promise<OrchestrationGetFullThreadDiffResult>;
+    exportThreadTranscript: (
+      input: OrchestrationExportThreadTranscriptInput,
+    ) => Promise<OrchestrationThreadTranscriptExport>;
     getArchivedShellSnapshot: () => Promise<OrchestrationShellSnapshot>;
     subscribeShell: (
       callback: (event: OrchestrationShellStreamItem) => void,

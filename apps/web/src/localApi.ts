@@ -1,4 +1,5 @@
 import type { ContextMenuItem, LocalApi } from "@t3tools/contracts";
+import type { WsRpcClient } from "@t3tools/client-runtime/wsRpcClient";
 
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 import { showContextMenuFallback } from "./contextMenuFallback";
@@ -10,7 +11,7 @@ function unavailableLocalBackendError(): Error {
   return new Error("Local backend API is unavailable before a backend is paired.");
 }
 
-function createBrowserLocalApi(): LocalApi {
+function createBrowserLocalApi(rpcClient?: WsRpcClient): LocalApi {
   return {
     dialogs: {
       pickFolder: async (options) => {
@@ -64,24 +65,156 @@ function createBrowserLocalApi(): LocalApi {
       },
     },
     server: {
-      getConfig: () => Promise.reject(unavailableLocalBackendError()),
-      refreshProviders: () => Promise.reject(unavailableLocalBackendError()),
-      updateProvider: () => Promise.reject(unavailableLocalBackendError()),
-      upsertKeybinding: () => Promise.reject(unavailableLocalBackendError()),
-      removeKeybinding: () => Promise.reject(unavailableLocalBackendError()),
-      getSettings: () => Promise.reject(unavailableLocalBackendError()),
-      updateSettings: () => Promise.reject(unavailableLocalBackendError()),
-      discoverSourceControl: () => Promise.reject(unavailableLocalBackendError()),
-      getTraceDiagnostics: () => Promise.reject(unavailableLocalBackendError()),
-      getProcessDiagnostics: () => Promise.reject(unavailableLocalBackendError()),
-      getProcessResourceHistory: () => Promise.reject(unavailableLocalBackendError()),
-      signalProcess: () => Promise.reject(unavailableLocalBackendError()),
+      getConfig: () =>
+        rpcClient ? rpcClient.server.getConfig() : Promise.reject(unavailableLocalBackendError()),
+      refreshProviders: () =>
+        rpcClient
+          ? rpcClient.server.refreshProviders()
+          : Promise.reject(unavailableLocalBackendError()),
+      updateProvider: (input) =>
+        rpcClient
+          ? rpcClient.server.updateProvider(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      upsertKeybinding: (input) =>
+        rpcClient
+          ? rpcClient.server.upsertKeybinding(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      removeKeybinding: (input) =>
+        rpcClient
+          ? rpcClient.server.removeKeybinding(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      getSettings: () =>
+        rpcClient ? rpcClient.server.getSettings() : Promise.reject(unavailableLocalBackendError()),
+      updateSettings: (patch) =>
+        rpcClient
+          ? rpcClient.server.updateSettings(patch)
+          : Promise.reject(unavailableLocalBackendError()),
+      createAssemblyAiStreamingToken: (input) =>
+        rpcClient
+          ? rpcClient.server.createAssemblyAiStreamingToken(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      discoverSourceControl: () =>
+        rpcClient
+          ? rpcClient.server.discoverSourceControl()
+          : Promise.reject(unavailableLocalBackendError()),
+      getTraceDiagnostics: () =>
+        rpcClient
+          ? rpcClient.server.getTraceDiagnostics()
+          : Promise.reject(unavailableLocalBackendError()),
+      getProcessDiagnostics: () =>
+        rpcClient
+          ? rpcClient.server.getProcessDiagnostics()
+          : Promise.reject(unavailableLocalBackendError()),
+      getProcessResourceHistory: (input) =>
+        rpcClient
+          ? rpcClient.server.getProcessResourceHistory(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      signalProcess: (input) =>
+        rpcClient
+          ? rpcClient.server.signalProcess(input)
+          : Promise.reject(unavailableLocalBackendError()),
+    },
+    speech: {
+      getProjectProfile: (input) =>
+        rpcClient
+          ? rpcClient.speech.getProjectProfile(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      listProjectProfiles: () =>
+        rpcClient
+          ? rpcClient.speech.listProjectProfiles()
+          : Promise.reject(unavailableLocalBackendError()),
+      indexProject: (input) =>
+        rpcClient
+          ? rpcClient.speech.indexProject(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      createBasicProjectProfile: (input) =>
+        rpcClient
+          ? rpcClient.speech.createBasicProjectProfile(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      translateTranscript: (input) =>
+        rpcClient
+          ? rpcClient.speech.translateTranscript(input)
+          : Promise.reject(unavailableLocalBackendError()),
+    },
+    prompt: {
+      improve: (input) =>
+        rpcClient
+          ? rpcClient.prompt.improve(input)
+          : Promise.reject(unavailableLocalBackendError()),
+    },
+    chatImport: {
+      discover: (input) =>
+        rpcClient
+          ? rpcClient.chatImport.discover(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      run: (input) =>
+        rpcClient
+          ? rpcClient.chatImport.run(input)
+          : Promise.reject(unavailableLocalBackendError()),
+    },
+    skills: {
+      list: (input) =>
+        rpcClient ? rpcClient.skills.list(input) : Promise.reject(unavailableLocalBackendError()),
+      discoverImportSources: (input) =>
+        rpcClient
+          ? rpcClient.skills.discoverImportSources(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      importSources: (input) =>
+        rpcClient
+          ? rpcClient.skills.importSources(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      create: (input) =>
+        rpcClient ? rpcClient.skills.create(input) : Promise.reject(unavailableLocalBackendError()),
+      update: (input) =>
+        rpcClient ? rpcClient.skills.update(input) : Promise.reject(unavailableLocalBackendError()),
+      rename: (input) =>
+        rpcClient ? rpcClient.skills.rename(input) : Promise.reject(unavailableLocalBackendError()),
+      delete: (input) =>
+        rpcClient ? rpcClient.skills.delete(input) : Promise.reject(unavailableLocalBackendError()),
+      setEnabled: (input) =>
+        rpcClient
+          ? rpcClient.skills.setEnabled(input)
+          : Promise.reject(unavailableLocalBackendError()),
+    },
+    mcp: {
+      list: (input) =>
+        rpcClient ? rpcClient.mcp.list(input) : Promise.reject(unavailableLocalBackendError()),
+      discoverImportSources: (input) =>
+        rpcClient
+          ? rpcClient.mcp.discoverImportSources(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      create: (input) =>
+        rpcClient ? rpcClient.mcp.create(input) : Promise.reject(unavailableLocalBackendError()),
+      update: (input) =>
+        rpcClient ? rpcClient.mcp.update(input) : Promise.reject(unavailableLocalBackendError()),
+      delete: (input) =>
+        rpcClient ? rpcClient.mcp.delete(input) : Promise.reject(unavailableLocalBackendError()),
+      setEnabled: (input) =>
+        rpcClient
+          ? rpcClient.mcp.setEnabled(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      importCursorJson: (input) =>
+        rpcClient
+          ? rpcClient.mcp.importCursorJson(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      importSources: (input) =>
+        rpcClient
+          ? rpcClient.mcp.importSources(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      exportCursorJson: (input) =>
+        rpcClient
+          ? rpcClient.mcp.exportCursorJson(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      providerStatus: (input) =>
+        rpcClient
+          ? rpcClient.mcp.providerStatus(input)
+          : Promise.reject(unavailableLocalBackendError()),
     },
   };
 }
 
-export function createLocalApi(): LocalApi {
-  return createBrowserLocalApi();
+export function createLocalApi(rpcClient?: WsRpcClient): LocalApi {
+  return createBrowserLocalApi(rpcClient);
 }
 
 export function readLocalApi(): LocalApi | undefined {

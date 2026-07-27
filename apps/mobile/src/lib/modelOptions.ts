@@ -15,6 +15,8 @@ export type ModelOption = {
   readonly providerKey: string;
   readonly providerLabel: string;
   readonly providerDriver: string;
+  readonly continuationGroupKey: string | null;
+  readonly requiresNewThreadForModelChange: boolean;
   readonly capabilities: ModelCapabilities | null;
   readonly selection: ModelSelection;
 };
@@ -78,6 +80,8 @@ export function buildModelOptions(
         providerKey: provider.instanceId,
         providerLabel,
         providerDriver: provider.driver,
+        continuationGroupKey: provider.continuation?.groupKey ?? null,
+        requiresNewThreadForModelChange: provider.requiresNewThreadForModelChange === true,
         capabilities: model.capabilities,
         selection: normalizeSelectionOptions(
           {
@@ -107,6 +111,8 @@ export function buildModelOptions(
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
         providerDriver: fallbackModelSelection.instanceId,
+        continuationGroupKey: null,
+        requiresNewThreadForModelChange: false,
         capabilities: null,
         selection: fallbackModelSelection,
       });
@@ -135,4 +141,49 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     providerLabel: group.providerLabel,
     models: group.models,
   }));
+}
+
+export function filterStartedThreadModelOptions(input: {
+  readonly options: ReadonlyArray<ModelOption>;
+  readonly currentSelection: ModelSelection;
+  readonly currentProviderInstanceId?: ModelSelection["instanceId"] | null;
+  readonly hasStarted: boolean;
+  readonly allowMidChatProviderSwitching: boolean;
+}): ReadonlyArray<ModelOption> {
+  if (!input.hasStarted || input.allowMidChatProviderSwitching) {
+    return input.options;
+  }
+
+  const currentInstanceId = input.currentProviderInstanceId ?? input.currentSelection.instanceId;
+  const current = input.options.find(
+    (option) =>
+      option.selection.instanceId === currentInstanceId &&
+      option.selection.model === input.currentSelection.model,
+  );
+  if (!current) {
+    return input.options.filter(
+      (option) =>
+        option.selection.instanceId === input.currentSelection.instanceId &&
+        option.selection.model === input.currentSelection.model,
+    );
+  }
+
+  return input.options.filter((option) => {
+    if (option.providerDriver !== current.providerDriver) return false;
+    if (
+      current.continuationGroupKey !== null &&
+      option.continuationGroupKey !== null &&
+      option.continuationGroupKey !== current.continuationGroupKey
+    ) {
+      return false;
+    }
+    if (
+      (current.requiresNewThreadForModelChange || option.requiresNewThreadForModelChange) &&
+      (option.selection.instanceId !== current.selection.instanceId ||
+        option.selection.model !== current.selection.model)
+    ) {
+      return false;
+    }
+    return true;
+  });
 }

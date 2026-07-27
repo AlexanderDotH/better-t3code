@@ -421,6 +421,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
         ? ["Delete confirmation"]
         : []),
+      ...(settings.improvePromptBeforeSend !== DEFAULT_UNIFIED_SETTINGS.improvePromptBeforeSend
+        ? ["Prompt improvement"]
+        : []),
       ...(isGitWritingModelDirty ? ["Git writing model"] : []),
     ],
     [
@@ -434,6 +437,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffIgnoreWhitespace,
       settings.automaticGitFetchInterval,
       settings.enableAssistantStreaming,
+      settings.improvePromptBeforeSend,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
       settings.wordWrap,
@@ -465,6 +469,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
+      improvePromptBeforeSend: DEFAULT_UNIFIED_SETTINGS.improvePromptBeforeSend,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
     });
     onRestored?.();
@@ -879,7 +884,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           title="Text generation model"
-          description="Configure the model used for generated commit messages, PR titles, and similar Git text."
+          description="Configure the model used for generated Git text, voice translation, and prompt improvement."
           resetAction={
             isGitWritingModelDirty ? (
               <SettingResetButton
@@ -948,6 +953,33 @@ export function GeneralSettingsPanel() {
                 }}
               />
             </div>
+          }
+        />
+
+        <SettingsRow
+          title="Prompt improvement"
+          description="Improve the wording and structure of normal chat prompts before they are sent, without changing their language or scope."
+          resetAction={
+            settings.improvePromptBeforeSend !==
+            DEFAULT_UNIFIED_SETTINGS.improvePromptBeforeSend ? (
+              <SettingResetButton
+                label="prompt improvement"
+                onClick={() =>
+                  updateSettings({
+                    improvePromptBeforeSend: DEFAULT_UNIFIED_SETTINGS.improvePromptBeforeSend,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.improvePromptBeforeSend}
+              onCheckedChange={(checked) =>
+                updateSettings({ improvePromptBeforeSend: Boolean(checked) })
+              }
+              aria-label="Improve prompts before sending"
+            />
           }
         />
       </SettingsSection>
@@ -1135,8 +1167,9 @@ export function ProviderSettingsPanel() {
     const driver = providerSettings.provider;
     const defaultInstanceId = defaultInstanceIdForDriver(driver);
     const explicitInstance = settings.providerInstances?.[defaultInstanceId];
-    const legacyConfig = legacyProviders[providerSettings.provider]!;
-    const defaultLegacyConfig = defaultLegacyProviders[providerSettings.provider]!;
+    const legacyConfig = legacyProviders[driver] ?? defaultLegacyProviders[driver];
+    const defaultLegacyConfig = defaultLegacyProviders[driver];
+    if (legacyConfig === undefined || defaultLegacyConfig === undefined) continue;
     const effectiveInstance: ProviderInstanceConfig =
       explicitInstance ??
       ({

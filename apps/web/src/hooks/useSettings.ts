@@ -191,10 +191,40 @@ function useClientSettingsValue(): ClientSettings {
 }
 
 export function mergeEnvironmentSettings(
-  serverSettings: ServerSettings,
+  serverSettings: ServerSettings | Partial<ServerSettings>,
   clientSettings: ClientSettings,
 ): UnifiedSettings {
-  return { ...serverSettings, ...clientSettings };
+  return {
+    ...DEFAULT_SERVER_SETTINGS,
+    ...serverSettings,
+    providers: {
+      ...DEFAULT_SERVER_SETTINGS.providers,
+      ...serverSettings.providers,
+    },
+    providerInstances:
+      serverSettings.providerInstances ?? DEFAULT_SERVER_SETTINGS.providerInstances,
+    observability: {
+      ...DEFAULT_SERVER_SETTINGS.observability,
+      ...serverSettings.observability,
+    },
+    speechTranscription: {
+      ...DEFAULT_SERVER_SETTINGS.speechTranscription,
+      ...serverSettings.speechTranscription,
+      assemblyAi: {
+        ...DEFAULT_SERVER_SETTINGS.speechTranscription.assemblyAi,
+        ...serverSettings.speechTranscription?.assemblyAi,
+      },
+    },
+    mcp: {
+      ...DEFAULT_SERVER_SETTINGS.mcp,
+      ...serverSettings.mcp,
+    },
+    skills: {
+      ...DEFAULT_SERVER_SETTINGS.skills,
+      ...serverSettings.skills,
+    },
+    ...clientSettings,
+  };
 }
 
 function useMergedSettings<T>(

@@ -15,8 +15,9 @@ import ProjectScriptsControl, {
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
 import { OpenInPicker } from "./OpenInPicker";
-import { usePrimaryEnvironmentId } from "../../state/environments";
 import { cn } from "~/lib/utils";
+import { usePrimaryEnvironmentId } from "../../state/environments";
+import { ChatTranscriptCopyButton } from "./ChatTranscriptCopyButton";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -31,6 +32,8 @@ interface ChatHeaderProps {
   availableEditors: ReadonlyArray<EditorId>;
   rightPanelOpen: boolean;
   gitCwd: string | null;
+  transcriptAvailable: boolean;
+  activeTurnInProgress: boolean;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
@@ -65,6 +68,8 @@ export const ChatHeader = memo(function ChatHeader({
   availableEditors,
   rightPanelOpen,
   gitCwd,
+  transcriptAvailable,
+  activeTurnInProgress,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -124,6 +129,13 @@ export const ChatHeader = memo(function ChatHeader({
             gitCwd={gitCwd}
             activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
             {...(draftId ? { draftId } : {})}
+          />
+        )}
+        {transcriptAvailable && (
+          <ChatTranscriptCopyButton
+            environmentId={activeThreadEnvironmentId}
+            threadId={activeThreadId}
+            activeTurnInProgress={activeTurnInProgress}
           />
         )}
       </div>

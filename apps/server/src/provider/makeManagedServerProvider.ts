@@ -32,6 +32,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     readonly getSnapshot: Effect.Effect<ServerProvider>;
     readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   }) => Effect.Effect<void>;
+  readonly initialRefreshDelay?: Duration.Input;
   readonly refreshInterval?: Duration.Input;
 }): Effect.fn.Return<ServerProviderShape, ServerSettingsError, Scope.Scope> {
   const refreshSemaphore = yield* Semaphore.make(1);
@@ -145,10 +146,12 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     ),
   ).pipe(Effect.forkScoped);
 
-  yield* applySnapshot(initialSettings, { forceRefresh: true }).pipe(
-    Effect.ignoreCause({ log: true }),
-    Effect.forkScoped,
-  );
+  const initialRefresh = applySnapshot(initialSettings, { forceRefresh: true });
+  yield* (
+    input.initialRefreshDelay
+      ? Effect.sleep(input.initialRefreshDelay).pipe(Effect.flatMap(() => initialRefresh))
+      : initialRefresh
+  ).pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
 
   return {
     maintenanceCapabilities: input.maintenanceCapabilities,

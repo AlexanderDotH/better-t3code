@@ -111,6 +111,9 @@ export interface CursorAdapterLiveOptions {
    * the latest snapshot so the closure isn't stale.
    */
   readonly resolveSettings?: Effect.Effect<CursorSettings>;
+  readonly resolveMcpServers?: (input: {
+    readonly cwd: string;
+  }) => Effect.Effect<ReadonlyArray<EffectAcpSchema.McpServer>>;
 }
 
 interface PendingApproval {
@@ -530,6 +533,9 @@ export function makeCursorAdapter(
           const effectiveCursorSettings = options?.resolveSettings
             ? yield* options.resolveSettings
             : cursorSettings;
+          const mcpServers = options?.resolveMcpServers
+            ? yield* options.resolveMcpServers({ cwd })
+            : [];
 
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
           const acp = yield* makeCursorAcpRuntime({
@@ -537,6 +543,7 @@ export function makeCursorAdapter(
             ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
             cwd,
+            mcpServers,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
             ...(mcpSession
@@ -1163,7 +1170,7 @@ export function makeCursorAdapter(
 
     return {
       provider: PROVIDER,
-      capabilities: { sessionModelSwitch: "in-session" },
+      capabilities: { sessionModelSwitch: "in-session", mcp: "sessionConfig" },
       startSession,
       sendTurn,
       interruptTurn,

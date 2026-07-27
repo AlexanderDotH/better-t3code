@@ -70,6 +70,11 @@ const desktopEnvironmentLayer = Layer.unwrap(
   }),
 );
 
+const disableSandbox = process.env.T3_NO_SANDBOX === "1" || process.env.T3_NO_SANDBOX === "true";
+if (disableSandbox) {
+  Electron.app.commandLine.appendSwitch("no-sandbox");
+}
+
 const resolveDesktopSshCliRunner = (
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
   settings: DesktopAppSettings.DesktopSettings,
