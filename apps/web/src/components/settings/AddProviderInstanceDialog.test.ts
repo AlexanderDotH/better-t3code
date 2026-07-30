@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
+import { ProviderDriverKind } from "@t3tools/contracts";
 
-import { resolveWizardNavigation } from "./AddProviderInstanceDialog.logic";
+import {
+  activeAndComingSoonDriverKindsAreDisjoint,
+  resolveWizardNavigation,
+} from "./AddProviderInstanceDialog.logic";
+import { DRIVER_OPTIONS } from "./providerDriverMeta";
 
 describe("resolveWizardNavigation", () => {
   const invalidId = { instanceIdError: "Instance ID is required." };
@@ -40,5 +45,29 @@ describe("resolveWizardNavigation", () => {
   it("clamps requested steps to the wizard bounds", () => {
     expect(resolveWizardNavigation(2, 8, 3, validId)).toEqual({ kind: "navigate", step: 2 });
     expect(resolveWizardNavigation(0, -1, 3, invalidId)).toEqual({ kind: "navigate", step: 0 });
+  });
+});
+
+describe("provider driver groups", () => {
+  it("does not show Gemini in both the active and coming-soon groups", () => {
+    expect(
+      activeAndComingSoonDriverKindsAreDisjoint(
+        DRIVER_OPTIONS.map((option) => option.value),
+        [
+          ProviderDriverKind.make("githubCopilot"),
+          ProviderDriverKind.make("acpRegistry"),
+          ProviderDriverKind.make("piAgent"),
+        ],
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a duplicated driver kind", () => {
+    expect(
+      activeAndComingSoonDriverKindsAreDisjoint(
+        [ProviderDriverKind.make("gemini")],
+        [ProviderDriverKind.make("gemini")],
+      ),
+    ).toBe(false);
   });
 });

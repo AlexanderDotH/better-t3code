@@ -37,16 +37,19 @@ describe("ProviderSettingsForm helpers", () => {
     });
   });
 
-  it("labels Hyperagent as an OpenCode-backed MCP proxy", () => {
+  it("uses direct Hyperagent settings instead of the legacy OpenCode proxy config", () => {
     const hyperagent = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("hyperagent")];
 
     expect(hyperagent).toMatchObject({
       label: "Hyperagent",
-      badgeLabel: "MCP Proxy",
+      badgeLabel: "Early Access",
     });
-    expect(deriveProviderSettingsFields(hyperagent!).map((field) => field.key)).toContain(
-      "serverUrl",
-    );
+    expect(deriveProviderSettingsFields(hyperagent!).map((field) => field.key)).toEqual([
+      "sessionCookie",
+      "baseUrl",
+      "model",
+      "fastMode",
+    ]);
   });
 
   it("preserves unknown config keys while omitting empty configurable fields", () => {

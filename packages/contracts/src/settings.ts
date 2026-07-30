@@ -4,7 +4,12 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { McpSettings, McpServerDefinition } from "./mcp.ts";
-import { DEFAULT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
+import {
+  AgentReasoningEffort,
+  DEFAULT_AGENT_REASONING_EFFORT,
+  DEFAULT_TEXT_GENERATION_MODEL,
+  ProviderOptionSelections,
+} from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
 import { SkillSettings } from "./skills.ts";
@@ -150,7 +155,7 @@ export const DEFAULT_CLIENT_SETTINGS: ClientSettings = Schema.decodeSync(ClientS
 export const ThreadEnvMode = Schema.Literals(["local", "worktree"]);
 export type ThreadEnvMode = typeof ThreadEnvMode.Type;
 
-const makeBinaryPathSetting = (fallback: string) =>
+const makeDefaultedTrimmedStringSetting = (fallback: string) =>
   TrimmedString.pipe(
     Schema.decodeTo(
       Schema.String,
@@ -161,6 +166,8 @@ const makeBinaryPathSetting = (fallback: string) =>
     ),
     Schema.withDecodingDefault(Effect.succeed(fallback)),
   );
+
+const makeBinaryPathSetting = makeDefaultedTrimmedStringSetting;
 
 export type ProviderSettingsFormControl = "text" | "password" | "textarea" | "switch";
 
@@ -202,6 +209,93 @@ export function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fi
     }),
   );
 }
+
+const makeEnabledProviderSetting = (defaultEnabled: boolean) =>
+  Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(defaultEnabled)),
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  );
+
+const makeCustomModelsSetting = () =>
+  Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  );
+
+const makeManualModelIdsSetting = () =>
+  Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  );
+
+const makeProviderTextSetting = (input: {
+  readonly title: string;
+  readonly description: string;
+  readonly placeholder?: string | undefined;
+  readonly defaultValue?: string | undefined;
+  readonly hidden?: boolean | undefined;
+}) =>
+  TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed(input.defaultValue ?? "")),
+    Schema.annotateKey({
+      title: input.title,
+      description: input.description,
+      providerSettingsForm: {
+        placeholder: input.placeholder,
+        clearWhenEmpty: "omit",
+        hidden: input.hidden,
+      },
+    }),
+  );
+
+const makeProviderDefaultedTextSetting = (input: {
+  readonly title: string;
+  readonly description: string;
+  readonly placeholder: string;
+  readonly defaultValue: string;
+}) =>
+  makeDefaultedTrimmedStringSetting(input.defaultValue).pipe(
+    Schema.annotateKey({
+      title: input.title,
+      description: input.description,
+      providerSettingsForm: {
+        placeholder: input.placeholder,
+        clearWhenEmpty: "omit",
+      },
+    }),
+  );
+
+const makeProviderSecretSetting = (input: {
+  readonly title: string;
+  readonly description: string;
+  readonly placeholder?: string | undefined;
+}) =>
+  TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+    Schema.annotateKey({
+      title: input.title,
+      description: input.description,
+      providerSettingsForm: {
+        control: "password",
+        placeholder: input.placeholder ?? "Optional",
+        clearWhenEmpty: "omit",
+      },
+    }),
+  );
+
+const makeProviderSwitchSetting = (input: {
+  readonly title: string;
+  readonly description: string;
+  readonly defaultValue?: boolean | undefined;
+}) =>
+  Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(input.defaultValue ?? false)),
+    Schema.annotateKey({
+      title: input.title,
+      description: input.description,
+      providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
+    }),
+  );
 
 export const CodexSettings = makeProviderSettingsSchema(
   {
@@ -410,11 +504,320 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 
+export const GeminiSettings = makeProviderSettingsSchema(
+  {
+    enabled: makeEnabledProviderSetting(false),
+    apiKey: makeProviderSecretSetting({
+      title: "Gemini API key",
+      description: "Google AI API key used for direct Gemini agent turns.",
+      placeholder: "AIza...",
+    }),
+    customModels: makeCustomModelsSetting(),
+  },
+  {
+    order: ["apiKey"],
+  },
+);
+export type GeminiSettings = typeof GeminiSettings.Type;
+
+export const OpenRouterSettings = makeProviderSettingsSchema(
+  {
+    enabled: makeEnabledProviderSetting(false),
+    apiKey: makeProviderSecretSetting({
+      title: "OpenRouter API key",
+      description: "Bearer key used for OpenRouter chat-completions requests.",
+      placeholder: "sk-or-...",
+    }),
+    baseUrl: makeProviderDefaultedTextSetting({
+      title: "Base URL",
+      description: "OpenRouter OpenAI-compatible API root.",
+      placeholder: "https://openrouter.ai/api/v1",
+      defaultValue: "https://openrouter.ai/api/v1",
+    }),
+    preferredMaxCatalogContextTokens: makeProviderTextSetting({
+      title: "Max catalog context",
+      description: "Optional token limit for hiding very large OpenRouter catalog rows.",
+      placeholder: "200000",
+    }),
+    contextCompression: makeProviderSwitchSetting({
+      title: "Context compression",
+      description: "Allow OpenRouter context-compression plugins on compatible requests.",
+    }),
+    customModels: makeCustomModelsSetting(),
+  },
+  {
+    order: ["apiKey", "baseUrl", "preferredMaxCatalogContextTokens", "contextCompression"],
+  },
+);
+export type OpenRouterSettings = typeof OpenRouterSettings.Type;
+
+export const NvidiaNimSettings = makeProviderSettingsSchema(
+  {
+    enabled: makeEnabledProviderSetting(false),
+    apiKey: makeProviderSecretSetting({
+      title: "NVIDIA NIM API key",
+      description: "Bearer key for NVIDIA NIM OpenAI-compatible requests.",
+      placeholder: "nvapi-...",
+    }),
+    baseUrl: makeProviderDefaultedTextSetting({
+      title: "Base URL",
+      description: "NVIDIA NIM OpenAI-compatible API root.",
+      placeholder: "https://integrate.api.nvidia.com/v1",
+      defaultValue: "https://integrate.api.nvidia.com/v1",
+    }),
+    customModels: makeCustomModelsSetting(),
+  },
+  {
+    order: ["apiKey", "baseUrl"],
+  },
+);
+export type NvidiaNimSettings = typeof NvidiaNimSettings.Type;
+
+export const LocalOpenAiSettings = makeProviderSettingsSchema(
+  {
+    enabled: makeEnabledProviderSetting(false),
+    v1BaseUrl: makeProviderTextSetting({
+      title: "OpenAI /v1 base URL",
+      description: "Local OpenAI-compatible API root, including /v1.",
+      placeholder: "http://127.0.0.1:11434/v1",
+    }),
+    apiKey: makeProviderSecretSetting({
+      title: "Bearer token",
+      description: "Optional token for local OpenAI-compatible servers.",
+    }),
+    opencodeServerBase: makeProviderTextSetting({
+      title: "OpenCode server URL",
+      description: "Optional opencode serve root used for local catalog hints.",
+      placeholder: "http://127.0.0.1:4096",
+    }),
+    opencodeServerUser: makeProviderTextSetting({
+      title: "OpenCode username",
+      description: "Optional basic-auth user for the OpenCode server.",
+      placeholder: "user",
+    }),
+    opencodeServerPassword: makeProviderSecretSetting({
+      title: "OpenCode password",
+      description: "Optional basic-auth password for the OpenCode server.",
+    }),
+    customModels: makeCustomModelsSetting(),
+  },
+  {
+    order: [
+      "v1BaseUrl",
+      "apiKey",
+      "opencodeServerBase",
+      "opencodeServerUser",
+      "opencodeServerPassword",
+    ],
+  },
+);
+export type LocalOpenAiSettings = typeof LocalOpenAiSettings.Type;
+
+export const OpenCodeZenSettings = makeProviderSettingsSchema(
+  {
+    enabled: makeEnabledProviderSetting(false),
+    apiKey: makeProviderSecretSetting({
+      title: "OpenCode Zen API key",
+      description: "Bearer key from OpenCode Zen.",
+    }),
+    baseUrl: makeProviderDefaultedTextSetting({
+      title: "Base URL",
+      description: "OpenCode Zen OpenAI-compatible API root.",
+      placeholder: "https://opencode.ai/zen/v1",
+      defaultValue: "https://opencode.ai/zen/v1",
+    }),
+    customModels: makeCustomModelsSetting(),
+  },
+  {
+    order: ["apiKey", "baseUrl"],
+  },
+);
+export type OpenCodeZenSettings = typeof OpenCodeZenSettings.Type;
+
+export const OpenCodeGoSettings = makeProviderSettingsSchema(
+  {
+    enabled: makeEnabledProviderSetting(false),
+    apiKey: makeProviderSecretSetting({
+      title: "OpenCode Go API key",
+      description: "Bearer key for OpenCode Go subscription models.",
+    }),
+    baseUrl: makeProviderDefaultedTextSetting({
+      title: "Base URL",
+      description: "OpenCode Go OpenAI-compatible API root.",
+      placeholder: "https://opencode.ai/zen/go/v1",
+      defaultValue: "https://opencode.ai/zen/go/v1",
+    }),
+    customModels: makeCustomModelsSetting(),
+  },
+  {
+    order: ["apiKey", "baseUrl"],
+  },
+);
+export type OpenCodeGoSettings = typeof OpenCodeGoSettings.Type;
+
+export const KiroAmazonQSettings = makeProviderSettingsSchema(
+  {
+    enabled: makeEnabledProviderSetting(false),
+    apiKey: makeProviderSecretSetting({
+      title: "Kiro / Amazon Q token",
+      description: "Bearer token for q.us-east-1.amazonaws.com agent calls.",
+    }),
+    profileArn: makeProviderTextSetting({
+      title: "Profile ARN",
+      description: "Optional profile ARN returned by Amazon Q model discovery.",
+      placeholder: "arn:aws:codewhisperer:...",
+    }),
+    refreshToken: makeProviderSecretSetting({
+      title: "Kiro refresh token",
+      description: "Optional Kiro desktop refresh token used to obtain a fresh access token.",
+    }),
+    refreshAuthRegion: makeProviderDefaultedTextSetting({
+      title: "Refresh auth region",
+      description: "Kiro desktop auth region segment.",
+      placeholder: "us-east-1",
+      defaultValue: "us-east-1",
+    }),
+    apiHost: makeProviderDefaultedTextSetting({
+      title: "API host",
+      description: "Amazon Q Developer API host.",
+      placeholder: "https://q.us-east-1.amazonaws.com",
+      defaultValue: "https://q.us-east-1.amazonaws.com",
+    }),
+    customModels: makeCustomModelsSetting(),
+  },
+  {
+    order: ["apiKey", "profileArn", "refreshToken", "refreshAuthRegion", "apiHost"],
+  },
+);
+export type KiroAmazonQSettings = typeof KiroAmazonQSettings.Type;
+
+export const HyperagentSettings = makeProviderSettingsSchema(
+  {
+    enabled: makeEnabledProviderSetting(false),
+    sessionCookie: makeProviderSecretSetting({
+      title: "Session cookie",
+      description: "Raw __Host-hyperagent_session token.",
+    }),
+    baseUrl: makeProviderDefaultedTextSetting({
+      title: "Base URL",
+      description: "Hyperagent web API root.",
+      placeholder: "https://hyperagent.com",
+      defaultValue: "https://hyperagent.com",
+    }),
+    model: makeProviderDefaultedTextSetting({
+      title: "Model",
+      description: "Default Hyperagent model id.",
+      placeholder: "sonnet-latest",
+      defaultValue: "sonnet-latest",
+    }),
+    fastMode: makeProviderSwitchSetting({
+      title: "Fast mode",
+      description: "Use Hyperagent fast mode for this provider instance.",
+    }),
+    customModels: makeCustomModelsSetting(),
+  },
+  {
+    order: ["sessionCookie", "baseUrl", "model", "fastMode"],
+  },
+);
+export type HyperagentSettings = typeof HyperagentSettings.Type;
+
+export const CursorSdkSettings = makeProviderSettingsSchema(
+  {
+    enabled: makeEnabledProviderSetting(false),
+    apiKey: makeProviderSecretSetting({
+      title: "Cursor SDK API key",
+      description: "Cursor Integrations API key used by @cursor/sdk.",
+      placeholder: "cursor_...",
+    }),
+    apiEndpoint: makeProviderTextSetting({
+      title: "API endpoint",
+      description: "Optional Cursor SDK API endpoint override.",
+      placeholder: "https://api.cursor.com",
+    }),
+    manualModelIds: makeManualModelIdsSetting(),
+    customModels: makeCustomModelsSetting(),
+  },
+  {
+    order: ["apiKey", "apiEndpoint"],
+  },
+);
+export type CursorSdkSettings = typeof CursorSdkSettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
+
+export const CavemanMode = Schema.Literals(["off", "lite", "full", "ultra"]);
+export type CavemanMode = typeof CavemanMode.Type;
+export const DEFAULT_CAVEMAN_MODE: CavemanMode = "off";
+
+export const DEEP_THINKING_STEP_COUNT_MIN = 2;
+export const DEEP_THINKING_STEP_COUNT_MAX = 8;
+export const DEFAULT_DEEP_THINKING_STEP_COUNT = 3;
+export const DEEP_THINKING_REFINEMENT_PASSES_MIN = 0;
+export const DEEP_THINKING_REFINEMENT_PASSES_MAX = 3;
+export const DEFAULT_DEEP_THINKING_REFINEMENT_PASSES = 0;
+export const DEEP_THINKING_PARALLEL_BATCH_SIZE_MIN = 1;
+export const DEEP_THINKING_PARALLEL_BATCH_SIZE_MAX = 8;
+export const DEFAULT_DEEP_THINKING_PARALLEL_BATCH_SIZE = 3;
+
+export const DeepThinkingStepCount = Schema.Int.check(
+  Schema.isBetween({
+    minimum: DEEP_THINKING_STEP_COUNT_MIN,
+    maximum: DEEP_THINKING_STEP_COUNT_MAX,
+  }),
+);
+export type DeepThinkingStepCount = typeof DeepThinkingStepCount.Type;
+
+export const DeepThinkingRefinementPasses = Schema.Int.check(
+  Schema.isBetween({
+    minimum: DEEP_THINKING_REFINEMENT_PASSES_MIN,
+    maximum: DEEP_THINKING_REFINEMENT_PASSES_MAX,
+  }),
+);
+export type DeepThinkingRefinementPasses = typeof DeepThinkingRefinementPasses.Type;
+
+export const DeepThinkingParallelBatchSize = Schema.Int.check(
+  Schema.isBetween({
+    minimum: DEEP_THINKING_PARALLEL_BATCH_SIZE_MIN,
+    maximum: DEEP_THINKING_PARALLEL_BATCH_SIZE_MAX,
+  }),
+);
+export type DeepThinkingParallelBatchSize = typeof DeepThinkingParallelBatchSize.Type;
+
+export const DeepThinkingSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  stepCount: DeepThinkingStepCount.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_DEEP_THINKING_STEP_COUNT)),
+  ),
+  refinementPasses: DeepThinkingRefinementPasses.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_DEEP_THINKING_REFINEMENT_PASSES)),
+  ),
+  parallelEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  parallelBatchSize: DeepThinkingParallelBatchSize.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_DEEP_THINKING_PARALLEL_BATCH_SIZE)),
+  ),
+  forceParallelForDurableProviders: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+});
+export type DeepThinkingSettings = typeof DeepThinkingSettings.Type;
+
+export const AgentEnhancementSettings = Schema.Struct({
+  cavemanMode: CavemanMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_CAVEMAN_MODE))),
+  defaultReasoningEffort: AgentReasoningEffort.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_AGENT_REASONING_EFFORT)),
+  ),
+  deepThinking: DeepThinkingSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+});
+export type AgentEnhancementSettings = typeof AgentEnhancementSettings.Type;
+
+export const DEFAULT_AGENT_ENHANCEMENT_SETTINGS: AgentEnhancementSettings = Schema.decodeSync(
+  AgentEnhancementSettings,
+)({});
 
 export const SourceControlWritingStyleMode = Schema.Literals([
   "repo_conventions",
@@ -548,6 +951,15 @@ export const ServerSettings = Schema.Struct({
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    gemini: GeminiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    openrouter: OpenRouterSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    nvidiaNim: NvidiaNimSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    localOpenAi: LocalOpenAiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    opencodeZen: OpenCodeZenSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    opencodeGo: OpenCodeGoSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    kiroAmazonQ: KiroAmazonQSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    hyperagent: HyperagentSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    cursorSdk: CursorSdkSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -557,6 +969,7 @@ export const ServerSettings = Schema.Struct({
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  agentEnhancement: AgentEnhancementSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   speechTranscription: SpeechTranscriptionSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -656,6 +1069,94 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const GeminiSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  apiKey: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const OpenRouterSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  apiKey: Schema.optionalKey(TrimmedString),
+  baseUrl: Schema.optionalKey(TrimmedString),
+  preferredMaxCatalogContextTokens: Schema.optionalKey(TrimmedString),
+  contextCompression: Schema.optionalKey(Schema.Boolean),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const NvidiaNimSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  apiKey: Schema.optionalKey(TrimmedString),
+  baseUrl: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const LocalOpenAiSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  v1BaseUrl: Schema.optionalKey(TrimmedString),
+  apiKey: Schema.optionalKey(TrimmedString),
+  opencodeServerBase: Schema.optionalKey(TrimmedString),
+  opencodeServerUser: Schema.optionalKey(TrimmedString),
+  opencodeServerPassword: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const OpenCodeZenSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  apiKey: Schema.optionalKey(TrimmedString),
+  baseUrl: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const OpenCodeGoSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  apiKey: Schema.optionalKey(TrimmedString),
+  baseUrl: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const KiroAmazonQSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  apiKey: Schema.optionalKey(TrimmedString),
+  profileArn: Schema.optionalKey(TrimmedString),
+  refreshToken: Schema.optionalKey(TrimmedString),
+  refreshAuthRegion: Schema.optionalKey(TrimmedString),
+  apiHost: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const HyperagentSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  sessionCookie: Schema.optionalKey(TrimmedString),
+  baseUrl: Schema.optionalKey(TrimmedString),
+  model: Schema.optionalKey(TrimmedString),
+  fastMode: Schema.optionalKey(Schema.Boolean),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const CursorSdkSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  apiKey: Schema.optionalKey(TrimmedString),
+  apiEndpoint: Schema.optionalKey(TrimmedString),
+  manualModelIds: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const DeepThinkingSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  stepCount: Schema.optionalKey(DeepThinkingStepCount),
+  refinementPasses: Schema.optionalKey(DeepThinkingRefinementPasses),
+  parallelEnabled: Schema.optionalKey(Schema.Boolean),
+  parallelBatchSize: Schema.optionalKey(DeepThinkingParallelBatchSize),
+  forceParallelForDurableProviders: Schema.optionalKey(Schema.Boolean),
+});
+
+const AgentEnhancementSettingsPatch = Schema.Struct({
+  cavemanMode: Schema.optionalKey(CavemanMode),
+  defaultReasoningEffort: Schema.optionalKey(AgentReasoningEffort),
+  deepThinking: Schema.optionalKey(DeepThinkingSettingsPatch),
+});
+
 const SecretSettingValuePatch = Schema.Struct({
   value: Schema.optionalKey(TrimmedString),
   valueRedacted: Schema.optionalKey(Schema.Boolean),
@@ -680,6 +1181,7 @@ export const ServerSettingsPatch = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  agentEnhancement: Schema.optionalKey(AgentEnhancementSettingsPatch),
   sourceControlWritingStyle: Schema.optionalKey(
     Schema.Struct({
       mode: Schema.optionalKey(SourceControlWritingStyleMode),
@@ -720,6 +1222,15 @@ export const ServerSettingsPatch = Schema.Struct({
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
+      gemini: Schema.optionalKey(GeminiSettingsPatch),
+      openrouter: Schema.optionalKey(OpenRouterSettingsPatch),
+      nvidiaNim: Schema.optionalKey(NvidiaNimSettingsPatch),
+      localOpenAi: Schema.optionalKey(LocalOpenAiSettingsPatch),
+      opencodeZen: Schema.optionalKey(OpenCodeZenSettingsPatch),
+      opencodeGo: Schema.optionalKey(OpenCodeGoSettingsPatch),
+      kiroAmazonQ: Schema.optionalKey(KiroAmazonQSettingsPatch),
+      hyperagent: Schema.optionalKey(HyperagentSettingsPatch),
+      cursorSdk: Schema.optionalKey(CursorSdkSettingsPatch),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual

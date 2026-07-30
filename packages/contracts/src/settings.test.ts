@@ -5,6 +5,7 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsSchema,
   ClientSettingsPatch,
+  DEFAULT_AGENT_ENHANCEMENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   ServerSettings,
   ServerSettingsPatch,
@@ -181,6 +182,115 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
     expect(() =>
       decodeServerSettings({
         providerInstances: { "1bad": { driver: "codex" } },
+      }),
+    ).toThrow();
+  });
+});
+
+describe("ServerSettings multi-provider defaults", () => {
+  it("defaults credential-backed providers off while hydrating stable endpoints", () => {
+    const decoded = decodeServerSettings({});
+
+    expect(decoded.providers.gemini.enabled).toBe(false);
+    expect(decoded.providers.openrouter.enabled).toBe(false);
+    expect(decoded.providers.openrouter.baseUrl).toBe("https://openrouter.ai/api/v1");
+    expect(decoded.providers.nvidiaNim.baseUrl).toBe("https://integrate.api.nvidia.com/v1");
+    expect(decoded.providers.localOpenAi.v1BaseUrl).toBe("");
+    expect(decoded.providers.localOpenAi.opencodeServerBase).toBe("");
+    expect(decoded.providers.opencodeZen.baseUrl).toBe("https://opencode.ai/zen/v1");
+    expect(decoded.providers.opencodeGo.baseUrl).toBe("https://opencode.ai/zen/go/v1");
+    expect(decoded.providers.kiroAmazonQ.apiHost).toBe("https://q.us-east-1.amazonaws.com");
+    expect(decoded.providers.kiroAmazonQ.refreshAuthRegion).toBe("us-east-1");
+    expect(decoded.providers.hyperagent.baseUrl).toBe("https://hyperagent.com");
+    expect(decoded.providers.hyperagent.model).toBe("sonnet-latest");
+    expect(decoded.providers.hyperagent.fastMode).toBe(false);
+    expect(decoded.providers.cursorSdk.manualModelIds).toEqual([]);
+  });
+
+  it("normalizes provider setting patches for every added driver", () => {
+    const patch = decodeServerSettingsPatch({
+      providers: {
+        gemini: { apiKey: "  gemini-key  " },
+        openrouter: {
+          apiKey: "  sk-or-key  ",
+          contextCompression: true,
+          preferredMaxCatalogContextTokens: "  200000  ",
+        },
+        nvidiaNim: { apiKey: "  nvapi-key  " },
+        localOpenAi: {
+          v1BaseUrl: "  http://127.0.0.1:11434/v1  ",
+          opencodeServerBase: "  http://127.0.0.1:4096  ",
+        },
+        opencodeZen: { apiKey: "  zen-key  " },
+        opencodeGo: { apiKey: "  go-key  " },
+        kiroAmazonQ: {
+          apiKey: "  kiro-key  ",
+          profileArn: "  arn:aws:codewhisperer:us-east-1:123:profile/test  ",
+        },
+        hyperagent: {
+          sessionCookie: "  session-token  ",
+          model: "  opus-latest  ",
+          fastMode: true,
+        },
+        cursorSdk: { apiKey: "  cursor-key  ", manualModelIds: ["  composer-2  "] },
+      },
+    });
+
+    expect(patch.providers?.gemini?.apiKey).toBe("gemini-key");
+    expect(patch.providers?.openrouter?.contextCompression).toBe(true);
+    expect(patch.providers?.openrouter?.preferredMaxCatalogContextTokens).toBe("200000");
+    expect(patch.providers?.nvidiaNim?.apiKey).toBe("nvapi-key");
+    expect(patch.providers?.localOpenAi?.v1BaseUrl).toBe("http://127.0.0.1:11434/v1");
+    expect(patch.providers?.localOpenAi?.opencodeServerBase).toBe("http://127.0.0.1:4096");
+    expect(patch.providers?.opencodeZen?.apiKey).toBe("zen-key");
+    expect(patch.providers?.opencodeGo?.apiKey).toBe("go-key");
+    expect(patch.providers?.kiroAmazonQ?.profileArn).toBe(
+      "arn:aws:codewhisperer:us-east-1:123:profile/test",
+    );
+    expect(patch.providers?.hyperagent?.model).toBe("opus-latest");
+    expect(patch.providers?.hyperagent?.fastMode).toBe(true);
+    expect(patch.providers?.cursorSdk?.manualModelIds).toEqual(["composer-2"]);
+  });
+});
+
+describe("AgentEnhancementSettings", () => {
+  it("provides conservative backward-compatible defaults", () => {
+    expect(DEFAULT_SERVER_SETTINGS.agentEnhancement).toEqual(DEFAULT_AGENT_ENHANCEMENT_SETTINGS);
+    expect(DEFAULT_AGENT_ENHANCEMENT_SETTINGS).toEqual({
+      cavemanMode: "off",
+      defaultReasoningEffort: "medium",
+      deepThinking: {
+        enabled: false,
+        stepCount: 3,
+        refinementPasses: 0,
+        parallelEnabled: false,
+        parallelBatchSize: 3,
+        forceParallelForDurableProviders: false,
+      },
+    });
+  });
+
+  it("accepts bounded enhancement patches and rejects invalid deep-thinking values", () => {
+    const patch = decodeServerSettingsPatch({
+      agentEnhancement: {
+        cavemanMode: "lite",
+        defaultReasoningEffort: "xhigh",
+        deepThinking: {
+          enabled: true,
+          stepCount: 8,
+          refinementPasses: 3,
+          parallelEnabled: true,
+          parallelBatchSize: 8,
+          forceParallelForDurableProviders: true,
+        },
+      },
+    });
+
+    expect(patch.agentEnhancement?.cavemanMode).toBe("lite");
+    expect(patch.agentEnhancement?.deepThinking?.stepCount).toBe(8);
+    expect(() =>
+      decodeServerSettingsPatch({
+        agentEnhancement: { deepThinking: { stepCount: 1 } },
       }),
     ).toThrow();
   });

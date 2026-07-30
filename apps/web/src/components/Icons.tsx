@@ -492,6 +492,92 @@ export const OpenAI: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+export const OpenRouterIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 32 32"
+    fill="none"
+    className={cn("text-[#111827] dark:text-[#F9FAFB]", className)}
+  >
+    <rect width="32" height="32" rx="7" fill="currentColor" />
+    <path
+      d="M7 18.5h7.7c1.7 0 3.2-.9 4-2.4l1.2-2.2c.5-1 1.5-1.6 2.6-1.6H25"
+      stroke="#fff"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2.5"
+    />
+    <path
+      d="M7 13.5h5.1c1.7 0 3.2.9 4 2.4l1.2 2.2c.5 1 1.5 1.6 2.6 1.6H25"
+      stroke="#FF5C35"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2.5"
+    />
+    <circle cx="7" cy="13.5" r="2" fill="#FF5C35" />
+    <circle cx="7" cy="18.5" r="2" fill="#fff" />
+    <circle cx="25" cy="12.3" r="2" fill="#fff" />
+    <circle cx="25" cy="19.7" r="2" fill="#FF5C35" />
+  </svg>
+);
+
+export const NvidiaIcon: Icon = ({ className, ...props }) => (
+  <svg {...props} viewBox="0 0 32 32" fill="none" className={className}>
+    <rect width="32" height="32" rx="7" fill="#76B900" />
+    <path
+      d="M7 11.2c5.7-2.4 12.5-2 18 1.2-2.5-1.1-5.5-1.2-8.3-.2-3.5 1.2-6.1 3.8-7.3 7.1C9.1 16.5 10.7 13.1 14 12"
+      stroke="#fff"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+    <path
+      d="M13.1 18.7c.6-2.3 2.6-4 5-4 2.2 0 4 1.3 4.8 3.1-.8-.5-1.8-.8-2.9-.8-1.9 0-3.6 1-4.5 2.5"
+      stroke="#fff"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+    <circle cx="19" cy="20" r="1.8" fill="#fff" />
+  </svg>
+);
+
+export const LocalOpenAiIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 32 32"
+    fill="none"
+    className={cn("text-[#0F172A] dark:text-[#E2E8F0]", className)}
+  >
+    <rect width="32" height="32" rx="7" fill="currentColor" />
+    <rect x="7" y="8" width="18" height="14" rx="2.5" fill="#fff" />
+    <path d="M11 25h10" stroke="#fff" strokeLinecap="round" strokeWidth="2" />
+    <path d="M14 22v3M18 22v3" stroke="#fff" strokeLinecap="round" strokeWidth="2" />
+    <path
+      d="m12 15 2-2m-2 2 2 2m4-4h3"
+      stroke="#0F172A"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+  </svg>
+);
+
+export const HyperagentIcon: Icon = ({ className, ...props }) => (
+  <svg {...props} viewBox="0 0 32 32" fill="none" className={className}>
+    <rect width="32" height="32" rx="7" fill="#14111F" />
+    <path d="M9 22V10h3.2v4.5h7.6V10H23v12h-3.2v-4.7h-7.6V22H9Z" fill="#F8FAFC" />
+    <path
+      d="M6.8 16c2.2-5.2 6-8.1 10.2-8.1 3 0 5.4 1.4 6.9 3.6M25.2 16c-2.2 5.2-6 8.1-10.2 8.1-3 0-5.4-1.4-6.9-3.6"
+      stroke="#8B5CF6"
+      strokeLinecap="round"
+      strokeWidth="2"
+    />
+    <circle cx="24.8" cy="16" r="2.2" fill="#38BDF8" />
+    <circle cx="7.2" cy="16" r="2.2" fill="#A78BFA" />
+  </svg>
+);
+
 export const ClaudeAI: Icon = ({ className, ...props }) => (
   <svg
     {...props}
