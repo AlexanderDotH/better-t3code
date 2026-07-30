@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  ClientOrchestrationCommand,
   ModelSelection,
   OrchestrationCommand,
   OrchestrationEvent,
@@ -27,6 +28,7 @@ import {
   ThreadTurnStartRequestedPayload,
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { RuntimeSessionId, TurnId } from "./baseSchemas.ts";
 
 const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);
 const decodeFullThreadDiffInput = Schema.decodeUnknownEffect(OrchestrationGetFullThreadDiffInput);
@@ -55,6 +57,7 @@ function getOptionValue(
 }
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
+const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 
@@ -792,6 +795,116 @@ it.effect("decodes orchestration session runtime mode defaults", () =>
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+    assert.strictEqual(parsed.runtimeSessionId, null);
+    assert.strictEqual(parsed.abortState, null);
+  }),
+);
+
+it.effect("decodes orchestration session abort synchronization state", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationSession({
+      threadId: "thread-1",
+      status: "running",
+      providerName: "codex",
+      runtimeSessionId: " runtime-session-1 ",
+      runtimeMode: "full-access",
+      activeTurnId: "turn-1",
+      abortState: {
+        runtimeSessionId: " runtime-session-1 ",
+        targetTurnId: "turn-1",
+        phase: "interrupting",
+        requestedAt: "2026-01-01T00:00:01.000Z",
+        forceAt: "2026-01-01T00:00:06.000Z",
+      },
+      lastError: null,
+      updatedAt: "2026-01-01T00:00:01.000Z",
+    });
+
+    assert.strictEqual(parsed.runtimeSessionId, "runtime-session-1");
+    assert.deepStrictEqual(parsed.abortState, {
+      runtimeSessionId: RuntimeSessionId.make("runtime-session-1"),
+      targetTurnId: TurnId.make("turn-1"),
+      phase: "interrupting",
+      requestedAt: "2026-01-01T00:00:01.000Z",
+      forceAt: "2026-01-01T00:00:06.000Z",
+    });
+  }),
+);
+
+it.effect("decodes the internal turn abort settlement command", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "thread.turn.abort.settle",
+      commandId: "cmd-abort-settle",
+      threadId: "thread-1",
+      runtimeSessionId: "runtime-session-1",
+      turnId: "turn-1",
+      outcome: "force-terminated",
+      settledAt: "2026-01-01T00:00:07.000Z",
+      createdAt: "2026-01-01T00:00:07.000Z",
+    });
+
+    assert.strictEqual(parsed.type, "thread.turn.abort.settle");
+    if (parsed.type !== "thread.turn.abort.settle") {
+      return;
+    }
+    assert.strictEqual(parsed.outcome, "force-terminated");
+    assert.strictEqual(parsed.turnId, "turn-1");
+  }),
+);
+
+it.effect("keeps interrupt public without exposing a force-abort client command", () =>
+  Effect.gen(function* () {
+    const interrupt = yield* decodeClientOrchestrationCommand({
+      type: "thread.turn.interrupt",
+      commandId: "cmd-interrupt",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(interrupt.type, "thread.turn.interrupt");
+
+    const forceAbort = yield* Effect.exit(
+      decodeClientOrchestrationCommand({
+        type: "thread.turn.force-abort",
+        commandId: "cmd-force-abort",
+        threadId: "thread-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    assert.strictEqual(forceAbort._tag, "Failure");
+  }),
+);
+
+it.effect("decodes the authoritative turn abort settlement event", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationEvent({
+      sequence: 42,
+      eventId: "evt-abort-settled",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      occurredAt: "2026-01-01T00:00:07.000Z",
+      commandId: "cmd-abort-settle",
+      causationEventId: null,
+      correlationId: "cmd-abort-settle",
+      metadata: {},
+      type: "thread.turn-abort-settled",
+      payload: {
+        threadId: "thread-1",
+        runtimeSessionId: "runtime-session-1",
+        turnId: null,
+        outcome: "force-detached",
+        detail: "Remote termination could not be confirmed",
+        settledAt: "2026-01-01T00:00:07.000Z",
+      },
+    });
+
+    assert.strictEqual(parsed.type, "thread.turn-abort-settled");
+    if (parsed.type !== "thread.turn-abort-settled") {
+      return;
+    }
+    assert.strictEqual(parsed.payload.outcome, "force-detached");
+    assert.strictEqual(parsed.payload.turnId, null);
   }),
 );
 

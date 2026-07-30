@@ -5,6 +5,7 @@ import {
   EventId,
   IsoDateTime,
   ProviderItemId,
+  RuntimeSessionId,
   SubagentId,
   ThreadId,
   TurnId,
@@ -43,6 +44,8 @@ export const ProviderSession = Schema.Struct({
   cwd: Schema.optional(TrimmedNonEmptyString),
   model: Schema.optional(TrimmedNonEmptyString),
   threadId: ThreadId,
+  // Historical sessions predate runtime lease fencing.
+  runtimeSessionId: Schema.optional(RuntimeSessionId),
   resumeCursor: Schema.optional(Schema.Unknown),
   activeTurnId: Schema.optional(TurnId),
   createdAt: IsoDateTime,
@@ -53,6 +56,9 @@ export type ProviderSession = typeof ProviderSession.Type;
 
 export const ProviderSessionStartInput = Schema.Struct({
   threadId: ThreadId,
+  // Assigned by ProviderService before entering an adapter. Optional only for
+  // persisted and legacy producers while runtime lease fencing rolls out.
+  runtimeSessionId: Schema.optional(RuntimeSessionId),
   provider: Schema.optional(ProviderDriverKind),
   // See ProviderSession for the migration story.
   providerInstanceId: Schema.optional(ProviderInstanceId),

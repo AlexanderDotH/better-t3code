@@ -94,6 +94,6 @@ it.effect("038_ProjectionThreadsSnoozedCompatibility repairs a legacy fork migra
 
     yield* Migration038;
     yield* Migration038;
-    assert.deepStrictEqual(yield* runMigrations(), []);
+    assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 38 }), []);
   }).pipe(provideFreshDatabase),
 );

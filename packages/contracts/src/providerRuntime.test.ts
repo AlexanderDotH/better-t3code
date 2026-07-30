@@ -77,6 +77,33 @@ describe("ProviderRuntimeEvent", () => {
     ).toThrow();
   });
 
+  it("decodes runtime identity on newly emitted events", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "session.started",
+      eventId: "event-runtime-session",
+      provider: "codex",
+      runtimeSessionId: " runtime-session-1 ",
+      createdAt: "2026-02-28T00:00:00.000Z",
+      threadId: "thread-1",
+      payload: {},
+    });
+
+    expect(parsed.runtimeSessionId).toBe("runtime-session-1");
+  });
+
+  it("continues to decode historical events without runtime identity", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "session.started",
+      eventId: "event-legacy-session",
+      provider: "codex",
+      createdAt: "2026-02-28T00:00:00.000Z",
+      threadId: "thread-1",
+      payload: {},
+    });
+
+    expect(parsed.runtimeSessionId).toBeUndefined();
+  });
+
   it("accepts fork-provided driver kinds as branded slugs", () => {
     const parsed = decodeRuntimeEvent({
       type: "session.started",

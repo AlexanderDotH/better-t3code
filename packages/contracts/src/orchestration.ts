@@ -16,6 +16,7 @@ import {
   NonNegativeInt,
   ProjectId,
   ProviderItemId,
+  RuntimeSessionId,
   SubagentId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -273,13 +274,31 @@ export const OrchestrationSessionStatus = Schema.Literals([
 ]);
 export type OrchestrationSessionStatus = typeof OrchestrationSessionStatus.Type;
 
+export const OrchestrationTurnAbortPhase = Schema.Literals(["interrupting", "force-stopping"]);
+export type OrchestrationTurnAbortPhase = typeof OrchestrationTurnAbortPhase.Type;
+
+export const OrchestrationTurnAbortState = Schema.Struct({
+  runtimeSessionId: RuntimeSessionId,
+  targetTurnId: Schema.NullOr(TurnId),
+  phase: OrchestrationTurnAbortPhase,
+  requestedAt: IsoDateTime,
+  forceAt: IsoDateTime,
+});
+export type OrchestrationTurnAbortState = typeof OrchestrationTurnAbortState.Type;
+
 export const OrchestrationSession = Schema.Struct({
   threadId: ThreadId,
   status: OrchestrationSessionStatus,
   providerName: Schema.NullOr(TrimmedNonEmptyString),
   providerInstanceId: Schema.optional(ProviderInstanceId),
+  runtimeSessionId: Schema.NullOr(RuntimeSessionId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   activeTurnId: Schema.NullOr(TurnId),
+  abortState: Schema.NullOr(OrchestrationTurnAbortState).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
   updatedAt: IsoDateTime,
 });
@@ -978,6 +997,27 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const ThreadTurnAbortOutcome = Schema.Literals([
+  "cooperative",
+  "force-terminated",
+  "force-detached",
+  "force-failed",
+]);
+export type ThreadTurnAbortOutcome = typeof ThreadTurnAbortOutcome.Type;
+
+export const ThreadTurnAbortSettleCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.abort.settle"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  runtimeSessionId: RuntimeSessionId,
+  turnId: Schema.NullOr(TurnId),
+  outcome: ThreadTurnAbortOutcome,
+  detail: Schema.optional(TrimmedNonEmptyString),
+  settledAt: IsoDateTime,
+  createdAt: IsoDateTime,
+});
+export type ThreadTurnAbortSettleCommand = typeof ThreadTurnAbortSettleCommand.Type;
+
 const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.title.regeneration.complete"),
   commandId: CommandId,
@@ -1022,6 +1062,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
+  ThreadTurnAbortSettleCommand,
   ThreadTitleRegenerationCompleteCommand,
   ThreadSubagentUpsertCommand,
   ThreadSubagentStateSetCommand,
@@ -1053,6 +1094,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.message-sent",
   "thread.turn-start-requested",
   "thread.turn-interrupt-requested",
+  "thread.turn-abort-settled",
   "thread.approval-response-requested",
   "thread.user-input-response-requested",
   "thread.checkpoint-revert-requested",
@@ -1219,6 +1261,16 @@ export const ThreadTurnInterruptRequestedPayload = Schema.Struct({
   turnId: Schema.optional(TurnId),
   createdAt: IsoDateTime,
 });
+
+export const ThreadTurnAbortSettledPayload = Schema.Struct({
+  threadId: ThreadId,
+  runtimeSessionId: RuntimeSessionId,
+  turnId: Schema.NullOr(TurnId),
+  outcome: ThreadTurnAbortOutcome,
+  detail: Schema.optional(TrimmedNonEmptyString),
+  settledAt: IsoDateTime,
+});
+export type ThreadTurnAbortSettledPayload = typeof ThreadTurnAbortSettledPayload.Type;
 
 export const ThreadApprovalResponseRequestedPayload = Schema.Struct({
   threadId: ThreadId,
@@ -1404,6 +1456,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.turn-interrupt-requested"),
     payload: ThreadTurnInterruptRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-abort-settled"),
+    payload: ThreadTurnAbortSettledPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

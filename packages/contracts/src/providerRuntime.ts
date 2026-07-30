@@ -8,6 +8,7 @@ import {
   PositiveInt,
   RuntimeItemId,
   RuntimeRequestId,
+  RuntimeSessionId,
   RuntimeTaskId,
   SubagentId,
   ThreadId,
@@ -259,6 +260,9 @@ const ProviderRuntimeEventBase = Schema.Struct({
   // populates it (post-slice-4), routing flips to instance-id-only.
   providerInstanceId: Schema.optional(ProviderInstanceId),
   threadId: ThreadId,
+  // Historical persisted events may omit the lease. All new live emitters
+  // attach it through the provider runtime-origin boundary.
+  runtimeSessionId: Schema.optional(RuntimeSessionId),
   subagentId: Schema.optional(SubagentId),
   createdAt: IsoDateTime,
   turnId: Schema.optional(TurnId),

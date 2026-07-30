@@ -123,6 +123,18 @@ describe("ProviderSessionStartInput", () => {
     expect(parsed.providerInstanceId).toBe("ollama_local");
     expect(parsed.modelSelection?.instanceId).toBe("ollama_local");
   });
+
+  it("normalizes a service-assigned runtime session id", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-1",
+      provider: "codex",
+      providerInstanceId: "codex_personal",
+      runtimeSessionId: " runtime-session-1 ",
+      runtimeMode: "full-access",
+    });
+
+    expect(parsed.runtimeSessionId).toBe("runtime-session-1");
+  });
 });
 
 describe("ProviderSendTurnInput", () => {
@@ -195,6 +207,35 @@ describe("providerInstanceId routing key (slice-2 invariant)", () => {
       updatedAt: "2024-01-01T00:00:00Z",
     });
     expect(session.providerInstanceId).toBe("codex_work");
+  });
+
+  it("decodes ProviderSession without runtimeSessionId for legacy producers", () => {
+    const session = decodeProviderSession({
+      provider: "codex",
+      providerInstanceId: "codex_work",
+      status: "ready",
+      runtimeMode: "full-access",
+      threadId: "thread-1",
+      createdAt: "2024-01-01T00:00:00Z",
+      updatedAt: "2024-01-01T00:00:00Z",
+    });
+
+    expect(session.runtimeSessionId).toBeUndefined();
+  });
+
+  it("propagates runtimeSessionId through ProviderSession decode", () => {
+    const session = decodeProviderSession({
+      provider: "codex",
+      providerInstanceId: "codex_work",
+      runtimeSessionId: " runtime-session-1 ",
+      status: "ready",
+      runtimeMode: "full-access",
+      threadId: "thread-1",
+      createdAt: "2024-01-01T00:00:00Z",
+      updatedAt: "2024-01-01T00:00:00Z",
+    });
+
+    expect(session.runtimeSessionId).toBe("runtime-session-1");
   });
 
   it("decodes ProviderSession for fork-provided driver kinds", () => {
