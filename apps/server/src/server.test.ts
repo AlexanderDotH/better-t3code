@@ -89,7 +89,10 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import { AssemblyAiStreamingToken } from "./speech/Layers/AssemblyAiStreamingToken.ts";
+import * as ProjectSpeechProfileStore from "./speech/ProjectSpeechProfileStore.ts";
+import * as ProjectSpeechWorkspaceScanner from "./speech/ProjectSpeechWorkspaceScanner.ts";
 import { NoOpSkillEngineLayer } from "./skills/testUtils/NoOpSkillEngine.ts";
+import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -500,6 +503,20 @@ const buildAppUnderTest = (options?: {
         Layer.provide(WorkspacePaths.layer),
         Layer.provide(workspaceEntriesLayer),
       ),
+      Layer.mock(ProjectSpeechProfileStore.ProjectSpeechProfileStore)({
+        get: () => Effect.succeed(Option.none()),
+        list: () => Effect.succeed([]),
+        upsert: () => Effect.die("ProjectSpeechProfileStore not stubbed in this test"),
+      }),
+      ProjectSpeechWorkspaceScanner.layer,
+      Layer.mock(TextGeneration.TextGeneration)({
+        generateCommitMessage: () => Effect.die("TextGeneration not stubbed in this test"),
+        generatePrContent: () => Effect.die("TextGeneration not stubbed in this test"),
+        generateBranchName: () => Effect.die("TextGeneration not stubbed in this test"),
+        generateThreadTitle: () => Effect.die("TextGeneration not stubbed in this test"),
+        translateTranscriptToEnglish: () => Effect.die("TextGeneration not stubbed in this test"),
+        improvePrompt: () => Effect.die("TextGeneration not stubbed in this test"),
+      }),
       ProjectFaviconResolver.layer.pipe(Layer.provide(WorkspacePaths.layer)),
     );
     const gitWorkflowLayer = GitWorkflowService.layer.pipe(

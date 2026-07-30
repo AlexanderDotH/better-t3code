@@ -1,5 +1,7 @@
 import type { RepositoryIdentity } from "@t3tools/contracts";
 
+import { isIgnoredProjectSpeechPath } from "./ProjectSpeechPathPolicy.ts";
+
 export interface ProjectSpeechProfileWorkspaceEntry {
   readonly path: string;
   readonly kind: "file" | "directory";
@@ -38,12 +40,6 @@ const MAX_KEYTERM_LENGTH = 50;
 function stringSet(values: string): Set<string> {
   return new Set(values.trim().split(/\s+/));
 }
-
-const IGNORED_PATH_SEGMENTS = stringSet(`
-  .cache .git .next .nuxt .output .parcel-cache .svelte-kit .turbo .venv .vite .vite-plus
-  __generated__ __pycache__ bin build coverage deriveddata dist generated node_modules obj out
-  pods target temp third_party tmp vendor venv
-`);
 
 const COMMON_TERMS = stringSet(`
   a about all an and api app application architecture assets build code components config
@@ -211,19 +207,6 @@ function basename(path: string): string {
   );
 }
 
-function isIgnoredPath(path: string): boolean {
-  const segments = path.replace(/\\/g, "/").split("/").filter(Boolean);
-  if (segments.some((segment) => IGNORED_PATH_SEGMENTS.has(segment.toLowerCase()))) return true;
-
-  const filename = segments.at(-1)?.toLowerCase() ?? "";
-  return (
-    filename === ".env" ||
-    filename.startsWith(".env.") ||
-    /(?:^|\.)(?:gen|generated|min)\.[^.]+$/.test(filename) ||
-    filename.endsWith(".map")
-  );
-}
-
 function cleanTerm(raw: string, allowCommon = false): string | undefined {
   const value = raw
     .normalize("NFKC")
@@ -370,7 +353,7 @@ function detectPathTechnologies(path: string, technologies: Set<string>): void {
 
 function sortedTextFiles(input: ProjectSpeechProfileInput): Array<ProjectSpeechProfileTextFile> {
   return [...input.textFiles]
-    .filter((file) => !isIgnoredPath(file.path))
+    .filter((file) => !isIgnoredProjectSpeechPath(file.path))
     .sort(
       (left, right) =>
         compareText(left.path, right.path) || compareText(left.contents, right.contents),
@@ -383,7 +366,7 @@ function detectTechnologies(input: ProjectSpeechProfileInput): Array<string> {
     ...input.workspaceEntries.filter((entry) => entry.kind === "file").map((entry) => entry.path),
     ...input.textFiles.map((file) => file.path),
   ]
-    .filter((path) => !isIgnoredPath(path))
+    .filter((path) => !isIgnoredProjectSpeechPath(path))
     .sort(compareText);
 
   for (const path of paths) detectPathTechnologies(path, technologies);
@@ -527,7 +510,7 @@ function buildProjectSpeechProfileContent(
       ...input.workspaceEntries.filter((entry) => entry.kind === "file").map((entry) => entry.path),
       ...input.textFiles.map((file) => file.path),
     ]
-      .filter((path) => !isIgnoredPath(path))
+      .filter((path) => !isIgnoredProjectSpeechPath(path))
       .sort(compareText);
     for (const path of paths) addCandidate(candidates, fileStem(path), 60);
     for (const file of sortedTextFiles(input)) indexTextFile(file, candidates);
