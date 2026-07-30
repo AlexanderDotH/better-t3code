@@ -43,6 +43,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { BUILT_IN_DRIVERS } from "../builtInDrivers.ts";
 import { GrokDriver, type GrokDriverEnv } from "../Drivers/GrokDriver.ts";
 import { NoOpMcpConfigEngineLayer } from "../../mcp/testUtils.ts";
 import { ClaudeDriver, type ClaudeDriverEnv } from "../Drivers/ClaudeDriver.ts";
@@ -137,6 +138,27 @@ const makeOpenCodeConfig = (overrides: Partial<OpenCodeSettings>): OpenCodeSetti
   serverPassword: "",
   customModels: [],
   ...overrides,
+});
+
+describe("BUILT_IN_DRIVERS", () => {
+  it("registers every first-party provider exposed by settings metadata", () => {
+    expect(BUILT_IN_DRIVERS.map((driver) => driver.driverKind)).toEqual([
+      ProviderDriverKind.make("codex"),
+      ProviderDriverKind.make("claudeAgent"),
+      ProviderDriverKind.make("cursor"),
+      ProviderDriverKind.make("grok"),
+      ProviderDriverKind.make("opencode"),
+      ProviderDriverKind.make("gemini"),
+      ProviderDriverKind.make("openrouter"),
+      ProviderDriverKind.make("nvidiaNim"),
+      ProviderDriverKind.make("localOpenAi"),
+      ProviderDriverKind.make("opencodeZen"),
+      ProviderDriverKind.make("opencodeGo"),
+      ProviderDriverKind.make("kiroAmazonQ"),
+      ProviderDriverKind.make("hyperagent"),
+      ProviderDriverKind.make("cursorSdk"),
+    ]);
+  });
 });
 
 describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {

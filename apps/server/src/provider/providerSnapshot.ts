@@ -13,7 +13,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { normalizeCustomModelSlug } from "@t3tools/shared/model";
+import { normalizeCustomModelSlug, normalizeModelSlug } from "@t3tools/shared/model";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
 import { createProviderVersionAdvisory } from "./providerMaintenance.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
@@ -142,13 +142,36 @@ export function providerModelsFromSettings(
   builtInModels: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<string>,
   customModelCapabilities: ModelCapabilities,
+): ReadonlyArray<ServerProviderModel>;
+export function providerModelsFromSettings(
+  builtInModels: ReadonlyArray<ServerProviderModel>,
+  provider: ProviderDriverKind,
+  customModels: ReadonlyArray<string>,
+  customModelCapabilities: ModelCapabilities,
+): ReadonlyArray<ServerProviderModel>;
+export function providerModelsFromSettings(
+  builtInModels: ReadonlyArray<ServerProviderModel>,
+  providerOrCustomModels: ProviderDriverKind | ReadonlyArray<string>,
+  customModelsOrCapabilities: ReadonlyArray<string> | ModelCapabilities,
+  maybeCustomModelCapabilities?: ModelCapabilities,
 ): ReadonlyArray<ServerProviderModel> {
+  const provider = Array.isArray(providerOrCustomModels)
+    ? undefined
+    : (providerOrCustomModels as ProviderDriverKind);
+  const customModels = Array.isArray(providerOrCustomModels)
+    ? providerOrCustomModels
+    : (customModelsOrCapabilities as ReadonlyArray<string>);
+  const customModelCapabilities = Array.isArray(providerOrCustomModels)
+    ? (customModelsOrCapabilities as ModelCapabilities)
+    : maybeCustomModelCapabilities;
   const resolvedBuiltInModels = [...builtInModels];
   const seen = new Set(resolvedBuiltInModels.map((model) => model.slug));
   const customEntries: ServerProviderModel[] = [];
 
   for (const candidate of customModels) {
-    const normalized = normalizeCustomModelSlug(candidate);
+    const normalized = provider
+      ? normalizeModelSlug(candidate, provider)
+      : normalizeCustomModelSlug(candidate);
     if (!normalized || seen.has(normalized)) {
       continue;
     }
@@ -157,7 +180,7 @@ export function providerModelsFromSettings(
       slug: normalized,
       name: normalized,
       isCustom: true,
-      capabilities: customModelCapabilities,
+      capabilities: customModelCapabilities!,
     });
   }
 

@@ -1,10 +1,8 @@
 /**
- * Hyperagent compatibility driver.
+ * Legacy Hyperagent compatibility driver retained for focused registry tests.
  *
- * Hyperagent does not currently expose an MCP transport that T3 can configure.
- * This driver deliberately uses the OpenCode runtime instead, preserving the
- * Hyperagent provider identity while attaching T3's active MCP servers to the
- * underlying OpenCode session.
+ * Production registration uses `HyperagentDriver`; this OpenCode-backed
+ * variant remains available only to callers that explicitly import it.
  */
 import { ProviderDriverKind } from "@t3tools/contracts";
 
