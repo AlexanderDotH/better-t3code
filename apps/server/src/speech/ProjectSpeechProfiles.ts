@@ -15,7 +15,6 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "../workspace/WorkspaceFileSystem.ts";
 import {
   buildBasicProjectSpeechProfileContent,
@@ -24,6 +23,8 @@ import {
   type ProjectSpeechProfileTextFile,
 } from "./ProjectSpeechProfileIndexer.ts";
 import { ProjectSpeechProfileStore } from "./ProjectSpeechProfileStore.ts";
+import { isIgnoredProjectSpeechPath } from "./ProjectSpeechPathPolicy.ts";
+import { ProjectSpeechWorkspaceScanner } from "./ProjectSpeechWorkspaceScanner.ts";
 
 export const PROJECT_SPEECH_PROFILE_INDEX_FILE_LIMIT = 24;
 export const INDEX_FALLBACK_WARNING =
@@ -104,22 +105,6 @@ const SOURCE_EXTENSIONS = new Set([
   "vue",
   "zig",
 ]);
-const IGNORED_PATH_SEGMENTS = new Set([
-  ".git",
-  ".next",
-  ".nuxt",
-  ".svelte-kit",
-  ".venv",
-  "build",
-  "coverage",
-  "dist",
-  "generated",
-  "node_modules",
-  "out",
-  "target",
-  "vendor",
-]);
-
 interface RankedEntry {
   readonly entry: ProjectEntry;
   readonly normalizedPath: string;
@@ -141,9 +126,7 @@ function normalizePath(path: string): string {
 
 function selectionPriority(normalizedPath: string): number | undefined {
   const segments = normalizedPath.split("/").filter(Boolean);
-  if (segments.some((segment) => IGNORED_PATH_SEGMENTS.has(segment.toLowerCase()))) {
-    return undefined;
-  }
+  if (isIgnoredProjectSpeechPath(normalizedPath)) return undefined;
   const filename = segments.at(-1)?.toLowerCase() ?? "";
   if (
     MANIFEST_NAMES.has(filename) ||
@@ -240,8 +223,8 @@ export class ProjectSpeechProfiles extends Context.Service<
 export const make = Effect.gen(function* () {
   const store = yield* ProjectSpeechProfileStore;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-  const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
   const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+  const workspaceScanner = yield* ProjectSpeechWorkspaceScanner;
 
   const resolveProject = Effect.fn("ProjectSpeechProfiles.resolveProject")(function* (
     projectId: ProjectId,
@@ -292,7 +275,7 @@ export const make = Effect.gen(function* () {
   const buildIndexedContent = Effect.fn("ProjectSpeechProfiles.buildIndexedContent")(function* (
     project: OrchestrationProjectShell,
   ) {
-    const listed = yield* workspaceEntries.list({ cwd: project.workspaceRoot });
+    const listed = yield* workspaceScanner.scan(project.workspaceRoot);
     const selected = selectIndexEntries(listed.entries);
     const readResults = yield* Effect.forEach(selected, (entry) =>
       workspaceFileSystem
@@ -314,7 +297,7 @@ export const make = Effect.gen(function* () {
   const buildBasicContent = Effect.fn("ProjectSpeechProfiles.buildBasicContent")(function* (
     project: OrchestrationProjectShell,
   ) {
-    const entries = yield* workspaceEntries.list({ cwd: project.workspaceRoot }).pipe(
+    const entries = yield* workspaceScanner.scan(project.workspaceRoot).pipe(
       Effect.map((result) => result.entries),
       Effect.orElseSucceed(() => []),
     );

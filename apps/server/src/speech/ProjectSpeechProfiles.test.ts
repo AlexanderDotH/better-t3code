@@ -12,6 +12,7 @@ import * as WorkspaceFileSystem from "../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectSpeechProfileStore from "./ProjectSpeechProfileStore.ts";
 import * as ProjectSpeechProfiles from "./ProjectSpeechProfiles.ts";
+import * as ProjectSpeechWorkspaceScanner from "./ProjectSpeechWorkspaceScanner.ts";
 
 const projectId = ProjectId.make("project-speech");
 const project: OrchestrationProjectShell = {
@@ -63,6 +64,7 @@ function projectionLayer(
 function workspaceLayer(options: {
   readonly list: WorkspaceEntries.WorkspaceEntries["Service"]["list"];
   readonly readFile: WorkspaceFileSystem.WorkspaceFileSystem["Service"]["readFile"];
+  readonly scan?: ProjectSpeechWorkspaceScanner.ProjectSpeechWorkspaceScanner["Service"]["scan"];
 }) {
   return Layer.mergeAll(
     Layer.succeed(
@@ -79,6 +81,20 @@ function workspaceLayer(options: {
       WorkspaceFileSystem.WorkspaceFileSystem.of({
         readFile: options.readFile,
         writeFile: () => Effect.die("unused"),
+      }),
+    ),
+    Layer.succeed(
+      ProjectSpeechWorkspaceScanner.ProjectSpeechWorkspaceScanner,
+      ProjectSpeechWorkspaceScanner.ProjectSpeechWorkspaceScanner.of({
+        scan:
+          options.scan ??
+          ((workspaceRoot) =>
+            options.list({ cwd: workspaceRoot }).pipe(
+              Effect.map(({ entries, truncated }) => ({
+                entries,
+                truncated,
+              })),
+            )),
       }),
     ),
   );
@@ -190,6 +206,33 @@ it.effect("indexes readable high-signal files, skips read errors, and persists t
             truncated: false,
           });
         },
+      }),
+    ),
+  );
+});
+
+it.effect("does not create the native workspace search index while building speech context", () => {
+  const entries: ReadonlyArray<ProjectEntry> = [
+    { path: "package.json", kind: "file" },
+    { path: "src/ProjectSpeechProfiles.ts", kind: "file" },
+  ];
+
+  return Effect.gen(function* () {
+    const profiles = yield* ProjectSpeechProfiles.ProjectSpeechProfiles;
+
+    const indexed = yield* profiles.index(projectId);
+
+    assert.strictEqual(indexed.source, "indexed");
+    assert.include(indexed.keyterms, "ProjectSpeechProfiles");
+  }).pipe(
+    Effect.provide(
+      serviceLayer({
+        list: () => Effect.die("native workspace search index must not run"),
+        scan: () => Effect.succeed({ entries: [...entries], truncated: false }),
+        readFile: successfulReadFile({
+          "package.json": '{"name":"t3-speech","dependencies":{"effect":"latest"}}',
+          "src/ProjectSpeechProfiles.ts": "export class ProjectSpeechProfiles {}",
+        }),
       }),
     ),
   );

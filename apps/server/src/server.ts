@@ -100,6 +100,7 @@ import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinar
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import { AssemblyAiStreamingTokenLive } from "./speech/Layers/AssemblyAiStreamingToken.ts";
 import * as ProjectSpeechProfileStore from "./speech/ProjectSpeechProfileStore.ts";
+import * as ProjectSpeechWorkspaceScanner from "./speech/ProjectSpeechWorkspaceScanner.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import {
   clearPersistedServerRuntimeState,
@@ -321,6 +322,7 @@ const WorkspaceLayerLive = Layer.mergeAll(
   WorkspacePaths.layer,
   WorkspaceEntriesLayerLive,
   WorkspaceFileSystemLayerLive,
+  ProjectSpeechWorkspaceScanner.layer,
 );
 
 const ProjectFaviconResolverLayerLive = ProjectFaviconResolver.layer.pipe(
