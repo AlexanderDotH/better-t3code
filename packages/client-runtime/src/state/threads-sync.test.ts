@@ -75,6 +75,7 @@ const BASE_THREAD: OrchestrationThread = {
   messages: [],
   proposedPlans: [],
   activities: [],
+  subagents: [],
   checkpoints: [],
   session: null,
 };
@@ -314,6 +315,11 @@ const deleted = (): OrchestrationThreadStreamItem => ({
   },
 });
 
+const cursor = (sequence: number): OrchestrationThreadStreamItem => ({
+  kind: "cursor",
+  sequence,
+});
+
 describe("EnvironmentThreads", () => {
   it.effect("publishes cached data immediately from a warm cache", () =>
     Effect.gen(function* () {
@@ -436,6 +442,29 @@ describe("EnvironmentThreads", () => {
       );
 
       expect(Option.getOrThrow(state.data).title).toBe("Live title");
+    }),
+  );
+
+  it.effect("advances the resume sequence across filtered cursor frames", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD });
+      yield* Queue.offer(harness.inputs, snapshot(BASE_THREAD));
+      yield* Queue.offer(harness.inputs, cursor(10));
+      yield* Queue.offer(harness.inputs, titleUpdated("Stale title", 9));
+      yield* Queue.offer(harness.inputs, titleUpdated("Live title", 11));
+
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.title === "Live title",
+      );
+      yield* TestClock.adjust("500 millis");
+      yield* Effect.yieldNow;
+
+      expect(Option.getOrThrow(state.data).title).toBe("Live title");
+      expect((yield* Ref.get(harness.savedThreads)).at(-1)?.snapshotSequence).toBe(11);
     }),
   );
 

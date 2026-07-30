@@ -24,6 +24,8 @@ import {
   ProviderApprovalDecision,
   ThreadId,
   ProviderSendTurnInput,
+  type RuntimeSubagentState,
+  SubagentId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
@@ -56,6 +58,7 @@ import { ServerConfig } from "../../config.ts";
 import {
   CodexResumeCursorSchema,
   CodexSessionRuntimeThreadIdMissingError,
+  makeCodexSubagentId,
   makeCodexSessionRuntime,
   type CodexSessionRuntimeError,
   type CodexSessionRuntimeOptions,
@@ -423,6 +426,79 @@ function asRuntimeRequestId(requestId: string): RuntimeRequestId {
   return RuntimeRequestId.make(requestId);
 }
 
+type CodexCollabAgentStatus = EffectCodexSchema.ServerNotification__CollabAgentState["status"];
+
+export function normalizeCodexCollabAgentStatus(
+  status: CodexCollabAgentStatus,
+): RuntimeSubagentState {
+  switch (status) {
+    case "pendingInit":
+      return "starting";
+    case "running":
+      return "running";
+    case "interrupted":
+      return "interrupted";
+    case "completed":
+    case "shutdown":
+      return "completed";
+    case "errored":
+      return "error";
+    case "notFound":
+      return "unavailable";
+  }
+}
+
+function toSubagentStateFromThreadStatus(
+  status: EffectCodexSchema.V2ThreadStatusChangedNotification["status"],
+): RuntimeSubagentState {
+  switch (status.type) {
+    case "active":
+      return status.activeFlags.length > 0 ? "waiting" : "running";
+    case "idle":
+      return "waiting";
+    case "systemError":
+      return "error";
+    case "notLoaded":
+      return "unavailable";
+  }
+}
+
+function unknownRecord(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null
+    ? (value as Readonly<Record<string, unknown>>)
+    : undefined;
+}
+
+function stringArray(value: unknown): ReadonlyArray<string> {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+function nonNegativeInt(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+function subagentDepthFromPath(agentPath: string | undefined): number | undefined {
+  if (!agentPath) {
+    return undefined;
+  }
+  const segments = agentPath.split("/").filter((segment) => segment.length > 0);
+  if (segments.length === 0) {
+    return undefined;
+  }
+  return Math.max(0, segments.length - (segments[0] === "root" ? 1 : 0));
+}
+
+function lifecycleItemFromEvent(
+  event: ProviderEvent,
+): Readonly<Record<string, unknown>> | undefined {
+  if (event.method !== "item/started" && event.method !== "item/completed") {
+    return undefined;
+  }
+  return unknownRecord(unknownRecord(event.payload)?.item);
+}
+
 function eventRawSource(event: ProviderEvent): NonNullable<ProviderRuntimeEvent["raw"]>["source"] {
   return event.kind === "request" ? "codex.app-server.request" : "codex.app-server.notification";
 }
@@ -431,6 +507,7 @@ function providerRefsFromEvent(
   event: ProviderEvent,
 ): ProviderRuntimeEvent["providerRefs"] | undefined {
   const refs: Record<string, string> = {};
+  if (event.providerThreadId) refs.providerThreadId = event.providerThreadId;
   if (event.turnId) refs.providerTurnId = event.turnId;
   if (event.itemId) refs.providerItemId = event.itemId;
   if (event.requestId) refs.providerRequestId = event.requestId;
@@ -448,6 +525,8 @@ function runtimeEventBase(
     provider: event.provider,
     threadId: canonicalThreadId,
     createdAt: event.createdAt,
+    ...(event.providerInstanceId ? { providerInstanceId: event.providerInstanceId } : {}),
+    ...(event.subagentId ? { subagentId: event.subagentId } : {}),
     ...(event.turnId ? { turnId: event.turnId } : {}),
     ...(event.itemId ? { itemId: asRuntimeItemId(event.itemId) } : {}),
     ...(event.requestId ? { requestId: asRuntimeRequestId(event.requestId) } : {}),
@@ -498,7 +577,375 @@ function mapItemLifecycle(
   };
 }
 
-function mapToRuntimeEvents(
+function makeSubagentDiscoveredEvent(
+  event: ProviderEvent,
+  canonicalThreadId: ThreadId,
+  providerThreadId: string,
+  metadata?: {
+    readonly parentSubagentId?: SubagentId;
+    readonly agentPath?: string;
+    readonly nickname?: string;
+    readonly role?: string;
+    readonly task?: string;
+    readonly model?: string;
+    readonly reasoningEffort?: string;
+    readonly depth?: number;
+  },
+): ProviderRuntimeEvent {
+  const subagentId = makeCodexSubagentId(providerThreadId);
+  return {
+    ...runtimeEventBase(event, canonicalThreadId),
+    subagentId,
+    type: "subagent.discovered",
+    payload: {
+      subagentId,
+      providerThreadId,
+      ...(metadata?.parentSubagentId ? { parentSubagentId: metadata.parentSubagentId } : {}),
+      ...(trimText(metadata?.agentPath) ? { agentPath: trimText(metadata?.agentPath) } : {}),
+      ...(trimText(metadata?.nickname) ? { nickname: trimText(metadata?.nickname) } : {}),
+      ...(trimText(metadata?.role) ? { role: trimText(metadata?.role) } : {}),
+      ...(trimText(metadata?.task) ? { task: trimText(metadata?.task) } : {}),
+      ...(trimText(metadata?.model) ? { model: trimText(metadata?.model) } : {}),
+      ...(trimText(metadata?.reasoningEffort)
+        ? { reasoningEffort: trimText(metadata?.reasoningEffort) }
+        : {}),
+      ...(metadata?.depth !== undefined ? { depth: metadata.depth } : {}),
+    },
+  };
+}
+
+function makeSubagentStateChangedEvent(
+  event: ProviderEvent,
+  canonicalThreadId: ThreadId,
+  subagentId: SubagentId,
+  state: RuntimeSubagentState,
+  statusMessage?: string | null,
+): ProviderRuntimeEvent {
+  return {
+    ...runtimeEventBase(event, canonicalThreadId),
+    subagentId,
+    type: "subagent.state.changed",
+    payload: {
+      subagentId,
+      state,
+      ...(trimText(statusMessage) ? { statusMessage: trimText(statusMessage) } : {}),
+    },
+  };
+}
+
+function parentSubagentId(
+  providerThreadId: string | undefined,
+  rootProviderThreadId: string | undefined,
+): SubagentId | undefined {
+  if (!providerThreadId || providerThreadId === rootProviderThreadId) {
+    return undefined;
+  }
+  return makeCodexSubagentId(providerThreadId);
+}
+
+function mapSubagentActivityEvents(
+  event: ProviderEvent,
+  canonicalThreadId: ThreadId,
+): ReadonlyArray<ProviderRuntimeEvent> {
+  const item = lifecycleItemFromEvent(event);
+  if (item?.type !== "subAgentActivity") {
+    return [];
+  }
+  const providerThreadId = trimText(
+    typeof item.agentThreadId === "string" ? item.agentThreadId : undefined,
+  );
+  if (!providerThreadId) {
+    return [];
+  }
+  const agentPath = trimText(typeof item.agentPath === "string" ? item.agentPath : undefined);
+  const depth = subagentDepthFromPath(agentPath);
+  const subagentId = makeCodexSubagentId(providerThreadId);
+  const kind = item.kind;
+  const state =
+    kind === "started"
+      ? "starting"
+      : kind === "interacted"
+        ? "running"
+        : kind === "interrupted"
+          ? "interrupted"
+          : undefined;
+  return [
+    makeSubagentDiscoveredEvent(event, canonicalThreadId, providerThreadId, {
+      ...(event.subagentId ? { parentSubagentId: event.subagentId } : {}),
+      ...(agentPath ? { agentPath } : {}),
+      ...(depth !== undefined ? { depth } : {}),
+    }),
+    ...(state ? [makeSubagentStateChangedEvent(event, canonicalThreadId, subagentId, state)] : []),
+  ];
+}
+
+function isCodexCollabAgentStatus(value: unknown): value is CodexCollabAgentStatus {
+  return (
+    value === "pendingInit" ||
+    value === "running" ||
+    value === "interrupted" ||
+    value === "completed" ||
+    value === "errored" ||
+    value === "shutdown" ||
+    value === "notFound"
+  );
+}
+
+function collabToolFallbackState(tool: unknown, status: unknown): RuntimeSubagentState | undefined {
+  if (status === "failed") {
+    return "error";
+  }
+  switch (tool) {
+    case "spawnAgent":
+      return "starting";
+    case "sendInput":
+    case "resumeAgent":
+      return "running";
+    case "closeAgent":
+      return "completed";
+    default:
+      return undefined;
+  }
+}
+
+function mapCollabAgentEvents(
+  event: ProviderEvent,
+  canonicalThreadId: ThreadId,
+  rootProviderThreadId: string | undefined,
+): ReadonlyArray<ProviderRuntimeEvent> {
+  const item = lifecycleItemFromEvent(event);
+  if (item?.type !== "collabAgentToolCall") {
+    return [];
+  }
+
+  const agentStates = unknownRecord(item.agentsStates) ?? {};
+  const receiverThreadIds = stringArray(item.receiverThreadIds);
+  const providerThreadIds = Array.from(
+    new Set([...receiverThreadIds, ...Object.keys(agentStates)]),
+  ).filter((providerThreadId) => providerThreadId.trim().length > 0);
+  const senderThreadId = trimText(
+    typeof item.senderThreadId === "string" ? item.senderThreadId : undefined,
+  );
+  const parentId = event.subagentId ?? parentSubagentId(senderThreadId, rootProviderThreadId);
+  const task = trimText(typeof item.prompt === "string" ? item.prompt : undefined);
+  const model = trimText(typeof item.model === "string" ? item.model : undefined);
+  const reasoningEffort = trimText(
+    typeof item.reasoningEffort === "string" ? item.reasoningEffort : undefined,
+  );
+  const events: Array<ProviderRuntimeEvent> = [];
+
+  for (const providerThreadId of providerThreadIds) {
+    events.push(
+      makeSubagentDiscoveredEvent(event, canonicalThreadId, providerThreadId, {
+        ...(parentId ? { parentSubagentId: parentId } : {}),
+        ...(task ? { task } : {}),
+        ...(model ? { model } : {}),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+      }),
+    );
+
+    const stateRecord = unknownRecord(agentStates[providerThreadId]);
+    const rawState = stateRecord?.status;
+    const state = isCodexCollabAgentStatus(rawState)
+      ? normalizeCodexCollabAgentStatus(rawState)
+      : collabToolFallbackState(item.tool, item.status);
+    if (!state) {
+      continue;
+    }
+    events.push(
+      makeSubagentStateChangedEvent(
+        event,
+        canonicalThreadId,
+        makeCodexSubagentId(providerThreadId),
+        state,
+        typeof stateRecord?.message === "string" ? stateRecord.message : undefined,
+      ),
+    );
+  }
+
+  return events;
+}
+
+function threadSpawnMetadata(thread: EffectCodexSchema.V2ThreadStartedNotification["thread"]): {
+  readonly agentPath?: string;
+  readonly nickname?: string;
+  readonly role?: string;
+  readonly parentProviderThreadId?: string;
+  readonly depth?: number;
+} {
+  const source = thread.source;
+  const subAgent = typeof source === "object" && "subAgent" in source ? source.subAgent : undefined;
+  const spawn =
+    typeof subAgent === "object" && "thread_spawn" in subAgent ? subAgent.thread_spawn : undefined;
+  const agentPath = trimText(spawn?.agent_path);
+  const nickname = trimText(thread.agentNickname) ?? trimText(spawn?.agent_nickname);
+  const role = trimText(thread.agentRole) ?? trimText(spawn?.agent_role);
+  const parentProviderThreadId =
+    trimText(thread.parentThreadId) ?? trimText(spawn?.parent_thread_id);
+  const depth = spawn ? nonNegativeInt(spawn.depth) : subagentDepthFromPath(agentPath);
+  return {
+    ...(agentPath ? { agentPath } : {}),
+    ...(nickname ? { nickname } : {}),
+    ...(role ? { role } : {}),
+    ...(parentProviderThreadId ? { parentProviderThreadId } : {}),
+    ...(depth !== undefined ? { depth } : {}),
+  };
+}
+
+function mapChildThreadEvents(
+  event: ProviderEvent,
+  canonicalThreadId: ThreadId,
+  rootProviderThreadId: string | undefined,
+): ReadonlyArray<ProviderRuntimeEvent> {
+  const subagentId = event.subagentId;
+  const providerThreadId = event.providerThreadId;
+  if (!subagentId || !providerThreadId) {
+    return [];
+  }
+
+  if (event.method === "thread/started") {
+    const payload = readPayload(EffectCodexSchema.V2ThreadStartedNotification, event.payload);
+    if (!payload) {
+      return [];
+    }
+    const metadata = threadSpawnMetadata(payload.thread);
+    const parentId = parentSubagentId(metadata.parentProviderThreadId, rootProviderThreadId);
+    const task = trimText(payload.thread.preview);
+    return [
+      makeSubagentDiscoveredEvent(event, canonicalThreadId, providerThreadId, {
+        ...(parentId ? { parentSubagentId: parentId } : {}),
+        ...(metadata.agentPath ? { agentPath: metadata.agentPath } : {}),
+        ...(metadata.nickname ? { nickname: metadata.nickname } : {}),
+        ...(metadata.role ? { role: metadata.role } : {}),
+        ...(task ? { task } : {}),
+        ...(metadata.depth !== undefined ? { depth: metadata.depth } : {}),
+      }),
+      makeSubagentStateChangedEvent(
+        event,
+        canonicalThreadId,
+        subagentId,
+        toSubagentStateFromThreadStatus(payload.thread.status),
+      ),
+    ];
+  }
+
+  if (event.method === "thread/status/changed") {
+    const payload = readPayload(EffectCodexSchema.V2ThreadStatusChangedNotification, event.payload);
+    return payload
+      ? [
+          makeSubagentStateChangedEvent(
+            event,
+            canonicalThreadId,
+            subagentId,
+            toSubagentStateFromThreadStatus(payload.status),
+          ),
+        ]
+      : [];
+  }
+
+  if (event.method === "thread/closed" || event.method === "thread/archived") {
+    return [makeSubagentStateChangedEvent(event, canonicalThreadId, subagentId, "completed")];
+  }
+
+  if (event.method === "thread/unarchived" || event.method === "turn/started") {
+    return [makeSubagentStateChangedEvent(event, canonicalThreadId, subagentId, "running")];
+  }
+
+  if (event.method === "turn/completed") {
+    const payload = readPayload(EffectCodexSchema.V2TurnCompletedNotification, event.payload);
+    if (!payload) {
+      return [];
+    }
+    const state =
+      payload.turn.status === "failed"
+        ? "error"
+        : payload.turn.status === "interrupted"
+          ? "interrupted"
+          : "completed";
+    return [
+      makeSubagentStateChangedEvent(
+        event,
+        canonicalThreadId,
+        subagentId,
+        state,
+        payload.turn.error?.message,
+      ),
+    ];
+  }
+
+  if (event.method === "error") {
+    const payload = readPayload(EffectCodexSchema.V2ErrorNotification, event.payload);
+    return [
+      makeSubagentStateChangedEvent(
+        event,
+        canonicalThreadId,
+        subagentId,
+        payload?.willRetry ? "running" : "error",
+        payload?.error.message ?? event.message,
+      ),
+    ];
+  }
+
+  return [];
+}
+
+function suppressGenericChildThreadEvent(event: ProviderEvent): boolean {
+  if (!event.subagentId) {
+    return false;
+  }
+  return (
+    event.method === "thread/started" ||
+    event.method === "thread/status/changed" ||
+    event.method === "thread/archived" ||
+    event.method === "thread/unarchived" ||
+    event.method === "thread/closed"
+  );
+}
+
+export function makeCodexRuntimeEventMapper(initialRootProviderThreadId?: string) {
+  let rootProviderThreadId = trimText(initialRootProviderThreadId);
+  const knownProviderThreadIds = new Set<string>();
+
+  return (
+    event: ProviderEvent,
+    canonicalThreadId: ThreadId,
+  ): ReadonlyArray<ProviderRuntimeEvent> => {
+    if (!event.subagentId && event.providerThreadId && !rootProviderThreadId) {
+      rootProviderThreadId = event.providerThreadId;
+    }
+
+    const explicitEvents = [
+      ...mapSubagentActivityEvents(event, canonicalThreadId),
+      ...mapCollabAgentEvents(event, canonicalThreadId, rootProviderThreadId),
+      ...mapChildThreadEvents(event, canonicalThreadId, rootProviderThreadId),
+    ];
+    for (const explicitEvent of explicitEvents) {
+      if (explicitEvent.type === "subagent.discovered") {
+        knownProviderThreadIds.add(explicitEvent.payload.providerThreadId);
+      }
+    }
+
+    const placeholder =
+      event.subagentId &&
+      event.providerThreadId &&
+      !knownProviderThreadIds.has(event.providerThreadId)
+        ? [makeSubagentDiscoveredEvent(event, canonicalThreadId, event.providerThreadId)]
+        : [];
+    if (event.providerThreadId && event.subagentId) {
+      knownProviderThreadIds.add(event.providerThreadId);
+    }
+
+    return [
+      ...placeholder,
+      ...explicitEvents,
+      ...(suppressGenericChildThreadEvent(event)
+        ? []
+        : mapCanonicalRuntimeEvents(event, canonicalThreadId)),
+    ];
+  };
+}
+
+function mapCanonicalRuntimeEvents(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
 ): ReadonlyArray<ProviderRuntimeEvent> {
@@ -1476,11 +1923,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               }),
           ),
         );
+        const mapRuntimeEvent = makeCodexRuntimeEventMapper(runtimeInput.resumeCursor?.threadId);
 
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
-            const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+            const runtimeEvents = mapRuntimeEvent(event, event.threadId);
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,

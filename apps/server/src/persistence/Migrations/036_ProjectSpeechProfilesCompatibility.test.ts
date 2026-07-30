@@ -86,7 +86,7 @@ const assertCompleteSchema = Effect.fn("assertCompleteSchema")(function* () {
 it.effect("036_ProjectSpeechProfilesCompatibility upgrades a database ending at migration 32", () =>
   Effect.gen(function* () {
     yield* runMigrations({ toMigrationInclusive: 32 });
-    const migrations = yield* runMigrations();
+    const migrations = yield* runMigrations({ toMigrationInclusive: 36 });
     assert.deepStrictEqual(
       migrations.map(([id, name]) => [id, name]),
       [
@@ -105,7 +105,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       yield* runMigrations({ toMigrationInclusive: 35 });
-      const migrations = yield* runMigrations();
+      const migrations = yield* runMigrations({ toMigrationInclusive: 36 });
       assert.deepStrictEqual(
         migrations.map(([id, name]) => [id, name]),
         [[36, "ProjectSpeechProfilesCompatibility"]],
@@ -152,7 +152,7 @@ it.effect("036_ProjectSpeechProfilesCompatibility repairs a legacy fork migratio
         VALUES (33, 'ProjectSpeechProfiles')
       `;
 
-    const migrations = yield* runMigrations();
+    const migrations = yield* runMigrations({ toMigrationInclusive: 36 });
     assert.deepStrictEqual(
       migrations.map(([id, name]) => [id, name]),
       [

@@ -98,6 +98,8 @@ import type {
   OrchestrationGetTurnDiffResult,
   OrchestrationShellSnapshot,
   OrchestrationShellStreamItem,
+  OrchestrationSubagentStreamItem,
+  OrchestrationSubscribeSubagentInput,
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
@@ -1354,6 +1356,13 @@ export interface EnvironmentApi {
     subscribeThread: (
       input: OrchestrationSubscribeThreadInput,
       callback: (event: OrchestrationThreadStreamItem) => void,
+      options?: {
+        onResubscribe?: () => void;
+      },
+    ) => () => void;
+    subscribeSubagent: (
+      input: OrchestrationSubscribeSubagentInput,
+      callback: (event: OrchestrationSubagentStreamItem) => void,
       options?: {
         onResubscribe?: () => void;
       },

@@ -1,4 +1,11 @@
-import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
+import type {
+  OrchestrationEvent,
+  OrchestrationReadModel,
+  OrchestrationSubagentStatus,
+  OrchestrationSubagentSummary,
+  SubagentId,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
@@ -29,12 +36,150 @@ import {
   ThreadUnsnoozedPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
+  ThreadSubagentProgressSetPayload,
+  ThreadSubagentStateSetPayload,
+  ThreadSubagentUpsertedPayload,
   ThreadTurnDiffCompletedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
+const TERMINAL_SUBAGENT_STATUSES = new Set<OrchestrationSubagentStatus>([
+  "completed",
+  "interrupted",
+  "error",
+  "unavailable",
+]);
+
+function maxIsoDate(left: string, right: string): string {
+  return left.localeCompare(right) >= 0 ? left : right;
+}
+
+function minIsoDate(left: string, right: string): string {
+  return left.localeCompare(right) <= 0 ? left : right;
+}
+
+function placeholderSubagent(input: {
+  readonly subagentId: SubagentId;
+  readonly updatedAt: string;
+  readonly status?: OrchestrationSubagentStatus;
+}): OrchestrationSubagentSummary {
+  return {
+    id: input.subagentId,
+    providerThreadId: input.subagentId,
+    parentId: null,
+    path: null,
+    name: `Agent ${input.subagentId.slice(0, 8)}`,
+    nickname: null,
+    role: null,
+    task: null,
+    model: null,
+    reasoningEffort: null,
+    depth: 0,
+    status: input.status ?? "starting",
+    statusMessage: null,
+    latestProgress: null,
+    latestTurn: null,
+    startedAt: input.updatedAt,
+    updatedAt: input.updatedAt,
+    completedAt:
+      input.status !== undefined && TERMINAL_SUBAGENT_STATUSES.has(input.status)
+        ? input.updatedAt
+        : null,
+  };
+}
+
+function mergeSubagentSummary(
+  existing: OrchestrationSubagentSummary,
+  incoming: OrchestrationSubagentSummary,
+): OrchestrationSubagentSummary {
+  const lifecycle = incoming.updatedAt.localeCompare(existing.updatedAt) >= 0 ? incoming : existing;
+  return {
+    ...existing,
+    ...incoming,
+    parentId: incoming.parentId ?? existing.parentId,
+    path: incoming.path ?? existing.path,
+    nickname: incoming.nickname ?? existing.nickname,
+    role: incoming.role ?? existing.role,
+    task: incoming.task ?? existing.task,
+    model: incoming.model ?? existing.model,
+    reasoningEffort: incoming.reasoningEffort ?? existing.reasoningEffort,
+    status: lifecycle.status,
+    statusMessage: lifecycle.statusMessage,
+    latestProgress: lifecycle.latestProgress,
+    latestTurn: lifecycle.latestTurn,
+    startedAt: minIsoDate(existing.startedAt, incoming.startedAt),
+    updatedAt: lifecycle.updatedAt,
+    completedAt: lifecycle.completedAt,
+  };
+}
+
+function upsertSubagent(
+  subagents: ReadonlyArray<OrchestrationSubagentSummary>,
+  incoming: OrchestrationSubagentSummary,
+): OrchestrationSubagentSummary[] {
+  const existing = subagents.find((entry) => entry.id === incoming.id);
+  if (!existing) {
+    return [...subagents, incoming];
+  }
+  const merged = mergeSubagentSummary(existing, incoming);
+  return subagents.map((entry) => (entry.id === incoming.id ? merged : entry));
+}
+
+function setSubagentState(
+  subagents: ReadonlyArray<OrchestrationSubagentSummary>,
+  input: {
+    readonly subagentId: SubagentId;
+    readonly status: OrchestrationSubagentStatus;
+    readonly statusMessage: string | null;
+    readonly updatedAt: string;
+  },
+): OrchestrationSubagentSummary[] {
+  const existing =
+    subagents.find((entry) => entry.id === input.subagentId) ??
+    placeholderSubagent({
+      subagentId: input.subagentId,
+      updatedAt: input.updatedAt,
+      status: input.status,
+    });
+  const updated =
+    input.updatedAt.localeCompare(existing.updatedAt) < 0
+      ? existing
+      : {
+          ...existing,
+          status: input.status,
+          statusMessage: input.statusMessage,
+          updatedAt: input.updatedAt,
+          completedAt: TERMINAL_SUBAGENT_STATUSES.has(input.status) ? input.updatedAt : null,
+        };
+  return upsertSubagent(subagents, updated);
+}
+
+function setSubagentProgress(
+  subagents: ReadonlyArray<OrchestrationSubagentSummary>,
+  input: {
+    readonly subagentId: SubagentId;
+    readonly progress: OrchestrationSubagentSummary["latestProgress"];
+    readonly updatedAt: string;
+  },
+): OrchestrationSubagentSummary[] {
+  const existing =
+    subagents.find((entry) => entry.id === input.subagentId) ??
+    placeholderSubagent({
+      subagentId: input.subagentId,
+      updatedAt: input.updatedAt,
+    });
+  const updated =
+    input.updatedAt.localeCompare(existing.updatedAt) < 0
+      ? existing
+      : {
+          ...existing,
+          latestProgress: input.progress,
+          updatedAt: input.updatedAt,
+        };
+  return upsertSubagent(subagents, updated);
+}
 
 function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "error") {
   if (status === "error") return "error" as const;
@@ -296,7 +441,9 @@ export function projectEvent(
             snoozedAt: null,
             deletedAt: null,
             messages: [],
+            proposedPlans: [],
             activities: [],
+            subagents: [],
             checkpoints: [],
             session: null,
           },
@@ -452,6 +599,9 @@ export function projectEvent(
         if (!thread) {
           return nextBase;
         }
+        if (payload.subagentId !== undefined) {
+          return nextBase;
+        }
 
         const message: OrchestrationMessage = yield* decodeForEvent(
           OrchestrationMessage,
@@ -574,6 +724,9 @@ export function projectEvent(
         );
         const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
         if (!thread) {
+          return nextBase;
+        }
+        if (payload.subagentId !== undefined) {
           return nextBase;
         }
 
@@ -734,6 +887,9 @@ export function projectEvent(
           if (!thread) {
             return nextBase;
           }
+          if (payload.subagentId !== undefined) {
+            return nextBase;
+          }
 
           const activities = [
             ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
@@ -747,6 +903,72 @@ export function projectEvent(
             threads: updateThread(nextBase.threads, payload.threadId, {
               activities,
               updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.subagent-upserted":
+      return decodeForEvent(
+        ThreadSubagentUpsertedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              subagents: upsertSubagent(thread.subagents, payload.subagent),
+              updatedAt: maxIsoDate(thread.updatedAt, event.occurredAt),
+            }),
+          };
+        }),
+      );
+
+    case "thread.subagent-state-set":
+      return decodeForEvent(
+        ThreadSubagentStateSetPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              subagents: setSubagentState(thread.subagents, payload),
+              updatedAt: maxIsoDate(thread.updatedAt, event.occurredAt),
+            }),
+          };
+        }),
+      );
+
+    case "thread.subagent-progress-set":
+      return decodeForEvent(
+        ThreadSubagentProgressSetPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              subagents: setSubagentProgress(thread.subagents, payload),
+              updatedAt: maxIsoDate(thread.updatedAt, event.occurredAt),
             }),
           };
         }),

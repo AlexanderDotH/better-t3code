@@ -15,10 +15,13 @@ import type {
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
   OrchestrationShellSnapshot,
+  OrchestrationSubagentDetail,
+  OrchestrationSubagentDetailSnapshot,
   OrchestrationThread,
   OrchestrationThreadDetailSnapshot,
   OrchestrationThreadShell,
   ProjectId,
+  SubagentId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -168,6 +171,26 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadDetailById: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
+
+  /**
+   * Read one retained subagent and its transcript without hydrating the
+   * transcripts of sibling agents.
+   */
+  readonly getSubagentDetailById: (
+    threadId: ThreadId,
+    subagentId: SubagentId,
+  ) => Effect.Effect<Option.Option<OrchestrationSubagentDetail>, ProjectionRepositoryError>;
+
+  /**
+   * Read one retained subagent transcript together with the projection
+   * sequence in one transaction. This prevents a streaming event from being
+   * represented in the detail while still being replayed after an older
+   * independently-read cursor.
+   */
+  readonly getSubagentDetailSnapshot: (
+    threadId: ThreadId,
+    subagentId: SubagentId,
+  ) => Effect.Effect<Option.Option<OrchestrationSubagentDetailSnapshot>, ProjectionRepositoryError>;
 
   /**
    * Read a single active thread detail together with the projection snapshot
