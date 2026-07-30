@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the current checkout and install it as the user-local T3 Code build.
+# Legacy entry point retained as a build-only Linux AppImage workflow.
 set -euo pipefail
 
 if [[ "${EUID}" -eq 0 ]]; then
@@ -7,32 +7,27 @@ if [[ "${EUID}" -eq 0 ]]; then
   exit 1
 fi
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 RELEASE_DIR="$ROOT/apps/desktop/release"
-INSTALLER="$ROOT/scripts/install-t3code-local-linux.sh"
-PROFILE=""
 INSTALL_DEPS=true
 
 usage() {
   cat <<'EOF'
 Usage:
-  bash scripts/build-and-install-t3code-local-linux.sh [--profile isolated|shared-system] [--no-install-deps]
+  bash scripts/build-and-install-t3code-local-linux.sh [--no-install-deps]
 
 Builds the current checkout in a temporary directory, verifies required feature
-markers, records build provenance, and atomically updates only the user-local
-T3 Code installation.
+markers, and records build provenance. This is a build-only workflow: it never
+installs, starts, stops, or restarts T3 Code.
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --profile)
-      if [[ $# -lt 2 ]]; then
-        echo "error: --profile requires isolated or shared-system" >&2
-        exit 2
-      fi
-      PROFILE="$2"
-      shift 2
+      echo "error: --profile is no longer accepted by this build-only workflow" >&2
+      echo "Installation requires a separate, explicit later user action." >&2
+      exit 78
       ;;
     --no-install-deps)
       INSTALL_DEPS=false
@@ -50,15 +45,21 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -n "$PROFILE" && "$PROFILE" != "isolated" && "$PROFILE" != "shared-system" ]]; then
-  echo "error: invalid profile '$PROFILE'; expected isolated or shared-system" >&2
-  exit 2
+CANONICAL_CHECKOUT="${T3CODE_CANONICAL_CHECKOUT:-/home/alex/Workspace/Projects/Apps/better-t3code}"
+if [[ -d "$CANONICAL_CHECKOUT" ]]; then
+  CANONICAL_ROOT="$(cd "$CANONICAL_CHECKOUT" && pwd -P)"
+  if [[ "$ROOT" != "$CANONICAL_ROOT" ]]; then
+    echo "error: $ROOT is not the canonical T3 Code checkout" >&2
+    echo "Build from $CANONICAL_ROOT instead." >&2
+    exit 78
+  fi
 fi
+
 if [[ "$(uname -s)" != Linux ]]; then
   echo "error: Linux AppImage builds are only supported on Linux" >&2
   exit 1
 fi
-if [[ ! -f "$ROOT/package.json" || ! -x "$INSTALLER" ]]; then
+if [[ ! -f "$ROOT/package.json" ]]; then
   echo "error: incomplete repository checkout at $ROOT" >&2
   exit 1
 fi
@@ -155,18 +156,5 @@ EOF
 echo "==> verified all required feature markers"
 echo "==> artifact: $PERSISTED_APPIMAGE"
 echo "==> sha256: $ARTIFACT_SHA256"
-
-installer_args=()
-if [[ -n "$PROFILE" ]]; then
-  installer_args+=(--profile "$PROFILE")
-fi
-bash "$INSTALLER" "${installer_args[@]}" "$PERSISTED_APPIMAGE"
-
-DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
-INSTALLED_APPIMAGE="$DATA_HOME/t3code-local/T3CodeLocal.AppImage"
-INSTALLED_SHA256="$(sha256sum "$INSTALLED_APPIMAGE" | awk '{print $1}')"
-if [[ "$INSTALLED_SHA256" != "$ARTIFACT_SHA256" ]]; then
-  echo "error: installed AppImage checksum does not match the built artifact" >&2
-  exit 1
-fi
-echo "==> local installation verified: $INSTALLED_APPIMAGE"
+echo "==> build-only workflow complete; no T3 Code installation or process action was performed"
+echo "==> installation requires a separate, explicit later user action"

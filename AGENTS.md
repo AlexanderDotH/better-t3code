@@ -4,6 +4,28 @@ T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provid
 
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
 
+## Local fork and live-instance safety
+
+These are hard local overrides for agent work on this machine:
+
+- `/home/alex/Workspace/Projects/Apps/better-t3code` is the only canonical checkout. The sibling
+  `t3code` checkout and temporary integration worktrees are donor/reference copies only. Carry useful
+  source changes into this checkout before publishing or producing an installable artifact.
+- Never start, stop, restart, replace, or otherwise take control of a T3 Code process from an agent
+  session. This includes installed apps, desktop clients, dev servers, background handoffs, detached
+  restart jobs, and processes owned by another session.
+- Never invoke `app2unit`, `systemctl`, or a user-scope handoff to manage T3 Code. Do not arrange a
+  delayed command that performs one of those actions after the current agent exits.
+- Never install from an agent session. Do not modify `/opt/t3code-git/t3code`,
+  `/opt/t3code-bin/t3code`, launchers, desktop entries, wrapper scripts, install-profile selectors, or
+  immutable flags. Installation is a separate, explicit later user action after active chats finish.
+- Never open `~/.t3/userdata` read-write, run a server against it, migrate it, or otherwise mutate live
+  T3 home state. Read-only inspection and a consistent copy into this checkout's gitignored `.t3` are
+  allowed.
+- Build-only verification is allowed. `scripts/build-and-install-t3code-local-linux.sh` is retained
+  under its legacy name but only builds and verifies an AppImage; it does not install or manage a
+  process. Agents must not invoke `scripts/install-t3code-local-linux.sh`.
+
 ## What makes T3 Code special?
 
 We have over 100,000 users who love T3 Code. It's important we maintain the things they love as we continue to iterate on the product. Here's a brief list of the things we can never compromise on.

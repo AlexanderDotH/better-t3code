@@ -9,6 +9,11 @@ const installerPath = NodePath.resolve(
   import.meta.dirname,
   "../../../scripts/install-t3code-local-linux.sh",
 );
+const buildScriptPath = NodePath.resolve(
+  import.meta.dirname,
+  "../../../scripts/build-and-install-t3code-local-linux.sh",
+);
+const projectRoot = NodePath.resolve(import.meta.dirname, "../../..");
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
@@ -29,22 +34,29 @@ function writeFakeAppImage(filePath: string, body: string): void {
 }
 
 function installerEnvironment(home: string): NodeJS.ProcessEnv {
-  return {
+  const environment = {
     ...process.env,
     HOME: home,
+    T3CODE_CANONICAL_CHECKOUT: projectRoot,
     XDG_CONFIG_HOME: NodePath.join(home, "config"),
     XDG_DATA_HOME: NodePath.join(home, "data"),
     XDG_STATE_HOME: NodePath.join(home, "state"),
   };
+  delete environment.T3CODE_HOME;
+  return environment;
 }
 
 function runInstaller(input: {
   readonly appImage: string;
+  readonly confirmInstall?: boolean;
   readonly environment?: NodeJS.ProcessEnv;
   readonly home: string;
   readonly profile?: "isolated" | "shared-system";
 }) {
   const args = [installerPath];
+  if (input.confirmInstall !== false) {
+    args.push("--confirm-install");
+  }
   if (input.profile) {
     args.push("--profile", input.profile);
   }
@@ -59,6 +71,45 @@ function runInstaller(input: {
 }
 
 describe("install-t3code-local-linux", () => {
+  it("requires a separate explicit installation confirmation", () => {
+    const home = makeHome();
+    const appImage = NodePath.join(home, "fake.AppImage");
+    writeFakeAppImage(appImage, "exit 0");
+
+    const install = runInstaller({
+      appImage,
+      confirmInstall: false,
+      home,
+      profile: "isolated",
+    });
+
+    NodeAssert.equal(install.status, 78);
+    NodeAssert.match(install.stderr, /explicit later user action/);
+    NodeAssert.equal(NodeFS.existsSync(NodePath.join(home, "data", "t3code-local")), false);
+  });
+
+  it("refuses installation from a noncanonical checkout", () => {
+    const home = makeHome();
+    const appImage = NodePath.join(home, "fake.AppImage");
+    const canonicalCheckout = NodePath.join(home, "canonical-better-t3code");
+    writeFakeAppImage(appImage, "exit 0");
+    NodeFS.mkdirSync(canonicalCheckout);
+
+    const install = runInstaller({
+      appImage,
+      environment: {
+        T3CODE_CANONICAL_CHECKOUT: canonicalCheckout,
+      },
+      home,
+      profile: "isolated",
+    });
+
+    NodeAssert.equal(install.status, 78);
+    NodeAssert.match(install.stderr, /not the canonical T3 Code checkout/);
+    NodeAssert.match(install.stderr, /better-t3code/);
+    NodeAssert.equal(NodeFS.existsSync(NodePath.join(home, "data", "t3code-local")), false);
+  });
+
   it("atomically rotates the previous AppImage and preserves the selected profile", () => {
     const home = makeHome();
     const firstAppImage = NodePath.join(home, "first.AppImage");
@@ -240,5 +291,15 @@ describe("install-t3code-local-linux", () => {
       NodeFS.existsSync(NodePath.join(appDirectory, "shared-profile-backup-complete")),
       true,
     );
+  });
+});
+
+describe("build-and-install-t3code-local-linux", () => {
+  it("is a build-only workflow and cannot invoke the installer", () => {
+    const source = NodeFS.readFileSync(buildScriptPath, "utf8");
+
+    NodeAssert.match(source, /build-only/i);
+    NodeAssert.doesNotMatch(source, /bash\s+"\$INSTALLER"/);
+    NodeAssert.doesNotMatch(source, /\bapp2unit\b|\bsystemctl\b/);
   });
 });

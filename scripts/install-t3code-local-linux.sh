@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install a Linux AppImage as a user-local side-by-side T3 Code build.
+# Install a Linux AppImage after an explicit, separate user confirmation.
 set -euo pipefail
 
 if [[ "${EUID}" -eq 0 ]]; then
@@ -7,13 +7,13 @@ if [[ "${EUID}" -eq 0 ]]; then
   exit 1
 fi
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 ICON_PNG="$ROOT/apps/desktop/resources/icon.png"
 
 usage() {
   cat <<'EOF'
 Usage:
-  bash scripts/install-t3code-local-linux.sh [--profile isolated|shared-system] /path/to/T3-Code-x86_64.AppImage
+  bash scripts/install-t3code-local-linux.sh --confirm-install [--profile isolated|shared-system] /path/to/T3-Code-x86_64.AppImage
 
 Profiles:
   isolated       Use ~/.t3-local and ~/.config/t3code-local.
@@ -26,13 +26,21 @@ Installs:
   ~/.local/share/t3code-local/T3CodeLocal.AppImage
   ~/.local/bin/t3code-local
   ~/.local/share/applications/t3code-local.desktop
+
+This script never starts, stops, or restarts T3 Code. The confirmation flag
+keeps installation separate from automated build and agent workflows.
 EOF
 }
 
 PROFILE=""
 INPUT_APPIMAGE=""
+CONFIRM_INSTALL=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --confirm-install)
+      CONFIRM_INSTALL=true
+      shift
+      ;;
     --profile)
       if [[ $# -lt 2 ]]; then
         echo "error: --profile requires isolated or shared-system" >&2
@@ -66,6 +74,22 @@ APPIMAGE="$INPUT_APPIMAGE"
 if [[ -z "$APPIMAGE" ]]; then
   usage >&2
   exit 2
+fi
+
+if [[ "$CONFIRM_INSTALL" != true ]]; then
+  echo "error: installation requires a separate, explicit later user action" >&2
+  echo "Run this installer again with --confirm-install when all active T3 Code work is finished." >&2
+  exit 78
+fi
+
+CANONICAL_CHECKOUT="${T3CODE_CANONICAL_CHECKOUT:-/home/alex/Workspace/Projects/Apps/better-t3code}"
+if [[ -d "$CANONICAL_CHECKOUT" ]]; then
+  CANONICAL_ROOT="$(cd "$CANONICAL_CHECKOUT" && pwd -P)"
+  if [[ "$ROOT" != "$CANONICAL_ROOT" ]]; then
+    echo "error: $ROOT is not the canonical T3 Code checkout" >&2
+    echo "Install only from $CANONICAL_ROOT; carry source changes there first." >&2
+    exit 78
+  fi
 fi
 
 if [[ "$(uname -s)" != Linux ]]; then
@@ -400,3 +424,4 @@ echo "  command: $WRAPPER_PATH"
 echo "  desktop entry: $DESKTOP_PATH"
 echo "  app: $APPIMAGE_TARGET"
 echo "  sha256: $INSTALLED_SHA256"
+echo "No T3 Code process was started, stopped, or restarted."
