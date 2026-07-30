@@ -5,20 +5,24 @@ import {
   MessageId,
   NonNegativeInt,
   OrchestrationCheckpointFile,
+  OrchestrationLatestTurn,
   OrchestrationProposedPlanId,
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
+  OrchestrationSubagentDetail,
+  OrchestrationSubagentDetailSnapshot,
+  OrchestrationSubagentProgress,
   OrchestrationThread,
   OrchestrationThreadDetailSnapshot,
   ProjectScript,
   TurnId,
   type OrchestrationCheckpointSummary,
-  type OrchestrationLatestTurn,
   type OrchestrationMessage,
   type OrchestrationProjectShell,
   type OrchestrationProposedPlan,
   type OrchestrationProject,
   type OrchestrationSession,
+  type OrchestrationSubagentSummary,
   type OrchestrationThreadActivity,
   type OrchestrationThreadShell,
   ModelSelection,
@@ -48,6 +52,17 @@ import { ProjectionThreadActivity } from "../../persistence/Services/ProjectionT
 import { ProjectionThreadMessage } from "../../persistence/Services/ProjectionThreadMessages.ts";
 import { ProjectionThreadProposedPlan } from "../../persistence/Services/ProjectionThreadProposedPlans.ts";
 import { ProjectionThreadSession } from "../../persistence/Services/ProjectionThreadSessions.ts";
+import { ProjectionThreadSubagentActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadSubagentActivities.ts";
+import { ProjectionThreadSubagentMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadSubagentMessages.ts";
+import { ProjectionThreadSubagentProposedPlanRepositoryLive } from "../../persistence/Layers/ProjectionThreadSubagentProposedPlans.ts";
+import { ProjectionThreadSubagentRepositoryLive } from "../../persistence/Layers/ProjectionThreadSubagents.ts";
+import { ProjectionThreadSubagentActivityRepository } from "../../persistence/Services/ProjectionThreadSubagentActivities.ts";
+import { ProjectionThreadSubagentMessageRepository } from "../../persistence/Services/ProjectionThreadSubagentMessages.ts";
+import { ProjectionThreadSubagentProposedPlanRepository } from "../../persistence/Services/ProjectionThreadSubagentProposedPlans.ts";
+import {
+  ProjectionThreadSubagent,
+  ProjectionThreadSubagentRepository,
+} from "../../persistence/Services/ProjectionThreadSubagents.ts";
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
@@ -62,6 +77,7 @@ import {
 const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const decodeShellSnapshot = Schema.decodeUnknownEffect(OrchestrationShellSnapshot);
 const decodeThread = Schema.decodeUnknownEffect(OrchestrationThread);
+const decodeSubagentDetail = Schema.decodeUnknownEffect(OrchestrationSubagentDetail);
 const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
@@ -75,6 +91,12 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   }),
 );
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
+const ProjectionThreadSubagentDbRowSchema = ProjectionThreadSubagent.mapFields(
+  Struct.assign({
+    latestProgress: Schema.NullOr(Schema.fromJsonString(OrchestrationSubagentProgress)),
+    latestTurn: Schema.NullOr(Schema.fromJsonString(OrchestrationLatestTurn)),
+  }),
+);
 const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
@@ -146,6 +168,7 @@ const REQUIRED_SNAPSHOT_PROJECTORS = [
   ORCHESTRATION_PROJECTOR_NAMES.threadMessages,
   ORCHESTRATION_PROJECTOR_NAMES.threadProposedPlans,
   ORCHESTRATION_PROJECTOR_NAMES.threadActivities,
+  ORCHESTRATION_PROJECTOR_NAMES.threadSubagents,
   ORCHESTRATION_PROJECTOR_NAMES.threadSessions,
   ORCHESTRATION_PROJECTOR_NAMES.checkpoints,
 ] as const;
@@ -217,6 +240,7 @@ function mapSessionRow(
     status: row.status,
     providerName: row.providerName,
     ...(row.providerInstanceId !== null ? { providerInstanceId: row.providerInstanceId } : {}),
+    ...(row.providerSessionId != null ? { providerSessionId: row.providerSessionId } : {}),
     runtimeMode: row.runtimeMode,
     activeTurnId: row.activeTurnId,
     lastError: row.lastError,
@@ -254,6 +278,29 @@ function mapProposedPlanRow(
   };
 }
 
+function mapSubagentSummaryRow(row: ProjectionThreadSubagent): OrchestrationSubagentSummary {
+  return {
+    id: row.id,
+    providerThreadId: row.providerThreadId,
+    parentId: row.parentId,
+    path: row.path,
+    name: row.name,
+    nickname: row.nickname,
+    role: row.role,
+    task: row.task,
+    model: row.model,
+    reasoningEffort: row.reasoningEffort,
+    depth: row.depth,
+    status: row.status,
+    statusMessage: row.statusMessage,
+    latestProgress: row.latestProgress,
+    latestTurn: row.latestTurn,
+    startedAt: row.startedAt,
+    updatedAt: row.updatedAt,
+    completedAt: row.completedAt,
+  };
+}
+
 function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
   return (cause: unknown): ProjectionRepositoryError =>
     Schema.isSchemaError(cause)
@@ -264,6 +311,13 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
 const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const repositoryIdentityResolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+  const projectionThreadSubagentRepository = yield* ProjectionThreadSubagentRepository;
+  const projectionThreadSubagentMessageRepository =
+    yield* ProjectionThreadSubagentMessageRepository;
+  const projectionThreadSubagentProposedPlanRepository =
+    yield* ProjectionThreadSubagentProposedPlanRepository;
+  const projectionThreadSubagentActivityRepository =
+    yield* ProjectionThreadSubagentActivityRepository;
   const repositoryIdentityResolutionConcurrency = 4;
   const resolveRepositoryIdentitiesForProjects = Effect.fn(
     "ProjectionSnapshotQuery.resolveRepositoryIdentitiesForProjects",
@@ -440,6 +494,36 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           updated_at AS "updatedAt"
         FROM projection_thread_proposed_plans
         ORDER BY thread_id ASC, created_at ASC, plan_id ASC
+      `,
+  });
+
+  const listThreadSubagentRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionThreadSubagentDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          subagent_id AS "id",
+          provider_thread_id AS "providerThreadId",
+          parent_subagent_id AS "parentId",
+          path,
+          name,
+          nickname,
+          role,
+          task,
+          model,
+          reasoning_effort AS "reasoningEffort",
+          depth,
+          status,
+          status_message AS "statusMessage",
+          latest_progress_json AS "latestProgress",
+          latest_turn_json AS "latestTurn",
+          started_at AS "startedAt",
+          updated_at AS "updatedAt",
+          completed_at AS "completedAt"
+        FROM projection_thread_subagents
+        ORDER BY thread_id ASC, updated_at DESC, subagent_id ASC
       `,
   });
 
@@ -872,6 +956,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           status,
           provider_name AS "providerName",
           provider_instance_id AS "providerInstanceId",
+          provider_session_id AS "providerSessionId",
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
           last_error AS "lastError",
@@ -997,6 +1082,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listThreadSubagentRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSnapshot:listThreadSubagents:query",
+                "ProjectionSnapshotQuery.getSnapshot:listThreadSubagents:decodeRows",
+              ),
+            ),
+          ),
           listThreadActivityRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -1046,6 +1139,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             threadRows,
             messageRows,
             proposedPlanRows,
+            subagentRows,
             activityRows,
             sessionRows,
             checkpointRows,
@@ -1055,6 +1149,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             Effect.gen(function* () {
               const messagesByThread = new Map<string, Array<OrchestrationMessage>>();
               const proposedPlansByThread = new Map<string, Array<OrchestrationProposedPlan>>();
+              const subagentsByThread = new Map<string, Array<OrchestrationSubagentSummary>>();
               const activitiesByThread = new Map<string, Array<OrchestrationThreadActivity>>();
               const checkpointsByThread = new Map<string, Array<OrchestrationCheckpointSummary>>();
               const sessionsByThread = new Map<string, OrchestrationSession>();
@@ -1101,6 +1196,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   updatedAt: row.updatedAt,
                 });
                 proposedPlansByThread.set(row.threadId, threadProposedPlans);
+              }
+
+              for (const row of subagentRows) {
+                updatedAt = maxIso(updatedAt, row.updatedAt);
+                const threadSubagents = subagentsByThread.get(row.threadId) ?? [];
+                threadSubagents.push(mapSubagentSummaryRow(row));
+                subagentsByThread.set(row.threadId, threadSubagents);
               }
 
               for (const row of activityRows) {
@@ -1179,6 +1281,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   ...(row.providerInstanceId !== null
                     ? { providerInstanceId: row.providerInstanceId }
                     : {}),
+                  ...(row.providerSessionId != null
+                    ? { providerSessionId: row.providerSessionId }
+                    : {}),
                   runtimeMode: row.runtimeMode,
                   activeTurnId: row.activeTurnId,
                   lastError: row.lastError,
@@ -1220,6 +1325,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 messages: messagesByThread.get(row.threadId) ?? [],
                 proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                 activities: activitiesByThread.get(row.threadId) ?? [],
+                subagents: subagentsByThread.get(row.threadId) ?? [],
                 checkpoints: checkpointsByThread.get(row.threadId) ?? [],
                 session: sessionsByThread.get(row.threadId) ?? null,
               }));
@@ -1418,6 +1524,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   messages: [],
                   proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                   activities: [],
+                  subagents: [],
                   checkpoints: [],
                   session: sessionByThread.get(row.threadId) ?? null,
                 });
@@ -1931,6 +2038,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         threadRow,
         messageRows,
         proposedPlanRows,
+        subagentRows,
         activityRows,
         checkpointRows,
         latestTurnRow,
@@ -1960,6 +2068,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             ),
           ),
         ),
+        projectionThreadSubagentRepository.listByThreadId({ threadId }),
         listThreadActivityRowsByThread({ threadId }).pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
@@ -2028,6 +2137,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           return message;
         }),
         proposedPlans: proposedPlanRows.map(mapProposedPlanRow),
+        subagents: subagentRows.map(mapSubagentSummaryRow),
         activities: activityRows.map((row) => {
           const activity = {
             id: row.activityId,
@@ -2064,6 +2174,78 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       );
     });
 
+  const getSubagentDetailById: ProjectionSnapshotQueryShape["getSubagentDetailById"] = (
+    threadId,
+    subagentId,
+  ) =>
+    Effect.gen(function* () {
+      const summaryRow = yield* projectionThreadSubagentRepository.getById({
+        threadId,
+        subagentId,
+      });
+      if (Option.isNone(summaryRow)) {
+        return Option.none<OrchestrationSubagentDetail>();
+      }
+
+      const [messageRows, proposedPlanRows, activityRows] = yield* Effect.all([
+        projectionThreadSubagentMessageRepository.listBySubagentId({
+          threadId,
+          subagentId,
+        }),
+        projectionThreadSubagentProposedPlanRepository.listBySubagentId({
+          threadId,
+          subagentId,
+        }),
+        projectionThreadSubagentActivityRepository.listBySubagentId({
+          threadId,
+          subagentId,
+        }),
+      ]);
+
+      const detail = {
+        ...mapSubagentSummaryRow(summaryRow.value),
+        messages: messageRows.map((row) => ({
+          id: row.messageId,
+          role: row.role,
+          text: row.text,
+          ...(row.attachments !== undefined ? { attachments: row.attachments } : {}),
+          turnId: row.turnId,
+          streaming: row.isStreaming,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        })),
+        proposedPlans: proposedPlanRows.map((row) => ({
+          id: row.planId,
+          turnId: row.turnId,
+          planMarkdown: row.planMarkdown,
+          implementedAt: row.implementedAt,
+          implementationThreadId: row.implementationThreadId,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        })),
+        activities: activityRows.map((row) => ({
+          id: row.activityId,
+          tone: row.tone,
+          kind: row.kind,
+          summary: row.summary,
+          payload: row.payload,
+          turnId: row.turnId,
+          ...(row.sequence !== undefined ? { sequence: row.sequence } : {}),
+          createdAt: row.createdAt,
+        })),
+      };
+
+      return Option.some(
+        yield* decodeSubagentDetail(detail).pipe(
+          Effect.mapError(
+            toPersistenceDecodeError(
+              "ProjectionSnapshotQuery.getSubagentDetailById:decodeSubagentDetail",
+            ),
+          ),
+        ),
+      );
+    });
+
   const getThreadDetailSnapshot: ProjectionSnapshotQueryShape["getThreadDetailSnapshot"] = (
     threadId,
   ) =>
@@ -2093,6 +2275,35 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         ),
       );
 
+  const getSubagentDetailSnapshot: ProjectionSnapshotQueryShape["getSubagentDetailSnapshot"] = (
+    threadId,
+    subagentId,
+  ) =>
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const subagent = yield* getSubagentDetailById(threadId, subagentId);
+          if (Option.isNone(subagent)) {
+            return Option.none<OrchestrationSubagentDetailSnapshot>();
+          }
+          const { snapshotSequence } = yield* getSnapshotSequence();
+          return Option.some({
+            snapshotSequence,
+            threadId,
+            subagent: subagent.value,
+          });
+        }),
+      )
+      .pipe(
+        Effect.mapError((error) =>
+          isPersistenceError(error)
+            ? error
+            : toPersistenceSqlError(
+                "ProjectionSnapshotQuery.getSubagentDetailSnapshot:transaction",
+              )(error),
+        ),
+      );
+
   return {
     getCommandReadModel,
     getSnapshot,
@@ -2107,6 +2318,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getFullThreadDiffContext,
     getThreadShellById,
     getThreadDetailById,
+    getSubagentDetailById,
+    getSubagentDetailSnapshot,
     getThreadDetailSnapshot,
   } satisfies ProjectionSnapshotQueryShape;
 });
@@ -2114,4 +2327,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 export const OrchestrationProjectionSnapshotQueryLive = Layer.effect(
   ProjectionSnapshotQuery,
   makeProjectionSnapshotQuery,
+).pipe(
+  Layer.provideMerge(ProjectionThreadSubagentRepositoryLive),
+  Layer.provideMerge(ProjectionThreadSubagentMessageRepositoryLive),
+  Layer.provideMerge(ProjectionThreadSubagentProposedPlanRepositoryLive),
+  Layer.provideMerge(ProjectionThreadSubagentActivityRepositoryLive),
 );

@@ -6,6 +6,9 @@
  *
  * @module ClaudeAdapterLive
  */
+// @effect-diagnostics nodeBuiltinImport:off - Claude's SDK requires a synchronous native spawn hook.
+import * as NodeChildProcess from "node:child_process";
+
 import {
   type CanUseTool,
   query,
@@ -17,10 +20,12 @@ import {
   type SDKControlGetContextUsageResponse,
   type SDKResultMessage,
   type SettingSource,
+  type SpawnedProcess,
   type SDKUserMessage,
   type ModelUsage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   ApprovalRequestId,
   type CanonicalItemType,
@@ -89,6 +94,10 @@ import {
 } from "../Errors.ts";
 import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import {
+  forceTerminateNodeProcessTree,
+  type ManagedNodeProcess,
+} from "../../process/ManagedProcessTree.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.UnknownFromJsonString);
 
@@ -179,6 +188,7 @@ interface ClaudeTaskState {
 
 interface ClaudeSessionContext {
   session: ProviderSession;
+  readonly providerSessionId: string;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
   readonly query: ClaudeQueryRuntime;
   streamFiber: Fiber.Fiber<void, Error> | undefined;
@@ -195,11 +205,14 @@ interface ClaudeSessionContext {
   readonly inFlightTools: Map<number, ToolInFlight>;
   readonly claudeTasks: Map<string, ClaudeTaskState>;
   turnState: ClaudeTurnState | undefined;
+  turnGeneration: string | undefined;
+  cancellingTurnGeneration: string | undefined;
   lastKnownContextWindow: number | undefined;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
   lastKnownTotalProcessedTokens: number | undefined;
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
+  readonly spawnedProcess: (SpawnedProcess & ManagedNodeProcess) | undefined;
   stopped: boolean;
 }
 
@@ -1363,6 +1376,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig;
   const crypto = yield* Crypto.Crypto;
+  const hostPlatform = yield* HostProcessPlatform;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, options?.environment).pipe(
     Effect.provideService(Path.Path, path),
   );
@@ -1403,8 +1417,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const nextEventId = Effect.map(randomUUIDv4, (id) => EventId.make(id));
   const makeEventStamp = () => Effect.all({ eventId: nextEventId, createdAt: nowIso });
 
-  const offerRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
-    Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid);
+  const offerRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> => {
+    const context = sessions.get(event.threadId);
+    return Queue.offer(runtimeEventQueue, {
+      ...event,
+      ...(event.providerInstanceId ? {} : { providerInstanceId: boundInstanceId }),
+      ...(event.providerSessionId
+        ? {}
+        : context
+          ? { providerSessionId: context.providerSessionId }
+          : {}),
+    }).pipe(Effect.asVoid);
+  };
 
   const logNativeSdkMessage = Effect.fn("logNativeSdkMessage")(function* (
     context: ClaudeSessionContext,
@@ -1973,6 +1997,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     const turnState = context.turnState;
     if (!turnState) {
+      context.turnGeneration = undefined;
+      context.cancellingTurnGeneration = undefined;
       yield* emitThreadTokenUsage(context, usageSnapshot, {
         rawMethod: "claude/result",
         rawPayload: result ?? { status },
@@ -2075,6 +2101,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     const updatedAt = yield* nowIso;
     context.turnState = undefined;
+    context.turnGeneration = undefined;
+    context.cancellingTurnGeneration = undefined;
     context.session = {
       ...context.session,
       status: "ready",
@@ -2999,6 +3027,23 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
     context.pendingApprovals.clear();
 
+    for (const [requestId, pending] of context.pendingUserInputs) {
+      yield* Deferred.succeed(pending.answers, {});
+      const stamp = yield* makeEventStamp();
+      yield* offerRuntimeEvent({
+        type: "user-input.resolved",
+        eventId: stamp.eventId,
+        provider: PROVIDER,
+        createdAt: stamp.createdAt,
+        threadId: context.session.threadId,
+        ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+        requestId: asRuntimeRequestId(requestId),
+        payload: { answers: {} },
+        providerRefs: nativeProviderRefs(context),
+      });
+    }
+    context.pendingUserInputs.clear();
+
     if (context.turnState) {
       yield* completeTurn(context, "interrupted", "Session stopped.");
     }
@@ -3113,6 +3158,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
 
       const startedAt = yield* nowIso;
+      const providerSessionId = yield* randomUUIDv4;
       const resumeState = readClaudeResumeState(input.resumeCursor);
       const threadId = input.threadId;
       const existingResumeSessionId = resumeState?.resume;
@@ -3475,6 +3521,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       );
       const runtimeModeToPermission: Record<string, PermissionMode> = {
         "auto-accept-edits": "acceptEdits",
+        auto: "auto",
         "full-access": "bypassPermissions",
       };
       const permissionMode = runtimeModeToPermission[input.runtimeMode];
@@ -3487,6 +3534,22 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const mcpServers = options?.resolveMcpServers
         ? yield* options.resolveMcpServers({ cwd: input.cwd ?? serverConfig.cwd })
         : {};
+      let spawnedProcess: (SpawnedProcess & ManagedNodeProcess) | undefined;
+      const spawnClaudeCodeProcess: NonNullable<ClaudeQueryOptions["spawnClaudeCodeProcess"]> = (
+        spawnOptions,
+      ) => {
+        const child = NodeChildProcess.spawn(spawnOptions.command, spawnOptions.args, {
+          ...(spawnOptions.cwd ? { cwd: spawnOptions.cwd } : {}),
+          env: spawnOptions.env,
+          signal: spawnOptions.signal,
+          detached: hostPlatform !== "win32",
+          windowsHide: true,
+          stdio: ["pipe", "pipe", "ignore"],
+        });
+        const captured = child as unknown as SpawnedProcess & ManagedNodeProcess;
+        spawnedProcess = captured;
+        return captured;
+      };
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
@@ -3510,6 +3573,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         includePartialMessages: true,
         canUseTool,
         env: claudeEnvironment,
+        ...(options?.createQuery === undefined ? { spawnClaudeCodeProcess } : {}),
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
         ...(mcpSession
@@ -3573,6 +3637,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         threadId,
         provider: PROVIDER,
         providerInstanceId: boundInstanceId,
+        providerSessionId,
         status: "ready",
         runtimeMode: input.runtimeMode,
         ...(input.cwd ? { cwd: input.cwd } : {}),
@@ -3590,6 +3655,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
       const context: ClaudeSessionContext = {
         session,
+        providerSessionId,
         promptQueue,
         query: queryRuntime,
         streamFiber: undefined,
@@ -3603,11 +3669,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         inFlightTools,
         claudeTasks,
         turnState: undefined,
+        turnGeneration: undefined,
+        cancellingTurnGeneration: undefined,
         lastKnownContextWindow: initialContextWindow,
         lastKnownTokenUsage: undefined,
         lastKnownTotalProcessedTokens: undefined,
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
+        spawnedProcess,
         stopped: false,
       };
       yield* Ref.set(contextRef, context);
@@ -3745,6 +3814,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     const turnId = steeringTurnState?.turnId ?? TurnId.make(yield* randomUUIDv4);
+    const turnGeneration = yield* randomUUIDv4;
+    if (context.stopped || context.cancellingTurnGeneration !== undefined) {
+      return yield* new ProviderAdapterSessionClosedError({
+        provider: PROVIDER,
+        threadId: input.threadId,
+      });
+    }
+    context.turnGeneration = turnGeneration;
     if (steeringTurnState === null) {
       const turnState: ClaudeTurnState = {
         turnId,
@@ -3799,14 +3876,85 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   });
 
   const interruptTurn: ClaudeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
-    function* (threadId, _turnId) {
+    function* (threadId, turnId) {
       const context = yield* requireSession(threadId);
+      if (
+        turnId !== undefined &&
+        context.turnState !== undefined &&
+        context.turnState.turnId !== turnId
+      ) {
+        return;
+      }
+      const turnGeneration = context.turnGeneration;
+      if (turnGeneration) {
+        context.cancellingTurnGeneration = turnGeneration;
+      }
       yield* Effect.tryPromise({
         try: () => context.query.interrupt(),
         catch: (cause) => toRequestError(threadId, "turn/interrupt", cause),
-      });
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (context.cancellingTurnGeneration === turnGeneration) {
+              context.cancellingTurnGeneration = undefined;
+            }
+          }),
+        ),
+      );
     },
   );
+
+  const matchesAbortTarget = (
+    context: ClaudeSessionContext,
+    target: Parameters<ClaudeAdapterShape["forceStopSession"]>[0],
+  ): boolean =>
+    !context.stopped &&
+    context.session.threadId === target.threadId &&
+    boundInstanceId === target.providerInstanceId &&
+    context.providerSessionId === target.providerSessionId &&
+    context.turnGeneration !== undefined &&
+    context.turnGeneration === target.turnGeneration;
+
+  const captureAbortTarget: ClaudeAdapterShape["captureAbortTarget"] = (threadId) =>
+    Effect.sync(() => {
+      const context = sessions.get(threadId);
+      return context &&
+        !context.stopped &&
+        context.turnState !== undefined &&
+        context.turnGeneration !== undefined
+        ? {
+            threadId,
+            providerInstanceId: boundInstanceId,
+            providerSessionId: context.providerSessionId,
+            turnGeneration: context.turnGeneration,
+          }
+        : null;
+    });
+
+  const interruptAbortTarget: ClaudeAdapterShape["interruptAbortTarget"] = (target) =>
+    Effect.gen(function* () {
+      const context = sessions.get(target.threadId);
+      if (!context || !matchesAbortTarget(context, target)) {
+        return false;
+      }
+      if (context.cancellingTurnGeneration === target.turnGeneration) {
+        return true;
+      }
+      context.cancellingTurnGeneration = target.turnGeneration;
+      yield* Effect.tryPromise({
+        try: () => context.query.interrupt(),
+        catch: (cause) => toRequestError(target.threadId, "turn/interrupt", cause),
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (context.cancellingTurnGeneration === target.turnGeneration) {
+              context.cancellingTurnGeneration = undefined;
+            }
+          }),
+        ),
+      );
+      return context.turnGeneration === target.turnGeneration;
+    });
 
   const readThread: ClaudeAdapterShape["readThread"] = Effect.fn("readThread")(
     function* (threadId) {
@@ -3868,6 +4016,124 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     },
   );
 
+  const forceStopSession: ClaudeAdapterShape["forceStopSession"] = (target) =>
+    Effect.gen(function* () {
+      const context = sessions.get(target.threadId);
+      if (!context || context.stopped) {
+        return "already-stopped";
+      }
+      if (!matchesAbortTarget(context, target)) {
+        return "target-changed";
+      }
+
+      const turnId = context.turnState?.turnId;
+      context.stopped = true;
+      sessions.delete(target.threadId);
+
+      for (const pending of context.pendingApprovals.values()) {
+        yield* Deferred.succeed(pending.decision, "cancel").pipe(Effect.ignore);
+      }
+      context.pendingApprovals.clear();
+      for (const pending of context.pendingUserInputs.values()) {
+        yield* Deferred.succeed(pending.answers, {}).pipe(Effect.ignore);
+      }
+      context.pendingUserInputs.clear();
+      yield* Queue.shutdown(context.promptQueue);
+
+      const streamFiber = context.streamFiber;
+      context.streamFiber = undefined;
+      if (streamFiber && streamFiber.pollUnsafe() === undefined) {
+        yield* Fiber.interrupt(streamFiber).pipe(Effect.ignore);
+      }
+
+      const termination = context.spawnedProcess
+        ? yield* forceTerminateNodeProcessTree(context.spawnedProcess).pipe(Effect.exit)
+        : Exit.succeed("already-stopped" as const);
+
+      yield* Effect.sync(() => context.query.close()).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Failed to close Claude query after force-abort.", {
+            threadId: target.threadId,
+            cause,
+          }),
+        ),
+      );
+
+      context.turnState = undefined;
+      context.turnGeneration = undefined;
+      context.cancellingTurnGeneration = undefined;
+      context.session = {
+        ...context.session,
+        status: "closed",
+        activeTurnId: undefined,
+        updatedAt: yield* nowIso,
+      };
+
+      if (Exit.isFailure(termination)) {
+        const reason = `T3 could not confirm force-stopping the Claude process tree: ${String(
+          termination.cause,
+        )}`;
+        const errorStamp = yield* makeEventStamp();
+        yield* offerRuntimeEvent({
+          type: "runtime.error",
+          eventId: errorStamp.eventId,
+          provider: PROVIDER,
+          providerInstanceId: boundInstanceId,
+          providerSessionId: context.providerSessionId,
+          createdAt: errorStamp.createdAt,
+          threadId: target.threadId,
+          ...(turnId ? { turnId } : {}),
+          payload: {
+            message: reason,
+            class: "transport_error",
+          },
+          providerRefs: nativeProviderRefs(context),
+        }).pipe(Effect.ignore);
+        const exitStamp = yield* makeEventStamp();
+        yield* offerRuntimeEvent({
+          type: "session.exited",
+          eventId: exitStamp.eventId,
+          provider: PROVIDER,
+          providerInstanceId: boundInstanceId,
+          providerSessionId: context.providerSessionId,
+          createdAt: exitStamp.createdAt,
+          threadId: target.threadId,
+          ...(turnId ? { turnId } : {}),
+          payload: {
+            reason,
+            recoverable: false,
+            exitKind: "error",
+          },
+          providerRefs: nativeProviderRefs(context),
+        }).pipe(Effect.ignore);
+        return yield* new ProviderAdapterProcessError({
+          provider: PROVIDER,
+          threadId: target.threadId,
+          detail: reason,
+          cause: termination.cause,
+        });
+      }
+
+      const stamp = yield* makeEventStamp();
+      yield* offerRuntimeEvent({
+        type: "session.exited",
+        eventId: stamp.eventId,
+        provider: PROVIDER,
+        providerInstanceId: boundInstanceId,
+        providerSessionId: context.providerSessionId,
+        createdAt: stamp.createdAt,
+        threadId: target.threadId,
+        ...(turnId ? { turnId } : {}),
+        payload: {
+          reason: "Claude process tree force-stopped.",
+          recoverable: false,
+          exitKind: "forced",
+        },
+        providerRefs: nativeProviderRefs(context),
+      });
+      return "forced";
+    });
+
   const listSessions: ClaudeAdapterShape["listSessions"] = () =>
     Effect.sync(() => Array.from(sessions.values(), ({ session }) => ({ ...session })));
 
@@ -3912,11 +4178,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     startSession,
     sendTurn,
     interruptTurn,
+    captureAbortTarget,
+    interruptAbortTarget,
     readThread,
     rollbackThread,
     respondToRequest,
     respondToUserInput,
     stopSession,
+    forceStopSession,
     listSessions,
     hasSession,
     stopAll,

@@ -29,8 +29,14 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 import type { ProviderServiceError } from "../Errors.ts";
-import type { ProviderAdapterCapabilities } from "./ProviderAdapter.ts";
+import type {
+  ProviderAbortTarget,
+  ProviderAdapterCapabilities,
+  ProviderForceStopResult,
+} from "./ProviderAdapter.ts";
 import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
+
+export type { ProviderAbortTarget, ProviderForceStopResult } from "./ProviderAdapter.ts";
 
 /**
  * ProviderServiceShape - Service API for provider session and turn orchestration.
@@ -57,6 +63,18 @@ export interface ProviderServiceShape {
   readonly interruptTurn: (
     input: ProviderInterruptTurnInput,
   ) => Effect.Effect<void, ProviderServiceError>;
+
+  readonly captureAbortTarget: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ProviderAbortTarget | null, ProviderServiceError>;
+
+  readonly interruptAbortTarget: (
+    target: ProviderAbortTarget,
+  ) => Effect.Effect<void, ProviderServiceError>;
+
+  readonly forceStopAbortTarget: (
+    target: ProviderAbortTarget,
+  ) => Effect.Effect<ProviderForceStopResult, ProviderServiceError>;
 
   /**
    * Respond to a provider approval request.

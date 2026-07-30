@@ -45,6 +45,7 @@ import {
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
+import type { ProviderAbortTarget, ProviderForceStopResult } from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
 import { makeProviderServiceLive } from "./ProviderService.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
@@ -135,6 +136,45 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
       Effect.void,
   );
 
+  const captureAbortTarget = vi.fn(
+    (threadId: ThreadId): Effect.Effect<ProviderAbortTarget | null, ProviderAdapterError> =>
+      Effect.sync(() => {
+        const session = sessions.get(threadId);
+        if (
+          !session ||
+          session.status !== "running" ||
+          session.providerSessionId == null ||
+          session.activeTurnId == null
+        ) {
+          return null;
+        }
+        return {
+          threadId,
+          providerInstanceId:
+            session.providerInstanceId ?? ProviderInstanceId.make(String(session.provider)),
+          providerSessionId: session.providerSessionId,
+          turnGeneration: session.activeTurnId,
+        };
+      }),
+  );
+
+  const interruptAbortTarget = vi.fn(
+    (target: ProviderAbortTarget): Effect.Effect<boolean, ProviderAdapterError> =>
+      Effect.gen(function* () {
+        const current = yield* captureAbortTarget(target.threadId);
+        if (
+          current === null ||
+          current.providerInstanceId !== target.providerInstanceId ||
+          current.providerSessionId !== target.providerSessionId ||
+          current.turnGeneration !== target.turnGeneration
+        ) {
+          return false;
+        }
+        yield* interruptTurn(target.threadId, TurnId.make(target.turnGeneration));
+        return true;
+      }),
+  );
+
   const respondToRequest = vi.fn(
     (
       _threadId: ThreadId,
@@ -155,6 +195,24 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     (threadId: ThreadId): Effect.Effect<void, ProviderAdapterError> =>
       Effect.sync(() => {
         sessions.delete(threadId);
+      }),
+  );
+
+  const forceStopSession = vi.fn(
+    (target: ProviderAbortTarget): Effect.Effect<ProviderForceStopResult, ProviderAdapterError> =>
+      Effect.sync(() => {
+        const session = sessions.get(target.threadId);
+        if (!session) {
+          return "already-stopped";
+        }
+        if (
+          session.providerSessionId !== target.providerSessionId ||
+          session.activeTurnId !== target.turnGeneration
+        ) {
+          return "target-changed";
+        }
+        sessions.delete(target.threadId);
+        return "forced";
       }),
   );
 
@@ -202,13 +260,17 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     provider,
     capabilities: {
       sessionModelSwitch: "in-session",
+      mcp: "nativeConfig",
     },
     startSession,
     sendTurn,
     interruptTurn,
+    captureAbortTarget,
+    interruptAbortTarget,
     respondToRequest,
     respondToUserInput,
     stopSession,
+    forceStopSession,
     listSessions,
     hasSession,
     readThread,
@@ -241,9 +303,12 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     startSession,
     sendTurn,
     interruptTurn,
+    captureAbortTarget,
+    interruptAbortTarget,
     respondToRequest,
     respondToUserInput,
     stopSession,
+    forceStopSession,
     listSessions,
     hasSession,
     readThread,
@@ -831,6 +896,50 @@ it.effect(
 );
 
 routing.layer("ProviderServiceLive routing", (it) => {
+  it.effect("force-stops only the captured provider session and turn generation", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-force-abort");
+      const session = yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+      const activeTurnId = asTurnId("provider-turn-force-abort");
+      routing.codex.updateSession(threadId, (current) => ({
+        ...current,
+        providerSessionId: "provider-session-force-abort",
+        status: "running",
+        activeTurnId,
+      }));
+
+      const target = yield* provider.captureAbortTarget(threadId);
+      assert.deepEqual(target, {
+        threadId,
+        providerInstanceId: codexInstanceId,
+        providerSessionId: "provider-session-force-abort",
+        turnGeneration: activeTurnId,
+      });
+      if (target === null) {
+        return;
+      }
+
+      yield* provider.interruptAbortTarget(target);
+      assert.deepEqual(routing.codex.interruptTurn.mock.calls.at(-1), [
+        session.threadId,
+        activeTurnId,
+      ]);
+
+      const result = yield* provider.forceStopAbortTarget(target);
+      assert.equal(result, "forced");
+      assert.deepEqual(routing.codex.forceStopSession.mock.calls.at(-1), [target]);
+      routing.codex.interruptTurn.mockClear();
+      routing.codex.forceStopSession.mockClear();
+    }),
+  );
+
   it.effect("routes provider operations and rollback conversation", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;

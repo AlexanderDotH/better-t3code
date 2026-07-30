@@ -410,6 +410,7 @@ function createSnapshotForTargetUser(options: {
         messages,
         activities: [],
         proposedPlans: [],
+        subagents: [],
         checkpoints: [],
         session: {
           threadId: THREAD_ID,
@@ -476,6 +477,7 @@ function addThreadToSnapshot(
         messages: [],
         activities: [],
         proposedPlans: [],
+        subagents: [],
         checkpoints: [],
         session: {
           threadId,
@@ -810,6 +812,7 @@ function createSnapshotWithSecondaryProject(options?: {
           messages: [],
           activities: [],
           proposedPlans: [],
+          subagents: [],
           checkpoints: [],
           session: {
             threadId: SECONDARY_THREAD_ID,
@@ -842,6 +845,7 @@ function createSnapshotWithSecondaryProject(options?: {
           messages: [],
           activities: [],
           proposedPlans: [],
+          subagents: [],
           checkpoints: [],
           session: {
             threadId: ARCHIVED_SECONDARY_THREAD_ID,

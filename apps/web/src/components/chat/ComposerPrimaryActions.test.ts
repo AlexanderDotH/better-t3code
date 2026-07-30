@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatPendingPrimaryActionLabel } from "./ComposerPrimaryActions";
+import { formatPendingPrimaryActionLabel, stopActionPresentation } from "./ComposerPrimaryActions";
 
 describe("formatPendingPrimaryActionLabel", () => {
   it("returns 'Submitting...' while responding", () => {
@@ -89,5 +89,26 @@ describe("formatPendingPrimaryActionLabel", () => {
         questionIndex: 5,
       }),
     ).toBe("Submit answers");
+  });
+});
+
+describe("stopActionPresentation", () => {
+  it("offers immediate force-stop while graceful cancellation is pending", () => {
+    expect(stopActionPresentation("graceful-pending")).toEqual({
+      ariaLabel: "Force stop agent now",
+      title:
+        "Stopping agent… Click again to force stop now. T3 will force stop automatically after 5 seconds.",
+      disabled: false,
+      showSpinner: true,
+    });
+  });
+
+  it("disables repeat clicks after force-stop is requested", () => {
+    expect(stopActionPresentation("force-pending")).toEqual({
+      ariaLabel: "Force stopping agent",
+      title: "Force stopping agent…",
+      disabled: true,
+      showSpinner: true,
+    });
   });
 });

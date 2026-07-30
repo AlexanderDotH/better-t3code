@@ -7,6 +7,14 @@ if [[ "${EUID}" -eq 0 ]]; then
   exit 1
 fi
 
+CANONICAL_LOCAL_APPIMAGE="${T3CODE_CANONICAL_LOCAL_APPIMAGE:-/opt/t3code-git/t3code}"
+if [[ -e "$CANONICAL_LOCAL_APPIMAGE" ]]; then
+  echo "error: canonical Local T3Code installation exists at $CANONICAL_LOCAL_APPIMAGE" >&2
+  echo "This legacy build-and-install workflow is disabled because it would replace the shared Caelestia launcher." >&2
+  echo "Build and deploy from /home/alex/Workspace/Projects/Apps/better-t3code instead." >&2
+  exit 78
+fi
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELEASE_DIR="$ROOT/apps/desktop/release"
 INSTALLER="$ROOT/scripts/install-t3code-local-linux.sh"

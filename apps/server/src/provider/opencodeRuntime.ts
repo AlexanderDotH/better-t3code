@@ -29,6 +29,11 @@ import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import {
+  forceTerminateManagedProcessTree,
+  type ManagedProcessTreeTerminationError,
+  type ManagedProcessTreeTerminationResult,
+} from "../process/ManagedProcessTree.ts";
 
 import { isWindowsCommandNotFound } from "../processRunner.ts";
 import { collectStreamAsString } from "./providerSnapshot.ts";
@@ -46,12 +51,20 @@ type OpenCodeMcpConfig = Record<string, McpLocalConfig | McpRemoteConfig>;
 export interface OpenCodeServerProcess {
   readonly url: string;
   readonly exitCode: Effect.Effect<number, never>;
+  readonly forceKill: Effect.Effect<
+    ManagedProcessTreeTerminationResult,
+    ManagedProcessTreeTerminationError
+  >;
 }
 
 export interface OpenCodeServerConnection {
   readonly url: string;
   readonly exitCode: Effect.Effect<number, never> | null;
   readonly external: boolean;
+  readonly forceKill: Effect.Effect<
+    ManagedProcessTreeTerminationResult,
+    ManagedProcessTreeTerminationError
+  > | null;
 }
 
 const OPENCODE_RUNTIME_ERROR_TAG = "OpenCodeRuntimeError";
@@ -484,6 +497,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           Effect.map(Number),
           Effect.orElseSucceed(() => 0),
         ),
+        forceKill: forceTerminateManagedProcessTree(child),
       } satisfies OpenCodeServerProcess;
     });
 
@@ -495,6 +509,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         url: serverUrl,
         exitCode: null,
         external: true,
+        forceKill: null,
       });
     }
 
@@ -510,6 +525,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         url: server.url,
         exitCode: server.exitCode,
         external: false,
+        forceKill: server.forceKill,
       })),
     );
   };

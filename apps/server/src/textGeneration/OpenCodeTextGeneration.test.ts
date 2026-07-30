@@ -55,6 +55,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
       return {
         url,
         exitCode: Effect.never,
+        forceKill: Effect.succeed("forced" as const),
       };
     }),
   connectToOpenCodeServer: ({ serverUrl }) =>
@@ -62,6 +63,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
       url: serverUrl ?? "http://127.0.0.1:4301",
       exitCode: null,
       external: Boolean(serverUrl),
+      forceKill: serverUrl ? null : Effect.succeed("forced" as const),
     }),
   runOpenCodeCommand: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
   createOpenCodeSdkClient: ({ baseUrl, serverPassword }) =>

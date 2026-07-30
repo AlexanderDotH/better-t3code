@@ -63,6 +63,14 @@ if [[ -z "$APPIMAGE" ]]; then
   exit 2
 fi
 
+CANONICAL_LOCAL_APPIMAGE="${T3CODE_CANONICAL_LOCAL_APPIMAGE:-/opt/t3code-git/t3code}"
+if [[ -e "$CANONICAL_LOCAL_APPIMAGE" ]]; then
+  echo "error: canonical Local T3Code installation exists at $CANONICAL_LOCAL_APPIMAGE" >&2
+  echo "This legacy user-local installer is disabled because it would replace the shared Caelestia launcher." >&2
+  echo "Build and deploy from /home/alex/Workspace/Projects/Apps/better-t3code instead." >&2
+  exit 78
+fi
+
 if [[ "$(uname -s)" != Linux ]]; then
   echo "error: Linux user-local install is only supported on Linux" >&2
   exit 1

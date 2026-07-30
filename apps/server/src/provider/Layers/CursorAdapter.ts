@@ -128,6 +128,7 @@ interface PendingUserInput {
 interface CursorSessionContext {
   readonly threadId: ThreadId;
   session: ProviderSession;
+  readonly providerSessionId: string;
   readonly scope: Scope.Closeable;
   readonly acp: AcpSessionRuntime.AcpSessionRuntime["Service"];
   notificationFiber: Fiber.Fiber<void, never> | undefined;
@@ -136,6 +137,7 @@ interface CursorSessionContext {
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
   activeTurnId: TurnId | undefined;
+  turnGeneration: string | undefined;
   /** Number of sendTurn prompts currently in flight or being prepared.
    * >0 means a turn is actively running, so a new sendTurn is a steer that
    * continues it, and only the last remaining prompt settles the turn. */
@@ -336,6 +338,7 @@ export function makeCursorAdapter(
     const makeAcpNativeLoggers = yield* makeAcpNativeLoggerFactory();
 
     const sessions = new Map<ThreadId, CursorSessionContext>();
+    const providerSessionIds = new Map<ThreadId, string>();
     const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
     const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
 
@@ -364,8 +367,13 @@ export function makeCursorAdapter(
         ),
       );
 
-    const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
-      PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
+    const offerRuntimeEvent = (event: ProviderRuntimeEvent) => {
+      const providerSessionId = providerSessionIds.get(event.threadId);
+      return PubSub.publish(runtimeEventPubSub, {
+        ...event,
+        ...(event.providerSessionId ? {} : providerSessionId ? { providerSessionId } : {}),
+      }).pipe(Effect.asVoid);
+    };
 
     const getThreadSemaphore = (threadId: string) =>
       SynchronizedRef.modifyEffect(threadLocksRef, (current) => {
@@ -477,6 +485,9 @@ export function makeCursorAdapter(
           threadId: ctx.threadId,
           payload: { exitKind: "graceful" },
         });
+        if (providerSessionIds.get(ctx.threadId) === ctx.providerSessionId) {
+          providerSessionIds.delete(ctx.threadId);
+        }
       });
 
     const startSession: CursorAdapterShape["startSession"] = (input) =>
@@ -508,10 +519,22 @@ export function makeCursorAdapter(
 
           const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
           const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
+          const providerSessionId = yield* randomUUIDv4;
+          providerSessionIds.set(input.threadId, providerSessionId);
           const sessionScope = yield* Scope.make("sequential");
           let sessionScopeTransferred = false;
           yield* Effect.addFinalizer(() =>
-            sessionScopeTransferred ? Effect.void : Scope.close(sessionScope, Exit.void),
+            sessionScopeTransferred
+              ? Effect.void
+              : Scope.close(sessionScope, Exit.void).pipe(
+                  Effect.ensuring(
+                    Effect.sync(() => {
+                      if (providerSessionIds.get(input.threadId) === providerSessionId) {
+                        providerSessionIds.delete(input.threadId);
+                      }
+                    }),
+                  ),
+                ),
           );
           let ctx!: CursorSessionContext;
 
@@ -760,6 +783,7 @@ export function makeCursorAdapter(
           const session: ProviderSession = {
             provider: PROVIDER,
             providerInstanceId: boundInstanceId,
+            providerSessionId,
             status: "ready",
             runtimeMode: input.runtimeMode,
             cwd,
@@ -776,6 +800,7 @@ export function makeCursorAdapter(
           ctx = {
             threadId: input.threadId,
             session,
+            providerSessionId,
             scope: sessionScope,
             acp,
             notificationFiber: undefined,
@@ -784,6 +809,7 @@ export function makeCursorAdapter(
             turns: [],
             lastPlanFingerprint: undefined,
             activeTurnId: undefined,
+            turnGeneration: undefined,
             promptsInFlight: 0,
             stopped: false,
           };
@@ -925,6 +951,14 @@ export function makeCursorAdapter(
         // resolving from here on does not settle the turn; the matching
         // decrement is the `ensuring` below.
         ctx.promptsInFlight += 1;
+        const turnGeneration = yield* randomUUIDv4;
+        if (ctx.stopped) {
+          return yield* new ProviderAdapterSessionNotFoundError({
+            provider: PROVIDER,
+            threadId: input.threadId,
+          });
+        }
+        ctx.turnGeneration = turnGeneration;
 
         return yield* Effect.gen(function* () {
           const turnModelSelection =
@@ -951,6 +985,7 @@ export function makeCursorAdapter(
           }
           ctx.session = {
             ...ctx.session,
+            status: "running",
             activeTurnId: turnId,
             updatedAt: yield* nowIso,
           };
@@ -1037,6 +1072,16 @@ export function makeCursorAdapter(
           // superseded prompt resolving (usually cancelled) while another is
           // in flight or pending must leave the merged turn running.
           if (ctx.promptsInFlight === 1) {
+            if (ctx.turnGeneration === turnGeneration) {
+              ctx.activeTurnId = undefined;
+              ctx.turnGeneration = undefined;
+              ctx.session = {
+                ...ctx.session,
+                status: "ready",
+                activeTurnId: undefined,
+                updatedAt: yield* nowIso,
+              };
+            }
             yield* offerRuntimeEvent({
               type: "turn.completed",
               ...(yield* makeEventStamp()),
@@ -1059,6 +1104,15 @@ export function makeCursorAdapter(
           Effect.ensuring(
             Effect.sync(() => {
               ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
+              if (ctx.promptsInFlight === 0 && ctx.turnGeneration === turnGeneration) {
+                ctx.activeTurnId = undefined;
+                ctx.turnGeneration = undefined;
+                ctx.session = {
+                  ...ctx.session,
+                  status: ctx.stopped ? "closed" : "ready",
+                  activeTurnId: undefined,
+                };
+              }
             }),
           ),
         );
@@ -1077,6 +1131,55 @@ export function makeCursorAdapter(
           ),
         );
       });
+
+    const matchesAbortTarget = (
+      ctx: CursorSessionContext,
+      target: Parameters<CursorAdapterShape["forceStopSession"]>[0],
+    ): boolean =>
+      !ctx.stopped &&
+      ctx.threadId === target.threadId &&
+      boundInstanceId === target.providerInstanceId &&
+      ctx.providerSessionId === target.providerSessionId &&
+      ctx.turnGeneration !== undefined &&
+      ctx.turnGeneration === target.turnGeneration;
+
+    const captureAbortTarget: CursorAdapterShape["captureAbortTarget"] = (threadId) =>
+      withThreadLock(
+        threadId,
+        Effect.sync(() => {
+          const ctx = sessions.get(threadId);
+          return ctx &&
+            !ctx.stopped &&
+            ctx.activeTurnId !== undefined &&
+            ctx.turnGeneration !== undefined
+            ? {
+                threadId,
+                providerInstanceId: boundInstanceId,
+                providerSessionId: ctx.providerSessionId,
+                turnGeneration: ctx.turnGeneration,
+              }
+            : null;
+        }),
+      );
+
+    const interruptAbortTarget: CursorAdapterShape["interruptAbortTarget"] = (target) =>
+      withThreadLock(
+        target.threadId,
+        Effect.gen(function* () {
+          const ctx = sessions.get(target.threadId);
+          if (!ctx || !matchesAbortTarget(ctx, target)) {
+            return false;
+          }
+          yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+          yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
+          yield* ctx.acp.cancel.pipe(
+            Effect.mapError((error) =>
+              mapAcpToAdapterError(PROVIDER, target.threadId, "session/cancel", error),
+            ),
+          );
+          return true;
+        }),
+      );
 
     const respondToRequest: CursorAdapterShape["respondToRequest"] = (
       threadId,
@@ -1144,6 +1247,101 @@ export function makeCursorAdapter(
         }),
       );
 
+    const forceStopSession: CursorAdapterShape["forceStopSession"] = (target) =>
+      withThreadLock(
+        target.threadId,
+        Effect.gen(function* () {
+          const ctx = sessions.get(target.threadId);
+          if (!ctx || ctx.stopped) {
+            return "already-stopped";
+          }
+          if (!matchesAbortTarget(ctx, target)) {
+            return "target-changed";
+          }
+
+          const turnId = ctx.activeTurnId;
+          ctx.stopped = true;
+          ctx.session = {
+            ...ctx.session,
+            status: "closed",
+            activeTurnId: undefined,
+            updatedAt: yield* nowIso,
+          };
+          sessions.delete(ctx.threadId);
+          yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+          yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
+          if (ctx.notificationFiber) {
+            yield* Fiber.interrupt(ctx.notificationFiber).pipe(Effect.ignore);
+          }
+
+          const termination = yield* ctx.acp.forceClose.pipe(Effect.exit);
+          yield* Scope.close(ctx.scope, Exit.void).pipe(
+            Effect.timeoutOption("2 seconds"),
+            Effect.ignore,
+          );
+
+          if (Exit.isFailure(termination)) {
+            const reason = `T3 could not confirm force-stopping the Cursor process tree: ${String(
+              termination.cause,
+            )}`;
+            yield* offerRuntimeEvent({
+              type: "runtime.error",
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              providerInstanceId: boundInstanceId,
+              providerSessionId: ctx.providerSessionId,
+              threadId: ctx.threadId,
+              ...(turnId ? { turnId } : {}),
+              payload: {
+                message: reason,
+                class: "transport_error",
+              },
+            }).pipe(Effect.ignore);
+            yield* offerRuntimeEvent({
+              type: "session.exited",
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              providerInstanceId: boundInstanceId,
+              providerSessionId: ctx.providerSessionId,
+              threadId: ctx.threadId,
+              ...(turnId ? { turnId } : {}),
+              payload: {
+                exitKind: "error",
+                recoverable: false,
+                reason,
+              },
+            }).pipe(Effect.ignore);
+            if (providerSessionIds.get(ctx.threadId) === ctx.providerSessionId) {
+              providerSessionIds.delete(ctx.threadId);
+            }
+            return yield* new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId: ctx.threadId,
+              detail: reason,
+              cause: termination.cause,
+            });
+          }
+
+          yield* offerRuntimeEvent({
+            type: "session.exited",
+            ...(yield* makeEventStamp()),
+            provider: PROVIDER,
+            providerInstanceId: boundInstanceId,
+            providerSessionId: ctx.providerSessionId,
+            threadId: ctx.threadId,
+            ...(turnId ? { turnId } : {}),
+            payload: {
+              exitKind: "forced",
+              recoverable: false,
+            },
+          });
+          if (providerSessionIds.get(ctx.threadId) === ctx.providerSessionId) {
+            providerSessionIds.delete(ctx.threadId);
+          }
+          return "forced";
+        }),
+      );
+
     const listSessions: CursorAdapterShape["listSessions"] = () =>
       Effect.sync(() => Array.from(sessions.values(), (c) => ({ ...c.session })));
 
@@ -1174,11 +1372,14 @@ export function makeCursorAdapter(
       startSession,
       sendTurn,
       interruptTurn,
+      captureAbortTarget,
+      interruptAbortTarget,
       readThread,
       rollbackThread,
       respondToRequest,
       respondToUserInput,
       stopSession,
+      forceStopSession,
       listSessions,
       hasSession,
       stopAll,

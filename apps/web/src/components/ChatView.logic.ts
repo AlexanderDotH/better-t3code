@@ -52,6 +52,7 @@ export function buildLocalDraftThread(
     checkpoints: [],
     activities: [],
     proposedPlans: [],
+    subagents: [],
   };
 }
 
@@ -83,6 +84,32 @@ export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "sessi
     threadId: thread.id,
     ...(runningTurnId !== null ? { turnId: runningTurnId } : {}),
   };
+}
+
+export type ThreadAbortStage = "idle" | "graceful-pending" | "force-pending";
+
+export function deriveThreadAbortStage(
+  thread: Pick<Thread, "latestTurn" | "session">,
+): ThreadAbortStage {
+  const activeTurnId = thread.session?.status === "running" ? thread.session.activeTurnId : null;
+  if (
+    activeTurnId === null ||
+    thread.latestTurn?.turnId !== activeTurnId ||
+    thread.latestTurn.state !== "interrupted"
+  ) {
+    return "idle";
+  }
+  return "graceful-pending";
+}
+
+export function buildThreadTurnForceAbortInput(
+  thread: Pick<Thread, "id" | "latestTurn" | "session">,
+): { threadId: ThreadId; turnId: TurnId } | null {
+  if (deriveThreadAbortStage(thread) !== "graceful-pending") {
+    return null;
+  }
+  const turnId = thread.session?.activeTurnId;
+  return turnId === null || turnId === undefined ? null : { threadId: thread.id, turnId };
 }
 
 export function reconcileMountedTerminalThreadIds(input: {

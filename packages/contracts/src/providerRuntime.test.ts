@@ -6,6 +6,101 @@ import { ProviderRuntimeEvent } from "./providerRuntime.ts";
 const decodeRuntimeEvent = Schema.decodeUnknownSync(ProviderRuntimeEvent);
 
 describe("ProviderRuntimeEvent", () => {
+  it("decodes a forced session exit with its runtime session id", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "session.exited",
+      eventId: "event-forced-exit-1",
+      provider: "codex",
+      providerInstanceId: "codex",
+      providerSessionId: "runtime-session-1",
+      createdAt: "2026-07-30T10:00:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        reason: "Force-aborted after cancellation timeout",
+        recoverable: true,
+        exitKind: "forced",
+      },
+    });
+
+    expect(parsed.type).toBe("session.exited");
+    expect(parsed.providerSessionId).toBe("runtime-session-1");
+    if (parsed.type !== "session.exited") {
+      throw new Error("expected session.exited");
+    }
+    expect(parsed.payload.exitKind).toBe("forced");
+  });
+
+  it("decodes a discovered nested subagent with provider routing metadata", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "subagent.discovered",
+      eventId: "event-subagent-discovered-1",
+      provider: "codex",
+      createdAt: "2026-07-30T10:00:00.000Z",
+      threadId: "thread-1",
+      subagentId: "agent-child",
+      providerRefs: {
+        providerThreadId: "provider-thread-child",
+      },
+      payload: {
+        subagentId: "agent-child",
+        providerThreadId: "provider-thread-child",
+        parentSubagentId: "agent-parent",
+        agentPath: "/root/child",
+        nickname: "contracts",
+        role: "worker",
+        task: "Add the schema contracts",
+        model: "gpt-5.6-codex",
+        reasoningEffort: "ultra",
+        depth: 1,
+      },
+    });
+
+    expect(parsed.type).toBe("subagent.discovered");
+    if (parsed.type !== "subagent.discovered") {
+      throw new Error("expected subagent.discovered");
+    }
+    expect(parsed.subagentId).toBe("agent-child");
+    expect(parsed.providerRefs?.providerThreadId).toBe("provider-thread-child");
+    expect(parsed.payload.parentSubagentId).toBe("agent-parent");
+    expect(parsed.payload.depth).toBe(1);
+  });
+
+  it("decodes a subagent state change without a status message", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "subagent.state.changed",
+      eventId: "event-subagent-state-1",
+      provider: "codex",
+      createdAt: "2026-07-30T10:00:01.000Z",
+      threadId: "thread-1",
+      subagentId: "agent-child",
+      payload: {
+        subagentId: "agent-child",
+        state: "waiting",
+      },
+    });
+
+    expect(parsed.type).toBe("subagent.state.changed");
+    if (parsed.type !== "subagent.state.changed") {
+      throw new Error("expected subagent.state.changed");
+    }
+    expect(parsed.payload.state).toBe("waiting");
+    expect(parsed.payload.statusMessage).toBeUndefined();
+  });
+
+  it("rejects empty subagent routing identifiers", () => {
+    expect(() =>
+      decodeRuntimeEvent({
+        type: "turn.started",
+        eventId: "event-subagent-invalid-1",
+        provider: "codex",
+        createdAt: "2026-07-30T10:00:02.000Z",
+        threadId: "thread-1",
+        subagentId: "   ",
+        payload: {},
+      }),
+    ).toThrow();
+  });
+
   it("accepts fork-provided driver kinds as branded slugs", () => {
     const parsed = decodeRuntimeEvent({
       type: "session.started",

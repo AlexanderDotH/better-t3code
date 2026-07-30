@@ -7,8 +7,12 @@ import {
   type OrchestrationEvent,
   type OrchestrationMessage,
   type OrchestrationProposedPlanId,
+  type OrchestrationSubagentProgress,
+  type OrchestrationSubagentStatus,
+  type OrchestrationSubagentSummary,
   CheckpointRef,
   isToolLifecycleItemType,
+  type SubagentId,
   ThreadId,
   type ThreadTokenUsageSnapshot,
   TurnId,
@@ -40,7 +44,13 @@ import {
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 
-const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
+const providerTargetKey = (threadId: ThreadId, subagentId?: SubagentId) =>
+  subagentId === undefined ? String(threadId) : `${threadId}:subagent:${subagentId}`;
+
+const providerTurnKey = (threadId: ThreadId, turnId: TurnId, subagentId?: SubagentId) =>
+  subagentId === undefined
+    ? `${threadId}:${turnId}`
+    : `${providerTargetKey(threadId, subagentId)}:turn:${turnId}`;
 
 interface AssistantSegmentState {
   baseKey: string;
@@ -53,6 +63,7 @@ type ContentDeltaRuntimeEvent = Extract<ProviderRuntimeEvent, { type: "content.d
 interface BufferedContentStream {
   readonly key: string;
   readonly threadId: ThreadId;
+  readonly subagentId: SubagentId | undefined;
   readonly turnId: TurnId | null;
   readonly itemId: string | null;
   readonly streamKind: ContentDeltaRuntimeEvent["payload"]["streamKind"];
@@ -74,6 +85,8 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
 const MAX_BUFFERED_CONTENT_STREAM_CHARS = 64_000;
 const MAX_BUFFERED_CONTENT_STREAMS = 20_000;
+const EXITED_PROVIDER_SESSION_CACHE_CAPACITY = 20_000;
+const EXITED_PROVIDER_SESSION_TTL = Duration.hours(12);
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
 type TurnStartRequestedDomainEvent = Extract<
@@ -157,6 +170,36 @@ function findProposedPlanById(
   return undefined;
 }
 
+function requestIdFromActivity(activity: OrchestrationThreadActivity): string | undefined {
+  if (
+    typeof activity.payload !== "object" ||
+    activity.payload === null ||
+    !("requestId" in activity.payload)
+  ) {
+    return undefined;
+  }
+  const requestId = activity.payload.requestId;
+  return typeof requestId === "string" && requestId.length > 0 ? requestId : undefined;
+}
+
+function unresolvedActivityRequestIds(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  requestedKind: string,
+  resolvedKind: string,
+): ReadonlyArray<string> {
+  const pending = new Set<string>();
+  for (const activity of activities) {
+    const requestId = requestIdFromActivity(activity);
+    if (!requestId) continue;
+    if (activity.kind === requestedKind) {
+      pending.add(requestId);
+    } else if (activity.kind === resolvedKind) {
+      pending.delete(requestId);
+    }
+  }
+  return [...pending];
+}
+
 function hasCheckpointForTurn(
   checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>,
   turnId: TurnId,
@@ -198,29 +241,159 @@ function hasRenderableAssistantText(text: string | undefined): boolean {
   return (text?.trim().length ?? 0) > 0;
 }
 
-function proposedPlanIdForTurn(threadId: ThreadId, turnId: TurnId): string {
-  return `plan:${threadId}:turn:${turnId}`;
+function proposedPlanIdForTurn(
+  threadId: ThreadId,
+  turnId: TurnId,
+  subagentId?: SubagentId,
+): string {
+  return `plan:${providerTargetKey(threadId, subagentId)}:turn:${turnId}`;
 }
 
 function proposedPlanIdFromEvent(event: ProviderRuntimeEvent, threadId: ThreadId): string {
   const turnId = toTurnId(event.turnId);
   if (turnId) {
-    return proposedPlanIdForTurn(threadId, turnId);
+    return proposedPlanIdForTurn(threadId, turnId, event.subagentId);
   }
+  const targetKey = providerTargetKey(threadId, event.subagentId);
   if (event.itemId) {
-    return `plan:${threadId}:item:${event.itemId}`;
+    return `plan:${targetKey}:item:${event.itemId}`;
   }
-  return `plan:${threadId}:event:${event.eventId}`;
+  return `plan:${targetKey}:event:${event.eventId}`;
 }
 
 function assistantSegmentBaseKeyFromEvent(event: ProviderRuntimeEvent): string {
-  return String(event.itemId ?? event.turnId ?? event.eventId);
+  const sourceId = event.itemId ?? event.turnId ?? event.eventId;
+  return event.subagentId === undefined
+    ? String(sourceId)
+    : `${providerTargetKey(event.threadId, event.subagentId)}:${sourceId}`;
 }
 
 function assistantSegmentMessageId(baseKey: string, segmentIndex: number): MessageId {
   return MessageId.make(
     segmentIndex === 0 ? `assistant:${baseKey}` : `assistant:${baseKey}:segment:${segmentIndex}`,
   );
+}
+
+function shortSubagentName(subagentId: SubagentId): string {
+  return `Agent ${subagentId.slice(0, 8)}`;
+}
+
+function subagentPathLeaf(agentPath: string | undefined): string | undefined {
+  if (!agentPath) return undefined;
+  const segments = agentPath.split("/").filter((segment) => segment.length > 0);
+  return segments.at(-1);
+}
+
+function subagentDepth(agentPath: string | undefined): number {
+  if (!agentPath) return 0;
+  const segments = agentPath.split("/").filter((segment) => segment.length > 0);
+  return Math.max(0, segments.length - (segments[0] === "root" ? 1 : 0));
+}
+
+function stateProgress(
+  status: OrchestrationSubagentStatus,
+  statusMessage: string | undefined,
+  createdAt: string,
+): OrchestrationSubagentProgress {
+  const fallbackSummary: Record<OrchestrationSubagentStatus, string> = {
+    starting: "Starting",
+    running: "Running",
+    waiting: "Waiting",
+    completed: "Completed",
+    interrupted: "Interrupted",
+    error: "Error",
+    unavailable: "Unavailable",
+  };
+  return {
+    kind: `state.${status}`,
+    summary: statusMessage ?? fallbackSummary[status],
+    detail: null,
+    createdAt,
+  };
+}
+
+function placeholderSubagentSummary(
+  event: ProviderRuntimeEvent,
+  subagentId: SubagentId,
+): OrchestrationSubagentSummary {
+  return {
+    id: subagentId,
+    providerThreadId: event.providerRefs?.providerThreadId ?? subagentId,
+    parentId: null,
+    path: null,
+    name: shortSubagentName(subagentId),
+    nickname: null,
+    role: null,
+    task: null,
+    model: null,
+    reasoningEffort: null,
+    depth: 0,
+    status: "starting",
+    statusMessage: null,
+    latestProgress: null,
+    latestTurn: null,
+    startedAt: event.createdAt,
+    updatedAt: event.createdAt,
+    completedAt: null,
+  };
+}
+
+function discoveredSubagentSummary(
+  event: Extract<ProviderRuntimeEvent, { type: "subagent.discovered" }>,
+  existing: OrchestrationSubagentSummary | undefined,
+): OrchestrationSubagentSummary {
+  const payload = event.payload;
+  const path = payload.agentPath ?? existing?.path ?? null;
+  const nickname = payload.nickname ?? existing?.nickname ?? null;
+  const role = payload.role ?? existing?.role ?? null;
+  const name =
+    nickname ??
+    subagentPathLeaf(path ?? undefined) ??
+    role ??
+    existing?.name ??
+    shortSubagentName(payload.subagentId);
+  return {
+    id: payload.subagentId,
+    providerThreadId: payload.providerThreadId,
+    parentId: payload.parentSubagentId ?? existing?.parentId ?? null,
+    path,
+    name,
+    nickname,
+    role,
+    task: payload.task ?? existing?.task ?? null,
+    model: payload.model ?? existing?.model ?? null,
+    reasoningEffort: payload.reasoningEffort ?? existing?.reasoningEffort ?? null,
+    depth: payload.depth ?? (path ? subagentDepth(path) : (existing?.depth ?? 0)),
+    status: existing?.status ?? "starting",
+    statusMessage: existing?.statusMessage ?? null,
+    latestProgress: existing?.latestProgress ?? null,
+    latestTurn: existing?.latestTurn ?? null,
+    startedAt: existing?.startedAt ?? event.createdAt,
+    updatedAt:
+      existing && existing.updatedAt.localeCompare(event.createdAt) > 0
+        ? existing.updatedAt
+        : event.createdAt,
+    completedAt: existing?.completedAt ?? null,
+  };
+}
+
+function scopedActivityId(
+  threadId: ThreadId,
+  subagentId: SubagentId | undefined,
+  activityId: EventId,
+): EventId {
+  if (subagentId === undefined) return activityId;
+  return EventId.make(`subagent:${threadId}:${subagentId}:${activityId}`);
+}
+
+function scopeActivityForEvent(
+  event: ProviderRuntimeEvent,
+  activity: OrchestrationThreadActivity,
+): OrchestrationThreadActivity {
+  return {
+    ...activity,
+    id: scopedActivityId(event.threadId, event.subagentId, activity.id),
+  };
 }
 function buildContextWindowActivityPayload(
   event: ProviderRuntimeEvent,
@@ -358,6 +531,24 @@ function runtimeEventToActivities(
           payload: {
             message: truncateDetail(event.payload.message),
           },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "session.exited": {
+      if (event.payload.exitKind !== "forced") {
+        return [];
+      }
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "error",
+          kind: "provider.force-aborted",
+          summary: "Agent force-stopped",
+          payload: event.payload.reason ? { message: truncateDetail(event.payload.reason) } : {},
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
         },
@@ -647,6 +838,64 @@ function runtimeEventToActivities(
   return [];
 }
 
+function itemLifecycleProgress(
+  event: ProviderRuntimeEvent,
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): OrchestrationSubagentProgress | undefined {
+  if (
+    event.type !== "item.started" &&
+    event.type !== "item.updated" &&
+    event.type !== "item.completed"
+  ) {
+    return undefined;
+  }
+
+  const activity = activities[0];
+  if (activity) {
+    const payload = asUnknownRecord(activity.payload);
+    const detail = typeof payload.detail === "string" ? payload.detail : null;
+    return {
+      kind: activity.kind,
+      summary: activity.summary,
+      detail,
+      createdAt: event.createdAt,
+    };
+  }
+
+  const lifecycle = event.type.slice("item.".length);
+  const generic = (() => {
+    switch (event.payload.itemType) {
+      case "assistant_message":
+        return lifecycle === "completed" ? "Response completed" : "Writing response";
+      case "reasoning":
+        return "Thinking";
+      case "plan":
+        return lifecycle === "completed" ? "Plan completed" : "Planning";
+      case "user_message":
+        return undefined;
+      default:
+        return event.payload.title;
+    }
+  })();
+  if (!generic) return undefined;
+
+  return {
+    kind: `item.${event.payload.itemType}.${lifecycle}`,
+    summary: generic,
+    detail: event.payload.detail ? truncateDetail(event.payload.detail) : null,
+    createdAt: event.createdAt,
+  };
+}
+
+function mirrorsInteractionToRoot(event: ProviderRuntimeEvent): boolean {
+  return (
+    event.type === "request.opened" ||
+    event.type === "request.resolved" ||
+    event.type === "user-input.requested" ||
+    event.type === "user-input.resolved"
+  );
+}
+
 function asUnknownRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -665,6 +914,7 @@ function enrichActivityWithRuntimeContext(
       eventId: event.eventId,
       provider: event.provider,
       providerInstanceId: event.providerInstanceId ?? null,
+      subagentId: event.subagentId ?? null,
       itemId: event.itemId ?? null,
       requestId: event.requestId ?? null,
       providerRefs: event.providerRefs ?? null,
@@ -675,7 +925,7 @@ function enrichActivityWithRuntimeContext(
 
 function contentStreamKey(event: ContentDeltaRuntimeEvent, threadId: ThreadId): string {
   return [
-    threadId,
+    providerTargetKey(threadId, event.subagentId),
     event.turnId ?? "no-turn",
     event.itemId ?? "no-item",
     event.payload.streamKind,
@@ -773,6 +1023,11 @@ const make = Effect.gen(function* () {
     timeToLive: BUFFERED_PROPOSED_PLAN_BY_ID_TTL,
     lookup: () => Effect.succeed({ text: "", createdAt: "" }),
   });
+  const exitedProviderSessionIds = yield* Cache.make<string, true>({
+    capacity: EXITED_PROVIDER_SESSION_CACHE_CAPACITY,
+    timeToLive: EXITED_PROVIDER_SESSION_TTL,
+    lookup: () => Effect.succeed(true),
+  });
 
   const bufferedContentStreams = new Map<string, BufferedContentStream>();
 
@@ -796,8 +1051,12 @@ const make = Effect.gen(function* () {
       flushReason: input.flushReason,
     };
     const activity = enrichActivityWithRuntimeContext(input.stream.lastEvent, {
-      id: EventId.make(
-        `content-stream:${input.stream.firstEventId}:segment:${input.stream.segmentIndex}`,
+      id: scopedActivityId(
+        input.stream.threadId,
+        input.stream.subagentId,
+        EventId.make(
+          `content-stream:${input.stream.firstEventId}:segment:${input.stream.segmentIndex}`,
+        ),
       ),
       createdAt: input.stream.firstCreatedAt,
       tone: "info",
@@ -824,6 +1083,7 @@ const make = Effect.gen(function* () {
       type: "thread.activity.append",
       commandId: yield* providerCommandId(input.stream.lastEvent, "content-stream-append"),
       threadId: input.stream.threadId,
+      ...(input.stream.subagentId !== undefined ? { subagentId: input.stream.subagentId } : {}),
       activity,
       createdAt: activity.createdAt,
     });
@@ -858,6 +1118,7 @@ const make = Effect.gen(function* () {
       stream = {
         key,
         threadId,
+        subagentId: event.subagentId,
         turnId: toTurnId(event.turnId) ?? null,
         itemId: event.itemId ?? null,
         streamKind: event.payload.streamKind,
@@ -899,6 +1160,7 @@ const make = Effect.gen(function* () {
     const eventItemId = event.itemId ?? null;
     const shouldFlush = (stream: BufferedContentStream): boolean => {
       if (stream.threadId !== threadId) return false;
+      if (stream.subagentId !== event.subagentId) return false;
       switch (event.type) {
         case "item.completed":
           return eventItemId !== null && stream.itemId === eventItemId;
@@ -939,12 +1201,17 @@ const make = Effect.gen(function* () {
       .pipe(Effect.map(Option.getOrUndefined));
   });
 
-  const rememberAssistantMessageId = (threadId: ThreadId, turnId: TurnId, messageId: MessageId) =>
-    Cache.getOption(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId)).pipe(
+  const rememberAssistantMessageId = (
+    threadId: ThreadId,
+    turnId: TurnId,
+    messageId: MessageId,
+    subagentId?: SubagentId,
+  ) =>
+    Cache.getOption(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId, subagentId)).pipe(
       Effect.flatMap((existingIds) =>
         Cache.set(
           turnMessageIdsByTurnKey,
-          providerTurnKey(threadId, turnId),
+          providerTurnKey(threadId, turnId, subagentId),
           Option.match(existingIds, {
             onNone: () => new Set([messageId]),
             onSome: (ids) => {
@@ -957,8 +1224,13 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const forgetAssistantMessageId = (threadId: ThreadId, turnId: TurnId, messageId: MessageId) =>
-    Cache.getOption(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId)).pipe(
+  const forgetAssistantMessageId = (
+    threadId: ThreadId,
+    turnId: TurnId,
+    messageId: MessageId,
+    subagentId?: SubagentId,
+  ) =>
+    Cache.getOption(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId, subagentId)).pipe(
       Effect.flatMap((existingIds) =>
         Option.match(existingIds, {
           onNone: () => Effect.void,
@@ -966,38 +1238,66 @@ const make = Effect.gen(function* () {
             const nextIds = new Set(ids);
             nextIds.delete(messageId);
             if (nextIds.size === 0) {
-              return Cache.invalidate(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId));
+              return Cache.invalidate(
+                turnMessageIdsByTurnKey,
+                providerTurnKey(threadId, turnId, subagentId),
+              );
             }
-            return Cache.set(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId), nextIds);
+            return Cache.set(
+              turnMessageIdsByTurnKey,
+              providerTurnKey(threadId, turnId, subagentId),
+              nextIds,
+            );
           },
         }),
       ),
     );
 
-  const getAssistantMessageIdsForTurn = (threadId: ThreadId, turnId: TurnId) =>
-    Cache.getOption(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId)).pipe(
+  const getAssistantMessageIdsForTurn = (
+    threadId: ThreadId,
+    turnId: TurnId,
+    subagentId?: SubagentId,
+  ) =>
+    Cache.getOption(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId, subagentId)).pipe(
       Effect.map((existingIds) =>
         Option.getOrElse(existingIds, (): Set<MessageId> => new Set<MessageId>()),
       ),
     );
 
-  const clearAssistantMessageIdsForTurn = (threadId: ThreadId, turnId: TurnId) =>
-    Cache.invalidate(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId));
+  const clearAssistantMessageIdsForTurn = (
+    threadId: ThreadId,
+    turnId: TurnId,
+    subagentId?: SubagentId,
+  ) => Cache.invalidate(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId, subagentId));
 
-  const getAssistantSegmentStateForTurn = (threadId: ThreadId, turnId: TurnId) =>
-    Cache.getOption(assistantSegmentStateByTurnKey, providerTurnKey(threadId, turnId));
+  const getAssistantSegmentStateForTurn = (
+    threadId: ThreadId,
+    turnId: TurnId,
+    subagentId?: SubagentId,
+  ) =>
+    Cache.getOption(assistantSegmentStateByTurnKey, providerTurnKey(threadId, turnId, subagentId));
 
   const setAssistantSegmentStateForTurn = (
     threadId: ThreadId,
     turnId: TurnId,
     state: AssistantSegmentState,
-  ) => Cache.set(assistantSegmentStateByTurnKey, providerTurnKey(threadId, turnId), state);
+    subagentId?: SubagentId,
+  ) =>
+    Cache.set(assistantSegmentStateByTurnKey, providerTurnKey(threadId, turnId, subagentId), state);
 
-  const clearAssistantSegmentStateForTurn = (threadId: ThreadId, turnId: TurnId) =>
-    Cache.invalidate(assistantSegmentStateByTurnKey, providerTurnKey(threadId, turnId));
+  const clearAssistantSegmentStateForTurn = (
+    threadId: ThreadId,
+    turnId: TurnId,
+    subagentId?: SubagentId,
+  ) =>
+    Cache.invalidate(assistantSegmentStateByTurnKey, providerTurnKey(threadId, turnId, subagentId));
 
-  const getActiveAssistantMessageIdForTurn = (threadId: ThreadId, turnId: TurnId) =>
-    getAssistantSegmentStateForTurn(threadId, turnId).pipe(
+  const getActiveAssistantMessageIdForTurn = (
+    threadId: ThreadId,
+    turnId: TurnId,
+    subagentId?: SubagentId,
+  ) =>
+    getAssistantSegmentStateForTurn(threadId, turnId, subagentId).pipe(
       Effect.map((state) =>
         Option.flatMap(state, (entry) =>
           entry.activeMessageId ? Option.some(entry.activeMessageId) : Option.none(),
@@ -1009,8 +1309,9 @@ const make = Effect.gen(function* () {
     threadId: ThreadId;
     turnId: TurnId;
     baseKey: string;
+    subagentId?: SubagentId;
   }) =>
-    getAssistantSegmentStateForTurn(input.threadId, input.turnId).pipe(
+    getAssistantSegmentStateForTurn(input.threadId, input.turnId, input.subagentId).pipe(
       Effect.flatMap((existingState) =>
         Effect.gen(function* () {
           const nextState = Option.match(existingState, {
@@ -1029,7 +1330,12 @@ const make = Effect.gen(function* () {
               } satisfies AssistantSegmentState;
             },
           });
-          yield* setAssistantSegmentStateForTurn(input.threadId, input.turnId, nextState);
+          yield* setAssistantSegmentStateForTurn(
+            input.threadId,
+            input.turnId,
+            nextState,
+            input.subagentId,
+          );
           return nextState.activeMessageId!;
         }),
       ),
@@ -1048,6 +1354,7 @@ const make = Effect.gen(function* () {
       const activeMessageId = yield* getActiveAssistantMessageIdForTurn(
         input.threadId,
         input.turnId,
+        input.event.subagentId,
       );
       if (Option.isSome(activeMessageId)) {
         return activeMessageId.value;
@@ -1057,6 +1364,7 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         turnId: input.turnId,
         baseKey: assistantSegmentBaseKeyFromEvent(input.event),
+        ...(input.event.subagentId !== undefined ? { subagentId: input.event.subagentId } : {}),
       });
     });
 
@@ -1122,6 +1430,7 @@ const make = Effect.gen(function* () {
   const flushBufferedAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
     threadId: ThreadId;
+    subagentId?: SubagentId;
     messageId: MessageId;
     turnId?: TurnId;
     createdAt: string;
@@ -1137,6 +1446,7 @@ const make = Effect.gen(function* () {
         type: "thread.message.assistant.delta",
         commandId: yield* providerCommandId(input.event, input.commandTag),
         threadId: input.threadId,
+        ...(input.subagentId !== undefined ? { subagentId: input.subagentId } : {}),
         messageId: input.messageId,
         delta: bufferedText,
         ...(input.turnId ? { turnId: input.turnId } : {}),
@@ -1148,6 +1458,7 @@ const make = Effect.gen(function* () {
   const flushBufferedAssistantMessagesForTurn = (input: {
     event: ProviderRuntimeEvent;
     threadId: ThreadId;
+    subagentId?: SubagentId;
     turnId: TurnId;
     createdAt: string;
     commandTag: string;
@@ -1156,6 +1467,7 @@ const make = Effect.gen(function* () {
       const assistantMessageIds = yield* getAssistantMessageIdsForTurn(
         input.threadId,
         input.turnId,
+        input.subagentId,
       );
       const flushedMessageIds = new Set<MessageId>();
       yield* Effect.forEach(
@@ -1164,6 +1476,7 @@ const make = Effect.gen(function* () {
           flushBufferedAssistantMessage({
             event: input.event,
             threadId: input.threadId,
+            ...(input.subagentId !== undefined ? { subagentId: input.subagentId } : {}),
             messageId,
             turnId: input.turnId,
             createdAt: input.createdAt,
@@ -1181,6 +1494,7 @@ const make = Effect.gen(function* () {
   const finalizeAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
     threadId: ThreadId;
+    subagentId?: SubagentId;
     messageId: MessageId;
     turnId?: TurnId;
     createdAt: string;
@@ -1204,6 +1518,7 @@ const make = Effect.gen(function* () {
           type: "thread.message.assistant.delta",
           commandId: yield* providerCommandId(input.event, input.finalDeltaCommandTag),
           threadId: input.threadId,
+          ...(input.subagentId !== undefined ? { subagentId: input.subagentId } : {}),
           messageId: input.messageId,
           delta: text,
           ...(input.turnId ? { turnId: input.turnId } : {}),
@@ -1216,6 +1531,7 @@ const make = Effect.gen(function* () {
           type: "thread.message.assistant.complete",
           commandId: yield* providerCommandId(input.event, input.commandTag),
           threadId: input.threadId,
+          ...(input.subagentId !== undefined ? { subagentId: input.subagentId } : {}),
           messageId: input.messageId,
           ...(input.turnId ? { turnId: input.turnId } : {}),
           createdAt: input.createdAt,
@@ -1227,6 +1543,7 @@ const make = Effect.gen(function* () {
   const finalizeActiveAssistantSegmentForTurn = (input: {
     event: ProviderRuntimeEvent;
     threadId: ThreadId;
+    subagentId?: SubagentId;
     turnId: TurnId;
     createdAt: string;
     commandTag: string;
@@ -1238,6 +1555,7 @@ const make = Effect.gen(function* () {
       const activeMessageId = yield* getActiveAssistantMessageIdForTurn(
         input.threadId,
         input.turnId,
+        input.subagentId,
       );
       if (Option.isNone(activeMessageId)) {
         return;
@@ -1246,6 +1564,7 @@ const make = Effect.gen(function* () {
       yield* finalizeAssistantMessage({
         event: input.event,
         threadId: input.threadId,
+        ...(input.subagentId !== undefined ? { subagentId: input.subagentId } : {}),
         messageId: activeMessageId.value,
         turnId: input.turnId,
         createdAt: input.createdAt,
@@ -1255,20 +1574,35 @@ const make = Effect.gen(function* () {
           input.hasProjectedMessage ||
           (input.flushedMessageIds?.has(activeMessageId.value) ?? false),
       });
-      yield* forgetAssistantMessageId(input.threadId, input.turnId, activeMessageId.value);
+      yield* forgetAssistantMessageId(
+        input.threadId,
+        input.turnId,
+        activeMessageId.value,
+        input.subagentId,
+      );
 
-      const state = yield* getAssistantSegmentStateForTurn(input.threadId, input.turnId);
+      const state = yield* getAssistantSegmentStateForTurn(
+        input.threadId,
+        input.turnId,
+        input.subagentId,
+      );
       if (Option.isSome(state)) {
-        yield* setAssistantSegmentStateForTurn(input.threadId, input.turnId, {
-          ...state.value,
-          activeMessageId: null,
-        });
+        yield* setAssistantSegmentStateForTurn(
+          input.threadId,
+          input.turnId,
+          {
+            ...state.value,
+            activeMessageId: null,
+          },
+          input.subagentId,
+        );
       }
     });
 
   const upsertProposedPlan = (input: {
     event: ProviderRuntimeEvent;
     threadId: ThreadId;
+    subagentId?: SubagentId;
     threadProposedPlans: ReadonlyArray<{
       id: string;
       createdAt: string;
@@ -1292,6 +1626,7 @@ const make = Effect.gen(function* () {
         type: "thread.proposed-plan.upsert",
         commandId: yield* providerCommandId(input.event, "proposed-plan-upsert"),
         threadId: input.threadId,
+        ...(input.subagentId !== undefined ? { subagentId: input.subagentId } : {}),
         proposedPlan: {
           id: input.planId,
           turnId: input.turnId ?? null,
@@ -1308,6 +1643,7 @@ const make = Effect.gen(function* () {
   const finalizeBufferedProposedPlan = (input: {
     event: ProviderRuntimeEvent;
     threadId: ThreadId;
+    subagentId?: SubagentId;
     threadProposedPlans: ReadonlyArray<{
       id: string;
       createdAt: string;
@@ -1331,6 +1667,7 @@ const make = Effect.gen(function* () {
       yield* upsertProposedPlan({
         event: input.event,
         threadId: input.threadId,
+        ...(input.subagentId !== undefined ? { subagentId: input.subagentId } : {}),
         threadProposedPlans: input.threadProposedPlans,
         planId: input.planId,
         ...(input.turnId ? { turnId: input.turnId } : {}),
@@ -1344,10 +1681,14 @@ const make = Effect.gen(function* () {
       yield* clearBufferedProposedPlan(input.planId);
     });
 
-  const clearTurnStateForSession = (threadId: ThreadId) =>
+  const clearTurnStateForSession = (threadId: ThreadId, subagentId?: SubagentId) =>
     Effect.gen(function* () {
-      const prefix = `${threadId}:`;
-      const proposedPlanPrefix = `plan:${threadId}:`;
+      const prefix =
+        subagentId === undefined ? `${threadId}:` : `${providerTargetKey(threadId, subagentId)}:`;
+      const proposedPlanPrefix =
+        subagentId === undefined
+          ? `plan:${threadId}:`
+          : `plan:${providerTargetKey(threadId, subagentId)}:`;
       const turnKeys = Array.from(yield* Cache.keys(turnMessageIdsByTurnKey));
       const assistantSegmentKeys = Array.from(yield* Cache.keys(assistantSegmentStateByTurnKey));
       const proposedPlanKeys = Array.from(yield* Cache.keys(bufferedProposedPlanById));
@@ -1387,6 +1728,61 @@ const make = Effect.gen(function* () {
         { concurrency: 1 },
       ).pipe(Effect.asVoid);
     });
+
+  const finalizeTurnArtifacts = Effect.fn("finalizeTurnArtifacts")(function* (input: {
+    readonly event: ProviderRuntimeEvent;
+    readonly threadId: ThreadId;
+    readonly subagentId?: SubagentId;
+    readonly turnId: TurnId;
+    readonly updatedAt: string;
+  }) {
+    const detailedThread = yield* resolveThreadDetail(input.threadId);
+    const messages = detailedThread?.messages ?? [];
+    const proposedPlans = detailedThread?.proposedPlans ?? [];
+    const cachedMessageIds = yield* getAssistantMessageIdsForTurn(
+      input.threadId,
+      input.turnId,
+      input.subagentId,
+    );
+    const assistantMessageIds = new Set(cachedMessageIds);
+    if (input.subagentId === undefined) {
+      for (const message of messages) {
+        if (message.role === "assistant" && message.turnId === input.turnId && message.streaming) {
+          assistantMessageIds.add(message.id);
+        }
+      }
+    }
+
+    yield* Effect.forEach(
+      assistantMessageIds,
+      (assistantMessageId) =>
+        finalizeAssistantMessage({
+          event: input.event,
+          threadId: input.threadId,
+          ...(input.subagentId !== undefined ? { subagentId: input.subagentId } : {}),
+          messageId: assistantMessageId,
+          turnId: input.turnId,
+          createdAt: input.updatedAt,
+          commandTag: "assistant-terminal-finalize",
+          finalDeltaCommandTag: "assistant-terminal-delta-finalize",
+          hasProjectedMessage:
+            input.subagentId !== undefined ||
+            findMessageById(messages, assistantMessageId) !== undefined,
+        }),
+      { concurrency: 1 },
+    ).pipe(Effect.asVoid);
+    yield* clearAssistantMessageIdsForTurn(input.threadId, input.turnId, input.subagentId);
+    yield* clearAssistantSegmentStateForTurn(input.threadId, input.turnId, input.subagentId);
+    yield* finalizeBufferedProposedPlan({
+      event: input.event,
+      threadId: input.threadId,
+      ...(input.subagentId !== undefined ? { subagentId: input.subagentId } : {}),
+      threadProposedPlans: proposedPlans,
+      planId: proposedPlanIdForTurn(input.threadId, input.turnId, input.subagentId),
+      turnId: input.turnId,
+      updatedAt: input.updatedAt,
+    });
+  });
 
   const getSourceProposedPlanReferenceForPendingTurnStart = Effect.fn(
     "getSourceProposedPlanReferenceForPendingTurnStart",
@@ -1468,6 +1864,39 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const thread = yield* resolveThreadShell(event.threadId);
       if (!thread) return;
+      const eventProviderSessionId = event.providerSessionId;
+      const projectedProviderSessionId = thread.session?.providerSessionId ?? null;
+      if (eventProviderSessionId !== undefined) {
+        const alreadyExited = yield* Cache.getOption(
+          exitedProviderSessionIds,
+          eventProviderSessionId,
+        );
+        if (Option.isSome(alreadyExited)) {
+          return;
+        }
+        const establishesReplacement =
+          event.type === "session.started" &&
+          (thread.session === null ||
+            thread.session.status === "starting" ||
+            thread.session.status === "stopped");
+        if (
+          projectedProviderSessionId !== null &&
+          projectedProviderSessionId !== eventProviderSessionId &&
+          !establishesReplacement
+        ) {
+          return;
+        }
+        if (
+          projectedProviderSessionId === eventProviderSessionId &&
+          thread.session?.status === "stopped" &&
+          event.type !== "session.exited"
+        ) {
+          return;
+        }
+        if (event.type === "session.exited") {
+          yield* Cache.set(exitedProviderSessionIds, eventProviderSessionId, true);
+        }
+      }
 
       let loadedThreadDetail: OrchestrationThread | null | undefined;
       const getLoadedThreadDetail = () =>
@@ -1482,6 +1911,113 @@ const make = Effect.gen(function* () {
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
+      const eventSubagentId =
+        event.type === "subagent.discovered" || event.type === "subagent.state.changed"
+          ? event.payload.subagentId
+          : event.subagentId;
+
+      const ensureSubagentSummary = Effect.fn("ensureSubagentSummary")(function* (
+        subagentId: SubagentId,
+      ) {
+        const detailedThread = yield* getLoadedThreadDetail();
+        const existing = detailedThread?.subagents.find((entry) => entry.id === subagentId);
+        if (existing) return existing;
+
+        const placeholder = placeholderSubagentSummary(event, subagentId);
+        yield* orchestrationEngine.dispatch({
+          type: "thread.subagent.upsert",
+          commandId: yield* providerCommandId(event, "subagent-placeholder-upsert"),
+          threadId: thread.id,
+          subagent: placeholder,
+          createdAt: now,
+        });
+        return placeholder;
+      });
+
+      if (event.type === "subagent.discovered") {
+        const detailedThread = yield* getLoadedThreadDetail();
+        const existing = detailedThread?.subagents.find(
+          (entry) => entry.id === event.payload.subagentId,
+        );
+        yield* orchestrationEngine.dispatch({
+          type: "thread.subagent.upsert",
+          commandId: yield* providerCommandId(event, "subagent-discovered-upsert"),
+          threadId: thread.id,
+          subagent: discoveredSubagentSummary(event, existing),
+          createdAt: now,
+        });
+        return;
+      }
+
+      if (event.type === "subagent.state.changed") {
+        yield* ensureSubagentSummary(event.payload.subagentId);
+        yield* orchestrationEngine.dispatch({
+          type: "thread.subagent.state.set",
+          commandId: yield* providerCommandId(event, "subagent-state-set"),
+          threadId: thread.id,
+          subagentId: event.payload.subagentId,
+          status: event.payload.state,
+          statusMessage: event.payload.statusMessage ?? null,
+          updatedAt: now,
+        });
+        yield* orchestrationEngine.dispatch({
+          type: "thread.subagent.progress.set",
+          commandId: yield* providerCommandId(event, "subagent-state-progress-set"),
+          threadId: thread.id,
+          subagentId: event.payload.subagentId,
+          progress: stateProgress(
+            event.payload.state,
+            event.payload.statusMessage,
+            event.createdAt,
+          ),
+          updatedAt: now,
+        });
+        return;
+      }
+
+      if (eventSubagentId !== undefined) {
+        const subagent = yield* ensureSubagentSummary(eventSubagentId);
+        if (
+          eventTurnId !== undefined &&
+          (event.type === "turn.started" ||
+            event.type === "turn.completed" ||
+            event.type === "turn.aborted")
+        ) {
+          const previousTurn =
+            subagent.latestTurn?.turnId === eventTurnId ? subagent.latestTurn : null;
+          const state =
+            event.type === "turn.started"
+              ? "running"
+              : event.type === "turn.aborted"
+                ? "interrupted"
+                : normalizeRuntimeTurnState(event.payload.state) === "failed"
+                  ? "error"
+                  : normalizeRuntimeTurnState(event.payload.state) === "completed"
+                    ? "completed"
+                    : "interrupted";
+          yield* orchestrationEngine.dispatch({
+            type: "thread.subagent.upsert",
+            commandId: yield* providerCommandId(event, "subagent-latest-turn-upsert"),
+            threadId: thread.id,
+            subagent: {
+              ...subagent,
+              latestTurn: {
+                turnId: eventTurnId,
+                state,
+                requestedAt: previousTurn?.requestedAt ?? now,
+                startedAt: event.type === "turn.started" ? now : (previousTurn?.startedAt ?? null),
+                completedAt: event.type === "turn.started" ? null : now,
+                assistantMessageId: previousTurn?.assistantMessageId ?? null,
+                ...(previousTurn?.sourceProposedPlan !== undefined
+                  ? { sourceProposedPlan: previousTurn.sourceProposedPlan }
+                  : {}),
+              },
+              updatedAt: subagent.updatedAt.localeCompare(now) > 0 ? subagent.updatedAt : now,
+            },
+            createdAt: now,
+          });
+        }
+      }
 
       const conflictsWithActiveTurn =
         activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
@@ -1494,7 +2030,7 @@ const make = Effect.gen(function* () {
       // new turn without ever completing the superseded one. A stale
       // turn.started for some other turn id still gets rejected.
       const conflictingTurnStartIsPendingTurnStart =
-        event.type === "turn.started" && conflictsWithActiveTurn
+        eventSubagentId === undefined && event.type === "turn.started" && conflictsWithActiveTurn
           ? sameId(yield* getExpectedProviderTurnIdForThread(thread.id), eventTurnId) &&
             Option.isSome(
               yield* projectionTurnRepository.getPendingTurnStartByThreadId({
@@ -1504,6 +2040,9 @@ const make = Effect.gen(function* () {
           : false;
 
       const shouldApplyThreadLifecycle = (() => {
+        if (eventSubagentId !== undefined) {
+          return false;
+        }
         if (!STRICT_PROVIDER_LIFECYCLE_GUARD) {
           return true;
         }
@@ -1516,6 +2055,7 @@ const make = Effect.gen(function* () {
           case "turn.started":
             return !conflictsWithActiveTurn || conflictingTurnStartIsPendingTurnStart;
           case "turn.completed":
+          case "turn.aborted":
             if (conflictsWithActiveTurn || missingTurnForActiveTurn) {
               return false;
             }
@@ -1530,7 +2070,7 @@ const make = Effect.gen(function* () {
         }
       })();
       const acceptedTurnStartedSourcePlan =
-        event.type === "turn.started" && shouldApplyThreadLifecycle
+        eventSubagentId === undefined && event.type === "turn.started" && shouldApplyThreadLifecycle
           ? yield* getSourceProposedPlanReferenceForAcceptedTurnStart(thread.id, eventTurnId)
           : null;
 
@@ -1540,12 +2080,15 @@ const make = Effect.gen(function* () {
         event.type === "session.exited" ||
         event.type === "thread.started" ||
         event.type === "turn.started" ||
-        event.type === "turn.completed"
+        event.type === "turn.completed" ||
+        event.type === "turn.aborted"
       ) {
         const nextActiveTurnId =
           event.type === "turn.started"
             ? (eventTurnId ?? null)
-            : event.type === "turn.completed" || event.type === "session.exited"
+            : event.type === "turn.completed" ||
+                event.type === "turn.aborted" ||
+                event.type === "session.exited"
               ? null
               : activeTurnId;
         const status = (() => {
@@ -1560,6 +2103,8 @@ const make = Effect.gen(function* () {
               return normalizeRuntimeTurnState(event.payload.state) === "failed"
                 ? "error"
                 : "ready";
+            case "turn.aborted":
+              return "ready";
             case "session.started":
             case "thread.started":
               // Provider thread/session start notifications can arrive during an
@@ -1597,6 +2142,33 @@ const make = Effect.gen(function* () {
               ),
             );
           }
+          const turnEndedInterrupted =
+            event.type === "turn.aborted" ||
+            (event.type === "turn.completed" &&
+              (normalizeRuntimeTurnState(event.payload.state) === "interrupted" ||
+                normalizeRuntimeTurnState(event.payload.state) === "cancelled"));
+          if (turnEndedInterrupted) {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.session.set",
+              commandId: yield* providerCommandId(event, "thread-session-interrupted-set"),
+              threadId: thread.id,
+              session: {
+                threadId: thread.id,
+                status: "interrupted",
+                providerName: event.provider,
+                ...(event.providerInstanceId !== undefined
+                  ? { providerInstanceId: event.providerInstanceId }
+                  : {}),
+                providerSessionId:
+                  event.providerSessionId ?? thread.session?.providerSessionId ?? null,
+                runtimeMode: thread.session?.runtimeMode ?? "full-access",
+                activeTurnId: null,
+                lastError: null,
+                updatedAt: now,
+              },
+              createdAt: now,
+            });
+          }
 
           yield* orchestrationEngine.dispatch({
             type: "thread.session.set",
@@ -1609,6 +2181,8 @@ const make = Effect.gen(function* () {
               ...(event.providerInstanceId !== undefined
                 ? { providerInstanceId: event.providerInstanceId }
                 : {}),
+              providerSessionId:
+                event.providerSessionId ?? thread.session?.providerSessionId ?? null,
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,
               lastError,
@@ -1638,7 +2212,7 @@ const make = Effect.gen(function* () {
           ...(turnId ? { turnId } : {}),
         });
         if (turnId) {
-          yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
+          yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId, eventSubagentId);
         }
 
         const assistantDeliveryMode: AssistantDeliveryMode = yield* Effect.map(
@@ -1652,6 +2226,7 @@ const make = Effect.gen(function* () {
               type: "thread.message.assistant.delta",
               commandId: yield* providerCommandId(event, "assistant-delta-buffer-spill"),
               threadId: thread.id,
+              ...(eventSubagentId !== undefined ? { subagentId: eventSubagentId } : {}),
               messageId: assistantMessageId,
               delta: spillChunk,
               ...(turnId ? { turnId } : {}),
@@ -1663,6 +2238,7 @@ const make = Effect.gen(function* () {
             type: "thread.message.assistant.delta",
             commandId: yield* providerCommandId(event, "assistant-delta"),
             threadId: thread.id,
+            ...(eventSubagentId !== undefined ? { subagentId: eventSubagentId } : {}),
             messageId: assistantMessageId,
             delta: assistantDelta,
             ...(turnId ? { turnId } : {}),
@@ -1686,6 +2262,7 @@ const make = Effect.gen(function* () {
             ? yield* flushBufferedAssistantMessagesForTurn({
                 event,
                 threadId: thread.id,
+                ...(eventSubagentId !== undefined ? { subagentId: eventSubagentId } : {}),
                 turnId: pauseForUserTurnId,
                 createdAt: now,
                 commandTag:
@@ -1697,6 +2274,7 @@ const make = Effect.gen(function* () {
         yield* finalizeActiveAssistantSegmentForTurn({
           event,
           threadId: thread.id,
+          ...(eventSubagentId !== undefined ? { subagentId: eventSubagentId } : {}),
           turnId: pauseForUserTurnId,
           createdAt: now,
           commandTag:
@@ -1708,10 +2286,11 @@ const make = Effect.gen(function* () {
               ? "assistant-delta-finalize-on-request-opened"
               : "assistant-delta-finalize-on-user-input-requested",
           hasProjectedMessage:
-            detailedThread !== null &&
-            hasAssistantMessageForTurn(detailedThread.messages, pauseForUserTurnId, {
-              streamingOnly: true,
-            }),
+            eventSubagentId !== undefined ||
+            (detailedThread !== null &&
+              hasAssistantMessageForTurn(detailedThread.messages, pauseForUserTurnId, {
+                streamingOnly: true,
+              })),
           flushedMessageIds,
         });
       }
@@ -1724,9 +2303,7 @@ const make = Effect.gen(function* () {
       const assistantCompletion =
         event.type === "item.completed" && event.payload.itemType === "assistant_message"
           ? {
-              messageId: MessageId.make(
-                `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
-              ),
+              messageId: assistantSegmentMessageId(assistantSegmentBaseKeyFromEvent(event), 0),
               fallbackText: event.payload.detail,
             }
           : undefined;
@@ -1744,10 +2321,12 @@ const make = Effect.gen(function* () {
         const messages = detailedThread?.messages ?? [];
         const turnId = toTurnId(event.turnId);
         const activeAssistantMessageId = turnId
-          ? yield* getActiveAssistantMessageIdForTurn(thread.id, turnId)
+          ? yield* getActiveAssistantMessageIdForTurn(thread.id, turnId, eventSubagentId)
           : Option.none<MessageId>();
         const hasAssistantMessagesForTurn =
-          turnId !== undefined ? hasAssistantMessageForTurn(messages, turnId) : false;
+          eventSubagentId === undefined && turnId !== undefined
+            ? hasAssistantMessageForTurn(messages, turnId)
+            : false;
         const assistantMessageId = Option.getOrElse(
           activeAssistantMessageId,
           () => assistantCompletion.messageId,
@@ -1764,30 +2343,39 @@ const make = Effect.gen(function* () {
 
         if (!shouldSkipRedundantCompletion) {
           if (turnId && Option.isNone(activeAssistantMessageId)) {
-            yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
+            yield* rememberAssistantMessageId(
+              thread.id,
+              turnId,
+              assistantMessageId,
+              eventSubagentId,
+            );
           }
 
           yield* finalizeAssistantMessage({
             event,
             threadId: thread.id,
+            ...(eventSubagentId !== undefined ? { subagentId: eventSubagentId } : {}),
             messageId: assistantMessageId,
             ...(turnId ? { turnId } : {}),
             createdAt: now,
             commandTag: "assistant-complete",
             finalDeltaCommandTag: "assistant-delta-finalize",
-            hasProjectedMessage: existingAssistantMessage !== undefined,
+            hasProjectedMessage:
+              eventSubagentId !== undefined
+                ? Option.isSome(activeAssistantMessageId)
+                : existingAssistantMessage !== undefined,
             ...(assistantCompletion.fallbackText !== undefined && shouldApplyFallbackCompletionText
               ? { fallbackText: assistantCompletion.fallbackText }
               : {}),
           });
 
           if (turnId) {
-            yield* forgetAssistantMessageId(thread.id, turnId, assistantMessageId);
+            yield* forgetAssistantMessageId(thread.id, turnId, assistantMessageId, eventSubagentId);
           }
         }
 
         if (turnId) {
-          yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
+          yield* clearAssistantSegmentStateForTurn(thread.id, turnId, eventSubagentId);
         }
       }
 
@@ -1796,6 +2384,7 @@ const make = Effect.gen(function* () {
         yield* finalizeBufferedProposedPlan({
           event,
           threadId: thread.id,
+          ...(eventSubagentId !== undefined ? { subagentId: eventSubagentId } : {}),
           threadProposedPlans: detailedThread?.proposedPlans ?? [],
           planId: proposedPlanCompletion.planId,
           ...(proposedPlanCompletion.turnId ? { turnId: proposedPlanCompletion.turnId } : {}),
@@ -1804,47 +2393,117 @@ const make = Effect.gen(function* () {
         });
       }
 
-      if (event.type === "turn.completed") {
-        const detailedThread = yield* getLoadedThreadDetail();
-        const messages = detailedThread?.messages ?? [];
-        const proposedPlans = detailedThread?.proposedPlans ?? [];
-        const turnId = toTurnId(event.turnId);
-        if (turnId) {
-          const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
-          yield* Effect.forEach(
-            assistantMessageIds,
-            (assistantMessageId) =>
-              finalizeAssistantMessage({
-                event,
-                threadId: thread.id,
-                messageId: assistantMessageId,
-                turnId,
-                createdAt: now,
-                commandTag: "assistant-complete-finalize",
-                finalDeltaCommandTag: "assistant-delta-finalize-fallback",
-                hasProjectedMessage: findMessageById(messages, assistantMessageId) !== undefined,
-              }),
-            { concurrency: 1 },
-          ).pipe(Effect.asVoid);
-          yield* clearAssistantMessageIdsForTurn(thread.id, turnId);
-          yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
-
-          yield* finalizeBufferedProposedPlan({
+      if (
+        event.type === "turn.completed" ||
+        event.type === "turn.aborted" ||
+        event.type === "session.exited"
+      ) {
+        const terminalTurnId = eventTurnId ?? activeTurnId ?? undefined;
+        if (terminalTurnId) {
+          yield* finalizeTurnArtifacts({
             event,
             threadId: thread.id,
-            threadProposedPlans: proposedPlans,
-            planId: proposedPlanIdForTurn(thread.id, turnId),
-            turnId,
+            ...(eventSubagentId !== undefined ? { subagentId: eventSubagentId } : {}),
+            turnId: terminalTurnId,
             updatedAt: now,
           });
         }
       }
 
-      if (event.type === "session.exited") {
-        yield* clearTurnStateForSession(thread.id);
+      if (
+        event.type === "session.exited" &&
+        event.payload.exitKind === "forced" &&
+        eventSubagentId === undefined
+      ) {
+        const detailedThread = yield* getLoadedThreadDetail();
+        if (detailedThread) {
+          for (const subagent of detailedThread.subagents) {
+            if (
+              subagent.status !== "starting" &&
+              subagent.status !== "running" &&
+              subagent.status !== "waiting"
+            ) {
+              continue;
+            }
+            yield* orchestrationEngine.dispatch({
+              type: "thread.subagent.state.set",
+              commandId: yield* providerCommandId(event, "force-abort-subagent-state-set"),
+              threadId: thread.id,
+              subagentId: subagent.id,
+              status: "interrupted",
+              statusMessage: "Parent agent was force-stopped.",
+              updatedAt: now,
+            });
+            yield* orchestrationEngine.dispatch({
+              type: "thread.subagent.progress.set",
+              commandId: yield* providerCommandId(event, "force-abort-subagent-progress-set"),
+              threadId: thread.id,
+              subagentId: subagent.id,
+              progress: stateProgress("interrupted", "Parent agent was force-stopped.", now),
+              updatedAt: now,
+            });
+          }
+
+          const pendingApprovalIds = unresolvedActivityRequestIds(
+            detailedThread.activities,
+            "approval.requested",
+            "approval.resolved",
+          );
+          const pendingUserInputIds = unresolvedActivityRequestIds(
+            detailedThread.activities,
+            "user-input.requested",
+            "user-input.resolved",
+          );
+          for (const requestId of pendingApprovalIds) {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.activity.append",
+              commandId: yield* providerCommandId(event, "force-abort-approval-resolved"),
+              threadId: thread.id,
+              activity: {
+                id: EventId.make(`force-abort:${event.eventId}:approval:${requestId}`),
+                tone: "approval",
+                kind: "approval.resolved",
+                summary: "Approval cancelled",
+                payload: {
+                  requestId,
+                  decision: "cancel",
+                  detail: "Cancelled because the agent was force-stopped.",
+                },
+                turnId: eventTurnId ?? activeTurnId,
+                createdAt: now,
+              },
+              createdAt: now,
+            });
+          }
+          for (const requestId of pendingUserInputIds) {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.activity.append",
+              commandId: yield* providerCommandId(event, "force-abort-user-input-resolved"),
+              threadId: thread.id,
+              activity: {
+                id: EventId.make(`force-abort:${event.eventId}:user-input:${requestId}`),
+                tone: "info",
+                kind: "user-input.resolved",
+                summary: "User input cancelled",
+                payload: {
+                  requestId,
+                  answers: {},
+                  detail: "Cancelled because the agent was force-stopped.",
+                },
+                turnId: eventTurnId ?? activeTurnId,
+                createdAt: now,
+              },
+              createdAt: now,
+            });
+          }
+        }
       }
 
-      if (event.type === "runtime.error") {
+      if (event.type === "session.exited") {
+        yield* clearTurnStateForSession(thread.id, eventSubagentId);
+      }
+
+      if (event.type === "runtime.error" && eventSubagentId === undefined) {
         const runtimeErrorMessage = event.payload.message;
 
         const shouldApplyRuntimeError = !STRICT_PROVIDER_LIFECYCLE_GUARD
@@ -1863,6 +2522,8 @@ const make = Effect.gen(function* () {
               ...(event.providerInstanceId !== undefined
                 ? { providerInstanceId: event.providerInstanceId }
                 : {}),
+              providerSessionId:
+                event.providerSessionId ?? thread.session?.providerSessionId ?? null,
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: eventTurnId ?? null,
               lastError: runtimeErrorMessage,
@@ -1873,7 +2534,11 @@ const make = Effect.gen(function* () {
         }
       }
 
-      if (event.type === "thread.metadata.updated" && event.payload.name) {
+      if (
+        eventSubagentId === undefined &&
+        event.type === "thread.metadata.updated" &&
+        event.payload.name
+      ) {
         yield* orchestrationEngine.dispatch({
           type: "thread.meta.update",
           commandId: yield* providerCommandId(event, "thread-meta-update"),
@@ -1882,7 +2547,7 @@ const make = Effect.gen(function* () {
         });
       }
 
-      if (event.type === "turn.diff.updated") {
+      if (event.type === "turn.diff.updated" && eventSubagentId === undefined) {
         const turnId = toTurnId(event.turnId);
         const checkpointContext = turnId
           ? yield* projectionSnapshotQuery
@@ -1929,22 +2594,56 @@ const make = Effect.gen(function* () {
         yield* flushContentStreams(event, thread.id);
       }
 
-      const activities = runtimeEventToActivities(event).map((activity) =>
+      const runtimeActivities = runtimeEventToActivities(event);
+      const enrichedActivities = runtimeActivities.map((activity) =>
         enrichActivityWithRuntimeContext(event, activity),
       );
-      yield* Effect.forEach(activities, (activity) =>
-        providerCommandId(event, "thread-activity-append").pipe(
-          Effect.flatMap((commandId) =>
-            orchestrationEngine.dispatch({
-              type: "thread.activity.append",
-              commandId,
-              threadId: thread.id,
-              activity,
-              createdAt: activity.createdAt,
-            }),
+      if (eventSubagentId !== undefined && mirrorsInteractionToRoot(event)) {
+        yield* Effect.forEach(enrichedActivities, (activity) =>
+          providerCommandId(event, "root-interaction-activity-append").pipe(
+            Effect.flatMap((commandId) =>
+              orchestrationEngine.dispatch({
+                type: "thread.activity.append",
+                commandId,
+                threadId: thread.id,
+                activity,
+                createdAt: activity.createdAt,
+              }),
+            ),
           ),
-        ),
+        ).pipe(Effect.asVoid);
+      }
+
+      yield* Effect.forEach(
+        enrichedActivities.map((activity) => scopeActivityForEvent(event, activity)),
+        (activity) =>
+          providerCommandId(event, "thread-activity-append").pipe(
+            Effect.flatMap((commandId) =>
+              orchestrationEngine.dispatch({
+                type: "thread.activity.append",
+                commandId,
+                threadId: thread.id,
+                ...(eventSubagentId !== undefined ? { subagentId: eventSubagentId } : {}),
+                activity,
+                createdAt: activity.createdAt,
+              }),
+            ),
+          ),
       ).pipe(Effect.asVoid);
+
+      if (eventSubagentId !== undefined) {
+        const progress = itemLifecycleProgress(event, runtimeActivities);
+        if (progress) {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.subagent.progress.set",
+            commandId: yield* providerCommandId(event, "subagent-item-progress-set"),
+            threadId: thread.id,
+            subagentId: eventSubagentId,
+            progress,
+            updatedAt: now,
+          });
+        }
+      }
     });
 
   const processDomainEvent = (_event: TurnStartRequestedDomainEvent) => Effect.void;

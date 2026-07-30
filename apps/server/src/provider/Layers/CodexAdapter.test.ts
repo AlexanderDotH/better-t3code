@@ -10,6 +10,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderItemId,
+  SubagentId,
   type ProviderApprovalDecision,
   type ProviderEvent,
   type ProviderSession,
@@ -33,6 +34,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as CodexErrors from "effect-codex-app-server/errors";
+import { describe } from "vite-plus/test";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -45,7 +47,11 @@ import {
   type CodexSessionRuntimeShape,
   type CodexThreadSnapshot,
 } from "./CodexSessionRuntime.ts";
-import { makeCodexAdapter } from "./CodexAdapter.ts";
+import {
+  makeCodexAdapter,
+  makeCodexRuntimeEventMapper,
+  normalizeCodexCollabAgentStatus,
+} from "./CodexAdapter.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* CodexAdapter`.
@@ -57,6 +63,248 @@ const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
 const asItemId = (value: string): ProviderItemId => ProviderItemId.make(value);
+
+function makeProviderNotification(
+  input: Pick<ProviderEvent, "id" | "method" | "payload"> &
+    Partial<Pick<ProviderEvent, "providerThreadId" | "subagentId" | "turnId" | "itemId">>,
+): ProviderEvent {
+  return {
+    id: input.id,
+    kind: "notification",
+    provider: ProviderDriverKind.make("codex"),
+    threadId: asThreadId("thread-1"),
+    createdAt: "2026-01-01T00:00:00.000Z",
+    method: input.method,
+    payload: input.payload,
+    ...(input.providerThreadId ? { providerThreadId: input.providerThreadId } : {}),
+    ...(input.subagentId ? { subagentId: input.subagentId } : {}),
+    ...(input.turnId ? { turnId: input.turnId } : {}),
+    ...(input.itemId ? { itemId: input.itemId } : {}),
+  };
+}
+
+describe("Codex subagent event mapping", () => {
+  it("discovers a placeholder before child metadata and preserves child turn and item ids", () => {
+    const mapEvent = makeCodexRuntimeEventMapper();
+    const childId = SubagentId.make("codex:provider-child");
+
+    const events = mapEvent(
+      makeProviderNotification({
+        id: asEventId("evt-child-item"),
+        method: "item/started",
+        providerThreadId: "provider-child",
+        subagentId: childId,
+        turnId: asTurnId("child-turn"),
+        itemId: asItemId("child-item"),
+        payload: {
+          startedAtMs: 1_778_000_000_000,
+          threadId: "provider-child",
+          turnId: "child-turn",
+          item: {
+            id: "child-item",
+            type: "agentMessage",
+            text: "",
+          },
+        },
+      }),
+      asThreadId("thread-1"),
+    );
+
+    NodeAssert.deepStrictEqual(
+      events.map((event) => event.type),
+      ["subagent.discovered", "item.started"],
+    );
+    NodeAssert.deepStrictEqual(events[0]?.payload, {
+      subagentId: childId,
+      providerThreadId: "provider-child",
+    });
+    NodeAssert.equal(events[1]?.subagentId, childId);
+    NodeAssert.equal(events[1]?.turnId, "child-turn");
+    NodeAssert.equal(events[1]?.itemId, "child-item");
+    NodeAssert.equal(events[1]?.providerRefs?.providerThreadId, "provider-child");
+    NodeAssert.equal(events[1]?.providerRefs?.providerTurnId, "child-turn");
+    NodeAssert.equal(events[1]?.providerRefs?.providerItemId, "child-item");
+  });
+
+  it("discovers agents from subAgentActivity when collab receiver lists are empty", () => {
+    const mapEvent = makeCodexRuntimeEventMapper();
+
+    const collabEvents = mapEvent(
+      makeProviderNotification({
+        id: asEventId("evt-empty-receivers"),
+        method: "item/completed",
+        providerThreadId: "provider-root",
+        turnId: asTurnId("root-turn"),
+        itemId: asItemId("collab-wait"),
+        payload: {
+          threadId: "provider-root",
+          turnId: "root-turn",
+          item: {
+            id: "collab-wait",
+            type: "collabAgentToolCall",
+            tool: "wait",
+            senderThreadId: "provider-root",
+            receiverThreadIds: [],
+            agentsStates: {},
+            status: "completed",
+          },
+        },
+      }),
+      asThreadId("thread-1"),
+    );
+    NodeAssert.equal(
+      collabEvents.some((event) => event.type === "subagent.discovered"),
+      false,
+    );
+
+    const activityEvents = mapEvent(
+      makeProviderNotification({
+        id: asEventId("evt-subagent-activity"),
+        method: "item/completed",
+        providerThreadId: "provider-root",
+        turnId: asTurnId("root-turn"),
+        itemId: asItemId("activity-1"),
+        payload: {
+          threadId: "provider-root",
+          turnId: "root-turn",
+          item: {
+            id: "activity-1",
+            type: "subAgentActivity",
+            agentThreadId: "provider-child",
+            agentPath: "/root/research",
+            kind: "started",
+          },
+        },
+      }),
+      asThreadId("thread-1"),
+    );
+
+    const discovered = activityEvents.find((event) => event.type === "subagent.discovered");
+    NodeAssert.ok(discovered);
+    NodeAssert.deepStrictEqual(discovered.payload, {
+      subagentId: SubagentId.make("codex:provider-child"),
+      providerThreadId: "provider-child",
+      agentPath: "/root/research",
+      depth: 1,
+    });
+  });
+
+  it("enriches nested agents from thread metadata", () => {
+    const mapEvent = makeCodexRuntimeEventMapper();
+    const childId = SubagentId.make("codex:provider-child");
+
+    const events = mapEvent(
+      makeProviderNotification({
+        id: asEventId("evt-child-thread-started"),
+        method: "thread/started",
+        providerThreadId: "provider-child",
+        subagentId: childId,
+        payload: {
+          thread: {
+            id: "provider-child",
+            agentNickname: "researcher",
+            agentRole: "explorer",
+            cliVersion: "0.145.0",
+            createdAt: 1,
+            cwd: "/tmp/project",
+            ephemeral: false,
+            modelProvider: "openai",
+            preview: "Inspect the runtime",
+            sessionId: "session-1",
+            source: {
+              subAgent: {
+                thread_spawn: {
+                  agent_nickname: "researcher",
+                  agent_path: "/root/planner/researcher",
+                  agent_role: "explorer",
+                  depth: 2,
+                  parent_thread_id: "provider-parent",
+                },
+              },
+            },
+            status: {
+              type: "active",
+              activeFlags: [],
+            },
+            turns: [],
+            updatedAt: 1,
+          },
+        },
+      }),
+      asThreadId("thread-1"),
+    );
+
+    const discovered = events.find((event) => event.type === "subagent.discovered");
+    NodeAssert.ok(discovered);
+    NodeAssert.deepStrictEqual(discovered.payload, {
+      subagentId: childId,
+      providerThreadId: "provider-child",
+      parentSubagentId: SubagentId.make("codex:provider-parent"),
+      agentPath: "/root/planner/researcher",
+      nickname: "researcher",
+      role: "explorer",
+      task: "Inspect the runtime",
+      depth: 2,
+    });
+    const state = events.find((event) => event.type === "subagent.state.changed");
+    NodeAssert.deepStrictEqual(state?.payload, {
+      subagentId: childId,
+      state: "running",
+    });
+  });
+
+  it("maps collab agent states even when receiverThreadIds is empty", () => {
+    const mapEvent = makeCodexRuntimeEventMapper();
+
+    const events = mapEvent(
+      makeProviderNotification({
+        id: asEventId("evt-collab-state"),
+        method: "item/completed",
+        providerThreadId: "provider-root",
+        turnId: asTurnId("root-turn"),
+        itemId: asItemId("collab-state"),
+        payload: {
+          threadId: "provider-root",
+          turnId: "root-turn",
+          item: {
+            id: "collab-state",
+            type: "collabAgentToolCall",
+            tool: "wait",
+            senderThreadId: "provider-root",
+            receiverThreadIds: [],
+            agentsStates: {
+              "provider-child": {
+                status: "errored",
+                message: "command failed",
+              },
+            },
+            status: "completed",
+          },
+        },
+      }),
+      asThreadId("thread-1"),
+    );
+
+    const state = events.find((event) => event.type === "subagent.state.changed");
+    NodeAssert.deepStrictEqual(state?.payload, {
+      subagentId: SubagentId.make("codex:provider-child"),
+      state: "error",
+      statusMessage: "command failed",
+    });
+  });
+
+  it("normalizes every Codex collab status", () => {
+    NodeAssert.deepStrictEqual(
+      ["pendingInit", "running", "interrupted", "completed", "errored", "shutdown", "notFound"].map(
+        (status) =>
+          normalizeCodexCollabAgentStatus(
+            status as Parameters<typeof normalizeCodexCollabAgentStatus>[0],
+          ),
+      ),
+      ["starting", "running", "interrupted", "completed", "error", "completed", "unavailable"],
+    );
+  });
+});
 
 class FakeCodexRuntime implements CodexSessionRuntimeShape {
   private readonly eventQueue = Effect.runSync(Queue.unbounded<ProviderEvent>());
@@ -114,6 +362,7 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   );
 
   public readonly closeImpl = vi.fn(() => Promise.resolve(undefined));
+  public readonly forceCloseImpl = vi.fn(() => Promise.resolve("forced" as const));
 
   readonly options: CodexSessionRuntimeOptions;
 
@@ -154,6 +403,8 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   }
 
   close = Effect.promise(() => this.closeImpl());
+
+  forceClose = Effect.promise(() => this.forceCloseImpl());
 
   emit(event: ProviderEvent) {
     return Queue.offer(this.eventQueue, event).pipe(Effect.asVoid);

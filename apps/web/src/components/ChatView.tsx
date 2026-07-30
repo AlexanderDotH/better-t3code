@@ -12,6 +12,7 @@ import {
   type ServerProvider,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
+  type SubagentId,
   type ThreadId,
   type TurnId,
   type KeybindingCommand,
@@ -63,6 +64,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
@@ -195,7 +197,7 @@ import {
   serverEnvironment,
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
-import { threadEnvironment } from "../state/threads";
+import { threadEnvironment, useEnvironmentSubagent } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
@@ -226,15 +228,18 @@ import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
+  buildThreadTurnForceAbortInput,
   buildThreadTurnInterruptInput,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveThreadAbortStage,
   hasServerAcknowledgedLocalDispatch,
   getStartedThreadModelChangeBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
   type LocalDispatchSnapshot,
+  type ThreadAbortStage,
   PullRequestDialogState,
   cloneComposerImageForRetry,
   deriveLockedProvider,
@@ -252,6 +257,8 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { RightPanelSheet } from "./RightPanelSheet";
+import { ChatAgentStack } from "./ChatAgentStack";
+import { SubagentTranscriptDialog } from "./SubagentTranscriptDialog";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { Button } from "./ui/button";
@@ -1037,6 +1044,9 @@ function ChatViewContent(props: ChatViewProps) {
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
+  const forceAbortThreadTurn = useAtomCommand(threadEnvironment.forceAbortTurn, {
+    reportFailure: false,
+  });
   const respondToThreadApproval = useAtomCommand(threadEnvironment.respondToApproval, {
     reportFailure: false,
   });
@@ -1134,6 +1144,11 @@ function ChatViewContent(props: ChatViewProps) {
     Record<string, string | null>
   >({});
   const [isConnecting, _setIsConnecting] = useState(false);
+  const [localAbortRequest, setLocalAbortRequest] = useState<{
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+    readonly stage: Exclude<ThreadAbortStage, "idle">;
+  } | null>(null);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [maximizedRightPanelThreadKey, setMaximizedRightPanelThreadKey] = useState<string | null>(
     null,
@@ -1148,6 +1163,10 @@ function ChatViewContent(props: ChatViewProps) {
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
   const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
+  const [subagentDialogSelection, setSubagentDialogSelection] = useState<{
+    readonly threadKey: string;
+    readonly subagentId: SubagentId;
+  } | null>(null);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
@@ -1336,6 +1355,24 @@ function ChatViewContent(props: ChatViewProps) {
   const activeRightPanelSurface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
   );
+  const selectedSubagentId =
+    subagentDialogSelection?.threadKey === activeThreadKey
+      ? subagentDialogSelection.subagentId
+      : null;
+  const subagentState = useEnvironmentSubagent(
+    activeThreadRef?.environmentId ?? null,
+    activeThreadId,
+    selectedSubagentId,
+  );
+  const selectedSubagent = Option.getOrNull(subagentState.data);
+  const subagentErrorMessage =
+    Option.getOrNull(subagentState.error) ??
+    (subagentState.status === "deleted" ? "This agent transcript is no longer available." : null);
+  const subagentTranscriptLoading =
+    selectedSubagentId !== null &&
+    selectedSubagent === null &&
+    subagentErrorMessage === null &&
+    subagentState.status !== "deleted";
   const activeFileSurface =
     activeRightPanelSurface?.kind === "file" ? activeRightPanelSurface : null;
   const activePreviewState = useThreadPreviewState(activeThreadRef);
@@ -1361,6 +1398,12 @@ function ChatViewContent(props: ChatViewProps) {
       .getState()
       .reconcileBrowserSurfaces(activeThreadRef, Object.keys(activePreviewState.sessions));
   }, [activePreviewState.sessions, activeThreadRef]);
+
+  useEffect(() => {
+    setSubagentDialogSelection((current) =>
+      current?.threadKey === activeThreadKey ? current : null,
+    );
+  }, [activeThreadKey]);
 
   const planSidebarOpen = activeRightPanelKind === "plan";
 
@@ -1883,6 +1926,26 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
+  const projectedAbortStage = activeThread ? deriveThreadAbortStage(activeThread) : "idle";
+  const activeAbortTurnId =
+    activeThread?.session?.status === "running" ? activeThread.session.activeTurnId : null;
+  const abortStage: ThreadAbortStage =
+    localAbortRequest !== null &&
+    localAbortRequest.threadId === activeThread?.id &&
+    localAbortRequest.turnId === activeAbortTurnId
+      ? localAbortRequest.stage
+      : projectedAbortStage;
+  useEffect(() => {
+    setLocalAbortRequest((current) => {
+      if (
+        current === null ||
+        (current.threadId === activeThread?.id && current.turnId === activeAbortTurnId)
+      ) {
+        return current;
+      }
+      return null;
+    });
+  }, [activeAbortTurnId, activeThread?.id]);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
   const pendingApprovals = useMemo(
@@ -2936,6 +2999,20 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
+  const selectSubagent = useCallback(
+    (subagentId: SubagentId) => {
+      if (!activeThreadKey) {
+        return;
+      }
+      setSubagentDialogSelection({ threadKey: activeThreadKey, subagentId });
+    },
+    [activeThreadKey],
+  );
+  const handleSubagentDialogOpenChange = useCallback((open: boolean) => {
+    if (!open) {
+      setSubagentDialogSelection(null);
+    }
+  }, []);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -4404,16 +4481,56 @@ function ChatViewContent(props: ChatViewProps) {
 
   const onInterrupt = async () => {
     if (!activeThread) return;
+    if (abortStage === "force-pending") return;
+    if (abortStage === "graceful-pending") {
+      const input =
+        buildThreadTurnForceAbortInput(activeThread) ??
+        (activeAbortTurnId === null
+          ? null
+          : { threadId: activeThread.id, turnId: activeAbortTurnId });
+      if (input === null) return;
+      setLocalAbortRequest({
+        threadId: activeThread.id,
+        turnId: input.turnId,
+        stage: "force-pending",
+      });
+      const result = await forceAbortThreadTurn({ environmentId, input });
+      if (result._tag === "Failure") {
+        setLocalAbortRequest({
+          threadId: activeThread.id,
+          turnId: input.turnId,
+          stage: "graceful-pending",
+        });
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          setThreadError(
+            activeThread.id,
+            error instanceof Error ? error.message : "Failed to force stop the current turn.",
+          );
+        }
+      }
+      return;
+    }
+    const input = buildThreadTurnInterruptInput(activeThread);
+    if (input.turnId === undefined) return;
+    setLocalAbortRequest({
+      threadId: activeThread.id,
+      turnId: input.turnId,
+      stage: "graceful-pending",
+    });
     const result = await interruptThreadTurn({
       environmentId,
-      input: buildThreadTurnInterruptInput(activeThread),
+      input,
     });
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      setThreadError(
-        activeThread.id,
-        error instanceof Error ? error.message : "Failed to interrupt the current turn.",
-      );
+    if (result._tag === "Failure") {
+      setLocalAbortRequest(null);
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : "Failed to interrupt the current turn.",
+        );
+      }
     }
   };
 
@@ -5237,6 +5354,19 @@ function ChatViewContent(props: ChatViewProps) {
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
             {/* Messages Wrapper */}
             <div className="relative flex min-h-0 flex-1 flex-col">
+              {isServerThread && !shouldUsePlanSidebarSheet && activeThread.subagents.length > 0 ? (
+                <div
+                  data-chat-agent-floating-layer
+                  className="pointer-events-none absolute top-3 left-3 z-30"
+                >
+                  <ChatAgentStack
+                    key={activeThread.id}
+                    subagents={activeThread.subagents}
+                    selectedSubagentId={selectedSubagentId}
+                    onSelectSubagent={selectSubagent}
+                  />
+                </div>
+              ) : null}
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
                 key={activeThread.id}
@@ -5323,6 +5453,7 @@ function ChatViewContent(props: ChatViewProps) {
                       isServerThread={isServerThread}
                       isLocalDraftThread={isLocalDraftThread}
                       phase={phase}
+                      abortStage={abortStage}
                       isConnecting={isConnecting}
                       isSendBusy={isSendBusy || isImprovingPrompt}
                       isPreparingWorktree={isPreparingWorktree}
@@ -5535,6 +5666,19 @@ function ChatViewContent(props: ChatViewProps) {
           onOpenChange={(open) => {
             if (!open) dismissProjectSpeechPreindexDialog();
           }}
+        />
+      ) : null}
+
+      {activeThreadRef ? (
+        <SubagentTranscriptDialog
+          open={selectedSubagentId !== null}
+          onOpenChange={handleSubagentDialogOpenChange}
+          subagent={selectedSubagent}
+          isLoading={subagentTranscriptLoading}
+          errorMessage={subagentErrorMessage}
+          {...(gitCwd ? { markdownCwd: gitCwd } : {})}
+          threadRef={activeThreadRef}
+          timestampFormat={timestampFormat}
         />
       ) : null}
 

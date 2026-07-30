@@ -31,6 +31,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
+  type OrchestrationSubagentStreamItem,
   type OrchestrationThreadStreamItem,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
@@ -71,6 +72,11 @@ import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadTranscriptExport } from "./orchestration/Services/ThreadTranscriptExport.ts";
+import {
+  isThreadAggregateEvent,
+  toRootThreadStreamItem,
+  toSubagentStreamItem,
+} from "./orchestration/threadStreamRouting.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
@@ -259,28 +265,6 @@ function projectSetupScriptCompatibilityDetail(
   }
 }
 
-function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
-  OrchestrationEvent,
-  {
-    type:
-      | "thread.message-sent"
-      | "thread.proposed-plan-upserted"
-      | "thread.activity-appended"
-      | "thread.turn-diff-completed"
-      | "thread.reverted"
-      | "thread.session-set";
-  }
-> {
-  return (
-    event.type === "thread.message-sent" ||
-    event.type === "thread.proposed-plan-upserted" ||
-    event.type === "thread.activity-appended" ||
-    event.type === "thread.turn-diff-completed" ||
-    event.type === "thread.reverted" ||
-    event.type === "thread.session-set"
-  );
-}
-
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.dispatchCommand, AuthOrchestrationOperateScope],
@@ -291,6 +275,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.subscribeShell, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.subscribeThread, AuthOrchestrationReadScope],
+  [ORCHESTRATION_WS_METHODS.subscribeSubagent, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetConfig, AuthOrchestrationReadScope],
   [WS_METHODS.serverRefreshProviders, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUpdateProvider, AuthOrchestrationOperateScope],
@@ -1199,18 +1184,13 @@ const makeWsRpcLayer = (
         [ORCHESTRATION_WS_METHODS.subscribeThread]: (input) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
-            Effect.gen(function* () {
-              const isThisThreadDetailEvent = (event: OrchestrationEvent) =>
-                event.aggregateKind === "thread" &&
-                event.aggregateId === input.threadId &&
-                isThreadDetailEvent(event);
+            Effect.sync(() => {
+              const isThisThreadEvent = (event: OrchestrationEvent) =>
+                isThreadAggregateEvent(event, input.threadId);
 
               const liveStream = orchestrationEngine.streamDomainEvents.pipe(
-                Stream.filter(isThisThreadDetailEvent),
-                Stream.map((event) => ({
-                  kind: "event" as const,
-                  event,
-                })),
+                Stream.filter(isThisThreadEvent),
+                Stream.map(toRootThreadStreamItem),
               );
 
               // When the client already loaded the snapshot over HTTP it passes
@@ -1241,8 +1221,8 @@ const makeWsRpcLayer = (
                     const catchUpStream = orchestrationEngine
                       .readEvents(afterSequence, Number.MAX_SAFE_INTEGER)
                       .pipe(
-                        Stream.filter(isThisThreadDetailEvent),
-                        Stream.map((event) => ({ kind: "event" as const, event })),
+                        Stream.filter(isThisThreadEvent),
+                        Stream.map(toRootThreadStreamItem),
                         Stream.mapError(
                           (cause) =>
                             new OrchestrationGetSnapshotError({
@@ -1256,31 +1236,117 @@ const makeWsRpcLayer = (
                 );
               }
 
-              const snapshot = yield* projectionSnapshotQuery
-                .getThreadDetailSnapshot(input.threadId)
-                .pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new OrchestrationGetSnapshotError({
-                        message: `Failed to load thread ${input.threadId}`,
-                        cause,
-                      }),
-                  ),
-                );
+              return Stream.unwrap(
+                Effect.gen(function* () {
+                  const liveBuffer = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+                  yield* Effect.forkScoped(
+                    liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
+                  );
+                  const snapshot = yield* projectionSnapshotQuery
+                    .getThreadDetailSnapshot(input.threadId)
+                    .pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new OrchestrationGetSnapshotError({
+                            message: `Failed to load thread ${input.threadId}`,
+                            cause,
+                          }),
+                      ),
+                    );
 
-              if (Option.isNone(snapshot)) {
-                return yield* new OrchestrationGetSnapshotError({
-                  message: `Thread ${input.threadId} was not found`,
-                  cause: input.threadId,
-                });
+                  if (Option.isNone(snapshot)) {
+                    return yield* new OrchestrationGetSnapshotError({
+                      message: `Thread ${input.threadId} was not found`,
+                      cause: input.threadId,
+                    });
+                  }
+
+                  return Stream.concat(
+                    Stream.make({
+                      kind: "snapshot" as const,
+                      snapshot: snapshot.value,
+                    }),
+                    Stream.fromQueue(liveBuffer),
+                  );
+                }),
+              );
+            }),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.subscribeSubagent]: (input) =>
+          observeRpcStreamEffect(
+            ORCHESTRATION_WS_METHODS.subscribeSubagent,
+            Effect.sync(() => {
+              const isThisThreadEvent = (event: OrchestrationEvent) =>
+                isThreadAggregateEvent(event, input.threadId);
+              const routeSubagentStreamItem = (event: OrchestrationEvent) =>
+                toSubagentStreamItem(event, input.subagentId);
+
+              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
+                Stream.filter(isThisThreadEvent),
+                Stream.map(routeSubagentStreamItem),
+              );
+
+              if (input.afterSequence !== undefined) {
+                const afterSequence = input.afterSequence;
+                return Stream.unwrap(
+                  Effect.gen(function* () {
+                    const liveBuffer = yield* Queue.unbounded<OrchestrationSubagentStreamItem>();
+                    yield* Effect.forkScoped(
+                      liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
+                    );
+                    const catchUpStream = orchestrationEngine
+                      .readEvents(afterSequence, Number.MAX_SAFE_INTEGER)
+                      .pipe(
+                        Stream.filter(isThisThreadEvent),
+                        Stream.map(routeSubagentStreamItem),
+                        Stream.mapError(
+                          (cause) =>
+                            new OrchestrationGetSnapshotError({
+                              message: `Failed to replay subagent ${input.subagentId} events`,
+                              cause,
+                            }),
+                        ),
+                      );
+                    return Stream.concat(catchUpStream, Stream.fromQueue(liveBuffer));
+                  }),
+                );
               }
 
-              return Stream.concat(
-                Stream.make({
-                  kind: "snapshot" as const,
-                  snapshot: snapshot.value,
+              return Stream.unwrap(
+                Effect.gen(function* () {
+                  const liveBuffer = yield* Queue.unbounded<OrchestrationSubagentStreamItem>();
+                  yield* Effect.forkScoped(
+                    liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
+                  );
+
+                  const snapshot = yield* projectionSnapshotQuery
+                    .getSubagentDetailSnapshot(input.threadId, input.subagentId)
+                    .pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new OrchestrationGetSnapshotError({
+                            message: `Failed to load subagent ${input.subagentId}`,
+                            cause,
+                          }),
+                      ),
+                    );
+
+                  if (Option.isNone(snapshot)) {
+                    return yield* new OrchestrationGetSnapshotError({
+                      message: `Subagent ${input.subagentId} was not found`,
+                      cause: input.subagentId,
+                    });
+                  }
+
+                  return Stream.concat(
+                    Stream.make({
+                      kind: "snapshot" as const,
+                      snapshot: snapshot.value,
+                    }),
+                    Stream.fromQueue(liveBuffer),
+                  );
                 }),
-                liveStream,
               );
             }),
             { "rpc.aggregate": "orchestration" },

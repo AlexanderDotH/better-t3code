@@ -6,10 +6,12 @@ import {
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
+  buildThreadTurnForceAbortInput,
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   deriveLockedProvider,
+  deriveThreadAbortStage,
   getStartedThreadModelChangeBlockReason,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
@@ -41,6 +43,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     messages: [],
     proposedPlans: [],
     activities: [],
+    subagents: [],
     checkpoints: [],
     createdAt: now,
     updatedAt: now,
@@ -94,6 +97,46 @@ describe("buildThreadTurnInterruptInput", () => {
     expect(buildThreadTurnInterruptInput(makeThread({ session: readySession }))).toEqual({
       threadId,
     });
+  });
+});
+
+describe("deriveThreadAbortStage", () => {
+  it("reports graceful cancellation while the interrupted turn still owns the running session", () => {
+    const activeTurnId = TurnId.make("turn-running");
+    const thread = makeThread({
+      latestTurn: {
+        ...completedTurn,
+        turnId: activeTurnId,
+        state: "interrupted",
+      },
+      session: {
+        ...readySession,
+        status: "running",
+        activeTurnId,
+      },
+    });
+
+    expect(deriveThreadAbortStage(thread)).toBe("graceful-pending");
+    expect(buildThreadTurnForceAbortInput(thread)).toEqual({ threadId, turnId: activeTurnId });
+  });
+
+  it("does not target a completed or replacement turn", () => {
+    expect(deriveThreadAbortStage(makeThread({ session: readySession }))).toBe("idle");
+    expect(buildThreadTurnForceAbortInput(makeThread({ session: readySession }))).toBeNull();
+
+    const activeTurnId = TurnId.make("turn-new");
+    const thread = makeThread({
+      latestTurn: {
+        ...completedTurn,
+        state: "interrupted",
+      },
+      session: {
+        ...readySession,
+        status: "running",
+        activeTurnId,
+      },
+    });
+    expect(deriveThreadAbortStage(thread)).toBe("idle");
   });
 });
 

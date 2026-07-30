@@ -16,6 +16,7 @@ import {
   NonNegativeInt,
   ProjectId,
   ProviderItemId,
+  SubagentId,
   ThreadId,
   TrimmedNonEmptyString,
   TurnId,
@@ -31,6 +32,7 @@ export const ORCHESTRATION_WS_METHODS = {
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
+  subscribeSubagent: "orchestration.subscribeSubagent",
 } as const;
 
 export const ProviderApprovalPolicy = Schema.Literals([
@@ -118,6 +120,7 @@ export type ModelSelection = typeof ModelSelection.Type;
 export const RuntimeMode = Schema.Literals([
   "approval-required",
   "auto-accept-edits",
+  "auto",
   "full-access",
 ]);
 export type RuntimeMode = typeof RuntimeMode.Type;
@@ -274,6 +277,7 @@ export const OrchestrationSession = Schema.Struct({
   status: OrchestrationSessionStatus,
   providerName: Schema.NullOr(TrimmedNonEmptyString),
   providerInstanceId: Schema.optional(ProviderInstanceId),
+  providerSessionId: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
@@ -342,6 +346,55 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+export const OrchestrationSubagentStatus = Schema.Literals([
+  "starting",
+  "running",
+  "waiting",
+  "completed",
+  "interrupted",
+  "error",
+  "unavailable",
+]);
+export type OrchestrationSubagentStatus = typeof OrchestrationSubagentStatus.Type;
+
+export const OrchestrationSubagentProgress = Schema.Struct({
+  kind: TrimmedNonEmptyString,
+  summary: TrimmedNonEmptyString,
+  detail: Schema.NullOr(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+});
+export type OrchestrationSubagentProgress = typeof OrchestrationSubagentProgress.Type;
+
+export const OrchestrationSubagentSummary = Schema.Struct({
+  id: SubagentId,
+  providerThreadId: TrimmedNonEmptyString,
+  parentId: Schema.NullOr(SubagentId),
+  path: Schema.NullOr(TrimmedNonEmptyString),
+  name: TrimmedNonEmptyString,
+  nickname: Schema.NullOr(TrimmedNonEmptyString),
+  role: Schema.NullOr(TrimmedNonEmptyString),
+  task: Schema.NullOr(TrimmedNonEmptyString),
+  model: Schema.NullOr(TrimmedNonEmptyString),
+  reasoningEffort: Schema.NullOr(TrimmedNonEmptyString),
+  depth: NonNegativeInt,
+  status: OrchestrationSubagentStatus,
+  statusMessage: Schema.NullOr(TrimmedNonEmptyString),
+  latestProgress: Schema.NullOr(OrchestrationSubagentProgress),
+  latestTurn: Schema.NullOr(OrchestrationLatestTurn),
+  startedAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  completedAt: Schema.NullOr(IsoDateTime),
+});
+export type OrchestrationSubagentSummary = typeof OrchestrationSubagentSummary.Type;
+
+export const OrchestrationSubagentDetail = Schema.Struct({
+  ...OrchestrationSubagentSummary.fields,
+  messages: Schema.Array(OrchestrationMessage),
+  proposedPlans: Schema.Array(OrchestrationProposedPlan),
+  activities: Schema.Array(OrchestrationThreadActivity),
+});
+export type OrchestrationSubagentDetail = typeof OrchestrationSubagentDetail.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -363,6 +416,9 @@ export const OrchestrationThread = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   activities: Schema.Array(OrchestrationThreadActivity),
+  subagents: Schema.Array(OrchestrationSubagentSummary).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
   session: Schema.NullOr(OrchestrationSession),
 });
@@ -478,6 +534,18 @@ export const OrchestrationSubscribeThreadInput = Schema.Struct({
 });
 export type OrchestrationSubscribeThreadInput = typeof OrchestrationSubscribeThreadInput.Type;
 
+export const OrchestrationSubscribeSubagentInput = Schema.Struct({
+  threadId: ThreadId,
+  subagentId: SubagentId,
+  /**
+   * Resumes the filtered subagent stream after the last sequence already held
+   * by the client. Cursor frames advance this value across unrelated thread
+   * events without sending their payloads.
+   */
+  afterSequence: Schema.optionalKey(NonNegativeInt),
+});
+export type OrchestrationSubscribeSubagentInput = typeof OrchestrationSubscribeSubagentInput.Type;
+
 export const OrchestrationExportThreadTranscriptInput = Schema.Struct({
   threadId: ThreadId,
 });
@@ -498,6 +566,13 @@ export const OrchestrationThreadDetailSnapshot = Schema.Struct({
   thread: OrchestrationThread,
 });
 export type OrchestrationThreadDetailSnapshot = typeof OrchestrationThreadDetailSnapshot.Type;
+
+export const OrchestrationSubagentDetailSnapshot = Schema.Struct({
+  snapshotSequence: NonNegativeInt,
+  threadId: ThreadId,
+  subagent: OrchestrationSubagentDetail,
+});
+export type OrchestrationSubagentDetailSnapshot = typeof OrchestrationSubagentDetailSnapshot.Type;
 
 export const ProjectCreateCommand = Schema.Struct({
   type: Schema.Literal("project.create"),
@@ -662,6 +737,15 @@ const ThreadTurnInterruptCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const ThreadTurnForceAbortCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.force-abort"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnId: TurnId,
+  createdAt: IsoDateTime,
+});
+export type ThreadTurnForceAbortCommand = typeof ThreadTurnForceAbortCommand.Type;
+
 const ThreadApprovalRespondCommand = Schema.Struct({
   type: Schema.Literal("thread.approval.respond"),
   commandId: CommandId,
@@ -708,6 +792,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadInteractionModeSetCommand,
   ThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
+  ThreadTurnForceAbortCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
@@ -729,6 +814,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
+  ThreadTurnForceAbortCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
@@ -748,6 +834,7 @@ const ThreadMessageAssistantDeltaCommand = Schema.Struct({
   type: Schema.Literal("thread.message.assistant.delta"),
   commandId: CommandId,
   threadId: ThreadId,
+  subagentId: Schema.optional(SubagentId),
   messageId: MessageId,
   delta: Schema.String,
   turnId: Schema.optional(TurnId),
@@ -758,6 +845,7 @@ const ThreadMessageAssistantCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.message.assistant.complete"),
   commandId: CommandId,
   threadId: ThreadId,
+  subagentId: Schema.optional(SubagentId),
   messageId: MessageId,
   turnId: Schema.optional(TurnId),
   createdAt: IsoDateTime,
@@ -767,6 +855,7 @@ const ThreadMessageImportCommand = Schema.Struct({
   type: Schema.Literal("thread.message.import"),
   commandId: CommandId,
   threadId: ThreadId,
+  subagentId: Schema.optional(SubagentId),
   message: OrchestrationMessage,
 });
 
@@ -774,6 +863,7 @@ const ThreadProposedPlanUpsertCommand = Schema.Struct({
   type: Schema.Literal("thread.proposed-plan.upsert"),
   commandId: CommandId,
   threadId: ThreadId,
+  subagentId: Schema.optional(SubagentId),
   proposedPlan: OrchestrationProposedPlan,
   createdAt: IsoDateTime,
 });
@@ -796,6 +886,7 @@ const ThreadActivityAppendCommand = Schema.Struct({
   type: Schema.Literal("thread.activity.append"),
   commandId: CommandId,
   threadId: ThreadId,
+  subagentId: Schema.optional(SubagentId),
   activity: OrchestrationThreadActivity,
   createdAt: IsoDateTime,
 });
@@ -808,6 +899,33 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const ThreadSubagentUpsertCommand = Schema.Struct({
+  type: Schema.Literal("thread.subagent.upsert"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  subagent: OrchestrationSubagentSummary,
+  createdAt: IsoDateTime,
+});
+
+export const ThreadSubagentStateSetCommand = Schema.Struct({
+  type: Schema.Literal("thread.subagent.state.set"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  subagentId: SubagentId,
+  status: OrchestrationSubagentStatus,
+  statusMessage: Schema.NullOr(TrimmedNonEmptyString),
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadSubagentProgressSetCommand = Schema.Struct({
+  type: Schema.Literal("thread.subagent.progress.set"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  subagentId: SubagentId,
+  progress: Schema.NullOr(OrchestrationSubagentProgress),
+  updatedAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -817,6 +935,9 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
+  ThreadSubagentUpsertCommand,
+  ThreadSubagentStateSetCommand,
+  ThreadSubagentProgressSetCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -840,6 +961,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.message-sent",
   "thread.turn-start-requested",
   "thread.turn-interrupt-requested",
+  "thread.turn-force-abort-requested",
   "thread.approval-response-requested",
   "thread.user-input-response-requested",
   "thread.checkpoint-revert-requested",
@@ -849,6 +971,9 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "thread.subagent-upserted",
+  "thread.subagent-state-set",
+  "thread.subagent-progress-set",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -938,6 +1063,7 @@ export const ThreadInteractionModeSetPayload = Schema.Struct({
 
 export const ThreadMessageSentPayload = Schema.Struct({
   threadId: ThreadId,
+  subagentId: Schema.optional(SubagentId),
   messageId: MessageId,
   role: OrchestrationMessageRole,
   text: Schema.String,
@@ -966,6 +1092,13 @@ export const ThreadTurnInterruptRequestedPayload = Schema.Struct({
   turnId: Schema.optional(TurnId),
   createdAt: IsoDateTime,
 });
+
+export const ThreadTurnForceAbortRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+  createdAt: IsoDateTime,
+});
+export type ThreadTurnForceAbortRequestedPayload = typeof ThreadTurnForceAbortRequestedPayload.Type;
 
 export const ThreadApprovalResponseRequestedPayload = Schema.Struct({
   threadId: ThreadId,
@@ -1004,6 +1137,7 @@ export const ThreadSessionSetPayload = Schema.Struct({
 
 export const ThreadProposedPlanUpsertedPayload = Schema.Struct({
   threadId: ThreadId,
+  subagentId: Schema.optional(SubagentId),
   proposedPlan: OrchestrationProposedPlan,
 });
 
@@ -1020,7 +1154,28 @@ export const ThreadTurnDiffCompletedPayload = Schema.Struct({
 
 export const ThreadActivityAppendedPayload = Schema.Struct({
   threadId: ThreadId,
+  subagentId: Schema.optional(SubagentId),
   activity: OrchestrationThreadActivity,
+});
+
+export const ThreadSubagentUpsertedPayload = Schema.Struct({
+  threadId: ThreadId,
+  subagent: OrchestrationSubagentSummary,
+});
+
+export const ThreadSubagentStateSetPayload = Schema.Struct({
+  threadId: ThreadId,
+  subagentId: SubagentId,
+  status: OrchestrationSubagentStatus,
+  statusMessage: Schema.NullOr(TrimmedNonEmptyString),
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadSubagentProgressSetPayload = Schema.Struct({
+  threadId: ThreadId,
+  subagentId: SubagentId,
+  progress: Schema.NullOr(OrchestrationSubagentProgress),
+  updatedAt: IsoDateTime,
 });
 
 export const OrchestrationEventMetadata = Schema.Struct({
@@ -1112,6 +1267,11 @@ export const OrchestrationEvent = Schema.Union([
   }),
   Schema.Struct({
     ...EventBaseFields,
+    type: Schema.Literal("thread.turn-force-abort-requested"),
+    payload: ThreadTurnForceAbortRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
     type: Schema.Literal("thread.approval-response-requested"),
     payload: ThreadApprovalResponseRequestedPayload,
   }),
@@ -1155,8 +1315,29 @@ export const OrchestrationEvent = Schema.Union([
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
   }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.subagent-upserted"),
+    payload: ThreadSubagentUpsertedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.subagent-state-set"),
+    payload: ThreadSubagentStateSetPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.subagent-progress-set"),
+    payload: ThreadSubagentProgressSetPayload,
+  }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
+
+export const OrchestrationStreamCursor = Schema.Struct({
+  kind: Schema.Literal("cursor"),
+  sequence: NonNegativeInt,
+});
+export type OrchestrationStreamCursor = typeof OrchestrationStreamCursor.Type;
 
 export const OrchestrationThreadStreamItem = Schema.Union([
   Schema.Struct({
@@ -1167,8 +1348,22 @@ export const OrchestrationThreadStreamItem = Schema.Union([
     kind: Schema.Literal("event"),
     event: OrchestrationEvent,
   }),
+  OrchestrationStreamCursor,
 ]);
 export type OrchestrationThreadStreamItem = typeof OrchestrationThreadStreamItem.Type;
+
+export const OrchestrationSubagentStreamItem = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("snapshot"),
+    snapshot: OrchestrationSubagentDetailSnapshot,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("event"),
+    event: OrchestrationEvent,
+  }),
+  OrchestrationStreamCursor,
+]);
+export type OrchestrationSubagentStreamItem = typeof OrchestrationSubagentStreamItem.Type;
 
 export const OrchestrationCommandReceiptStatus = Schema.Literals(["accepted", "rejected"]);
 export type OrchestrationCommandReceiptStatus = typeof OrchestrationCommandReceiptStatus.Type;
@@ -1292,6 +1487,10 @@ export const OrchestrationRpcSchemas = {
   subscribeThread: {
     input: OrchestrationSubscribeThreadInput,
     output: OrchestrationThreadStreamItem,
+  },
+  subscribeSubagent: {
+    input: OrchestrationSubscribeSubagentInput,
+    output: OrchestrationSubagentStreamItem,
   },
   subscribeShell: {
     input: OrchestrationSubscribeShellInput,

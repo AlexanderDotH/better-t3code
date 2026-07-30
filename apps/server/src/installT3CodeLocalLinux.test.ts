@@ -32,6 +32,7 @@ function installerEnvironment(home: string): NodeJS.ProcessEnv {
   return {
     ...process.env,
     HOME: home,
+    T3CODE_CANONICAL_LOCAL_APPIMAGE: NodePath.join(home, "canonical-t3code.AppImage"),
     XDG_CONFIG_HOME: NodePath.join(home, "config"),
     XDG_DATA_HOME: NodePath.join(home, "data"),
     XDG_STATE_HOME: NodePath.join(home, "state"),
@@ -55,6 +56,27 @@ function runInstaller(input: {
 }
 
 describe("install-t3code-local-linux", () => {
+  it("refuses to replace the Local T3Code launcher when the canonical /opt installation exists", () => {
+    const home = makeHome();
+    const appImage = NodePath.join(home, "legacy.AppImage");
+    const canonicalAppImage = NodePath.join(home, "canonical-t3code.AppImage");
+    writeFakeAppImage(appImage, 'printf "legacy\\n"');
+    writeFakeAppImage(canonicalAppImage, 'printf "canonical\\n"');
+
+    const install = runInstaller({ appImage, home, profile: "shared-system" });
+
+    NodeAssert.equal(install.status, 78);
+    NodeAssert.match(install.stderr, /canonical Local T3Code installation exists/);
+    NodeAssert.equal(
+      NodeFS.existsSync(NodePath.join(home, "data", "t3code-local", "T3CodeLocal.AppImage")),
+      false,
+    );
+    NodeAssert.equal(
+      NodeFS.existsSync(NodePath.join(home, ".local", "bin", "t3code-local")),
+      false,
+    );
+  });
+
   it("atomically rotates the previous AppImage and preserves the selected profile", () => {
     const home = makeHome();
     const firstAppImage = NodePath.join(home, "first.AppImage");

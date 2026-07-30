@@ -9,6 +9,7 @@ import {
   ProviderRuntimeEvent,
   ProviderSession,
   ProviderInstanceId,
+  SubagentId,
 } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
@@ -61,6 +62,7 @@ const asEventId = (value: string): EventId => EventId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
+const asSubagentId = (value: string): SubagentId => SubagentId.make(value);
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
@@ -312,6 +314,10 @@ describe("ProviderRuntimeIngestion", () => {
     return {
       engine,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
+      readEvents: () =>
+        Effect.runPromise(
+          Stream.runCollect(engine.readEvents(0)).pipe(Effect.map((chunk) => Array.from(chunk))),
+        ),
       emit: provider.emit,
       setProviderSession: provider.setSession,
       drain,
@@ -2075,11 +2081,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(resumedMessage?.text).toBe(" second half");
     expect(resumedMessage?.streaming).toBe(false);
 
-    const events = await Effect.runPromise(
-      Stream.runCollect(harness.engine.readEvents(0)).pipe(
-        Effect.map((chunk) => Array.from(chunk)),
-      ),
-    );
+    const events = await harness.readEvents();
     const assistantEvents = events.filter(
       (event): event is Extract<(typeof events)[number], { type: "thread.message-sent" }> =>
         event.type === "thread.message-sent" &&
@@ -2431,11 +2433,7 @@ describe("ProviderRuntimeIngestion", () => {
         ),
     );
 
-    const events = await Effect.runPromise(
-      Stream.runCollect(harness.engine.readEvents(0)).pipe(
-        Effect.map((chunk) => Array.from(chunk)),
-      ),
-    );
+    const events = await harness.readEvents();
     const completionEvents = events.filter((event) => {
       if (event.type !== "thread.message-sent") {
         return false;
@@ -3155,6 +3153,417 @@ describe("ProviderRuntimeIngestion", () => {
     expect(resolvedPayload?.answers).toEqual({
       sandbox_mode: "workspace-write",
     });
+  });
+
+  it("projects complete deterministic subagent summaries with stable display-name fallbacks", async () => {
+    const harness = await createHarness();
+    const discoveredAt = "2026-07-30T10:00:00.000Z";
+    const cases = [
+      {
+        id: asSubagentId("codex:provider-nickname"),
+        providerThreadId: "provider-nickname",
+        agentPath: "/root/path-name",
+        nickname: "preferred-name",
+        role: "reviewer",
+        expectedName: "preferred-name",
+      },
+      {
+        id: asSubagentId("codex:provider-path"),
+        providerThreadId: "provider-path",
+        agentPath: "/root/path-name",
+        role: "reviewer",
+        expectedName: "path-name",
+      },
+      {
+        id: asSubagentId("codex:provider-role"),
+        providerThreadId: "provider-role",
+        role: "reviewer",
+        expectedName: "reviewer",
+      },
+      {
+        id: asSubagentId("codex:provider-id"),
+        providerThreadId: "provider-id",
+        expectedName: "Agent codex:pr",
+      },
+    ] as const;
+
+    for (const [index, entry] of cases.entries()) {
+      harness.emit({
+        type: "subagent.discovered",
+        eventId: asEventId(`evt-subagent-discovered-${index}`),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: discoveredAt,
+        threadId: asThreadId("thread-1"),
+        subagentId: entry.id,
+        payload: {
+          subagentId: entry.id,
+          providerThreadId: entry.providerThreadId,
+          ...(entry.agentPath !== undefined ? { agentPath: entry.agentPath } : {}),
+          ...(entry.nickname !== undefined ? { nickname: entry.nickname } : {}),
+          ...(entry.role !== undefined ? { role: entry.role } : {}),
+        },
+      });
+    }
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.subagents.length === cases.length,
+    );
+
+    for (const entry of cases) {
+      expect(thread.subagents.find((agent) => agent.id === entry.id)).toMatchObject({
+        id: entry.id,
+        providerThreadId: entry.providerThreadId,
+        parentId: null,
+        path: entry.agentPath ?? null,
+        name: entry.expectedName,
+        nickname: entry.nickname ?? null,
+        role: entry.role ?? null,
+        task: null,
+        model: null,
+        reasoningEffort: null,
+        depth: entry.agentPath ? 1 : 0,
+        status: "starting",
+        statusMessage: null,
+        latestProgress: null,
+        latestTurn: null,
+        startedAt: discoveredAt,
+        updatedAt: discoveredAt,
+        completedAt: null,
+      });
+    }
+  });
+
+  it("upserts a placeholder before discovery and applies subagent state without changing root lifecycle", async () => {
+    const harness = await createHarness();
+    const subagentId = asSubagentId("codex:provider-late-discovery");
+    const waitingAt = "2026-07-30T10:01:00.000Z";
+
+    harness.emit({
+      type: "subagent.state.changed",
+      eventId: asEventId("evt-subagent-state-before-discovery"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: waitingAt,
+      threadId: asThreadId("thread-1"),
+      subagentId,
+      payload: {
+        subagentId,
+        state: "waiting",
+        statusMessage: "Waiting for another agent",
+      },
+    });
+
+    let thread = await waitForThread(harness.readModel, (entry) =>
+      entry.subagents.some((agent) => agent.id === subagentId),
+    );
+    expect(thread.subagents.find((agent) => agent.id === subagentId)).toMatchObject({
+      id: subagentId,
+      providerThreadId: subagentId,
+      name: "Agent codex:pr",
+      status: "waiting",
+      statusMessage: "Waiting for another agent",
+      latestProgress: {
+        kind: "state.waiting",
+        summary: "Waiting for another agent",
+        detail: null,
+        createdAt: waitingAt,
+      },
+    });
+    expect(thread.session).toMatchObject({ status: "ready", activeTurnId: null });
+    expect(thread.latestTurn).toBeNull();
+
+    harness.emit({
+      type: "subagent.discovered",
+      eventId: asEventId("evt-subagent-discovered-after-state"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-07-30T10:01:01.000Z",
+      threadId: asThreadId("thread-1"),
+      subagentId,
+      payload: {
+        subagentId,
+        providerThreadId: "provider-late-discovery",
+        agentPath: "/root/late-worker",
+        nickname: "late-worker",
+        depth: 1,
+      },
+    });
+
+    thread = await waitForThread(harness.readModel, (entry) =>
+      entry.subagents.some((agent) => agent.id === subagentId && agent.nickname === "late-worker"),
+    );
+    expect(thread.subagents.find((agent) => agent.id === subagentId)).toMatchObject({
+      providerThreadId: "provider-late-discovery",
+      name: "late-worker",
+      nickname: "late-worker",
+      status: "waiting",
+      statusMessage: "Waiting for another agent",
+    });
+
+    const events = await harness.readEvents();
+    const upsertIndex = events.findIndex(
+      (event) =>
+        event.type === "thread.subagent-upserted" && event.payload.subagent.id === subagentId,
+    );
+    const stateIndex = events.findIndex(
+      (event) =>
+        event.type === "thread.subagent-state-set" && event.payload.subagentId === subagentId,
+    );
+    expect(upsertIndex).toBeGreaterThanOrEqual(0);
+    expect(stateIndex).toBeGreaterThan(upsertIndex);
+  });
+
+  it("routes child assistant, plan, and activity events to namespaced subagent commands", async () => {
+    const harness = await createHarness();
+    const subagentA = asSubagentId("codex:provider-agent-a");
+    const subagentB = asSubagentId("codex:provider-agent-b");
+    const now = "2026-07-30T10:02:00.000Z";
+
+    for (const [index, subagentId] of [subagentA, subagentB].entries()) {
+      harness.emit({
+        type: "content.delta",
+        eventId: asEventId(`evt-child-assistant-delta-${index}`),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: now,
+        threadId: asThreadId("thread-1"),
+        subagentId,
+        turnId: asTurnId("shared-turn"),
+        itemId: asItemId("shared-item"),
+        payload: {
+          streamKind: "assistant_text",
+          delta: `child-${index}`,
+        },
+      });
+      harness.emit({
+        type: "item.completed",
+        eventId: asEventId(`evt-child-assistant-completed-${index}`),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: now,
+        threadId: asThreadId("thread-1"),
+        subagentId,
+        turnId: asTurnId("shared-turn"),
+        itemId: asItemId("shared-item"),
+        payload: {
+          itemType: "assistant_message",
+          status: "completed",
+        },
+      });
+    }
+
+    harness.emit({
+      type: "turn.proposed.delta",
+      eventId: asEventId("evt-child-plan-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      subagentId: subagentA,
+      turnId: asTurnId("shared-turn"),
+      payload: { delta: "# Child plan" },
+    });
+    harness.emit({
+      type: "turn.proposed.completed",
+      eventId: asEventId("evt-child-plan-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      subagentId: subagentA,
+      turnId: asTurnId("shared-turn"),
+      payload: { planMarkdown: "# Child plan" },
+    });
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-child-command-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      subagentId: subagentA,
+      turnId: asTurnId("shared-turn"),
+      itemId: asItemId("shared-command"),
+      payload: {
+        itemType: "command_execution",
+        title: "Run tests",
+      },
+    });
+
+    await harness.drain();
+    const thread = await waitForThread(harness.readModel, (entry) => entry.subagents.length === 2);
+    expect(thread.messages).toEqual([]);
+    expect(thread.proposedPlans).toEqual([]);
+    expect(thread.activities).toEqual([]);
+    expect(thread.session).toMatchObject({ status: "ready", activeTurnId: null });
+    expect(thread.latestTurn).toBeNull();
+
+    const events = await harness.readEvents();
+    const childMessages = events.filter(
+      (event) =>
+        event.type === "thread.message-sent" &&
+        (event.payload.subagentId === subagentA || event.payload.subagentId === subagentB),
+    );
+    const agentAMessageIds = childMessages
+      .filter((event) => event.payload.subagentId === subagentA)
+      .map((event) => event.payload.messageId);
+    const agentBMessageIds = childMessages
+      .filter((event) => event.payload.subagentId === subagentB)
+      .map((event) => event.payload.messageId);
+    expect(agentAMessageIds.length).toBeGreaterThan(0);
+    expect(agentBMessageIds.length).toBeGreaterThan(0);
+    expect(new Set(agentAMessageIds)).not.toEqual(new Set(agentBMessageIds));
+    expect(agentAMessageIds.every((id) => id.includes(String(subagentA)))).toBe(true);
+    expect(agentBMessageIds.every((id) => id.includes(String(subagentB)))).toBe(true);
+
+    const childPlan = events.find(
+      (event) =>
+        event.type === "thread.proposed-plan-upserted" && event.payload.subagentId === subagentA,
+    );
+    expect(childPlan?.payload.proposedPlan.id).toContain(String(subagentA));
+
+    const childActivity = events.find(
+      (event) =>
+        event.type === "thread.activity-appended" &&
+        event.payload.subagentId === subagentA &&
+        event.payload.activity.kind === "tool.started",
+    );
+    expect(childActivity?.payload.activity.id).toContain(String(subagentA));
+  });
+
+  it("mirrors child approval interactions to root while preserving child activity origin", async () => {
+    const harness = await createHarness();
+    const subagentId = asSubagentId("codex:provider-approval-agent");
+    const now = "2026-07-30T10:03:00.000Z";
+
+    harness.emit({
+      type: "request.opened",
+      eventId: asEventId("evt-child-approval-opened"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      subagentId,
+      turnId: asTurnId("child-turn"),
+      requestId: ApprovalRequestId.make("child-request"),
+      payload: {
+        requestType: "command_execution_approval",
+        detail: "Run the focused tests",
+      },
+    });
+    harness.emit({
+      type: "user-input.requested",
+      eventId: asEventId("evt-child-input-requested"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      subagentId,
+      turnId: asTurnId("child-turn"),
+      requestId: ApprovalRequestId.make("child-input"),
+      payload: {
+        questions: [
+          {
+            id: "choice",
+            header: "Choice",
+            question: "Continue?",
+            options: [{ label: "Yes", description: "Continue the task" }],
+          },
+        ],
+      },
+    });
+
+    await harness.drain();
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.activities.some((activity) => activity.id === "evt-child-approval-opened") &&
+        entry.activities.some((activity) => activity.id === "evt-child-input-requested"),
+    );
+    expect(thread.activities.map((activity) => activity.kind)).toEqual(
+      expect.arrayContaining(["approval.requested", "user-input.requested"]),
+    );
+
+    const events = await harness.readEvents();
+    for (const activityId of ["evt-child-approval-opened", "evt-child-input-requested"]) {
+      const mirrored = events.filter(
+        (event) =>
+          event.type === "thread.activity-appended" &&
+          String(event.payload.activity.id).includes(activityId),
+      );
+      expect(mirrored.some((event) => event.payload.subagentId === undefined)).toBe(true);
+      expect(mirrored.some((event) => event.payload.subagentId === subagentId)).toBe(true);
+    }
+  });
+
+  it("updates subagent progress from state and item lifecycle but not content deltas", async () => {
+    const harness = await createHarness();
+    const subagentId = asSubagentId("codex:provider-progress-agent");
+    const now = "2026-07-30T10:04:00.000Z";
+
+    harness.emit({
+      type: "subagent.discovered",
+      eventId: asEventId("evt-progress-agent-discovered"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      subagentId,
+      payload: {
+        subagentId,
+        providerThreadId: "provider-progress-agent",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-progress-content-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      subagentId,
+      turnId: asTurnId("progress-turn"),
+      itemId: asItemId("progress-item"),
+      payload: {
+        streamKind: "reasoning_summary_text",
+        delta: "Inspecting files",
+      },
+    });
+    await harness.drain();
+
+    let events = await harness.readEvents();
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "thread.subagent-progress-set" && event.payload.subagentId === subagentId,
+      ),
+    ).toHaveLength(0);
+
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-progress-command-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-07-30T10:04:01.000Z",
+      threadId: asThreadId("thread-1"),
+      subagentId,
+      turnId: asTurnId("progress-turn"),
+      itemId: asItemId("progress-command"),
+      payload: {
+        itemType: "command_execution",
+        title: "Run typecheck",
+        detail: "vp run typecheck",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.subagents.some(
+        (agent) => agent.id === subagentId && agent.latestProgress?.kind === "tool.started",
+      ),
+    );
+    expect(thread.subagents.find((agent) => agent.id === subagentId)?.latestProgress).toEqual({
+      kind: "tool.started",
+      summary: "Run typecheck started",
+      detail: "vp run typecheck",
+      createdAt: "2026-07-30T10:04:01.000Z",
+    });
+
+    events = await harness.readEvents();
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "thread.subagent-progress-set" && event.payload.subagentId === subagentId,
+      ),
+    ).toHaveLength(1);
   });
 
   it("continues processing runtime events after a single event handler failure", async () => {

@@ -46,7 +46,7 @@ import {
   withMetrics,
 } from "../../observability/Metrics.ts";
 import { type ProviderAdapterError, ProviderValidationError } from "../Errors.ts";
-import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
+import { type ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
@@ -721,6 +721,68 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const captureAbortTarget: ProviderServiceMethod<"captureAbortTarget"> = Effect.fn(
+    "ProviderService.captureAbortTarget",
+  )(function* (threadId) {
+    const routed = yield* resolveRoutableSession({
+      threadId,
+      operation: "ProviderService.captureAbortTarget",
+      allowRecovery: false,
+    });
+    if (!routed.isActive) {
+      return null;
+    }
+    const target = yield* routed.adapter.captureAbortTarget(threadId);
+    return target?.providerInstanceId === routed.instanceId ? target : null;
+  });
+
+  const interruptAbortTarget: ProviderServiceMethod<"interruptAbortTarget"> = Effect.fn(
+    "ProviderService.interruptAbortTarget",
+  )(function* (target) {
+    const routed = yield* resolveRoutableSession({
+      threadId: target.threadId,
+      operation: "ProviderService.interruptAbortTarget",
+      allowRecovery: false,
+    });
+    if (!routed.isActive || routed.instanceId !== target.providerInstanceId) {
+      return;
+    }
+    yield* routed.adapter.interruptAbortTarget(target);
+  });
+
+  const forceStopAbortTarget: ProviderServiceMethod<"forceStopAbortTarget"> = Effect.fn(
+    "ProviderService.forceStopAbortTarget",
+  )(function* (target) {
+    const routed = yield* resolveRoutableSession({
+      threadId: target.threadId,
+      operation: "ProviderService.forceStopAbortTarget",
+      allowRecovery: false,
+    });
+    if (!routed.isActive) {
+      return "already-stopped";
+    }
+    if (routed.instanceId !== target.providerInstanceId) {
+      return "target-changed";
+    }
+    const result = yield* routed.adapter.forceStopSession(target);
+    if (result !== "forced" && result !== "externally-managed") {
+      return result;
+    }
+    yield* clearMcpSession(target.threadId);
+    yield* directory.upsert({
+      threadId: target.threadId,
+      provider: routed.adapter.provider,
+      providerInstanceId: routed.instanceId,
+      status: "stopped",
+      runtimePayload: {
+        activeTurnId: null,
+        lastRuntimeEvent: "provider.forceStop",
+        lastRuntimeEventAt: yield* nowIso,
+      },
+    });
+    return result;
+  });
+
   const respondToRequest: ProviderServiceMethod<"respondToRequest"> = Effect.fn("respondToRequest")(
     function* (rawInput) {
       const input = yield* decodeInputOrValidationError({
@@ -1023,6 +1085,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     startSession,
     sendTurn,
     interruptTurn,
+    captureAbortTarget,
+    interruptAbortTarget,
+    forceStopAbortTarget,
     respondToRequest,
     respondToUserInput,
     stopSession,

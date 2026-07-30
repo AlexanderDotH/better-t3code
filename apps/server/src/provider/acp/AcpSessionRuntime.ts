@@ -19,6 +19,11 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import {
+  forceTerminateManagedProcessTree,
+  type ManagedProcessTreeTerminationError,
+  type ManagedProcessTreeTerminationResult,
+} from "../../process/ManagedProcessTree.ts";
 
 import {
   collectSessionConfigOptionValues,
@@ -198,6 +203,11 @@ export class AcpSessionRuntime extends Context.Service<
      * @see https://agentclientprotocol.com/protocol/schema#session/cancel
      */
     readonly cancel: Effect.Effect<void, EffectAcpErrors.AcpError>;
+    /** Force-terminates the complete ACP child-process tree and confirms exit. */
+    readonly forceClose: Effect.Effect<
+      ManagedProcessTreeTerminationResult,
+      ManagedProcessTreeTerminationError
+    >;
     /**
      * Selects the active mode through the negotiated `mode` configuration option.
      * This is a no-op when the requested mode is already active.
@@ -759,6 +769,7 @@ export const make = (
           }),
         ),
       ),
+      forceClose: forceTerminateManagedProcessTree(child),
       setMode: (modeId) =>
         Ref.get(modeStateRef).pipe(
           Effect.flatMap((modeState) => {

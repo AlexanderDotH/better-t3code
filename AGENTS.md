@@ -6,6 +6,23 @@
   - If changing native mobile code, `vp run lint:mobile` must also pass.
 - Use `vp test` for the built-in Vite+ test command and `vp run test` when you specifically need the `test` package script.
 
+## Local Linux Deployment Disabled
+
+This checkout is not the canonical Local T3Code deployment source.
+
+- Never run `scripts/build-and-install-t3code-local-linux.sh` or
+  `scripts/install-t3code-local-linux.sh` on this machine.
+- Never write `~/.local/bin/t3code-local`, `~/.local/share/applications/t3code-local.desktop`, or
+  `~/.local/share/t3code-local/install-profile`.
+- Never replace `/opt/t3code-git/t3code` from this checkout.
+- The canonical source and deployment instructions live in
+  `/home/alex/Workspace/Projects/Apps/better-t3code`.
+- Runnable changes made here must first be carried into the canonical checkout. Only that checkout may
+  build and deploy T3 Code Local.
+
+The host launcher contract is root-owned and immutable. Do not remove that protection or attempt to work
+around the legacy installer's refusal guard.
+
 ## Project Snapshot
 
 T3 Code is a minimal web GUI for using coding agents like Codex and Claude.

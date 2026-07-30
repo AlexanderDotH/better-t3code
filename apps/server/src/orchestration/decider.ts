@@ -489,6 +489,28 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.turn.force-abort": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.turn-force-abort-requested",
+        payload: {
+          threadId: command.threadId,
+          turnId: command.turnId,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
     case "thread.approval.respond": {
       yield* requireThread({
         readModel,
@@ -622,6 +644,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.message-sent",
         payload: {
           threadId: command.threadId,
+          ...(command.subagentId !== undefined ? { subagentId: command.subagentId } : {}),
           messageId: command.messageId,
           role: "assistant",
           text: command.delta,
@@ -649,6 +672,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.message-sent",
         payload: {
           threadId: command.threadId,
+          ...(command.subagentId !== undefined ? { subagentId: command.subagentId } : {}),
           messageId: command.messageId,
           role: "assistant",
           text: "",
@@ -676,6 +700,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.message-sent",
         payload: {
           threadId: command.threadId,
+          ...(command.subagentId !== undefined ? { subagentId: command.subagentId } : {}),
           messageId: command.message.id,
           role: command.message.role,
           text: command.message.text,
@@ -706,6 +731,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.proposed-plan-upserted",
         payload: {
           threadId: command.threadId,
+          ...(command.subagentId !== undefined ? { subagentId: command.subagentId } : {}),
           proposedPlan: command.proposedPlan,
         },
       };
@@ -784,7 +810,76 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.activity-appended",
         payload: {
           threadId: command.threadId,
+          ...(command.subagentId !== undefined ? { subagentId: command.subagentId } : {}),
           activity: command.activity,
+        },
+      };
+    }
+
+    case "thread.subagent.upsert": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.subagent-upserted",
+        payload: {
+          threadId: command.threadId,
+          subagent: command.subagent,
+        },
+      };
+    }
+
+    case "thread.subagent.state.set": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.updatedAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.subagent-state-set",
+        payload: {
+          threadId: command.threadId,
+          subagentId: command.subagentId,
+          status: command.status,
+          statusMessage: command.statusMessage,
+          updatedAt: command.updatedAt,
+        },
+      };
+    }
+
+    case "thread.subagent.progress.set": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.updatedAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.subagent-progress-set",
+        payload: {
+          threadId: command.threadId,
+          subagentId: command.subagentId,
+          progress: command.progress,
+          updatedAt: command.updatedAt,
         },
       };
     }

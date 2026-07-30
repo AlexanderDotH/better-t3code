@@ -68,6 +68,7 @@ type OpenCodeSubscribedEvent =
 
 interface OpenCodeSessionContext {
   session: ProviderSession;
+  readonly providerSessionId: string;
   readonly client: OpencodeClient;
   readonly server: OpenCodeServerConnection;
   readonly directory: string;
@@ -80,6 +81,8 @@ interface OpenCodeSessionContext {
   readonly completedAssistantPartIds: Set<string>;
   readonly turns: Array<OpenCodeTurnSnapshot>;
   activeTurnId: TurnId | undefined;
+  turnGeneration: string | undefined;
+  cancellingTurnGeneration: string | undefined;
   activeAgent: string | undefined;
   activeVariant: string | undefined;
   /**
@@ -150,6 +153,7 @@ const toProcessError = (
 
 type EventBaseInput = {
   readonly threadId: ThreadId;
+  readonly providerSessionId?: string | undefined;
   readonly turnId?: TurnId | undefined;
   readonly itemId?: string | undefined;
   readonly requestId?: string | undefined;
@@ -502,23 +506,29 @@ export function makeOpenCodeAdapter(
         eventId: randomUUIDv4.pipe(Effect.map(EventId.make)),
         createdAt: input.createdAt === undefined ? nowIso : Effect.succeed(input.createdAt),
       }).pipe(
-        Effect.map(({ eventId, createdAt }) => ({
-          eventId,
-          provider,
-          threadId: input.threadId,
-          createdAt,
-          ...(input.turnId ? { turnId: input.turnId } : {}),
-          ...(input.itemId ? { itemId: RuntimeItemId.make(input.itemId) } : {}),
-          ...(input.requestId ? { requestId: RuntimeRequestId.make(input.requestId) } : {}),
-          ...(input.raw !== undefined
-            ? {
-                raw: {
-                  source: "opencode.sdk.event" as const,
-                  payload: input.raw,
-                },
-              }
-            : {}),
-        })),
+        Effect.map(({ eventId, createdAt }) => {
+          const providerSessionId =
+            input.providerSessionId ?? sessions.get(input.threadId)?.providerSessionId;
+          return {
+            eventId,
+            provider,
+            providerInstanceId: boundInstanceId,
+            ...(providerSessionId ? { providerSessionId } : {}),
+            threadId: input.threadId,
+            createdAt,
+            ...(input.turnId ? { turnId: input.turnId } : {}),
+            ...(input.itemId ? { itemId: RuntimeItemId.make(input.itemId) } : {}),
+            ...(input.requestId ? { requestId: RuntimeRequestId.make(input.requestId) } : {}),
+            ...(input.raw !== undefined
+              ? {
+                  raw: {
+                    source: "opencode.sdk.event" as const,
+                    payload: input.raw,
+                  },
+                }
+              : {}),
+          };
+        }),
       );
 
     // Layer-level finalizer: when the adapter layer shuts down, stop every
@@ -586,6 +596,7 @@ export function makeOpenCodeAdapter(
       yield* emit({
         ...(yield* buildEventBase({
           threadId: context.session.threadId,
+          providerSessionId: context.providerSessionId,
           turnId,
         })),
         type: "runtime.error",
@@ -597,6 +608,7 @@ export function makeOpenCodeAdapter(
       yield* emit({
         ...(yield* buildEventBase({
           threadId: context.session.threadId,
+          providerSessionId: context.providerSessionId,
           turnId,
         })),
         type: "session.exited",
@@ -939,6 +951,8 @@ export function makeOpenCodeAdapter(
 
           if (event.properties.status.type === "idle" && turnId) {
             context.activeTurnId = undefined;
+            context.turnGeneration = undefined;
+            context.cancellingTurnGeneration = undefined;
             yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
             yield* emit({
               ...(yield* buildEventBase({
@@ -959,6 +973,8 @@ export function makeOpenCodeAdapter(
           const message = sessionErrorMessage(event.properties.error);
           const activeTurnId = context.activeTurnId;
           context.activeTurnId = undefined;
+          context.turnGeneration = undefined;
+          context.cancellingTurnGeneration = undefined;
           yield* updateProviderSession(
             context,
             {
@@ -1164,9 +1180,11 @@ export function makeOpenCodeAdapter(
         }
 
         const createdAt = yield* nowIso;
+        const providerSessionId = yield* randomUUIDv4;
         const session: ProviderSession = {
           provider,
           providerInstanceId: boundInstanceId,
+          providerSessionId,
           status: "ready",
           runtimeMode: input.runtimeMode,
           cwd: directory,
@@ -1178,6 +1196,7 @@ export function makeOpenCodeAdapter(
 
         const context: OpenCodeSessionContext = {
           session,
+          providerSessionId,
           client: started.client,
           server: started.server,
           directory,
@@ -1190,6 +1209,8 @@ export function makeOpenCodeAdapter(
           completedAssistantPartIds: new Set(),
           turns: [],
           activeTurnId: undefined,
+          turnGeneration: undefined,
+          cancellingTurnGeneration: undefined,
           activeAgent: undefined,
           activeVariant: undefined,
           stopped: yield* Ref.make(false),
@@ -1264,8 +1285,16 @@ export function makeOpenCodeAdapter(
 
       const agent = getModelSelectionStringOptionValue(modelSelection, "agent");
       const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
+      const turnGeneration = yield* randomUUIDv4;
+      if (Ref.getUnsafe(context.stopped) || context.cancellingTurnGeneration !== undefined) {
+        return yield* new ProviderAdapterSessionClosedError({
+          provider,
+          threadId: input.threadId,
+        });
+      }
 
       context.activeTurnId = turnId;
+      context.turnGeneration = turnGeneration;
       context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
       context.activeVariant = variant;
       yield* updateProviderSession(
@@ -1308,6 +1337,9 @@ export function makeOpenCodeAdapter(
             ? Effect.void
             : Effect.gen(function* () {
                 context.activeTurnId = undefined;
+                if (context.turnGeneration === turnGeneration) {
+                  context.turnGeneration = undefined;
+                }
                 context.activeAgent = undefined;
                 context.activeVariant = undefined;
                 yield* updateProviderSession(
@@ -1342,14 +1374,42 @@ export function makeOpenCodeAdapter(
     const interruptTurn: OpenCodeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
       function* (threadId, turnId) {
         const context = ensureSessionContext(provider, sessions, threadId);
+        const interruptedTurnId = context.activeTurnId;
+        if (
+          turnId !== undefined &&
+          interruptedTurnId !== undefined &&
+          turnId !== interruptedTurnId
+        ) {
+          return;
+        }
+        const interruptedGeneration = context.turnGeneration;
+        if (interruptedGeneration) {
+          context.cancellingTurnGeneration = interruptedGeneration;
+        }
         yield* runOpenCodeSdk("session.abort", () =>
           context.client.session.abort({ sessionID: context.openCodeSessionId }),
-        ).pipe(Effect.mapError(mapRequestError));
-        if (turnId ?? context.activeTurnId) {
+        ).pipe(
+          Effect.mapError(mapRequestError),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (context.cancellingTurnGeneration === interruptedGeneration) {
+                context.cancellingTurnGeneration = undefined;
+              }
+            }),
+          ),
+        );
+        if (context.turnGeneration === interruptedGeneration) {
+          context.turnGeneration = undefined;
+          context.activeTurnId = undefined;
+          context.activeAgent = undefined;
+          context.activeVariant = undefined;
+          yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
+        }
+        if (turnId ?? interruptedTurnId) {
           yield* emit({
             ...(yield* buildEventBase({
               threadId,
-              turnId: turnId ?? context.activeTurnId,
+              turnId: turnId ?? interruptedTurnId,
             })),
             type: "turn.aborted",
             payload: {
@@ -1359,6 +1419,84 @@ export function makeOpenCodeAdapter(
         }
       },
     );
+
+    const matchesAbortTarget = (
+      context: OpenCodeSessionContext,
+      target: Parameters<OpenCodeAdapterShape["forceStopSession"]>[0],
+    ): boolean =>
+      !Ref.getUnsafe(context.stopped) &&
+      context.session.threadId === target.threadId &&
+      boundInstanceId === target.providerInstanceId &&
+      context.providerSessionId === target.providerSessionId &&
+      context.turnGeneration !== undefined &&
+      context.turnGeneration === target.turnGeneration;
+
+    const captureAbortTarget: OpenCodeAdapterShape["captureAbortTarget"] = (threadId) =>
+      Effect.sync(() => {
+        const context = sessions.get(threadId);
+        return context &&
+          matchesAbortTarget(context, {
+            threadId,
+            providerInstanceId: boundInstanceId,
+            providerSessionId: context.providerSessionId,
+            turnGeneration: context.turnGeneration ?? "",
+          })
+          ? {
+              threadId,
+              providerInstanceId: boundInstanceId,
+              providerSessionId: context.providerSessionId,
+              turnGeneration: context.turnGeneration!,
+            }
+          : null;
+      });
+
+    const interruptAbortTarget: OpenCodeAdapterShape["interruptAbortTarget"] = (target) =>
+      Effect.gen(function* () {
+        const context = sessions.get(target.threadId);
+        if (
+          !context ||
+          !matchesAbortTarget(context, target) ||
+          context.cancellingTurnGeneration !== undefined
+        ) {
+          return false;
+        }
+
+        const turnId = context.activeTurnId;
+        context.cancellingTurnGeneration = target.turnGeneration;
+        yield* runOpenCodeSdk("session.abort", () =>
+          context.client.session.abort({ sessionID: context.openCodeSessionId }),
+        ).pipe(
+          Effect.mapError(mapRequestError),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (context.cancellingTurnGeneration === target.turnGeneration) {
+                context.cancellingTurnGeneration = undefined;
+              }
+            }),
+          ),
+        );
+        if (context.turnGeneration !== target.turnGeneration) {
+          return false;
+        }
+        context.turnGeneration = undefined;
+        context.activeTurnId = undefined;
+        context.activeAgent = undefined;
+        context.activeVariant = undefined;
+        yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
+        if (turnId) {
+          yield* emit({
+            ...(yield* buildEventBase({
+              threadId: target.threadId,
+              turnId,
+            })),
+            type: "turn.aborted",
+            payload: {
+              reason: "Interrupted by user.",
+            },
+          });
+        }
+        return true;
+      });
 
     const respondToRequest: OpenCodeAdapterShape["respondToRequest"] = Effect.fn(
       "respondToRequest",
@@ -1416,7 +1554,10 @@ export function makeOpenCodeAdapter(
           return;
         }
         yield* emit({
-          ...(yield* buildEventBase({ threadId })),
+          ...(yield* buildEventBase({
+            threadId,
+            providerSessionId: context.providerSessionId,
+          })),
           type: "session.exited",
           payload: {
             reason: "Session stopped.",
@@ -1426,6 +1567,98 @@ export function makeOpenCodeAdapter(
         });
       },
     );
+
+    const forceStopSession: OpenCodeAdapterShape["forceStopSession"] = (target) =>
+      Effect.gen(function* () {
+        const context = sessions.get(target.threadId);
+        if (!context) {
+          return "already-stopped";
+        }
+        const claim = yield* Ref.modify(context.stopped, (stopped) => {
+          if (stopped) {
+            return ["already-stopped" as const, true] as const;
+          }
+          if (!matchesAbortTarget(context, target)) {
+            return ["target-changed" as const, false] as const;
+          }
+          return ["claimed" as const, true] as const;
+        });
+        if (claim !== "claimed") {
+          return claim;
+        }
+
+        const turnId = context.activeTurnId;
+        sessions.delete(target.threadId);
+        context.pendingPermissions.clear();
+        context.pendingQuestions.clear();
+
+        const termination =
+          context.server.external || context.server.forceKill === null
+            ? Exit.succeed("already-stopped" as const)
+            : yield* context.server.forceKill.pipe(Effect.exit);
+
+        yield* runOpenCodeSdk("session.abort", () =>
+          context.client.session.abort({ sessionID: context.openCodeSessionId }),
+        ).pipe(Effect.ignore({ log: true }));
+        yield* Scope.close(context.sessionScope, Exit.void).pipe(
+          Effect.timeoutOption("2 seconds"),
+          Effect.ignore,
+        );
+
+        if (Exit.isFailure(termination)) {
+          const reason = `T3 could not confirm force-stopping the OpenCode process tree: ${String(
+            termination.cause,
+          )}`;
+          yield* emit({
+            ...(yield* buildEventBase({
+              threadId: target.threadId,
+              providerSessionId: context.providerSessionId,
+              turnId,
+            })),
+            type: "runtime.error",
+            payload: {
+              message: reason,
+              class: "transport_error",
+            },
+          }).pipe(Effect.ignore);
+          yield* emit({
+            ...(yield* buildEventBase({
+              threadId: target.threadId,
+              providerSessionId: context.providerSessionId,
+              turnId,
+            })),
+            type: "session.exited",
+            payload: {
+              reason,
+              recoverable: false,
+              exitKind: "error",
+            },
+          }).pipe(Effect.ignore);
+          return yield* new ProviderAdapterProcessError({
+            provider,
+            threadId: target.threadId,
+            detail: reason,
+            cause: termination.cause,
+          });
+        }
+
+        yield* emit({
+          ...(yield* buildEventBase({
+            threadId: target.threadId,
+            providerSessionId: context.providerSessionId,
+            turnId,
+          })),
+          type: "session.exited",
+          payload: {
+            reason: context.server.external
+              ? "External OpenCode session force-aborted; shared server left running."
+              : "OpenCode process tree force-stopped.",
+            recoverable: false,
+            exitKind: "forced",
+          },
+        });
+        return context.server.external ? "externally-managed" : "forced";
+      });
 
     const listSessions: OpenCodeAdapterShape["listSessions"] = () =>
       Effect.sync(() => [...sessions.values()].map((context) => context.session));
@@ -1508,9 +1741,12 @@ export function makeOpenCodeAdapter(
       startSession,
       sendTurn,
       interruptTurn,
+      captureAbortTarget,
+      interruptAbortTarget,
       respondToRequest,
       respondToUserInput,
       stopSession,
+      forceStopSession,
       listSessions,
       hasSession,
       readThread,

@@ -57,6 +57,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
     Effect.succeed({
       url: "http://127.0.0.1:4301",
       exitCode: Effect.never,
+      forceKill: Effect.succeed("forced" as const),
     }),
   connectToOpenCodeServer: ({ serverUrl }) =>
     Effect.gen(function* () {
@@ -71,6 +72,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         url: serverUrl ?? "http://127.0.0.1:4301",
         exitCode: null,
         external: Boolean(serverUrl),
+        forceKill: serverUrl ? null : Effect.succeed("forced" as const),
       };
     }),
   runOpenCodeCommand: () =>

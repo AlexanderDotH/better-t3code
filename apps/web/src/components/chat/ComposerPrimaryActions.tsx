@@ -4,6 +4,7 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
+import type { ThreadAbortStage } from "../ChatView.logic";
 
 interface PendingActionState {
   questionIndex: number;
@@ -17,6 +18,7 @@ interface ComposerPrimaryActionsProps {
   compact: boolean;
   pendingAction: PendingActionState | null;
   isRunning: boolean;
+  abortStage: ThreadAbortStage;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -56,6 +58,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   compact,
   pendingAction,
   isRunning,
+  abortStage,
   showPlanFollowUpPrompt,
   promptHasText,
   isSendBusy,
@@ -124,17 +127,24 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   }
 
   if (isRunning) {
+    const stopPresentation = stopActionPresentation(abortStage);
     return (
       <button
         type="button"
-        className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-[0_1px_--theme(--color-white/16%)] transition-all duration-150 hover:bg-destructive hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none sm:h-8 sm:w-8"
+        className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-[0_1px_--theme(--color-white/16%)] transition-all duration-150 hover:bg-destructive hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:cursor-default disabled:opacity-70 disabled:hover:scale-100 sm:h-8 sm:w-8"
         {...pointerFocusProps}
         onClick={onInterrupt}
-        aria-label="Stop generation"
+        aria-label={stopPresentation.ariaLabel}
+        title={stopPresentation.title}
+        disabled={stopPresentation.disabled}
       >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
-          <rect x="2" y="2" width="8" height="8" rx="1.5" />
-        </svg>
+        {stopPresentation.showSpinner ? (
+          <Spinner className="size-3.5 animate-pulse" aria-hidden="true" />
+        ) : (
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+            <rect x="2" y="2" width="8" height="8" rx="1.5" />
+          </svg>
+        )}
       </button>
     );
   }
@@ -227,3 +237,34 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     </button>
   );
 });
+
+export function stopActionPresentation(stage: ThreadAbortStage): {
+  readonly ariaLabel: string;
+  readonly title: string;
+  readonly disabled: boolean;
+  readonly showSpinner: boolean;
+} {
+  if (stage === "graceful-pending") {
+    return {
+      ariaLabel: "Force stop agent now",
+      title:
+        "Stopping agent… Click again to force stop now. T3 will force stop automatically after 5 seconds.",
+      disabled: false,
+      showSpinner: true,
+    };
+  }
+  if (stage === "force-pending") {
+    return {
+      ariaLabel: "Force stopping agent",
+      title: "Force stopping agent…",
+      disabled: true,
+      showSpinner: true,
+    };
+  }
+  return {
+    ariaLabel: "Stop generation",
+    title: "Stop generation",
+    disabled: false,
+    showSpinner: false,
+  };
+}

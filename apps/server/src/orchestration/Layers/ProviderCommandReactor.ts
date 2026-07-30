@@ -33,6 +33,7 @@ import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { ProviderTurnAbortCoordinator } from "../../provider/Services/ProviderTurnAbortCoordinator.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -58,6 +59,7 @@ type ProviderIntentEvent = Extract<
       | "thread.runtime-mode-set"
       | "thread.turn-start-requested"
       | "thread.turn-interrupt-requested"
+      | "thread.turn-force-abort-requested"
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
       | "thread.session-stop-requested";
@@ -198,6 +200,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
+  const turnAbortCoordinator = yield* ProviderTurnAbortCoordinator;
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
@@ -461,6 +464,7 @@ const make = Effect.gen(function* () {
             status: mapProviderSessionStatusToOrchestrationStatus(session.status),
             providerName: session.provider,
             providerInstanceId: session.providerInstanceId,
+            providerSessionId: session.providerSessionId ?? null,
             runtimeMode: desiredRuntimeMode,
             // Provider turn ids are not orchestration turn ids.
             activeTurnId: null,
@@ -878,8 +882,10 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
-    const hasSession = thread.session && thread.session.status !== "stopped";
-    if (!hasSession) {
+    const activeTurnMatches =
+      thread.session?.status === "running" &&
+      (event.payload.turnId === undefined || thread.session.activeTurnId === event.payload.turnId);
+    if (!activeTurnMatches) {
       return yield* appendProviderFailureActivity({
         threadId: event.payload.threadId,
         kind: "provider.turn.interrupt.failed",
@@ -890,8 +896,32 @@ const make = Effect.gen(function* () {
       });
     }
 
-    // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+    if (event.payload.turnId === undefined) {
+      // Backward compatibility for historical clients. Without an
+      // orchestration turn id we cannot safely arm process-level escalation.
+      yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+      return;
+    }
+    yield* turnAbortCoordinator.requestAbort({
+      threadId: event.payload.threadId,
+      turnId: event.payload.turnId,
+    });
+  });
+
+  const processTurnForceAbortRequested = Effect.fn("processTurnForceAbortRequested")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.turn-force-abort-requested" }>,
+  ) {
+    const thread = yield* resolveThread(event.payload.threadId);
+    if (
+      thread?.session?.status !== "running" ||
+      thread.session.activeTurnId !== event.payload.turnId
+    ) {
+      return;
+    }
+    yield* turnAbortCoordinator.forceAbort({
+      threadId: event.payload.threadId,
+      turnId: event.payload.turnId,
+    });
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
@@ -1004,6 +1034,7 @@ const make = Effect.gen(function* () {
         ...(thread.session?.providerInstanceId !== undefined
           ? { providerInstanceId: thread.session.providerInstanceId }
           : {}),
+        providerSessionId: thread.session?.providerSessionId ?? null,
         runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
         activeTurnId: null,
         lastError: thread.session?.lastError ?? null,
@@ -1044,6 +1075,9 @@ const make = Effect.gen(function* () {
       case "thread.turn-interrupt-requested":
         yield* processTurnInterruptRequested(event);
         return;
+      case "thread.turn-force-abort-requested":
+        yield* processTurnForceAbortRequested(event);
+        return;
       case "thread.approval-response-requested":
         yield* processApprovalResponseRequested(event);
         return;
@@ -1077,6 +1111,7 @@ const make = Effect.gen(function* () {
         event.type === "thread.runtime-mode-set" ||
         event.type === "thread.turn-start-requested" ||
         event.type === "thread.turn-interrupt-requested" ||
+        event.type === "thread.turn-force-abort-requested" ||
         event.type === "thread.approval-response-requested" ||
         event.type === "thread.user-input-response-requested" ||
         event.type === "thread.session-stop-requested"

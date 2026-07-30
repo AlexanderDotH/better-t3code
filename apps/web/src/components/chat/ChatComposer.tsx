@@ -43,7 +43,11 @@ import {
   expandCollapsedComposerCursor,
   replaceTextRange,
 } from "../../composer-logic";
-import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
+import {
+  deriveComposerSendState,
+  readFileAsDataUrl,
+  type ThreadAbortStage,
+} from "../ChatView.logic";
 import {
   type ComposerImageAttachment,
   type DraftId,
@@ -102,6 +106,7 @@ import {
   LockIcon,
   LockOpenIcon,
   PenLineIcon,
+  SparklesIcon,
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
@@ -149,6 +154,11 @@ const runtimeModeConfig: Record<
     label: "Auto-accept edits",
     description: "Auto-approve edits, ask before other actions.",
     icon: PenLineIcon,
+  },
+  auto: {
+    label: "Auto",
+    description: "An AI reviewer approves routine actions; risky ones still ask.",
+    icon: SparklesIcon,
   },
   "full-access": {
     label: "Full access",
@@ -348,6 +358,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
     isComplete: boolean;
   } | null;
   isRunning: boolean;
+  abortStage: ThreadAbortStage;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -374,6 +385,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         compact={props.compact}
         pendingAction={props.pendingAction}
         isRunning={props.isRunning}
+        abortStage={props.abortStage}
         showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
         promptHasText={props.promptHasText}
         isSendBusy={props.isSendBusy}
@@ -452,6 +464,7 @@ export interface ChatComposerProps {
 
   // Session phase
   phase: SessionPhase;
+  abortStage: ThreadAbortStage;
   isConnecting: boolean;
   isSendBusy: boolean;
   isPreparingWorktree: boolean;
@@ -563,6 +576,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isServerThread: _isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
     phase,
+    abortStage,
     isConnecting,
     isSendBusy,
     isPreparingWorktree,
@@ -2280,6 +2294,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       compact
                       pendingAction={pendingPrimaryAction}
                       isRunning={false}
+                      abortStage="idle"
                       showPlanFollowUpPrompt={false}
                       promptHasText={false}
                       isSendBusy={isSendBusy}
@@ -2542,6 +2557,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     compact
                     pendingAction={pendingPrimaryAction}
                     isRunning={false}
+                    abortStage="idle"
                     showPlanFollowUpPrompt={false}
                     promptHasText={false}
                     isSendBusy={isSendBusy}
@@ -2670,6 +2686,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   activeThreadProviderDisplayName={activeThreadProviderDisplayName}
                   pendingAction={pendingPrimaryAction}
                   isRunning={phase === "running"}
+                  abortStage={abortStage}
                   showPlanFollowUpPrompt={pendingUserInputs.length === 0 && showPlanFollowUpPrompt}
                   promptHasText={prompt.trim().length > 0}
                   isSendBusy={isSendBusy || voiceRecordingActive}

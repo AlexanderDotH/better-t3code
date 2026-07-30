@@ -188,6 +188,7 @@ describe("providerInstanceId routing key (slice-2 invariant)", () => {
     const session = decodeProviderSession({
       provider: "codex",
       providerInstanceId: "codex_work",
+      providerSessionId: "runtime-session-1",
       status: "ready",
       runtimeMode: "full-access",
       threadId: "thread-1",
@@ -195,6 +196,7 @@ describe("providerInstanceId routing key (slice-2 invariant)", () => {
       updatedAt: "2024-01-01T00:00:00Z",
     });
     expect(session.providerInstanceId).toBe("codex_work");
+    expect(session.providerSessionId).toBe("runtime-session-1");
   });
 
   it("decodes ProviderSession for fork-provided driver kinds", () => {
@@ -224,6 +226,22 @@ describe("providerInstanceId routing key (slice-2 invariant)", () => {
     });
     expect(event.provider).toBe("codex");
     expect(event.providerInstanceId).toBe("codex_personal");
+  });
+
+  it("decodes a ProviderEvent carrying subagent and provider-thread routing", () => {
+    const event = decodeProviderEvent({
+      id: "event-subagent-1",
+      kind: "notification",
+      provider: "codex",
+      threadId: "thread-1",
+      subagentId: "agent-contracts",
+      providerThreadId: "provider-thread-contracts",
+      createdAt: "2026-07-30T10:00:00.000Z",
+      method: "item/started",
+    });
+
+    expect(event.subagentId).toBe("agent-contracts");
+    expect(event.providerThreadId).toBe("provider-thread-contracts");
   });
 
   it("rejects providerInstanceId values that fail the slug pattern (defense in depth)", () => {

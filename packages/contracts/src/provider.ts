@@ -5,6 +5,7 @@ import {
   EventId,
   IsoDateTime,
   ProviderItemId,
+  SubagentId,
   ThreadId,
   TurnId,
 } from "./baseSchemas.ts";
@@ -37,6 +38,7 @@ export const ProviderSession = Schema.Struct({
   // populates it (post-slice-4), routing flips to instance-id-only and the
   // legacy `provider` field is removed.
   providerInstanceId: Schema.optional(ProviderInstanceId),
+  providerSessionId: Schema.optional(TrimmedNonEmptyString),
   status: ProviderSessionStatus,
   runtimeMode: RuntimeMode,
   cwd: Schema.optional(TrimmedNonEmptyString),
@@ -118,7 +120,10 @@ export const ProviderEvent = Schema.Struct({
   provider: ProviderDriverKind,
   // See ProviderSession for the migration story.
   providerInstanceId: Schema.optional(ProviderInstanceId),
+  providerSessionId: Schema.optional(TrimmedNonEmptyString),
   threadId: ThreadId,
+  subagentId: Schema.optional(SubagentId),
+  providerThreadId: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
   method: TrimmedNonEmptyString,
   message: Schema.optional(TrimmedNonEmptyString),

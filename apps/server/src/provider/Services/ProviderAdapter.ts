@@ -11,6 +11,7 @@ import type {
   ApprovalRequestId,
   ProviderApprovalDecision,
   ProviderDriverKind,
+  ProviderInstanceId,
   ProviderUserInputAnswers,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
@@ -47,6 +48,23 @@ export interface ProviderThreadSnapshot {
   readonly turns: ReadonlyArray<ProviderThreadTurnSnapshot>;
 }
 
+export interface ProviderAbortTarget {
+  readonly threadId: ThreadId;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly providerSessionId: string;
+  readonly turnGeneration: string;
+}
+
+export type ProviderForceStopResult =
+  | "forced"
+  | "already-stopped"
+  | "target-changed"
+  | "externally-managed";
+
+export function providerAbortSessionId(session: ProviderSession): string {
+  return session.providerSessionId ?? session.createdAt;
+}
+
 export interface ProviderAdapterShape<TError> {
   /**
    * Provider kind implemented by this adapter.
@@ -74,6 +92,20 @@ export interface ProviderAdapterShape<TError> {
   readonly interruptTurn: (threadId: ThreadId, turnId?: TurnId) => Effect.Effect<void, TError>;
 
   /**
+   * Capture the exact live provider process and internal turn generation
+   * without starting or recovering a session.
+   */
+  readonly captureAbortTarget: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ProviderAbortTarget | null, TError>;
+
+  /**
+   * Cooperatively interrupt only when the target still identifies the current
+   * process and turn generation.
+   */
+  readonly interruptAbortTarget: (target: ProviderAbortTarget) => Effect.Effect<boolean, TError>;
+
+  /**
    * Respond to an interactive approval request.
    */
   readonly respondToRequest: (
@@ -95,6 +127,13 @@ export interface ProviderAdapterShape<TError> {
    * Stop one provider session.
    */
   readonly stopSession: (threadId: ThreadId) => Effect.Effect<void, TError>;
+
+  /**
+   * Force-stop one exact live provider process generation.
+   */
+  readonly forceStopSession: (
+    target: ProviderAbortTarget,
+  ) => Effect.Effect<ProviderForceStopResult, TError>;
 
   /**
    * List currently active provider sessions for this adapter.

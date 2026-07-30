@@ -342,6 +342,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               createdAt: "2026-02-24T00:00:06.000Z",
             },
           ],
+          subagents: [],
           checkpoints: [
             {
               turnId: asTurnId("turn-1"),
@@ -357,6 +358,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            providerSessionId: "provider-session-1",
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
             lastError: null,
@@ -422,6 +424,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            providerSessionId: "provider-session-1",
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
             lastError: null,

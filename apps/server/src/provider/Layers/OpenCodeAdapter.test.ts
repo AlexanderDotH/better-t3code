@@ -99,6 +99,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       return {
         url,
         exitCode: Effect.never,
+        forceKill: Effect.succeed("forced" as const),
       };
     }),
   connectToOpenCodeServer: ({ serverUrl, mcpServers }) =>
@@ -121,6 +122,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         url,
         exitCode: null,
         external: Boolean(serverUrl),
+        forceKill: serverUrl ? null : Effect.succeed("forced" as const),
       };
     }),
   runOpenCodeCommand: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),

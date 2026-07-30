@@ -4,7 +4,7 @@ import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
-import { ThreadId } from "@t3tools/contracts";
+import { SubagentId, ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 
@@ -14,8 +14,10 @@ import {
 } from "../CodexDeveloperInstructions.ts";
 import {
   buildTurnStartParams,
+  codexNotificationProviderRoute,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
+  makeCodexSubagentId,
   openCodexThread,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
@@ -102,6 +104,7 @@ describe("buildTurnStartParams", () => {
     NodeAssert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "never",
+      approvalsReviewer: "user",
       sandboxPolicy: {
         type: "dangerFullAccess",
       },
@@ -144,6 +147,7 @@ describe("buildTurnStartParams", () => {
     NodeAssert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "on-request",
+      approvalsReviewer: "user",
       sandboxPolicy: {
         type: "workspaceWrite",
       },
@@ -169,6 +173,31 @@ describe("buildTurnStartParams", () => {
     });
   });
 
+  it.effect("routes approvals to the auto reviewer in auto mode", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "auto",
+        prompt: "Ship it",
+      });
+
+      NodeAssert.deepStrictEqual(params, {
+        threadId: "provider-thread-1",
+        approvalPolicy: "on-request",
+        approvalsReviewer: "auto_review",
+        sandboxPolicy: {
+          type: "workspaceWrite",
+        },
+        input: [
+          {
+            type: "text",
+            text: "Ship it",
+          },
+        ],
+      });
+    }),
+  );
+
   it("omits collaboration mode when interaction mode is absent", () => {
     const params = Effect.runSync(
       buildTurnStartParams({
@@ -181,6 +210,7 @@ describe("buildTurnStartParams", () => {
     NodeAssert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "untrusted",
+      approvalsReviewer: "user",
       sandboxPolicy: {
         type: "readOnly",
       },
@@ -216,6 +246,60 @@ describe("hasConfiguredMcpServer", () => {
       hasConfiguredMcpServer(["-c", 'mcp_servers.t3-code.url="http://127.0.0.1/mcp"']),
       true,
     );
+  });
+});
+
+describe("Codex notification provider routing", () => {
+  it("tags child notifications from their provider thread without rewriting their route", () => {
+    const route = codexNotificationProviderRoute("provider-root", {
+      method: "item/started",
+      params: {
+        threadId: "provider-child",
+        turnId: "child-turn",
+        item: {
+          id: "child-item",
+          type: "agentMessage",
+          text: "",
+        },
+      },
+    });
+
+    NodeAssert.deepStrictEqual(route, {
+      providerThreadId: "provider-child",
+      subagentId: SubagentId.make("codex:provider-child"),
+    });
+  });
+
+  it("reads child thread ids from thread metadata notifications", () => {
+    const route = codexNotificationProviderRoute("provider-root", {
+      method: "thread/started",
+      params: {
+        thread: {
+          id: "provider-child",
+        },
+      },
+    });
+
+    NodeAssert.deepStrictEqual(route, {
+      providerThreadId: "provider-child",
+      subagentId: makeCodexSubagentId("provider-child"),
+    });
+  });
+
+  it("keeps root notifications untagged while retaining the provider thread id", () => {
+    const route = codexNotificationProviderRoute("provider-root", {
+      method: "turn/started",
+      params: {
+        threadId: "provider-root",
+        turn: {
+          id: "root-turn",
+        },
+      },
+    });
+
+    NodeAssert.deepStrictEqual(route, {
+      providerThreadId: "provider-root",
+    });
   });
 });
 

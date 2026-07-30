@@ -920,6 +920,16 @@ export const WsOrchestrationSubscribeThreadRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationSubscribeSubagentRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.subscribeSubagent,
+  {
+    payload: OrchestrationRpcSchemas.subscribeSubagent.input,
+    success: OrchestrationRpcSchemas.subscribeSubagent.output,
+    error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
+    stream: true,
+  },
+);
+
 export const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTerminalEvents, {
   payload: Schema.Struct({}),
   success: TerminalEvent,
@@ -1052,4 +1062,5 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  WsOrchestrationSubscribeSubagentRpc,
 );
