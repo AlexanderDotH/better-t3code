@@ -19,6 +19,7 @@ import {
   OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
+  RuntimeSessionId,
   ThreadId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -45,6 +46,7 @@ class OpenCodeAdapter extends Context.Service<OpenCodeAdapter, OpenCodeAdapterSh
 ) {}
 
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
+const FORCE_STOP_RUNTIME_SESSION_ID = RuntimeSessionId.make("opencode-force-stop-runtime");
 
 type MessageEntry = {
   info: {
@@ -718,6 +720,30 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         runtimeMock.state.abortCalls.includes("http://127.0.0.1:9999/session"),
         true,
       );
+    }),
+  );
+
+  it.effect("force-detaches a configured external server without remote abort", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-force-external");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeSessionId: FORCE_STOP_RUNTIME_SESSION_ID,
+        runtimeMode: "full-access",
+      });
+
+      const result = yield* adapter.forceStopSession(threadId, FORCE_STOP_RUNTIME_SESSION_ID);
+
+      NodeAssert.deepStrictEqual(result, {
+        outcome: "detached",
+        mechanism: "local-detach",
+        detail:
+          "Detached local OpenCode session state; the externally managed server may continue remote work.",
+      });
+      NodeAssert.deepStrictEqual(runtimeMock.state.abortCalls, []);
+      NodeAssert.equal(yield* adapter.hasSession(threadId), false);
     }),
   );
 

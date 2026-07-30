@@ -18,6 +18,7 @@ import {
   ProviderDriverKind,
   ProviderItemId,
   ProviderRuntimeEvent,
+  RuntimeSessionId,
   type RuntimeMode,
   ThreadId,
   ProviderInstanceId,
@@ -42,6 +43,7 @@ import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+const FORCE_STOP_RUNTIME_SESSION_ID = RuntimeSessionId.make("claude-force-stop-runtime");
 
 // Test-local service tag so the rest of the file can keep using `yield* ClaudeAdapter`.
 class ClaudeAdapter extends Context.Service<ClaudeAdapter, ClaudeAdapterShape>()(
@@ -2055,6 +2057,54 @@ describe("ClaudeAdapterLive", () => {
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(layer),
+    );
+  });
+
+  it.effect("force-stops Claude by closing its exact query without interrupting first", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        runtimeSessionId: FORCE_STOP_RUNTIME_SESSION_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const result = yield* adapter.forceStopSession(THREAD_ID, FORCE_STOP_RUNTIME_SESSION_ID);
+
+      assert.deepEqual(result, {
+        outcome: "terminated",
+        mechanism: "runtime-close",
+      });
+      assert.equal(harness.query.closeCalls, 1);
+      assert.deepEqual(harness.query.interruptCalls, []);
+      assert.equal(yield* adapter.hasSession(THREAD_ID), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("does not stop an absent Claude query", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      assert.deepEqual(
+        yield* adapter.forceStopSession(
+          ThreadId.make("claude-missing-force-stop"),
+          FORCE_STOP_RUNTIME_SESSION_ID,
+        ),
+        {
+          outcome: "terminated",
+          mechanism: "already-stopped",
+        },
+      );
+      assert.equal(harness.query.closeCalls, 0);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
     );
   });
 

@@ -22,6 +22,7 @@ import {
   RuntimeItemId,
   RuntimeRequestId,
   ProviderApprovalDecision,
+  RuntimeSessionId,
   ThreadId,
   ProviderSendTurnInput,
   type RuntimeSubagentState,
@@ -66,6 +67,7 @@ import {
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import { stampProviderRuntimeEventOrigin } from "../runtimeEventOrigin.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
 const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
@@ -94,6 +96,7 @@ export interface CodexAdapterLiveOptions {
 
 interface CodexAdapterSessionContext {
   readonly threadId: ThreadId;
+  readonly runtimeSessionId: RuntimeSessionId;
   readonly scope: Scope.Closeable;
   readonly runtime: CodexSessionRuntimeShape;
   readonly eventFiber: Fiber.Fiber<void, never>;
@@ -1863,6 +1866,21 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         if (existing && !existing.stopped) {
           yield* Effect.suspend(() => stopSessionInternal(existing));
         }
+        const runtimeSessionId =
+          input.runtimeSessionId ??
+          RuntimeSessionId.make(
+            yield* crypto.randomUUIDv4.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterRequestError({
+                    provider: PROVIDER,
+                    method: "crypto/randomUUIDv4",
+                    detail: "Failed to generate Codex runtime identifier.",
+                    cause,
+                  }),
+              ),
+            ),
+          );
 
         const serviceTier =
           input.modelSelection?.instanceId === boundInstanceId
@@ -1938,7 +1956,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               });
               return;
             }
-            yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
+            yield* Queue.offerAll(
+              runtimeEventQueue,
+              runtimeEvents.map((runtimeEvent) =>
+                stampProviderRuntimeEventOrigin(runtimeSessionId, runtimeEvent),
+              ),
+            );
           }),
         ).pipe(Effect.forkChild);
 
@@ -1963,6 +1986,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
 
         sessions.set(input.threadId, {
           threadId: input.threadId,
+          runtimeSessionId,
           scope: sessionScope,
           runtime,
           eventFiber,
@@ -1970,7 +1994,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         });
         sessionScopeTransferred = true;
 
-        return started;
+        return {
+          ...started,
+          runtimeSessionId,
+        };
       }),
     );
 
@@ -2051,15 +2078,65 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     return session;
   });
 
-  const interruptTurn: CodexAdapterShape["interruptTurn"] = (threadId, turnId) =>
-    requireSession(threadId).pipe(
-      Effect.flatMap((session) => session.runtime.interruptTurn(turnId)),
+  const interruptTurn: CodexAdapterShape["interruptTurn"] = (
+    threadId,
+    turnId,
+    expectedRuntimeSessionId,
+  ) =>
+    Effect.gen(function* () {
+      const current = sessions.get(threadId);
+      if (
+        expectedRuntimeSessionId !== undefined &&
+        (!current || current.stopped || current.runtimeSessionId !== expectedRuntimeSessionId)
+      ) {
+        return;
+      }
+      const session = yield* requireSession(threadId);
+      yield* session.runtime.interruptTurn(turnId);
+    }).pipe(
       Effect.mapError((cause) =>
         cause._tag === "ProviderAdapterSessionNotFoundError"
           ? cause
           : mapCodexRuntimeError(threadId, "turn/interrupt", cause),
       ),
     );
+
+  const forceStopSession: CodexAdapterShape["forceStopSession"] = Effect.fn(
+    "CodexAdapter.forceStopSession",
+  )(function* (threadId, expectedRuntimeSessionId) {
+    const session = sessions.get(threadId);
+    if (!session || session.stopped || session.runtimeSessionId !== expectedRuntimeSessionId) {
+      return {
+        outcome: "terminated",
+        mechanism: "already-stopped",
+      };
+    }
+
+    session.stopped = true;
+    sessions.delete(threadId);
+    yield* session.runtime.forceClose.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderAdapterProcessError({
+            provider: PROVIDER,
+            threadId,
+            detail: cause.message,
+            cause,
+          }),
+      ),
+      Effect.ensuring(
+        Fiber.interrupt(session.eventFiber).pipe(
+          Effect.ignore,
+          Effect.andThen(Scope.close(session.scope, Exit.void).pipe(Effect.ignore)),
+        ),
+      ),
+    );
+
+    return {
+      outcome: "terminated",
+      mechanism: "process-tree",
+    };
+  });
 
   const readThread: CodexAdapterShape["readThread"] = (threadId) =>
     requireSession(threadId).pipe(
@@ -2186,6 +2263,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     startSession,
     sendTurn,
     interruptTurn,
+    forceStopSession,
     readThread,
     rollbackThread,
     respondToRequest,

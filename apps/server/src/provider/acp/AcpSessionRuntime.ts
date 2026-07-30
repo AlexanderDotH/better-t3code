@@ -5,6 +5,7 @@ import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -21,6 +22,10 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
+import {
+  forceTerminateOwnedChildProcessAndCleanup,
+  type OwnedChildProcessTerminationError,
+} from "../../process/OwnedChildProcess.ts";
 import {
   collectSessionConfigOptionValues,
   extractModelConfigId,
@@ -199,6 +204,8 @@ export class AcpSessionRuntime extends Context.Service<
      * @see https://agentclientprotocol.com/protocol/schema#session/cancel
      */
     readonly cancel: Effect.Effect<void, EffectAcpErrors.AcpError>;
+    /** Immediately terminates the exact owned ACP process group and closes local resources. */
+    readonly forceClose: Effect.Effect<void, OwnedChildProcessTerminationError>;
     /**
      * Selects the active mode through the negotiated `mode` configuration option.
      * This is a no-op when the requested mode is already active.
@@ -688,6 +695,21 @@ export const make = (
       return yield* effect;
     });
 
+    const forceClose = Effect.gen(function* () {
+      const activePromptFiber = yield* Ref.getAndSet(activePromptFiberRef, Option.none());
+      if (Option.isSome(activePromptFiber)) {
+        yield* Fiber.interrupt(activePromptFiber.value).pipe(
+          Effect.ignore,
+          Effect.forkChild,
+          Effect.asVoid,
+        );
+      }
+      yield* forceTerminateOwnedChildProcessAndCleanup(
+        { child },
+        Scope.close(runtimeScope, Exit.void).pipe(Effect.ensuring(Queue.shutdown(eventQueue))),
+      );
+    });
+
     return {
       handleRequestPermission: acp.handleRequestPermission,
       handleElicitation: acp.handleElicitation,
@@ -771,6 +793,7 @@ export const make = (
           }),
         ),
       ),
+      forceClose,
       setMode: (modeId) =>
         Ref.get(modeStateRef).pipe(
           Effect.flatMap((modeState) => {

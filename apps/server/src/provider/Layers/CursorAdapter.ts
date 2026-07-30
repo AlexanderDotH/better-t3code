@@ -17,6 +17,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RuntimeRequestId,
+  RuntimeSessionId,
   type RuntimeMode,
   type ThreadId,
   TurnId,
@@ -505,6 +506,8 @@ export function makeCursorAdapter(
           if (existing && !existing.stopped) {
             yield* stopSessionInternal(existing);
           }
+          const runtimeSessionId =
+            input.runtimeSessionId ?? RuntimeSessionId.make(yield* randomUUIDv4);
 
           const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
           const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
@@ -761,6 +764,7 @@ export function makeCursorAdapter(
           const session: ProviderSession = {
             provider: PROVIDER,
             providerInstanceId: boundInstanceId,
+            runtimeSessionId,
             status: "ready",
             runtimeMode: input.runtimeMode,
             cwd,
@@ -1065,8 +1069,21 @@ export function makeCursorAdapter(
         );
       });
 
-    const interruptTurn: CursorAdapterShape["interruptTurn"] = (threadId) =>
+    const interruptTurn: CursorAdapterShape["interruptTurn"] = (
+      threadId,
+      _turnId,
+      expectedRuntimeSessionId,
+    ) =>
       Effect.gen(function* () {
+        const current = sessions.get(threadId);
+        if (
+          expectedRuntimeSessionId !== undefined &&
+          (!current ||
+            current.stopped ||
+            current.session.runtimeSessionId !== expectedRuntimeSessionId)
+        ) {
+          return;
+        }
         const ctx = yield* requireSession(threadId);
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
@@ -1078,6 +1095,47 @@ export function makeCursorAdapter(
           ),
         );
       });
+
+    const forceStopSession: CursorAdapterShape["forceStopSession"] = Effect.fn(
+      "CursorAdapter.forceStopSession",
+    )(function* (threadId, expectedRuntimeSessionId) {
+      const ctx = sessions.get(threadId);
+      if (!ctx || ctx.stopped || ctx.session.runtimeSessionId !== expectedRuntimeSessionId) {
+        return {
+          outcome: "terminated",
+          mechanism: "already-stopped",
+        };
+      }
+
+      ctx.stopped = true;
+      sessions.delete(threadId);
+      yield* ctx.acp.forceClose.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId,
+              detail: cause.message,
+              cause,
+            }),
+        ),
+        Effect.ensuring(
+          Effect.gen(function* () {
+            yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+            yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
+            if (ctx.notificationFiber) {
+              yield* Fiber.interrupt(ctx.notificationFiber).pipe(Effect.ignore);
+            }
+            yield* Scope.close(ctx.scope, Exit.void).pipe(Effect.ignore);
+          }),
+        ),
+      );
+
+      return {
+        outcome: "terminated",
+        mechanism: "process-tree",
+      };
+    });
 
     const respondToRequest: CursorAdapterShape["respondToRequest"] = (
       threadId,
@@ -1175,6 +1233,7 @@ export function makeCursorAdapter(
       startSession,
       sendTurn,
       interruptTurn,
+      forceStopSession,
       readThread,
       rollbackThread,
       respondToRequest,

@@ -41,6 +41,7 @@ import {
   type RuntimeContentStreamKind,
   RuntimeItemId,
   RuntimeRequestId,
+  RuntimeSessionId,
   RuntimeTaskId,
   ThreadId,
   TurnId,
@@ -3187,6 +3188,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
 
       const startedAt = yield* nowIso;
+      const runtimeSessionId = input.runtimeSessionId ?? RuntimeSessionId.make(yield* randomUUIDv4);
       const resumeState = readClaudeResumeState(input.resumeCursor);
       const threadId = input.threadId;
       const existingResumeSessionId = resumeState?.resume;
@@ -3649,6 +3651,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         threadId,
         provider: PROVIDER,
         providerInstanceId: boundInstanceId,
+        runtimeSessionId,
         status: "ready",
         runtimeMode: input.runtimeMode,
         ...(input.cwd ? { cwd: input.cwd } : {}),
@@ -3875,7 +3878,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   });
 
   const interruptTurn: ClaudeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
-    function* (threadId, _turnId) {
+    function* (threadId, _turnId, expectedRuntimeSessionId) {
+      const current = sessions.get(threadId);
+      if (
+        expectedRuntimeSessionId !== undefined &&
+        (!current ||
+          current.stopped ||
+          current.session.runtimeSessionId !== expectedRuntimeSessionId)
+      ) {
+        return;
+      }
       const context = yield* requireSession(threadId);
       yield* Effect.tryPromise({
         try: () => context.query.interrupt(),
@@ -3883,6 +3895,74 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     },
   );
+
+  const forceStopSession: ClaudeAdapterShape["forceStopSession"] = Effect.fn(
+    "ClaudeAdapter.forceStopSession",
+  )(function* (threadId, expectedRuntimeSessionId) {
+    const context = sessions.get(threadId);
+    if (
+      !context ||
+      context.stopped ||
+      context.session.runtimeSessionId !== expectedRuntimeSessionId
+    ) {
+      return {
+        outcome: "terminated",
+        mechanism: "already-stopped",
+      };
+    }
+
+    context.stopped = true;
+    sessions.delete(threadId);
+
+    let closeError: ProviderAdapterProcessError | undefined;
+    yield* Effect.try({
+      try: () => context.query.close(),
+      catch: (cause) =>
+        new ProviderAdapterProcessError({
+          provider: PROVIDER,
+          threadId,
+          detail: "Failed to force-close Claude runtime query.",
+          cause,
+        }),
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.sync(() => {
+          closeError = error;
+        }),
+      ),
+    );
+
+    for (const pending of context.pendingApprovals.values()) {
+      yield* Deferred.succeed(pending.decision, "cancel").pipe(Effect.ignore);
+    }
+    context.pendingApprovals.clear();
+    for (const pending of context.pendingUserInputs.values()) {
+      yield* Deferred.succeed(pending.answers, {}).pipe(Effect.ignore);
+    }
+    context.pendingUserInputs.clear();
+    yield* Queue.shutdown(context.promptQueue);
+
+    const streamFiber = context.streamFiber;
+    context.streamFiber = undefined;
+    if (streamFiber && streamFiber.pollUnsafe() === undefined) {
+      yield* Fiber.interrupt(streamFiber).pipe(Effect.ignore);
+    }
+
+    context.session = {
+      ...context.session,
+      status: "closed",
+      activeTurnId: undefined,
+      updatedAt: yield* nowIso,
+    };
+
+    if (closeError) {
+      return yield* closeError;
+    }
+    return {
+      outcome: "terminated",
+      mechanism: "runtime-close",
+    };
+  });
 
   const readThread: ClaudeAdapterShape["readThread"] = Effect.fn("readThread")(
     function* (threadId) {
@@ -3989,6 +4069,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     startSession,
     sendTurn,
     interruptTurn,
+    forceStopSession,
     readThread,
     rollbackThread,
     respondToRequest,

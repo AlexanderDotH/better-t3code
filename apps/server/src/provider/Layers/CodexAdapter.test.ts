@@ -16,6 +16,7 @@ import {
   type ProviderSession,
   type ProviderTurnStartResult,
   type ProviderUserInputAnswers,
+  RuntimeSessionId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -60,6 +61,7 @@ class CodexAdapter extends Context.Service<CodexAdapter, CodexAdapterShape>()(
 ) {}
 
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
+const FORCE_STOP_RUNTIME_SESSION_ID = RuntimeSessionId.make("codex-force-stop-runtime");
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
 const asItemId = (value: string): ProviderItemId => ProviderItemId.make(value);
@@ -362,6 +364,7 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   );
 
   public readonly closeImpl = vi.fn(() => Promise.resolve(undefined));
+  public readonly forceCloseImpl = vi.fn(() => Promise.resolve(undefined));
 
   readonly options: CodexSessionRuntimeOptions;
 
@@ -402,6 +405,7 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   }
 
   close = Effect.promise(() => this.closeImpl());
+  forceClose = Effect.promise(() => this.forceCloseImpl());
 
   emit(event: ProviderEvent) {
     return Queue.offer(this.eventQueue, event).pipe(Effect.asVoid);
@@ -751,6 +755,7 @@ function startLifecycleRuntime() {
     yield* adapter.startSession({
       provider: ProviderDriverKind.make("codex"),
       threadId: asThreadId("thread-1"),
+      runtimeSessionId: FORCE_STOP_RUNTIME_SESSION_ID,
       runtimeMode: "full-access",
     });
     const runtime = lifecycleRuntimeFactory.lastRuntime;
@@ -760,6 +765,42 @@ function startLifecycleRuntime() {
 }
 
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+  it.effect("force-stops the exact owned Codex runtime without cooperative close", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+
+      const result = yield* adapter.forceStopSession(
+        asThreadId("thread-1"),
+        FORCE_STOP_RUNTIME_SESSION_ID,
+      );
+
+      NodeAssert.deepStrictEqual(result, {
+        outcome: "terminated",
+        mechanism: "process-tree",
+      });
+      NodeAssert.equal(runtime.forceCloseImpl.mock.calls.length, 1);
+      NodeAssert.equal(runtime.closeImpl.mock.calls.length, 0);
+      NodeAssert.equal(yield* adapter.hasSession(asThreadId("thread-1")), false);
+    }),
+  );
+
+  it.effect("does not stop a missing Codex runtime", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+
+      NodeAssert.deepStrictEqual(
+        yield* adapter.forceStopSession(
+          asThreadId("missing-force-stop"),
+          FORCE_STOP_RUNTIME_SESSION_ID,
+        ),
+        {
+          outcome: "terminated",
+          mechanism: "already-stopped",
+        },
+      );
+    }),
+  );
+
   it.effect("maps completed agent message items to canonical item.completed events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

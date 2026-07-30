@@ -9,6 +9,8 @@
  *
  * @module ProviderServiceLive
  */
+import * as NodeCrypto from "node:crypto";
+
 import {
   ModelSelection,
   NonNegativeInt,
@@ -19,6 +21,7 @@ import {
   ProviderSendTurnInput,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
+  RuntimeSessionId,
   type ProviderInstanceId,
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
@@ -26,13 +29,17 @@ import {
 } from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import {
@@ -67,6 +74,23 @@ export interface ProviderServiceLiveOptions {
 
 type ProviderServiceMethod<Name extends keyof ProviderService.ProviderService["Service"]> =
   ProviderService.ProviderService["Service"][Name];
+
+interface ProviderRuntimeLease {
+  readonly runtimeSessionId: RuntimeSessionId;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
+  readonly startFiber?: Fiber.Fiber<ProviderSession, ProviderAdapterError>;
+  readonly forceStopping?: boolean;
+}
+
+type RuntimeLeaseInstallResult =
+  | {
+      readonly _tag: "Installed";
+      readonly previous: ProviderRuntimeLease | undefined;
+    }
+  | {
+      readonly _tag: "BlockedByCleanup";
+    };
 
 const ProviderRollbackConversationInput = Schema.Struct({
   threadId: ThreadId,
@@ -129,6 +153,7 @@ function toRuntimePayloadFromSession(
   return {
     cwd: session.cwd ?? null,
     model: session.model ?? null,
+    runtimeSessionId: session.runtimeSessionId ?? null,
     activeTurnId: session.activeTurnId ?? null,
     lastError: session.lastError ?? null,
     ...(extra?.modelSelection !== undefined ? { modelSelection: extra.modelSelection } : {}),
@@ -211,7 +236,135 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+  const serviceScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+    Scope.close(scope, Exit.void),
+  );
+  const runtimeLeases = yield* Ref.make(new Map<ThreadId, ProviderRuntimeLease>());
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+  const nextRuntimeSessionId = Effect.sync(() => RuntimeSessionId.make(NodeCrypto.randomUUID()));
+
+  const installRuntimeLease = (input: {
+    readonly threadId: ThreadId;
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
+    readonly runtimeSessionId: RuntimeSessionId;
+    readonly startFiber?: Fiber.Fiber<ProviderSession, ProviderAdapterError>;
+  }) =>
+    Ref.modify(runtimeLeases, (current) => {
+      const previous = current.get(input.threadId);
+      if (previous?.forceStopping === true) {
+        return [{ _tag: "BlockedByCleanup" } as RuntimeLeaseInstallResult, current] as const;
+      }
+      const next = new Map(current);
+      next.set(input.threadId, {
+        runtimeSessionId: input.runtimeSessionId,
+        providerInstanceId: input.providerInstanceId,
+        adapter: input.adapter,
+        ...(input.startFiber !== undefined ? { startFiber: input.startFiber } : {}),
+      });
+      return [
+        {
+          _tag: "Installed",
+          previous,
+        } as RuntimeLeaseInstallResult,
+        next,
+      ] as const;
+    });
+
+  const claimRuntimeLeaseForCleanup = (input: {
+    readonly threadId: ThreadId;
+    readonly expectedRuntimeSessionId: RuntimeSessionId;
+    readonly expectedProviderInstanceId?: ProviderInstanceId;
+  }) =>
+    Ref.modify(runtimeLeases, (current) => {
+      const existing = current.get(input.threadId);
+      if (
+        existing?.runtimeSessionId !== input.expectedRuntimeSessionId ||
+        (input.expectedProviderInstanceId !== undefined &&
+          existing.providerInstanceId !== input.expectedProviderInstanceId) ||
+        existing.forceStopping === true
+      ) {
+        return [undefined, current] as const;
+      }
+      const next = new Map(current);
+      next.set(input.threadId, {
+        ...existing,
+        forceStopping: true,
+      });
+      return [existing, next] as const;
+    });
+
+  const completeRuntimeLeaseCleanup = (input: {
+    readonly threadId: ThreadId;
+    readonly expectedRuntimeSessionId: RuntimeSessionId;
+    readonly replacement?: ProviderRuntimeLease;
+  }) =>
+    Ref.modify(runtimeLeases, (current) => {
+      const existing = current.get(input.threadId);
+      if (
+        existing?.runtimeSessionId !== input.expectedRuntimeSessionId ||
+        existing.forceStopping !== true
+      ) {
+        return [false, current] as const;
+      }
+      const next = new Map(current);
+      if (input.replacement !== undefined) {
+        next.set(input.threadId, input.replacement);
+      } else {
+        next.delete(input.threadId);
+      }
+      return [true, next] as const;
+    });
+
+  const clearRuntimeLease = (threadId: ThreadId, expectedRuntimeSessionId?: RuntimeSessionId) =>
+    Ref.modify(runtimeLeases, (current) => {
+      const existing = current.get(threadId);
+      if (
+        !existing ||
+        existing.forceStopping === true ||
+        (expectedRuntimeSessionId !== undefined &&
+          existing.runtimeSessionId !== expectedRuntimeSessionId)
+      ) {
+        return [false, current] as const;
+      }
+      const next = new Map(current);
+      next.delete(threadId);
+      return [true, next] as const;
+    });
+
+  const ensureRuntimeLease = Effect.fn("ensureRuntimeLease")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
+  }) {
+    const current = (yield* Ref.get(runtimeLeases)).get(input.threadId);
+    if (
+      current?.providerInstanceId === input.providerInstanceId &&
+      current.adapter === input.adapter &&
+      current.forceStopping !== true
+    ) {
+      return current.runtimeSessionId;
+    }
+    if (current?.forceStopping === true) {
+      return yield* toValidationError(
+        "ProviderService.ensureRuntimeLease",
+        `Cannot adopt thread '${input.threadId}' while runtime '${current.runtimeSessionId}' is being force-stopped.`,
+      );
+    }
+    const runtimeSessionId = yield* nextRuntimeSessionId;
+    const installed = yield* installRuntimeLease({
+      ...input,
+      runtimeSessionId,
+    });
+    if (installed._tag === "BlockedByCleanup") {
+      return yield* toValidationError(
+        "ProviderService.ensureRuntimeLease",
+        `Cannot adopt thread '${input.threadId}' while its previous runtime is being cleaned up.`,
+      );
+    }
+    return runtimeSessionId;
+  });
+
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
     McpSessionRegistry.issueActiveMcpCredential({ threadId, providerInstanceId }).pipe(
       Effect.tap((credential) =>
@@ -224,6 +377,105 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     McpSessionRegistry.revokeActiveMcpThread(threadId).pipe(
       Effect.tap(() => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
     );
+
+  const cleanupExactRuntimeLeaseMcpSession = Effect.fn("cleanupExactRuntimeLeaseMcpSession")(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly expectedRuntimeSessionId: RuntimeSessionId;
+      readonly replacement?: ProviderRuntimeLease;
+    }) {
+      const claimed = yield* claimRuntimeLeaseForCleanup(input);
+      if (claimed === undefined) {
+        return false;
+      }
+      yield* clearMcpSession(input.threadId).pipe(
+        Effect.ensuring(
+          completeRuntimeLeaseCleanup({
+            threadId: input.threadId,
+            expectedRuntimeSessionId: input.expectedRuntimeSessionId,
+            ...(input.replacement !== undefined ? { replacement: input.replacement } : {}),
+          }),
+        ),
+      );
+      return true;
+    },
+  );
+
+  const startAdapterSessionWithLease = Effect.fn("startAdapterSessionWithLease")(function* (input: {
+    readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly sessionInput: Parameters<
+      ProviderAdapterShape<ProviderAdapterError>["startSession"]
+    >[0];
+  }) {
+    const runtimeSessionId = yield* nextRuntimeSessionId;
+    const sessionInput = {
+      ...input.sessionInput,
+      runtimeSessionId,
+    };
+    const startGate = yield* Deferred.make<void>();
+    const startFiber = yield* Deferred.await(startGate).pipe(
+      Effect.andThen(input.adapter.startSession(sessionInput)),
+      Effect.forkIn(serviceScope),
+    );
+    const installed = yield* installRuntimeLease({
+      threadId: input.sessionInput.threadId,
+      providerInstanceId: input.providerInstanceId,
+      adapter: input.adapter,
+      runtimeSessionId,
+      startFiber,
+    });
+    if (installed._tag === "BlockedByCleanup") {
+      yield* Fiber.interrupt(startFiber).pipe(Effect.ignore);
+      return yield* toValidationError(
+        "ProviderService.startSession",
+        `Cannot start thread '${input.sessionInput.threadId}' while its previous runtime is being cleaned up.`,
+      );
+    }
+    const startExit = yield* Effect.exit(
+      prepareMcpSession(input.sessionInput.threadId, input.providerInstanceId).pipe(
+        Effect.andThen(Deferred.succeed(startGate, undefined)),
+        Effect.andThen(Fiber.join(startFiber)),
+      ),
+    );
+    if (Exit.isFailure(startExit)) {
+      yield* Fiber.interrupt(startFiber).pipe(Effect.ignore);
+      yield* cleanupExactRuntimeLeaseMcpSession({
+        threadId: input.sessionInput.threadId,
+        expectedRuntimeSessionId: runtimeSessionId,
+        ...(installed.previous !== undefined ? { replacement: installed.previous } : {}),
+      });
+      return yield* Effect.failCause(startExit.cause);
+    }
+    const session = startExit.value;
+    const leaseIsCurrent = yield* Ref.modify(runtimeLeases, (current) => {
+      const lease = current.get(input.sessionInput.threadId);
+      if (lease?.runtimeSessionId !== runtimeSessionId || lease.forceStopping === true) {
+        return [false, current] as const;
+      }
+      const next = new Map(current);
+      next.set(input.sessionInput.threadId, {
+        runtimeSessionId: lease.runtimeSessionId,
+        providerInstanceId: lease.providerInstanceId,
+        adapter: lease.adapter,
+      });
+      return [true, next] as const;
+    });
+    if (!leaseIsCurrent) {
+      yield* input.adapter
+        .forceStopSession(input.sessionInput.threadId, runtimeSessionId)
+        .pipe(Effect.ignore);
+      return yield* toValidationError(
+        "ProviderService.startSession",
+        `Provider runtime '${runtimeSessionId}' was stopped before session startup completed.`,
+      );
+    }
+    return {
+      ...session,
+      providerInstanceId: input.providerInstanceId,
+      runtimeSessionId,
+    };
+  });
 
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
     Effect.succeed(event).pipe(
@@ -372,11 +624,18 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           (session) => session.threadId === input.binding.threadId,
         );
         if (existing) {
-          yield* upsertSessionBinding(
-            { ...existing, providerInstanceId: bindingInstanceId },
-            input.binding.threadId,
-          );
-          return { adapter, session: existing } as const;
+          const runtimeSessionId = yield* ensureRuntimeLease({
+            threadId: input.binding.threadId,
+            providerInstanceId: bindingInstanceId,
+            adapter,
+          });
+          const existingWithLease = {
+            ...existing,
+            providerInstanceId: bindingInstanceId,
+            runtimeSessionId,
+          };
+          yield* upsertSessionBinding(existingWithLease, input.binding.threadId);
+          return { adapter, session: existingWithLease } as const;
         }
       }
 
@@ -390,9 +649,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
 
-      yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
-      const resumed = yield* adapter
-        .startSession({
+      const resumed = yield* startAdapterSessionWithLease({
+        adapter,
+        providerInstanceId: bindingInstanceId,
+        sessionInput: {
           threadId: input.binding.threadId,
           provider: input.binding.provider,
           providerInstanceId: bindingInstanceId,
@@ -400,10 +660,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
           ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
           runtimeMode: input.binding.runtimeMode ?? "full-access",
-        })
-        .pipe(Effect.onError(() => clearMcpSession(input.binding.threadId)));
+        },
+      });
       if (resumed.provider !== adapter.provider) {
-        yield* clearMcpSession(input.binding.threadId);
+        yield* cleanupExactRuntimeLeaseMcpSession({
+          threadId: input.binding.threadId,
+          expectedRuntimeSessionId: resumed.runtimeSessionId,
+        });
         return yield* toValidationError(
           input.operation,
           `Adapter/provider mismatch while recovering thread '${input.binding.threadId}'. Expected '${adapter.provider}', received '${resumed.provider}'.`,
@@ -575,28 +838,29 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "provider.cwd.effective": effectiveCwd ?? "",
         });
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
-        yield* prepareMcpSession(threadId, resolvedInstanceId);
         const { resumeCursor: _requestedResumeCursor, ...sessionInput } = input;
-        const session = yield* adapter
-          .startSession({
+        const session = yield* startAdapterSessionWithLease({
+          adapter,
+          providerInstanceId: resolvedInstanceId,
+          sessionInput: {
             ...sessionInput,
             providerInstanceId: resolvedInstanceId,
             ...(effectiveCwd !== undefined ? { cwd: effectiveCwd } : {}),
             ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),
-          })
-          .pipe(Effect.onError(() => clearMcpSession(threadId)));
+          },
+        });
 
         if (session.provider !== adapter.provider) {
-          yield* clearMcpSession(threadId);
+          yield* cleanupExactRuntimeLeaseMcpSession({
+            threadId,
+            expectedRuntimeSessionId: session.runtimeSessionId,
+          });
           return yield* toValidationError(
             "ProviderService.startSession",
             `Adapter/provider mismatch: requested '${adapter.provider}', received '${session.provider}'.`,
           );
         }
-        const sessionWithInstance = {
-          ...session,
-          providerInstanceId: resolvedInstanceId,
-        };
+        const sessionWithInstance = session;
 
         yield* stopStaleSessionsForThread({
           threadId,
@@ -693,6 +957,102 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
+  const resolveAbortTarget: ProviderServiceMethod<"resolveAbortTarget"> = Effect.fn(
+    "resolveAbortTarget",
+  )(function* (rawInput) {
+    const input = yield* decodeInputOrValidationError({
+      operation: "ProviderService.resolveAbortTarget",
+      schema: ProviderInterruptTurnInput,
+      payload: rawInput,
+    });
+    const lease = (yield* Ref.get(runtimeLeases)).get(input.threadId);
+    if (!lease) {
+      return yield* toValidationError(
+        "ProviderService.resolveAbortTarget",
+        `Cannot abort thread '${input.threadId}' because it has no active runtime session.`,
+      );
+    }
+    return {
+      threadId: input.threadId,
+      runtimeSessionId: lease.runtimeSessionId,
+      turnId: input.turnId ?? null,
+      providerInstanceId: lease.providerInstanceId,
+    };
+  });
+
+  const isAbortTargetCurrent: ProviderServiceMethod<"isAbortTargetCurrent"> = (target) =>
+    Ref.get(runtimeLeases).pipe(
+      Effect.map((leases) => {
+        const current = leases.get(target.threadId);
+        return (
+          current?.runtimeSessionId === target.runtimeSessionId &&
+          current.providerInstanceId === target.providerInstanceId
+        );
+      }),
+    );
+
+  const interruptAbortTarget: ProviderServiceMethod<"interruptAbortTarget"> = Effect.fn(
+    "interruptAbortTarget",
+  )(function* (target) {
+    const lease = (yield* Ref.get(runtimeLeases)).get(target.threadId);
+    if (
+      lease?.runtimeSessionId !== target.runtimeSessionId ||
+      lease.providerInstanceId !== target.providerInstanceId
+    ) {
+      return;
+    }
+    yield* lease.adapter.interruptTurn(target.threadId, undefined, target.runtimeSessionId);
+  });
+
+  const forceStopAbortTarget: ProviderServiceMethod<"forceStopAbortTarget"> = Effect.fn(
+    "forceStopAbortTarget",
+  )(function* (target) {
+    const lease = yield* claimRuntimeLeaseForCleanup({
+      threadId: target.threadId,
+      expectedRuntimeSessionId: target.runtimeSessionId,
+      expectedProviderInstanceId: target.providerInstanceId,
+    });
+    if (lease === undefined) {
+      return {
+        outcome: "terminated",
+        mechanism: "already-stopped",
+      } as const;
+    }
+
+    return yield* Effect.gen(function* () {
+      if (lease.startFiber !== undefined) {
+        yield* Fiber.interrupt(lease.startFiber).pipe(Effect.ignore);
+      }
+      const forceExit = yield* Effect.exit(
+        lease.adapter.forceStopSession(target.threadId, target.runtimeSessionId),
+      );
+      yield* clearMcpSession(target.threadId);
+      yield* directory.upsert({
+        threadId: target.threadId,
+        provider: lease.adapter.provider,
+        providerInstanceId: lease.providerInstanceId,
+        status: "stopped",
+        runtimePayload: {
+          runtimeSessionId: null,
+          activeTurnId: null,
+          lastRuntimeEvent: "provider.forceStop",
+          lastRuntimeEventAt: yield* nowIso,
+        },
+      });
+      if (Exit.isFailure(forceExit)) {
+        return yield* Effect.failCause(forceExit.cause);
+      }
+      return forceExit.value;
+    }).pipe(
+      Effect.ensuring(
+        completeRuntimeLeaseCleanup({
+          threadId: target.threadId,
+          expectedRuntimeSessionId: target.runtimeSessionId,
+        }),
+      ),
+    );
+  });
+
   const interruptTurn: ProviderServiceMethod<"interruptTurn"> = Effect.fn("interruptTurn")(
     function* (rawInput) {
       const input = yield* decodeInputOrValidationError({
@@ -702,19 +1062,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
       let metricProvider = "unknown";
       return yield* Effect.gen(function* () {
-        const routed = yield* resolveRoutableSession({
-          threadId: input.threadId,
-          operation: "ProviderService.interruptTurn",
-          allowRecovery: true,
-        });
-        metricProvider = routed.adapter.provider;
+        const target = yield* resolveAbortTarget(input);
+        const lease = (yield* Ref.get(runtimeLeases)).get(target.threadId);
+        metricProvider = lease?.adapter.provider ?? "unknown";
         yield* Effect.annotateCurrentSpan({
           "provider.operation": "interrupt-turn",
-          "provider.kind": routed.adapter.provider,
+          "provider.kind": metricProvider,
           "provider.thread_id": input.threadId,
           "provider.turn_id": input.turnId,
         });
-        yield* routed.adapter.interruptTurn(routed.threadId, input.turnId);
+        yield* interruptAbortTarget(target);
       }).pipe(
         withMetrics({
           counter: providerTurnsTotal,
@@ -818,6 +1175,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         if (routed.isActive) {
           yield* routed.adapter.stopSession(routed.threadId);
         }
+        yield* clearRuntimeLease(input.threadId);
         yield* clearMcpSession(input.threadId);
         yield* directory.upsert({
           threadId: input.threadId,
@@ -991,6 +1349,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       ),
     ).pipe(Effect.asVoid);
     yield* Effect.forEach(currentAdapters, ([, adapter]) => adapter.stopAll()).pipe(Effect.asVoid);
+    yield* Ref.set(runtimeLeases, new Map());
     yield* McpSessionRegistry.revokeAllActiveMcpCredentials();
     McpProviderSession.clearAllMcpProviderSessions();
     const bindings = yield* directory.listBindings().pipe(Effect.orElseSucceed(() => []));
@@ -1029,6 +1388,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     startSession,
     sendTurn,
     interruptTurn,
+    resolveAbortTarget,
+    interruptAbortTarget,
+    forceStopAbortTarget,
+    isAbortTargetCurrent,
     respondToRequest,
     respondToUserInput,
     stopSession,

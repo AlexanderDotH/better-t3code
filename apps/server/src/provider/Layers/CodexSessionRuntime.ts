@@ -37,6 +37,10 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
+import {
+  forceTerminateOwnedChildProcessAndCleanup,
+  type OwnedChildProcessTerminationError,
+} from "../../process/OwnedChildProcess.ts";
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
@@ -155,6 +159,7 @@ export interface CodexSessionRuntimeShape {
   ) => Effect.Effect<void, CodexSessionRuntimeError>;
   readonly events: Stream.Stream<ProviderEvent, never>;
   readonly close: Effect.Effect<void>;
+  readonly forceClose: Effect.Effect<void, OwnedChildProcessTerminationError>;
 }
 
 export type CodexSessionRuntimeError =
@@ -1319,6 +1324,28 @@ export const makeCodexSessionRuntime = (
       yield* Queue.shutdown(events);
     });
 
+    const forceClose = Effect.gen(function* () {
+      yield* settlePendingApprovals("cancel");
+      yield* settlePendingUserInputs({});
+      const shutdownQueues = Effect.all(
+        [Queue.shutdown(serverNotifications), Queue.shutdown(events)],
+        { discard: true },
+      );
+      const cleanup = Effect.all(
+        [
+          Ref.set(closedRef, true),
+          updateSession(sessionRef, {
+            status: "closed",
+            activeTurnId: undefined,
+          }),
+        ],
+        { discard: true },
+      ).pipe(
+        Effect.ensuring(Scope.close(runtimeScope, Exit.void).pipe(Effect.ensuring(shutdownQueues))),
+      );
+      yield* forceTerminateOwnedChildProcessAndCleanup({ child }, cleanup);
+    });
+
     return {
       start,
       getSession: Ref.get(sessionRef),
@@ -1468,5 +1495,6 @@ export const makeCodexSessionRuntime = (
         }),
       events: Stream.fromQueue(events),
       close,
+      forceClose,
     } satisfies CodexSessionRuntimeShape;
   });

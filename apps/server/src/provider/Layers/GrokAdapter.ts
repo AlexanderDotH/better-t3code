@@ -9,6 +9,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RuntimeRequestId,
+  RuntimeSessionId,
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -553,6 +554,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           if (existing && !existing.stopped) {
             yield* stopSessionInternal(existing);
           }
+          const runtimeSessionId =
+            input.runtimeSessionId ?? RuntimeSessionId.make(yield* randomUUIDv4);
 
           const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
           const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
@@ -750,6 +753,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           const session: ProviderSession = {
             provider: PROVIDER,
             providerInstanceId: boundInstanceId,
+            runtimeSessionId,
             status: "ready",
             runtimeMode: input.runtimeMode,
             cwd,
@@ -1272,10 +1276,20 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         );
       });
 
-    const interruptTurn: GrokAdapterShape["interruptTurn"] = (threadId, turnId) =>
+    const interruptTurn: GrokAdapterShape["interruptTurn"] = (
+      threadId,
+      turnId,
+      expectedRuntimeSessionId,
+    ) =>
       Effect.gen(function* () {
         const observed = yield* Effect.sync(() => {
           const ctx = sessions.get(threadId);
+          if (
+            expectedRuntimeSessionId !== undefined &&
+            (!ctx || ctx.stopped || ctx.session.runtimeSessionId !== expectedRuntimeSessionId)
+          ) {
+            return { _tag: "Ignore" as const };
+          }
           if (!ctx || ctx.stopped) {
             return {
               _tag: "Proceed" as const,
@@ -1305,6 +1319,12 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           threadId,
           Effect.gen(function* () {
             const ctx = yield* requireSession(threadId);
+            if (
+              expectedRuntimeSessionId !== undefined &&
+              ctx.session.runtimeSessionId !== expectedRuntimeSessionId
+            ) {
+              return;
+            }
             if (observed.acpSessionId !== undefined && ctx.acpSessionId !== observed.acpSessionId) {
               return;
             }
@@ -1354,6 +1374,47 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           }),
         );
       });
+
+    const forceStopSession: GrokAdapterShape["forceStopSession"] = Effect.fn(
+      "GrokAdapter.forceStopSession",
+    )(function* (threadId, expectedRuntimeSessionId) {
+      const ctx = sessions.get(threadId);
+      if (!ctx || ctx.stopped || ctx.session.runtimeSessionId !== expectedRuntimeSessionId) {
+        return {
+          outcome: "terminated",
+          mechanism: "already-stopped",
+        };
+      }
+
+      ctx.stopped = true;
+      sessions.delete(threadId);
+      yield* ctx.acp.forceClose.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId,
+              detail: cause.message,
+              cause,
+            }),
+        ),
+        Effect.ensuring(
+          Effect.gen(function* () {
+            yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+            yield* settlePendingUserInputsAsCancelled(ctx.pendingUserInputs);
+            if (ctx.notificationFiber) {
+              yield* Fiber.interrupt(ctx.notificationFiber).pipe(Effect.ignore);
+            }
+            yield* Scope.close(ctx.scope, Exit.void).pipe(Effect.ignore);
+          }),
+        ),
+      );
+
+      return {
+        outcome: "terminated",
+        mechanism: "process-tree",
+      };
+    });
 
     const respondToRequest: GrokAdapterShape["respondToRequest"] = (
       threadId,
@@ -1450,6 +1511,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       startSession,
       sendTurn,
       interruptTurn,
+      forceStopSession,
       readThread,
       rollbackThread,
       respondToRequest,

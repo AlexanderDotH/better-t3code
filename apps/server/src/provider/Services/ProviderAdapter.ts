@@ -16,6 +16,7 @@ import type {
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
+  RuntimeSessionId,
   ThreadId,
   ProviderTurnStartResult,
   TurnId,
@@ -25,6 +26,25 @@ import type * as Stream from "effect/Stream";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
 export type ProviderMcpSupportMode = "unsupported" | "sessionConfig" | "nativeConfig";
+
+export type ProviderForceStopMechanism =
+  | "process-tree"
+  | "runtime-close"
+  | "remote-cancel"
+  | "local-detach"
+  | "already-stopped";
+
+export type ProviderForceStopResult =
+  | {
+      readonly outcome: "terminated";
+      readonly mechanism: Exclude<ProviderForceStopMechanism, "local-detach">;
+      readonly detail?: string;
+    }
+  | {
+      readonly outcome: "detached";
+      readonly mechanism: "local-detach";
+      readonly detail: string;
+    };
 
 export interface ProviderAdapterCapabilities {
   /**
@@ -71,7 +91,21 @@ export interface ProviderAdapterShape<TError> {
   /**
    * Interrupt an active turn.
    */
-  readonly interruptTurn: (threadId: ThreadId, turnId?: TurnId) => Effect.Effect<void, TError>;
+  readonly interruptTurn: (
+    threadId: ThreadId,
+    turnId?: TurnId,
+    expectedRuntimeSessionId?: RuntimeSessionId,
+  ) => Effect.Effect<void, TError>;
+
+  /**
+   * Immediately tear down the exact provider runtime owned by this adapter.
+   * Implementations must fence the operation by runtime session id so a stale
+   * watchdog cannot stop a replacement session for the same thread.
+   */
+  readonly forceStopSession: (
+    threadId: ThreadId,
+    expectedRuntimeSessionId: RuntimeSessionId,
+  ) => Effect.Effect<ProviderForceStopResult, TError>;
 
   /**
    * Respond to an interactive approval request.

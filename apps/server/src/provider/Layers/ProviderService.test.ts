@@ -16,6 +16,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionStartInput,
+  RuntimeSessionId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -104,6 +105,9 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
         cwd: input.cwd ?? process.cwd(),
         createdAt: now,
         updatedAt: now,
+        ...(input.runtimeSessionId !== undefined
+          ? { runtimeSessionId: input.runtimeSessionId }
+          : {}),
       };
       sessions.set(session.threadId, session);
       return session;
@@ -131,8 +135,47 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
   );
 
   const interruptTurn = vi.fn(
-    (_threadId: ThreadId, _turnId?: TurnId): Effect.Effect<void, ProviderAdapterError> =>
-      Effect.void,
+    (
+      threadId: ThreadId,
+      _turnId?: TurnId,
+      expectedRuntimeSessionId?: RuntimeSessionId,
+    ): Effect.Effect<void, ProviderAdapterError> =>
+      Effect.sync(() => {
+        const session = sessions.get(threadId);
+        if (
+          expectedRuntimeSessionId !== undefined &&
+          session?.runtimeSessionId !== expectedRuntimeSessionId
+        ) {
+          return;
+        }
+      }),
+  );
+
+  const forceStopSession = vi.fn(
+    (
+      threadId: ThreadId,
+      expectedRuntimeSessionId: RuntimeSessionId,
+    ): Effect.Effect<
+      {
+        readonly outcome: "terminated";
+        readonly mechanism: "runtime-close" | "already-stopped";
+      },
+      ProviderAdapterError
+    > =>
+      Effect.sync(() => {
+        const session = sessions.get(threadId);
+        if (session?.runtimeSessionId !== expectedRuntimeSessionId) {
+          return {
+            outcome: "terminated",
+            mechanism: "already-stopped",
+          } as const;
+        }
+        sessions.delete(threadId);
+        return {
+          outcome: "terminated",
+          mechanism: "runtime-close",
+        } as const;
+      }),
   );
 
   const respondToRequest = vi.fn(
@@ -206,6 +249,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     startSession,
     sendTurn,
     interruptTurn,
+    forceStopSession,
     respondToRequest,
     respondToUserInput,
     stopSession,
@@ -241,6 +285,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     startSession,
     sendTurn,
     interruptTurn,
+    forceStopSession,
     respondToRequest,
     respondToUserInput,
     stopSession,
@@ -831,6 +876,61 @@ it.effect(
 );
 
 routing.layer("ProviderServiceLive routing", (it) => {
+  it.effect("fences force-stop operations to the captured runtime session", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-force-stop-fence");
+      const turnId = asTurnId("orchestration-turn-force-stop");
+
+      const firstSession = yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+      assert.ok(firstSession.runtimeSessionId);
+
+      const firstTarget = yield* provider.resolveAbortTarget({ threadId, turnId });
+      assert.equal(firstTarget.runtimeSessionId, firstSession.runtimeSessionId);
+      assert.equal(yield* provider.isAbortTargetCurrent(firstTarget), true);
+
+      yield* provider.interruptAbortTarget(firstTarget);
+      assert.deepEqual(routing.codex.interruptTurn.mock.calls, [
+        [threadId, undefined, firstSession.runtimeSessionId],
+      ]);
+
+      assert.deepEqual(yield* provider.forceStopAbortTarget(firstTarget), {
+        outcome: "terminated",
+        mechanism: "runtime-close",
+      });
+      assert.equal(routing.codex.forceStopSession.mock.calls.length, 1);
+      assert.equal(yield* provider.isAbortTargetCurrent(firstTarget), false);
+
+      const replacement = yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+      assert.ok(replacement.runtimeSessionId);
+      assert.notEqual(replacement.runtimeSessionId, firstSession.runtimeSessionId);
+
+      yield* provider.interruptAbortTarget(firstTarget);
+      assert.deepEqual(yield* provider.forceStopAbortTarget(firstTarget), {
+        outcome: "terminated",
+        mechanism: "already-stopped",
+      });
+      assert.equal(routing.codex.interruptTurn.mock.calls.length, 1);
+      assert.equal(routing.codex.forceStopSession.mock.calls.length, 1);
+
+      yield* provider.stopSession({ threadId });
+      routing.codex.interruptTurn.mockClear();
+      routing.codex.forceStopSession.mockClear();
+    }),
+  );
+
   it.effect("routes provider operations and rollback conversation", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
@@ -855,7 +955,9 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
 
       yield* provider.interruptTurn({ threadId: session.threadId });
-      assert.deepEqual(routing.codex.interruptTurn.mock.calls, [[session.threadId, undefined]]);
+      assert.deepEqual(routing.codex.interruptTurn.mock.calls, [
+        [session.threadId, undefined, session.runtimeSessionId],
+      ]);
 
       yield* provider.respondToRequest({
         threadId: session.threadId,

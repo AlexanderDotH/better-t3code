@@ -5,6 +5,7 @@ import {
   ProviderInstanceId,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  RuntimeSessionId,
   RuntimeItemId,
   RuntimeRequestId,
   ThreadId,
@@ -1239,6 +1240,8 @@ export function makeOpenCodeAdapter(
           yield* stopOpenCodeContext(existing);
           sessions.delete(input.threadId);
         }
+        const runtimeSessionId =
+          input.runtimeSessionId ?? RuntimeSessionId.make(yield* randomUUIDv4);
 
         const started = yield* Effect.gen(function* () {
           const sessionScope = yield* Scope.make();
@@ -1402,6 +1405,7 @@ export function makeOpenCodeAdapter(
         const session: ProviderSession = {
           provider,
           providerInstanceId: boundInstanceId,
+          runtimeSessionId,
           status: "ready",
           runtimeMode: input.runtimeMode,
           cwd: directory,
@@ -1587,7 +1591,14 @@ export function makeOpenCodeAdapter(
     });
 
     const interruptTurn: OpenCodeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
-      function* (threadId, turnId) {
+      function* (threadId, turnId, expectedRuntimeSessionId) {
+        const current = sessions.get(threadId);
+        if (
+          expectedRuntimeSessionId !== undefined &&
+          (!current || current.session.runtimeSessionId !== expectedRuntimeSessionId)
+        ) {
+          return;
+        }
         const context = yield* ensureSessionContext(provider, sessions, threadId);
         yield* runOpenCodeSdk("session.abort", () =>
           context.client.session.abort({ sessionID: context.openCodeSessionId }),
@@ -1606,6 +1617,44 @@ export function makeOpenCodeAdapter(
         }
       },
     );
+
+    const forceStopSession: OpenCodeAdapterShape["forceStopSession"] = Effect.fn(
+      "OpenCodeAdapter.forceStopSession",
+    )(function* (threadId, expectedRuntimeSessionId) {
+      const context = sessions.get(threadId);
+      if (!context || context.session.runtimeSessionId !== expectedRuntimeSessionId) {
+        return {
+          outcome: "terminated",
+          mechanism: "already-stopped",
+        };
+      }
+      if (yield* Ref.getAndSet(context.stopped, true)) {
+        sessions.delete(threadId);
+        return {
+          outcome: "terminated",
+          mechanism: "already-stopped",
+        };
+      }
+
+      sessions.delete(threadId);
+      const closeExit = yield* Scope.close(context.sessionScope, Exit.void).pipe(Effect.exit);
+      if (Exit.isFailure(closeExit)) {
+        return yield* toProcessError(provider, threadId, Cause.squash(closeExit.cause));
+      }
+
+      if (context.server.external) {
+        return {
+          outcome: "detached",
+          mechanism: "local-detach",
+          detail:
+            "Detached local OpenCode session state; the externally managed server may continue remote work.",
+        };
+      }
+      return {
+        outcome: "terminated",
+        mechanism: "process-tree",
+      };
+    });
 
     const respondToRequest: OpenCodeAdapterShape["respondToRequest"] = Effect.fn(
       "respondToRequest",
@@ -1755,6 +1804,7 @@ export function makeOpenCodeAdapter(
       startSession,
       sendTurn,
       interruptTurn,
+      forceStopSession,
       respondToRequest,
       respondToUserInput,
       stopSession,

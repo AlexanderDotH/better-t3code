@@ -22,6 +22,7 @@ import {
   EnvironmentId,
   ProviderDriverKind,
   type ProviderRuntimeEvent,
+  RuntimeSessionId,
   ThreadId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -32,6 +33,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { makeCursorAdapter } from "./CursorAdapter.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
+const FORCE_STOP_RUNTIME_SESSION_ID = RuntimeSessionId.make("cursor-force-stop-runtime");
 
 // Test-local service tag so the rest of the file can keep using `yield* CursorAdapter`.
 class CursorAdapter extends Context.Service<CursorAdapter, CursorAdapterShape>()(
@@ -357,6 +359,50 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
 
       const exitLog = yield* Effect.promise(() => waitForFileContent(exitLogPath));
       assert.include(exitLog, "SIGTERM");
+    }),
+  );
+
+  it.effect("force-stops the exact owned Cursor ACP process", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-force-stop-session");
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId,
+        runtimeSessionId: FORCE_STOP_RUNTIME_SESSION_ID,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const result = yield* adapter.forceStopSession(threadId, FORCE_STOP_RUNTIME_SESSION_ID);
+
+      assert.deepStrictEqual(result, {
+        outcome: "terminated",
+        mechanism: "process-tree",
+      });
+      assert.equal(yield* adapter.hasSession(threadId), false);
+    }),
+  );
+
+  it.effect("does not stop a missing Cursor ACP runtime", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+
+      assert.deepStrictEqual(
+        yield* adapter.forceStopSession(
+          ThreadId.make("cursor-missing-force-stop"),
+          FORCE_STOP_RUNTIME_SESSION_ID,
+        ),
+        {
+          outcome: "terminated",
+          mechanism: "already-stopped",
+        },
+      );
     }),
   );
 
