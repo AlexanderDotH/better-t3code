@@ -6,6 +6,7 @@ import {
   type ProviderDriverKind,
   type ServerProvider,
   type ScopedThreadRef,
+  type SubagentId,
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
@@ -52,7 +53,20 @@ export function buildLocalDraftThread(
     checkpoints: [],
     activities: [],
     proposedPlans: [],
+    subagents: [],
   };
+}
+
+export interface SubagentDialogSelection {
+  readonly threadKey: string;
+  readonly subagentId: SubagentId;
+}
+
+export function resolveSelectedSubagentId(
+  selection: SubagentDialogSelection | null,
+  activeThreadKey: string | null,
+): SubagentId | null {
+  return selection?.threadKey === activeThreadKey ? selection.subagentId : null;
 }
 
 export function shouldWriteThreadErrorToCurrentServerThread(input: {
@@ -83,6 +97,17 @@ export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "sessi
     threadId: thread.id,
     ...(runningTurnId !== null ? { turnId: runningTurnId } : {}),
   };
+}
+
+export function canRequestThreadTurnInterrupt(thread: Pick<Thread, "session">): boolean {
+  const session = thread.session;
+  if (session === null) {
+    return false;
+  }
+  if (session.status !== "running" && session.status !== "starting") {
+    return false;
+  }
+  return session.abortState === null;
 }
 
 export function reconcileMountedTerminalThreadIds(input: {

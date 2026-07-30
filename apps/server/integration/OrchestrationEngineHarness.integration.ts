@@ -54,6 +54,7 @@ import { RuntimeReceiptBusTest } from "../src/orchestration/Layers/RuntimeReceip
 import { OrchestrationReactorLive } from "../src/orchestration/Layers/OrchestrationReactor.ts";
 import { ProviderCommandReactorLive } from "../src/orchestration/Layers/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionLive } from "../src/orchestration/Layers/ProviderRuntimeIngestion.ts";
+import { TurnAbortCoordinatorLive } from "../src/orchestration/Layers/TurnAbortCoordinator.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -307,7 +308,11 @@ export const makeOrchestrationIntegrationHarness = (
       RuntimeReceiptBusTest,
     );
     const serverSettingsLayer = ServerSettingsService.layerTest();
+    const abortCoordinatorLayer = TurnAbortCoordinatorLive.pipe(
+      Layer.provideMerge(runtimeServicesLayer),
+    );
     const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
+      Layer.provideMerge(abortCoordinatorLayer),
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(serverSettingsLayer),
     );
@@ -323,6 +328,7 @@ export const makeOrchestrationIntegrationHarness = (
       generateThreadTitle: () => Effect.succeed({ title: "New thread" }),
     } as unknown as TextGenerationShape);
     const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
+      Layer.provideMerge(abortCoordinatorLayer),
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(gitWorkflowLayer),
       Layer.provideMerge(textGenerationLayer),

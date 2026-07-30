@@ -96,6 +96,8 @@ it.effect("launchStartupHeartbeat does not block the caller while counts are loa
           getFullThreadDiffContext: () => Effect.succeed(Option.none()),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getSubagentDetailById: () => Effect.succeed(Option.none()),
+          getSubagentDetailSnapshot: () => Effect.succeed(Option.none()),
         }),
         Effect.provideService(AnalyticsService.AnalyticsService, {
           record: () => Effect.void,
@@ -158,6 +160,8 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
         getFullThreadDiffContext: () => Effect.succeed(Option.none()),
         getThreadShellById: () => Effect.die("unused"),
         getThreadDetailById: () => Effect.die("unused"),
+        getSubagentDetailById: () => Effect.die("unused"),
+        getSubagentDetailSnapshot: () => Effect.die("unused"),
       }),
       Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
         readEvents: () => Stream.empty,
@@ -200,6 +204,8 @@ it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when 
         getFullThreadDiffContext: () => Effect.succeed(Option.none()),
         getThreadShellById: () => Effect.die("unused"),
         getThreadDetailById: () => Effect.die("unused"),
+        getSubagentDetailById: () => Effect.die("unused"),
+        getSubagentDetailSnapshot: () => Effect.die("unused"),
       }),
       Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
         readEvents: () => Stream.empty,
@@ -248,6 +254,8 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
         getFullThreadDiffContext: () => Effect.succeed(Option.none()),
         getThreadShellById: () => Effect.die("unused"),
         getThreadDetailById: () => Effect.die("unused"),
+        getSubagentDetailById: () => Effect.die("unused"),
+        getSubagentDetailSnapshot: () => Effect.die("unused"),
       }),
       Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
         readEvents: () => Stream.empty,

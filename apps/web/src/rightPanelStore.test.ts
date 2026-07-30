@@ -102,6 +102,88 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("drops removed subagent and unknown surfaces while preserving valid tabs", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "subagent:agent-1",
+            surfaces: [
+              { id: "browser:tab-a", kind: "preview", resourceId: "tab-a" },
+              { id: "subagent:agent-1", kind: "subagent", resourceId: "agent-1" },
+              { id: "future:thing", kind: "future", resourceId: "thing" },
+              { id: "plan", kind: "plan" },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "plan",
+          surfaces: [
+            { id: "browser:tab-a", kind: "preview", resourceId: "tab-a" },
+            { id: "plan", kind: "plan" },
+          ],
+        },
+      },
+    });
+  });
+
+  it("preserves an active valid surface while removing malformed neighbors", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "browser:tab-a",
+            surfaces: [
+              { id: "browser:tab-a", kind: "preview", resourceId: "tab-a" },
+              null,
+              "invalid",
+              { id: "files", kind: "files" },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "browser:tab-a",
+          surfaces: [
+            { id: "browser:tab-a", kind: "preview", resourceId: "tab-a" },
+            { id: "files", kind: "files" },
+          ],
+        },
+      },
+    });
+  });
+
+  it("closes a persisted panel when its removed subagent was the only surface", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "subagent:agent-1",
+            surfaces: [{ id: "subagent:agent-1", kind: "subagent", resourceId: "agent-1" }],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: false,
+          activeSurfaceId: null,
+          surfaces: [],
+        },
+      },
+    });
+  });
+
   it("open sets the active panel for a thread", () => {
     useRightPanelStore.getState().open(refA, "preview");
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("preview");

@@ -20,6 +20,7 @@ import {
   GrokSettings,
   ProviderDriverKind,
   ProviderInstanceId,
+  RuntimeSessionId,
   ThreadId,
   TurnId,
   type ProviderRuntimeEvent,
@@ -28,6 +29,7 @@ import {
 import { ServerConfig } from "../../config.ts";
 import { grokPromptSettlementBelongsToContext, makeGrokAdapter } from "./GrokAdapter.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
+const FORCE_STOP_RUNTIME_SESSION_ID = RuntimeSessionId.make("grok-force-stop-runtime");
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
@@ -205,6 +207,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
 
       yield* adapter.startSession({
         threadId,
+        runtimeSessionId: FORCE_STOP_RUNTIME_SESSION_ID,
         provider: ProviderDriverKind.make("grok"),
         cwd: process.cwd(),
         runtimeMode: "full-access",
@@ -215,6 +218,48 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
 
       const exitLog = yield* waitForFileContent(exitLogPath);
       assert.include(exitLog, "SIGTERM");
+    }),
+  );
+
+  it.effect("force-stops the exact owned Grok ACP process", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-force-stop-session");
+      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      yield* adapter.startSession({
+        threadId,
+        runtimeSessionId: FORCE_STOP_RUNTIME_SESSION_ID,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+
+      const result = yield* adapter.forceStopSession(threadId, FORCE_STOP_RUNTIME_SESSION_ID);
+
+      assert.deepStrictEqual(result, {
+        outcome: "terminated",
+        mechanism: "process-tree",
+      });
+      assert.equal(yield* adapter.hasSession(threadId), false);
+    }),
+  );
+
+  it.effect("reports an already-absent Grok ACP runtime as stopped", () =>
+    Effect.gen(function* () {
+      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      const result = yield* adapter.forceStopSession(
+        ThreadId.make("grok-missing-force-stop"),
+        FORCE_STOP_RUNTIME_SESSION_ID,
+      );
+
+      assert.deepStrictEqual(result, {
+        outcome: "terminated",
+        mechanism: "already-stopped",
+      });
     }),
   );
 

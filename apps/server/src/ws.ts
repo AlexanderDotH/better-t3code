@@ -69,6 +69,11 @@ import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
+  isRootThreadDetailEvent,
+  isSelectedSubagentDetailEvent,
+  isThreadAggregateEvent,
+} from "./orchestration/threadStreamRouting.ts";
+import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
   observeRpcStreamEffect as instrumentRpcStreamEffect,
@@ -250,28 +255,6 @@ function projectSetupScriptCompatibilityDetail(
   }
 }
 
-function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
-  OrchestrationEvent,
-  {
-    type:
-      | "thread.message-sent"
-      | "thread.proposed-plan-upserted"
-      | "thread.activity-appended"
-      | "thread.turn-diff-completed"
-      | "thread.reverted"
-      | "thread.session-set";
-  }
-> {
-  return (
-    event.type === "thread.message-sent" ||
-    event.type === "thread.proposed-plan-upserted" ||
-    event.type === "thread.activity-appended" ||
-    event.type === "thread.turn-diff-completed" ||
-    event.type === "thread.reverted" ||
-    event.type === "thread.session-set"
-  );
-}
-
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
@@ -282,6 +265,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.subscribeShell, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.subscribeThread, AuthOrchestrationReadScope],
+  [ORCHESTRATION_WS_METHODS.subscribeSubagent, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetConfig, AuthOrchestrationReadScope],
   [WS_METHODS.serverRefreshProviders, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUpdateProvider, AuthOrchestrationOperateScope],
@@ -1146,9 +1130,7 @@ const makeWsRpcLayer = (
               const liveStream = orchestrationEngine.streamDomainEvents.pipe(
                 Stream.filter(
                   (event) =>
-                    event.aggregateKind === "thread" &&
-                    event.aggregateId === input.threadId &&
-                    isThreadDetailEvent(event),
+                    isThreadAggregateEvent(event, input.threadId) && isRootThreadDetailEvent(event),
                 ),
                 Stream.map((event) => ({
                   kind: "event" as const,
@@ -1163,6 +1145,51 @@ const makeWsRpcLayer = (
                     snapshotSequence,
                     thread: threadDetail.value,
                   },
+                }),
+                liveStream,
+              );
+            }),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.subscribeSubagent]: (input) =>
+          observeRpcStreamEffect(
+            ORCHESTRATION_WS_METHODS.subscribeSubagent,
+            Effect.gen(function* () {
+              const snapshot = yield* projectionSnapshotQuery
+                .getSubagentDetailSnapshot(input.threadId, input.subagentId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationGetSnapshotError({
+                        message: `Failed to load subagent ${input.subagentId}`,
+                        cause,
+                      }),
+                  ),
+                );
+
+              if (Option.isNone(snapshot)) {
+                return yield* new OrchestrationGetSnapshotError({
+                  message: `Subagent ${input.subagentId} was not found`,
+                  cause: input.subagentId,
+                });
+              }
+
+              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
+                Stream.filter(
+                  (event) =>
+                    isThreadAggregateEvent(event, input.threadId) &&
+                    isSelectedSubagentDetailEvent(event, input.subagentId),
+                ),
+                Stream.map((event) => ({
+                  kind: "event" as const,
+                  event,
+                })),
+              );
+
+              return Stream.concat(
+                Stream.make({
+                  kind: "snapshot" as const,
+                  snapshot: snapshot.value,
                 }),
                 liveStream,
               );

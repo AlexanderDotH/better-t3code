@@ -3,6 +3,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  RuntimeSessionId,
   ThreadId,
   TurnId,
   ProviderInstanceId,
@@ -182,8 +183,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           provider_name,
           provider_session_id,
           provider_thread_id,
+          runtime_session_id,
           runtime_mode,
           active_turn_id,
+          abort_state_json,
           last_error,
           updated_at
         )
@@ -193,12 +196,27 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'codex',
           'provider-session-1',
           'provider-thread-1',
+          'runtime-session-1',
           'approval-required',
           'turn-1',
+          '{"runtimeSessionId":"runtime-session-1","targetTurnId":"turn-1","phase":"interrupting","requestedAt":"2026-02-24T00:00:07.000Z","forceAt":"2026-02-24T00:00:12.000Z"}',
           NULL,
           '2026-02-24T00:00:07.000Z'
         )
       `;
+
+      const persistedAbortSessionRows = yield* sql<{
+        readonly runtimeSessionId: string | null;
+        readonly abortState: string | null;
+      }>`
+        SELECT
+          runtime_session_id AS "runtimeSessionId",
+          abort_state_json AS "abortState"
+        FROM projection_thread_sessions
+        WHERE thread_id = 'thread-1'
+      `;
+      assert.strictEqual(persistedAbortSessionRows[0]?.runtimeSessionId, "runtime-session-1");
+      assert.notStrictEqual(persistedAbortSessionRows[0]?.abortState, null);
 
       yield* sql`
         INSERT INTO projection_turns (
@@ -342,6 +360,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               createdAt: "2026-02-24T00:00:06.000Z",
             },
           ],
+          subagents: [],
           checkpoints: [
             {
               turnId: asTurnId("turn-1"),
@@ -357,8 +376,16 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            runtimeSessionId: RuntimeSessionId.make("runtime-session-1"),
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
+            abortState: {
+              runtimeSessionId: RuntimeSessionId.make("runtime-session-1"),
+              targetTurnId: asTurnId("turn-1"),
+              phase: "interrupting",
+              requestedAt: "2026-02-24T00:00:07.000Z",
+              forceAt: "2026-02-24T00:00:12.000Z",
+            },
             lastError: null,
             updatedAt: "2026-02-24T00:00:07.000Z",
           },
@@ -422,8 +449,16 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            runtimeSessionId: RuntimeSessionId.make("runtime-session-1"),
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
+            abortState: {
+              runtimeSessionId: RuntimeSessionId.make("runtime-session-1"),
+              targetTurnId: asTurnId("turn-1"),
+              phase: "interrupting",
+              requestedAt: "2026-02-24T00:00:07.000Z",
+              forceAt: "2026-02-24T00:00:12.000Z",
+            },
             lastError: null,
             updatedAt: "2026-02-24T00:00:07.000Z",
           },

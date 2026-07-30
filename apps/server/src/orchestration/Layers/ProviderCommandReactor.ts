@@ -38,6 +38,7 @@ import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
 } from "../Services/ProviderCommandReactor.ts";
+import { TurnAbortCoordinator } from "../Services/TurnAbortCoordinator.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
@@ -191,6 +192,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
+  const turnAbortCoordinator = yield* TurnAbortCoordinator;
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
@@ -501,9 +503,11 @@ const make = Effect.gen(function* () {
             status: mapProviderSessionStatusToOrchestrationStatus(session.status),
             providerName: session.provider,
             providerInstanceId: session.providerInstanceId,
+            runtimeSessionId: session.runtimeSessionId ?? null,
             runtimeMode: desiredRuntimeMode,
             // Provider turn ids are not orchestration turn ids.
             activeTurnId: null,
+            abortState: null,
             lastError: session.lastError ?? null,
             updatedAt: session.updatedAt,
           },
@@ -867,20 +871,24 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
-    const hasSession = thread.session && thread.session.status !== "stopped";
-    if (!hasSession) {
-      return yield* appendProviderFailureActivity({
+    yield* turnAbortCoordinator
+      .requestAbort({
         threadId: event.payload.threadId,
-        kind: "provider.turn.interrupt.failed",
-        summary: "Provider turn interrupt failed",
-        detail: "No active provider session is bound to this thread.",
-        turnId: event.payload.turnId ?? null,
-        createdAt: event.payload.createdAt,
-      });
-    }
-
-    // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+        ...(event.payload.turnId !== undefined ? { turnId: event.payload.turnId } : {}),
+        requestedAt: event.payload.createdAt,
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          appendProviderFailureActivity({
+            threadId: event.payload.threadId,
+            kind: "provider.turn.interrupt.failed",
+            summary: "Provider turn interrupt failed",
+            detail: formatFailureDetail(cause),
+            turnId: event.payload.turnId ?? null,
+            createdAt: event.payload.createdAt,
+          }),
+        ),
+      );
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
@@ -993,8 +1001,10 @@ const make = Effect.gen(function* () {
         ...(thread.session?.providerInstanceId !== undefined
           ? { providerInstanceId: thread.session.providerInstanceId }
           : {}),
+        runtimeSessionId: null,
         runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
         activeTurnId: null,
+        abortState: null,
         lastError: thread.session?.lastError ?? null,
         updatedAt: now,
       },

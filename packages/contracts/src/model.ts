@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderDriverKind } from "./providerInstance.ts";
 
 export const ProviderOptionDescriptorType = Schema.Literals(["select", "boolean"]);
@@ -122,16 +122,120 @@ function canonicalSelectionsToLegacyObject(
   return out;
 }
 
+export const AGENT_REASONING_EFFORT_VALUES = ["minimal", "low", "medium", "high", "xhigh"] as const;
+export const AgentReasoningEffort = Schema.Literals(AGENT_REASONING_EFFORT_VALUES);
+export type AgentReasoningEffort = typeof AgentReasoningEffort.Type;
+export const DEFAULT_AGENT_REASONING_EFFORT: AgentReasoningEffort = "medium";
+
+export const OpenAiCompatibleAgentProviderId = Schema.Literals([
+  "openrouter",
+  "nvidia",
+  "local",
+  "zen",
+  "go",
+  "kiro",
+]);
+export type OpenAiCompatibleAgentProviderId = typeof OpenAiCompatibleAgentProviderId.Type;
+
+export const AgentModelCatalogProviderId = Schema.Literals([
+  "gemini",
+  "openrouter",
+  "nvidia",
+  "local",
+  "zen",
+  "go",
+  "kiro",
+  "cursor",
+  "hyperagent",
+]);
+export type AgentModelCatalogProviderId = typeof AgentModelCatalogProviderId.Type;
+
+export const AgentLlmTransportKind = Schema.Literals([
+  "gemini-sdk",
+  "cursor-agent",
+  "hyperagent-agent",
+  "openai-compatible",
+]);
+export type AgentLlmTransportKind = typeof AgentLlmTransportKind.Type;
+
+export const AgentLlmSlotRole = Schema.Literals([
+  "implementation",
+  "planning",
+  "verification",
+  "freeChat",
+  "customerForm",
+  "cvImport",
+]);
+export type AgentLlmSlotRole = typeof AgentLlmSlotRole.Type;
+
+export const AGENT_MODEL_ID_PREFIX_BY_PROVIDER = {
+  gemini: "gemini-direct:",
+  nvidia: "nvidia:",
+  local: "local:",
+  zen: "zen:",
+  go: "go:",
+  kiro: "kiro:",
+  cursor: "cursor:",
+  hyperagent: "hyperagent:",
+} as const satisfies Partial<Record<AgentModelCatalogProviderId, string>>;
+
+export const AgentSlotSamplingExtras = Schema.Struct({
+  temperature: Schema.optionalKey(Schema.Number),
+  topP: Schema.optionalKey(Schema.Number),
+  maxOutputTokens: Schema.optionalKey(PositiveInt),
+  frequencyPenalty: Schema.optionalKey(Schema.Number),
+  presencePenalty: Schema.optionalKey(Schema.Number),
+});
+export type AgentSlotSamplingExtras = typeof AgentSlotSamplingExtras.Type;
+
+export const AgentLlmSlotOverride = Schema.Struct({
+  reasoningEffort: Schema.optionalKey(AgentReasoningEffort),
+  supportsReasoningEffort: Schema.optionalKey(Schema.Boolean),
+  openRouterContextCompression: Schema.optionalKey(Schema.Boolean),
+  samplingExtras: Schema.optionalKey(AgentSlotSamplingExtras),
+});
+export type AgentLlmSlotOverride = typeof AgentLlmSlotOverride.Type;
+
+export const AgentLlmSlotState = Schema.Struct({
+  storedModelId: TrimmedNonEmptyString,
+  label: Schema.optionalKey(TrimmedNonEmptyString),
+  overrides: Schema.optionalKey(AgentLlmSlotOverride),
+});
+export type AgentLlmSlotState = typeof AgentLlmSlotState.Type;
+
+export const AgentLlmSelectionSettings = Schema.Struct({
+  version: Schema.Literal(1),
+  slots: Schema.Struct({
+    implementation: AgentLlmSlotState,
+    verification: AgentLlmSlotState,
+    planning: Schema.optionalKey(Schema.NullOr(AgentLlmSlotState)),
+    freeChat: Schema.optionalKey(Schema.NullOr(AgentLlmSlotState)),
+    customerForm: Schema.optionalKey(Schema.NullOr(AgentLlmSlotState)),
+    cvImport: Schema.optionalKey(Schema.NullOr(AgentLlmSlotState)),
+  }),
+  modelDefaults: Schema.optionalKey(Schema.Record(TrimmedNonEmptyString, AgentLlmSlotOverride)),
+});
+export type AgentLlmSelectionSettings = typeof AgentLlmSelectionSettings.Type;
+
 export const ModelCapabilities = Schema.Struct({
   optionDescriptors: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
 });
 export type ModelCapabilities = typeof ModelCapabilities.Type;
 
-const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
-const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
-const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
-const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
-const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
+export const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
+export const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
+export const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
+export const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
+export const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
+export const GEMINI_DRIVER_KIND = ProviderDriverKind.make("gemini");
+export const OPENROUTER_DRIVER_KIND = ProviderDriverKind.make("openrouter");
+export const NVIDIA_NIM_DRIVER_KIND = ProviderDriverKind.make("nvidiaNim");
+export const LOCAL_OPENAI_DRIVER_KIND = ProviderDriverKind.make("localOpenAi");
+export const OPENCODE_ZEN_DRIVER_KIND = ProviderDriverKind.make("opencodeZen");
+export const OPENCODE_GO_DRIVER_KIND = ProviderDriverKind.make("opencodeGo");
+export const KIRO_AMAZON_Q_DRIVER_KIND = ProviderDriverKind.make("kiroAmazonQ");
+export const HYPERAGENT_DRIVER_KIND = ProviderDriverKind.make("hyperagent");
+export const CURSOR_SDK_DRIVER_KIND = ProviderDriverKind.make("cursorSdk");
 
 export const DEFAULT_MODEL = "gpt-5.4";
 export const DEFAULT_GIT_TEXT_GENERATION_MODEL = "gpt-5.4-mini";
@@ -142,6 +246,15 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [CURSOR_DRIVER_KIND]: "auto",
   [GROK_DRIVER_KIND]: "grok-build",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [GEMINI_DRIVER_KIND]: "gemini-2.5-flash",
+  [OPENROUTER_DRIVER_KIND]: "openai/gpt-5",
+  [NVIDIA_NIM_DRIVER_KIND]: "z-ai/glm-4.5",
+  [LOCAL_OPENAI_DRIVER_KIND]: "llama3.1",
+  [OPENCODE_ZEN_DRIVER_KIND]: "big-pickle",
+  [OPENCODE_GO_DRIVER_KIND]: "deepseek-v4-pro",
+  [KIRO_AMAZON_Q_DRIVER_KIND]: "amazon.nova-pro-v1:0",
+  [CURSOR_SDK_DRIVER_KIND]: "composer-2",
+  [HYPERAGENT_DRIVER_KIND]: "sonnet-latest",
 };
 
 /** Per-provider text generation model defaults. */
@@ -152,6 +265,7 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [GEMINI_DRIVER_KIND]: "gemini-2.5-flash",
 };
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
@@ -208,4 +322,13 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CURSOR_DRIVER_KIND]: "Cursor",
   [GROK_DRIVER_KIND]: "Grok",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
+  [GEMINI_DRIVER_KIND]: "Gemini",
+  [OPENROUTER_DRIVER_KIND]: "OpenRouter",
+  [NVIDIA_NIM_DRIVER_KIND]: "NVIDIA NIM",
+  [LOCAL_OPENAI_DRIVER_KIND]: "Local OpenAI",
+  [OPENCODE_ZEN_DRIVER_KIND]: "OpenCode Zen",
+  [OPENCODE_GO_DRIVER_KIND]: "OpenCode Go",
+  [KIRO_AMAZON_Q_DRIVER_KIND]: "Kiro / Amazon Q",
+  [HYPERAGENT_DRIVER_KIND]: "Hyperagent",
+  [CURSOR_SDK_DRIVER_KIND]: "Cursor SDK",
 };

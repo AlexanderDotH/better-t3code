@@ -41,6 +41,7 @@ import {
   type RuntimeContentStreamKind,
   RuntimeItemId,
   RuntimeRequestId,
+  RuntimeSessionId,
   RuntimeTaskId,
   ThreadId,
   TurnId,
@@ -88,6 +89,7 @@ import {
 } from "../Errors.ts";
 import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { bindProviderRuntimeEventOrigin } from "../runtimeEventOrigin.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.UnknownFromJsonString);
 
@@ -178,6 +180,7 @@ interface ClaudeTaskState {
 
 interface ClaudeSessionContext {
   session: ProviderSession;
+  readonly emitRuntimeEvent: (event: ProviderRuntimeEvent) => Effect.Effect<void>;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
   readonly query: ClaudeQueryRuntime;
   streamFiber: Fiber.Fiber<void, Error> | undefined;
@@ -1384,7 +1387,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const nextEventId = Effect.map(randomUUIDv4, (id) => EventId.make(id));
   const makeEventStamp = () => Effect.all({ eventId: nextEventId, createdAt: nowIso });
 
-  const offerRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
+  const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
     Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid);
 
   const logNativeSdkMessage = Effect.fn("logNativeSdkMessage")(function* (
@@ -1537,7 +1540,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     if (!block.emittedTextDelta && block.fallbackText.length > 0) {
       const deltaStamp = yield* makeEventStamp();
-      yield* offerRuntimeEvent({
+      yield* context.emitRuntimeEvent({
         type: "content.delta",
         eventId: deltaStamp.eventId,
         provider: PROVIDER,
@@ -1568,7 +1571,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     const stamp = yield* makeEventStamp();
-    yield* offerRuntimeEvent({
+    yield* context.emitRuntimeEvent({
       type: "item.completed",
       eventId: stamp.eventId,
       provider: PROVIDER,
@@ -1660,7 +1663,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     if (context.lastThreadStartedId !== nextThreadId) {
       context.lastThreadStartedId = nextThreadId;
       const stamp = yield* makeEventStamp();
-      yield* offerRuntimeEvent({
+      yield* context.emitRuntimeEvent({
         type: "thread.started",
         eventId: stamp.eventId,
         provider: PROVIDER,
@@ -1691,7 +1694,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
     const turnState = context.turnState;
     const stamp = yield* makeEventStamp();
-    yield* offerRuntimeEvent({
+    yield* context.emitRuntimeEvent({
       type: "runtime.error",
       eventId: stamp.eventId,
       provider: PROVIDER,
@@ -1714,7 +1717,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   ) {
     const turnState = context.turnState;
     const stamp = yield* makeEventStamp();
-    yield* offerRuntimeEvent({
+    yield* context.emitRuntimeEvent({
       type: "runtime.warning",
       eventId: stamp.eventId,
       provider: PROVIDER,
@@ -1747,7 +1750,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     const turnState = context.turnState;
     const stamp = yield* makeEventStamp();
-    yield* offerRuntimeEvent({
+    yield* context.emitRuntimeEvent({
       type: "thread.token-usage.updated",
       eventId: stamp.eventId,
       provider: PROVIDER,
@@ -1819,7 +1822,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     turnState.capturedProposedPlanKeys.add(captureKey);
 
     const stamp = yield* makeEventStamp();
-    yield* offerRuntimeEvent({
+    yield* context.emitRuntimeEvent({
       type: "turn.proposed.completed",
       eventId: stamp.eventId,
       provider: PROVIDER,
@@ -1854,7 +1857,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     const stamp = yield* makeEventStamp();
-    yield* offerRuntimeEvent({
+    yield* context.emitRuntimeEvent({
       type: "turn.plan.updated",
       eventId: stamp.eventId,
       provider: PROVIDER,
@@ -1960,7 +1963,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
 
       const stamp = yield* makeEventStamp();
-      yield* offerRuntimeEvent({
+      yield* context.emitRuntimeEvent({
         type: "turn.completed",
         eventId: stamp.eventId,
         provider: PROVIDER,
@@ -1983,7 +1986,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     for (const [index, tool] of context.inFlightTools.entries()) {
       const toolStamp = yield* makeEventStamp();
-      yield* offerRuntimeEvent({
+      yield* context.emitRuntimeEvent({
         type: "item.completed",
         eventId: toolStamp.eventId,
         provider: PROVIDER,
@@ -2034,7 +2037,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     });
 
     const stamp = yield* makeEventStamp();
-    yield* offerRuntimeEvent({
+    yield* context.emitRuntimeEvent({
       type: "turn.completed",
       eventId: stamp.eventId,
       provider: PROVIDER,
@@ -2123,7 +2126,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           assistantBlockEntry.block.emittedTextDelta = true;
         }
         const stamp = yield* makeEventStamp();
-        yield* offerRuntimeEvent({
+        yield* context.emitRuntimeEvent({
           type: "content.delta",
           eventId: stamp.eventId,
           provider: PROVIDER,
@@ -2186,7 +2189,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         context.inFlightTools.set(event.index, nextTool);
 
         const stamp = yield* makeEventStamp();
-        yield* offerRuntimeEvent({
+        yield* context.emitRuntimeEvent({
           type: "item.updated",
           eventId: stamp.eventId,
           provider: PROVIDER,
@@ -2223,7 +2226,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           const planSteps = extractPlanStepsFromTodoInput(parsedInput);
           if (planSteps && planSteps.length > 0) {
             const planStamp = yield* makeEventStamp();
-            yield* offerRuntimeEvent({
+            yield* context.emitRuntimeEvent({
               type: "turn.plan.updated",
               eventId: planStamp.eventId,
               provider: PROVIDER,
@@ -2285,7 +2288,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       context.inFlightTools.set(index, tool);
 
       const stamp = yield* makeEventStamp();
-      yield* offerRuntimeEvent({
+      yield* context.emitRuntimeEvent({
         type: "item.started",
         eventId: stamp.eventId,
         provider: PROVIDER,
@@ -2363,7 +2366,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       };
 
       const updatedStamp = yield* makeEventStamp();
-      yield* offerRuntimeEvent({
+      yield* context.emitRuntimeEvent({
         type: "item.updated",
         eventId: updatedStamp.eventId,
         provider: PROVIDER,
@@ -2391,7 +2394,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const streamKind = toolResultStreamKind(tool.itemType);
       if (streamKind && toolResult.text.length > 0 && context.turnState) {
         const deltaStamp = yield* makeEventStamp();
-        yield* offerRuntimeEvent({
+        yield* context.emitRuntimeEvent({
           type: "content.delta",
           eventId: deltaStamp.eventId,
           provider: PROVIDER,
@@ -2415,7 +2418,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
 
       const completedStamp = yield* makeEventStamp();
-      yield* offerRuntimeEvent({
+      yield* context.emitRuntimeEvent({
         type: "item.completed",
         eventId: completedStamp.eventId,
         provider: PROVIDER,
@@ -2485,7 +2488,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         updatedAt: startedAt,
       };
       const turnStartedStamp = yield* makeEventStamp();
-      yield* offerRuntimeEvent({
+      yield* context.emitRuntimeEvent({
         type: "turn.started",
         eventId: turnStartedStamp.eventId,
         provider: PROVIDER,
@@ -2587,7 +2590,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     switch (message.subtype) {
       case "init":
-        yield* offerRuntimeEvent({
+        yield* context.emitRuntimeEvent({
           ...base,
           type: "session.configured",
           payload: {
@@ -2596,7 +2599,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       case "status":
-        yield* offerRuntimeEvent({
+        yield* context.emitRuntimeEvent({
           ...base,
           type: "session.state.changed",
           payload: {
@@ -2619,7 +2622,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             rawPayload: message,
           },
         );
-        yield* offerRuntimeEvent({
+        yield* context.emitRuntimeEvent({
           ...base,
           type: "thread.state.changed",
           payload: {
@@ -2629,7 +2632,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       case "hook_started":
-        yield* offerRuntimeEvent({
+        yield* context.emitRuntimeEvent({
           ...base,
           type: "hook.started",
           payload: {
@@ -2640,7 +2643,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       case "hook_progress":
-        yield* offerRuntimeEvent({
+        yield* context.emitRuntimeEvent({
           ...base,
           type: "hook.progress",
           payload: {
@@ -2652,7 +2655,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       case "hook_response":
-        yield* offerRuntimeEvent({
+        yield* context.emitRuntimeEvent({
           ...base,
           type: "hook.completed",
           payload: {
@@ -2666,7 +2669,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       case "task_started":
-        yield* offerRuntimeEvent({
+        yield* context.emitRuntimeEvent({
           ...base,
           type: "task.started",
           payload: {
@@ -2685,7 +2688,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             rawPayload: message,
           },
         );
-        yield* offerRuntimeEvent({
+        yield* context.emitRuntimeEvent({
           ...base,
           type: "task.progress",
           payload: {
@@ -2706,7 +2709,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             rawPayload: message,
           },
         );
-        yield* offerRuntimeEvent({
+        yield* context.emitRuntimeEvent({
           ...base,
           type: "task.completed",
           payload: {
@@ -2718,7 +2721,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       case "files_persisted":
-        yield* offerRuntimeEvent({
+        yield* context.emitRuntimeEvent({
           ...base,
           type: "files.persisted",
           payload: {
@@ -2742,7 +2745,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       case "thinking_tokens":
         return;
       case "permission_denied":
-        yield* offerRuntimeEvent({
+        yield* context.emitRuntimeEvent({
           ...base,
           type: "tool.denied",
           payload: {
@@ -2791,7 +2794,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     };
 
     if (message.type === "tool_progress") {
-      yield* offerRuntimeEvent({
+      yield* context.emitRuntimeEvent({
         ...base,
         type: "tool.progress",
         payload: {
@@ -2805,7 +2808,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (message.type === "tool_use_summary") {
-      yield* offerRuntimeEvent({
+      yield* context.emitRuntimeEvent({
         ...base,
         type: "tool.summary",
         payload: {
@@ -2821,7 +2824,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (message.type === "auth_status") {
-      yield* offerRuntimeEvent({
+      yield* context.emitRuntimeEvent({
         ...base,
         type: "auth.status",
         payload: {
@@ -2834,7 +2837,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (message.type === "rate_limit_event") {
-      yield* offerRuntimeEvent({
+      yield* context.emitRuntimeEvent({
         ...base,
         type: "account.rate-limits.updated",
         payload: {
@@ -2957,7 +2960,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     for (const [requestId, pending] of context.pendingApprovals) {
       yield* Deferred.succeed(pending.decision, "cancel");
       const stamp = yield* makeEventStamp();
-      yield* offerRuntimeEvent({
+      yield* context.emitRuntimeEvent({
         type: "request.resolved",
         eventId: stamp.eventId,
         provider: PROVIDER,
@@ -3016,7 +3019,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     if (options?.emitExitEvent !== false) {
       const stamp = yield* makeEventStamp();
-      yield* offerRuntimeEvent({
+      yield* context.emitRuntimeEvent({
         type: "session.exited",
         eventId: stamp.eventId,
         provider: PROVIDER,
@@ -3088,6 +3091,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
 
       const startedAt = yield* nowIso;
+      const runtimeSessionId = input.runtimeSessionId ?? RuntimeSessionId.make(yield* randomUUIDv4);
       const resumeState = readClaudeResumeState(input.resumeCursor);
       const threadId = input.threadId;
       const existingResumeSessionId = resumeState?.resume;
@@ -3159,7 +3163,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
         // Emit user-input.requested so the UI can present the questions.
         const requestedStamp = yield* makeEventStamp();
-        yield* offerRuntimeEvent({
+        yield* context.emitRuntimeEvent({
           type: "user-input.requested",
           eventId: requestedStamp.eventId,
           provider: PROVIDER,
@@ -3206,7 +3210,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
         // Emit user-input.resolved so the UI knows the interaction completed.
         const resolvedStamp = yield* makeEventStamp();
-        yield* offerRuntimeEvent({
+        yield* context.emitRuntimeEvent({
           type: "user-input.resolved",
           eventId: resolvedStamp.eventId,
           provider: PROVIDER,
@@ -3309,7 +3313,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         };
 
         const requestedStamp = yield* makeEventStamp();
-        yield* offerRuntimeEvent({
+        yield* context.emitRuntimeEvent({
           type: "request.opened",
           eventId: requestedStamp.eventId,
           provider: PROVIDER,
@@ -3357,7 +3361,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         pendingApprovals.delete(requestId);
 
         const resolvedStamp = yield* makeEventStamp();
-        yield* offerRuntimeEvent({
+        yield* context.emitRuntimeEvent({
           type: "request.resolved",
           eventId: resolvedStamp.eventId,
           provider: PROVIDER,
@@ -3526,6 +3530,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         providerInstanceId: boundInstanceId,
         status: "ready",
         runtimeMode: input.runtimeMode,
+        runtimeSessionId,
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(modelSelection?.model ? { model: modelSelection.model } : {}),
         ...(threadId ? { threadId } : {}),
@@ -3541,6 +3546,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
       const context: ClaudeSessionContext = {
         session,
+        emitRuntimeEvent: bindProviderRuntimeEventOrigin(runtimeSessionId, publishRuntimeEvent),
         promptQueue,
         query: queryRuntime,
         streamFiber: undefined,
@@ -3565,7 +3571,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       sessions.set(threadId, context);
 
       const sessionStartedStamp = yield* makeEventStamp();
-      yield* offerRuntimeEvent({
+      yield* context.emitRuntimeEvent({
         type: "session.started",
         eventId: sessionStartedStamp.eventId,
         provider: PROVIDER,
@@ -3576,7 +3582,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
 
       const configuredStamp = yield* makeEventStamp();
-      yield* offerRuntimeEvent({
+      yield* context.emitRuntimeEvent({
         type: "session.configured",
         eventId: configuredStamp.eventId,
         provider: PROVIDER,
@@ -3595,7 +3601,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
 
       const readyStamp = yield* makeEventStamp();
-      yield* offerRuntimeEvent({
+      yield* context.emitRuntimeEvent({
         type: "session.state.changed",
         eventId: readyStamp.eventId,
         provider: PROVIDER,
@@ -3709,7 +3715,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       };
 
       const turnStartedStamp = yield* makeEventStamp();
-      yield* offerRuntimeEvent({
+      yield* context.emitRuntimeEvent({
         type: "turn.started",
         eventId: turnStartedStamp.eventId,
         provider: PROVIDER,
@@ -3742,7 +3748,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   });
 
   const interruptTurn: ClaudeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
-    function* (threadId, _turnId) {
+    function* (threadId, _turnId, expectedRuntimeSessionId) {
+      const current = sessions.get(threadId);
+      if (
+        expectedRuntimeSessionId !== undefined &&
+        (!current ||
+          current.stopped ||
+          current.session.runtimeSessionId !== expectedRuntimeSessionId)
+      ) {
+        return;
+      }
       const context = yield* requireSession(threadId);
       yield* Effect.tryPromise({
         try: () => context.query.interrupt(),
@@ -3750,6 +3765,75 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     },
   );
+
+  const forceStopSession: ClaudeAdapterShape["forceStopSession"] = Effect.fn(
+    "ClaudeAdapter.forceStopSession",
+  )(function* (threadId, expectedRuntimeSessionId) {
+    const context = sessions.get(threadId);
+    if (
+      !context ||
+      context.stopped ||
+      context.session.runtimeSessionId !== expectedRuntimeSessionId
+    ) {
+      return {
+        outcome: "terminated",
+        mechanism: "already-stopped",
+      };
+    }
+
+    context.stopped = true;
+    sessions.delete(threadId);
+
+    let closeError: ProviderAdapterProcessError | undefined;
+    yield* Effect.try({
+      try: () => context.query.close(),
+      catch: (cause) =>
+        new ProviderAdapterProcessError({
+          provider: PROVIDER,
+          threadId,
+          detail: "Failed to force-close Claude runtime query.",
+          cause,
+        }),
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.sync(() => {
+          closeError = error;
+        }),
+      ),
+    );
+
+    for (const pending of context.pendingApprovals.values()) {
+      yield* Deferred.succeed(pending.decision, "cancel").pipe(Effect.ignore);
+    }
+    context.pendingApprovals.clear();
+    for (const pending of context.pendingUserInputs.values()) {
+      yield* Deferred.succeed(pending.answers, {}).pipe(Effect.ignore);
+    }
+    context.pendingUserInputs.clear();
+    yield* Queue.shutdown(context.promptQueue);
+
+    const streamFiber = context.streamFiber;
+    context.streamFiber = undefined;
+    if (streamFiber && streamFiber.pollUnsafe() === undefined) {
+      yield* Fiber.interrupt(streamFiber).pipe(Effect.ignore);
+    }
+
+    const updatedAt = yield* nowIso;
+    context.session = {
+      ...context.session,
+      status: "closed",
+      activeTurnId: undefined,
+      updatedAt,
+    };
+
+    if (closeError) {
+      return yield* closeError;
+    }
+    return {
+      outcome: "terminated",
+      mechanism: "runtime-close",
+    };
+  });
 
   const readThread: ClaudeAdapterShape["readThread"] = Effect.fn("readThread")(
     function* (threadId) {
@@ -3854,6 +3938,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     startSession,
     sendTurn,
     interruptTurn,
+    forceStopSession,
     readThread,
     rollbackThread,
     respondToRequest,

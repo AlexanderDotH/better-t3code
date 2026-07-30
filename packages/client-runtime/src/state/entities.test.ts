@@ -207,6 +207,7 @@ describe("environment entity projections", () => {
       messages,
       proposedPlans: [],
       activities: [],
+      subagents: [],
       checkpoints: [],
     } satisfies OrchestrationThread & { readonly environmentId: EnvironmentId };
     const shell = {
@@ -322,6 +323,7 @@ describe("environment entity projections", () => {
       messages: [],
       proposedPlans: [],
       activities: [],
+      subagents: [],
       checkpoints: [],
     } satisfies OrchestrationThread;
 
@@ -352,7 +354,9 @@ describe("environment entity projections", () => {
             status: "ready",
             providerName: "codex",
             runtimeMode: "full-access",
+            runtimeSessionId: null,
             activeTurnId: null,
+            abortState: null,
             lastError: null,
             updatedAt: "2026-06-01T00:01:00.000Z",
           },

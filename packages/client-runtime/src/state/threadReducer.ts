@@ -13,6 +13,8 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 
+import { applySubagentSummaryEvent } from "./subagentReducer.ts";
+
 export type ThreadDetailReducerResult =
   | { readonly kind: "updated"; readonly thread: OrchestrationThread }
   | { readonly kind: "deleted" }
@@ -76,6 +78,7 @@ export function applyThreadDetailEvent(
           messages: [],
           proposedPlans: [],
           activities: [],
+          subagents: [],
           checkpoints: [],
           session: null,
         },
@@ -178,6 +181,9 @@ export function applyThreadDetailEvent(
 
     // ── Messages ────────────────────────────────────────────────────
     case "thread.message-sent": {
+      if (event.payload.subagentId !== undefined) {
+        return { kind: "unchanged" };
+      }
       const message: OrchestrationMessage = {
         id: event.payload.messageId,
         role: event.payload.role,
@@ -341,6 +347,9 @@ export function applyThreadDetailEvent(
 
     // ── Proposed plans ──────────────────────────────────────────────
     case "thread.proposed-plan-upserted": {
+      if (event.payload.subagentId !== undefined) {
+        return { kind: "unchanged" };
+      }
       const proposedPlan = event.payload.proposedPlan;
 
       const proposedPlans = pipe(
@@ -457,6 +466,9 @@ export function applyThreadDetailEvent(
 
     // ── Activities ──────────────────────────────────────────────────
     case "thread.activity-appended": {
+      if (event.payload.subagentId !== undefined) {
+        return { kind: "unchanged" };
+      }
       const activities = pipe(
         thread.activities,
         Arr.filter((activity) => activity.id !== event.payload.activity.id),
@@ -467,6 +479,26 @@ export function applyThreadDetailEvent(
       return {
         kind: "updated",
         thread: { ...thread, activities, updatedAt: event.occurredAt },
+      };
+    }
+
+    // ── Subagent summaries ──────────────────────────────────────────
+    case "thread.subagent-upserted":
+    case "thread.subagent-state-set":
+    case "thread.subagent-progress-set": {
+      const subagents = applySubagentSummaryEvent(thread.subagents, event);
+      const updatedAt =
+        thread.updatedAt.localeCompare(event.occurredAt) >= 0 ? thread.updatedAt : event.occurredAt;
+      if (subagents === thread.subagents && updatedAt === thread.updatedAt) {
+        return { kind: "unchanged" };
+      }
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          subagents,
+          updatedAt,
+        },
       };
     }
 

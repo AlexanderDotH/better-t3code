@@ -6,6 +6,7 @@ import type {
   ServerProviderSkill,
   ServerProviderSlashCommand,
   ServerProviderModel,
+  ServerProviderNativeSubagents,
   ServerProviderState,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -57,6 +58,7 @@ export interface ServerProviderPresentation {
   readonly badgeLabel?: string;
   readonly showInteractionModeToggle?: boolean;
   readonly requiresNewThreadForModelChange?: boolean;
+  readonly nativeSubagents?: ServerProviderNativeSubagents;
 }
 
 export type ServerProviderDraft = Omit<ServerProvider, "instanceId" | "driver">;
@@ -233,6 +235,9 @@ export function buildServerProvider(input: {
       : {}),
     ...(typeof input.presentation.requiresNewThreadForModelChange === "boolean"
       ? { requiresNewThreadForModelChange: input.presentation.requiresNewThreadForModelChange }
+      : {}),
+    ...(input.presentation.nativeSubagents
+      ? { nativeSubagents: { ...input.presentation.nativeSubagents } }
       : {}),
     enabled: input.enabled,
     installed: input.probe.installed,

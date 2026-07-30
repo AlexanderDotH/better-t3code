@@ -21,7 +21,9 @@ import type {
   ProviderSession,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
+  RuntimeSessionId,
   ThreadId,
+  TurnId,
   ProviderTurnStartResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -29,8 +31,15 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 import type { ProviderServiceError } from "../Errors.ts";
-import type { ProviderAdapterCapabilities } from "./ProviderAdapter.ts";
+import type { ProviderAdapterCapabilities, ProviderForceStopResult } from "./ProviderAdapter.ts";
 import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
+
+export interface ProviderAbortTarget {
+  readonly threadId: ThreadId;
+  readonly runtimeSessionId: RuntimeSessionId;
+  readonly turnId: TurnId | null;
+  readonly providerInstanceId: ProviderInstanceId;
+}
 
 /**
  * ProviderServiceShape - Service API for provider session and turn orchestration.
@@ -57,6 +66,33 @@ export interface ProviderServiceShape {
   readonly interruptTurn: (
     input: ProviderInterruptTurnInput,
   ) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
+   * Capture the exact runtime lease that an abort request is allowed to affect.
+   */
+  readonly resolveAbortTarget: (
+    input: ProviderInterruptTurnInput,
+  ) => Effect.Effect<ProviderAbortTarget, ProviderServiceError>;
+
+  /**
+   * Cooperatively interrupt only when the captured runtime lease is current.
+   */
+  readonly interruptAbortTarget: (
+    target: ProviderAbortTarget,
+  ) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
+   * Hard-stop only the captured runtime lease. This must never recover or
+   * route to a newer session for the same thread.
+   */
+  readonly forceStopAbortTarget: (
+    target: ProviderAbortTarget,
+  ) => Effect.Effect<ProviderForceStopResult, ProviderServiceError>;
+
+  /**
+   * Cheap generation check used by the abort watchdog before escalation.
+   */
+  readonly isAbortTargetCurrent: (target: ProviderAbortTarget) => Effect.Effect<boolean>;
 
   /**
    * Respond to a provider approval request.

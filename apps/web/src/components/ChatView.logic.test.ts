@@ -1,4 +1,12 @@
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  RuntimeSessionId,
+  SubagentId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { Thread } from "../types";
@@ -7,12 +15,14 @@ import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
   buildThreadTurnInterruptInput,
+  canRequestThreadTurnInterrupt,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   getStartedThreadModelChangeBlockReason,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveSelectedSubagentId,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
@@ -20,6 +30,7 @@ import {
 const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
+const runtimeSessionId = RuntimeSessionId.make("runtime-session-1");
 const now = "2026-03-29T00:00:00.000Z";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -36,6 +47,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     interactionMode: "default",
     session: null,
     messages: [],
+    subagents: [],
     proposedPlans: [],
     activities: [],
     checkpoints: [],
@@ -49,6 +61,17 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     ...overrides,
   };
 }
+
+describe("resolveSelectedSubagentId", () => {
+  it("keeps the selected agent only while its thread remains active", () => {
+    const subagentId = SubagentId.make("codex:agent-1");
+    const selection = { threadKey: "environment-local:thread-1", subagentId };
+
+    expect(resolveSelectedSubagentId(selection, "environment-local:thread-1")).toBe(subagentId);
+    expect(resolveSelectedSubagentId(selection, "environment-local:thread-2")).toBeNull();
+    expect(resolveSelectedSubagentId(selection, null)).toBeNull();
+  });
+});
 
 const completedTurn = {
   turnId: TurnId.make("turn-1"),
@@ -65,7 +88,9 @@ const readySession = {
   providerName: "codex",
   providerInstanceId: ProviderInstanceId.make("codex"),
   runtimeMode: "full-access" as const,
+  runtimeSessionId,
   activeTurnId: null,
+  abortState: null,
   lastError: null,
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
@@ -91,6 +116,69 @@ describe("buildThreadTurnInterruptInput", () => {
     expect(buildThreadTurnInterruptInput(makeThread({ session: readySession }))).toEqual({
       threadId,
     });
+  });
+});
+
+describe("canRequestThreadTurnInterrupt", () => {
+  it("allows one interrupt request for an active turn", () => {
+    expect(
+      canRequestThreadTurnInterrupt(
+        makeThread({
+          session: {
+            ...readySession,
+            status: "running",
+            activeTurnId: TurnId.make("turn-running"),
+            abortState: null,
+          },
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects another interrupt while cooperative cancellation is pending", () => {
+    expect(
+      canRequestThreadTurnInterrupt(
+        makeThread({
+          session: {
+            ...readySession,
+            status: "running",
+            activeTurnId: TurnId.make("turn-running"),
+            abortState: {
+              runtimeSessionId,
+              targetTurnId: TurnId.make("turn-running"),
+              phase: "interrupting",
+              requestedAt: now,
+              forceAt: "2026-03-29T00:00:05.000Z",
+            },
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects another interrupt while force termination is pending", () => {
+    expect(
+      canRequestThreadTurnInterrupt(
+        makeThread({
+          session: {
+            ...readySession,
+            status: "running",
+            activeTurnId: TurnId.make("turn-running"),
+            abortState: {
+              runtimeSessionId,
+              targetTurnId: TurnId.make("turn-running"),
+              phase: "force-stopping",
+              requestedAt: now,
+              forceAt: "2026-03-29T00:00:05.000Z",
+            },
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects interrupts when no runtime is active", () => {
+    expect(canRequestThreadTurnInterrupt(makeThread({ session: readySession }))).toBe(false);
   });
 });
 

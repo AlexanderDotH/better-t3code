@@ -5,6 +5,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  RuntimeSessionId,
   ThreadId,
   TurnId,
   ProviderInstanceId,
@@ -174,6 +175,318 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 });
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-abort-state-test-")))(
+  "OrchestrationProjectionPipeline",
+  (it) => {
+    it.effect("projects synchronized turn abort state with its runtime lease", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const runtimeSessionId = RuntimeSessionId.make("runtime-session-abort");
+
+        yield* eventStore.append({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-session-abort"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-abort"),
+          occurredAt: "2026-07-30T00:00:00.000Z",
+          commandId: CommandId.make("cmd-session-abort"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-session-abort"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("thread-abort"),
+            session: {
+              threadId: ThreadId.make("thread-abort"),
+              status: "running",
+              providerName: "codex",
+              runtimeSessionId,
+              runtimeMode: "full-access",
+              activeTurnId: TurnId.make("turn-abort"),
+              abortState: {
+                runtimeSessionId,
+                targetTurnId: TurnId.make("turn-abort"),
+                phase: "force-stopping",
+                requestedAt: "2026-07-30T00:00:00.000Z",
+                forceAt: "2026-07-30T00:00:05.000Z",
+              },
+              lastError: null,
+              updatedAt: "2026-07-30T00:00:05.000Z",
+            },
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{
+          readonly runtimeSessionId: string | null;
+          readonly abortStateJson: string | null;
+        }>`
+        SELECT
+          runtime_session_id AS "runtimeSessionId",
+          abort_state_json AS "abortStateJson"
+        FROM projection_thread_sessions
+        WHERE thread_id = 'thread-abort'
+      `;
+        assert.strictEqual(rows[0]?.runtimeSessionId, runtimeSessionId);
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        assert.deepStrictEqual(JSON.parse(rows[0]?.abortStateJson ?? "null"), {
+          runtimeSessionId,
+          targetTurnId: "turn-abort",
+          phase: "force-stopping",
+          requestedAt: "2026-07-30T00:00:00.000Z",
+          forceAt: "2026-07-30T00:00:05.000Z",
+        });
+      }),
+    );
+
+    it.effect("settles the targeted turn as interrupted from the authoritative abort event", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-abort-settled");
+        const turnId = TurnId.make("turn-abort-settled");
+        const runtimeSessionId = RuntimeSessionId.make("runtime-session-abort-settled");
+
+        yield* eventStore.append({
+          type: "thread.turn-start-requested",
+          eventId: EventId.make("evt-abort-start-requested"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-07-30T00:00:00.000Z",
+          commandId: CommandId.make("cmd-abort-start-requested"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-abort-start-requested"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId: MessageId.make("message-abort-start"),
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: "2026-07-30T00:00:00.000Z",
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.activity-appended",
+          eventId: EventId.make("evt-abort-approval-requested"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-07-30T00:00:02.000Z",
+          commandId: CommandId.make("cmd-abort-approval-requested"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-abort-approval-requested"),
+          metadata: {},
+          payload: {
+            threadId,
+            activity: {
+              id: EventId.make("activity-abort-approval-requested"),
+              tone: "approval",
+              kind: "approval.requested",
+              summary: "Command approval requested",
+              payload: { requestId: "approval-abort-target" },
+              turnId,
+              createdAt: "2026-07-30T00:00:02.000Z",
+            },
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.activity-appended",
+          eventId: EventId.make("evt-abort-user-input-requested"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-07-30T00:00:02.100Z",
+          commandId: CommandId.make("cmd-abort-user-input-requested"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-abort-user-input-requested"),
+          metadata: {},
+          payload: {
+            threadId,
+            activity: {
+              id: EventId.make("activity-abort-user-input-requested"),
+              tone: "approval",
+              kind: "user-input.requested",
+              summary: "User input requested",
+              payload: { requestId: "user-input-abort-target" },
+              turnId,
+              createdAt: "2026-07-30T00:00:02.100Z",
+            },
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.activity-appended",
+          eventId: EventId.make("evt-abort-other-approval-requested"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-07-30T00:00:02.200Z",
+          commandId: CommandId.make("cmd-abort-other-approval-requested"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-abort-other-approval-requested"),
+          metadata: {},
+          payload: {
+            threadId,
+            activity: {
+              id: EventId.make("activity-abort-other-approval-requested"),
+              tone: "approval",
+              kind: "approval.requested",
+              summary: "Other turn approval requested",
+              payload: { requestId: "approval-abort-other-turn" },
+              turnId: TurnId.make("turn-abort-other"),
+              createdAt: "2026-07-30T00:00:02.200Z",
+            },
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-abort-running"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-07-30T00:00:01.000Z",
+          commandId: CommandId.make("cmd-abort-running"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-abort-running"),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "running",
+              providerName: "codex",
+              runtimeSessionId,
+              runtimeMode: "full-access",
+              activeTurnId: turnId,
+              abortState: {
+                runtimeSessionId,
+                targetTurnId: turnId,
+                phase: "interrupting",
+                requestedAt: "2026-07-30T00:00:02.000Z",
+                forceAt: "2026-07-30T00:00:07.000Z",
+              },
+              lastError: null,
+              updatedAt: "2026-07-30T00:00:01.000Z",
+            },
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.turn-abort-settled",
+          eventId: EventId.make("evt-abort-settled"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-07-30T00:00:04.000Z",
+          commandId: CommandId.make("cmd-abort-settled"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-abort-settled"),
+          metadata: {},
+          payload: {
+            threadId,
+            runtimeSessionId,
+            turnId,
+            outcome: "cooperative",
+            settledAt: "2026-07-30T00:00:04.000Z",
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{
+          readonly state: string;
+          readonly completedAt: string | null;
+        }>`
+        SELECT
+          state,
+          completed_at AS "completedAt"
+        FROM projection_turns
+        WHERE thread_id = ${threadId}
+          AND turn_id = ${turnId}
+      `;
+        assert.deepStrictEqual(rows, [
+          {
+            state: "interrupted",
+            completedAt: "2026-07-30T00:00:04.000Z",
+          },
+        ]);
+        const sessions = yield* sql<{
+          readonly status: string;
+          readonly runtimeSessionId: string | null;
+          readonly activeTurnId: string | null;
+          readonly abortStateJson: string | null;
+        }>`
+        SELECT
+          status,
+          runtime_session_id AS "runtimeSessionId",
+          active_turn_id AS "activeTurnId",
+          abort_state_json AS "abortStateJson"
+        FROM projection_thread_sessions
+        WHERE thread_id = ${threadId}
+      `;
+        assert.deepStrictEqual(sessions, [
+          {
+            status: "ready",
+            runtimeSessionId,
+            activeTurnId: null,
+            abortStateJson: null,
+          },
+        ]);
+        const pendingApprovals = yield* sql<{
+          readonly requestId: string;
+          readonly status: string;
+          readonly decision: string | null;
+        }>`
+        SELECT
+          request_id AS "requestId",
+          status,
+          decision
+        FROM projection_pending_approvals
+        WHERE thread_id = ${threadId}
+        ORDER BY request_id ASC
+      `;
+        assert.deepStrictEqual(pendingApprovals, [
+          {
+            requestId: "approval-abort-other-turn",
+            status: "pending",
+            decision: null,
+          },
+          {
+            requestId: "approval-abort-target",
+            status: "resolved",
+            decision: "cancel",
+          },
+        ]);
+        const resolutionActivities = yield* sql<{
+          readonly activityId: string;
+          readonly kind: string;
+          readonly turnId: string | null;
+        }>`
+        SELECT
+          activity_id AS "activityId",
+          kind,
+          turn_id AS "turnId"
+        FROM projection_thread_activities
+        WHERE thread_id = ${threadId}
+          AND kind IN ('approval.resolved', 'user-input.resolved')
+        ORDER BY activity_id ASC
+      `;
+        assert.deepStrictEqual(resolutionActivities, [
+          {
+            activityId: "evt-abort-settled:abort:approval:approval-abort-target",
+            kind: "approval.resolved",
+            turnId,
+          },
+          {
+            activityId: "evt-abort-settled:abort:user-input:user-input-abort-target",
+            kind: "user-input.resolved",
+            turnId,
+          },
+        ]);
+      }),
+    );
+  },
+);
 
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-base-")))(
   "OrchestrationProjectionPipeline",
@@ -1283,8 +1596,10 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             threadId,
             status: "running",
             providerName: "claude",
+            runtimeSessionId: null,
             runtimeMode: "full-access",
             activeTurnId: turnId,
+            abortState: null,
             lastError: null,
             updatedAt: "2026-01-01T00:00:01.000Z",
           },
@@ -1344,8 +1659,10 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             threadId,
             status: "ready",
             providerName: "claude",
+            runtimeSessionId: null,
             runtimeMode: "full-access",
             activeTurnId: null,
+            abortState: null,
             lastError: null,
             updatedAt: "2026-01-01T00:01:00.000Z",
           },
@@ -1421,8 +1738,10 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
               threadId,
               status: "running",
               providerName: "opencode",
+              runtimeSessionId: null,
               runtimeMode: "full-access",
               activeTurnId: turnId,
+              abortState: null,
               lastError: null,
               updatedAt,
             },
@@ -2471,8 +2790,10 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
             threadId,
             status: "running",
             providerName: "codex",
+            runtimeSessionId: null,
             runtimeMode: "approval-required",
             activeTurnId: turnId,
+            abortState: null,
             lastError: null,
             updatedAt: sessionSetAt,
           },

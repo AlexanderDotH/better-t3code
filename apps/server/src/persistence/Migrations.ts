@@ -45,6 +45,9 @@ import Migration0029 from "./Migrations/029_ProjectionThreadDetailOrderingIndexe
 import Migration0030 from "./Migrations/030_ProjectionThreadShellArchiveIndexes.ts";
 import Migration0031 from "./Migrations/031_AuthAuthorizationScopes.ts";
 import Migration0032 from "./Migrations/032_AuthPairingProofKeyThumbprint.ts";
+import Migration0039 from "./Migrations/039_ProjectionThreadSessionAbortState.ts";
+import Migration0040 from "./Migrations/040_ProjectionCompatibility.ts";
+import Migration0041 from "./Migrations/041_ProjectionThreadSubagents.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -89,6 +92,11 @@ export const migrationEntries = [
   [30, "ProjectionThreadShellArchiveIndexes", Migration0030],
   [31, "AuthAuthorizationScopes", Migration0031],
   [32, "AuthPairingProofKeyThumbprint", Migration0032],
+  // IDs 33-38 have conflicting meanings across deployed upstream and fork databases.
+  // Reapply every required schema change idempotently at fresh IDs instead of rewriting history.
+  [39, "ProjectionThreadSessionAbortState", Migration0039],
+  [40, "ProjectionCompatibility", Migration0040],
+  [41, "ProjectionThreadSubagents", Migration0041],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

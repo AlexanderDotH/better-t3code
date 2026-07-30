@@ -33,6 +33,9 @@ const fakeCodexAdapter: CodexAdapter.CodexAdapterShape = {
   startSession: vi.fn(),
   sendTurn: vi.fn(),
   interruptTurn: vi.fn(),
+  forceStopSession: vi.fn(() =>
+    Effect.succeed({ outcome: "terminated" as const, mechanism: "already-stopped" as const }),
+  ),
   respondToRequest: vi.fn(),
   respondToUserInput: vi.fn(),
   stopSession: vi.fn(),
@@ -50,6 +53,9 @@ const fakeClaudeAdapter: ClaudeAdapter.ClaudeAdapterShape = {
   startSession: vi.fn(),
   sendTurn: vi.fn(),
   interruptTurn: vi.fn(),
+  forceStopSession: vi.fn(() =>
+    Effect.succeed({ outcome: "terminated" as const, mechanism: "already-stopped" as const }),
+  ),
   respondToRequest: vi.fn(),
   respondToUserInput: vi.fn(),
   stopSession: vi.fn(),
@@ -67,6 +73,9 @@ const fakeOpenCodeAdapter: OpenCodeAdapter.OpenCodeAdapterShape = {
   startSession: vi.fn(),
   sendTurn: vi.fn(),
   interruptTurn: vi.fn(),
+  forceStopSession: vi.fn(() =>
+    Effect.succeed({ outcome: "terminated" as const, mechanism: "already-stopped" as const }),
+  ),
   respondToRequest: vi.fn(),
   respondToUserInput: vi.fn(),
   stopSession: vi.fn(),
@@ -84,6 +93,9 @@ const fakeCursorAdapter: CursorAdapter.CursorAdapterShape = {
   startSession: vi.fn(),
   sendTurn: vi.fn(),
   interruptTurn: vi.fn(),
+  forceStopSession: vi.fn(() =>
+    Effect.succeed({ outcome: "terminated" as const, mechanism: "already-stopped" as const }),
+  ),
   respondToRequest: vi.fn(),
   respondToUserInput: vi.fn(),
   stopSession: vi.fn(),

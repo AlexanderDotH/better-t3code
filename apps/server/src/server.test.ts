@@ -26,10 +26,13 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ResolvedKeybindingRule,
+  SubagentId,
   ThreadId,
   WS_METHODS,
   WsRpcGroup,
   EditorId,
+  type OrchestrationSubagentDetail,
+  type OrchestrationSubagentSummary,
 } from "@t3tools/contracts";
 import {
   computeDpopAccessTokenHash,
@@ -121,6 +124,7 @@ const defaultModelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5-codex",
 } as const;
+const defaultSubagentId = SubagentId.make("codex:subagent-default");
 const testEnvironmentDescriptor = {
   environmentId: EnvironmentId.make("environment-test"),
   label: "Test environment",
@@ -168,12 +172,92 @@ const makeDefaultOrchestrationReadModel = () => {
         session: null,
         activities: [],
         proposedPlans: [],
+        subagents: [],
         checkpoints: [],
         deletedAt: null,
       },
     ],
   };
 };
+
+const makeDefaultSubagentSummary = (
+  overrides: Partial<OrchestrationSubagentSummary> = {},
+): OrchestrationSubagentSummary => {
+  const now = "2026-01-01T00:00:00.000Z";
+  return {
+    id: defaultSubagentId,
+    providerThreadId: "provider-subagent-default",
+    parentId: null,
+    path: null,
+    name: "Default subagent",
+    nickname: null,
+    role: null,
+    task: null,
+    model: null,
+    reasoningEffort: null,
+    depth: 1,
+    status: "running",
+    statusMessage: null,
+    latestProgress: null,
+    latestTurn: null,
+    startedAt: now,
+    updatedAt: now,
+    completedAt: null,
+    ...overrides,
+  };
+};
+
+const makeDefaultSubagentDetail = (
+  overrides: Partial<OrchestrationSubagentDetail> = {},
+): OrchestrationSubagentDetail => ({
+  ...makeDefaultSubagentSummary(overrides),
+  messages: [],
+  proposedPlans: [],
+  activities: [],
+  ...overrides,
+});
+
+const makeThreadEvent = (
+  sequence: number,
+  type: OrchestrationEvent["type"],
+  payload: unknown,
+  aggregateId: ThreadId = defaultThreadId,
+): OrchestrationEvent =>
+  ({
+    sequence,
+    eventId: EventId.make(`event-${sequence}`),
+    aggregateKind: "thread",
+    aggregateId,
+    occurredAt: "2026-01-01T00:00:00.000Z",
+    commandId: CommandId.make(`command-${sequence}`),
+    causationEventId: null,
+    correlationId: CommandId.make(`command-${sequence}`),
+    metadata: {},
+    type,
+    payload: payload as never,
+  }) as OrchestrationEvent;
+
+const makeMessageSentEvent = (
+  sequence: number,
+  subagentId?: SubagentId,
+  aggregateId: ThreadId = defaultThreadId,
+): OrchestrationEvent =>
+  makeThreadEvent(
+    sequence,
+    "thread.message-sent",
+    {
+      threadId: aggregateId,
+      ...(subagentId === undefined ? {} : { subagentId }),
+      messageId: MessageId.make(`message-${sequence}`),
+      role: "assistant",
+      text: `message ${sequence}`,
+      turnId: null,
+      streaming: false,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    },
+    aggregateId,
+  );
 
 const makeDefaultOrchestrationThreadShell = (
   overrides: Partial<OrchestrationThreadShell> = {},
@@ -702,6 +786,7 @@ const buildAppUnderTest = (options?: {
           getProjectShellById: () => Effect.succeed(Option.none()),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getSubagentDetailSnapshot: () => Effect.succeed(Option.none()),
           getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
@@ -5498,6 +5583,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             session: null,
             activities: [],
             proposedPlans: [],
+            subagents: [],
             checkpoints: [],
             deletedAt: null,
           },
@@ -5574,6 +5660,201 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
       assert.deepEqual(replayResult, []);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("keeps child transcript events out of the root thread subscription", () =>
+    Effect.gen(function* () {
+      const subagent = makeDefaultSubagentSummary();
+      const thread = {
+        ...makeDefaultOrchestrationReadModel().threads[0]!,
+        subagents: [subagent],
+      };
+      const rootMessage = makeMessageSentEvent(1);
+      const childMessage = makeMessageSentEvent(2, subagent.id);
+      const subagentUpdate = makeThreadEvent(3, "thread.subagent-state-set", {
+        threadId: defaultThreadId,
+        subagentId: subagent.id,
+        status: "completed",
+        statusMessage: null,
+        updatedAt: "2026-01-01T00:00:01.000Z",
+      });
+      const unrelatedThreadMessage = makeMessageSentEvent(
+        4,
+        undefined,
+        ThreadId.make("thread-unrelated"),
+      );
+
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getThreadDetailById: () => Effect.succeed(Option.some(thread)),
+            getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 10 }),
+          },
+          orchestrationEngine: {
+            streamDomainEvents: Stream.fromIterable([
+              rootMessage,
+              childMessage,
+              subagentUpdate,
+              unrelatedThreadMessage,
+            ]),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+          }).pipe(Stream.runCollect),
+        ),
+      );
+      const items = Array.from(result);
+
+      assert.deepEqual(
+        items.map((item) =>
+          item.kind === "snapshot" ? item.snapshot.snapshotSequence : item.event.sequence,
+        ),
+        [10, rootMessage.sequence, subagentUpdate.sequence],
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("streams one selected subagent snapshot and only its transcript events", () =>
+    Effect.gen(function* () {
+      const selected = makeDefaultSubagentDetail();
+      const siblingId = SubagentId.make("codex:subagent-sibling");
+      const selectedMessage = makeMessageSentEvent(1, selected.id);
+      const siblingMessage = makeMessageSentEvent(2, siblingId);
+      const rootMessage = makeMessageSentEvent(3);
+      const selectedUpdate = makeThreadEvent(4, "thread.subagent-progress-set", {
+        threadId: defaultThreadId,
+        subagentId: selected.id,
+        progress: {
+          kind: "tool",
+          summary: "Inspecting files",
+          detail: null,
+          createdAt: "2026-01-01T00:00:01.000Z",
+        },
+        updatedAt: "2026-01-01T00:00:01.000Z",
+      });
+      const siblingUpdate = makeThreadEvent(5, "thread.subagent-state-set", {
+        threadId: defaultThreadId,
+        subagentId: siblingId,
+        status: "completed",
+        statusMessage: null,
+        updatedAt: "2026-01-01T00:00:01.000Z",
+      });
+      const unrelatedThreadMessage = makeMessageSentEvent(
+        6,
+        selected.id,
+        ThreadId.make("thread-unrelated"),
+      );
+
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getSubagentDetailSnapshot: () =>
+              Effect.succeed(
+                Option.some({
+                  snapshotSequence: 20,
+                  threadId: defaultThreadId,
+                  subagent: selected,
+                }),
+              ),
+          },
+          orchestrationEngine: {
+            streamDomainEvents: Stream.fromIterable([
+              selectedMessage,
+              siblingMessage,
+              rootMessage,
+              selectedUpdate,
+              siblingUpdate,
+              unrelatedThreadMessage,
+            ]),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeSubagent]({
+            threadId: defaultThreadId,
+            subagentId: selected.id,
+          }).pipe(Stream.runCollect),
+        ),
+      );
+      const items = Array.from(result);
+
+      assert.deepEqual(
+        items.map((item) =>
+          item.kind === "snapshot" ? item.snapshot.snapshotSequence : item.event.sequence,
+        ),
+        [20, selectedMessage.sequence, selectedUpdate.sequence],
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("reports a snapshot error when the selected subagent does not exist", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getSubagentDetailSnapshot: () => Effect.succeed(Option.none()),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeSubagent]({
+            threadId: defaultThreadId,
+            subagentId: defaultSubagentId,
+          }).pipe(Stream.runCollect),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "OrchestrationGetSnapshotError");
+      assert.include(result.failure.message, defaultSubagentId);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("requires orchestration read scope for subagent subscriptions", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const { response: exchangeResponse, body: tokenBody } = yield* exchangeAccessToken(
+        defaultDesktopBootstrapToken,
+        { scope: "access:write" },
+      );
+      assert.equal(exchangeResponse.status, 200);
+      assert.isDefined(tokenBody.access_token);
+
+      const wsTicketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: {
+          authorization: `Bearer ${tokenBody.access_token ?? ""}`,
+        },
+      });
+      const wsTicketBody = (yield* wsTicketResponse.json) as { readonly ticket: string };
+      const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(wsTicketBody.ticket)}`;
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeSubagent]({
+            threadId: defaultThreadId,
+            subagentId: defaultSubagentId,
+          }).pipe(Stream.runCollect),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "EnvironmentAuthorizationError");
+      if (result.failure._tag === "EnvironmentAuthorizationError") {
+        assert.equal(result.failure.requiredScope, "orchestration:read");
+      }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -5706,8 +5987,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                       threadId,
                       status: "ready",
                       providerName: "claudeAgent",
+                      runtimeSessionId: null,
                       runtimeMode: "full-access",
                       activeTurnId: null,
+                      abortState: null,
                       lastError: null,
                       updatedAt: now,
                     },
@@ -5784,8 +6067,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                           threadId,
                           status: "ready",
                           providerName: "claudeAgent",
+                          runtimeSessionId: null,
                           runtimeMode: "full-access",
                           activeTurnId: null,
+                          abortState: null,
                           lastError: null,
                           updatedAt: now,
                         },
@@ -5908,8 +6193,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                         threadId,
                         status: "stopped",
                         providerName: "claudeAgent",
+                        runtimeSessionId: null,
                         runtimeMode: "full-access",
                         activeTurnId: null,
+                        abortState: null,
                         lastError: null,
                         updatedAt: now,
                       },
@@ -5981,8 +6268,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                       threadId,
                       status: "ready",
                       providerName: "claudeAgent",
+                      runtimeSessionId: null,
                       runtimeMode: "full-access",
                       activeTurnId: null,
+                      abortState: null,
                       lastError: null,
                       updatedAt: now,
                     },
@@ -6053,8 +6342,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                       threadId,
                       status: "ready",
                       providerName: "claudeAgent",
+                      runtimeSessionId: null,
                       runtimeMode: "full-access",
                       activeTurnId: null,
+                      abortState: null,
                       lastError: null,
                       updatedAt: now,
                     },

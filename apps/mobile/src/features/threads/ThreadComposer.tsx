@@ -59,6 +59,7 @@ import {
 } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
+import { resolveThreadAbortPresentation } from "./threadAbortPresentation";
 
 /**
  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
@@ -204,6 +205,7 @@ const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
   const isDarkMode = useColorScheme() === "dark";
   const foregroundColor = useThemeColor("--color-foreground");
+  const dangerForegroundColor = useThemeColor("--color-danger-foreground");
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
@@ -239,9 +241,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     setIsFocused(false);
     onExpandedChange?.(false);
   }, [onExpandedChange]);
-  const showStopAction =
-    props.selectedThread.session?.status === "running" ||
-    props.selectedThread.session?.status === "starting";
+  const stopAction = resolveThreadAbortPresentation(props.selectedThread.session);
 
   const sendLabel =
     props.connectionState !== "connected" || props.activeThreadBusy || props.queueCount > 0
@@ -758,8 +758,19 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             </View>
           ) : null}
           {!isExpanded ? (
-            showStopAction ? (
-              <ControlPill icon="stop.fill" variant="danger" onPress={props.onStopThread} />
+            stopAction.showStopAction ? (
+              <ControlPill
+                accessibilityLabel={stopAction.accessibilityLabel}
+                icon={stopAction.disabled ? undefined : "stop.fill"}
+                iconNode={
+                  stopAction.disabled ? (
+                    <ActivityIndicator size="small" color={dangerForegroundColor} />
+                  ) : undefined
+                }
+                variant="danger"
+                disabled={stopAction.disabled}
+                onPress={props.onStopThread}
+              />
             ) : (
               <ControlPill
                 icon="arrow.up"
@@ -805,10 +816,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   label={configurationLabel}
                 />
               </ControlPillMenu>
-              {showStopAction ? (
+              {stopAction.showStopAction ? (
                 <ComposerToolbarButton
-                  icon="stop.fill"
+                  accessibilityLabel={stopAction.accessibilityLabel}
+                  icon={stopAction.disabled ? undefined : "stop.fill"}
+                  iconNode={
+                    stopAction.disabled ? (
+                      <ActivityIndicator size="small" color={dangerForegroundColor} />
+                    ) : undefined
+                  }
                   variant="danger"
+                  disabled={stopAction.disabled}
                   onPress={props.onStopThread}
                   showChevron={false}
                 />

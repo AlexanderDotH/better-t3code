@@ -6,6 +6,7 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  SubagentId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -38,6 +39,7 @@ const baseThread: OrchestrationThread = {
   messages: [],
   proposedPlans: [],
   activities: [],
+  subagents: [],
   checkpoints: [],
   session: null,
 };
@@ -97,8 +99,178 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.title).toBe("New Thread");
         expect(result.thread.branch).toBe("main");
         expect(result.thread.messages).toEqual([]);
+        expect(result.thread.subagents).toEqual([]);
         expect(result.thread.session).toBeNull();
       }
+    });
+  });
+
+  describe("subagent routing", () => {
+    const subagentId = SubagentId.make("agent-client-runtime");
+    const subagent = {
+      id: subagentId,
+      providerThreadId: "provider-agent-client-runtime",
+      parentId: null,
+      path: "/root/client_runtime",
+      name: "client_runtime",
+      nickname: "Carson",
+      role: "worker",
+      task: "Implement client runtime",
+      model: "gpt-5.6-codex",
+      reasoningEffort: "ultra",
+      depth: 1,
+      status: "running" as const,
+      statusMessage: "Adding tests",
+      latestProgress: null,
+      latestTurn: null,
+      startedAt: "2026-07-30T10:00:00.000Z",
+      updatedAt: "2026-07-30T10:00:01.000Z",
+      completedAt: null,
+    };
+
+    it("upserts authoritative subagent summaries", () => {
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 16,
+        occurredAt: "2026-07-30T10:00:01.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.subagent-upserted",
+        payload: {
+          threadId: baseThread.id,
+          subagent,
+        },
+      });
+
+      expect(result).toMatchObject({
+        kind: "updated",
+        thread: {
+          subagents: [subagent],
+          updatedAt: "2026-07-30T10:00:01.000Z",
+        },
+      });
+    });
+
+    it("applies lifecycle and progress updates without duplicating a summary", () => {
+      const waiting = applyThreadDetailEvent(
+        { ...baseThread, subagents: [subagent] },
+        {
+          ...baseEventFields,
+          sequence: 17,
+          occurredAt: "2026-07-30T10:00:02.000Z",
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.subagent-state-set",
+          payload: {
+            threadId: baseThread.id,
+            subagentId,
+            status: "waiting",
+            statusMessage: "Waiting for another agent",
+            updatedAt: "2026-07-30T10:00:02.000Z",
+          },
+        },
+      );
+      expect(waiting.kind).toBe("updated");
+      if (waiting.kind !== "updated") {
+        return;
+      }
+
+      const progressed = applyThreadDetailEvent(waiting.thread, {
+        ...baseEventFields,
+        sequence: 18,
+        occurredAt: "2026-07-30T10:00:03.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.subagent-progress-set",
+        payload: {
+          threadId: baseThread.id,
+          subagentId,
+          progress: {
+            kind: "test",
+            summary: "Running focused tests",
+            detail: null,
+            createdAt: "2026-07-30T10:00:03.000Z",
+          },
+          updatedAt: "2026-07-30T10:00:03.000Z",
+        },
+      });
+
+      expect(progressed).toMatchObject({
+        kind: "updated",
+        thread: {
+          subagents: [
+            {
+              id: subagentId,
+              status: "waiting",
+              statusMessage: "Waiting for another agent",
+              latestProgress: {
+                summary: "Running focused tests",
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    it.each([
+      {
+        type: "thread.message-sent" as const,
+        payload: {
+          threadId: baseThread.id,
+          subagentId,
+          messageId: MessageId.make("child-message"),
+          role: "assistant" as const,
+          text: "Child output",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-07-30T10:00:02.000Z",
+          updatedAt: "2026-07-30T10:00:02.000Z",
+        },
+      },
+      {
+        type: "thread.proposed-plan-upserted" as const,
+        payload: {
+          threadId: baseThread.id,
+          subagentId,
+          proposedPlan: {
+            id: "child-plan",
+            turnId: null,
+            planMarkdown: "# Child plan",
+            implementedAt: null,
+            implementationThreadId: null,
+            createdAt: "2026-07-30T10:00:02.000Z",
+            updatedAt: "2026-07-30T10:00:02.000Z",
+          },
+        },
+      },
+      {
+        type: "thread.activity-appended" as const,
+        payload: {
+          threadId: baseThread.id,
+          subagentId,
+          activity: {
+            id: EventId.make("child-activity"),
+            tone: "tool" as const,
+            kind: "command",
+            summary: "Ran tests",
+            payload: {},
+            turnId: null,
+            createdAt: "2026-07-30T10:00:02.000Z",
+          },
+        },
+      },
+    ])("keeps routed $type data out of the root transcript", ({ type, payload }) => {
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 19,
+        occurredAt: "2026-07-30T10:00:02.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type,
+        payload,
+      } as never);
+
+      expect(result).toEqual({ kind: "unchanged" });
     });
   });
 
@@ -297,7 +469,9 @@ describe("applyThreadDetailEvent", () => {
           status: "running",
           providerName: "claude",
           runtimeMode: "full-access",
+          runtimeSessionId: null,
           activeTurnId: TurnId.make("turn-1"),
+          abortState: null,
           lastError: null,
           updatedAt: "2026-04-01T06:59:00.000Z",
         },
@@ -366,7 +540,9 @@ describe("applyThreadDetailEvent", () => {
             status: "ready",
             providerName: "claude",
             runtimeMode: "full-access",
+            runtimeSessionId: null,
             activeTurnId: null,
+            abortState: null,
             lastError: null,
             updatedAt: "2026-04-01T08:00:00.000Z",
           },
@@ -395,7 +571,9 @@ describe("applyThreadDetailEvent", () => {
             status: "running",
             providerName: "codex",
             runtimeMode: "full-access",
+            runtimeSessionId: null,
             activeTurnId: TurnId.make("turn-1"),
+            abortState: null,
             lastError: null,
             updatedAt: "2026-04-01T08:00:00.000Z",
           },
@@ -420,7 +598,9 @@ describe("applyThreadDetailEvent", () => {
           status: "running",
           providerName: "codex",
           runtimeMode: "full-access",
+          runtimeSessionId: null,
           activeTurnId: TurnId.make("turn-1"),
+          abortState: null,
           lastError: null,
           updatedAt: "2026-04-01T08:00:00.000Z",
         },

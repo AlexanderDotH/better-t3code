@@ -9,6 +9,7 @@ import {
   ProviderSession,
   ProviderDriverKind,
   ProviderInstanceId,
+  RuntimeSessionId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import {
@@ -54,6 +55,10 @@ import {
 } from "./ProviderCommandReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
+import {
+  TurnAbortCoordinator,
+  type TurnAbortCoordinatorShape,
+} from "../Services/TurnAbortCoordinator.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Clock from "effect/Clock";
@@ -222,6 +227,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
+    const requestAbort = vi.fn<TurnAbortCoordinatorShape["requestAbort"]>(() => Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
     const stopSession = vi.fn((input: unknown) =>
@@ -298,6 +304,17 @@ describe("ProviderCommandReactor", () => {
       startSession: startSession as ProviderServiceShape["startSession"],
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
       interruptTurn: interruptTurn as ProviderServiceShape["interruptTurn"],
+      resolveAbortTarget: ({ threadId, turnId }) =>
+        Effect.succeed({
+          threadId,
+          runtimeSessionId: RuntimeSessionId.make("runtime-reactor-test"),
+          turnId: turnId ?? null,
+          providerInstanceId: modelSelection.instanceId,
+        }),
+      interruptAbortTarget: () => Effect.void,
+      forceStopAbortTarget: () =>
+        Effect.succeed({ outcome: "terminated", mechanism: "already-stopped" }),
+      isAbortTargetCurrent: () => Effect.succeed(true),
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
@@ -347,6 +364,12 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
+      Layer.provideMerge(
+        Layer.succeed(TurnAbortCoordinator, {
+          requestAbort,
+          settleCooperative: () => Effect.succeed(false),
+        }),
+      ),
       Layer.provideMerge(makeProviderRegistryLayer(providerSnapshots as never)),
       Layer.provideMerge(
         Layer.mock(GitWorkflowService.GitWorkflowService)({
@@ -414,6 +437,7 @@ describe("ProviderCommandReactor", () => {
       startSession,
       sendTurn,
       interruptTurn,
+      requestAbort,
       respondToRequest,
       respondToUserInput,
       stopSession,
@@ -1366,8 +1390,10 @@ describe("ProviderCommandReactor", () => {
           threadId: ThreadId.make("thread-1"),
           status: "ready",
           providerName: "claudeAgent",
+          runtimeSessionId: null,
           runtimeMode: "full-access",
           activeTurnId: null,
+          abortState: null,
           lastError: null,
           updatedAt: now,
         },
@@ -1547,8 +1573,10 @@ describe("ProviderCommandReactor", () => {
           status: "stopped",
           providerName: "codex",
           providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeSessionId: null,
           runtimeMode: "approval-required",
           activeTurnId: null,
+          abortState: null,
           lastError: null,
           updatedAt: now,
         },
@@ -1612,8 +1640,10 @@ describe("ProviderCommandReactor", () => {
           threadId: ThreadId.make("thread-1"),
           status: "running",
           providerName: "codex",
+          runtimeSessionId: null,
           runtimeMode: "approval-required",
           activeTurnId: asTurnId("turn-1"),
+          abortState: null,
           lastError: null,
           updatedAt: now,
         },
@@ -1631,10 +1661,13 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.interruptTurn.mock.calls.length === 1);
-    expect(harness.interruptTurn.mock.calls[0]?.[0]).toEqual({
+    await waitFor(() => harness.requestAbort.mock.calls.length === 1);
+    expect(harness.requestAbort.mock.calls[0]?.[0]).toEqual({
       threadId: "thread-1",
+      turnId: "turn-1",
+      requestedAt: now,
     });
+    expect(harness.interruptTurn).not.toHaveBeenCalled();
   });
 
   it("starts a fresh session when only projected session state exists", async () => {
@@ -1650,8 +1683,10 @@ describe("ProviderCommandReactor", () => {
           threadId: ThreadId.make("thread-1"),
           status: "ready",
           providerName: "codex",
+          runtimeSessionId: null,
           runtimeMode: "approval-required",
           activeTurnId: null,
+          abortState: null,
           lastError: null,
           updatedAt: now,
         },
@@ -1705,8 +1740,10 @@ describe("ProviderCommandReactor", () => {
           threadId: ThreadId.make("thread-1"),
           status: "ready",
           providerName: "codex",
+          runtimeSessionId: null,
           runtimeMode: "approval-required",
           activeTurnId: null,
+          abortState: null,
           lastError: null,
           updatedAt: now,
         },
@@ -1776,8 +1813,10 @@ describe("ProviderCommandReactor", () => {
           threadId: ThreadId.make("thread-1"),
           status: "running",
           providerName: "codex",
+          runtimeSessionId: null,
           runtimeMode: "approval-required",
           activeTurnId: null,
+          abortState: null,
           lastError: null,
           updatedAt: now,
         },
@@ -1817,8 +1856,10 @@ describe("ProviderCommandReactor", () => {
           threadId: ThreadId.make("thread-1"),
           status: "running",
           providerName: "codex",
+          runtimeSessionId: null,
           runtimeMode: "approval-required",
           activeTurnId: null,
+          abortState: null,
           lastError: null,
           updatedAt: now,
         },
@@ -1871,8 +1912,10 @@ describe("ProviderCommandReactor", () => {
           threadId: ThreadId.make("thread-1"),
           status: "running",
           providerName: "codex",
+          runtimeSessionId: null,
           runtimeMode: "approval-required",
           activeTurnId: null,
+          abortState: null,
           lastError: null,
           updatedAt: now,
         },
@@ -1966,8 +2009,10 @@ describe("ProviderCommandReactor", () => {
           threadId: ThreadId.make("thread-1"),
           status: "running",
           providerName: "claudeAgent",
+          runtimeSessionId: null,
           runtimeMode: "approval-required",
           activeTurnId: null,
+          abortState: null,
           lastError: null,
           updatedAt: now,
         },
@@ -2067,8 +2112,10 @@ describe("ProviderCommandReactor", () => {
           status: "ready",
           providerName: "codex",
           providerInstanceId: ProviderInstanceId.make("codex_work"),
+          runtimeSessionId: null,
           runtimeMode: "approval-required",
           activeTurnId: null,
+          abortState: null,
           lastError: null,
           updatedAt: now,
         },

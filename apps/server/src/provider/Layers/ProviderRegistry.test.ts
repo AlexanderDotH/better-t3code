@@ -323,6 +323,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.installed, true);
           assert.strictEqual(status.version, "1.0.0");
           assert.strictEqual(status.auth.status, "authenticated");
+          assert.deepStrictEqual(status.nativeSubagents, {
+            toolName: "spawn_agent",
+            maxRecommendedSubagents: 4,
+          });
           assert.strictEqual(status.auth.type, "chatgpt");
           assert.strictEqual(status.auth.label, "ChatGPT Pro 20x Subscription");
           assert.strictEqual(status.auth.email, "test@example.com");
@@ -1348,6 +1352,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.strictEqual(ghost?.driver, "ghostDriver");
             assert.strictEqual(ghost?.availability, "unavailable");
             assert.match(ghost?.unavailableReason ?? "", /ghostDriver/);
+            assert.strictEqual(ghost?.nativeSubagents, undefined);
           }).pipe(Effect.provide(runtimeServices));
         }),
       );
@@ -1436,8 +1441,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 "claudeAgent",
                 "codex",
                 "cursor",
+                "cursorSdk",
+                "gemini",
                 "grok",
+                "hyperagent",
+                "kiroAmazonQ",
+                "localOpenAi",
+                "nvidiaNim",
                 "opencode",
+                "opencodeGo",
+                "opencodeZen",
+                "openrouter",
               ]);
               assert.strictEqual(cursorProvider?.enabled, false);
               assert.strictEqual(cursorProvider?.status, "disabled");
@@ -1475,6 +1489,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.installed, true);
           assert.strictEqual(status.auth.status, "authenticated");
+          assert.deepStrictEqual(status.nativeSubagents, {
+            toolName: "Agent",
+            maxRecommendedSubagents: 4,
+          });
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {

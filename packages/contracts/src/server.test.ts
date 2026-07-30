@@ -25,6 +25,67 @@ describe("ServerProvider", () => {
     expect(parsed.skills).toEqual([]);
     expect(parsed.versionAdvisory).toBeUndefined();
     expect(parsed.updateState).toBeUndefined();
+    expect(parsed.nativeSubagents).toBeUndefined();
+  });
+
+  it("decodes native subagent capabilities", () => {
+    const parsed = decodeServerProvider({
+      instanceId: "codex",
+      driver: "codex",
+      nativeSubagents: {
+        toolName: "spawn_agent",
+        maxRecommendedSubagents: 4,
+      },
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+    });
+
+    expect(parsed.nativeSubagents).toEqual({
+      toolName: "spawn_agent",
+      maxRecommendedSubagents: 4,
+    });
+  });
+
+  it("rejects invalid native subagent capabilities", () => {
+    const provider = {
+      instanceId: "codex",
+      driver: "codex",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+    };
+
+    expect(() =>
+      decodeServerProvider({
+        ...provider,
+        nativeSubagents: {
+          toolName: " ",
+          maxRecommendedSubagents: 4,
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeServerProvider({
+        ...provider,
+        nativeSubagents: {
+          toolName: "spawn_agent",
+          maxRecommendedSubagents: 0,
+        },
+      }),
+    ).toThrow();
   });
 
   it("defaults one-click update support when decoding older advisory snapshots", () => {

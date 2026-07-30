@@ -5,6 +5,8 @@ import {
   EventId,
   IsoDateTime,
   ProviderItemId,
+  RuntimeSessionId,
+  SubagentId,
   ThreadId,
   TurnId,
 } from "./baseSchemas.ts";
@@ -42,6 +44,8 @@ export const ProviderSession = Schema.Struct({
   cwd: Schema.optional(TrimmedNonEmptyString),
   model: Schema.optional(TrimmedNonEmptyString),
   threadId: ThreadId,
+  // Absent only on sessions produced before runtime lease fencing was introduced.
+  runtimeSessionId: Schema.optional(RuntimeSessionId),
   resumeCursor: Schema.optional(Schema.Unknown),
   activeTurnId: Schema.optional(TurnId),
   createdAt: IsoDateTime,
@@ -52,6 +56,9 @@ export type ProviderSession = typeof ProviderSession.Type;
 
 export const ProviderSessionStartInput = Schema.Struct({
   threadId: ThreadId,
+  // Assigned by ProviderService before entering an adapter. Optional only so
+  // persisted/legacy producers can still decode during the migration.
+  runtimeSessionId: Schema.optional(RuntimeSessionId),
   provider: Schema.optional(ProviderDriverKind),
   // See ProviderSession for the migration story.
   providerInstanceId: Schema.optional(ProviderInstanceId),
@@ -118,6 +125,8 @@ export const ProviderEvent = Schema.Struct({
   // See ProviderSession for the migration story.
   providerInstanceId: Schema.optional(ProviderInstanceId),
   threadId: ThreadId,
+  subagentId: Schema.optional(SubagentId),
+  providerThreadId: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
   method: TrimmedNonEmptyString,
   message: Schema.optional(TrimmedNonEmptyString),

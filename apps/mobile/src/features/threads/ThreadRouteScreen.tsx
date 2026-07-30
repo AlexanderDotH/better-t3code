@@ -47,6 +47,7 @@ import { useSelectedThreadWorktree } from "../../state/use-selected-thread-workt
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { threadEnvironment } from "../../state/threads";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
+import { resolveThreadAbortPresentation } from "./threadAbortPresentation";
 
 function firstRouteParam(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) {
@@ -152,20 +153,19 @@ export function ThreadRouteScreen() {
     void router.push("/connections");
   }, [router]);
   const handleStopThread = useCallback(() => {
-    if (
-      !selectedThread ||
-      (selectedThread.session?.status !== "running" &&
-        selectedThread.session?.status !== "starting")
-    ) {
+    if (!selectedThread) {
+      return;
+    }
+    const session = selectedThread.session;
+    const stopAction = resolveThreadAbortPresentation(session);
+    if (session === null || !stopAction.showStopAction || stopAction.disabled) {
       return;
     }
     return interruptThreadTurn({
       environmentId: selectedThread.environmentId,
       input: {
         threadId: selectedThread.id,
-        ...(selectedThread.session.activeTurnId
-          ? { turnId: selectedThread.session.activeTurnId }
-          : {}),
+        ...(session.activeTurnId ? { turnId: session.activeTurnId } : {}),
       },
     });
   }, [interruptThreadTurn, selectedThread]);

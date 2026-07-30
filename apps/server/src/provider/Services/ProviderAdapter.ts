@@ -16,6 +16,7 @@ import type {
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
+  RuntimeSessionId,
   ThreadId,
   ProviderTurnStartResult,
   TurnId,
@@ -24,6 +25,30 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
+
+export type ProviderForceStopMechanism =
+  | "process-tree"
+  | "runtime-close"
+  | "remote-cancel"
+  | "local-detach"
+  | "already-stopped";
+
+/**
+ * Describes what the strongest provider-specific stop primitive could
+ * guarantee. `detached` means T3 Code stopped all local work and event
+ * ingestion, but the remote provider did not offer a verifiable hard-stop API.
+ */
+export type ProviderForceStopResult =
+  | {
+      readonly outcome: "terminated";
+      readonly mechanism: Exclude<ProviderForceStopMechanism, "local-detach">;
+      readonly detail?: string;
+    }
+  | {
+      readonly outcome: "detached";
+      readonly mechanism: "local-detach";
+      readonly detail: string;
+    };
 
 export interface ProviderAdapterCapabilities {
   /**
@@ -66,7 +91,24 @@ export interface ProviderAdapterShape<TError> {
   /**
    * Interrupt an active turn.
    */
-  readonly interruptTurn: (threadId: ThreadId, turnId?: TurnId) => Effect.Effect<void, TError>;
+  readonly interruptTurn: (
+    threadId: ThreadId,
+    turnId?: TurnId,
+    expectedRuntimeSessionId?: RuntimeSessionId,
+  ) => Effect.Effect<void, TError>;
+
+  /**
+   * Immediately tear down the exact provider session owned by this adapter.
+   *
+   * Implementations must not wait for the cooperative interrupt path. Owned
+   * child processes should be killed and remote-only providers should cancel
+   * remotely when possible, otherwise detach all local work and report that
+   * limitation.
+   */
+  readonly forceStopSession: (
+    threadId: ThreadId,
+    expectedRuntimeSessionId: RuntimeSessionId,
+  ) => Effect.Effect<ProviderForceStopResult, TError>;
 
   /**
    * Respond to an interactive approval request.

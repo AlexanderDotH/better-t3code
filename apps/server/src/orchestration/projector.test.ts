@@ -6,6 +6,7 @@ import {
   ThreadId,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
+import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -93,6 +94,7 @@ describe("orchestration projector", () => {
         messages: [],
         proposedPlans: [],
         activities: [],
+        subagents: [],
         checkpoints: [],
         session: null,
       },
@@ -952,4 +954,116 @@ describe("orchestration projector", () => {
     expect(thread?.checkpoints[0]?.turnId).toBe("turn-100");
     expect(thread?.checkpoints.at(-1)?.turnId).toBe("turn-599");
   });
+
+  effectIt.effect(
+    "preserves interaction history while making aborted-turn requests non-actionable",
+    () =>
+      Effect.gen(function* () {
+        const createdAt = "2026-07-30T00:00:00.000Z";
+        const events = [
+          makeEvent({
+            sequence: 1,
+            type: "thread.created",
+            aggregateKind: "thread",
+            aggregateId: "thread-abort-interactions",
+            occurredAt: createdAt,
+            commandId: "cmd-abort-thread-create",
+            payload: {
+              threadId: "thread-abort-interactions",
+              projectId: "project-abort-interactions",
+              title: "Abort interactions",
+              modelSelection: { instanceId: "codex", model: "gpt-5-codex" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              createdAt,
+              updatedAt: createdAt,
+            },
+          }),
+          makeEvent({
+            sequence: 2,
+            type: "thread.session-set",
+            aggregateKind: "thread",
+            aggregateId: "thread-abort-interactions",
+            occurredAt: "2026-07-30T00:00:01.000Z",
+            commandId: "cmd-abort-session",
+            payload: {
+              threadId: "thread-abort-interactions",
+              session: {
+                threadId: "thread-abort-interactions",
+                status: "running",
+                providerName: "codex",
+                runtimeSessionId: "runtime-abort-interactions",
+                runtimeMode: "full-access",
+                activeTurnId: "turn-abort-interactions",
+                abortState: {
+                  runtimeSessionId: "runtime-abort-interactions",
+                  targetTurnId: "turn-abort-interactions",
+                  phase: "interrupting",
+                  requestedAt: "2026-07-30T00:00:01.000Z",
+                  forceAt: "2026-07-30T00:00:06.000Z",
+                },
+                lastError: null,
+                updatedAt: "2026-07-30T00:00:01.000Z",
+              },
+            },
+          }),
+          ...(["approval", "user-input"] as const).map((kind, index) =>
+            makeEvent({
+              sequence: index + 3,
+              type: "thread.activity-appended",
+              aggregateKind: "thread",
+              aggregateId: "thread-abort-interactions",
+              occurredAt: `2026-07-30T00:00:0${index + 2}.000Z`,
+              commandId: `cmd-abort-${kind}`,
+              payload: {
+                threadId: "thread-abort-interactions",
+                activity: {
+                  id: `activity-abort-${kind}`,
+                  tone: "approval",
+                  kind: `${kind}.requested`,
+                  summary: `${kind} requested`,
+                  payload: { requestId: `${kind}-abort-interactions` },
+                  turnId: "turn-abort-interactions",
+                  createdAt: `2026-07-30T00:00:0${index + 2}.000Z`,
+                },
+              },
+            }),
+          ),
+          makeEvent({
+            sequence: 5,
+            type: "thread.turn-abort-settled",
+            aggregateKind: "thread",
+            aggregateId: "thread-abort-interactions",
+            occurredAt: "2026-07-30T00:00:04.000Z",
+            commandId: "cmd-abort-settled",
+            payload: {
+              threadId: "thread-abort-interactions",
+              runtimeSessionId: "runtime-abort-interactions",
+              turnId: "turn-abort-interactions",
+              outcome: "force-terminated",
+              settledAt: "2026-07-30T00:00:04.000Z",
+            },
+          }),
+        ];
+
+        let finalState = createEmptyReadModel(createdAt);
+        for (const event of events) {
+          finalState = yield* projectEvent(finalState, event);
+        }
+        const thread = finalState.threads[0];
+        expect(thread?.session?.status).toBe("stopped");
+        expect(thread?.activities.map((activity) => activity.kind)).toEqual([
+          "approval.requested",
+          "user-input.requested",
+          "approval.resolved",
+          "user-input.resolved",
+        ]);
+        expect(thread?.activities.slice(-2).map((activity) => activity.id)).toEqual([
+          "event-5:abort:approval:approval-abort-interactions",
+          "event-5:abort:user-input:user-input-abort-interactions",
+        ]);
+      }),
+  );
 });

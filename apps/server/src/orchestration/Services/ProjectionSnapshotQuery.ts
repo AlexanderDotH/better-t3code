@@ -13,9 +13,12 @@ import type {
   OrchestrationProjectShell,
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
+  OrchestrationSubagentDetail,
+  OrchestrationSubagentDetailSnapshot,
   OrchestrationThread,
   OrchestrationThreadShell,
   ProjectId,
+  SubagentId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -157,6 +160,24 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadDetailById: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
+
+  /**
+   * Read one retained subagent and its transcript without hydrating sibling
+   * transcripts.
+   */
+  readonly getSubagentDetailById: (
+    threadId: ThreadId,
+    subagentId: SubagentId,
+  ) => Effect.Effect<Option.Option<OrchestrationSubagentDetail>, ProjectionRepositoryError>;
+
+  /**
+   * Read one retained subagent transcript and its projection sequence inside a
+   * single transaction.
+   */
+  readonly getSubagentDetailSnapshot: (
+    threadId: ThreadId,
+    subagentId: SubagentId,
+  ) => Effect.Effect<Option.Option<OrchestrationSubagentDetailSnapshot>, ProjectionRepositoryError>;
 }
 
 /**

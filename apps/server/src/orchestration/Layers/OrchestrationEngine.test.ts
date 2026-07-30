@@ -148,6 +148,7 @@ describe("OrchestrationEngine", () => {
           archivedAt: null,
           deletedAt: null,
           messages: [],
+          subagents: [],
           proposedPlans: [],
           activities: [],
           checkpoints: [],
@@ -200,6 +201,8 @@ describe("OrchestrationEngine", () => {
           getFullThreadDiffContext: () => Effect.succeed(Option.none()),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getSubagentDetailById: () => Effect.succeed(Option.none()),
+          getSubagentDetailSnapshot: () => Effect.succeed(Option.none()),
         }),
       ),
       Layer.provide(

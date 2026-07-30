@@ -5,6 +5,7 @@ import {
   ProviderRuntimeEvent,
   RuntimeSessionId,
   ProviderSession,
+  type ProviderSessionStartInput,
   ProviderTurnStartResult,
   ThreadId,
   TurnId,
@@ -28,6 +29,15 @@ import type {
 
 export interface TestTurnResponse {
   readonly events: ReadonlyArray<FixtureProviderRuntimeEvent>;
+  /**
+   * `omit` models a provider turn that keeps running after `sendTurn` returns.
+   * Tests can then drive cooperative interruption and force-stop independently.
+   */
+  readonly terminalEventBehavior?: "automatic" | "omit";
+  /**
+   * `never` models a provider whose cooperative interrupt RPC never resolves.
+   */
+  readonly interruptBehavior?: "complete" | "never";
   readonly mutateWorkspace?: (input: {
     readonly cwd: string;
     readonly turnCount: number;
@@ -51,9 +61,11 @@ export type FixtureProviderRuntimeEvent = {
 export type LegacyProviderRuntimeEvent = FixtureProviderRuntimeEvent;
 
 interface SessionState {
-  readonly session: ProviderSession;
+  readonly runtimeSessionId: RuntimeSessionId;
+  session: ProviderSession;
   snapshot: ProviderThreadSnapshot;
   turnCount: number;
+  activeInterruptBehavior: "complete" | "never";
   readonly queuedResponses: Array<TestTurnResponse>;
   readonly rollbackCalls: Array<number>;
 }
@@ -190,7 +202,13 @@ export interface TestProviderAdapterHarness {
   readonly getStartCount: () => number;
   readonly getRollbackCalls: (threadId: ThreadId) => ReadonlyArray<number>;
   readonly getInterruptCalls: (threadId: ThreadId) => ReadonlyArray<TurnId | undefined>;
+  readonly getForceStopCalls: (threadId: ThreadId) => number;
+  readonly getSessionStartInputs: () => ReadonlyArray<ProviderSessionStartInput>;
   readonly listActiveSessionIds: () => ReadonlyArray<ThreadId>;
+  readonly emitRuntimeEvent: (
+    event: FixtureProviderRuntimeEvent,
+    runtimeSessionId: RuntimeSessionId,
+  ) => Effect.Effect<void>;
   readonly getApprovalResponses: (threadId: ThreadId) => ReadonlyArray<{
     readonly threadId: ThreadId;
     readonly requestId: ApprovalRequestId;
@@ -232,6 +250,8 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
     const sessions = new Map<ThreadId, SessionState>();
     const queuedResponsesForNextSession: TestTurnResponse[] = [];
     const interruptCallsBySession = new Map<ThreadId, Array<TurnId | undefined>>();
+    const forceStopCallsBySession = new Map<ThreadId, number>();
+    const sessionStartInputs: ProviderSessionStartInput[] = [];
     const approvalResponsesBySession = new Map<
       ThreadId,
       Array<{
@@ -268,6 +288,15 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
         sessionCount += 1;
         const threadId = input.threadId;
         const createdAt = nowIso();
+        sessionStartInputs.push(input);
+        const runtimeSessionId = input.runtimeSessionId;
+        if (runtimeSessionId === undefined) {
+          return yield* new ProviderAdapterValidationError({
+            provider,
+            operation: "startSession",
+            issue: `Expected ProviderService to stamp a runtime session id for thread '${threadId}'.`,
+          });
+        }
 
         const session: ProviderSession = {
           provider,
@@ -277,6 +306,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
           status: "ready",
           runtimeMode: input.runtimeMode,
           threadId,
+          runtimeSessionId,
           cwd: input.cwd,
           resumeCursor: input.resumeCursor ?? { threadId: String(threadId), seed: sessionCount },
           createdAt,
@@ -284,12 +314,14 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
         };
 
         sessions.set(threadId, {
+          runtimeSessionId,
           session,
           snapshot: {
             threadId,
             turns: [],
           },
           turnCount: 0,
+          activeInterruptBehavior: "complete",
           queuedResponses: queuedResponsesForNextSession.splice(0),
           rollbackCalls: [],
         });
@@ -316,6 +348,13 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
             issue: `No queued turn response for thread ${input.threadId}.`,
           });
         }
+        state.activeInterruptBehavior = response.interruptBehavior ?? "complete";
+        state.session = {
+          ...state.session,
+          status: "running",
+          activeTurnId: turnId,
+          updatedAt: nowIso(),
+        };
 
         const assistantDeltas: string[] = [];
         const deferredTurnCompletedEvents: ProviderRuntimeEvent[] = [];
@@ -324,7 +363,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
             ...(fixtureEvent as Record<string, unknown>),
             eventId: yield* randomUUIDv4(input.threadId),
             provider,
-            sessionId: RuntimeSessionId.make(String(input.threadId)),
+            runtimeSessionId: state.runtimeSessionId,
           };
           rawEvent.threadId = state.snapshot.threadId;
           if (Object.hasOwn(rawEvent, "turnId")) {
@@ -376,22 +415,32 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
           turns: [...state.snapshot.turns, nextTurn],
         };
 
-        if (deferredTurnCompletedEvents.length === 0) {
+        if (deferredTurnCompletedEvents.length === 0 && response.terminalEventBehavior !== "omit") {
           yield* emit({
             type: "turn.completed",
             eventId: EventId.make(yield* randomUUIDv4(input.threadId)),
             provider,
             createdAt: nowIso(),
             threadId: state.snapshot.threadId,
+            runtimeSessionId: state.runtimeSessionId,
             turnId,
             payload: {
               state: "completed",
             },
           });
-        } else {
+        } else if (response.terminalEventBehavior !== "omit") {
           for (const completedEvent of deferredTurnCompletedEvents) {
             yield* emit(completedEvent);
           }
+        }
+        if (response.terminalEventBehavior !== "omit") {
+          const { activeTurnId: _activeTurnId, ...sessionWithoutActiveTurn } = state.session;
+          state.activeInterruptBehavior = "complete";
+          state.session = {
+            ...sessionWithoutActiveTurn,
+            status: "ready",
+            updatedAt: nowIso(),
+          };
         }
 
         return {
@@ -403,14 +452,31 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
     const interruptTurn: ProviderAdapterShape<ProviderAdapterError>["interruptTurn"] = (
       threadId,
       turnId,
+    ) => {
+      const state = sessions.get(threadId);
+      if (!state) {
+        return missingSessionEffect(provider, threadId);
+      }
+      return Effect.sync(() => {
+        const existing = interruptCallsBySession.get(threadId) ?? [];
+        existing.push(turnId);
+        interruptCallsBySession.set(threadId, existing);
+      }).pipe(
+        Effect.andThen(state.activeInterruptBehavior === "never" ? Effect.never : Effect.void),
+      );
+    };
+
+    const forceStopSession: ProviderAdapterShape<ProviderAdapterError>["forceStopSession"] = (
+      threadId,
     ) =>
-      sessions.has(threadId)
-        ? Effect.sync(() => {
-            const existing = interruptCallsBySession.get(threadId) ?? [];
-            existing.push(turnId);
-            interruptCallsBySession.set(threadId, existing);
-          })
-        : missingSessionEffect(provider, threadId);
+      Effect.sync(() => {
+        forceStopCallsBySession.set(threadId, (forceStopCallsBySession.get(threadId) ?? 0) + 1);
+        sessions.delete(threadId);
+        return {
+          outcome: "terminated",
+          mechanism: "runtime-close",
+        } as const;
+      });
 
     const respondToRequest: ProviderAdapterShape<ProviderAdapterError>["respondToRequest"] = (
       threadId,
@@ -496,6 +562,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       startSession,
       sendTurn,
       interruptTurn,
+      forceStopSession,
       respondToRequest,
       respondToUserInput,
       stopSession,
@@ -546,8 +613,27 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       return [...calls];
     };
 
+    const getForceStopCalls = (threadId: ThreadId): number =>
+      forceStopCallsBySession.get(threadId) ?? 0;
+
+    const getSessionStartInputs = (): ReadonlyArray<ProviderSessionStartInput> => [
+      ...sessionStartInputs,
+    ];
+
     const listActiveSessionIds = (): ReadonlyArray<ThreadId> =>
       Array.from(sessions.values(), (state) => state.session.threadId);
+
+    const emitRuntimeEvent = (
+      event: FixtureProviderRuntimeEvent,
+      runtimeSessionId: RuntimeSessionId,
+    ): Effect.Effect<void> =>
+      emit(
+        normalizeFixtureEvent({
+          ...(event as Record<string, unknown>),
+          provider,
+          runtimeSessionId,
+        }),
+      ).pipe(Effect.asVoid);
 
     const getApprovalResponses = (
       threadId: ThreadId,
@@ -571,7 +657,10 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       getStartCount,
       getRollbackCalls,
       getInterruptCalls,
+      getForceStopCalls,
+      getSessionStartInputs,
       listActiveSessionIds,
+      emitRuntimeEvent,
       getApprovalResponses,
     } satisfies TestProviderAdapterHarness;
   });

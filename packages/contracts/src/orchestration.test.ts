@@ -11,6 +11,9 @@ import {
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffInput,
   OrchestrationLatestTurn,
+  OrchestrationSubagentDetail,
+  OrchestrationSubagentSummary,
+  OrchestrationThread,
   ProjectCreatedPayload,
   ProjectMetaUpdatedPayload,
   OrchestrationProposedPlan,
@@ -23,6 +26,7 @@ import {
   ThreadTurnStartRequestedPayload,
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { RuntimeSessionId, TurnId } from "./baseSchemas.ts";
 
 const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);
 const decodeFullThreadDiffInput = Schema.decodeUnknownEffect(OrchestrationGetFullThreadDiffInput);
@@ -37,6 +41,9 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
+const decodeOrchestrationSubagentDetail = Schema.decodeUnknownEffect(OrchestrationSubagentDetail);
+const decodeOrchestrationSubagentSummary = Schema.decodeUnknownEffect(OrchestrationSubagentSummary);
+const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
 const encodeThreadCreatedPayload = Schema.encodeEffect(ThreadCreatedPayload);
 
 function getOptionValue(
@@ -618,6 +625,294 @@ it.effect("decodes orchestration session runtime mode defaults", () =>
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+    assert.strictEqual(parsed.runtimeSessionId, null);
+    assert.strictEqual(parsed.abortState, null);
+  }),
+);
+
+it.effect("decodes orchestration session abort synchronization state", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationSession({
+      threadId: "thread-1",
+      status: "running",
+      providerName: "codex",
+      runtimeSessionId: " runtime-session-1 ",
+      runtimeMode: "full-access",
+      activeTurnId: "turn-1",
+      abortState: {
+        runtimeSessionId: " runtime-session-1 ",
+        targetTurnId: "turn-1",
+        phase: "interrupting",
+        requestedAt: "2026-01-01T00:00:01.000Z",
+        forceAt: "2026-01-01T00:00:06.000Z",
+      },
+      lastError: null,
+      updatedAt: "2026-01-01T00:00:01.000Z",
+    });
+
+    assert.strictEqual(parsed.runtimeSessionId, "runtime-session-1");
+    assert.deepStrictEqual(parsed.abortState, {
+      runtimeSessionId: RuntimeSessionId.make("runtime-session-1"),
+      targetTurnId: TurnId.make("turn-1"),
+      phase: "interrupting",
+      requestedAt: "2026-01-01T00:00:01.000Z",
+      forceAt: "2026-01-01T00:00:06.000Z",
+    });
+  }),
+);
+
+it.effect("decodes the internal turn abort settlement command", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "thread.turn.abort.settle",
+      commandId: "cmd-abort-settle",
+      threadId: "thread-1",
+      runtimeSessionId: "runtime-session-1",
+      turnId: "turn-1",
+      outcome: "force-terminated",
+      settledAt: "2026-01-01T00:00:07.000Z",
+      createdAt: "2026-01-01T00:00:07.000Z",
+    });
+
+    assert.strictEqual(parsed.type, "thread.turn.abort.settle");
+    if (parsed.type !== "thread.turn.abort.settle") {
+      return;
+    }
+    assert.strictEqual(parsed.outcome, "force-terminated");
+    assert.strictEqual(parsed.turnId, "turn-1");
+  }),
+);
+
+it.effect("decodes the authoritative turn abort settlement event", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationEvent({
+      sequence: 42,
+      eventId: "evt-abort-settled",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      occurredAt: "2026-01-01T00:00:07.000Z",
+      commandId: "cmd-abort-settle",
+      causationEventId: null,
+      correlationId: "cmd-abort-settle",
+      metadata: {},
+      type: "thread.turn-abort-settled",
+      payload: {
+        threadId: "thread-1",
+        runtimeSessionId: "runtime-session-1",
+        turnId: null,
+        outcome: "force-detached",
+        detail: "Remote termination could not be confirmed",
+        settledAt: "2026-01-01T00:00:07.000Z",
+      },
+    });
+
+    assert.strictEqual(parsed.type, "thread.turn-abort-settled");
+    if (parsed.type !== "thread.turn-abort-settled") {
+      return;
+    }
+    assert.strictEqual(parsed.payload.outcome, "force-detached");
+    assert.strictEqual(parsed.payload.turnId, null);
+  }),
+);
+
+const orchestrationThreadFixture = {
+  id: "thread-1",
+  projectId: "project-1",
+  title: "Subagent contracts",
+  modelSelection: {
+    instanceId: "codex",
+    model: "gpt-5.6-codex",
+  },
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  branch: "main",
+  worktreePath: "/tmp/project",
+  latestTurn: null,
+  createdAt: "2026-07-30T10:00:00.000Z",
+  updatedAt: "2026-07-30T10:00:00.000Z",
+  archivedAt: null,
+  deletedAt: null,
+  messages: [],
+  proposedPlans: [],
+  activities: [],
+  checkpoints: [],
+  session: null,
+} as const;
+
+const orchestrationSubagentSummaryFixture = {
+  id: "agent-contracts",
+  providerThreadId: "provider-thread-contracts",
+  parentId: null,
+  path: "/root/contracts",
+  name: "contracts",
+  nickname: "contracts",
+  role: "worker",
+  task: "Implement contract schemas",
+  model: "gpt-5.6-codex",
+  reasoningEffort: "ultra",
+  depth: 1,
+  status: "running",
+  statusMessage: "Adding tests",
+  latestProgress: {
+    kind: "test",
+    summary: "Running contract tests",
+    detail: null,
+    createdAt: "2026-07-30T10:00:01.000Z",
+  },
+  latestTurn: null,
+  startedAt: "2026-07-30T10:00:00.000Z",
+  updatedAt: "2026-07-30T10:00:01.000Z",
+  completedAt: null,
+} as const;
+
+it.effect("defaults subagents to an empty list for historical thread snapshots", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationThread(orchestrationThreadFixture);
+
+    assert.deepStrictEqual(parsed.subagents, []);
+  }),
+);
+
+it.effect("decodes subagent summaries with explicit progress and lifecycle state", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationSubagentSummary(orchestrationSubagentSummaryFixture);
+
+    assert.strictEqual(parsed.id, "agent-contracts");
+    assert.strictEqual(parsed.status, "running");
+    assert.strictEqual(parsed.latestProgress?.summary, "Running contract tests");
+  }),
+);
+
+it.effect("decodes a subagent detail using the existing transcript schemas", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationSubagentDetail({
+      ...orchestrationSubagentSummaryFixture,
+      messages: [
+        {
+          id: "message-agent-1",
+          role: "assistant",
+          text: "Contracts are ready.",
+          turnId: "turn-agent-1",
+          streaming: false,
+          createdAt: "2026-07-30T10:00:02.000Z",
+          updatedAt: "2026-07-30T10:00:02.000Z",
+        },
+      ],
+      proposedPlans: [],
+      activities: [],
+    });
+
+    assert.strictEqual(parsed.messages[0]?.text, "Contracts are ready.");
+  }),
+);
+
+it.effect("routes internal transcript commands to an optional subagent", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "thread.message.assistant.delta",
+      commandId: "command-agent-delta-1",
+      threadId: "thread-1",
+      subagentId: "agent-contracts",
+      messageId: "message-agent-1",
+      delta: "Contracts",
+      turnId: "turn-agent-1",
+      createdAt: "2026-07-30T10:00:01.000Z",
+    });
+
+    assert.strictEqual(parsed.type, "thread.message.assistant.delta");
+    if (parsed.type !== "thread.message.assistant.delta") {
+      return;
+    }
+    assert.strictEqual(parsed.subagentId, "agent-contracts");
+  }),
+);
+
+it.effect("decodes subagent summary, state, and progress commands", () =>
+  Effect.gen(function* () {
+    const upsert = yield* decodeOrchestrationCommand({
+      type: "thread.subagent.upsert",
+      commandId: "command-agent-upsert-1",
+      threadId: "thread-1",
+      subagent: orchestrationSubagentSummaryFixture,
+      createdAt: "2026-07-30T10:00:01.000Z",
+    });
+    const state = yield* decodeOrchestrationCommand({
+      type: "thread.subagent.state.set",
+      commandId: "command-agent-state-1",
+      threadId: "thread-1",
+      subagentId: "agent-contracts",
+      status: "waiting",
+      statusMessage: null,
+      updatedAt: "2026-07-30T10:00:02.000Z",
+    });
+    const progress = yield* decodeOrchestrationCommand({
+      type: "thread.subagent.progress.set",
+      commandId: "command-agent-progress-1",
+      threadId: "thread-1",
+      subagentId: "agent-contracts",
+      progress: null,
+      updatedAt: "2026-07-30T10:00:02.000Z",
+    });
+
+    assert.strictEqual(upsert.type, "thread.subagent.upsert");
+    assert.strictEqual(state.type, "thread.subagent.state.set");
+    assert.strictEqual(progress.type, "thread.subagent.progress.set");
+  }),
+);
+
+it.effect("decodes routed subagent transcript events and lifecycle updates", () =>
+  Effect.gen(function* () {
+    const stateEvent = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-agent-state-1",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      occurredAt: "2026-07-30T10:00:02.000Z",
+      commandId: "command-agent-state-1",
+      causationEventId: null,
+      correlationId: "command-agent-state-1",
+      metadata: {},
+      type: "thread.subagent-state-set",
+      payload: {
+        threadId: "thread-1",
+        subagentId: "agent-contracts",
+        status: "waiting",
+        statusMessage: null,
+        updatedAt: "2026-07-30T10:00:02.000Z",
+      },
+    });
+    const activityEvent = yield* decodeOrchestrationEvent({
+      sequence: 2,
+      eventId: "event-agent-activity-1",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      occurredAt: "2026-07-30T10:00:03.000Z",
+      commandId: "command-agent-activity-1",
+      causationEventId: null,
+      correlationId: "command-agent-activity-1",
+      metadata: {},
+      type: "thread.activity-appended",
+      payload: {
+        threadId: "thread-1",
+        subagentId: "agent-contracts",
+        activity: {
+          id: "activity-agent-1",
+          tone: "tool",
+          kind: "command",
+          summary: "Running tests",
+          payload: {},
+          turnId: "turn-agent-1",
+          createdAt: "2026-07-30T10:00:03.000Z",
+        },
+      },
+    });
+
+    assert.strictEqual(stateEvent.type, "thread.subagent-state-set");
+    assert.strictEqual(activityEvent.type, "thread.activity-appended");
+    if (activityEvent.type !== "thread.activity-appended") {
+      return;
+    }
+    assert.strictEqual(activityEvent.payload.subagentId, "agent-contracts");
   }),
 );
 

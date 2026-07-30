@@ -16,6 +16,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionStartInput,
+  RuntimeSessionId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -105,6 +106,9 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
         cwd: input.cwd ?? process.cwd(),
         createdAt: now,
         updatedAt: now,
+        ...(input.runtimeSessionId !== undefined
+          ? { runtimeSessionId: input.runtimeSessionId }
+          : {}),
       };
       sessions.set(session.threadId, session);
       return session;
@@ -132,8 +136,47 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
   );
 
   const interruptTurn = vi.fn(
-    (_threadId: ThreadId, _turnId?: TurnId): Effect.Effect<void, ProviderAdapterError> =>
-      Effect.void,
+    (
+      threadId: ThreadId,
+      _turnId?: TurnId,
+      expectedRuntimeSessionId?: RuntimeSessionId,
+    ): Effect.Effect<void, ProviderAdapterError> =>
+      Effect.sync(() => {
+        const session = sessions.get(threadId);
+        if (
+          expectedRuntimeSessionId !== undefined &&
+          session?.runtimeSessionId !== expectedRuntimeSessionId
+        ) {
+          return;
+        }
+      }),
+  );
+
+  const forceStopSession = vi.fn(
+    (
+      threadId: ThreadId,
+      expectedRuntimeSessionId: RuntimeSessionId,
+    ): Effect.Effect<
+      {
+        readonly outcome: "terminated";
+        readonly mechanism: "runtime-close" | "already-stopped";
+      },
+      ProviderAdapterError
+    > =>
+      Effect.sync(() => {
+        const session = sessions.get(threadId);
+        if (session?.runtimeSessionId !== expectedRuntimeSessionId) {
+          return {
+            outcome: "terminated",
+            mechanism: "already-stopped",
+          } as const;
+        }
+        sessions.delete(threadId);
+        return {
+          outcome: "terminated",
+          mechanism: "runtime-close",
+        } as const;
+      }),
   );
 
   const respondToRequest = vi.fn(
@@ -207,6 +250,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     startSession,
     sendTurn,
     interruptTurn,
+    forceStopSession,
     respondToRequest,
     respondToUserInput,
     stopSession,
@@ -242,6 +286,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     startSession,
     sendTurn,
     interruptTurn,
+    forceStopSession,
     respondToRequest,
     respondToUserInput,
     stopSession,
@@ -841,6 +886,181 @@ it.effect(
 );
 
 routing.layer("ProviderServiceLive routing", (it) => {
+  it.effect("fences force-stop operations to the captured runtime session", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-force-stop-fence");
+      const turnId = asTurnId("orchestration-turn-force-stop");
+
+      const firstSession = yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+      assert.ok(firstSession.runtimeSessionId);
+
+      const firstTarget = yield* provider.resolveAbortTarget({ threadId, turnId });
+      assert.equal(firstTarget.runtimeSessionId, firstSession.runtimeSessionId);
+      assert.equal(firstTarget.turnId, turnId);
+      assert.equal(yield* provider.isAbortTargetCurrent(firstTarget), true);
+
+      yield* provider.interruptAbortTarget(firstTarget);
+      assert.deepEqual(routing.codex.interruptTurn.mock.calls, [
+        [threadId, undefined, firstSession.runtimeSessionId],
+      ]);
+
+      const forceResult = yield* provider.forceStopAbortTarget(firstTarget);
+      assert.deepEqual(forceResult, {
+        outcome: "terminated",
+        mechanism: "runtime-close",
+      });
+      assert.equal(routing.codex.forceStopSession.mock.calls.length, 1);
+      assert.equal(yield* provider.isAbortTargetCurrent(firstTarget), false);
+
+      const secondSession = yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+      assert.ok(secondSession.runtimeSessionId);
+      assert.notEqual(secondSession.runtimeSessionId, firstSession.runtimeSessionId);
+
+      yield* provider.interruptAbortTarget(firstTarget);
+      const staleResult = yield* provider.forceStopAbortTarget(firstTarget);
+      assert.deepEqual(staleResult, {
+        outcome: "terminated",
+        mechanism: "already-stopped",
+      });
+      assert.equal(routing.codex.forceStopSession.mock.calls.length, 1);
+      assert.equal(routing.codex.interruptTurn.mock.calls.length, 1);
+      assert.equal(
+        (yield* provider.listSessions()).some(
+          (session) =>
+            session.threadId === threadId &&
+            session.runtimeSessionId === secondSession.runtimeSessionId,
+        ),
+        true,
+      );
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const replacementBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+      assert.equal(replacementBinding?.status, "running");
+      const replacementRuntimePayload = replacementBinding?.runtimePayload;
+      assert.equal(
+        replacementRuntimePayload &&
+          typeof replacementRuntimePayload === "object" &&
+          !Array.isArray(replacementRuntimePayload) &&
+          "runtimeSessionId" in replacementRuntimePayload
+          ? replacementRuntimePayload.runtimeSessionId
+          : undefined,
+        secondSession.runtimeSessionId,
+      );
+      yield* provider.stopSession({ threadId });
+      routing.codex.interruptTurn.mockClear();
+      routing.codex.forceStopSession.mockClear();
+    }),
+  );
+
+  it.effect("force-stops an exact session while provider startup is still pending", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-force-stop-starting");
+      routing.codex.startSession.mockImplementationOnce(() => Effect.never);
+
+      const startingFiber = yield* provider
+        .startSession(threadId, {
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: codexInstanceId,
+          threadId,
+          cwd: "/tmp/project",
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      const target = yield* provider.resolveAbortTarget({ threadId });
+      assert.equal(yield* provider.isAbortTargetCurrent(target), true);
+      const result = yield* provider.forceStopAbortTarget(target);
+      assert.deepEqual(result, {
+        outcome: "terminated",
+        mechanism: "already-stopped",
+      });
+      assert.equal(routing.codex.forceStopSession.mock.calls.length, 1);
+      assert.equal(yield* provider.isAbortTargetCurrent(target), false);
+      assert.equal(Exit.isFailure(yield* Fiber.await(startingFiber)), true);
+      assert.equal(
+        (yield* provider.listSessions()).some((session) => session.threadId === threadId),
+        false,
+      );
+
+      routing.codex.forceStopSession.mockClear();
+    }),
+  );
+
+  it.effect("releases the exact lease after a force-stop failure so restart remains safe", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-force-stop-failure-restart");
+      const firstSession = yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+      const target = yield* provider.resolveAbortTarget({ threadId });
+      routing.codex.forceStopSession.mockImplementationOnce(
+        (
+          _threadId: ThreadId,
+          _expectedRuntimeSessionId: RuntimeSessionId,
+        ): Effect.Effect<
+          {
+            readonly outcome: "terminated";
+            readonly mechanism: "runtime-close" | "already-stopped";
+          },
+          ProviderAdapterError
+        > =>
+          Effect.fail(
+            new ProviderAdapterRequestError({
+              provider: String(CODEX_DRIVER),
+              method: "forceStopSession",
+              detail: "simulated force-stop failure",
+            }),
+          ),
+      );
+
+      const failure = yield* Effect.flip(provider.forceStopAbortTarget(target));
+      assert.instanceOf(failure, ProviderAdapterRequestError);
+      assert.equal(yield* provider.isAbortTargetCurrent(target), false);
+
+      const replacement = yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+      assert.ok(firstSession.runtimeSessionId);
+      assert.ok(replacement.runtimeSessionId);
+      assert.notEqual(replacement.runtimeSessionId, firstSession.runtimeSessionId);
+      assert.equal(
+        (yield* provider.listSessions()).some(
+          (session) =>
+            session.threadId === threadId &&
+            session.runtimeSessionId === replacement.runtimeSessionId,
+        ),
+        true,
+      );
+
+      yield* provider.stopSession({ threadId });
+      routing.codex.forceStopSession.mockClear();
+    }),
+  );
+
   it.effect("routes provider operations and rollback conversation", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
@@ -865,7 +1085,9 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
 
       yield* provider.interruptTurn({ threadId: session.threadId });
-      assert.deepEqual(routing.codex.interruptTurn.mock.calls, [[session.threadId, undefined]]);
+      assert.deepEqual(routing.codex.interruptTurn.mock.calls, [
+        [session.threadId, undefined, session.runtimeSessionId],
+      ]);
 
       yield* provider.respondToRequest({
         threadId: session.threadId,
@@ -1490,7 +1712,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
 const fanout = makeProviderServiceLayer();
 fanout.layer("ProviderServiceLive fanout", (it) => {
-  it.effect("fans out adapter turn completion events", () =>
+  it.effect("does not relabel an id-less adapter event with the current runtime lease", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
       const session = yield* provider.startSession(asThreadId("thread-1"), {
@@ -1529,10 +1751,58 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       assert.equal(
         events.some(
           (entry) =>
-            entry.type === "turn.completed" && entry.providerInstanceId === codexInstanceId,
+            entry.type === "turn.completed" &&
+            entry.providerInstanceId === codexInstanceId &&
+            entry.runtimeSessionId === undefined,
         ),
         true,
       );
+    }),
+  );
+
+  it.effect("preserves an old event origin after the thread starts a replacement runtime", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-old-event-origin");
+      const first = yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      assert.ok(first.runtimeSessionId);
+      yield* provider.stopSession({ threadId });
+      const replacement = yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      assert.ok(replacement.runtimeSessionId);
+      assert.notEqual(first.runtimeSessionId, replacement.runtimeSessionId);
+
+      const eventsRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
+      const consumer = yield* Stream.take(provider.streamEvents, 1).pipe(
+        Stream.runForEach((event) => Ref.update(eventsRef, (current) => [...current, event])),
+        Effect.forkChild,
+      );
+      yield* advanceTestClock(50);
+
+      fanout.codex.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-old-origin"),
+        provider: CODEX_DRIVER,
+        runtimeSessionId: first.runtimeSessionId,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        turnId: asTurnId("turn-old"),
+        status: "interrupted",
+      });
+
+      yield* Fiber.join(consumer);
+      const [received] = yield* Ref.get(eventsRef);
+      assert.equal(received?.runtimeSessionId, first.runtimeSessionId);
+      assert.notEqual(received?.runtimeSessionId, replacement.runtimeSessionId);
     }),
   );
 

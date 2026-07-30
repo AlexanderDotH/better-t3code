@@ -17,6 +17,7 @@ import {
   OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
+  RuntimeSessionId,
   ThreadId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -41,6 +42,7 @@ class OpenCodeAdapter extends Context.Service<OpenCodeAdapter, OpenCodeAdapterSh
 ) {}
 
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
+const FORCE_STOP_RUNTIME_SESSION_ID = RuntimeSessionId.make("opencode-force-stop-runtime");
 
 type MessageEntry = {
   info: {
@@ -266,6 +268,64 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       );
     }),
   );
+
+  it.effect("force-detaches a configured external server without waiting on remote abort", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-force-external");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeSessionId: FORCE_STOP_RUNTIME_SESSION_ID,
+        runtimeMode: "full-access",
+      });
+
+      const result = yield* adapter.forceStopSession(threadId, FORCE_STOP_RUNTIME_SESSION_ID);
+
+      NodeAssert.deepStrictEqual(result, {
+        outcome: "detached",
+        mechanism: "local-detach",
+        detail:
+          "Detached local OpenCode session state; the externally managed server may continue remote work.",
+      });
+      NodeAssert.deepStrictEqual(runtimeMock.state.abortCalls, []);
+      NodeAssert.equal(yield* adapter.hasSession(threadId), false);
+    }),
+  );
+
+  it.effect("force-stops an owned OpenCode server without waiting on SDK abort", () => {
+    const localSettings = Schema.decodeSync(OpenCodeSettings)({
+      binaryPath: "fake-opencode",
+    });
+    const localLayer = Layer.effect(OpenCodeAdapter, makeOpenCodeAdapter(localSettings)).pipe(
+      Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-force-owned");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeSessionId: FORCE_STOP_RUNTIME_SESSION_ID,
+        runtimeMode: "full-access",
+      });
+
+      const result = yield* adapter.forceStopSession(threadId, FORCE_STOP_RUNTIME_SESSION_ID);
+
+      NodeAssert.deepStrictEqual(result, {
+        outcome: "terminated",
+        mechanism: "process-tree",
+      });
+      NodeAssert.deepStrictEqual(runtimeMock.state.abortCalls, []);
+      NodeAssert.equal(runtimeMock.state.closeCalls.length, 1);
+      NodeAssert.equal(yield* adapter.hasSession(threadId), false);
+    }).pipe(Effect.provide(localLayer));
+  });
 
   it.effect("emits one session.exited event when stopping a session", () =>
     Effect.gen(function* () {

@@ -20,6 +20,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     interactionMode: DEFAULT_INTERACTION_MODE,
     session: null,
     messages: [],
+    subagents: [],
     checkpoints: [],
     activities: [],
     proposedPlans: [],
