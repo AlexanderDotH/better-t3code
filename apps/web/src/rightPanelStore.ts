@@ -8,21 +8,13 @@
  * workspace paths, and diff/plan/files remain singleton surfaces.
  */
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef, SubagentId } from "@t3tools/contracts";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 
-export const RIGHT_PANEL_KINDS = [
-  "plan",
-  "diff",
-  "files",
-  "file",
-  "preview",
-  "terminal",
-  "subagent",
-] as const;
+export const RIGHT_PANEL_KINDS = ["plan", "diff", "files", "file", "preview", "terminal"] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
 export type RightPanelSurface =
@@ -45,8 +37,7 @@ export type RightPanelSurface =
       revealLine: number | null;
       revealRequestId: number;
     }
-  | { id: "plan"; kind: "plan" }
-  | { id: "subagent"; kind: "subagent"; subagentId: SubagentId };
+  | { id: "plan"; kind: "plan" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 const RIGHT_PANEL_STORAGE_VERSION = 8;
@@ -59,11 +50,7 @@ export interface ThreadRightPanelState {
 
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
-  open: (
-    ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "subagent">,
-  ) => void;
-  openSubagent: (ref: ScopedThreadRef, subagentId: SubagentId) => void;
+  open: (ref: ScopedThreadRef, kind: Exclude<RightPanelKind, "file" | "terminal">) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
@@ -85,10 +72,7 @@ interface RightPanelStoreState {
   show: (ref: ScopedThreadRef) => void;
   close: (ref: ScopedThreadRef) => void;
   toggleVisibility: (ref: ScopedThreadRef) => void;
-  toggle: (
-    ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "subagent">,
-  ) => void;
+  toggle: (ref: ScopedThreadRef, kind: Exclude<RightPanelKind, "file" | "terminal">) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
 
@@ -99,7 +83,7 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "subagent">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -136,12 +120,6 @@ const terminalSurface = (terminalId: string): RightPanelSurface => ({
   activeTerminalId: terminalId,
 });
 
-const subagentSurface = (subagentId: SubagentId): RightPanelSurface => ({
-  id: "subagent",
-  kind: "subagent",
-  subagentId,
-});
-
 const upsertSurface = (
   current: ThreadRightPanelState,
   surface: RightPanelSurface,
@@ -153,22 +131,6 @@ const upsertSurface = (
     : [...current.surfaces, surface],
   activeSurfaceId: activate ? surface.id : current.activeSurfaceId,
 });
-
-const replaceSubagentSurface = (
-  current: ThreadRightPanelState,
-  subagentId: SubagentId,
-): ThreadRightPanelState => {
-  const surface = subagentSurface(subagentId);
-  const existingIndex = current.surfaces.findIndex((entry) => entry.kind === "subagent");
-  if (existingIndex < 0) {
-    return upsertSurface(current, surface);
-  }
-  return {
-    isOpen: true,
-    activeSurfaceId: surface.id,
-    surfaces: current.surfaces.map((entry, index) => (index === existingIndex ? surface : entry)),
-  };
-};
 
 const updateThread = (
   byThreadKey: Record<string, ThreadRightPanelState>,
@@ -191,90 +153,140 @@ function normalizeRevealLine(line: number | undefined): number | null {
   return Math.max(1, Math.trunc(line));
 }
 
+function normalizePersistedRightPanelSurface(surface: unknown): RightPanelSurface | null {
+  if (!surface || typeof surface !== "object" || Array.isArray(surface)) {
+    return null;
+  }
+  const record = surface as Record<string, unknown>;
+  const kind = record.kind;
+  const id = record.id;
+
+  if (kind === "plan") {
+    return id === kind ? { id: "plan", kind: "plan" } : null;
+  }
+  if (kind === "diff") {
+    return id === kind ? { id: "diff", kind: "diff" } : null;
+  }
+  if (kind === "files") {
+    return id === kind ? { id: "files", kind: "files" } : null;
+  }
+  if (kind === "preview") {
+    if (id === "browser:new" && record.resourceId === null) {
+      return { id, kind, resourceId: null };
+    }
+    if (typeof record.resourceId === "string" && id === `browser:${record.resourceId}`) {
+      return { id: `browser:${record.resourceId}`, kind, resourceId: record.resourceId };
+    }
+    return null;
+  }
+  if (kind === "file") {
+    if (typeof record.relativePath !== "string" || id !== `file:${record.relativePath}`) {
+      return null;
+    }
+    const revealRequestId =
+      typeof record.revealRequestId === "number" &&
+      Number.isSafeInteger(record.revealRequestId) &&
+      record.revealRequestId >= 0
+        ? record.revealRequestId
+        : 0;
+    return {
+      id: `file:${record.relativePath}`,
+      kind,
+      relativePath: record.relativePath,
+      revealLine:
+        typeof record.revealLine === "number" ? normalizeRevealLine(record.revealLine) : null,
+      revealRequestId,
+    };
+  }
+  if (
+    kind !== "terminal" ||
+    typeof record.resourceId !== "string" ||
+    id !== `terminal:${record.resourceId}`
+  ) {
+    return null;
+  }
+
+  const terminalIds = Array.isArray(record.terminalIds)
+    ? [
+        ...new Set(
+          record.terminalIds.filter(
+            (terminalId): terminalId is string => typeof terminalId === "string",
+          ),
+        ),
+      ]
+    : [record.resourceId];
+  const normalizedTerminalIds = terminalIds.length > 0 ? terminalIds : [record.resourceId];
+  const activeTerminalId =
+    typeof record.activeTerminalId === "string" &&
+    normalizedTerminalIds.includes(record.activeTerminalId)
+      ? record.activeTerminalId
+      : (normalizedTerminalIds[0] ?? record.resourceId);
+  return {
+    id: `terminal:${record.resourceId}`,
+    kind,
+    resourceId: record.resourceId,
+    terminalIds: normalizedTerminalIds,
+    activeTerminalId,
+    ...(record.splitDirection === "horizontal" || record.splitDirection === "vertical"
+      ? { splitDirection: record.splitDirection }
+      : {}),
+  };
+}
+
 export function migratePersistedRightPanelState(persistedState: unknown): {
   byThreadKey: Record<string, ThreadRightPanelState>;
 } {
   if (!persistedState || typeof persistedState !== "object") {
     return { byThreadKey: {} };
   }
+  const persistedRecord = persistedState as Record<string, unknown>;
+  const persistedByThreadKey = Object.hasOwn(persistedRecord, "byThreadKey")
+    ? persistedRecord.byThreadKey
+    : null;
   const byThreadKey =
-    "byThreadKey" in persistedState &&
-    persistedState.byThreadKey &&
-    typeof persistedState.byThreadKey === "object"
+    persistedByThreadKey && typeof persistedByThreadKey === "object"
       ? Object.fromEntries(
-          Object.entries(persistedState.byThreadKey as Record<string, ThreadRightPanelState>).map(
+          Object.entries(persistedByThreadKey as Record<string, ThreadRightPanelState>).map(
             ([threadKey, threadState]) => {
               const validThreadState =
                 threadState && typeof threadState === "object" ? threadState : null;
-              const surfaces = Array.isArray(validThreadState?.surfaces)
-                ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
-                    if (surface.kind === "subagent") {
-                      if (
-                        surface.id !== "subagent" ||
-                        typeof surface.subagentId !== "string" ||
-                        surface.subagentId.trim().length === 0
-                      ) {
-                        return [];
-                      }
-                      return [surface];
-                    }
-                    if (surface.kind === "file") {
-                      const revealLine =
-                        typeof surface.revealLine === "number" &&
-                        Number.isFinite(surface.revealLine)
-                          ? Math.max(1, Math.trunc(surface.revealLine))
-                          : null;
-                      const revealRequestId =
-                        typeof surface.revealRequestId === "number" &&
-                        Number.isSafeInteger(surface.revealRequestId) &&
-                        surface.revealRequestId >= 0
-                          ? surface.revealRequestId
-                          : 0;
-                      return [{ ...surface, revealLine, revealRequestId }];
-                    }
-                    if (surface.kind !== "terminal") return [surface];
-                    if (
-                      !("resourceId" in surface) ||
-                      typeof surface.resourceId !== "string" ||
-                      surface.id !== `terminal:${surface.resourceId}`
-                    ) {
-                      return [];
-                    }
-                    const terminalIds =
-                      "terminalIds" in surface && Array.isArray(surface.terminalIds)
-                        ? [
-                            ...new Set(
-                              surface.terminalIds.filter(
-                                (terminalId): terminalId is string =>
-                                  typeof terminalId === "string",
-                              ),
-                            ),
-                          ]
-                        : [surface.resourceId];
-                    const activeTerminalId =
-                      "activeTerminalId" in surface &&
-                      typeof surface.activeTerminalId === "string" &&
-                      terminalIds.includes(surface.activeTerminalId)
-                        ? surface.activeTerminalId
-                        : (terminalIds[0] ?? surface.resourceId);
-                    return [
-                      {
-                        ...surface,
-                        terminalIds: terminalIds.length > 0 ? terminalIds : [surface.resourceId],
-                        activeTerminalId,
-                      },
-                    ];
-                  })
+              const rawSurfaces = Array.isArray(validThreadState?.surfaces)
+                ? validThreadState.surfaces
                 : [];
-              const activeSurfaceId = surfaces.some(
-                (surface) => surface.id === validThreadState?.activeSurfaceId,
-              )
-                ? (validThreadState?.activeSurfaceId ?? null)
-                : null;
+              const normalizedSurfaces = rawSurfaces.flatMap((surface, index) => {
+                const normalized = normalizePersistedRightPanelSurface(surface);
+                return normalized ? [{ index, surface: normalized }] : [];
+              });
+              const surfaces = normalizedSurfaces.map(({ surface }) => surface);
+              const requestedActiveSurfaceId =
+                typeof validThreadState?.activeSurfaceId === "string"
+                  ? validThreadState.activeSurfaceId
+                  : null;
+              const preservedActiveSurface = surfaces.find(
+                (surface) => surface.id === requestedActiveSurfaceId,
+              );
+              const removedActiveIndex = rawSurfaces.findIndex(
+                (surface) =>
+                  surface !== null &&
+                  typeof surface === "object" &&
+                  !Array.isArray(surface) &&
+                  (surface as Record<string, unknown>).id === requestedActiveSurfaceId,
+              );
+              const fallbackActiveSurface =
+                validThreadState?.isOpen === true && requestedActiveSurfaceId !== null
+                  ? (normalizedSurfaces.find(({ index }) => index > removedActiveIndex)?.surface ??
+                    normalizedSurfaces.findLast(({ index }) => index < removedActiveIndex)
+                      ?.surface ??
+                    surfaces[0] ??
+                    null)
+                  : null;
+              const activeSurfaceId =
+                preservedActiveSurface?.id ?? fallbackActiveSurface?.id ?? null;
               const isOpen =
-                typeof validThreadState?.isOpen === "boolean"
+                surfaces.length > 0 &&
+                (typeof validThreadState?.isOpen === "boolean"
                   ? validThreadState.isOpen
-                  : activeSurfaceId !== null;
+                  : activeSurfaceId !== null);
               return [threadKey, { isOpen, surfaces, activeSurfaceId }];
             },
           ),
@@ -296,12 +308,6 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             }
             return upsertSurface(current, singletonSurface(kind));
           }),
-        })),
-      openSubagent: (ref, subagentId) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
-            replaceSubagentSurface(current, subagentId),
-          ),
         })),
       openBrowser: (ref, tabId) =>
         set((state) => ({

@@ -3,6 +3,7 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  SubagentId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -25,6 +26,7 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveSelectedSubagentId,
   resolveSpeechEnvironmentId,
   resolveThreadMetadataUpdateForNextTurn,
   resolvePromptForSend,
@@ -34,6 +36,17 @@ import {
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
+
+describe("resolveSelectedSubagentId", () => {
+  it("keeps a dialog selection only while its thread remains active", () => {
+    const subagentId = SubagentId.make("codex:agent-1");
+    const selection = { threadKey: "environment-local:thread-1", subagentId };
+
+    expect(resolveSelectedSubagentId(selection, "environment-local:thread-1")).toBe(subagentId);
+    expect(resolveSelectedSubagentId(selection, "environment-local:thread-2")).toBeNull();
+    expect(resolveSelectedSubagentId(selection, null)).toBeNull();
+  });
+});
 
 const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");

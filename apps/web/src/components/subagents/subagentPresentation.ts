@@ -24,7 +24,7 @@ const STATUS_PRESENTATION = {
   waiting: {
     label: "Waiting",
     fallbackActivity: "Waiting",
-    tone: "warning",
+    tone: "progress",
   },
   completed: {
     label: "Completed",
@@ -34,7 +34,7 @@ const STATUS_PRESENTATION = {
   interrupted: {
     label: "Interrupted",
     fallbackActivity: "Interrupted",
-    tone: "neutral",
+    tone: "danger",
   },
   error: {
     label: "Error",
@@ -44,7 +44,7 @@ const STATUS_PRESENTATION = {
   unavailable: {
     label: "Unavailable",
     fallbackActivity: "Unavailable",
-    tone: "neutral",
+    tone: "danger",
   },
 } as const satisfies Record<
   OrchestrationSubagentStatus,

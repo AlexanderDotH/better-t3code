@@ -7,6 +7,7 @@ import {
   type ServerProvider,
   type ScopedProjectRef,
   type ScopedThreadRef,
+  type SubagentId,
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
@@ -27,6 +28,18 @@ export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
+
+export interface SubagentDialogSelection {
+  readonly threadKey: string;
+  readonly subagentId: SubagentId;
+}
+
+export function resolveSelectedSubagentId(
+  selection: SubagentDialogSelection | null,
+  activeThreadKey: string | null,
+): SubagentId | null {
+  return selection?.threadKey === activeThreadKey ? selection.subagentId : null;
+}
 
 export function startNewThreadForProject(
   projectRef: ScopedProjectRef | null,

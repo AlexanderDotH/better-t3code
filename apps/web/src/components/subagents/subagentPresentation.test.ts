@@ -120,7 +120,7 @@ describe("subagent presentation", () => {
       label: "Waiting",
       activity: "Waiting",
       detail: null,
-      tone: "warning",
+      tone: "progress",
       isActive: true,
     });
     expect(resolveSubagentStatusPresentation(makeSubagent("failed", "error"))).toMatchObject({

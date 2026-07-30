@@ -155,7 +155,7 @@ function SubagentTranscriptHeader({
   );
 
   return (
-    <header className="shrink-0 border-b border-border/60 bg-card/35 px-4 py-3">
+    <header className="shrink-0 border-b border-border/60 bg-card/35 py-3 pr-12 pl-4">
       <div className="flex min-w-0 items-start gap-3">
         <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background text-muted-foreground shadow-xs">
           <BotIcon aria-hidden="true" className="size-4" />

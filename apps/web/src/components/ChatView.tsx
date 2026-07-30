@@ -124,10 +124,7 @@ import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
-import {
-  RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY,
-  SUBAGENT_DEDICATED_PANE_MEDIA_QUERY,
-} from "../rightPanelLayout";
+import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import {
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
@@ -285,6 +282,7 @@ import {
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  resolveSelectedSubagentId,
   resolveThreadMetadataUpdateForNextTurn,
   resolvePromptForSend,
   resolveSendEnvMode,
@@ -301,8 +299,8 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { RightPanelSheet } from "./RightPanelSheet";
-import { ChatAgentPopover } from "./ChatAgentPopover";
-import { SubagentTranscriptPanel } from "./SubagentTranscriptPanel";
+import { ChatAgentStack } from "./ChatAgentStack";
+import { SubagentTranscriptDialog } from "./SubagentTranscriptDialog";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { Button } from "./ui/button";
@@ -1322,8 +1320,7 @@ function ChatViewContent(props: ChatViewProps) {
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
   const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
-  const shouldUseDedicatedSubagentPane = useMediaQuery(SUBAGENT_DEDICATED_PANE_MEDIA_QUERY);
-  const [dedicatedSubagentSelection, setDedicatedSubagentSelection] = useState<{
+  const [subagentDialogSelection, setSubagentDialogSelection] = useState<{
     readonly threadKey: string;
     readonly subagentId: SubagentId;
   } | null>(null);
@@ -1531,6 +1528,26 @@ function ChatViewContent(props: ChatViewProps) {
     [activeThread],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  const selectedSubagentId = resolveSelectedSubagentId(subagentDialogSelection, activeThreadKey);
+  const subagentState = useEnvironmentSubagent(
+    activeThreadRef?.environmentId ?? null,
+    activeThreadId,
+    selectedSubagentId,
+  );
+  const selectedSubagent = Option.getOrNull(subagentState.data);
+  const subagentErrorMessage =
+    Option.getOrNull(subagentState.error) ??
+    (subagentState.status === "deleted" ? "This agent transcript is no longer available." : null);
+  const subagentTranscriptLoading =
+    selectedSubagentId !== null &&
+    selectedSubagent === null &&
+    subagentErrorMessage === null &&
+    subagentState.status !== "deleted";
+  useEffect(() => {
+    setSubagentDialogSelection((selection) =>
+      selection?.threadKey === activeThreadKey ? selection : null,
+    );
+  }, [activeThreadKey]);
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
     readonly messageId: MessageId | null;
@@ -1549,36 +1566,6 @@ function ChatViewContent(props: ChatViewProps) {
   const activeRightPanelSurface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
   );
-  const activeSubagentSurface =
-    rightPanelState.isOpen && activeRightPanelSurface?.kind === "subagent"
-      ? activeRightPanelSurface
-      : null;
-  const dedicatedSubagentId =
-    shouldUseDedicatedSubagentPane && dedicatedSubagentSelection?.threadKey === activeThreadKey
-      ? dedicatedSubagentSelection.subagentId
-      : shouldUseDedicatedSubagentPane
-        ? (activeSubagentSurface?.subagentId ?? null)
-        : null;
-  const selectedSubagentId = shouldUsePlanSidebarSheet
-    ? null
-    : shouldUseDedicatedSubagentPane
-      ? dedicatedSubagentId
-      : (activeSubagentSurface?.subagentId ?? null);
-  const subagentState = useEnvironmentSubagent(
-    activeThreadRef?.environmentId ?? null,
-    activeThreadId,
-    selectedSubagentId,
-  );
-  const selectedSubagent = Option.getOrNull(subagentState.data);
-  const subagentErrorMessage =
-    Option.getOrNull(subagentState.error) ??
-    (subagentState.status === "deleted" ? "This agent transcript is no longer available." : null);
-  const subagentTranscriptLoading =
-    selectedSubagentId !== null &&
-    selectedSubagent === null &&
-    subagentErrorMessage === null &&
-    subagentState.status !== "deleted";
-  const showDedicatedSubagentPane = shouldUseDedicatedSubagentPane && selectedSubagentId !== null;
   const activeFileSurface =
     activeRightPanelSurface?.kind === "file" ? activeRightPanelSurface : null;
   const activePreviewState = useThreadPreviewState(activeThreadRef);
@@ -1595,11 +1582,8 @@ function ChatViewContent(props: ChatViewProps) {
     [rightPanelState.surfaces],
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
-  const subagentSurfacePresentedOutsideRightPanel =
-    activeSubagentSurface !== null && (shouldUsePlanSidebarSheet || shouldUseDedicatedSubagentPane);
-  const rightPanelOpen = rightPanelState.isOpen && !subagentSurfacePresentedOutsideRightPanel;
-  const canMaximizeRightPanel =
-    rightPanelOpen && !shouldUsePlanSidebarSheet && activeRightPanelSurface?.kind !== "subagent";
+  const rightPanelOpen = rightPanelState.isOpen;
+  const canMaximizeRightPanel = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const rightPanelMaximized =
     canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
@@ -1627,56 +1611,6 @@ function ChatViewContent(props: ChatViewProps) {
     activeRightPanelSurface,
     activeThreadRef,
     previewPanelOpen,
-  ]);
-
-  useEffect(() => {
-    if (!activeThreadRef || !activeThreadKey) {
-      setDedicatedSubagentSelection(null);
-      return;
-    }
-
-    if (shouldUsePlanSidebarSheet) {
-      if (activeRightPanelSurface?.kind === "subagent") {
-        useRightPanelStore.getState().closeSurface(activeThreadRef, activeRightPanelSurface.id);
-      }
-      setDedicatedSubagentSelection(null);
-      return;
-    }
-
-    if (!shouldUseDedicatedSubagentPane) {
-      if (dedicatedSubagentSelection?.threadKey !== activeThreadKey) {
-        return;
-      }
-      useRightPanelStore
-        .getState()
-        .openSubagent(activeThreadRef, dedicatedSubagentSelection.subagentId);
-      setDedicatedSubagentSelection(null);
-      return;
-    }
-
-    if (activeSubagentSurface) {
-      setDedicatedSubagentSelection({
-        threadKey: activeThreadKey,
-        subagentId: activeSubagentSurface.subagentId,
-      });
-      useRightPanelStore.getState().closeSurface(activeThreadRef, activeSubagentSurface.id);
-      return;
-    }
-
-    if (
-      dedicatedSubagentSelection !== null &&
-      dedicatedSubagentSelection.threadKey !== activeThreadKey
-    ) {
-      setDedicatedSubagentSelection(null);
-    }
-  }, [
-    activeRightPanelSurface,
-    activeSubagentSurface,
-    activeThreadKey,
-    activeThreadRef,
-    dedicatedSubagentSelection,
-    shouldUseDedicatedSubagentPane,
-    shouldUsePlanSidebarSheet,
   ]);
 
   const planSidebarOpen = activeRightPanelKind === "plan";
@@ -3335,26 +3269,16 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeProject, activeThreadRef]);
   const selectSubagent = useCallback(
     (subagentId: SubagentId) => {
-      if (!activeThreadRef || !activeThreadKey || shouldUsePlanSidebarSheet) {
-        return;
-      }
-      if (shouldUseDedicatedSubagentPane) {
-        setDedicatedSubagentSelection({ threadKey: activeThreadKey, subagentId });
-        const store = useRightPanelStore.getState();
-        const subagentSurface = selectThreadRightPanelState(
-          store.byThreadKey,
-          activeThreadRef,
-        ).surfaces.find((surface) => surface.kind === "subagent");
-        if (subagentSurface) {
-          store.closeSurface(activeThreadRef, subagentSurface.id);
-        }
-        return;
-      }
-      setDedicatedSubagentSelection(null);
-      useRightPanelStore.getState().openSubagent(activeThreadRef, subagentId);
+      if (!activeThreadKey) return;
+      setSubagentDialogSelection({ threadKey: activeThreadKey, subagentId });
     },
-    [activeThreadKey, activeThreadRef, shouldUseDedicatedSubagentPane, shouldUsePlanSidebarSheet],
+    [activeThreadKey],
   );
+  const handleSubagentDialogOpenChange = useCallback((open: boolean) => {
+    if (!open) {
+      setSubagentDialogSelection(null);
+    }
+  }, []);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -5910,16 +5834,7 @@ function ChatViewContent(props: ChatViewProps) {
     </div>
   );
   const rightPanelContent = activeThreadRef ? (
-    activeRightPanelSurface?.kind === "subagent" ? (
-      <SubagentTranscriptPanel
-        subagent={selectedSubagent}
-        isLoading={subagentTranscriptLoading}
-        errorMessage={subagentErrorMessage}
-        {...(gitCwd ? { markdownCwd: gitCwd } : {})}
-        threadRef={activeThreadRef}
-        timestampFormat={timestampFormat}
-      />
-    ) : activeRightPanelSurface?.kind === "preview" ? (
+    activeRightPanelSurface?.kind === "preview" ? (
       <Suspense fallback={null}>
         <PreviewPanel
           mode="embedded"
@@ -6054,7 +5969,7 @@ function ChatViewContent(props: ChatViewProps) {
         {/* Main content area with optional plan sidebar */}
         <div className="flex min-h-0 min-w-0 flex-1">
           {/* Chat column */}
-          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="@container/chat-column relative flex min-h-0 min-w-0 flex-1 flex-col">
             {/* Provider status overlays the timeline without changing its content height. */}
             <div className="pointer-events-none absolute inset-x-0 top-0 z-20">
               <ProviderStatusBanner
@@ -6064,12 +5979,10 @@ function ChatViewContent(props: ChatViewProps) {
             </div>
             {/* Messages Wrapper */}
             <div className="relative flex min-h-0 flex-1 flex-col">
-              {isServerThread && !shouldUsePlanSidebarSheet && activeThread.subagents.length > 0 ? (
-                <div
-                  data-chat-agent-floating-layer
-                  className="pointer-events-none absolute top-3 left-3 z-30"
-                >
-                  <ChatAgentPopover
+              {isServerThread ? (
+                <div data-chat-agent-floating-layer className="chat-agent-floating-layer">
+                  <ChatAgentStack
+                    key={activeThread.id}
                     subagents={activeThread.subagents}
                     selectedSubagentId={selectedSubagentId}
                     onSelectSubagent={selectSubagent}
@@ -6396,24 +6309,6 @@ function ChatViewContent(props: ChatViewProps) {
         ))}
       </div>
 
-      {showDedicatedSubagentPane && activeThreadRef ? (
-        <aside
-          aria-label="Selected agent"
-          className="flex h-full min-h-0 w-[min(34vw,42rem)] min-w-[28rem] shrink-0 border-l border-border bg-background"
-          data-subagent-dedicated-pane
-        >
-          <SubagentTranscriptPanel
-            subagent={selectedSubagent}
-            isLoading={subagentTranscriptLoading}
-            errorMessage={subagentErrorMessage}
-            {...(gitCwd ? { markdownCwd: gitCwd } : {})}
-            threadRef={activeThreadRef}
-            timestampFormat={timestampFormat}
-            className="min-w-0 flex-1"
-          />
-        </aside>
-      ) : null}
-
       {!shouldUsePlanSidebarSheet && rightPanelOpen && activeThreadRef ? (
         <RightPanelTabs
           mode="inline"
@@ -6467,6 +6362,19 @@ function ChatViewContent(props: ChatViewProps) {
             {rightPanelContent}
           </RightPanelTabs>
         </RightPanelSheet>
+      ) : null}
+
+      {activeThreadRef ? (
+        <SubagentTranscriptDialog
+          open={selectedSubagentId !== null}
+          onOpenChange={handleSubagentDialogOpenChange}
+          subagent={selectedSubagent}
+          isLoading={subagentTranscriptLoading}
+          errorMessage={subagentErrorMessage}
+          {...(gitCwd ? { markdownCwd: gitCwd } : {})}
+          threadRef={activeThreadRef}
+          timestampFormat={timestampFormat}
+        />
       ) : null}
 
       {projectSpeechPreindexDialog ? (

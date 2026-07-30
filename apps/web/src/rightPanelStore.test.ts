@@ -1,5 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type EnvironmentId, SubagentId, ThreadId } from "@t3tools/contracts";
+import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -18,16 +18,18 @@ beforeEach(() => {
 });
 
 describe("rightPanelStore", () => {
-  it("preserves a valid singleton agent surface during migration", () => {
+  it("drops removed subagent and unknown surfaces while preserving valid tabs", () => {
     expect(
       migratePersistedRightPanelState({
         byThreadKey: {
           "env-1:thread-A": {
             isOpen: true,
-            activeSurfaceId: "subagent",
+            activeSurfaceId: "subagent:agent-1",
             surfaces: [
+              { id: "browser:tab-a", kind: "preview", resourceId: "tab-a" },
+              { id: "subagent:agent-1", kind: "subagent", resourceId: "agent-1" },
+              { id: "future:thing", kind: "future", resourceId: "thing" },
               { id: "plan", kind: "plan" },
-              { id: "subagent", kind: "subagent", subagentId: "agent-contracts" },
             ],
           },
         },
@@ -36,36 +38,33 @@ describe("rightPanelStore", () => {
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,
-          activeSurfaceId: "subagent",
+          activeSurfaceId: "plan",
           surfaces: [
+            { id: "browser:tab-a", kind: "preview", resourceId: "tab-a" },
             { id: "plan", kind: "plan" },
-            { id: "subagent", kind: "subagent", subagentId: "agent-contracts" },
           ],
         },
       },
     });
   });
 
-  it("drops malformed persisted agent surfaces without disturbing existing surfaces", () => {
+  it("closes a persisted panel when its removed subagent was the only surface", () => {
     expect(
       migratePersistedRightPanelState({
         byThreadKey: {
           "env-1:thread-A": {
             isOpen: true,
-            activeSurfaceId: "subagent",
-            surfaces: [
-              { id: "diff", kind: "diff" },
-              { id: "subagent", kind: "subagent", subagentId: "" },
-            ],
+            activeSurfaceId: "subagent:agent-1",
+            surfaces: [{ id: "subagent:agent-1", kind: "subagent", resourceId: "agent-1" }],
           },
         },
       }),
     ).toEqual({
       byThreadKey: {
         "env-1:thread-A": {
-          isOpen: true,
+          isOpen: false,
           activeSurfaceId: null,
-          surfaces: [{ id: "diff", kind: "diff" }],
+          surfaces: [],
         },
       },
     });
@@ -181,25 +180,6 @@ describe("rightPanelStore", () => {
       surfaces: [
         { id: "diff", kind: "diff" },
         { id: "plan", kind: "plan" },
-      ],
-    });
-  });
-
-  it("keeps exactly one agent surface and replaces its selected transcript", () => {
-    useRightPanelStore.getState().open(refA, "plan");
-    useRightPanelStore.getState().openSubagent(refA, SubagentId.make("agent-runtime"));
-    useRightPanelStore.getState().openSubagent(refA, SubagentId.make("agent-contracts"));
-
-    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
-      isOpen: true,
-      activeSurfaceId: "subagent",
-      surfaces: [
-        { id: "plan", kind: "plan" },
-        {
-          id: "subagent",
-          kind: "subagent",
-          subagentId: SubagentId.make("agent-contracts"),
-        },
       ],
     });
   });
