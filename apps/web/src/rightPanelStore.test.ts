@@ -1,5 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { type EnvironmentId, SubagentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -18,6 +18,59 @@ beforeEach(() => {
 });
 
 describe("rightPanelStore", () => {
+  it("preserves a valid singleton agent surface during migration", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "subagent",
+            surfaces: [
+              { id: "plan", kind: "plan" },
+              { id: "subagent", kind: "subagent", subagentId: "agent-contracts" },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "subagent",
+          surfaces: [
+            { id: "plan", kind: "plan" },
+            { id: "subagent", kind: "subagent", subagentId: "agent-contracts" },
+          ],
+        },
+      },
+    });
+  });
+
+  it("drops malformed persisted agent surfaces without disturbing existing surfaces", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "subagent",
+            surfaces: [
+              { id: "diff", kind: "diff" },
+              { id: "subagent", kind: "subagent", subagentId: "" },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: null,
+          surfaces: [{ id: "diff", kind: "diff" }],
+        },
+      },
+    });
+  });
+
   it("drops the legacy singleton terminal surface during migration", () => {
     expect(
       migratePersistedRightPanelState({
@@ -128,6 +181,25 @@ describe("rightPanelStore", () => {
       surfaces: [
         { id: "diff", kind: "diff" },
         { id: "plan", kind: "plan" },
+      ],
+    });
+  });
+
+  it("keeps exactly one agent surface and replaces its selected transcript", () => {
+    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore.getState().openSubagent(refA, SubagentId.make("agent-runtime"));
+    useRightPanelStore.getState().openSubagent(refA, SubagentId.make("agent-contracts"));
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "subagent",
+      surfaces: [
+        { id: "plan", kind: "plan" },
+        {
+          id: "subagent",
+          kind: "subagent",
+          subagentId: SubagentId.make("agent-contracts"),
+        },
       ],
     });
   });

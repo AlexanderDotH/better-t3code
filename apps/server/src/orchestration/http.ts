@@ -74,6 +74,25 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "subagentSnapshot",
+        Effect.fn("environment.orchestration.subagentSnapshot")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+
+          const snapshot = yield* projectionSnapshotQuery
+            .getSubagentDetailSnapshot(args.params.threadId, args.params.subagentId)
+            .pipe(
+              Effect.catch((cause) =>
+                failEnvironmentInternal("orchestration_subagent_snapshot_failed", cause),
+              ),
+            );
+          if (Option.isNone(snapshot)) {
+            return yield* failEnvironmentNotFound("subagent_not_found");
+          }
+          return snapshot.value;
+        }),
+      )
+      .handle(
         "dispatch",
         Effect.fn("environment.orchestration.dispatch")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);

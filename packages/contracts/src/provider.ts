@@ -5,6 +5,7 @@ import {
   EventId,
   IsoDateTime,
   ProviderItemId,
+  SubagentId,
   ThreadId,
   TurnId,
 } from "./baseSchemas.ts";
@@ -119,6 +120,8 @@ export const ProviderEvent = Schema.Struct({
   // See ProviderSession for the migration story.
   providerInstanceId: Schema.optional(ProviderInstanceId),
   threadId: ThreadId,
+  subagentId: Schema.optional(SubagentId),
+  providerThreadId: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
   method: TrimmedNonEmptyString,
   message: Schema.optional(TrimmedNonEmptyString),

@@ -9,6 +9,7 @@ import {
   RuntimeItemId,
   RuntimeRequestId,
   RuntimeTaskId,
+  SubagentId,
   ThreadId,
   TrimmedNonEmptyString,
   TurnId,
@@ -43,6 +44,7 @@ const ProviderRequestId = TrimmedNonEmptyStringSchema;
 export type ProviderRequestId = typeof ProviderRequestId.Type;
 
 const ProviderRefs = Schema.Struct({
+  providerThreadId: Schema.optional(TrimmedNonEmptyStringSchema),
   providerTurnId: Schema.optional(TrimmedNonEmptyStringSchema),
   providerItemId: Schema.optional(ProviderItemId),
   providerRequestId: Schema.optional(ProviderRequestId),
@@ -159,6 +161,8 @@ const ProviderRuntimeEventType = Schema.Literals([
   "thread.realtime.audio.delta",
   "thread.realtime.error",
   "thread.realtime.closed",
+  "subagent.discovered",
+  "subagent.state.changed",
   "turn.started",
   "turn.completed",
   "turn.aborted",
@@ -209,6 +213,8 @@ const ThreadRealtimeItemAddedType = Schema.Literal("thread.realtime.item-added")
 const ThreadRealtimeAudioDeltaType = Schema.Literal("thread.realtime.audio.delta");
 const ThreadRealtimeErrorType = Schema.Literal("thread.realtime.error");
 const ThreadRealtimeClosedType = Schema.Literal("thread.realtime.closed");
+const SubagentDiscoveredType = Schema.Literal("subagent.discovered");
+const SubagentStateChangedType = Schema.Literal("subagent.state.changed");
 const TurnStartedType = Schema.Literal("turn.started");
 const TurnCompletedType = Schema.Literal("turn.completed");
 const TurnAbortedType = Schema.Literal("turn.aborted");
@@ -253,6 +259,7 @@ const ProviderRuntimeEventBase = Schema.Struct({
   // populates it (post-slice-4), routing flips to instance-id-only.
   providerInstanceId: Schema.optional(ProviderInstanceId),
   threadId: ThreadId,
+  subagentId: Schema.optional(SubagentId),
   createdAt: IsoDateTime,
   turnId: Schema.optional(TurnId),
   itemId: Schema.optional(RuntimeItemId),
@@ -352,6 +359,38 @@ const ThreadRealtimeClosedPayload = Schema.Struct({
   reason: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type ThreadRealtimeClosedPayload = typeof ThreadRealtimeClosedPayload.Type;
+
+export const RuntimeSubagentState = Schema.Literals([
+  "starting",
+  "running",
+  "waiting",
+  "completed",
+  "interrupted",
+  "error",
+  "unavailable",
+]);
+export type RuntimeSubagentState = typeof RuntimeSubagentState.Type;
+
+export const SubagentDiscoveredPayload = Schema.Struct({
+  subagentId: SubagentId,
+  providerThreadId: TrimmedNonEmptyStringSchema,
+  parentSubagentId: Schema.optional(SubagentId),
+  agentPath: Schema.optional(TrimmedNonEmptyStringSchema),
+  nickname: Schema.optional(TrimmedNonEmptyStringSchema),
+  role: Schema.optional(TrimmedNonEmptyStringSchema),
+  task: Schema.optional(TrimmedNonEmptyStringSchema),
+  model: Schema.optional(TrimmedNonEmptyStringSchema),
+  reasoningEffort: Schema.optional(TrimmedNonEmptyStringSchema),
+  depth: Schema.optional(NonNegativeInt),
+});
+export type SubagentDiscoveredPayload = typeof SubagentDiscoveredPayload.Type;
+
+export const SubagentStateChangedPayload = Schema.Struct({
+  subagentId: SubagentId,
+  state: RuntimeSubagentState,
+  statusMessage: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type SubagentStateChangedPayload = typeof SubagentStateChangedPayload.Type;
 
 const TurnStartedPayload = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyStringSchema),
@@ -712,6 +751,22 @@ const ProviderRuntimeThreadRealtimeClosedEvent = Schema.Struct({
 export type ProviderRuntimeThreadRealtimeClosedEvent =
   typeof ProviderRuntimeThreadRealtimeClosedEvent.Type;
 
+export const ProviderRuntimeSubagentDiscoveredEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: SubagentDiscoveredType,
+  payload: SubagentDiscoveredPayload,
+});
+export type ProviderRuntimeSubagentDiscoveredEvent =
+  typeof ProviderRuntimeSubagentDiscoveredEvent.Type;
+
+export const ProviderRuntimeSubagentStateChangedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: SubagentStateChangedType,
+  payload: SubagentStateChangedPayload,
+});
+export type ProviderRuntimeSubagentStateChangedEvent =
+  typeof ProviderRuntimeSubagentStateChangedEvent.Type;
+
 const ProviderRuntimeTurnStartedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: TurnStartedType,
@@ -978,6 +1033,8 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeThreadRealtimeAudioDeltaEvent,
   ProviderRuntimeThreadRealtimeErrorEvent,
   ProviderRuntimeThreadRealtimeClosedEvent,
+  ProviderRuntimeSubagentDiscoveredEvent,
+  ProviderRuntimeSubagentStateChangedEvent,
   ProviderRuntimeTurnStartedEvent,
   ProviderRuntimeTurnCompletedEvent,
   ProviderRuntimeTurnAbortedEvent,

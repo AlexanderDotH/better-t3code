@@ -25,6 +25,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
+  type OrchestrationSubagentStreamItem,
   type OrchestrationThreadStreamItem,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
@@ -73,6 +74,11 @@ import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadTranscriptExport } from "./orchestration/Services/ThreadTranscriptExport.ts";
+import {
+  isThreadAggregateEvent,
+  toRootThreadStreamItem,
+  toSubagentStreamItem,
+} from "./orchestration/threadStreamRouting.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
@@ -271,28 +277,6 @@ function projectSetupScriptCompatibilityDetail(
     default:
       return unexpectedCompatibilityError(error);
   }
-}
-
-function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
-  OrchestrationEvent,
-  {
-    type:
-      | "thread.message-sent"
-      | "thread.proposed-plan-upserted"
-      | "thread.activity-appended"
-      | "thread.turn-diff-completed"
-      | "thread.reverted"
-      | "thread.session-set";
-  }
-> {
-  return (
-    event.type === "thread.message-sent" ||
-    event.type === "thread.proposed-plan-upserted" ||
-    event.type === "thread.activity-appended" ||
-    event.type === "thread.turn-diff-completed" ||
-    event.type === "thread.reverted" ||
-    event.type === "thread.session-set"
-  );
 }
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
@@ -1266,17 +1250,14 @@ const makeWsRpcLayer = (
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
             Effect.gen(function* () {
-              const isThisThreadDetailEvent = (event: OrchestrationEvent) =>
-                event.aggregateKind === "thread" &&
-                event.aggregateId === input.threadId &&
-                isThreadDetailEvent(event);
+              const isThisThreadEvent = (event: OrchestrationEvent) =>
+                isThreadAggregateEvent(event, input.threadId);
+              const routeRootThreadStreamItem = (event: OrchestrationEvent) =>
+                toRootThreadStreamItem(projectActivityEvent(event));
 
               const liveStream = orchestrationEngine.streamDomainEvents.pipe(
-                Stream.filter(isThisThreadDetailEvent),
-                Stream.map((event) => ({
-                  kind: "event" as const,
-                  event: projectActivityEvent(event),
-                })),
+                Stream.filter(isThisThreadEvent),
+                Stream.map(routeRootThreadStreamItem),
               );
 
               // Attach live delivery before reading either replay or snapshot state.
@@ -1309,11 +1290,8 @@ const makeWsRpcLayer = (
                 const catchUpStream = orchestrationEngine
                   .readEvents(afterSequence, Number.MAX_SAFE_INTEGER)
                   .pipe(
-                    Stream.filter(isThisThreadDetailEvent),
-                    Stream.map((event) => ({
-                      kind: "event" as const,
-                      event: projectActivityEvent(event),
-                    })),
+                    Stream.filter(isThisThreadEvent),
+                    Stream.map(routeRootThreadStreamItem),
                     Stream.mapError(
                       (cause) =>
                         new OrchestrationGetSnapshotError({
@@ -1368,6 +1346,75 @@ const makeWsRpcLayer = (
                   snapshot: projectThreadDetailSnapshot(snapshot.value),
                 }),
                 afterSnapshot,
+              );
+            }),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.subscribeSubagent]: (input) =>
+          observeRpcStreamEffect(
+            ORCHESTRATION_WS_METHODS.subscribeSubagent,
+            Effect.gen(function* () {
+              const isThisThreadEvent = (event: OrchestrationEvent) =>
+                isThreadAggregateEvent(event, input.threadId);
+              const routeSubagentStreamItem = (event: OrchestrationEvent) =>
+                toSubagentStreamItem(projectActivityEvent(event), input.subagentId);
+
+              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
+                Stream.filter(isThisThreadEvent),
+                Stream.map(routeSubagentStreamItem),
+              );
+
+              // Subscribe before loading replay or snapshot state so no event can
+              // fall into the gap between the persisted state and live delivery.
+              const liveBuffer = yield* Queue.unbounded<OrchestrationSubagentStreamItem>();
+              yield* Effect.forkScoped(
+                liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
+              );
+              const bufferedLiveStream = Stream.fromQueue(liveBuffer);
+
+              if (input.afterSequence !== undefined) {
+                const afterSequence = input.afterSequence;
+                const catchUpStream = orchestrationEngine
+                  .readEvents(afterSequence, Number.MAX_SAFE_INTEGER)
+                  .pipe(
+                    Stream.filter(isThisThreadEvent),
+                    Stream.map(routeSubagentStreamItem),
+                    Stream.mapError(
+                      (cause) =>
+                        new OrchestrationGetSnapshotError({
+                          message: `Failed to replay subagent ${input.subagentId} events`,
+                          cause,
+                        }),
+                    ),
+                  );
+                return Stream.concat(catchUpStream, bufferedLiveStream);
+              }
+
+              const snapshot = yield* projectionSnapshotQuery
+                .getSubagentDetailSnapshot(input.threadId, input.subagentId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationGetSnapshotError({
+                        message: `Failed to load subagent ${input.subagentId}`,
+                        cause,
+                      }),
+                  ),
+                );
+
+              if (Option.isNone(snapshot)) {
+                return yield* new OrchestrationGetSnapshotError({
+                  message: `Subagent ${input.subagentId} was not found`,
+                  cause: input.subagentId,
+                });
+              }
+
+              return Stream.concat(
+                Stream.make({
+                  kind: "snapshot" as const,
+                  snapshot: snapshot.value,
+                }),
+                bufferedLiveStream,
               );
             }),
             { "rpc.aggregate": "orchestration" },

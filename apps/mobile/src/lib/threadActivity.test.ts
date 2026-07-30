@@ -47,6 +47,7 @@ function makeThread(
     messages: [],
     proposedPlans: [],
     activities: [],
+    subagents: [],
     checkpoints: [],
     session: null,
     ...input,

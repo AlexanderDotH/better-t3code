@@ -226,6 +226,22 @@ describe("providerInstanceId routing key (slice-2 invariant)", () => {
     expect(event.providerInstanceId).toBe("codex_personal");
   });
 
+  it("decodes a ProviderEvent carrying subagent and provider-thread routing", () => {
+    const event = decodeProviderEvent({
+      id: "event-subagent-1",
+      kind: "notification",
+      provider: "codex",
+      threadId: "thread-1",
+      subagentId: "agent-contracts",
+      providerThreadId: "provider-thread-contracts",
+      createdAt: "2026-07-30T10:00:00.000Z",
+      method: "item/started",
+    });
+
+    expect(event.subagentId).toBe("agent-contracts");
+    expect(event.providerThreadId).toBe("provider-thread-contracts");
+  });
+
   it("rejects providerInstanceId values that fail the slug pattern (defense in depth)", () => {
     expect(() =>
       decodeProviderSessionStartInput({
