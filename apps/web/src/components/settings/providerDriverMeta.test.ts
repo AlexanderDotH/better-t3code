@@ -1,82 +1,67 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { HyperagentIcon, LocalOpenAiIcon, NvidiaIcon, OpenRouterIcon } from "../Icons";
 import { deriveProviderSettingsFields } from "./ProviderSettingsForm";
 import { DRIVER_OPTION_BY_VALUE, DRIVER_OPTIONS } from "./providerDriverMeta";
 
-const ADDED_PROVIDER_DRIVERS = [
-  { kind: "gemini", label: "Gemini", fields: ["apiKey"] },
+const NATIVE_PROVIDER_DRIVERS = [
   {
-    kind: "openrouter",
-    label: "OpenRouter",
-    fields: ["apiKey", "baseUrl", "preferredMaxCatalogContextTokens", "contextCompression"],
-  },
-  { kind: "nvidiaNim", label: "NVIDIA NIM", fields: ["apiKey", "baseUrl"] },
-  {
-    kind: "localOpenAi",
-    label: "Local OpenAI",
-    fields: [
-      "v1BaseUrl",
-      "apiKey",
-      "opencodeServerBase",
-      "opencodeServerUser",
-      "opencodeServerPassword",
-    ],
-  },
-  { kind: "opencodeZen", label: "OpenCode Zen", fields: ["apiKey", "baseUrl"] },
-  { kind: "opencodeGo", label: "OpenCode Go", fields: ["apiKey", "baseUrl"] },
-  {
-    kind: "kiroAmazonQ",
-    label: "Kiro / Amazon Q",
-    fields: ["apiKey", "profileArn", "refreshToken", "refreshAuthRegion", "apiHost"],
+    kind: "codex",
+    label: "Codex",
+    fields: ["binaryPath", "homePath", "shadowHomePath", "launchArgs"],
   },
   {
-    kind: "hyperagent",
-    label: "Hyperagent",
-    fields: ["sessionCookie", "baseUrl", "model", "fastMode"],
+    kind: "claudeAgent",
+    label: "Claude",
+    fields: ["binaryPath", "homePath", "launchArgs"],
   },
-  { kind: "cursorSdk", label: "Cursor SDK", fields: ["apiKey", "apiEndpoint"] },
+  {
+    kind: "cursor",
+    label: "Cursor",
+    badgeLabel: "Early Access",
+    fields: ["binaryPath", "apiEndpoint"],
+  },
+  {
+    kind: "grok",
+    label: "Grok",
+    badgeLabel: "Early Access",
+    fields: ["binaryPath"],
+  },
+  {
+    kind: "opencode",
+    label: "OpenCode",
+    fields: ["binaryPath", "serverUrl", "serverPassword"],
+  },
 ] as const;
 
 describe("providerDriverMeta", () => {
-  it("exposes settings metadata for every added provider driver", () => {
-    for (const driver of ADDED_PROVIDER_DRIVERS) {
+  it("exposes exactly the five native provider drivers in upstream order", () => {
+    expect(
+      DRIVER_OPTIONS.map(({ value, label, badgeLabel }) => ({
+        value,
+        label,
+        ...(badgeLabel ? { badgeLabel } : {}),
+      })),
+    ).toEqual(
+      NATIVE_PROVIDER_DRIVERS.map(({ kind, label, ...driver }) => ({
+        value: ProviderDriverKind.make(kind),
+        label,
+        ...("badgeLabel" in driver && driver.badgeLabel ? { badgeLabel: driver.badgeLabel } : {}),
+      })),
+    );
+  });
+
+  it("derives settings fields for every native provider driver", () => {
+    for (const driver of NATIVE_PROVIDER_DRIVERS) {
       const definition = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make(driver.kind)];
 
       expect(definition).toMatchObject({
         value: ProviderDriverKind.make(driver.kind),
         label: driver.label,
-        badgeLabel: "Early Access",
       });
       expect(deriveProviderSettingsFields(definition!).map((field) => field.key)).toEqual(
         driver.fields,
       );
     }
-  });
-
-  it("lists Gemini exactly once as an active driver option", () => {
-    const geminiOptions = DRIVER_OPTIONS.filter(
-      (option) => option.value === ProviderDriverKind.make("gemini"),
-    );
-
-    expect(geminiOptions).toHaveLength(1);
-    expect(geminiOptions[0]).toMatchObject({
-      label: "Gemini",
-      badgeLabel: "Early Access",
-    });
-  });
-
-  it("uses provider-specific icons for external provider integrations", () => {
-    expect(DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("openrouter")]?.icon).toBe(
-      OpenRouterIcon,
-    );
-    expect(DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("nvidiaNim")]?.icon).toBe(NvidiaIcon);
-    expect(DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("localOpenAi")]?.icon).toBe(
-      LocalOpenAiIcon,
-    );
-    expect(DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("hyperagent")]?.icon).toBe(
-      HyperagentIcon,
-    );
   });
 });

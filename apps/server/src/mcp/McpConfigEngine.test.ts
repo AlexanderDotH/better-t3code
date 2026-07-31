@@ -175,13 +175,13 @@ describe("MCP config helpers", () => {
     });
   });
 
-  it("reports built-in providers as MCP-capable without failing future providers", () => {
+  it("reports native provider MCP capabilities without failing unknown providers", () => {
     const providers = [
       provider("codex"),
       provider("cursor"),
       provider("claudeAgent"),
       provider("opencode"),
-      provider("hyperagent"),
+      provider("grok"),
       provider("futureAgent"),
     ];
 
@@ -208,10 +208,10 @@ describe("MCP config helpers", () => {
         activeServerCount: 2,
       },
       {
-        provider: "hyperagent",
-        capability: "sessionConfig",
-        state: "ready",
-        activeServerCount: 2,
+        provider: "grok",
+        capability: "unsupported",
+        state: "unsupported",
+        activeServerCount: 0,
       },
       {
         provider: "futureAgent",

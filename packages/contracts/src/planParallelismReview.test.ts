@@ -15,7 +15,7 @@ const decodeInput = Schema.decodeUnknownSync(PlanParallelismReviewInput);
 const decodeResult = Schema.decodeUnknownSync(PlanParallelismReviewResult);
 
 describe("plan parallelism review contracts", () => {
-  it("allows every supported reviewer driver and excludes Gemini", () => {
+  it("allows every supported reviewer driver and excludes unregistered drivers", () => {
     expect(PLAN_PARALLELISM_REVIEW_DRIVER_KINDS).toEqual([
       "codex",
       "claudeAgent",
@@ -24,7 +24,7 @@ describe("plan parallelism review contracts", () => {
       "opencode",
     ]);
     expect(isPlanParallelismReviewDriverKind("codex")).toBe(true);
-    expect(isPlanParallelismReviewDriverKind("gemini")).toBe(false);
+    expect(isPlanParallelismReviewDriverKind("customReviewer")).toBe(false);
   });
 
   it("accepts recommendation counts above the current provider snapshots", () => {

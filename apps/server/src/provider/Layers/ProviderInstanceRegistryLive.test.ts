@@ -10,7 +10,7 @@
  *
  *  2. **Many drivers, one registry** — the "all drivers slice" describe
  *     block below configures one instance of every shipped driver
- *     (`codex`, `claudeAgent`, `cursor`, `grok`, `opencode`, `hyperagent`) in a single
+ *     (`codex`, `claudeAgent`, `cursor`, `grok`, `opencode`) in a single
  *     `ProviderInstanceConfigMap` and asserts the registry boots them all
  *     without cross-contamination. This proves the driver SPI is uniform
  *     across every provider — any driver plugs into the registry through
@@ -25,6 +25,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  DEFAULT_SERVER_SETTINGS,
   type ClaudeSettings,
   type CodexSettings,
   type CursorSettings,
@@ -49,14 +50,11 @@ import { NoOpMcpConfigEngineLayer } from "../../mcp/testUtils.ts";
 import { ClaudeDriver, type ClaudeDriverEnv } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "../Drivers/CodexDriver.ts";
 import { CursorDriver, type CursorDriverEnv } from "../Drivers/CursorDriver.ts";
-import {
-  HyperagentSimulationDriver,
-  type HyperagentSimulationDriverEnv,
-} from "../Drivers/HyperagentSimulationDriver.ts";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "../Drivers/OpenCodeDriver.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import type { AnyProviderDriver } from "../ProviderDriver.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
+import { deriveProviderInstanceConfigMap } from "./ProviderInstanceRegistryHydration.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
 
 const TestHttpClientLive = Layer.succeed(
@@ -141,22 +139,29 @@ const makeOpenCodeConfig = (overrides: Partial<OpenCodeSettings>): OpenCodeSetti
 });
 
 describe("BUILT_IN_DRIVERS", () => {
-  it("registers every first-party provider exposed by settings metadata", () => {
+  it("registers exactly the native providers in upstream order", () => {
     expect(BUILT_IN_DRIVERS.map((driver) => driver.driverKind)).toEqual([
       ProviderDriverKind.make("codex"),
       ProviderDriverKind.make("claudeAgent"),
       ProviderDriverKind.make("cursor"),
       ProviderDriverKind.make("grok"),
       ProviderDriverKind.make("opencode"),
-      ProviderDriverKind.make("gemini"),
-      ProviderDriverKind.make("openrouter"),
-      ProviderDriverKind.make("nvidiaNim"),
-      ProviderDriverKind.make("localOpenAi"),
-      ProviderDriverKind.make("opencodeZen"),
-      ProviderDriverKind.make("opencodeGo"),
-      ProviderDriverKind.make("kiroAmazonQ"),
-      ProviderDriverKind.make("hyperagent"),
-      ProviderDriverKind.make("cursorSdk"),
+    ]);
+  });
+});
+
+describe("deriveProviderInstanceConfigMap", () => {
+  it("hydrates exactly the five native default instances", () => {
+    const configMap = deriveProviderInstanceConfigMap(DEFAULT_SERVER_SETTINGS);
+
+    expect(
+      Object.entries(configMap).map(([instanceId, config]) => [instanceId, config.driver]),
+    ).toEqual([
+      ["codex", "codex"],
+      ["claudeAgent", "claudeAgent"],
+      ["cursor", "cursor"],
+      ["grok", "grok"],
+      ["opencode", "opencode"],
     ]);
   });
 });
@@ -325,14 +330,12 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const cursorId = ProviderInstanceId.make("cursor_default");
       const grokId = ProviderInstanceId.make("grok_default");
       const openCodeId = ProviderInstanceId.make("opencode_default");
-      const hyperagentId = ProviderInstanceId.make("hyperagent_default");
 
       const codexDriverKind = ProviderDriverKind.make("codex");
       const claudeDriverKind = ProviderDriverKind.make("claudeAgent");
       const cursorDriverKind = ProviderDriverKind.make("cursor");
       const grokDriverKind = ProviderDriverKind.make("grok");
       const openCodeDriverKind = ProviderDriverKind.make("opencode");
-      const hyperagentDriverKind = ProviderDriverKind.make("hyperagent");
 
       const configMap: ProviderInstanceConfigMap = {
         [codexId]: {
@@ -368,12 +371,6 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
           enabled: false,
           config: makeOpenCodeConfig({}),
         },
-        [hyperagentId]: {
-          driver: hyperagentDriverKind,
-          displayName: "Hyperagent (MCP Proxy)",
-          enabled: false,
-          config: makeOpenCodeConfig({}),
-        },
       };
 
       type AllDriverEnv =
@@ -381,15 +378,13 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         | ClaudeDriverEnv
         | CursorDriverEnv
         | GrokDriverEnv
-        | OpenCodeDriverEnv
-        | HyperagentSimulationDriverEnv;
+        | OpenCodeDriverEnv;
       const drivers: ReadonlyArray<AnyProviderDriver<AllDriverEnv>> = [
         CodexDriver,
         ClaudeDriver,
         CursorDriver,
         GrokDriver,
         OpenCodeDriver,
-        HyperagentSimulationDriver,
       ];
       const { registry } = yield* makeProviderInstanceRegistry({
         drivers,
@@ -402,9 +397,9 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(unavailable).toEqual([]);
 
       const instances = yield* registry.listInstances;
-      expect(instances).toHaveLength(6);
+      expect(instances).toHaveLength(5);
       expect(instances.map((instance) => instance.instanceId).toSorted()).toEqual(
-        [codexId, claudeId, cursorId, grokId, openCodeId, hyperagentId].toSorted(),
+        [codexId, claudeId, cursorId, grokId, openCodeId].toSorted(),
       );
 
       // Instance lookup by id resolves each instance to its own bundle —
@@ -415,19 +410,16 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const cursor = yield* registry.getInstance(cursorId);
       const grok = yield* registry.getInstance(grokId);
       const openCode = yield* registry.getInstance(openCodeId);
-      const hyperagent = yield* registry.getInstance(hyperagentId);
       expect(codex?.driverKind).toBe(codexDriverKind);
       expect(claude?.driverKind).toBe(claudeDriverKind);
       expect(cursor?.driverKind).toBe(cursorDriverKind);
       expect(grok?.driverKind).toBe(grokDriverKind);
       expect(openCode?.driverKind).toBe(openCodeDriverKind);
-      expect(hyperagent?.driverKind).toBe(hyperagentDriverKind);
       expect(codex?.displayName).toBe("Codex");
       expect(claude?.displayName).toBe("Claude");
       expect(cursor?.displayName).toBe("Cursor");
       expect(grok?.displayName).toBe("Grok");
       expect(openCode?.displayName).toBe("OpenCode");
-      expect(hyperagent?.displayName).toBe("Hyperagent (MCP Proxy)");
 
       // Every instance owns its own set of closures — no sharing across
       // drivers. `adapter` / `textGeneration` / `snapshot` are all
@@ -440,7 +432,6 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.adapter,
         grok!.adapter,
         openCode!.adapter,
-        hyperagent!.adapter,
       ];
       expect(new Set(adapters).size).toBe(adapters.length);
       const textGenerations = [
@@ -449,7 +440,6 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.textGeneration,
         grok!.textGeneration,
         openCode!.textGeneration,
-        hyperagent!.textGeneration,
       ];
       expect(new Set(textGenerations).size).toBe(textGenerations.length);
       const snapshots = [
@@ -458,7 +448,6 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.snapshot,
         grok!.snapshot,
         openCode!.snapshot,
-        hyperagent!.snapshot,
       ];
       expect(new Set(snapshots).size).toBe(snapshots.length);
 
@@ -500,14 +489,6 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(openCodeSnapshot.enabled).toBe(false);
       expect(openCodeSnapshot.continuation?.groupKey).toBe(
         `${openCodeDriverKind}:instance:${openCodeId}`,
-      );
-
-      const hyperagentSnapshot = yield* hyperagent!.snapshot.getSnapshot;
-      expect(hyperagentSnapshot.instanceId).toBe(hyperagentId);
-      expect(hyperagentSnapshot.driver).toBe(hyperagentDriverKind);
-      expect(hyperagentSnapshot.enabled).toBe(false);
-      expect(hyperagentSnapshot.continuation?.groupKey).toBe(
-        `${hyperagentDriverKind}:instance:${hyperagentId}`,
       );
     }).pipe(Effect.provide(testLayer)),
   );

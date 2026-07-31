@@ -5,8 +5,12 @@ model catalog, text-generation support, and maintenance behavior for that instan
 dynamic, so multiple instances of the same driver and fork-specific drivers can coexist without
 changing orchestration contracts.
 
-Built-in drivers include Codex, Claude Agent, Cursor, Grok, OpenCode, Gemini, Hyperagent, and the
-hosted/OpenAI-compatible variants registered in `builtInDrivers.ts`.
+The built-in registry contains Codex, Claude, Cursor, Grok, and OpenCode, in that order.
+
+Driver slugs remain extensible for forks and downgrade compatibility. When an explicit
+`providerInstances` entry names a driver that is not registered in this build, the registry keeps
+the opaque configuration and exposes an unavailable snapshot so the entry can still be inspected
+and deleted. It does not synthesize a default instance, probe the driver, or start a session.
 
 ## Client boundary
 
@@ -19,15 +23,13 @@ orchestration model, and clients render the resulting typed domain events and pr
 Each adapter reports capabilities instead of making orchestration branch on provider names. MCP
 configuration is one such capability:
 
-| Driver                         | MCP delivery               | T3 internal workspace tools |
-| ------------------------------ | -------------------------- | --------------------------- |
-| Codex                          | Native configuration       | Yes                         |
-| Claude Agent                   | Session configuration      | Yes                         |
-| Cursor                         | Session configuration      | Yes                         |
-| OpenCode                       | Session configuration      | Yes                         |
-| Grok                           | Preview-only configuration | No                          |
-| Gemini                         | Unsupported                | No                          |
-| Hyperagent and hosted adapters | Unsupported                | No                          |
+| Driver   | MCP delivery               | T3 internal workspace tools |
+| -------- | -------------------------- | --------------------------- |
+| Codex    | Native configuration       | Yes                         |
+| Claude   | Session configuration      | Yes                         |
+| Cursor   | Session configuration      | Yes                         |
+| OpenCode | Session configuration      | Yes                         |
+| Grok     | Preview-only configuration | No                          |
 
 Supported adapters receive the authenticated `/mcp/workspace` endpoint, which exposes collaborative
 preview tools and the read-only `workspace_context` tool. The provider cannot select another project

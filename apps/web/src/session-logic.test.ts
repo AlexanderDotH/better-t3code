@@ -1,6 +1,7 @@
 import {
   EventId,
   MessageId,
+  ProviderDriverKind,
   ThreadId,
   TurnId,
   type OrchestrationThreadActivity,
@@ -18,10 +19,23 @@ import {
   findSidebarProposedPlan,
   hasActionableProposedPlan,
   isLatestTurnSettled,
+  PROVIDER_OPTIONS,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
 } from "./session-logic";
+
+describe("provider options", () => {
+  it("offers exactly the five native provider drivers", () => {
+    expect(PROVIDER_OPTIONS.map((option) => option.value)).toEqual([
+      ProviderDriverKind.make("codex"),
+      ProviderDriverKind.make("claudeAgent"),
+      ProviderDriverKind.make("opencode"),
+      ProviderDriverKind.make("cursor"),
+      ProviderDriverKind.make("grok"),
+    ]);
+  });
+});
 
 let nextActivityId = 0;
 

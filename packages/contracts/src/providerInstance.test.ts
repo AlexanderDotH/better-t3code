@@ -14,6 +14,7 @@ const decodeProviderInstanceId = Schema.decodeUnknownSync(ProviderInstanceId);
 const decodeProviderInstanceRef = Schema.decodeUnknownSync(ProviderInstanceRef);
 const decodeProviderInstanceConfig = Schema.decodeUnknownSync(ProviderInstanceConfig);
 const decodeProviderInstanceConfigMap = Schema.decodeUnknownSync(ProviderInstanceConfigMap);
+const encodeProviderInstanceConfigMap = Schema.encodeSync(ProviderInstanceConfigMap);
 
 describe("provider slug validation (shared by driver + instance ids)", () => {
   const cases = [
@@ -196,6 +197,28 @@ describe("ProviderInstanceConfigMap", () => {
       homePath: "~/.codex_work",
     });
     expect(decoded[ProviderInstanceId.make("ollama_local")]?.driver).toBe("ollama");
+  });
+
+  it("round-trips an entry whose driver is not registered by this build", () => {
+    const decoded = decodeProviderInstanceConfigMap({
+      custom_runtime: {
+        driver: "customRuntime",
+        displayName: "Custom Runtime",
+        enabled: false,
+        config: { endpoint: "http://localhost:11434", nested: { mode: "safe" } },
+      },
+    });
+    const encoded = encodeProviderInstanceConfigMap(decoded);
+
+    expect(encoded).toEqual({
+      custom_runtime: {
+        driver: "customRuntime",
+        displayName: "Custom Runtime",
+        enabled: false,
+        config: { endpoint: "http://localhost:11434", nested: { mode: "safe" } },
+      },
+    });
+    expect(decodeProviderInstanceConfigMap(encoded)).toEqual(decoded);
   });
 
   it("rejects keys that fail the instance-id pattern", () => {

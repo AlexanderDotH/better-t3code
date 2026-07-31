@@ -37,18 +37,16 @@ describe("ProviderSettingsForm helpers", () => {
     });
   });
 
-  it("uses direct Hyperagent settings instead of the legacy OpenCode proxy config", () => {
-    const hyperagent = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("hyperagent")];
+  it("derives native Cursor settings from its schema", () => {
+    const cursor = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("cursor")];
 
-    expect(hyperagent).toMatchObject({
-      label: "Hyperagent",
+    expect(cursor).toMatchObject({
+      label: "Cursor",
       badgeLabel: "Early Access",
     });
-    expect(deriveProviderSettingsFields(hyperagent!).map((field) => field.key)).toEqual([
-      "sessionCookie",
-      "baseUrl",
-      "model",
-      "fastMode",
+    expect(deriveProviderSettingsFields(cursor!).map((field) => field.key)).toEqual([
+      "binaryPath",
+      "apiEndpoint",
     ]);
   });
 

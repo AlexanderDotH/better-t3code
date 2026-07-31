@@ -2,67 +2,45 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import {
-  AGENT_MODEL_ID_PREFIX_BY_PROVIDER,
-  AgentLlmSlotState,
-  AgentLlmTransportKind,
-  AgentModelCatalogProviderId,
   AgentReasoningEffort,
+  CLAUDE_DRIVER_KIND,
+  CODEX_DRIVER_KIND,
+  CURSOR_DRIVER_KIND,
   DEFAULT_AGENT_REASONING_EFFORT,
   DEFAULT_MODEL_BY_PROVIDER,
-  GEMINI_DRIVER_KIND,
-  HYPERAGENT_DRIVER_KIND,
+  GROK_DRIVER_KIND,
   ModelCapabilities,
+  OPENCODE_DRIVER_KIND,
+  PROVIDER_DISPLAY_NAMES,
 } from "./model.ts";
 
-const decodeAgentLlmSlotState = Schema.decodeUnknownSync(AgentLlmSlotState);
-const decodeAgentModelCatalogProviderId = Schema.decodeUnknownSync(AgentModelCatalogProviderId);
-const decodeAgentLlmTransportKind = Schema.decodeUnknownSync(AgentLlmTransportKind);
 const decodeAgentReasoningEffort = Schema.decodeUnknownSync(AgentReasoningEffort);
 const decodeModelCapabilities = Schema.decodeUnknownSync(ModelCapabilities);
 
 describe("multi-provider model contracts", () => {
-  it("exports stable stored model prefixes for provider routing", () => {
-    expect(AGENT_MODEL_ID_PREFIX_BY_PROVIDER).toEqual({
-      gemini: "gemini-direct:",
-      nvidia: "nvidia:",
-      local: "local:",
-      zen: "zen:",
-      go: "go:",
-      kiro: "kiro:",
-      cursor: "cursor:",
-      hyperagent: "hyperagent:",
+  it("defines defaults for exactly the native provider drivers", () => {
+    expect(DEFAULT_MODEL_BY_PROVIDER).toEqual({
+      [CODEX_DRIVER_KIND]: "gpt-5.6-sol",
+      [CLAUDE_DRIVER_KIND]: "claude-sonnet-5",
+      [CURSOR_DRIVER_KIND]: "auto",
+      [GROK_DRIVER_KIND]: "grok-build",
+      [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
     });
   });
 
-  it("accepts every provider id and transport kind used by model selections", () => {
-    expect(decodeAgentModelCatalogProviderId("openrouter")).toBe("openrouter");
-    expect(decodeAgentModelCatalogProviderId("nvidia")).toBe("nvidia");
-    expect(decodeAgentModelCatalogProviderId("hyperagent")).toBe("hyperagent");
-    expect(decodeAgentLlmTransportKind("openai-compatible")).toBe("openai-compatible");
-    expect(decodeAgentLlmTransportKind("hyperagent-agent")).toBe("hyperagent-agent");
+  it("defines display names for exactly the native provider drivers", () => {
+    expect(PROVIDER_DISPLAY_NAMES).toEqual({
+      [CODEX_DRIVER_KIND]: "Codex",
+      [CLAUDE_DRIVER_KIND]: "Claude",
+      [CURSOR_DRIVER_KIND]: "Cursor",
+      [GROK_DRIVER_KIND]: "Grok",
+      [OPENCODE_DRIVER_KIND]: "OpenCode",
+    });
   });
 
-  it("decodes reasoning and per-slot model overrides", () => {
-    const decoded = decodeAgentLlmSlotState({
-      storedModelId: "  hyperagent:sonnet-latest  ",
-      label: "  Latest Sonnet  ",
-      overrides: {
-        reasoningEffort: "xhigh",
-        supportsReasoningEffort: true,
-        openRouterContextCompression: false,
-      },
-    });
-
+  it("retains provider-independent reasoning effort contracts", () => {
     expect(DEFAULT_AGENT_REASONING_EFFORT).toBe("medium");
     expect(decodeAgentReasoningEffort("minimal")).toBe("minimal");
-    expect(decoded.storedModelId).toBe("hyperagent:sonnet-latest");
-    expect(decoded.label).toBe("Latest Sonnet");
-    expect(decoded.overrides?.reasoningEffort).toBe("xhigh");
-  });
-
-  it("defines defaults for direct Gemini and Hyperagent runtimes", () => {
-    expect(DEFAULT_MODEL_BY_PROVIDER[GEMINI_DRIVER_KIND]).toBe("gemini-2.5-flash");
-    expect(DEFAULT_MODEL_BY_PROVIDER[HYPERAGENT_DRIVER_KIND]).toBe("sonnet-latest");
   });
 
   it("keeps provider options on the existing select and boolean descriptor surface", () => {

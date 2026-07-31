@@ -5,10 +5,9 @@ import {
   CODEX_DRIVER_KIND,
   CURSOR_DRIVER_KIND,
   EnvironmentId,
-  GEMINI_DRIVER_KIND,
   GROK_DRIVER_KIND,
-  HYPERAGENT_DRIVER_KIND,
   OPENCODE_DRIVER_KIND,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -153,8 +152,7 @@ it.effect("issues workspace credentials only to MCP-capable coding providers", (
       [CURSOR_DRIVER_KIND, "workspace"],
       [OPENCODE_DRIVER_KIND, "workspace"],
       [GROK_DRIVER_KIND, "preview"],
-      [GEMINI_DRIVER_KIND, "preview"],
-      [HYPERAGENT_DRIVER_KIND, "preview"],
+      [ProviderDriverKind.make("customAgent"), "preview"],
     ] as const;
 
     for (const [provider, expectedProfile] of cases) {

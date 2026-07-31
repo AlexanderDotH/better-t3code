@@ -49,7 +49,17 @@ describe("resolveWizardNavigation", () => {
 });
 
 describe("provider driver groups", () => {
-  it("does not show Gemini in both the active and coming-soon groups", () => {
+  it("offers exactly the five native provider drivers", () => {
+    expect(DRIVER_OPTIONS.map((option) => option.value)).toEqual([
+      ProviderDriverKind.make("codex"),
+      ProviderDriverKind.make("claudeAgent"),
+      ProviderDriverKind.make("cursor"),
+      ProviderDriverKind.make("grok"),
+      ProviderDriverKind.make("opencode"),
+    ]);
+  });
+
+  it("keeps active and coming-soon driver groups disjoint", () => {
     expect(
       activeAndComingSoonDriverKindsAreDisjoint(
         DRIVER_OPTIONS.map((option) => option.value),
@@ -65,8 +75,8 @@ describe("provider driver groups", () => {
   it("rejects a duplicated driver kind", () => {
     expect(
       activeAndComingSoonDriverKindsAreDisjoint(
-        [ProviderDriverKind.make("gemini")],
-        [ProviderDriverKind.make("gemini")],
+        [ProviderDriverKind.make("customDriver")],
+        [ProviderDriverKind.make("customDriver")],
       ),
     ).toBe(false);
   });

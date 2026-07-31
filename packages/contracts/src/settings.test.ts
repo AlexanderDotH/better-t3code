@@ -225,69 +225,47 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   });
 });
 
-describe("ServerSettings multi-provider defaults", () => {
-  it("defaults credential-backed providers off while hydrating stable endpoints", () => {
+describe("ServerSettings native provider boundary", () => {
+  it("hydrates defaults for exactly the five native providers", () => {
     const decoded = decodeServerSettings({});
 
-    expect(decoded.providers.gemini.enabled).toBe(false);
-    expect(decoded.providers.openrouter.enabled).toBe(false);
-    expect(decoded.providers.openrouter.baseUrl).toBe("https://openrouter.ai/api/v1");
-    expect(decoded.providers.nvidiaNim.baseUrl).toBe("https://integrate.api.nvidia.com/v1");
-    expect(decoded.providers.localOpenAi.v1BaseUrl).toBe("");
-    expect(decoded.providers.localOpenAi.opencodeServerBase).toBe("");
-    expect(decoded.providers.opencodeZen.baseUrl).toBe("https://opencode.ai/zen/v1");
-    expect(decoded.providers.opencodeGo.baseUrl).toBe("https://opencode.ai/zen/go/v1");
-    expect(decoded.providers.kiroAmazonQ.apiHost).toBe("https://q.us-east-1.amazonaws.com");
-    expect(decoded.providers.kiroAmazonQ.refreshAuthRegion).toBe("us-east-1");
-    expect(decoded.providers.hyperagent.baseUrl).toBe("https://hyperagent.com");
-    expect(decoded.providers.hyperagent.model).toBe("sonnet-latest");
-    expect(decoded.providers.hyperagent.fastMode).toBe(false);
-    expect(decoded.providers.cursorSdk.manualModelIds).toEqual([]);
+    expect(Object.keys(decoded.providers)).toEqual([
+      "codex",
+      "claudeAgent",
+      "cursor",
+      "grok",
+      "opencode",
+    ]);
   });
 
-  it("normalizes provider setting patches for every added driver", () => {
+  it("keeps native patch fields and ignores removed legacy provider keys", () => {
     const patch = decodeServerSettingsPatch({
       providers: {
+        codex: { binaryPath: "  /usr/local/bin/codex  " },
+        claudeAgent: { binaryPath: "  /usr/local/bin/claude  " },
+        cursor: { binaryPath: "  /usr/local/bin/cursor-agent  " },
+        grok: { binaryPath: "  /usr/local/bin/grok  " },
+        opencode: { binaryPath: "  /usr/local/bin/opencode  " },
         gemini: { apiKey: "  gemini-key  " },
-        openrouter: {
-          apiKey: "  sk-or-key  ",
-          contextCompression: true,
-          preferredMaxCatalogContextTokens: "  200000  ",
-        },
+        openrouter: { apiKey: "  gateway-key  " },
         nvidiaNim: { apiKey: "  nvapi-key  " },
-        localOpenAi: {
-          v1BaseUrl: "  http://127.0.0.1:11434/v1  ",
-          opencodeServerBase: "  http://127.0.0.1:4096  ",
-        },
+        localOpenAi: { v1BaseUrl: "  http://127.0.0.1:11434/v1  " },
         opencodeZen: { apiKey: "  zen-key  " },
         opencodeGo: { apiKey: "  go-key  " },
-        kiroAmazonQ: {
-          apiKey: "  kiro-key  ",
-          profileArn: "  arn:aws:codewhisperer:us-east-1:123:profile/test  ",
-        },
-        hyperagent: {
-          sessionCookie: "  session-token  ",
-          model: "  opus-latest  ",
-          fastMode: true,
-        },
+        kiroAmazonQ: { apiKey: "  editor-token  " },
+        hyperagent: { sessionCookie: "  session-token  " },
         cursorSdk: { apiKey: "  cursor-key  ", manualModelIds: ["  composer-2  "] },
       },
     });
 
-    expect(patch.providers?.gemini?.apiKey).toBe("gemini-key");
-    expect(patch.providers?.openrouter?.contextCompression).toBe(true);
-    expect(patch.providers?.openrouter?.preferredMaxCatalogContextTokens).toBe("200000");
-    expect(patch.providers?.nvidiaNim?.apiKey).toBe("nvapi-key");
-    expect(patch.providers?.localOpenAi?.v1BaseUrl).toBe("http://127.0.0.1:11434/v1");
-    expect(patch.providers?.localOpenAi?.opencodeServerBase).toBe("http://127.0.0.1:4096");
-    expect(patch.providers?.opencodeZen?.apiKey).toBe("zen-key");
-    expect(patch.providers?.opencodeGo?.apiKey).toBe("go-key");
-    expect(patch.providers?.kiroAmazonQ?.profileArn).toBe(
-      "arn:aws:codewhisperer:us-east-1:123:profile/test",
-    );
-    expect(patch.providers?.hyperagent?.model).toBe("opus-latest");
-    expect(patch.providers?.hyperagent?.fastMode).toBe(true);
-    expect(patch.providers?.cursorSdk?.manualModelIds).toEqual(["composer-2"]);
+    expect(Object.keys(patch.providers ?? {})).toEqual([
+      "codex",
+      "claudeAgent",
+      "cursor",
+      "grok",
+      "opencode",
+    ]);
+    expect(patch.providers?.codex?.binaryPath).toBe("/usr/local/bin/codex");
   });
 });
 

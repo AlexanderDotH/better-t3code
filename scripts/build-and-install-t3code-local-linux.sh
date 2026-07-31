@@ -118,7 +118,7 @@ declare -a FEATURE_MARKERS=(
   "AssemblyAiStreamingToken"
   "t3-assemblyai-pcm16"
   "GrokDriver"
-  "Hyperagent (MCP Proxy)"
+  "ProviderInstanceRegistry reconcile failed"
   'max: "Maximum"'
 )
 MARKER_REPORT="$RELEASE_DIR/T3Code.AppImage.feature-markers.txt"

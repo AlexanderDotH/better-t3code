@@ -2,34 +2,12 @@ import {
   ClaudeSettings,
   CodexSettings,
   CursorSettings,
-  CursorSdkSettings,
-  GeminiSettings,
   GrokSettings,
-  HyperagentSettings,
-  KiroAmazonQSettings,
-  LocalOpenAiSettings,
-  NvidiaNimSettings,
   OpenCodeSettings,
-  OpenCodeGoSettings,
-  OpenCodeZenSettings,
-  OpenRouterSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
-import {
-  ClaudeAI,
-  CursorIcon,
-  Gemini,
-  GrokIcon,
-  HyperagentIcon,
-  KiroIcon,
-  LocalOpenAiIcon,
-  NvidiaIcon,
-  type Icon,
-  OpenAI,
-  OpenCodeIcon,
-  OpenRouterIcon,
-} from "../Icons";
+import { ClaudeAI, CursorIcon, GrokIcon, type Icon, OpenAI, OpenCodeIcon } from "../Icons";
 
 type ProviderSettingsSchema = {
   readonly fields: Readonly<Record<string, Schema.Top>>;
@@ -90,69 +68,6 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     label: "OpenCode",
     icon: OpenCodeIcon,
     settingsSchema: OpenCodeSettings,
-  },
-  {
-    value: ProviderDriverKind.make("gemini"),
-    label: "Gemini",
-    icon: Gemini,
-    badgeLabel: EARLY_ACCESS_BADGE,
-    settingsSchema: GeminiSettings,
-  },
-  {
-    value: ProviderDriverKind.make("openrouter"),
-    label: "OpenRouter",
-    icon: OpenRouterIcon,
-    badgeLabel: EARLY_ACCESS_BADGE,
-    settingsSchema: OpenRouterSettings,
-  },
-  {
-    value: ProviderDriverKind.make("nvidiaNim"),
-    label: "NVIDIA NIM",
-    icon: NvidiaIcon,
-    badgeLabel: EARLY_ACCESS_BADGE,
-    settingsSchema: NvidiaNimSettings,
-  },
-  {
-    value: ProviderDriverKind.make("localOpenAi"),
-    label: "Local OpenAI",
-    icon: LocalOpenAiIcon,
-    badgeLabel: EARLY_ACCESS_BADGE,
-    settingsSchema: LocalOpenAiSettings,
-  },
-  {
-    value: ProviderDriverKind.make("opencodeZen"),
-    label: "OpenCode Zen",
-    icon: OpenCodeIcon,
-    badgeLabel: EARLY_ACCESS_BADGE,
-    settingsSchema: OpenCodeZenSettings,
-  },
-  {
-    value: ProviderDriverKind.make("opencodeGo"),
-    label: "OpenCode Go",
-    icon: OpenCodeIcon,
-    badgeLabel: EARLY_ACCESS_BADGE,
-    settingsSchema: OpenCodeGoSettings,
-  },
-  {
-    value: ProviderDriverKind.make("kiroAmazonQ"),
-    label: "Kiro / Amazon Q",
-    icon: KiroIcon,
-    badgeLabel: EARLY_ACCESS_BADGE,
-    settingsSchema: KiroAmazonQSettings,
-  },
-  {
-    value: ProviderDriverKind.make("hyperagent"),
-    label: "Hyperagent",
-    icon: HyperagentIcon,
-    badgeLabel: EARLY_ACCESS_BADGE,
-    settingsSchema: HyperagentSettings,
-  },
-  {
-    value: ProviderDriverKind.make("cursorSdk"),
-    label: "Cursor SDK",
-    icon: CursorIcon,
-    badgeLabel: EARLY_ACCESS_BADGE,
-    settingsSchema: CursorSdkSettings,
   },
 ];
 

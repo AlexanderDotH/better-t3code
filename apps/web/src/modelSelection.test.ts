@@ -307,7 +307,7 @@ describe("instance-scoped model selection", () => {
 });
 
 describe("plan parallelism review model selection", () => {
-  it("keeps supported custom instances while excluding Gemini and unknown drivers", () => {
+  it("keeps supported custom instances while excluding unknown drivers", () => {
     const providers = [
       provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex_personal" }),
       provider({
@@ -317,8 +317,10 @@ describe("plan parallelism review model selection", () => {
       provider({ provider: ProviderDriverKind.make("cursor"), instanceId: "cursor" }),
       provider({ provider: ProviderDriverKind.make("grok"), instanceId: "grok" }),
       provider({ provider: ProviderDriverKind.make("opencode"), instanceId: "opencode" }),
-      provider({ provider: ProviderDriverKind.make("gemini"), instanceId: "gemini" }),
-      provider({ provider: ProviderDriverKind.make("hyperagent"), instanceId: "hyperagent" }),
+      provider({
+        provider: ProviderDriverKind.make("customDriver"),
+        instanceId: "custom_provider",
+      }),
     ];
 
     expect(
@@ -354,12 +356,12 @@ describe("plan parallelism review model selection", () => {
     });
   });
 
-  it("does not let a stored Gemini selection escape the reviewer allowlist", () => {
+  it("does not let a stored unknown-driver selection escape the reviewer allowlist", () => {
     const providers = [
       provider({
-        provider: ProviderDriverKind.make("gemini"),
-        instanceId: "gemini",
-        models: ["gemini-2.5-flash"],
+        provider: ProviderDriverKind.make("customDriver"),
+        instanceId: "custom_provider",
+        models: ["custom-model"],
       }),
       provider({
         provider: ProviderDriverKind.make("codex"),
@@ -370,8 +372,8 @@ describe("plan parallelism review model selection", () => {
     const settings: UnifiedSettings = {
       ...DEFAULT_UNIFIED_SETTINGS,
       parallelPlanReviewModelSelection: {
-        instanceId: ProviderInstanceId.make("gemini"),
-        model: "gemini-2.5-flash",
+        instanceId: ProviderInstanceId.make("custom_provider"),
+        model: "custom-model",
       },
     };
 
@@ -384,22 +386,22 @@ describe("plan parallelism review model selection", () => {
   it("leaves the normal text-generation resolver unrestricted", () => {
     const providers = [
       provider({
-        provider: ProviderDriverKind.make("gemini"),
-        instanceId: "gemini",
-        models: ["gemini-2.5-flash"],
+        provider: ProviderDriverKind.make("customDriver"),
+        instanceId: "custom_provider",
+        models: ["custom-model"],
       }),
     ];
     const settings: UnifiedSettings = {
       ...DEFAULT_UNIFIED_SETTINGS,
       textGenerationModelSelection: {
-        instanceId: ProviderInstanceId.make("gemini"),
-        model: "gemini-2.5-flash",
+        instanceId: ProviderInstanceId.make("custom_provider"),
+        model: "custom-model",
       },
     };
 
     expect(resolveAppModelSelectionState(settings, providers)).toMatchObject({
-      instanceId: ProviderInstanceId.make("gemini"),
-      model: "gemini-2.5-flash",
+      instanceId: ProviderInstanceId.make("custom_provider"),
+      model: "custom-model",
     });
   });
 });

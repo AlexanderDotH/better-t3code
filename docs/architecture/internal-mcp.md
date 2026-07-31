@@ -22,17 +22,19 @@ credential issued for the preview endpoint cannot be used to obtain workspace to
 
 Provider support follows the adapter's MCP transport capability:
 
-| Provider driver                          | Internal MCP transport         | Issued endpoint  |
-| ---------------------------------------- | ------------------------------ | ---------------- |
-| Codex                                    | Native MCP configuration       | `/mcp/workspace` |
-| Claude Agent                             | Per-session MCP configuration  | `/mcp/workspace` |
-| Cursor                                   | Per-session MCP configuration  | `/mcp/workspace` |
-| OpenCode                                 | Per-session MCP configuration  | `/mcp/workspace` |
-| Grok                                     | Preview-only MCP configuration | `/mcp`           |
-| Gemini, Hyperagent, and hosted providers | No internal MCP transport      | None             |
+| Provider driver     | Internal MCP transport         | Issued endpoint  |
+| ------------------- | ------------------------------ | ---------------- |
+| Codex               | Native MCP configuration       | `/mcp/workspace` |
+| Claude              | Per-session MCP configuration  | `/mcp/workspace` |
+| Cursor              | Per-session MCP configuration  | `/mcp/workspace` |
+| OpenCode            | Per-session MCP configuration  | `/mcp/workspace` |
+| Grok                | Preview-only MCP configuration | `/mcp`           |
+| Unregistered driver | No adapter transport           | None             |
 
 This distinction keeps `workspace_context` out of the advertised tool list for unsupported
-providers instead of allowing a tool call that can only fail.
+drivers instead of allowing a tool call that can only fail. An explicit instance for an
+unregistered driver remains visible as unavailable, but no adapter exists to receive an internal
+MCP credential.
 
 ## Credentials and authorization
 

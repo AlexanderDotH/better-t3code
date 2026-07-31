@@ -48,12 +48,12 @@ describe("mergeEnvironmentSettings", () => {
   });
 
   it("fills default provider settings when persisted server settings only contain provider instances", () => {
-    const hyperagentId = ProviderInstanceId.make("hyperagent");
+    const customProviderId = ProviderInstanceId.make("custom_provider");
     const settings = mergeEnvironmentSettings(
       {
         providerInstances: {
-          [hyperagentId]: {
-            driver: ProviderDriverKind.make("hyperagent"),
+          [customProviderId]: {
+            driver: ProviderDriverKind.make("customDriver"),
             enabled: true,
           },
         },
@@ -63,14 +63,14 @@ describe("mergeEnvironmentSettings", () => {
 
     expect(settings.providers.codex.enabled).toBe(true);
     expect(settings.providers.claudeAgent.enabled).toBe(true);
-    expect(settings.providerInstances[hyperagentId]?.enabled).toBe(true);
+    expect(settings.providerInstances[customProviderId]?.enabled).toBe(true);
   });
 
   it("fully expands sparse persisted server settings before selectors read nested values", () => {
     const sparseSettings = {
       providerInstances: {
-        [ProviderInstanceId.make("hyperagent")]: {
-          driver: ProviderDriverKind.make("hyperagent"),
+        [ProviderInstanceId.make("custom_provider")]: {
+          driver: ProviderDriverKind.make("customDriver"),
           enabled: true,
         },
       },

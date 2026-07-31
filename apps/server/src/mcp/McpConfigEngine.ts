@@ -409,7 +409,6 @@ export function getProviderMcpCapability(provider: ProviderDriverKind): McpProvi
     case "cursor":
     case "claudeAgent":
     case "opencode":
-    case "hyperagent":
       return "sessionConfig";
     case "codex":
       return "nativeConfig";

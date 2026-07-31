@@ -655,11 +655,11 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
   });
 
   it.effect("supports an MCP-capable compatibility provider identity", () => {
-    const hyperagent = ProviderDriverKind.make("hyperagent");
+    const customOpenCodeProxy = ProviderDriverKind.make("customOpenCodeProxy");
     const layer = Layer.effect(
       OpenCodeAdapter,
       makeOpenCodeAdapter(openCodeAdapterTestSettings, {
-        provider: hyperagent,
+        provider: customOpenCodeProxy,
         resolveMcpServers: () =>
           Effect.succeed({
             docs: {
@@ -679,7 +679,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
 
     return Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
-      const threadId = asThreadId("thread-hyperagent-mcp-proxy");
+      const threadId = asThreadId("thread-custom-opencode-proxy");
       const eventsFiber = yield* adapter.streamEvents.pipe(
         Stream.filter((event) => event.threadId === threadId),
         Stream.take(2),
@@ -688,17 +688,17 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       );
 
       const session = yield* adapter.startSession({
-        provider: hyperagent,
+        provider: customOpenCodeProxy,
         threadId,
         runtimeMode: "full-access",
       });
       const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
 
-      NodeAssert.equal(adapter.provider, "hyperagent");
-      NodeAssert.equal(session.provider, "hyperagent");
+      NodeAssert.equal(adapter.provider, "customOpenCodeProxy");
+      NodeAssert.equal(session.provider, "customOpenCodeProxy");
       NodeAssert.deepEqual(
         events.map((event) => event.provider),
-        ["hyperagent", "hyperagent"],
+        ["customOpenCodeProxy", "customOpenCodeProxy"],
       );
       NodeAssert.equal(runtimeMock.state.mcpAddCalls.length, 1);
     }).pipe(Effect.provide(layer));

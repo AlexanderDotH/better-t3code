@@ -339,7 +339,7 @@ describe("PlanParallelismReview", () => {
     "rejects disallowed reviewer drivers and implementation providers without a cap",
     () => {
       const disallowedReviewerLayer = makeLayer({
-        reviewerDriverKind: "gemini",
+        reviewerDriverKind: "customReviewer",
         implementationMaxSubagents: 8,
         generate: () => Effect.succeed({ recommendedSubagents: 4 }),
       });
