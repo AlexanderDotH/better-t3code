@@ -1700,13 +1700,37 @@ label:has(> select#reasoning-effort) select {
   pointer-events: none;
   position: absolute;
   top: 0.75rem;
-  left: calc(50% - 24rem - 13rem - 0.75rem);
+  left: 0.75rem;
   z-index: 30;
+  display: block;
+}
+
+.subagent-stack-compact-trigger {
+  display: flex;
+}
+
+.subagent-stack-content {
+  display: none;
+}
+
+[data-chat-agent-stack][data-compact-open="true"] .subagent-stack-content {
+  display: block;
+}
+
+[data-chat-agent-stack][data-has-subagents="false"] .subagent-stack-compact-trigger {
   display: none;
 }
 
 @container chat-column (min-width: 77rem) {
   .chat-agent-floating-layer {
+    left: calc(50% - 24rem - 13rem - 0.75rem);
+  }
+
+  .subagent-stack-compact-trigger {
+    display: none;
+  }
+
+  .subagent-stack-content {
     display: block;
   }
 }

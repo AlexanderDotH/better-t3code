@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import chatAgentStackSource from "./ChatAgentStack.tsx?raw";
 import chatViewSource from "./ChatView.tsx?raw";
 
 describe("ChatView subagent integration", () => {
@@ -16,5 +17,12 @@ describe("ChatView subagent integration", () => {
     expect(chatViewSource).toContain("useEnvironmentSubagent(");
     expect(chatViewSource).not.toContain("SUBAGENT_DEDICATED_PANE_MEDIA_QUERY");
     expect(chatViewSource).not.toContain("openSubagent(");
+  });
+
+  it("offers a compact accessible agent disclosure when the side gutter is unavailable", () => {
+    expect(chatAgentStackSource).toContain("data-subagent-compact-trigger");
+    expect(chatAgentStackSource).toContain("aria-expanded={compactOpen}");
+    expect(chatAgentStackSource).toContain("data-compact-open={compactOpen");
+    expect(chatAgentStackSource).toContain("Agents");
   });
 });

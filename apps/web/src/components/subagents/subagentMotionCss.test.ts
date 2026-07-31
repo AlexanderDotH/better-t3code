@@ -20,11 +20,20 @@ describe("subagent stack motion CSS", () => {
     }),
   );
 
-  it.effect("only places the stack in the message gutter when the chat column has room", () =>
+  it.effect("keeps a compact launcher reachable until the message gutter has room", () =>
     Effect.gen(function* () {
       const indexCss = yield* readIndexCss;
       expect(indexCss).toMatch(
-        /\.chat-agent-floating-layer[\s\S]*?display:\s*none[\s\S]*?@container chat-column \(min-width: 77rem\)[\s\S]*?display:\s*block/,
+        /\.chat-agent-floating-layer\s*\{[^}]*left:\s*0\.75rem;[^}]*display:\s*block;/,
+      );
+      expect(indexCss).toMatch(
+        /\.subagent-stack-compact-trigger[\s\S]*?display:\s*flex[\s\S]*?\.subagent-stack-content[\s\S]*?display:\s*none/,
+      );
+      expect(indexCss).toMatch(
+        /\[data-chat-agent-stack\]\[data-compact-open="true"\][\s\S]*?\.subagent-stack-content[\s\S]*?display:\s*block/,
+      );
+      expect(indexCss).toMatch(
+        /@container chat-column \(min-width: 77rem\)[\s\S]*?\.subagent-stack-compact-trigger[\s\S]*?display:\s*none[\s\S]*?\.subagent-stack-content[\s\S]*?display:\s*block/,
       );
       expect(indexCss).toContain("left: calc(50% - 24rem - 13rem - 0.75rem)");
     }),

@@ -1,6 +1,12 @@
 import type { OrchestrationSubagentSummary, SubagentId } from "@t3tools/contracts";
 import { ArchiveIcon, BotIcon, ChevronRightIcon } from "lucide-react";
-import { memo, useEffect, useState, type AnimationEvent as ReactAnimationEvent } from "react";
+import {
+  memo,
+  useEffect,
+  useId,
+  useState,
+  type AnimationEvent as ReactAnimationEvent,
+} from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -48,36 +54,64 @@ export const ChatAgentStack = memo(function ChatAgentStack({
   className,
 }: ChatAgentStackProps) {
   const lifecycle = useSubagentLifecycleStack(subagents);
+  const compactContentId = useId();
+  const [compactOpen, setCompactOpen] = useState(false);
+  const hasSubagents = subagents.length > 0;
+  const selectSubagent = (subagentId: SubagentId) => {
+    setCompactOpen(false);
+    onSelectSubagent(subagentId);
+  };
 
   return (
     <div
       data-chat-agent-stack="true"
+      data-compact-open={compactOpen && hasSubagents ? "true" : "false"}
+      data-has-subagents={hasSubagents ? "true" : "false"}
       className={cn("pointer-events-none w-52 max-w-[calc(100dvw-1.5rem)]", className)}
     >
-      <ScrollArea
-        className="h-auto max-h-[min(20rem,calc(100dvh-6rem))] w-full"
-        hideScrollbars
-        scrollFade
+      <button
+        type="button"
+        data-subagent-compact-trigger
+        aria-label={`${subagents.length} ${subagents.length === 1 ? "agent" : "agents"}`}
+        aria-expanded={compactOpen}
+        aria-controls={compactContentId}
+        className="subagent-stack-compact-trigger pointer-events-auto h-7 w-fit items-center gap-1.5 rounded-full border border-border/65 bg-background/92 px-2.5 text-xs font-medium text-foreground shadow-md/8 outline-none backdrop-blur-xl transition-[background-color,border-color,box-shadow] hover:border-border hover:bg-background hover:shadow-md/12 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+        onClick={() => setCompactOpen((current) => !current)}
       >
-        <div className="flex w-full flex-col items-start py-0.5">
-          <ul className="w-full" role="list" aria-label="Active and recent agents">
-            {lifecycle.visible.map((entry) => (
-              <PresenceAgentItem
-                key={entry.agent.id}
-                entry={entry}
-                selected={entry.agent.id === selectedSubagentId}
-                onSelectSubagent={onSelectSubagent}
-                onCompletePhase={lifecycle.completePhase}
-              />
-            ))}
-          </ul>
-          <ArchivedAgentSection
-            agents={lifecycle.archived}
-            selectedSubagentId={selectedSubagentId}
-            onSelectSubagent={onSelectSubagent}
-          />
-        </div>
-      </ScrollArea>
+        <BotIcon aria-hidden="true" className="size-3.5 text-sky-600 dark:text-sky-300/80" />
+        <span>Agents</span>
+        <span className="tabular-nums">{subagents.length}</span>
+        <ChevronRightIcon
+          aria-hidden="true"
+          className={cn("size-3 transition-transform duration-200", compactOpen && "rotate-90")}
+        />
+      </button>
+      <div id={compactContentId} className="subagent-stack-content">
+        <ScrollArea
+          className="h-auto max-h-[min(20rem,calc(100dvh-6rem))] w-full"
+          hideScrollbars
+          scrollFade
+        >
+          <div className="flex w-full flex-col items-start py-0.5">
+            <ul className="w-full" role="list" aria-label="Active and recent agents">
+              {lifecycle.visible.map((entry) => (
+                <PresenceAgentItem
+                  key={entry.agent.id}
+                  entry={entry}
+                  selected={entry.agent.id === selectedSubagentId}
+                  onSelectSubagent={selectSubagent}
+                  onCompletePhase={lifecycle.completePhase}
+                />
+              ))}
+            </ul>
+            <ArchivedAgentSection
+              agents={lifecycle.archived}
+              selectedSubagentId={selectedSubagentId}
+              onSelectSubagent={selectSubagent}
+            />
+          </div>
+        </ScrollArea>
+      </div>
     </div>
   );
 });

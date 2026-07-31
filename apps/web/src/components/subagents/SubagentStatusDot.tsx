@@ -57,7 +57,6 @@ export function SubagentStatusDot({
       className={cn(
         "size-2 shrink-0 rounded-full transition-[background-color,box-shadow] duration-300 ease-out",
         DOT_TONE_CLASS_NAMES[tone],
-        tone === "working" && "animate-pulse motion-reduce:animate-none",
         className,
       )}
     />
