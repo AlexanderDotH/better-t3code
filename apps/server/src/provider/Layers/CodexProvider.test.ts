@@ -103,6 +103,35 @@ it("uses standard routing when the catalog has no default service tier", () => {
   ]);
 });
 
+it("canonicalizes the legacy fast catalog tier to priority", () => {
+  const capabilities = mapCodexModelCapabilities({
+    additionalSpeedTiers: ["fast"],
+    defaultReasoningEffort: "medium",
+    defaultServiceTier: "fast",
+    description: "Legacy catalog model",
+    displayName: "GPT Legacy",
+    hidden: false,
+    id: "gpt-legacy",
+    isDefault: false,
+    model: "gpt-legacy",
+    serviceTiers: [],
+    supportedReasoningEfforts: [],
+  });
+
+  assert.deepStrictEqual(capabilities.optionDescriptors, [
+    {
+      id: "serviceTier",
+      label: "Service Tier",
+      type: "select",
+      options: [
+        { id: "default", label: "Standard" },
+        { id: "priority", label: "Fast", isDefault: true },
+      ],
+      currentValue: "priority",
+    },
+  ]);
+});
+
 it("marks the most preferred available model as default", () => {
   const models = applyPreferredCodexDefaultModel([
     { slug: "gpt-5.6-terra", name: "GPT-5.6-Terra", isCustom: false, capabilities: null },

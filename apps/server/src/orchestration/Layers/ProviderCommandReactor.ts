@@ -40,6 +40,7 @@ import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
 } from "../Services/ProviderCommandReactor.ts";
+import { TurnAbortCoordinator } from "../Services/TurnAbortCoordinator.ts";
 import {
   resolveSourceControlWriterModelSelection,
   ServerSettingsService,
@@ -51,6 +52,7 @@ import {
   buildProviderTranscriptHandoff,
   prependProviderTranscriptHandoff,
 } from "../providerTranscriptHandoff.ts";
+import { normalizeCodexModelSelectionServiceTier } from "../../codexModelOptions.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -256,6 +258,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
+  const turnAbortCoordinator = yield* TurnAbortCoordinator;
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
@@ -365,7 +368,9 @@ const make = Effect.gen(function* () {
           threadId: input.threadId,
           providerName: null,
           providerInstanceId: thread.modelSelection.instanceId,
+          runtimeSessionId: null,
           runtimeMode: thread.runtimeMode,
+          abortState: null,
         }),
         status: session?.status === "stopped" ? "stopped" : "error",
         activeTurnId: null,
@@ -431,8 +436,8 @@ const make = Effect.gen(function* () {
       activeSession.providerInstanceId !== undefined
         ? activeSession.providerInstanceId
         : thread.modelSelection.instanceId;
-    const desiredModelSelection = requestedModelSelection ?? thread.modelSelection;
-    const desiredInstanceId = desiredModelSelection.instanceId;
+    const unnormalizedDesiredModelSelection = requestedModelSelection ?? thread.modelSelection;
+    const desiredInstanceId = unnormalizedDesiredModelSelection.instanceId;
     const currentInfo = yield* providerService.getInstanceInfo(currentInstanceId).pipe(
       Effect.mapError(
         () =>
@@ -452,7 +457,7 @@ const make = Effect.gen(function* () {
         () =>
           new ProviderAdapterRequestError({
             provider: providerErrorLabelFromInstanceHint({
-              instanceId: String(desiredModelSelection.instanceId),
+              instanceId: String(unnormalizedDesiredModelSelection.instanceId),
             }),
             method: "thread.turn.start",
             detail: `Requested provider instance '${desiredInstanceId}' is not configured in this build.`,
@@ -476,8 +481,11 @@ const make = Effect.gen(function* () {
           status: "starting",
           providerName: activeSession?.provider ?? preferredProvider,
           providerInstanceId: activeSession?.providerInstanceId ?? desiredInstanceId,
+          runtimeSessionId:
+            activeSession?.runtimeSessionId ?? thread.session?.runtimeSessionId ?? null,
           runtimeMode: desiredRuntimeMode,
           activeTurnId: null,
+          abortState: null,
           lastError: null,
           updatedAt: createdAt,
         },
@@ -485,6 +493,19 @@ const make = Effect.gen(function* () {
       });
     }
     const providerSnapshots = yield* providerRegistry.getProviders;
+    const desiredProviderSnapshot = providerSnapshots.find(
+      (snapshot) => snapshot.instanceId === desiredInstanceId,
+    );
+    const selectedCatalogModel = desiredProviderSnapshot?.models?.find(
+      (model) => model.slug === unnormalizedDesiredModelSelection.model,
+    );
+    const desiredModelSelection =
+      desiredDriverKind === ProviderDriverKind.make("codex")
+        ? normalizeCodexModelSelectionServiceTier(
+            unnormalizedDesiredModelSelection,
+            selectedCatalogModel?.capabilities,
+          )
+        : unnormalizedDesiredModelSelection;
     const currentModel = activeSession?.model ?? thread.modelSelection.model;
     const modelChanged =
       requestedModelSelection !== undefined && requestedModelSelection.model !== currentModel;
@@ -544,9 +565,11 @@ const make = Effect.gen(function* () {
                 : mapProviderSessionStatusToOrchestrationStatus(session.status),
             providerName: session.provider,
             providerInstanceId: session.providerInstanceId,
+            runtimeSessionId: session.runtimeSessionId ?? null,
             runtimeMode: desiredRuntimeMode,
             // Provider turn ids are not orchestration turn ids.
             activeTurnId: null,
+            abortState: null,
             lastError: session.lastError ?? null,
             updatedAt: session.updatedAt,
           },
@@ -583,6 +606,7 @@ const make = Effect.gen(function* () {
         return {
           sessionThreadId: existingSessionThreadId,
           transcriptHandoffRequired: false,
+          modelSelection: desiredModelSelection,
         };
       }
 
@@ -629,6 +653,7 @@ const make = Effect.gen(function* () {
       return {
         sessionThreadId: restartedSession.threadId,
         transcriptHandoffRequired: shouldStartFresh,
+        modelSelection: desiredModelSelection,
       };
     }
 
@@ -640,6 +665,7 @@ const make = Effect.gen(function* () {
     return {
       sessionThreadId: startedSession.threadId,
       transcriptHandoffRequired: shouldStartFresh,
+      modelSelection: desiredModelSelection,
     };
   });
 
@@ -663,7 +689,7 @@ const make = Effect.gen(function* () {
       pendingTurnStart: true,
     });
     if (input.modelSelection !== undefined) {
-      threadModelSelections.set(input.threadId, input.modelSelection);
+      threadModelSelections.set(input.threadId, sessionPreparation.modelSelection);
     }
     const normalizedAttachments = input.attachments ?? [];
     const activeSession = yield* providerService
@@ -709,7 +735,9 @@ const make = Effect.gen(function* () {
           : (yield* providerService.getCapabilities(activeSession.providerInstanceId))
               .sessionModelSwitch;
     const requestedModelSelection =
-      input.modelSelection ?? threadModelSelections.get(input.threadId) ?? thread.modelSelection;
+      input.modelSelection !== undefined
+        ? sessionPreparation.modelSelection
+        : (threadModelSelections.get(input.threadId) ?? thread.modelSelection);
     const modelForTurn =
       sessionModelSwitch === "unsupported" && input.modelSelection === undefined
         ? activeSession?.model !== undefined
@@ -718,16 +746,18 @@ const make = Effect.gen(function* () {
               model: activeSession.model,
             }
           : requestedModelSelection
-        : input.modelSelection;
+        : input.modelSelection !== undefined
+          ? requestedModelSelection
+          : undefined;
 
     if (input.modelSelection !== undefined) {
       yield* orchestrationEngine.dispatch({
         type: "thread.meta.update",
         commandId: yield* serverCommandId("model-selection-commit"),
         threadId: input.threadId,
-        modelSelection: input.modelSelection,
+        modelSelection: sessionPreparation.modelSelection,
       });
-      threadModelSelections.set(input.threadId, input.modelSelection);
+      threadModelSelections.set(input.threadId, sessionPreparation.modelSelection);
     }
 
     return {
@@ -1133,20 +1163,24 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
-    const hasSession = thread.session && thread.session.status !== "stopped";
-    if (!hasSession) {
-      return yield* appendProviderFailureActivity({
+    yield* turnAbortCoordinator
+      .requestAbort({
         threadId: event.payload.threadId,
-        kind: "provider.turn.interrupt.failed",
-        summary: "Provider turn interrupt failed",
-        detail: "No active provider session is bound to this thread.",
-        turnId: event.payload.turnId ?? null,
-        createdAt: event.payload.createdAt,
-      });
-    }
-
-    // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+        ...(event.payload.turnId !== undefined ? { turnId: event.payload.turnId } : {}),
+        requestedAt: event.payload.createdAt,
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          appendProviderFailureActivity({
+            threadId: event.payload.threadId,
+            kind: "provider.turn.interrupt.failed",
+            summary: "Provider turn interrupt failed",
+            detail: formatFailureDetail(cause),
+            turnId: event.payload.turnId ?? null,
+            createdAt: event.payload.createdAt,
+          }),
+        ),
+      );
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
@@ -1259,8 +1293,10 @@ const make = Effect.gen(function* () {
         ...(thread.session?.providerInstanceId !== undefined
           ? { providerInstanceId: thread.session.providerInstanceId }
           : {}),
+        runtimeSessionId: null,
         runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
         activeTurnId: null,
+        abortState: null,
         lastError: thread.session?.lastError ?? null,
         updatedAt: now,
       },

@@ -21,6 +21,7 @@ import { Route as SettingsMcpRouteImport } from './routes/settings.mcp'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
 import { Route as SettingsImportChatsRouteImport } from './routes/settings.import-chats'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
+import { Route as SettingsExperimentalRouteImport } from './routes/settings.experimental'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
 import { Route as SettingsBetaRouteImport } from './routes/settings.beta'
@@ -89,6 +90,11 @@ const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
   path: '/general',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsExperimentalRoute = SettingsExperimentalRouteImport.update({
+  id: '/experimental',
+  path: '/experimental',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsDiagnosticsRoute = SettingsDiagnosticsRouteImport.update({
   id: '/diagnostics',
   path: '/diagnostics',
@@ -142,6 +148,7 @@ export interface FileRoutesByFullPath {
   '/settings/beta': typeof SettingsBetaRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
+  '/settings/experimental': typeof SettingsExperimentalRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/import-chats': typeof SettingsImportChatsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
@@ -162,6 +169,7 @@ export interface FileRoutesByTo {
   '/settings/beta': typeof SettingsBetaRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
+  '/settings/experimental': typeof SettingsExperimentalRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/import-chats': typeof SettingsImportChatsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
@@ -185,6 +193,7 @@ export interface FileRoutesById {
   '/settings/beta': typeof SettingsBetaRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
+  '/settings/experimental': typeof SettingsExperimentalRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/import-chats': typeof SettingsImportChatsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
@@ -209,6 +218,7 @@ export interface FileRouteTypes {
     | '/settings/beta'
     | '/settings/connections'
     | '/settings/diagnostics'
+    | '/settings/experimental'
     | '/settings/general'
     | '/settings/import-chats'
     | '/settings/keybindings'
@@ -229,6 +239,7 @@ export interface FileRouteTypes {
     | '/settings/beta'
     | '/settings/connections'
     | '/settings/diagnostics'
+    | '/settings/experimental'
     | '/settings/general'
     | '/settings/import-chats'
     | '/settings/keybindings'
@@ -251,6 +262,7 @@ export interface FileRouteTypes {
     | '/settings/beta'
     | '/settings/connections'
     | '/settings/diagnostics'
+    | '/settings/experimental'
     | '/settings/general'
     | '/settings/import-chats'
     | '/settings/keybindings'
@@ -357,6 +369,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsGeneralRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/experimental': {
+      id: '/settings/experimental'
+      path: '/experimental'
+      fullPath: '/settings/experimental'
+      preLoaderRoute: typeof SettingsExperimentalRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/diagnostics': {
       id: '/settings/diagnostics'
       path: '/diagnostics'
@@ -436,6 +455,7 @@ interface SettingsRouteChildren {
   SettingsBetaRoute: typeof SettingsBetaRoute
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
+  SettingsExperimentalRoute: typeof SettingsExperimentalRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsImportChatsRoute: typeof SettingsImportChatsRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
@@ -451,6 +471,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsBetaRoute: SettingsBetaRoute,
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
+  SettingsExperimentalRoute: SettingsExperimentalRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsImportChatsRoute: SettingsImportChatsRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,

@@ -27,6 +27,7 @@ import {
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
 import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import { resolveThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
 import {
   parseScopedThreadKey,
   scopedThreadKey,
@@ -104,11 +105,9 @@ import {
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
 import { useUiStateStore } from "../uiStateStore";
-import {
-  buildPlanImplementationThreadTitle,
-  buildPlanImplementationPrompt,
-  resolvePlanFollowUpSubmission,
-} from "../proposedPlan";
+import { buildPlanImplementationThreadTitle, resolvePlanFollowUpSubmission } from "../proposedPlan";
+import type { PlanImplementationStrategy } from "../planImplementation";
+import { resolvePlanImplementationDispatch } from "../planImplementationDispatch";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -4728,6 +4727,7 @@ function ChatViewContent(props: ChatViewProps) {
       selectedProviderModels: ctxSelectedProviderModels,
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
+      planImplementationSuggestion,
     } = sendCtx;
     const promptForSend = promptRef.current;
     const {
@@ -4745,6 +4745,10 @@ function ChatViewContent(props: ChatViewProps) {
         composerReviewComments.length,
     });
     if (showPlanFollowUpPrompt && activeProposedPlan) {
+      if (!trimmed) {
+        await onImplementPlan(planImplementationSuggestion?.strategy ?? { kind: "standard" });
+        return;
+      }
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
@@ -5129,6 +5133,7 @@ function ChatViewContent(props: ChatViewProps) {
 
   const onInterrupt = async () => {
     if (!activeThread) return;
+    if (resolveThreadAbortPresentation(activeThread.session).disabled) return;
     const result = await interruptThreadTurn({
       environmentId,
       input: buildThreadTurnInterruptInput(activeThread),
@@ -5476,165 +5481,222 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
-  const onImplementPlanInNewThread = useCallback(async () => {
-    if (
-      !activeThread ||
-      !activeProject ||
-      !activeProposedPlan ||
-      !isServerThread ||
-      isSendBusy ||
-      isConnecting ||
-      activeEnvironmentUnavailable ||
-      sendInFlightRef.current
-    ) {
-      return;
-    }
+  const onImplementPlan = useCallback(
+    async (strategy: PlanImplementationStrategy) => {
+      if (!activeThread || !activeProposedPlan) {
+        return;
+      }
 
-    const sendCtx = composerRef.current?.getSendContext();
-    if (!sendCtx?.providerAvailable) {
-      return;
-    }
-    const {
-      selectedProvider: ctxSelectedProvider,
-      selectedModel: ctxSelectedModel,
-      selectedProviderModels: ctxSelectedProviderModels,
-      selectedPromptEffort: ctxSelectedPromptEffort,
-      selectedModelSelection: ctxSelectedModelSelection,
-    } = sendCtx;
+      const sendCtx = composerRef.current?.getSendContext();
+      if (!sendCtx?.providerAvailable) {
+        return;
+      }
 
-    const createdAt = new Date().toISOString();
-    const nextThreadId = newThreadId();
-    const planMarkdown = activeProposedPlan.planMarkdown;
-    const implementationPrompt = buildPlanImplementationPrompt(planMarkdown);
-    const outgoingImplementationPrompt = formatOutgoingPrompt({
-      provider: ctxSelectedProvider,
-      model: ctxSelectedModel,
-      models: ctxSelectedProviderModels,
-      effort: ctxSelectedPromptEffort,
-      text: implementationPrompt,
-    });
-    const nextThreadTitle = truncate(buildPlanImplementationThreadTitle(planMarkdown));
-    const nextThreadModelSelection: ModelSelection = ctxSelectedModelSelection;
+      const dispatch = resolvePlanImplementationDispatch({
+        planMarkdown: activeProposedPlan.planMarkdown,
+        strategy,
+        selectedProviderInstanceId: sendCtx.selectedModelSelection.instanceId,
+        providerStatuses,
+      });
+      if (dispatch._tag === "Blocked") {
+        setThreadError(activeThread.id, dispatch.error);
+        return;
+      }
 
-    sendInFlightRef.current = true;
-    beginLocalDispatch({ preparingWorktree: false });
-    const finish = () => {
-      sendInFlightRef.current = false;
-      resetLocalDispatch();
-    };
-
-    const createResult = await createThread({
-      environmentId,
-      input: {
-        threadId: nextThreadId,
-        projectId: activeProject.id,
-        title: nextThreadTitle,
-        modelSelection: nextThreadModelSelection,
-        runtimeMode,
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      await onSubmitPlanFollowUp({
+        text: dispatch.prompt,
         interactionMode: "default",
-        branch: activeThreadBranch,
-        worktreePath: activeThread.worktreePath,
-        createdAt,
-      },
-    });
-    let failure: AtomCommandResult<unknown, unknown> | null =
-      createResult._tag === "Failure" ? createResult : null;
+      });
+    },
+    [
+      activeProposedPlan,
+      activeThread,
+      clearComposerDraftContent,
+      composerDraftTarget,
+      composerRef,
+      onSubmitPlanFollowUp,
+      promptRef,
+      providerStatuses,
+      setThreadError,
+    ],
+  );
 
-    if (failure === null) {
-      const startResult = await startThreadTurn({
+  const onImplementPlanInNewThread = useCallback(
+    async (strategy: PlanImplementationStrategy) => {
+      if (
+        !activeThread ||
+        !activeProject ||
+        !activeProposedPlan ||
+        !isServerThread ||
+        isSendBusy ||
+        isConnecting ||
+        activeEnvironmentUnavailable ||
+        sendInFlightRef.current
+      ) {
+        return;
+      }
+
+      const sendCtx = composerRef.current?.getSendContext();
+      if (!sendCtx?.providerAvailable) {
+        return;
+      }
+      const {
+        selectedProvider: ctxSelectedProvider,
+        selectedModel: ctxSelectedModel,
+        selectedProviderModels: ctxSelectedProviderModels,
+        selectedPromptEffort: ctxSelectedPromptEffort,
+        selectedModelSelection: ctxSelectedModelSelection,
+      } = sendCtx;
+
+      const createdAt = new Date().toISOString();
+      const nextThreadId = newThreadId();
+      const planMarkdown = activeProposedPlan.planMarkdown;
+      const dispatch = resolvePlanImplementationDispatch({
+        planMarkdown,
+        strategy,
+        selectedProviderInstanceId: ctxSelectedModelSelection.instanceId,
+        providerStatuses,
+      });
+      if (dispatch._tag === "Blocked") {
+        setThreadError(activeThread.id, dispatch.error);
+        return;
+      }
+      const outgoingImplementationPrompt = formatOutgoingPrompt({
+        provider: ctxSelectedProvider,
+        model: ctxSelectedModel,
+        models: ctxSelectedProviderModels,
+        effort: ctxSelectedPromptEffort,
+        text: dispatch.prompt,
+      });
+      const nextThreadTitle = truncate(buildPlanImplementationThreadTitle(planMarkdown));
+      const nextThreadModelSelection: ModelSelection = ctxSelectedModelSelection;
+
+      sendInFlightRef.current = true;
+      beginLocalDispatch({ preparingWorktree: false });
+      const finish = () => {
+        sendInFlightRef.current = false;
+        resetLocalDispatch();
+      };
+
+      const createResult = await createThread({
         environmentId,
         input: {
           threadId: nextThreadId,
-          message: {
-            messageId: newMessageId(),
-            role: "user",
-            text: outgoingImplementationPrompt,
-            attachments: [],
-          },
-          modelSelection: ctxSelectedModelSelection,
-          titleSeed: nextThreadTitle,
+          projectId: activeProject.id,
+          title: nextThreadTitle,
+          modelSelection: nextThreadModelSelection,
           runtimeMode,
           interactionMode: "default",
-          sourceProposedPlan: {
-            threadId: activeThread.id,
-            planId: activeProposedPlan.id,
-          },
+          branch: activeThreadBranch,
+          worktreePath: activeThread.worktreePath,
           createdAt,
         },
       });
-      failure = startResult._tag === "Failure" ? startResult : null;
-    }
+      let failure: AtomCommandResult<unknown, unknown> | null =
+        createResult._tag === "Failure" ? createResult : null;
 
-    if (failure === null) {
-      const startedResult = await settlePromise(() =>
-        waitForStartedServerThread(scopeThreadRef(activeThread.environmentId, nextThreadId)),
-      );
-      failure = startedResult._tag === "Failure" ? startedResult : null;
-    }
-
-    if (failure === null) {
-      // Signal that the plan sidebar should open on the new thread when enabled.
-      planSidebarOpenOnNextThreadRef.current = autoOpenPlanSidebar;
-      const navigateResult = await settlePromise(() =>
-        navigate({
-          to: "/$environmentId/$threadId",
-          params: {
-            environmentId: activeThread.environmentId,
+      if (failure === null) {
+        const startResult = await startThreadTurn({
+          environmentId,
+          input: {
             threadId: nextThreadId,
+            message: {
+              messageId: newMessageId(),
+              role: "user",
+              text: outgoingImplementationPrompt,
+              attachments: [],
+            },
+            modelSelection: ctxSelectedModelSelection,
+            titleSeed: nextThreadTitle,
+            runtimeMode,
+            interactionMode: "default",
+            sourceProposedPlan: {
+              threadId: activeThread.id,
+              planId: activeProposedPlan.id,
+            },
+            createdAt,
           },
-        }),
-      );
-      failure = navigateResult._tag === "Failure" ? navigateResult : null;
-    }
-
-    if (failure !== null) {
-      const cleanupResult = await deleteThread({
-        environmentId,
-        input: {
-          threadId: nextThreadId,
-        },
-      });
-      if (cleanupResult._tag === "Failure" && !isAtomCommandInterrupted(cleanupResult)) {
-        console.warn(
-          "Failed to clean up implementation thread after start failure.",
-          squashAtomCommandFailure(cleanupResult),
-        );
+        });
+        failure = startResult._tag === "Failure" ? startResult : null;
       }
-      if (!isAtomCommandInterrupted(failure)) {
-        const error = squashAtomCommandFailure(failure);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not start implementation thread",
-            description:
-              error instanceof Error
-                ? error.message
-                : "An error occurred while creating the new thread.",
+
+      if (failure === null) {
+        const startedResult = await settlePromise(() =>
+          waitForStartedServerThread(scopeThreadRef(activeThread.environmentId, nextThreadId)),
+        );
+        failure = startedResult._tag === "Failure" ? startedResult : null;
+      }
+
+      if (failure === null) {
+        // Signal that the plan sidebar should open on the new thread when enabled.
+        planSidebarOpenOnNextThreadRef.current = autoOpenPlanSidebar;
+        const navigateResult = await settlePromise(() =>
+          navigate({
+            to: "/$environmentId/$threadId",
+            params: {
+              environmentId: activeThread.environmentId,
+              threadId: nextThreadId,
+            },
           }),
         );
+        failure = navigateResult._tag === "Failure" ? navigateResult : null;
       }
-    }
-    finish();
-  }, [
-    activeProject,
-    activeProposedPlan,
-    activeThreadBranch,
-    activeThread,
-    beginLocalDispatch,
-    activeEnvironmentUnavailable,
-    createThread,
-    deleteThread,
-    isConnecting,
-    isSendBusy,
-    isServerThread,
-    navigate,
-    resetLocalDispatch,
-    runtimeMode,
-    startThreadTurn,
-    autoOpenPlanSidebar,
-    environmentId,
-    composerRef,
-  ]);
+
+      if (failure !== null) {
+        const cleanupResult = await deleteThread({
+          environmentId,
+          input: {
+            threadId: nextThreadId,
+          },
+        });
+        if (cleanupResult._tag === "Failure" && !isAtomCommandInterrupted(cleanupResult)) {
+          console.warn(
+            "Failed to clean up implementation thread after start failure.",
+            squashAtomCommandFailure(cleanupResult),
+          );
+        }
+        if (!isAtomCommandInterrupted(failure)) {
+          const error = squashAtomCommandFailure(failure);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not start implementation thread",
+              description:
+                error instanceof Error
+                  ? error.message
+                  : "An error occurred while creating the new thread.",
+            }),
+          );
+        }
+      }
+      finish();
+    },
+    [
+      activeProject,
+      activeProposedPlan,
+      activeThreadBranch,
+      activeThread,
+      beginLocalDispatch,
+      activeEnvironmentUnavailable,
+      createThread,
+      deleteThread,
+      isConnecting,
+      isSendBusy,
+      isServerThread,
+      navigate,
+      providerStatuses,
+      resetLocalDispatch,
+      runtimeMode,
+      setThreadError,
+      startThreadTurn,
+      autoOpenPlanSidebar,
+      environmentId,
+      composerRef,
+    ],
+  );
 
   const getModelDisabledReason = useCallback(
     (instanceId: ProviderInstanceId, model: string): string | null => {
@@ -6158,6 +6220,7 @@ function ChatViewContent(props: ChatViewProps) {
                             composerElementContextsRef={composerElementContextsRef}
                             onSend={onSend}
                             onInterrupt={onInterrupt}
+                            onImplementPlan={onImplementPlan}
                             onImplementPlanInNewThread={onImplementPlanInNewThread}
                             onRespondToApproval={onRespondToApproval}
                             onSelectActivePendingUserInputOption={

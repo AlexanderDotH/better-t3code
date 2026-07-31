@@ -25,6 +25,7 @@ import {
   scopedThreadKey,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
+import { toStickyModelSelection } from "@t3tools/client-runtime/model-options";
 import * as Schema from "effect/Schema";
 import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
@@ -557,6 +558,32 @@ function compactModelSelectionByProvider(
     }
   }
   return Object.fromEntries(entries) as DeepMutable<Record<ProviderInstanceId, ModelSelection>>;
+}
+
+const CODEX_DRIVER = ProviderDriverKind.make("codex");
+const CODEX_INSTANCE = defaultInstanceIdForDriver(CODEX_DRIVER);
+
+function sanitizeStickyModelSelection(selection: ModelSelection): ModelSelection {
+  const hasServiceTier = selection.options?.some((option) => option.id === "serviceTier") === true;
+  if (selection.instanceId !== CODEX_INSTANCE && !hasServiceTier) {
+    return selection;
+  }
+  return toStickyModelSelection({
+    provider: CODEX_DRIVER,
+    selection,
+  });
+}
+
+function compactStickyModelSelectionByProvider(
+  selections: Partial<Record<ProviderInstanceId, ModelSelection>>,
+): DeepMutable<Record<ProviderInstanceId, ModelSelection>> {
+  const sanitized = Object.fromEntries(
+    Object.entries(selections).map(([instanceId, selection]) => [
+      instanceId,
+      selection ? sanitizeStickyModelSelection(selection) : selection,
+    ]),
+  ) as Partial<Record<ProviderInstanceId, ModelSelection>>;
+  return compactModelSelectionByProvider(sanitized);
 }
 
 const EMPTY_PERSISTED_DRAFT_STORE_STATE = Object.freeze<PersistedComposerDraftStoreState>({
@@ -1823,7 +1850,9 @@ function migratePersistedComposerDraftStoreState(
     draftsByThreadKey,
     draftThreadsByThreadKey,
     logicalProjectDraftThreadKeyByLogicalProjectKey,
-    stickyModelSelectionByProvider: compactModelSelectionByProvider(stickyModelSelectionByProvider),
+    stickyModelSelectionByProvider: compactStickyModelSelectionByProvider(
+      stickyModelSelectionByProvider,
+    ),
     stickyActiveProvider,
   };
 }
@@ -1916,7 +1945,7 @@ function partializeComposerDraftStoreState(
     draftThreadsByThreadKey: state.draftThreadsByThreadKey,
     logicalProjectDraftThreadKeyByLogicalProjectKey:
       state.logicalProjectDraftThreadKeyByLogicalProjectKey,
-    stickyModelSelectionByProvider: compactModelSelectionByProvider(
+    stickyModelSelectionByProvider: compactStickyModelSelectionByProvider(
       state.stickyModelSelectionByProvider,
     ),
     stickyActiveProvider: state.stickyActiveProvider,
@@ -1988,7 +2017,9 @@ function normalizeCurrentPersistedComposerDraftStoreState(
     ),
     draftThreadsByThreadKey,
     logicalProjectDraftThreadKeyByLogicalProjectKey,
-    stickyModelSelectionByProvider: compactModelSelectionByProvider(stickyModelSelectionByProvider),
+    stickyModelSelectionByProvider: compactStickyModelSelectionByProvider(
+      stickyModelSelectionByProvider,
+    ),
     stickyActiveProvider,
   };
 }
@@ -2495,18 +2526,19 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (!normalized) {
               return state;
             }
+            const stickySelection = sanitizeStickyModelSelection(normalized);
             const nextMap: Partial<Record<ProviderInstanceId, ModelSelection>> = {
               ...state.stickyModelSelectionByProvider,
-              [normalized.instanceId]: normalized,
+              [stickySelection.instanceId]: stickySelection,
             };
             if (Equal.equals(state.stickyModelSelectionByProvider, nextMap)) {
-              return state.stickyActiveProvider === normalized.instanceId
+              return state.stickyActiveProvider === stickySelection.instanceId
                 ? state
-                : { stickyActiveProvider: normalized.instanceId };
+                : { stickyActiveProvider: stickySelection.instanceId };
             }
             return {
               stickyModelSelectionByProvider: nextMap,
-              stickyActiveProvider: normalized.instanceId,
+              stickyActiveProvider: stickySelection.instanceId,
             };
           });
         },
@@ -2531,9 +2563,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 // the typed lookup.
                 const instanceKey = provider as ProviderInstanceId;
                 const current = nextMap[instanceKey];
+                const stickySelection = sanitizeStickyModelSelection(selection);
                 nextMap[instanceKey] = {
-                  ...selection,
-                  model: current?.model ?? selection.model,
+                  ...stickySelection,
+                  model: current?.model ?? stickySelection.model,
                 };
               }
             }
@@ -2743,11 +2776,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 base.modelSelectionByProvider[instanceKey] ??
                 createModelSelection(instanceKey, fallbackModel);
               if (providerOpts) {
-                nextStickyMap[instanceKey] = createModelSelection(
-                  instanceKey,
-                  stickyBase.model,
-                  providerOpts,
-                );
+                nextStickyMap[instanceKey] = toStickyModelSelection({
+                  provider: normalizedProvider,
+                  selection: createModelSelection(instanceKey, stickyBase.model, providerOpts),
+                });
               } else if ((stickyBase.options?.length ?? 0) > 0) {
                 const { options: _, ...rest } = stickyBase;
                 nextStickyMap[instanceKey] = rest as ModelSelection;

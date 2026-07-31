@@ -9,6 +9,7 @@ import {
   ProviderRuntimeEvent,
   ProviderSession,
   ProviderInstanceId,
+  RuntimeSessionId,
   SubagentId,
 } from "@t3tools/contracts";
 import {
@@ -49,6 +50,10 @@ import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import {
+  TurnAbortCoordinator,
+  type SettleCooperativeTurnAbortInput,
+} from "../Services/TurnAbortCoordinator.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -104,6 +109,10 @@ function createProviderServiceHarness() {
     startSession: () => unsupported(),
     sendTurn: () => unsupported(),
     interruptTurn: () => unsupported(),
+    resolveAbortTarget: () => unsupported(),
+    interruptAbortTarget: () => unsupported(),
+    forceStopAbortTarget: () => unsupported(),
+    isAbortTargetCurrent: () => Effect.succeed(false),
     respondToRequest: () => unsupported(),
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
@@ -224,6 +233,7 @@ describe("ProviderRuntimeIngestion", () => {
     const workspaceRoot = makeTempDir("t3-provider-project-");
     NodeFS.mkdirSync(NodePath.join(workspaceRoot, ".git"));
     const provider = createProviderServiceHarness();
+    const abortSettlements: SettleCooperativeTurnAbortInput[] = [];
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(OrchestrationProjectionPipelineLive),
@@ -241,6 +251,16 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
+      Layer.provideMerge(
+        Layer.succeed(TurnAbortCoordinator, {
+          requestAbort: () => Effect.die("requestAbort should not run in ingestion tests"),
+          settleCooperative: (input) =>
+            Effect.sync(() => {
+              abortSettlements.push(input);
+              return true;
+            }),
+        }),
+      ),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(NodeServices.layer),
@@ -295,8 +315,10 @@ describe("ProviderRuntimeIngestion", () => {
           threadId: ThreadId.make("thread-1"),
           status: "ready",
           providerName: "codex",
+          runtimeSessionId: null,
           runtimeMode: "approval-required",
           activeTurnId: null,
+          abortState: null,
           updatedAt: createdAt,
           lastError: null,
         },
@@ -321,9 +343,305 @@ describe("ProviderRuntimeIngestion", () => {
         ),
       emit: provider.emit,
       setProviderSession: provider.setSession,
+      abortSettlements,
       drain,
     };
   }
+
+  it("drops terminal events from a replaced runtime generation", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-current-runtime");
+    const currentRuntimeSessionId = RuntimeSessionId.make("runtime-current");
+    const staleRuntimeSessionId = RuntimeSessionId.make("runtime-stale");
+    const runningAt = "2026-07-31T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-seed-current-runtime"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          runtimeSessionId: currentRuntimeSessionId,
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          abortState: null,
+          lastError: null,
+          updatedAt: runningAt,
+        },
+        createdAt: runningAt,
+      }),
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-stale-runtime-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      runtimeSessionId: staleRuntimeSessionId,
+      threadId,
+      turnId,
+      createdAt: "2026-07-31T00:00:01.000Z",
+      payload: { state: "completed" },
+    });
+    harness.emit({
+      type: "thread.metadata.updated",
+      eventId: asEventId("evt-current-runtime-barrier"),
+      provider: ProviderDriverKind.make("codex"),
+      runtimeSessionId: currentRuntimeSessionId,
+      threadId,
+      createdAt: "2026-07-31T00:00:02.000Z",
+      payload: { name: "Current runtime still owns the thread" },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.title === "Current runtime still owns the thread",
+    );
+    expect(thread.session).toMatchObject({
+      status: "running",
+      runtimeSessionId: currentRuntimeSessionId,
+      activeTurnId: turnId,
+    });
+
+    const events = await harness.readEvents();
+    expect(
+      events.some(
+        (event) =>
+          event.type === "thread-session-set" &&
+          String(event.commandId).includes("evt-stale-runtime-completed"),
+      ),
+    ).toBe(false);
+  });
+
+  it("finalizes buffered output and settles an exact abort terminal cooperatively", async () => {
+    const harness = await createHarness({
+      serverSettings: { enableAssistantStreaming: false },
+    });
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-cooperative-abort");
+    const runtimeSessionId = RuntimeSessionId.make("runtime-cooperative-abort");
+    const requestedAt = "2026-07-31T00:01:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-seed-cooperative-abort"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          runtimeSessionId,
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          abortState: {
+            runtimeSessionId,
+            targetTurnId: turnId,
+            phase: "interrupting",
+            requestedAt,
+            forceAt: "2026-07-31T00:01:05.000Z",
+          },
+          lastError: null,
+          updatedAt: requestedAt,
+        },
+        createdAt: requestedAt,
+      }),
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-cooperative-assistant-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      runtimeSessionId,
+      threadId,
+      turnId,
+      itemId: asItemId("item-cooperative-assistant"),
+      createdAt: "2026-07-31T00:01:01.000Z",
+      payload: {
+        streamKind: "assistant_text",
+        delta: "Partial answer before the provider stopped.",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-cooperative-reasoning-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      runtimeSessionId,
+      threadId,
+      turnId,
+      itemId: asItemId("item-cooperative-reasoning"),
+      createdAt: "2026-07-31T00:01:02.000Z",
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "Buffered reasoning before abort.",
+      },
+    });
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-cooperative-turn-aborted"),
+      provider: ProviderDriverKind.make("codex"),
+      runtimeSessionId,
+      threadId,
+      turnId,
+      createdAt: "2026-07-31T00:01:03.000Z",
+      payload: { reason: "interrupted" },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.messages.some(
+          (message) =>
+            message.id === "assistant:item-cooperative-assistant" &&
+            message.text === "Partial answer before the provider stopped." &&
+            !message.streaming,
+        ) &&
+        entry.activities.some(
+          (activity) =>
+            activity.kind === "reasoning.text" &&
+            (activity.payload as Record<string, unknown>).text ===
+              "Buffered reasoning before abort.",
+        ),
+    );
+    expect(
+      (
+        thread.activities.find((activity) => activity.kind === "reasoning.text")?.payload as Record<
+          string,
+          unknown
+        >
+      ).flushReason,
+    ).toBe("thread.turn-abort-settled");
+    expect(harness.abortSettlements).toEqual([
+      {
+        threadId,
+        runtimeSessionId,
+        turnId,
+        settledAt: "2026-07-31T00:01:03.000Z",
+      },
+    ]);
+  });
+
+  it("finalizes buffered output when a forced abort settles without a runtime terminal", async () => {
+    const harness = await createHarness({
+      serverSettings: { enableAssistantStreaming: false },
+    });
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-forced-abort");
+    const runtimeSessionId = RuntimeSessionId.make("runtime-forced-abort");
+    const requestedAt = "2026-07-31T00:02:00.000Z";
+    const settledAt = "2026-07-31T00:02:05.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-seed-forced-abort"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          runtimeSessionId,
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          abortState: {
+            runtimeSessionId,
+            targetTurnId: turnId,
+            phase: "force-stopping",
+            requestedAt,
+            forceAt: settledAt,
+          },
+          lastError: null,
+          updatedAt: requestedAt,
+        },
+        createdAt: requestedAt,
+      }),
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-forced-assistant-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      runtimeSessionId,
+      threadId,
+      turnId,
+      itemId: asItemId("item-forced-assistant"),
+      createdAt: "2026-07-31T00:02:01.000Z",
+      payload: {
+        streamKind: "assistant_text",
+        delta: "Partial output before force-stop.",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-forced-command-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      runtimeSessionId,
+      threadId,
+      turnId,
+      itemId: asItemId("item-forced-command"),
+      createdAt: "2026-07-31T00:02:02.000Z",
+      payload: {
+        streamKind: "command_output",
+        delta: "partial command output",
+      },
+    });
+    harness.emit({
+      type: "thread.metadata.updated",
+      eventId: asEventId("evt-forced-buffer-barrier"),
+      provider: ProviderDriverKind.make("codex"),
+      runtimeSessionId,
+      threadId,
+      createdAt: "2026-07-31T00:02:03.000Z",
+      payload: { name: "Forced abort buffered" },
+    });
+    await waitForThread(harness.readModel, (entry) => entry.title === "Forced abort buffered");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.abort.settle",
+        commandId: CommandId.make("cmd-settle-forced-abort"),
+        threadId,
+        runtimeSessionId,
+        turnId,
+        outcome: "force-terminated",
+        settledAt,
+        createdAt: settledAt,
+      }),
+    );
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "stopped" &&
+        entry.messages.some(
+          (message) =>
+            message.id === "assistant:item-forced-assistant" &&
+            message.text === "Partial output before force-stop." &&
+            !message.streaming,
+        ) &&
+        entry.activities.some(
+          (activity) =>
+            activity.kind === "stream.command-output" &&
+            (activity.payload as Record<string, unknown>).text === "partial command output",
+        ),
+    );
+    expect(thread.session).toMatchObject({
+      status: "stopped",
+      runtimeSessionId: null,
+      activeTurnId: null,
+      abortState: null,
+    });
+    expect(
+      (
+        thread.activities.find((activity) => activity.kind === "stream.command-output")
+          ?.payload as Record<string, unknown>
+      ).flushReason,
+    ).toBe("thread.turn-abort-settled");
+    expect(harness.abortSettlements).toEqual([]);
+  });
 
   it("maps turn started/completed events into thread session updates", async () => {
     const harness = await createHarness();

@@ -125,6 +125,10 @@ it.layer(
         events.map((event) => event.type),
         ["session.started", "thread.started", "session.exited"],
       );
+      NodeAssert.equal(
+        events.every((event) => event.runtimeSessionId === session.runtimeSessionId),
+        true,
+      );
     }),
   );
 });
@@ -161,6 +165,10 @@ it.layer(
       NodeAssert.deepEqual(
         events.map((event) => event.type),
         ["turn.started", "content.delta", "content.delta", "item.completed", "turn.completed"],
+      );
+      NodeAssert.equal(
+        events.every((event) => event.runtimeSessionId === FORCE_STOP_RUNTIME_SESSION_ID),
+        true,
       );
       NodeAssert.equal(turn.threadId, threadId);
 

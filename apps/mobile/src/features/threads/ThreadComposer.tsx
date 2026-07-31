@@ -8,6 +8,7 @@ import type {
   RuntimeMode,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
+import { resolveThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
 import {
   detectComposerTrigger,
   replaceTextRange,
@@ -272,6 +273,7 @@ const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
   const isDarkMode = useColorScheme() === "dark";
   const foregroundColor = useThemeColor("--color-foreground");
+  const dangerForegroundColor = useThemeColor("--color-danger-foreground");
   const bodyText = useScaledTextRole("body");
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
@@ -283,7 +285,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
   const isExpanded = isFocused;
-  const canSend = hasContent;
+  const stopAction = resolveThreadAbortPresentation(props.selectedThread.session);
+  const canSend = hasContent && !stopAction.disabled;
 
   const onPressImage = useCallback(
     (uri: string) => {
@@ -309,10 +312,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     setIsFocused(false);
     onExpandedChange?.(false);
   }, [onExpandedChange]);
-  const showStopAction =
-    props.selectedThread.session?.status === "running" ||
-    props.selectedThread.session?.status === "starting";
-
   const sendLabel =
     props.connectionState !== "connected" || props.activeThreadBusy || props.queueCount > 0
       ? "Queue"
@@ -612,9 +611,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     () =>
       resolveProviderOptionDescriptors({
         capabilities: currentModelOption?.capabilities,
-        selections: currentModelSelection.options,
+        selections: currentModelOption
+          ? currentModelOption.selection.options
+          : currentModelSelection.options,
       }),
-    [currentModelOption?.capabilities, currentModelSelection.options],
+    [currentModelOption, currentModelSelection.options],
   );
   const configurationLabel = useMemo(
     () => providerOptionsConfigurationLabel(providerOptionDescriptors),
@@ -854,8 +855,19 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           ) : null}
           {!isExpanded ? (
             <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(100)}>
-              {showStopAction ? (
-                <ControlPill icon="stop.fill" variant="danger" onPress={props.onStopThread} />
+              {stopAction.showStopAction ? (
+                <ControlPill
+                  accessibilityLabel={stopAction.accessibilityLabel}
+                  icon={stopAction.disabled ? undefined : "stop.fill"}
+                  iconNode={
+                    stopAction.disabled ? (
+                      <ActivityIndicator size="small" color={dangerForegroundColor} />
+                    ) : undefined
+                  }
+                  variant="danger"
+                  disabled={stopAction.disabled}
+                  onPress={props.onStopThread}
+                />
               ) : (
                 <ControlPill
                   icon="arrow.up"
@@ -904,11 +916,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     label={configurationLabel}
                   />
                 </ControlPillMenu>
-                {showStopAction ? (
+                {stopAction.showStopAction ? (
                   <ComposerToolbarButton
-                    accessibilityLabel="Stop"
-                    icon="stop.fill"
+                    accessibilityLabel={stopAction.accessibilityLabel}
+                    icon={stopAction.disabled ? undefined : "stop.fill"}
+                    iconNode={
+                      stopAction.disabled ? (
+                        <ActivityIndicator size="small" color={dangerForegroundColor} />
+                      ) : undefined
+                    }
                     variant="danger"
+                    disabled={stopAction.disabled}
                     onPress={props.onStopThread}
                     showChevron={false}
                   />

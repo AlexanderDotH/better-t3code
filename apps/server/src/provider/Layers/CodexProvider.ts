@@ -37,12 +37,17 @@ import {
 } from "../providerSnapshot.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { codexManagedFeatureArgs } from "../CodexProcessArgs.ts";
+import { CODEX_DEFAULT_SERVICE_TIER, CODEX_FAST_SERVICE_TIER } from "../../codexModelOptions.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
 
 const CODEX_PRESENTATION = {
   displayName: "Codex",
   showInteractionModeToggle: true,
+  nativeSubagents: {
+    toolName: "spawn_agent",
+    maxRecommendedSubagents: 4,
+  },
 } as const;
 
 export interface CodexAppServerProviderSnapshot {
@@ -62,8 +67,6 @@ const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
   ultra: "Ultra",
   max: "Maximum",
 };
-
-const DEFAULT_SERVICE_TIER_ID = "default";
 
 function reasoningEffortLabel(reasoningEffort: string): string {
   return REASONING_EFFORT_LABELS[reasoningEffort] ?? reasoningEffort;
@@ -125,7 +128,7 @@ export function mapCodexModelCapabilities(
         },
   );
   const defaultReasoning = reasoningOptions.find((option) => option.isDefault)?.id;
-  const serviceTiers =
+  const rawServiceTiers =
     model.serviceTiers && model.serviceTiers.length > 0
       ? model.serviceTiers
       : (model.additionalSpeedTiers ?? []).map((id) => ({
@@ -133,12 +136,26 @@ export function mapCodexModelCapabilities(
           name: id === "fast" ? "Fast" : id,
           description: "",
         }));
-  const catalogDefaultServiceTier = serviceTiers.some(
-    (tier) => tier.id === model.defaultServiceTier,
-  )
-    ? model.defaultServiceTier
+  const serviceTiers = rawServiceTiers.reduce<
+    Array<{ readonly id: string; readonly name: string; readonly description: string }>
+  >((tiers, tier) => {
+    const id = tier.id === "fast" ? CODEX_FAST_SERVICE_TIER : tier.id;
+    if (tiers.some((candidate) => candidate.id === id)) {
+      return tiers;
+    }
+    tiers.push({
+      id,
+      name: id === CODEX_FAST_SERVICE_TIER ? "Fast" : tier.name,
+      description: tier.description,
+    });
+    return tiers;
+  }, []);
+  const catalogDefaultTier =
+    model.defaultServiceTier === "fast" ? CODEX_FAST_SERVICE_TIER : model.defaultServiceTier;
+  const catalogDefaultServiceTier = serviceTiers.some((tier) => tier.id === catalogDefaultTier)
+    ? catalogDefaultTier
     : null;
-  const defaultServiceTier = catalogDefaultServiceTier ?? DEFAULT_SERVICE_TIER_ID;
+  const defaultServiceTier = catalogDefaultServiceTier ?? CODEX_DEFAULT_SERVICE_TIER;
   const optionDescriptors: ProviderOptionDescriptor[] = [];
 
   if (reasoningOptions.length > 0) {
@@ -157,9 +174,9 @@ export function mapCodexModelCapabilities(
       type: "select",
       options: [
         {
-          id: DEFAULT_SERVICE_TIER_ID,
+          id: CODEX_DEFAULT_SERVICE_TIER,
           label: "Standard",
-          ...(defaultServiceTier === DEFAULT_SERVICE_TIER_ID ? { isDefault: true } : {}),
+          ...(defaultServiceTier === CODEX_DEFAULT_SERVICE_TIER ? { isDefault: true } : {}),
         },
         ...serviceTiers.map((tier) => ({
           id: tier.id,

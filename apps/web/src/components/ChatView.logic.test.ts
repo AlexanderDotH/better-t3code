@@ -99,7 +99,9 @@ const readySession = {
   providerName: "codex",
   providerInstanceId: ProviderInstanceId.make("codex"),
   runtimeMode: "full-access" as const,
+  runtimeSessionId: null,
   activeTurnId: null,
+  abortState: null,
   lastError: null,
   updatedAt: "2026-03-29T00:00:10.000Z",
 };

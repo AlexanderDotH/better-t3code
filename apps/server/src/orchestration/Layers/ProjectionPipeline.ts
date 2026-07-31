@@ -3,6 +3,7 @@ import {
   type ChatAttachment,
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
+  type OrchestrationThreadActivity,
   type OrchestrationSubagentStatus,
   type OrchestrationSubagentSummary,
   type SubagentId,
@@ -65,6 +66,7 @@ import {
   parseThreadSegmentFromAttachmentId,
   toSafeThreadAttachmentSegment,
 } from "../../attachmentStore.ts";
+import { makeAbortInteractionResolutionActivities } from "../abortInteractionSettlement.ts";
 
 export const ORCHESTRATION_PROJECTOR_NAMES = {
   projects: "projection.projects",
@@ -944,6 +946,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "thread.turn-abort-settled": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            updatedAt: event.occurredAt,
+          });
+          yield* refreshThreadShellSummary(event.payload.threadId);
+          return;
+        }
+
         case "thread.turn-diff-completed": {
           const existingRow = yield* projectionThreadRepository.getById({
             threadId: event.payload.threadId,
@@ -1162,6 +1179,49 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           });
           return;
 
+        case "thread.turn-abort-settled": {
+          const existingRows = yield* projectionThreadActivityRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const activities: ReadonlyArray<OrchestrationThreadActivity> = existingRows.map(
+            (row) => ({
+              id: row.activityId,
+              turnId: row.turnId,
+              tone: row.tone,
+              kind: row.kind,
+              summary: row.summary,
+              payload: row.payload,
+              ...(row.sequence !== undefined ? { sequence: row.sequence } : {}),
+              createdAt: row.createdAt,
+            }),
+          );
+          const resolutions = makeAbortInteractionResolutionActivities({
+            settlementEventId: event.eventId,
+            settlementSequence: event.sequence,
+            targetTurnId: event.payload.turnId,
+            outcome: event.payload.outcome,
+            settledAt: event.payload.settledAt,
+            activities,
+          });
+          yield* Effect.forEach(
+            resolutions,
+            (activity) =>
+              projectionThreadActivityRepository.upsert({
+                activityId: activity.id,
+                threadId: event.payload.threadId,
+                turnId: activity.turnId,
+                tone: activity.tone,
+                kind: activity.kind,
+                summary: activity.summary,
+                payload: activity.payload,
+                ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
+                createdAt: activity.createdAt,
+              }),
+            { concurrency: 1, discard: true },
+          );
+          return;
+        }
+
         case "thread.reverted": {
           const existingRows = yield* projectionThreadActivityRepository.listByThreadId({
             threadId: event.payload.threadId,
@@ -1365,6 +1425,37 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const applyThreadSessionsProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyThreadSessionsProjection",
     )(function* (event, _attachmentSideEffects) {
+      if (event.type === "thread.turn-abort-settled") {
+        const existing = yield* projectionThreadSessionRepository.getByThreadId({
+          threadId: event.payload.threadId,
+        });
+        if (
+          Option.isNone(existing) ||
+          existing.value.abortState === null ||
+          existing.value.runtimeSessionId !== event.payload.runtimeSessionId ||
+          existing.value.abortState.runtimeSessionId !== event.payload.runtimeSessionId ||
+          existing.value.abortState.targetTurnId !== event.payload.turnId
+        ) {
+          return;
+        }
+        const cooperative = event.payload.outcome === "cooperative";
+        const failed = event.payload.outcome === "force-failed";
+        yield* projectionThreadSessionRepository.upsert({
+          ...existing.value,
+          status: cooperative ? "ready" : failed ? "error" : "stopped",
+          runtimeSessionId: cooperative ? existing.value.runtimeSessionId : null,
+          activeTurnId: null,
+          abortState: null,
+          lastError:
+            event.payload.detail !== undefined
+              ? event.payload.detail
+              : failed
+                ? "Provider force-stop failed."
+                : existing.value.lastError,
+          updatedAt: event.payload.settledAt,
+        });
+        return;
+      }
       if (event.type !== "thread.session-set") {
         return;
       }
@@ -1373,8 +1464,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         status: event.payload.session.status,
         providerName: event.payload.session.providerName,
         providerInstanceId: event.payload.session.providerInstanceId ?? null,
+        runtimeSessionId: event.payload.session.runtimeSessionId ?? null,
         runtimeMode: event.payload.session.runtimeMode,
         activeTurnId: event.payload.session.activeTurnId,
+        abortState: event.payload.session.abortState ?? null,
         lastError: event.payload.session.lastError,
         updatedAt: event.payload.session.updatedAt,
       });
@@ -1391,6 +1484,29 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             sourceProposedPlanThreadId: event.payload.sourceProposedPlan?.threadId ?? null,
             sourceProposedPlanId: event.payload.sourceProposedPlan?.planId ?? null,
             requestedAt: event.payload.createdAt,
+          });
+          return;
+        }
+
+        case "thread.turn-abort-settled": {
+          yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
+            threadId: event.payload.threadId,
+          });
+          if (event.payload.turnId === null) {
+            return;
+          }
+          const existingTurn = yield* projectionTurnRepository.getByTurnId({
+            threadId: event.payload.threadId,
+            turnId: event.payload.turnId,
+          });
+          if (Option.isNone(existingTurn)) {
+            return;
+          }
+          yield* projectionTurnRepository.upsertByTurnId({
+            ...existingTurn.value,
+            turnId: event.payload.turnId,
+            state: event.payload.outcome === "force-failed" ? "error" : "interrupted",
+            completedAt: event.payload.settledAt,
           });
           return;
         }
@@ -1839,6 +1955,29 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               : event.payload.createdAt,
             resolvedAt: event.payload.createdAt,
           });
+          return;
+        }
+
+        case "thread.turn-abort-settled": {
+          if (event.payload.turnId === null) {
+            return;
+          }
+          const pendingRows = yield* projectionPendingApprovalRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          yield* Effect.forEach(
+            pendingRows.filter(
+              (row) => row.status === "pending" && row.turnId === event.payload.turnId,
+            ),
+            (row) =>
+              projectionPendingApprovalRepository.upsert({
+                ...row,
+                status: "resolved",
+                decision: "cancel",
+                resolvedAt: event.payload.settledAt,
+              }),
+            { concurrency: 1, discard: true },
+          );
           return;
         }
 

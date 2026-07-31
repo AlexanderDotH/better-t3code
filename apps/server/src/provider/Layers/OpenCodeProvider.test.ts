@@ -134,6 +134,10 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
 
       NodeAssert.equal(snapshot.status, "error");
       NodeAssert.equal(snapshot.installed, false);
+      NodeAssert.deepStrictEqual(snapshot.nativeSubagents, {
+        toolName: "Task",
+        maxRecommendedSubagents: 4,
+      });
       NodeAssert.equal(
         snapshot.message,
         "OpenCode CLI (`opencode`) is not installed or not on PATH.",

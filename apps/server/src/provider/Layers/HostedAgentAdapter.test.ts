@@ -43,6 +43,44 @@ function startRunningSession(runtime: HostedAgentRuntime, threadId: ThreadId) {
   });
 }
 
+it.effect("stamps every hosted runtime event with the originating runtime session", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-hosted-runtime-origin");
+      const adapter = yield* makeHostedAgentAdapter({
+        provider: PROVIDER,
+        instanceId: INSTANCE_ID,
+        runTurn: async () => ({ text: "done" }),
+      });
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(4),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: PROVIDER,
+        providerInstanceId: INSTANCE_ID,
+        threadId,
+        runtimeSessionId: FORCE_STOP_RUNTIME_SESSION_ID,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "finish" });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        ["session.started", "turn.started", "item.completed", "turn.completed"],
+      );
+      NodeAssert.equal(
+        events.every((event) => event.runtimeSessionId === FORCE_STOP_RUNTIME_SESSION_ID),
+        true,
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  ),
+);
+
 it.effect("force-stops a hosted request locally when no remote cancellation exists", () =>
   Effect.scoped(
     Effect.gen(function* () {

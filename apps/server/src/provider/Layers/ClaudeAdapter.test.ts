@@ -1283,6 +1283,9 @@ describe("ClaudeAdapterLive", () => {
           "turn.completed",
         ],
       );
+      assert.isTrue(
+        runtimeEvents.every((event) => event.runtimeSessionId === session.runtimeSessionId),
+      );
 
       const turnStarted = runtimeEvents[3];
       assert.equal(turnStarted?.type, "turn.started");

@@ -222,6 +222,9 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       ] as const) {
         assert.include(types, t);
       }
+      assert.isTrue(
+        runtimeEvents.every((event) => event.runtimeSessionId === session.runtimeSessionId),
+      );
 
       const assistantStarted = runtimeEvents.find(
         (event) => event.type === "item.started" && event.payload.itemType === "assistant_message",

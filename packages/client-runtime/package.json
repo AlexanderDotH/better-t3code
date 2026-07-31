@@ -35,6 +35,10 @@
       "types": "./src/operations/projects.ts",
       "default": "./src/operations/projects.ts"
     },
+    "./model-options": {
+      "types": "./src/modelOptions.ts",
+      "default": "./src/modelOptions.ts"
+    },
     "./platform": {
       "types": "./src/platform/index.ts",
       "default": "./src/platform/index.ts"
@@ -142,6 +146,10 @@
     "./state/thread-search": {
       "types": "./src/state/threadSearch.ts",
       "default": "./src/state/threadSearch.ts"
+    },
+    "./state/thread-abort": {
+      "types": "./src/state/threadAbort.ts",
+      "default": "./src/state/threadAbort.ts"
     },
     "./state/vcs": {
       "types": "./src/state/vcs.ts",

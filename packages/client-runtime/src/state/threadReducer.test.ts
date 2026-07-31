@@ -7,6 +7,7 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  RuntimeSessionId,
   SubagentId,
   ThreadId,
   TurnId,
@@ -46,6 +47,51 @@ const baseThread: OrchestrationThread = {
   checkpoints: [],
   session: null,
 };
+
+const RUNTIME_ONE = RuntimeSessionId.make("runtime-1");
+const RUNTIME_TWO = RuntimeSessionId.make("runtime-2");
+
+function makeAbortingThread(): OrchestrationThread {
+  return {
+    ...baseThread,
+    latestTurn: {
+      turnId: TurnId.make("turn-1"),
+      state: "running",
+      requestedAt: "2026-04-01T07:00:00.000Z",
+      startedAt: "2026-04-01T07:00:01.000Z",
+      completedAt: null,
+      assistantMessageId: MessageId.make("assistant-1"),
+    },
+    messages: [
+      {
+        id: MessageId.make("assistant-1"),
+        role: "assistant",
+        text: "Partial output remains visible.",
+        turnId: TurnId.make("turn-1"),
+        streaming: false,
+        createdAt: "2026-04-01T07:00:01.000Z",
+        updatedAt: "2026-04-01T07:00:02.000Z",
+      },
+    ],
+    session: {
+      threadId: ThreadId.make("thread-1"),
+      status: "running",
+      providerName: "codex",
+      runtimeSessionId: RUNTIME_ONE,
+      runtimeMode: "full-access",
+      activeTurnId: TurnId.make("turn-1"),
+      abortState: {
+        runtimeSessionId: RUNTIME_ONE,
+        targetTurnId: TurnId.make("turn-1"),
+        phase: "interrupting",
+        requestedAt: "2026-04-01T07:00:03.000Z",
+        forceAt: "2026-04-01T07:00:08.000Z",
+      },
+      lastError: null,
+      updatedAt: "2026-04-01T07:00:03.000Z",
+    },
+  };
+}
 
 describe("applyThreadDetailEvent", () => {
   describe("project events", () => {
@@ -261,6 +307,126 @@ describe("applyThreadDetailEvent", () => {
     });
   });
 
+  describe("thread turn abort lifecycle", () => {
+    it("does not optimistically complete a turn when interruption is requested", () => {
+      const thread = makeAbortingThread();
+
+      const result = applyThreadDetailEvent(thread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T07:00:03.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.turn-interrupt-requested",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          turnId: TurnId.make("turn-1"),
+          createdAt: "2026-04-01T07:00:03.000Z",
+        },
+      });
+
+      expect(result).toEqual({ kind: "unchanged" });
+      expect(thread.latestTurn?.state).toBe("running");
+      expect(thread.latestTurn?.completedAt).toBeNull();
+    });
+
+    it("settles the matching abort authoritatively and preserves partial output", () => {
+      const result = applyThreadDetailEvent(makeAbortingThread(), {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: "2026-04-01T07:00:04.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.turn-abort-settled",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          runtimeSessionId: RUNTIME_ONE,
+          turnId: TurnId.make("turn-1"),
+          outcome: "cooperative",
+          settledAt: "2026-04-01T07:00:04.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.session).toMatchObject({
+          status: "ready",
+          runtimeSessionId: RUNTIME_ONE,
+          activeTurnId: null,
+          abortState: null,
+        });
+        expect(result.thread.latestTurn).toMatchObject({
+          state: "interrupted",
+          completedAt: "2026-04-01T07:00:04.000Z",
+        });
+        expect(result.thread.messages).toEqual(makeAbortingThread().messages);
+      }
+    });
+
+    it("keeps the turn running while a matching abort is still settling", () => {
+      const thread = makeAbortingThread();
+
+      const result = applyThreadDetailEvent(thread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: "2026-04-01T07:00:04.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.session-set",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          session: {
+            ...thread.session!,
+            status: "stopped",
+            activeTurnId: null,
+            abortState: {
+              ...thread.session!.abortState!,
+              phase: "force-stopping",
+            },
+            updatedAt: "2026-04-01T07:00:04.000Z",
+          },
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.latestTurn?.state).toBe("running");
+        expect(result.thread.latestTurn?.completedAt).toBeNull();
+      }
+    });
+
+    it("ignores a stale settlement after a newer runtime replaces the abort target", () => {
+      const thread = makeAbortingThread();
+      const replacementThread: OrchestrationThread = {
+        ...thread,
+        session: {
+          ...thread.session!,
+          runtimeSessionId: RUNTIME_TWO,
+          activeTurnId: TurnId.make("turn-2"),
+          abortState: null,
+        },
+      };
+
+      const result = applyThreadDetailEvent(replacementThread, {
+        ...baseEventFields,
+        sequence: 8,
+        occurredAt: "2026-04-01T07:00:09.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.turn-abort-settled",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          runtimeSessionId: RUNTIME_ONE,
+          turnId: TurnId.make("turn-1"),
+          outcome: "force-terminated",
+          settledAt: "2026-04-01T07:00:09.000Z",
+        },
+      });
+
+      expect(result).toEqual({ kind: "unchanged" });
+    });
+  });
+
   describe("thread.message-sent", () => {
     it("appends a new message", () => {
       const result = applyThreadDetailEvent(baseThread, {
@@ -366,8 +532,10 @@ describe("applyThreadDetailEvent", () => {
           threadId: ThreadId.make("thread-1"),
           status: "running",
           providerName: "claude",
+          runtimeSessionId: null,
           runtimeMode: "full-access",
           activeTurnId: TurnId.make("turn-1"),
+          abortState: null,
           lastError: null,
           updatedAt: "2026-04-01T06:59:00.000Z",
         },
@@ -435,8 +603,10 @@ describe("applyThreadDetailEvent", () => {
             threadId: ThreadId.make("thread-1"),
             status: "ready",
             providerName: "claude",
+            runtimeSessionId: null,
             runtimeMode: "full-access",
             activeTurnId: null,
+            abortState: null,
             lastError: null,
             updatedAt: "2026-04-01T08:00:00.000Z",
           },
@@ -464,8 +634,10 @@ describe("applyThreadDetailEvent", () => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            runtimeSessionId: null,
             runtimeMode: "full-access",
             activeTurnId: TurnId.make("turn-1"),
+            abortState: null,
             lastError: null,
             updatedAt: "2026-04-01T08:00:00.000Z",
           },
@@ -489,8 +661,10 @@ describe("applyThreadDetailEvent", () => {
           threadId: ThreadId.make("thread-1"),
           status: "running",
           providerName: "codex",
+          runtimeSessionId: null,
           runtimeMode: "full-access",
           activeTurnId: TurnId.make("turn-1"),
+          abortState: null,
           lastError: null,
           updatedAt: "2026-04-01T08:00:00.000Z",
         },

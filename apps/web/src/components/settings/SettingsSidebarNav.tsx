@@ -35,6 +35,7 @@ export type SettingsSectionPath =
   | "/settings/mcp"
   | "/settings/source-control"
   | "/settings/connections"
+  | "/settings/experimental"
   | "/settings/beta"
   | "/settings/import-chats"
   | "/settings/archived";
@@ -52,6 +53,7 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   { label: "MCP Servers", to: "/settings/mcp", icon: PlugZapIcon },
   { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },
   { label: "Connections", to: "/settings/connections", icon: Link2Icon },
+  { label: "Experimental", to: "/settings/experimental", icon: FlaskConicalIcon },
   { label: "Beta", to: "/settings/beta", icon: FlaskConicalIcon },
   { label: "Import Chats", to: "/settings/import-chats", icon: DownloadIcon },
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },

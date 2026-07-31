@@ -8,6 +8,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
+import { resolveThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -461,20 +462,19 @@ function ThreadRouteContent(
     void navigation.navigate("Connections");
   }, [navigation]);
   const handleStopThread = useCallback(() => {
-    if (
-      !selectedThread ||
-      (selectedThread.session?.status !== "running" &&
-        selectedThread.session?.status !== "starting")
-    ) {
+    if (!selectedThread) {
+      return;
+    }
+    const session = selectedThread.session;
+    const stopAction = resolveThreadAbortPresentation(session);
+    if (session === null || !stopAction.showStopAction || stopAction.disabled) {
       return;
     }
     return interruptThreadTurn({
       environmentId: selectedThread.environmentId,
       input: {
         threadId: selectedThread.id,
-        ...(selectedThread.session.activeTurnId
-          ? { turnId: selectedThread.session.activeTurnId }
-          : {}),
+        ...(session.activeTurnId ? { turnId: session.activeTurnId } : {}),
       },
     });
   }, [interruptThreadTurn, selectedThread]);

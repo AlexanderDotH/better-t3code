@@ -1408,18 +1408,77 @@ describe("composerDraftStore modelSelection", () => {
     expect(draft?.activeProvider).toBe("claudeAgent");
   });
 
-  it("creates the first sticky snapshot from provider option changes", () => {
+  it("keeps Codex service tier on the current chat but out of sticky defaults", () => {
     const store = useComposerDraftStore.getState();
 
     store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"));
 
-    store.setProviderModelOptions(threadRef, CODEX_DRIVER, toSelections({ fastMode: true }), {
-      persistSticky: true,
-    });
+    store.setProviderModelOptions(
+      threadRef,
+      CODEX_DRIVER,
+      toSelections({ reasoningEffort: "high", serviceTier: "priority" }),
+      {
+        persistSticky: true,
+      },
+    );
 
+    expect(
+      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CODEX_INSTANCE],
+    ).toEqual(
+      modelSelection(CODEX_DRIVER, "gpt-5.4", {
+        reasoningEffort: "high",
+        serviceTier: "priority",
+      }),
+    );
     expect(useComposerDraftStore.getState().stickyModelSelectionByProvider[CODEX_INSTANCE]).toEqual(
       modelSelection(CODEX_DRIVER, "gpt-5.4", {
-        fastMode: true,
+        reasoningEffort: "high",
+      }),
+    );
+  });
+
+  it("rehydrates the current chat's service tier without making it sticky", () => {
+    const store = useComposerDraftStore.getState();
+    store.setModelSelection(
+      threadRef,
+      modelSelection(CODEX_DRIVER, "gpt-5.4", {
+        reasoningEffort: "high",
+        serviceTier: "priority",
+      }),
+    );
+    store.setProviderModelOptions(
+      threadRef,
+      CODEX_DRIVER,
+      toSelections({ reasoningEffort: "high", serviceTier: "priority" }),
+      { persistSticky: true },
+    );
+
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const persisted = persistApi.getOptions().partialize(useComposerDraftStore.getState());
+    const rehydrated = persistApi
+      .getOptions()
+      .merge(persisted, useComposerDraftStore.getInitialState());
+
+    expect(
+      rehydrated.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]
+        ?.modelSelectionByProvider[CODEX_INSTANCE],
+    ).toEqual(
+      modelSelection(CODEX_DRIVER, "gpt-5.4", {
+        reasoningEffort: "high",
+        serviceTier: "priority",
+      }),
+    );
+    expect(rehydrated.stickyModelSelectionByProvider[CODEX_INSTANCE]).toEqual(
+      modelSelection(CODEX_DRIVER, "gpt-5.4", {
+        reasoningEffort: "high",
       }),
     );
   });
@@ -1518,7 +1577,7 @@ describe("composerDraftStore sticky composer settings", () => {
     resetComposerDraftStore();
   });
 
-  it("stores a sticky model selection", () => {
+  it("stores model and reasoning without carrying legacy Codex Fast into new chats", () => {
     const store = useComposerDraftStore.getState();
 
     store.setStickyModelSelection(
@@ -1531,7 +1590,6 @@ describe("composerDraftStore sticky composer settings", () => {
     expect(useComposerDraftStore.getState().stickyModelSelectionByProvider[CODEX_INSTANCE]).toEqual(
       modelSelection(CODEX_DRIVER, "gpt-5.3-codex", {
         reasoningEffort: "medium",
-        fastMode: true,
       }),
     );
     expect(useComposerDraftStore.getState().stickyActiveProvider).toBe("codex");
@@ -1580,6 +1638,40 @@ describe("composerDraftStore sticky composer settings", () => {
       },
       activeProvider: "claudeAgent",
     });
+  });
+
+  it("removes persisted Codex speed aliases from sticky defaults during hydration", () => {
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+
+    const mergedState = persistApi.getOptions().merge(
+      {
+        draftsByThreadKey: {},
+        draftThreadsByThreadKey: {},
+        logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+        stickyModelSelectionByProvider: {
+          codex: modelSelection(CODEX_DRIVER, "gpt-5.4", {
+            reasoningEffort: "high",
+            serviceTier: "priority",
+            fastMode: true,
+          }),
+        },
+        stickyActiveProvider: CODEX_INSTANCE,
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+
+    expect(mergedState.stickyModelSelectionByProvider[CODEX_INSTANCE]).toEqual(
+      modelSelection(CODEX_DRIVER, "gpt-5.4", {
+        reasoningEffort: "high",
+      }),
+    );
   });
 });
 

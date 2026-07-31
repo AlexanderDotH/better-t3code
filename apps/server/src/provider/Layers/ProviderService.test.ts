@@ -659,12 +659,21 @@ it.effect("ProviderServiceLive writes canonical events to the emitting thread se
     );
 
     yield* Effect.gen(function* () {
-      yield* ProviderService.ProviderService;
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-canonical-thread-segment");
+      const session = yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      assert.ok(session.runtimeSessionId);
       yield* advanceTestClock(10);
       codex.emit({
         eventId: asEventId("evt-canonical-thread-segment"),
-        provider: ProviderDriverKind.make("codex"),
-        threadId: asThreadId("thread-canonical-thread-segment"),
+        provider: CODEX_DRIVER,
+        runtimeSessionId: session.runtimeSessionId,
+        threadId,
         createdAt: "2026-01-01T00:00:00.000Z",
         type: "turn.completed",
         payload: {
@@ -1615,6 +1624,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
       });
+      assert.ok(session.runtimeSessionId);
 
       const eventsRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
       const consumer = yield* Stream.runForEach(provider.streamEvents, (event) =>
@@ -1626,6 +1636,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         type: "turn.completed",
         eventId: asEventId("evt-1"),
         provider: ProviderDriverKind.make("codex"),
+        runtimeSessionId: session.runtimeSessionId,
         createdAt: "2026-01-01T00:00:00.000Z",
         threadId: session.threadId,
         turnId: asTurnId("turn-1"),
@@ -1652,6 +1663,86 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
     }),
   );
 
+  it.effect("only fans out live events stamped with the current runtime lease", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-runtime-event-fence");
+      const firstSession = yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      assert.ok(firstSession.runtimeSessionId);
+
+      const receivedRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
+      const consumer = yield* Stream.runForEach(provider.streamEvents, (event) =>
+        Ref.update(receivedRef, (current) => [...current, event]),
+      ).pipe(Effect.forkChild);
+      yield* advanceTestClock(20);
+
+      fanout.codex.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-runtime-unstamped"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        status: "completed",
+      });
+      fanout.codex.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-runtime-current-before-replacement"),
+        provider: CODEX_DRIVER,
+        runtimeSessionId: firstSession.runtimeSessionId,
+        createdAt: "2026-01-01T00:00:01.000Z",
+        threadId,
+        status: "completed",
+      });
+      yield* advanceTestClock(20);
+
+      const replacementSession = yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        freshSession: true,
+        runtimeMode: "full-access",
+      });
+      assert.ok(replacementSession.runtimeSessionId);
+      assert.notEqual(replacementSession.runtimeSessionId, firstSession.runtimeSessionId);
+
+      fanout.codex.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-runtime-stale-after-replacement"),
+        provider: CODEX_DRIVER,
+        runtimeSessionId: firstSession.runtimeSessionId,
+        createdAt: "2026-01-01T00:00:02.000Z",
+        threadId,
+        status: "completed",
+      });
+      fanout.codex.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-runtime-current-after-replacement"),
+        provider: CODEX_DRIVER,
+        runtimeSessionId: replacementSession.runtimeSessionId,
+        createdAt: "2026-01-01T00:00:03.000Z",
+        threadId,
+        status: "completed",
+      });
+      yield* advanceTestClock(40);
+
+      const received = yield* Ref.get(receivedRef);
+      yield* Fiber.interrupt(consumer);
+
+      assert.deepEqual(
+        received.filter((event) => event.threadId === threadId).map((event) => event.eventId),
+        [
+          asEventId("evt-runtime-current-before-replacement"),
+          asEventId("evt-runtime-current-after-replacement"),
+        ],
+      );
+    }),
+  );
+
   it.effect("fans out canonical runtime events in emission order", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
@@ -1661,6 +1752,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         threadId: asThreadId("thread-seq"),
         runtimeMode: "full-access",
       });
+      assert.ok(session.runtimeSessionId);
 
       const receivedRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
       const consumer = yield* Stream.take(provider.streamEvents, 3).pipe(
@@ -1673,6 +1765,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         type: "tool.started",
         eventId: asEventId("evt-seq-1"),
         provider: ProviderDriverKind.make("codex"),
+        runtimeSessionId: session.runtimeSessionId,
         createdAt: "2026-01-01T00:00:00.000Z",
         threadId: session.threadId,
         turnId: asTurnId("turn-1"),
@@ -1683,6 +1776,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         type: "tool.completed",
         eventId: asEventId("evt-seq-2"),
         provider: ProviderDriverKind.make("codex"),
+        runtimeSessionId: session.runtimeSessionId,
         createdAt: "2026-01-01T00:00:00.000Z",
         threadId: session.threadId,
         turnId: asTurnId("turn-1"),
@@ -1693,6 +1787,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         type: "turn.completed",
         eventId: asEventId("evt-seq-3"),
         provider: ProviderDriverKind.make("codex"),
+        runtimeSessionId: session.runtimeSessionId,
         createdAt: "2026-01-01T00:00:00.000Z",
         threadId: session.threadId,
         turnId: asTurnId("turn-1"),
@@ -1717,6 +1812,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
       });
+      assert.ok(session.runtimeSessionId);
 
       const receivedByHealthy: string[] = [];
       const expectedEventIds = new Set<string>(["evt-ordered-1", "evt-ordered-2", "evt-ordered-3"]);
@@ -1739,6 +1835,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
           type: "tool.completed",
           eventId: asEventId("evt-ordered-1"),
           provider: ProviderDriverKind.make("codex"),
+          runtimeSessionId: session.runtimeSessionId,
           createdAt: "2026-01-01T00:00:00.000Z",
           threadId: session.threadId,
           turnId: asTurnId("turn-1"),
@@ -1750,6 +1847,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
           type: "message.delta",
           eventId: asEventId("evt-ordered-2"),
           provider: ProviderDriverKind.make("codex"),
+          runtimeSessionId: session.runtimeSessionId,
           createdAt: "2026-01-01T00:00:00.000Z",
           threadId: session.threadId,
           turnId: asTurnId("turn-1"),
@@ -1759,6 +1857,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
           type: "turn.completed",
           eventId: asEventId("evt-ordered-3"),
           provider: ProviderDriverKind.make("codex"),
+          runtimeSessionId: session.runtimeSessionId,
           createdAt: "2026-01-01T00:00:00.000Z",
           threadId: session.threadId,
           turnId: asTurnId("turn-1"),

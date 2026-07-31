@@ -1,4 +1,5 @@
 import {
+  defaultInstanceIdForDriver,
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderOptionSelection,
@@ -11,6 +12,7 @@ import {
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
 } from "@t3tools/shared/model";
+import { normalizeClientModelSelection } from "@t3tools/client-runtime/model-options";
 import type { ReactNode } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
@@ -55,7 +57,19 @@ export function getComposerPromptInjectionState(prompt: string): ComposerPromptI
 export function getComposerProviderState(input: ComposerProviderStateInput): ComposerProviderState {
   const { provider, model, models, modelOptions, promptInjectionState = "none" } = input;
   const caps = getProviderModelCapabilities(models, model, provider);
-  const descriptors = getProviderOptionDescriptors({ caps, selections: modelOptions });
+  const normalizedSelection = normalizeClientModelSelection({
+    provider,
+    selection: {
+      instanceId: defaultInstanceIdForDriver(provider),
+      model,
+      ...(modelOptions ? { options: modelOptions } : {}),
+    },
+    capabilities: caps,
+  });
+  const descriptors = getProviderOptionDescriptors({
+    caps,
+    selections: normalizedSelection.options,
+  });
   const primarySelectDescriptor = descriptors.find(
     (descriptor): descriptor is Extract<(typeof descriptors)[number], { type: "select" }> =>
       descriptor.type === "select",

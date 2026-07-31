@@ -97,6 +97,42 @@ const ULTRATHINK_FRAME_CLASSES = {
 } as const;
 
 describe("getComposerProviderState", () => {
+  it("upgrades legacy Codex fast mode to the canonical service tier", () => {
+    const models = modelWith([
+      selectDescriptor("serviceTier", [
+        { id: "default", label: "Standard", isDefault: true },
+        { id: "priority", label: "Fast" },
+      ]),
+    ]);
+
+    expect(
+      getComposerProviderState({
+        provider: PROVIDER,
+        model: MODEL,
+        models,
+        modelOptions: selections(["fastMode", true]),
+      }).modelOptionsForDispatch,
+    ).toEqual(selections(["serviceTier", "priority"]));
+  });
+
+  it("dispatches Standard explicitly for a fast-capable Codex model", () => {
+    const models = modelWith([
+      selectDescriptor("serviceTier", [
+        { id: "default", label: "Standard", isDefault: true },
+        { id: "priority", label: "Fast" },
+      ]),
+    ]);
+
+    expect(
+      getComposerProviderState({
+        provider: PROVIDER,
+        model: MODEL,
+        models,
+        modelOptions: undefined,
+      }).modelOptionsForDispatch,
+    ).toEqual(selections(["serviceTier", "default"]));
+  });
+
   it("derives a stable prompt injection state for ordinary prompt edits", () => {
     expect(getComposerPromptInjectionState("Investigate this failure")).toBe("none");
     expect(getComposerPromptInjectionState("Ultrathink:\nInvestigate this failure")).toBe(

@@ -22,6 +22,7 @@ import {
   connectionStatusTitle,
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
+import { resolveThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
@@ -45,6 +46,11 @@ import {
   replaceTextRange,
   shouldSubmitComposerOnEnter,
 } from "../../composer-logic";
+import {
+  resolvePlanImplementationSuggestion,
+  type PlanImplementationStrategy,
+  type PlanImplementationSuggestion,
+} from "../../planImplementation";
 import {
   deriveComposerSendState,
   readFileAsDataUrl,
@@ -428,6 +434,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
     isComplete: boolean;
   } | null;
   isRunning: boolean;
+  abortPhase: ReturnType<typeof resolveThreadAbortPresentation>["phase"];
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -438,7 +445,9 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
-  onImplementPlanInNewThread: () => void;
+  planImplementationSuggestion: PlanImplementationSuggestion | null;
+  onImplementPlan: (strategy: PlanImplementationStrategy) => void;
+  onImplementPlanInNewThread: (strategy: PlanImplementationStrategy) => void;
 }) {
   return (
     <>
@@ -455,6 +464,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         compact={props.compact}
         pendingAction={props.pendingAction}
         isRunning={props.isRunning}
+        abortPhase={props.abortPhase}
         showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
         promptHasText={props.promptHasText}
         isSendBusy={props.isSendBusy}
@@ -466,6 +476,8 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
+        planImplementationSuggestion={props.planImplementationSuggestion}
+        onImplementPlan={props.onImplementPlan}
         onImplementPlanInNewThread={props.onImplementPlanInNewThread}
       />
     </>
@@ -512,6 +524,7 @@ export interface ChatComposerHandle {
     selectedProvider: ProviderDriverKind;
     selectedModel: string;
     selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
+    planImplementationSuggestion: PlanImplementationSuggestion | null;
   };
 }
 
@@ -602,7 +615,8 @@ export interface ChatComposerProps {
   // Callbacks
   onSend: (e?: { preventDefault: () => void }) => void;
   onInterrupt: () => void;
-  onImplementPlanInNewThread: () => void;
+  onImplementPlan: (strategy: PlanImplementationStrategy) => void;
+  onImplementPlanInNewThread: (strategy: PlanImplementationStrategy) => void;
   onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -690,6 +704,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerElementContextsRef,
     onSend,
     onInterrupt,
+    onImplementPlan,
     onImplementPlanInNewThread,
     onRespondToApproval,
     onSelectActivePendingUserInputOption,
@@ -720,6 +735,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerPreviewAnnotations = composerDraft.previewAnnotations;
   const composerReviewComments = composerDraft.reviewComments;
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
+  const abortPresentation = resolveThreadAbortPresentation(activeThread?.session ?? null);
 
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImage = useComposerDraftStore((store) => store.addImage);
@@ -893,6 +909,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedProviderModels = useMemo<ReadonlyArray<ServerProvider["models"][number]>>(
     () => selectedProviderEntry?.models ?? [],
     [selectedProviderEntry],
+  );
+  const planImplementationSuggestion = useMemo(
+    () =>
+      activeProposedPlan
+        ? resolvePlanImplementationSuggestion({
+            featureEnabled: settings.experimentalParallelPlanImplementation,
+            planMarkdown: activeProposedPlan.planMarkdown,
+            provider: selectedProviderStatus,
+          })
+        : null,
+    [activeProposedPlan, selectedProviderStatus, settings.experimentalParallelPlanImplementation],
   );
 
   const composerPromptInjectionState = useMemo(
@@ -1288,6 +1315,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const collapsedComposerPrimaryActionDisabled =
     phase === "running" ||
+    abortPresentation.disabled ||
     isSendBusy ||
     isSendDisabled ||
     isConnecting ||
@@ -1836,6 +1864,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (
       isSendBusy ||
       isSendDisabled ||
+      abortPresentation.disabled ||
       isConnecting ||
       noProviderAvailable ||
       environmentUnavailable !== null ||
@@ -1850,6 +1879,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [
     activePendingProgress,
     activePendingResolvedAnswers,
+    abortPresentation.disabled,
     composerSendState.hasSendableContent,
     environmentUnavailable,
     isConnecting,
@@ -1925,7 +1955,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const stopVoiceRecording = voiceDictation.stop;
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }) => {
-      if (noProviderAvailable || isSendDisabled || voiceRecordingActive) {
+      if (
+        noProviderAvailable ||
+        isSendDisabled ||
+        abortPresentation.disabled ||
+        voiceRecordingActive
+      ) {
         event?.preventDefault();
         return;
       }
@@ -1949,6 +1984,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
     [
       activeThreadId,
+      abortPresentation.disabled,
       blurMobileComposerAfterSend,
       isSendDisabled,
       noProviderAvailable,
@@ -2596,9 +2632,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const handleInterruptPrimaryAction = useCallback(() => {
     void onInterrupt();
   }, [onInterrupt]);
-  const handleImplementPlanInNewThreadPrimaryAction = useCallback(() => {
-    void onImplementPlanInNewThread();
-  }, [onImplementPlanInNewThread]);
+  const handleImplementPlanPrimaryAction = useCallback(
+    (strategy: PlanImplementationStrategy) => {
+      void onImplementPlan(strategy);
+    },
+    [onImplementPlan],
+  );
+  const handleImplementPlanInNewThreadPrimaryAction = useCallback(
+    (strategy: PlanImplementationStrategy) => {
+      void onImplementPlanInNewThread(strategy);
+    },
+    [onImplementPlanInNewThread],
+  );
   const scheduleComposerCollapseCheck = useCallback(() => {
     if (!isMobileViewport) {
       return;
@@ -2734,6 +2779,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedProvider,
         selectedModel,
         selectedProviderModels,
+        planImplementationSuggestion,
       }),
     }),
     [
@@ -2762,6 +2808,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedPromptEffort,
       selectedProvider,
       selectedProviderModels,
+      planImplementationSuggestion,
     ],
   );
 
@@ -2917,6 +2964,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       preserveComposerFocusOnPointerDown
                       onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                       onInterrupt={handleInterruptPrimaryAction}
+                      onImplementPlan={handleImplementPlanPrimaryAction}
                       onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
                     />
                   ) : null}
@@ -3210,6 +3258,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     preserveComposerFocusOnPointerDown
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
+                    onImplementPlan={handleImplementPlanPrimaryAction}
                     onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
                   />
                 </div>
@@ -3329,6 +3378,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       isConnecting ||
                       isSendBusy ||
                       isSendDisabled ||
+                      abortPresentation.disabled ||
                       noProviderAvailable ||
                       projectSelectionRequired ||
                       phase === "running" ||
@@ -3345,7 +3395,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   activeContextWindow={activeContextWindow}
                   activeThreadProviderDisplayName={activeThreadProviderDisplayName}
                   pendingAction={pendingPrimaryAction}
-                  isRunning={phase === "running"}
+                  isRunning={abortPresentation.showStopAction}
+                  abortPhase={abortPresentation.phase}
                   showPlanFollowUpPrompt={pendingUserInputs.length === 0 && showPlanFollowUpPrompt}
                   promptHasText={prompt.trim().length > 0}
                   isSendBusy={isSendBusy || voiceRecordingActive}
@@ -3361,6 +3412,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   preserveComposerFocusOnPointerDown={isMobileViewport}
                   onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                   onInterrupt={handleInterruptPrimaryAction}
+                  planImplementationSuggestion={planImplementationSuggestion}
+                  onImplementPlan={handleImplementPlanPrimaryAction}
                   onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
                 />
               </div>

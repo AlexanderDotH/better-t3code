@@ -6,6 +6,7 @@ import {
   ClientSettingsSchema,
   ClientSettingsPatch,
   DEFAULT_AGENT_ENHANCEMENT_SETTINGS,
+  DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   ServerSettings,
   ServerSettingsPatch,
@@ -31,6 +32,26 @@ describe("ClientSettings word wrap", () => {
     expect(decoded.wordWrap).toBe(true);
     expect(decoded).not.toHaveProperty("chatWordWrap");
     expect(decoded).not.toHaveProperty("diffWordWrap");
+  });
+});
+
+describe("ClientSettings experimental parallel plan implementation", () => {
+  it("defaults the experiment off when legacy settings omit it", () => {
+    const decoded = decodeClientSettings({});
+
+    expect(decoded.experimentalParallelPlanImplementation).toBe(false);
+    expect(DEFAULT_CLIENT_SETTINGS.experimentalParallelPlanImplementation).toBe(false);
+  });
+
+  it("accepts explicit enable and disable patches", () => {
+    expect(
+      decodeClientSettingsPatch({ experimentalParallelPlanImplementation: true })
+        .experimentalParallelPlanImplementation,
+    ).toBe(true);
+    expect(
+      decodeClientSettingsPatch({ experimentalParallelPlanImplementation: false })
+        .experimentalParallelPlanImplementation,
+    ).toBe(false);
   });
 });
 

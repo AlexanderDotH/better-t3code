@@ -840,6 +840,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       }
       NodeAssert.equal(firstEvent.value.itemId, "msg_1");
       NodeAssert.equal(firstEvent.value.turnId, "turn-1");
+      NodeAssert.equal(firstEvent.value.runtimeSessionId, FORCE_STOP_RUNTIME_SESSION_ID);
       NodeAssert.equal(firstEvent.value.payload.itemType, "assistant_message");
     }),
   );

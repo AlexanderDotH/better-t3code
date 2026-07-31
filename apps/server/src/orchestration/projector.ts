@@ -39,8 +39,10 @@ import {
   ThreadSubagentProgressSetPayload,
   ThreadSubagentStateSetPayload,
   ThreadSubagentUpsertedPayload,
+  ThreadTurnAbortSettledPayload,
   ThreadTurnDiffCompletedPayload,
 } from "./Schemas.ts";
+import { makeAbortInteractionResolutionActivities } from "./abortInteractionSettlement.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
@@ -709,6 +711,83 @@ export function projectEvent(
                       completedAt: session.updatedAt,
                     }
                   : thread.latestTurn,
+            updatedAt: event.occurredAt,
+          }),
+        };
+      });
+
+    case "thread.turn-abort-settled":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          ThreadTurnAbortSettledPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+        const session = thread?.session;
+        if (
+          !thread ||
+          !session ||
+          session.abortState === null ||
+          session.runtimeSessionId !== payload.runtimeSessionId ||
+          session.abortState.runtimeSessionId !== payload.runtimeSessionId ||
+          session.abortState.targetTurnId !== payload.turnId
+        ) {
+          return nextBase;
+        }
+
+        const cooperative = payload.outcome === "cooperative";
+        const failed = payload.outcome === "force-failed";
+        const nextSession: OrchestrationSession = {
+          ...session,
+          status: cooperative ? "ready" : failed ? "error" : "stopped",
+          runtimeSessionId: cooperative ? session.runtimeSessionId : null,
+          activeTurnId: null,
+          abortState: null,
+          lastError:
+            payload.detail !== undefined
+              ? payload.detail
+              : failed
+                ? "Provider force-stop failed."
+                : session.lastError,
+          updatedAt: payload.settledAt,
+        };
+        const abortResolutionActivities = makeAbortInteractionResolutionActivities({
+          settlementEventId: event.eventId,
+          settlementSequence: event.sequence,
+          targetTurnId: payload.turnId,
+          outcome: payload.outcome,
+          settledAt: payload.settledAt,
+          activities: thread.activities,
+        });
+        const settlementActivityIds = new Set(
+          abortResolutionActivities.map((activity) => activity.id),
+        );
+        const activities =
+          abortResolutionActivities.length === 0
+            ? thread.activities
+            : [
+                ...thread.activities.filter((activity) => !settlementActivityIds.has(activity.id)),
+                ...abortResolutionActivities,
+              ]
+                .toSorted(compareThreadActivities)
+                .slice(-500);
+        return {
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            session: nextSession,
+            activities,
+            latestTurn:
+              payload.turnId !== null &&
+              thread.latestTurn?.turnId === payload.turnId &&
+              thread.latestTurn.state === "running"
+                ? {
+                    ...thread.latestTurn,
+                    state: failed ? "error" : "interrupted",
+                    completedAt: payload.settledAt,
+                  }
+                : thread.latestTurn,
             updatedAt: event.occurredAt,
           }),
         };

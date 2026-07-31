@@ -531,21 +531,30 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
     });
 
-  const processRuntimeEvent = (
+  const processRuntimeEvent = Effect.fn("processRuntimeEvent")(function* (
     source: {
       readonly instanceId: ProviderInstanceId;
       readonly provider: ProviderDriverKind;
     },
     event: ProviderRuntimeEvent,
-  ): Effect.Effect<void> =>
-    Effect.sync(() => correlateRuntimeEventWithInstance(source, event)).pipe(
-      Effect.flatMap((canonicalEvent) =>
-        increment(providerRuntimeEventsTotal, {
-          provider: canonicalEvent.provider,
-          eventType: canonicalEvent.type,
-        }).pipe(Effect.andThen(publishRuntimeEvent(canonicalEvent))),
-      ),
+  ) {
+    const canonicalEvent = yield* Effect.sync(() =>
+      correlateRuntimeEventWithInstance(source, event),
     );
+    const currentLease = (yield* Ref.get(runtimeLeases)).get(canonicalEvent.threadId);
+    if (
+      !currentLease ||
+      currentLease.forceStopping === true ||
+      currentLease.providerInstanceId !== source.instanceId ||
+      currentLease.runtimeSessionId !== canonicalEvent.runtimeSessionId
+    ) {
+      return;
+    }
+    yield* increment(providerRuntimeEventsTotal, {
+      provider: canonicalEvent.provider,
+      eventType: canonicalEvent.type,
+    }).pipe(Effect.andThen(publishRuntimeEvent(canonicalEvent)));
+  });
 
   // `subscribedAdapters` is our source-of-truth for "which instance adapters
   // are currently wired into the runtime event bus". It both tracks the set

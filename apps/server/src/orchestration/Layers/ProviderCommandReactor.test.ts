@@ -56,6 +56,7 @@ import {
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import { TurnAbortCoordinator } from "../Services/TurnAbortCoordinator.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Clock from "effect/Clock";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -235,6 +236,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
+    const requestAbort = vi.fn<TurnAbortCoordinator["Service"]["requestAbort"]>(() => Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
     const stopSession = vi.fn((input: unknown) =>
@@ -311,6 +313,10 @@ describe("ProviderCommandReactor", () => {
       startSession: startSession as ProviderServiceShape["startSession"],
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
       interruptTurn: interruptTurn as ProviderServiceShape["interruptTurn"],
+      resolveAbortTarget: () => unsupported(),
+      interruptAbortTarget: () => unsupported(),
+      forceStopAbortTarget: () => unsupported(),
+      isAbortTargetCurrent: () => Effect.succeed(false),
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
@@ -387,6 +393,12 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(reactorOrchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
+      Layer.provideMerge(
+        Layer.succeed(TurnAbortCoordinator, {
+          requestAbort,
+          settleCooperative: () => Effect.succeed(false),
+        }),
+      ),
       Layer.provideMerge(makeProviderRegistryLayer(providerSnapshots as never)),
       Layer.provideMerge(
         Layer.mock(GitWorkflowService.GitWorkflowService)({
@@ -492,6 +504,7 @@ describe("ProviderCommandReactor", () => {
       startSession,
       sendTurn,
       interruptTurn,
+      requestAbort,
       respondToRequest,
       respondToUserInput,
       stopSession,
@@ -1381,7 +1394,7 @@ describe("ProviderCommandReactor", () => {
     expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe("/tmp/provider-project-worktree");
   });
 
-  it("forwards codex model options through session start and turn send", async () => {
+  it("canonicalizes legacy codex fast mode through session start and turn send", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
@@ -1411,14 +1424,14 @@ describe("ProviderCommandReactor", () => {
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
       modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
         { id: "reasoningEffort", value: "high" },
-        { id: "fastMode", value: true },
+        { id: "serviceTier", value: "priority" },
       ]),
     });
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
       modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
         { id: "reasoningEffort", value: "high" },
-        { id: "fastMode", value: true },
+        { id: "serviceTier", value: "priority" },
       ]),
     });
   });
@@ -2365,7 +2378,7 @@ describe("ProviderCommandReactor", () => {
     expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toContain("continue with claude");
   });
 
-  it("reacts to thread.turn.interrupt-requested by calling provider interrupt", async () => {
+  it("routes thread.turn.interrupt-requested through the server abort lane", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
@@ -2378,8 +2391,10 @@ describe("ProviderCommandReactor", () => {
           threadId: ThreadId.make("thread-1"),
           status: "running",
           providerName: "codex",
+          runtimeSessionId: null,
           runtimeMode: "approval-required",
           activeTurnId: asTurnId("turn-1"),
+          abortState: null,
           lastError: null,
           updatedAt: now,
         },
@@ -2397,10 +2412,13 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.interruptTurn.mock.calls.length === 1);
-    expect(harness.interruptTurn.mock.calls[0]?.[0]).toEqual({
+    await waitFor(() => harness.requestAbort.mock.calls.length === 1);
+    expect(harness.requestAbort.mock.calls[0]?.[0]).toEqual({
       threadId: "thread-1",
+      turnId: "turn-1",
+      requestedAt: now,
     });
+    expect(harness.interruptTurn).not.toHaveBeenCalled();
   });
 
   it("starts a fresh session when only projected session state exists", async () => {

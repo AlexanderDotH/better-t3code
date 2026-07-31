@@ -155,6 +155,12 @@ export const ServerProviderUpdateState = Schema.Struct({
 });
 export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 
+export const ServerProviderNativeSubagents = Schema.Struct({
+  toolName: TrimmedNonEmptyString,
+  maxRecommendedSubagents: PositiveInt,
+});
+export type ServerProviderNativeSubagents = typeof ServerProviderNativeSubagents.Type;
+
 export const ServerProvider = Schema.Struct({
   // Routing key for the configured instance this snapshot represents. This
   // is the only stable identity consumers may use for provider routing.
@@ -168,6 +174,7 @@ export const ServerProvider = Schema.Struct({
   continuation: Schema.optional(ServerProviderContinuation),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
+  nativeSubagents: Schema.optional(ServerProviderNativeSubagents),
   enabled: Schema.Boolean,
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),

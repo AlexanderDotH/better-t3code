@@ -1,8 +1,10 @@
-import type {
-  ModelCapabilities,
-  ModelSelection,
-  ServerConfig as T3ServerConfig,
+import {
+  ProviderDriverKind,
+  type ModelCapabilities,
+  type ModelSelection,
+  type ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
+import { normalizeClientModelSelection } from "@t3tools/client-runtime/model-options";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
@@ -42,21 +44,26 @@ function providerDisplayLabel(provider: {
 function normalizeSelectionOptions(
   selection: ModelSelection,
   capabilities: ModelCapabilities | null,
+  provider: ProviderDriverKind,
 ): ModelSelection {
-  if (!capabilities) {
-    return selection;
-  }
+  const normalizedSelection = normalizeClientModelSelection({
+    provider,
+    selection,
+    capabilities,
+  });
+  if (!capabilities) return normalizedSelection;
+
   const options = buildProviderOptionSelectionsFromDescriptors(
     getProviderOptionDescriptors({
       caps: capabilities,
-      selections: selection.options,
+      selections: normalizedSelection.options,
     }),
   );
   return options
-    ? { ...selection, options }
+    ? { ...normalizedSelection, options }
     : {
-        instanceId: selection.instanceId,
-        model: selection.model,
+        instanceId: normalizedSelection.instanceId,
+        model: normalizedSelection.model,
       };
 }
 
@@ -91,6 +98,7 @@ export function buildModelOptions(
             model: model.slug,
           },
           model.capabilities,
+          provider.driver,
         ),
       });
     }
@@ -102,9 +110,18 @@ export function buildModelOptions(
     if (existing) {
       options.set(key, {
         ...existing,
-        selection: normalizeSelectionOptions(fallbackModelSelection, existing.capabilities),
+        selection: normalizeSelectionOptions(
+          fallbackModelSelection,
+          existing.capabilities,
+          ProviderDriverKind.make(existing.providerDriver),
+        ),
       });
     } else {
+      const fallbackProvider = config?.providers.find(
+        (provider) => provider.instanceId === fallbackModelSelection.instanceId,
+      );
+      const fallbackProviderDriver =
+        fallbackProvider?.driver ?? ProviderDriverKind.make(fallbackModelSelection.instanceId);
       const providerLabel = fallbackModelSelection.instanceId;
       options.set(key, {
         key,
@@ -112,12 +129,12 @@ export function buildModelOptions(
         subtitle: providerLabel,
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
-        providerDriver: fallbackModelSelection.instanceId,
+        providerDriver: fallbackProviderDriver,
         isDefault: false,
         continuationGroupKey: null,
         requiresNewThreadForModelChange: false,
         capabilities: null,
-        selection: fallbackModelSelection,
+        selection: normalizeSelectionOptions(fallbackModelSelection, null, fallbackProviderDriver),
       });
     }
   }

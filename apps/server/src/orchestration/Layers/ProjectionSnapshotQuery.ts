@@ -15,6 +15,7 @@ import {
   OrchestrationSubagentProgress,
   OrchestrationThread,
   OrchestrationThreadDetailSnapshot,
+  OrchestrationTurnAbortState,
   ProjectScript,
   TurnId,
   type OrchestrationCheckpointSummary,
@@ -109,7 +110,11 @@ const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
     sequence: Schema.NullOr(NonNegativeInt),
   }),
 );
-const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession;
+const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession.mapFields(
+  Struct.assign({
+    abortState: Schema.NullOr(Schema.fromJsonString(OrchestrationTurnAbortState)),
+  }),
+);
 const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
   Struct.assign({
     files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
@@ -286,8 +291,10 @@ function mapSessionRow(
     status: row.status,
     providerName: row.providerName,
     ...(row.providerInstanceId !== null ? { providerInstanceId: row.providerInstanceId } : {}),
+    runtimeSessionId: row.runtimeSessionId,
     runtimeMode: row.runtimeMode,
     activeTurnId: row.activeTurnId,
+    abortState: row.abortState,
     lastError: row.lastError,
     updatedAt: row.updatedAt,
   };
@@ -624,10 +631,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           status,
           provider_name AS "providerName",
           provider_instance_id AS "providerInstanceId",
+          runtime_session_id AS "runtimeSessionId",
           provider_session_id AS "providerSessionId",
           provider_thread_id AS "providerThreadId",
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
+          abort_state_json AS "abortState",
           last_error AS "lastError",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
@@ -645,10 +654,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.status,
           sessions.provider_name AS "providerName",
           sessions.provider_instance_id AS "providerInstanceId",
+          sessions.runtime_session_id AS "runtimeSessionId",
           sessions.provider_session_id AS "providerSessionId",
           sessions.provider_thread_id AS "providerThreadId",
           sessions.runtime_mode AS "runtimeMode",
           sessions.active_turn_id AS "activeTurnId",
+          sessions.abort_state_json AS "abortState",
           sessions.last_error AS "lastError",
           sessions.updated_at AS "updatedAt"
         FROM projection_thread_sessions sessions
@@ -670,10 +681,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.status,
           sessions.provider_name AS "providerName",
           sessions.provider_instance_id AS "providerInstanceId",
+          sessions.runtime_session_id AS "runtimeSessionId",
           sessions.provider_session_id AS "providerSessionId",
           sessions.provider_thread_id AS "providerThreadId",
           sessions.runtime_mode AS "runtimeMode",
           sessions.active_turn_id AS "activeTurnId",
+          sessions.abort_state_json AS "abortState",
           sessions.last_error AS "lastError",
           sessions.updated_at AS "updatedAt"
         FROM projection_thread_sessions sessions
@@ -1099,8 +1112,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           status,
           provider_name AS "providerName",
           provider_instance_id AS "providerInstanceId",
+          runtime_session_id AS "runtimeSessionId",
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
+          abort_state_json AS "abortState",
           last_error AS "lastError",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
@@ -1423,8 +1438,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   ...(row.providerInstanceId !== null
                     ? { providerInstanceId: row.providerInstanceId }
                     : {}),
+                  runtimeSessionId: row.runtimeSessionId,
                   runtimeMode: row.runtimeMode,
                   activeTurnId: row.activeTurnId,
+                  abortState: row.abortState,
                   lastError: row.lastError,
                   updatedAt: row.updatedAt,
                 });

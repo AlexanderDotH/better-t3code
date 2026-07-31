@@ -179,6 +179,9 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         "content.delta",
         "turn.completed",
       ] as const);
+      assert.isTrue(
+        runtimeEvents.every((event) => event.runtimeSessionId === session.runtimeSessionId),
+      );
 
       const delta = runtimeEvents.find((e) => e.type === "content.delta");
       assert.isDefined(delta);

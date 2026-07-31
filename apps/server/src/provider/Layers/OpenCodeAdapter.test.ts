@@ -758,7 +758,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         Effect.forkChild,
       );
 
-      yield* adapter.startSession({
+      const session = yield* adapter.startSession({
         provider: ProviderDriverKind.make("opencode"),
         threadId,
         runtimeMode: "full-access",
@@ -769,6 +769,10 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.deepEqual(
         events.map((event) => event.type),
         ["session.started", "thread.started", "session.exited"],
+      );
+      NodeAssert.equal(
+        events.every((event) => event.runtimeSessionId === session.runtimeSessionId),
+        true,
       );
     }),
   );

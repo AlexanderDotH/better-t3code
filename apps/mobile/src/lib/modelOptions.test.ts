@@ -221,6 +221,87 @@ describe("mobile model options", () => {
     });
 
     expect(option?.capabilities?.optionDescriptors?.[0]?.id).toBe("serviceTier");
-    expect(option?.selection.options).toEqual([{ id: "serviceTier", value: "default" }]);
+    expect(option?.selection.options).toEqual([{ id: "serviceTier", value: "priority" }]);
+  });
+
+  it("stores Standard explicitly and drops Fast for an unsupported Codex model", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "codex",
+          driver: "codex",
+          displayName: "Codex",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "fast-model",
+              name: "Fast model",
+              isCustom: false,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "serviceTier",
+                    label: "Service Tier",
+                    type: "select",
+                    options: [
+                      { id: "default", label: "Standard", isDefault: true },
+                      { id: "priority", label: "Fast" },
+                    ],
+                    currentValue: "default",
+                  },
+                ],
+              },
+            },
+            {
+              slug: "standard-model",
+              name: "Standard model",
+              isCustom: false,
+              capabilities: { optionDescriptors: [] },
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    const options = buildModelOptions(config, {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "standard-model",
+      options: [{ id: "serviceTier", value: "priority" }],
+    });
+
+    expect(
+      options.find((option) => option.selection.model === "fast-model")?.selection.options,
+    ).toEqual([{ id: "serviceTier", value: "default" }]);
+    expect(
+      options.find((option) => option.selection.model === "standard-model")?.selection.options,
+    ).toBeUndefined();
+  });
+
+  it("drops Fast when a persisted Codex model is no longer in the catalog", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "codex",
+          driver: "codex",
+          displayName: "Codex",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [{ slug: "current-model", name: "Current", capabilities: null }],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    const options = buildModelOptions(config, {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "removed-model",
+      options: [{ id: "serviceTier", value: "priority" }],
+    });
+
+    expect(
+      options.find((option) => option.selection.model === "removed-model")?.selection.options,
+    ).toBeUndefined();
   });
 });

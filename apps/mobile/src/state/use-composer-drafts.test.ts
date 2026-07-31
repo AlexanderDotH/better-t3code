@@ -34,7 +34,10 @@ describe("mobile composer drafts", () => {
             modelSelection: {
               instanceId: "codex",
               model: "gpt-5.4",
-              options: [{ id: "reasoningEffort", value: "xhigh" }],
+              options: [
+                { id: "reasoningEffort", value: "xhigh" },
+                { id: "serviceTier", value: "priority" },
+              ],
             },
             runtimeMode: "approval-required",
             interactionMode: "plan",
@@ -53,7 +56,10 @@ describe("mobile composer drafts", () => {
         modelSelection: {
           instanceId: "codex",
           model: "gpt-5.4",
-          options: [{ id: "reasoningEffort", value: "xhigh" }],
+          options: [
+            { id: "reasoningEffort", value: "xhigh" },
+            { id: "serviceTier", value: "priority" },
+          ],
         },
         runtimeMode: "approval-required",
         interactionMode: "plan",

@@ -1029,6 +1029,44 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       return [unsettledEvent, sessionSetEvent];
     }
 
+    case "thread.turn.abort.settle": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const abortState = thread.session?.abortState;
+      if (
+        thread.session === null ||
+        abortState == null ||
+        thread.session.runtimeSessionId !== command.runtimeSessionId ||
+        abortState.runtimeSessionId !== command.runtimeSessionId ||
+        abortState.targetTurnId !== command.turnId
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Abort settlement for thread '${command.threadId}' does not match its active runtime and turn.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.settledAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.turn-abort-settled",
+        payload: {
+          threadId: command.threadId,
+          runtimeSessionId: command.runtimeSessionId,
+          turnId: command.turnId,
+          outcome: command.outcome,
+          ...(command.detail !== undefined ? { detail: command.detail } : {}),
+          settledAt: command.settledAt,
+        },
+      };
+    }
+
     case "thread.message.assistant.delta": {
       yield* requireThread({
         readModel,

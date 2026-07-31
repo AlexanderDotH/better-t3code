@@ -10,6 +10,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  buildServerProvider,
   isCommandMissingCause,
   providerModelsFromSettings,
   spawnAndCollect,
@@ -69,6 +70,44 @@ describe("providerModelsFromSettings", () => {
 
     expect(models.map((model) => model.slug)).toEqual(["claude-opus-4-8", "opus"]);
     expect(models[1]?.isCustom).toBe(true);
+  });
+});
+
+describe("buildServerProvider", () => {
+  const buildSnapshot = (presentation: Parameters<typeof buildServerProvider>[0]["presentation"]) =>
+    buildServerProvider({
+      presentation,
+      enabled: true,
+      checkedAt: "2026-07-30T00:00:00.000Z",
+      models: [],
+      probe: {
+        installed: true,
+        version: "1.0.0",
+        status: "ready",
+        auth: { status: "authenticated" },
+      },
+    });
+
+  it("forwards advertised native subagent capabilities", () => {
+    const snapshot = buildSnapshot({
+      displayName: "Codex",
+      nativeSubagents: {
+        toolName: "spawn_agent",
+        maxRecommendedSubagents: 4,
+      },
+    });
+
+    expect(snapshot.nativeSubagents).toEqual({
+      toolName: "spawn_agent",
+      maxRecommendedSubagents: 4,
+    });
+  });
+
+  it("omits native subagent capabilities when the presentation does not advertise them", () => {
+    const snapshot = buildSnapshot({ displayName: "Unavailable provider" });
+
+    expect(snapshot.nativeSubagents).toBeUndefined();
+    expect(snapshot).not.toHaveProperty("nativeSubagents");
   });
 });
 

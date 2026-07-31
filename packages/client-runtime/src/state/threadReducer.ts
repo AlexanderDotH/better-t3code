@@ -208,24 +208,56 @@ export function applyThreadDetailEvent(
         },
       };
 
-    case "thread.turn-interrupt-requested": {
-      if (event.payload.turnId === undefined) {
-        return { kind: "unchanged" };
-      }
+    case "thread.turn-interrupt-requested":
+      // The request only starts cooperative cancellation. The turn remains
+      // running until the matching runtime reports an authoritative abort
+      // settlement, so partial transcript output can continue to arrive.
+      return { kind: "unchanged" };
+
+    case "thread.turn-abort-settled": {
+      const session = thread.session;
+      const abortState = session?.abortState;
       const latestTurn = thread.latestTurn;
-      if (latestTurn === null || latestTurn.turnId !== event.payload.turnId) {
+      if (
+        !session ||
+        !abortState ||
+        session.runtimeSessionId !== event.payload.runtimeSessionId ||
+        abortState.runtimeSessionId !== event.payload.runtimeSessionId ||
+        abortState.targetTurnId !== event.payload.turnId
+      ) {
         return { kind: "unchanged" };
       }
+
+      const cooperative = event.payload.outcome === "cooperative";
+      const failed = event.payload.outcome === "force-failed";
       return {
         kind: "updated",
         thread: {
           ...thread,
-          latestTurn: {
-            ...latestTurn,
-            state: "interrupted",
-            startedAt: latestTurn.startedAt ?? event.payload.createdAt,
-            completedAt: latestTurn.completedAt ?? event.payload.createdAt,
+          session: {
+            ...session,
+            status: cooperative ? "ready" : failed ? "error" : "stopped",
+            runtimeSessionId: cooperative ? session.runtimeSessionId : null,
+            activeTurnId: null,
+            abortState: null,
+            lastError:
+              event.payload.detail !== undefined
+                ? event.payload.detail
+                : failed
+                  ? "Provider force-stop failed."
+                  : session.lastError,
+            updatedAt: event.payload.settledAt,
           },
+          latestTurn:
+            event.payload.turnId !== null &&
+            latestTurn?.turnId === event.payload.turnId &&
+            latestTurn.state === "running"
+              ? {
+                  ...latestTurn,
+                  state: failed ? "error" : "interrupted",
+                  completedAt: event.payload.settledAt,
+                }
+              : latestTurn,
           updatedAt: event.occurredAt,
         },
       };
@@ -336,23 +368,31 @@ export function applyThreadDetailEvent(
     case "thread.session-set": {
       // Leaving the "running" session status is the turn-end signal: settle a
       // still-running latest turn so its duration reflects the whole turn.
-      const settledTurnState = settledTurnStateForSessionStatus(event.payload.session.status);
+      const session = event.payload.session;
+      const abortState = session.abortState;
+      const abortStillSettling =
+        abortState != null &&
+        session.runtimeSessionId != null &&
+        abortState.runtimeSessionId === session.runtimeSessionId;
+      const settledTurnState = abortStillSettling
+        ? null
+        : settledTurnStateForSessionStatus(session.status);
       const latestTurn: OrchestrationLatestTurn | null =
-        event.payload.session.status === "running" && event.payload.session.activeTurnId !== null
+        session.status === "running" && session.activeTurnId !== null
           ? {
-              turnId: event.payload.session.activeTurnId,
+              turnId: session.activeTurnId,
               state: "running",
               requestedAt:
-                thread.latestTurn?.turnId === event.payload.session.activeTurnId
+                thread.latestTurn?.turnId === session.activeTurnId
                   ? thread.latestTurn.requestedAt
-                  : event.payload.session.updatedAt,
+                  : session.updatedAt,
               startedAt:
-                thread.latestTurn?.turnId === event.payload.session.activeTurnId
-                  ? (thread.latestTurn.startedAt ?? event.payload.session.updatedAt)
-                  : event.payload.session.updatedAt,
+                thread.latestTurn?.turnId === session.activeTurnId
+                  ? (thread.latestTurn.startedAt ?? session.updatedAt)
+                  : session.updatedAt,
               completedAt: null,
               assistantMessageId:
-                thread.latestTurn?.turnId === event.payload.session.activeTurnId
+                thread.latestTurn?.turnId === session.activeTurnId
                   ? thread.latestTurn.assistantMessageId
                   : null,
             }
@@ -365,7 +405,7 @@ export function applyThreadDetailEvent(
                 // A running turn's completedAt can only hold a mid-turn
                 // placeholder checkpoint timestamp — the session leaving
                 // "running" is the authoritative turn end.
-                completedAt: event.payload.session.updatedAt,
+                completedAt: session.updatedAt,
               }
             : thread.latestTurn;
 
@@ -373,7 +413,7 @@ export function applyThreadDetailEvent(
         kind: "updated",
         thread: {
           ...thread,
-          session: event.payload.session,
+          session,
           latestTurn,
           updatedAt: event.occurredAt,
         },
