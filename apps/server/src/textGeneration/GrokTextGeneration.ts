@@ -15,6 +15,7 @@ import * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildPlanParallelismReviewPrompt,
   buildPromptImprovementPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
@@ -56,7 +57,8 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       | "generateBranchName"
       | "generateThreadTitle"
       | "translateTranscriptToEnglish"
-      | "improvePrompt";
+      | "improvePrompt"
+      | "reviewPlanParallelism";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -284,6 +286,20 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
     return { text: generated.text.trim() };
   });
 
+  const reviewPlanParallelism: TextGeneration.TextGeneration["Service"]["reviewPlanParallelism"] =
+    Effect.fn("GrokTextGeneration.reviewPlanParallelism")(function* (input) {
+      const { prompt, outputSchema } = buildPlanParallelismReviewPrompt(input);
+      const generated = yield* runGrokJson({
+        operation: "reviewPlanParallelism",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return { recommendedSubagents: generated.recommendedSubagents };
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
@@ -291,5 +307,6 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
     generateThreadTitle,
     translateTranscriptToEnglish,
     improvePrompt,
+    reviewPlanParallelism,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

@@ -39,6 +39,10 @@
       "types": "./src/modelOptions.ts",
       "default": "./src/modelOptions.ts"
     },
+    "./reasoning-recommendation": {
+      "types": "./src/reasoningRecommendation.ts",
+      "default": "./src/reasoningRecommendation.ts"
+    },
     "./platform": {
       "types": "./src/platform/index.ts",
       "default": "./src/platform/index.ts"

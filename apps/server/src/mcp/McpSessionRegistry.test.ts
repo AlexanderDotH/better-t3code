@@ -1,6 +1,17 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  CLAUDE_DRIVER_KIND,
+  CODEX_DRIVER_KIND,
+  CURSOR_DRIVER_KIND,
+  EnvironmentId,
+  GEMINI_DRIVER_KIND,
+  GROK_DRIVER_KIND,
+  HYPERAGENT_DRIVER_KIND,
+  OPENCODE_DRIVER_KIND,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/unstable/http";
 
@@ -39,8 +50,9 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
     const issued = yield* registry.issue({
       threadId,
       providerInstanceId: ProviderInstanceId.make("codex"),
+      provider: CODEX_DRIVER_KIND,
     });
-    expect(issued.config.endpoint).toBe("http://127.0.0.1:43123/mcp");
+    expect(issued.config.endpoint).toBe("http://127.0.0.1:43123/mcp/workspace");
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
     expect(token.length).toBeGreaterThan(20);
 
@@ -67,7 +79,8 @@ it.effect("builds MCP endpoints from the bound server host", () =>
       const registry = yield* makeRegistry(() => 1_000, makeFakeHttpServer(hostname));
       const issued = yield* registry.issue({
         threadId: ThreadId.make(`thread-${hostname}`),
-        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("grok"),
+        provider: GROK_DRIVER_KIND,
       });
       expect(issued.config.endpoint).toBe(expectedEndpoint);
     }
@@ -81,6 +94,7 @@ it.effect("expires credentials once their session stops showing signs of life", 
     const issued = yield* registry.issue({
       threadId: ThreadId.make("thread-2"),
       providerInstanceId: ProviderInstanceId.make("claude"),
+      provider: CLAUDE_DRIVER_KIND,
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
     timestamp += 101;
@@ -96,6 +110,7 @@ it.effect("keeps a credential alive across turns that never touch an MCP tool", 
     const issued = yield* registry.issue({
       threadId,
       providerInstanceId: ProviderInstanceId.make("claude"),
+      provider: CLAUDE_DRIVER_KIND,
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
 
@@ -117,6 +132,7 @@ it.effect("does not keep credentials of other threads alive", () =>
     const issued = yield* registry.issue({
       threadId: ThreadId.make("thread-4"),
       providerInstanceId: ProviderInstanceId.make("codex"),
+      provider: CODEX_DRIVER_KIND,
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
 
@@ -125,5 +141,38 @@ it.effect("does not keep credentials of other threads alive", () =>
     timestamp += 2;
 
     expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
+it.effect("issues workspace credentials only to MCP-capable coding providers", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const cases = [
+      [CODEX_DRIVER_KIND, "workspace"],
+      [CLAUDE_DRIVER_KIND, "workspace"],
+      [CURSOR_DRIVER_KIND, "workspace"],
+      [OPENCODE_DRIVER_KIND, "workspace"],
+      [GROK_DRIVER_KIND, "preview"],
+      [GEMINI_DRIVER_KIND, "preview"],
+      [HYPERAGENT_DRIVER_KIND, "preview"],
+    ] as const;
+
+    for (const [provider, expectedProfile] of cases) {
+      const issued = yield* registry.issue({
+        threadId: ThreadId.make(`thread-${provider}`),
+        providerInstanceId: ProviderInstanceId.make(`instance-${provider}`),
+        provider,
+      });
+      const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+      const resolved = yield* registry.resolve(token);
+
+      expect(
+        issued.config.endpoint.endsWith(
+          expectedProfile === "workspace" ? "/mcp/workspace" : "/mcp",
+        ),
+      ).toBe(true);
+      expect(resolved?.capabilities.has("preview")).toBe(true);
+      expect(resolved?.capabilities.has("workspace")).toBe(expectedProfile === "workspace");
+    }
   }),
 );

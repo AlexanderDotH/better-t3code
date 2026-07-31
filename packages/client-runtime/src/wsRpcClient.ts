@@ -180,6 +180,9 @@ export interface WsRpcClient {
   readonly prompt: {
     readonly improve: RpcUnaryMethod<typeof WS_METHODS.promptImprove>;
   };
+  readonly plan: {
+    readonly reviewParallelism: RpcUnaryMethod<typeof WS_METHODS.planReviewParallelism>;
+  };
   readonly cloud: {
     readonly getRelayClientStatus: RpcUnaryNoArgMethod<typeof WS_METHODS.cloudGetRelayClientStatus>;
     readonly installRelayClient: (
@@ -418,6 +421,10 @@ export function createWsRpcClient(
     },
     prompt: {
       improve: (input) => transport.request((client) => client[WS_METHODS.promptImprove](input)),
+    },
+    plan: {
+      reviewParallelism: (input) =>
+        transport.request((client) => client[WS_METHODS.planReviewParallelism](input)),
     },
     cloud: {
       getRelayClientStatus: () =>

@@ -69,6 +69,11 @@ import {
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  PlanParallelismReviewError,
+  PlanParallelismReviewInput,
+  PlanParallelismReviewResult,
+} from "./planParallelismReview.ts";
+import {
   RelayClientInstallFailedError,
   RelayClientInstallProgressEventSchema,
   RelayClientStatusSchema,
@@ -289,6 +294,7 @@ export const WS_METHODS = {
   speechCreateBasicProjectProfile: "speech.createBasicProjectProfile",
   speechTranslateTranscript: "speech.translateTranscript",
   promptImprove: "prompt.improve",
+  planReviewParallelism: "plan.reviewParallelism",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
@@ -470,6 +476,12 @@ export const WsPromptImproveRpc = Rpc.make(WS_METHODS.promptImprove, {
   payload: ImprovePromptInput,
   success: ProjectTextTransformResult,
   error: Schema.Union([ProjectTextTransformError, EnvironmentAuthorizationError]),
+});
+
+export const WsPlanReviewParallelismRpc = Rpc.make(WS_METHODS.planReviewParallelism, {
+  payload: PlanParallelismReviewInput,
+  success: PlanParallelismReviewResult,
+  error: Schema.Union([PlanParallelismReviewError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
@@ -1074,6 +1086,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpeechCreateBasicProjectProfileRpc,
   WsSpeechTranslateTranscriptRpc,
   WsPromptImproveRpc,
+  WsPlanReviewParallelismRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,

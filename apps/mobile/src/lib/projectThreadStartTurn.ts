@@ -8,7 +8,8 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 
-import { toUploadChatImageAttachments, type DraftComposerImageAttachment } from "./composerImages";
+import type { DraftComposerImageAttachment } from "./composerImages";
+import { toUploadChatImageAttachments } from "./composerImageUploads";
 
 export function deriveThreadTitleFromPrompt(value: string): string {
   const trimmed = value.trim();
@@ -29,7 +30,8 @@ export interface ProjectThreadStartTurnSpec {
   readonly createdAt: string;
   readonly text: string;
   readonly attachments: ReadonlyArray<DraftComposerImageAttachment>;
-  readonly modelSelection: ModelSelection;
+  readonly durableModelSelection: ModelSelection;
+  readonly turnModelSelection?: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceMode: "local" | "worktree";
@@ -57,7 +59,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
       text: spec.text,
       attachments: toUploadChatImageAttachments(spec.attachments),
     },
-    modelSelection: spec.modelSelection,
+    modelSelection: spec.turnModelSelection ?? spec.durableModelSelection,
     titleSeed: title,
     runtimeMode: spec.runtimeMode,
     interactionMode: spec.interactionMode,
@@ -65,7 +67,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
       createThread: {
         projectId: spec.projectId,
         title,
-        modelSelection: spec.modelSelection,
+        modelSelection: spec.durableModelSelection,
         runtimeMode: spec.runtimeMode,
         interactionMode: spec.interactionMode,
         branch: spec.branch,

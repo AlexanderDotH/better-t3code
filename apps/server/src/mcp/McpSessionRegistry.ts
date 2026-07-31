@@ -1,4 +1,12 @@
-import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  CLAUDE_DRIVER_KIND,
+  CODEX_DRIVER_KIND,
+  CURSOR_DRIVER_KIND,
+  OPENCODE_DRIVER_KIND,
+  ProviderInstanceId,
+  ThreadId,
+  type ProviderDriverKind,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -14,6 +22,7 @@ import * as McpProviderSession from "./McpProviderSession.ts";
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
+  readonly provider: ProviderDriverKind;
 }
 
 export interface McpIssuedCredential {
@@ -66,11 +75,22 @@ export interface McpSessionRegistryOptions {
  * credentials whose session died without a clean stop — the normal paths
  * (`stopSession`, `stopAll`) revoke eagerly and do not wait for it.
  *
- * The bound matters because `/mcp` is mounted outside the environment auth
- * stack and is reachable on whatever host the server binds to, so this token is
- * the only thing guarding the preview toolkit on a remote-reachable server.
+ * The bound matters because the provider-scoped MCP endpoints are mounted
+ * outside the environment auth stack and are reachable on whatever host the
+ * server binds to. This token is the only thing guarding those toolkits on a
+ * remote-reachable server.
  */
 const DEFAULT_LIVENESS_WINDOW_MS = 24 * 60 * 60 * 1_000;
+
+const WORKSPACE_CONTEXT_PROVIDERS = new Set<ProviderDriverKind>([
+  CODEX_DRIVER_KIND,
+  CLAUDE_DRIVER_KIND,
+  CURSOR_DRIVER_KIND,
+  OPENCODE_DRIVER_KIND,
+]);
+
+const supportsWorkspaceContext = (provider: ProviderDriverKind): boolean =>
+  WORKSPACE_CONTEXT_PROVIDERS.has(provider);
 
 const bytesToHex = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -98,10 +118,10 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const state = yield* SynchronizedRef.make<RegistryState>({ records: new Map() });
   const currentTimeMillis = options.now ? Effect.sync(options.now) : Clock.currentTimeMillis;
   const livenessWindowMs = options.livenessWindowMs ?? DEFAULT_LIVENESS_WINDOW_MS;
-  const endpoint =
+  const endpointBase =
     httpServer.address._tag === "TcpAddress"
-      ? `http://${getHttpMcpEndpointHost(httpServer.address.hostname)}:${httpServer.address.port}/mcp`
-      : "http://127.0.0.1/mcp";
+      ? `http://${getHttpMcpEndpointHost(httpServer.address.hostname)}:${httpServer.address.port}`
+      : "http://127.0.0.1";
 
   const hashToken = (token: string) =>
     crypto
@@ -120,6 +140,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const issue: McpSessionRegistryShape["issue"] = Effect.fn("McpSessionRegistry.issue")(
     function* (request) {
       const issuedAt = yield* currentTimeMillis;
+      const workspaceContextEnabled = supportsWorkspaceContext(request.provider);
       const providerSessionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
@@ -128,7 +149,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         threadId: ThreadId.make(request.threadId),
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
-        capabilities: new Set(["preview"]),
+        capabilities: workspaceContextEnabled
+          ? new Set(["preview", "workspace"])
+          : new Set(["preview"]),
         issuedAt,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
@@ -142,7 +165,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           threadId: scope.threadId,
           providerSessionId,
           providerInstanceId: scope.providerInstanceId,
-          endpoint,
+          endpoint: `${endpointBase}${workspaceContextEnabled ? "/mcp/workspace" : "/mcp"}`,
           authorizationHeader: `Bearer ${rawToken}`,
         },
       };

@@ -1,9 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { it, describe, expect } from "@effect/vitest";
+import { FileFinder } from "@ff-labs/fff-node";
+import { afterEach, it, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -52,6 +54,10 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
 });
 
 it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (it) => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   describe("readFile", () => {
     it.effect("reads UTF-8 files relative to the workspace root", () =>
       Effect.gen(function* () {
@@ -235,6 +241,26 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           expect.arrayContaining([expect.objectContaining({ path: "plans/effect-rpc.md" })]),
         );
         expect(afterWrite.truncated).toBe(false);
+      }),
+    );
+
+    it.effect("writes without starting an eager workspace index scan", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/existing.ts", "export {};\n");
+        yield* workspaceEntries.list({ cwd });
+
+        const scanSpy = vi.spyOn(FileFinder.prototype, "scanFiles");
+        const result = yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "src/added.ts",
+          contents: "export {};\n",
+        });
+
+        expect(result).toEqual({ relativePath: "src/added.ts" });
+        expect(scanSpy).not.toHaveBeenCalled();
       }),
     );
 

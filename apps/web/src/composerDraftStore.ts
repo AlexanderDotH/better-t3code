@@ -26,6 +26,7 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { toStickyModelSelection } from "@t3tools/client-runtime/model-options";
+import type { ReasoningRecommendationState } from "@t3tools/client-runtime/reasoning-recommendation";
 import * as Schema from "effect/Schema";
 import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
@@ -148,6 +149,23 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   activeProvider: Schema.optionalKey(Schema.NullOr(ProviderInstanceId)),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
+  reasoningRecommendation: Schema.optionalKey(
+    Schema.Struct({
+      handledEvidenceTurnId: Schema.optionalKey(Schema.String),
+      pendingOverride: Schema.optionalKey(
+        Schema.Struct({
+          evidenceTurnId: Schema.String,
+          instanceId: Schema.String,
+          model: Schema.String,
+          optionId: Schema.String,
+          fromValue: Schema.String,
+          fromLabel: Schema.String,
+          targetValue: Schema.String,
+          targetLabel: Schema.String,
+        }),
+      ),
+    }),
+  ),
 });
 type PersistedComposerThreadDraftState = typeof PersistedComposerThreadDraftState.Type;
 
@@ -276,6 +294,7 @@ export interface ComposerThreadDraftState {
   activeProvider: ProviderInstanceId | null;
   runtimeMode: RuntimeMode | null;
   interactionMode: ProviderInteractionMode | null;
+  reasoningRecommendation?: ReasoningRecommendationState;
 }
 
 /**
@@ -443,6 +462,10 @@ interface ComposerDraftStoreState {
   setInteractionMode: (
     threadRef: ComposerThreadTarget,
     interactionMode: ProviderInteractionMode | null | undefined,
+  ) => void;
+  setReasoningRecommendation: (
+    threadRef: ComposerThreadTarget,
+    state: ReasoningRecommendationState | null | undefined,
   ) => void;
   addImage: (threadRef: ComposerThreadTarget, image: ComposerImageAttachment) => void;
   addImages: (threadRef: ComposerThreadTarget, images: ComposerImageAttachment[]) => void;
@@ -721,7 +744,8 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     Object.keys(draft.modelSelectionByProvider).length === 0 &&
     draft.activeProvider === null &&
     draft.runtimeMode === null &&
-    draft.interactionMode === null
+    draft.interactionMode === null &&
+    draft.reasoningRecommendation === undefined
   );
 }
 
@@ -1707,6 +1731,7 @@ function normalizePersistedDraftsByThreadId(
       draftCandidate.interactionMode === "plan" || draftCandidate.interactionMode === "default"
         ? draftCandidate.interactionMode
         : null;
+    const reasoningRecommendation = draftCandidate.reasoningRecommendation;
     const prompt = ensureInlineTerminalContextPlaceholders(
       promptCandidate,
       terminalContexts.length,
@@ -1767,7 +1792,8 @@ function normalizePersistedDraftsByThreadId(
       reviewComments.length === 0 &&
       !hasModelData &&
       !runtimeMode &&
-      !interactionMode
+      !interactionMode &&
+      reasoningRecommendation === undefined
     ) {
       continue;
     }
@@ -1797,6 +1823,7 @@ function normalizePersistedDraftsByThreadId(
         : {}),
       ...(runtimeMode ? { runtimeMode } : {}),
       ...(interactionMode ? { interactionMode } : {}),
+      ...(reasoningRecommendation ? { reasoningRecommendation } : {}),
     };
   }
 
@@ -1878,7 +1905,8 @@ function partializeComposerDraftStoreState(
       draft.reviewComments.length === 0 &&
       !hasModelData &&
       draft.runtimeMode === null &&
-      draft.interactionMode === null
+      draft.interactionMode === null &&
+      draft.reasoningRecommendation === undefined
     ) {
       continue;
     }
@@ -1937,6 +1965,9 @@ function partializeComposerDraftStoreState(
         : {}),
       ...(draft.runtimeMode ? { runtimeMode: draft.runtimeMode } : {}),
       ...(draft.interactionMode ? { interactionMode: draft.interactionMode } : {}),
+      ...(draft.reasoningRecommendation
+        ? { reasoningRecommendation: draft.reasoningRecommendation }
+        : {}),
     };
     persistedDraftsByThreadKey[threadKey] = persistedDraft;
   }
@@ -2176,6 +2207,9 @@ function toHydratedThreadDraft(
     activeProvider,
     runtimeMode: persistedDraft.runtimeMode ?? null,
     interactionMode: persistedDraft.interactionMode ?? null,
+    ...(persistedDraft.reasoningRecommendation
+      ? { reasoningRecommendation: persistedDraft.reasoningRecommendation }
+      : {}),
   };
 }
 
@@ -2868,6 +2902,33 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               ...base,
               interactionMode: nextInteractionMode,
             };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        setReasoningRecommendation: (threadRef, reasoningRecommendation) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) {
+            return;
+          }
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey];
+            if (!existing && !reasoningRecommendation) {
+              return state;
+            }
+            const base = existing ?? createEmptyThreadDraft();
+            const nextDraft: ComposerThreadDraftState = (() => {
+              if (reasoningRecommendation) {
+                return { ...base, reasoningRecommendation };
+              }
+              const { reasoningRecommendation: _, ...withoutRecommendation } = base;
+              return withoutRecommendation;
+            })();
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
               delete nextDraftsByThreadKey[threadKey];

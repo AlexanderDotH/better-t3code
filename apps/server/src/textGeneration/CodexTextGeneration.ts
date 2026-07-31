@@ -20,6 +20,7 @@ import * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildPlanParallelismReviewPrompt,
   buildPromptImprovementPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
@@ -103,7 +104,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateBranchName"
       | "generateThreadTitle"
       | "translateTranscriptToEnglish"
-      | "improvePrompt",
+      | "improvePrompt"
+      | "reviewPlanParallelism",
     value: unknown,
   ): Effect.Effect<string, TextGenerationError> =>
     encodeJsonString(value).pipe(
@@ -124,7 +126,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateBranchName"
       | "generateThreadTitle"
       | "translateTranscriptToEnglish"
-      | "improvePrompt",
+      | "improvePrompt"
+      | "reviewPlanParallelism",
     attachments: TextGeneration.BranchNameGenerationInput["attachments"],
   ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> {
     if (!attachments || attachments.length === 0) {
@@ -168,7 +171,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateBranchName"
       | "generateThreadTitle"
       | "translateTranscriptToEnglish"
-      | "improvePrompt";
+      | "improvePrompt"
+      | "reviewPlanParallelism";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -439,6 +443,20 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     return { text: generated.text.trim() };
   });
 
+  const reviewPlanParallelism: TextGeneration.TextGeneration["Service"]["reviewPlanParallelism"] =
+    Effect.fn("CodexTextGeneration.reviewPlanParallelism")(function* (input) {
+      const { prompt, outputSchema } = buildPlanParallelismReviewPrompt(input);
+      const generated = yield* runCodexJson({
+        operation: "reviewPlanParallelism",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return { recommendedSubagents: generated.recommendedSubagents };
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
@@ -446,5 +464,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     generateThreadTitle,
     translateTranscriptToEnglish,
     improvePrompt,
+    reviewPlanParallelism,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

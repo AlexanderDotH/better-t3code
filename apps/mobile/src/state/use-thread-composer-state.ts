@@ -11,6 +11,12 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import {
+  consumeReasoningRecommendationOverride,
+  reconcileReasoningRecommendationState,
+  resolveReasoningTurnModelSelection,
+  type ReasoningRecommendationState,
+} from "@t3tools/client-runtime/reasoning-recommendation";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
@@ -103,6 +109,7 @@ export function useThreadComposerState() {
   const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   const interactionMode = selectedDraft?.interactionMode ?? selectedThread?.interactionMode ?? null;
+  const reasoningRecommendationState = selectedDraft?.reasoningRecommendation ?? null;
 
   const selectedThreadSessionActivity = useMemo(() => {
     const selectedThread = selectedThreadDetail ?? selectedThreadShell;
@@ -154,6 +161,14 @@ export function useThreadComposerState() {
     // the tap frame instead of after file I/O. If the write fails the message
     // is rolled out of the queue and the content is merged back into the
     // draft, preserving anything typed since.
+    const durableModelSelection = draft.modelSelection ?? thread.modelSelection;
+    const reasoningTurnSelection = resolveReasoningTurnModelSelection(
+      durableModelSelection,
+      draft.reasoningRecommendation?.pendingOverride,
+    );
+    const consumedPendingOverride = reasoningTurnSelection.applied
+      ? draft.reasoningRecommendation?.pendingOverride
+      : undefined;
     const enqueuePromise = enqueueThreadOutboxMessage({
       environmentId: selectedThreadShell.environmentId,
       threadId: selectedThreadShell.id,
@@ -161,12 +176,31 @@ export function useThreadComposerState() {
       commandId: CommandId.make(metadata.commandId),
       text,
       attachments,
-      modelSelection: draft.modelSelection ?? thread.modelSelection,
+      modelSelection: durableModelSelection,
+      ...(reasoningTurnSelection.applied
+        ? { turnModelSelection: reasoningTurnSelection.turnModelSelection }
+        : {}),
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
       interactionMode: draft.interactionMode ?? thread.interactionMode,
       createdAt: metadata.createdAt,
     });
     clearComposerDraftContent(threadKey);
+    void enqueuePromise.then(
+      () => {
+        if (!consumedPendingOverride) {
+          return;
+        }
+        const current = getComposerDraftSnapshot(threadKey).reasoningRecommendation;
+        if (!current) {
+          return;
+        }
+        const next = consumeReasoningRecommendationOverride(current, consumedPendingOverride);
+        if (next !== current) {
+          updateComposerDraftSettings(threadKey, { reasoningRecommendation: next });
+        }
+      },
+      () => undefined,
+    );
     enqueuePromise.catch((error: unknown) => {
       // Restore text via merge (idempotent) but attachments via the uncapped
       // append: the merge path slots existing attachments first and truncates
@@ -274,7 +308,22 @@ export function useThreadComposerState() {
       if (!selectedThreadKey) {
         return;
       }
-      updateComposerDraftSettings(selectedThreadKey, { modelSelection: value });
+      const current = getComposerDraftSnapshot(selectedThreadKey).reasoningRecommendation;
+      const reconciled = reconcileReasoningRecommendationState(current, value);
+      updateComposerDraftSettings(selectedThreadKey, {
+        modelSelection: value,
+        ...(reconciled && reconciled !== current ? { reasoningRecommendation: reconciled } : {}),
+      });
+    },
+    [selectedThreadKey],
+  );
+
+  const onSetReasoningRecommendation = useCallback(
+    (value: ReasoningRecommendationState) => {
+      if (!selectedThreadKey) {
+        return;
+      }
+      updateComposerDraftSettings(selectedThreadKey, { reasoningRecommendation: value });
     },
     [selectedThreadKey],
   );
@@ -308,6 +357,7 @@ export function useThreadComposerState() {
     modelSelection,
     runtimeMode,
     interactionMode,
+    reasoningRecommendationState,
     activeThreadBusy,
     onChangeDraftMessage,
     onPickDraftImages,
@@ -318,5 +368,6 @@ export function useThreadComposerState() {
     onUpdateModelSelection,
     onUpdateRuntimeMode,
     onUpdateInteractionMode,
+    onSetReasoningRecommendation,
   };
 }

@@ -1280,7 +1280,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           title="Assistant output"
-          description="Show token-by-token output while a response is in progress."
+          description="Stream assistant text as it arrives. On web and desktop, new characters use a subtle reveal that adapts to the current output speed."
           resetAction={
             settings.enableAssistantStreaming !==
             DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming ? (

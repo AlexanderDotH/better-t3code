@@ -97,10 +97,22 @@ export function parsePersistedServerObservabilitySettings(
   return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined };
 }
 
-function shouldReplaceTextGenerationModelSelection(
-  patch: ServerSettingsPatch["textGenerationModelSelection"] | undefined,
-): boolean {
+type ModelSelectionPatch = NonNullable<ServerSettingsPatch["textGenerationModelSelection"]>;
+
+function shouldReplaceModelSelection(patch: ModelSelectionPatch | undefined): boolean {
   return Boolean(patch && (patch.instanceId !== undefined || patch.model !== undefined));
+}
+
+function applyModelSelectionPatch(
+  current: ModelSelection,
+  patch: ModelSelectionPatch,
+): ModelSelection {
+  const instanceId = patch.instanceId ?? current.instanceId;
+  const model = patch.model ?? current.model;
+  const options = shouldReplaceModelSelection(patch)
+    ? patch.options
+    : mergeModelSelectionOptionsById({ current: current.options, patch: patch.options });
+  return createModelSelection(instanceId, model, options);
 }
 
 function mergeModelSelectionOptionsById(input: {
@@ -125,12 +137,15 @@ export function applyServerSettingsPatch(
   current: ServerSettings,
   patch: ServerSettingsPatch,
 ): ServerSettings {
-  const selectionPatch = patch.textGenerationModelSelection;
+  const textGenerationSelectionPatch = patch.textGenerationModelSelection;
+  const parallelPlanReviewSelectionPatch = patch.parallelPlanReviewModelSelection;
   const {
     automaticGitFetchInterval,
     providerHealthRefreshInterval,
     backgroundActivityProfile,
     backgroundActivity,
+    textGenerationModelSelection: _textGenerationModelSelection,
+    parallelPlanReviewModelSelection: _parallelPlanReviewModelSelection,
     ...patchForMerge
   } = patch;
   const currentBackgroundActivity = normalizeServerBackgroundActivitySettings(current);
@@ -212,21 +227,23 @@ export function applyServerSettingsPatch(
     providerHealthRefreshInterval: resolvedBackgroundActivity.providerHealthRefreshInterval,
     backgroundActivityProfile: resolvedBackgroundActivity.profile,
   };
-  if (!selectionPatch) {
-    return nextWithReplacements;
-  }
-
-  const instanceId = selectionPatch.instanceId ?? current.textGenerationModelSelection.instanceId;
-  const model = selectionPatch.model ?? current.textGenerationModelSelection.model;
-  const options = shouldReplaceTextGenerationModelSelection(selectionPatch)
-    ? selectionPatch.options
-    : mergeModelSelectionOptionsById({
-        current: current.textGenerationModelSelection.options,
-        patch: selectionPatch.options,
-      });
-
   return {
     ...nextWithReplacements,
-    textGenerationModelSelection: createModelSelection(instanceId, model, options),
+    ...(textGenerationSelectionPatch !== undefined
+      ? {
+          textGenerationModelSelection: applyModelSelectionPatch(
+            current.textGenerationModelSelection,
+            textGenerationSelectionPatch,
+          ),
+        }
+      : {}),
+    ...(parallelPlanReviewSelectionPatch !== undefined
+      ? {
+          parallelPlanReviewModelSelection: applyModelSelectionPatch(
+            current.parallelPlanReviewModelSelection,
+            parallelPlanReviewSelectionPatch,
+          ),
+        }
+      : {}),
   };
 }

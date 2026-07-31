@@ -145,6 +145,25 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
     ),
   );
 
+  it.effect("reviews plan parallelism through Grok ACP", () =>
+    withFakeAcpGrok(
+      {
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({ recommendedSubagents: 4 }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.reviewPlanParallelism({
+            cwd: process.cwd(),
+            planMarkdown: "## Tests\nCover the reviewer flow.",
+            maxSubagents: 8,
+            modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-mock-alt"),
+          });
+
+          expect(generated).toEqual({ recommendedSubagents: 4 });
+        }),
+    ),
+  );
+
   it.effect("surfaces ACP request failures as text generation errors", () =>
     withFakeAcpGrok(
       {

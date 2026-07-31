@@ -11,6 +11,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { toStickyModelSelection } from "@t3tools/client-runtime/model-options";
+import type { ReasoningRecommendationState } from "@t3tools/client-runtime/reasoning-recommendation";
 import * as Schema from "effect/Schema";
 import { useEffect } from "react";
 import { Atom } from "effect/unstable/reactivity";
@@ -47,6 +48,7 @@ export interface ComposerDraft {
   readonly runtimeMode?: RuntimeMode;
   readonly interactionMode?: ProviderInteractionMode;
   readonly workspaceSelection?: ComposerDraftWorkspaceSelection;
+  readonly reasoningRecommendation?: ReasoningRecommendationState;
 }
 
 export interface ComposerDraftContent {
@@ -64,7 +66,11 @@ export interface ComposerDraftWorkspaceSelection {
 
 export type ComposerDraftSettingsUpdate = Pick<
   ComposerDraft,
-  "modelSelection" | "runtimeMode" | "interactionMode" | "workspaceSelection"
+  | "modelSelection"
+  | "runtimeMode"
+  | "interactionMode"
+  | "workspaceSelection"
+  | "reasoningRecommendation"
 >;
 
 const ComposerDraftWorkspaceSelectionSchema = Schema.Struct({
@@ -82,6 +88,23 @@ const ComposerDraftSchema = Schema.Struct({
   runtimeMode: Schema.optional(RuntimeModeSchema),
   interactionMode: Schema.optional(ProviderInteractionModeSchema),
   workspaceSelection: Schema.optional(ComposerDraftWorkspaceSelectionSchema),
+  reasoningRecommendation: Schema.optional(
+    Schema.Struct({
+      handledEvidenceTurnId: Schema.optional(Schema.String),
+      pendingOverride: Schema.optional(
+        Schema.Struct({
+          evidenceTurnId: Schema.String,
+          instanceId: Schema.String,
+          model: Schema.String,
+          optionId: Schema.String,
+          fromValue: Schema.String,
+          fromLabel: Schema.String,
+          targetValue: Schema.String,
+          targetLabel: Schema.String,
+        }),
+      ),
+    }),
+  ),
 });
 
 const PersistedComposerDraftsSchema = Schema.Struct({
@@ -133,7 +156,8 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
     draft.modelSelection === undefined &&
     draft.runtimeMode === undefined &&
     draft.interactionMode === undefined &&
-    draft.workspaceSelection === undefined
+    draft.workspaceSelection === undefined &&
+    draft.reasoningRecommendation === undefined
   );
 }
 

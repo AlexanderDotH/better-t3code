@@ -1,4 +1,4 @@
-import type { EnvironmentId, EnvironmentApi } from "@t3tools/contracts";
+import type { EnvironmentApi, EnvironmentId, PlanParallelismReviewInput } from "@t3tools/contracts";
 
 import * as Cause from "effect/Cause";
 import { runAtomCommand, type AtomCommand } from "@t3tools/client-runtime/state/runtime";
@@ -92,6 +92,9 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       getArchivedShellSnapshot: client.orchestration.getArchivedShellSnapshot,
       subscribeShell: client.orchestration.subscribeShell,
       subscribeThread: client.orchestration.subscribeThread,
+    },
+    plan: {
+      reviewParallelism: client.plan.reviewParallelism,
     },
     preview: client.preview,
   } as unknown as EnvironmentApi;
@@ -226,6 +229,13 @@ function createRuntimeEnvironmentApi(environmentId: EnvironmentId): EnvironmentA
           input,
         }),
     },
+    plan: {
+      reviewParallelism: (input: PlanParallelismReviewInput) =>
+        runEnvironmentCommand(serverEnvironment.reviewPlanParallelism, {
+          environmentId,
+          input,
+        }),
+    },
   } as unknown as EnvironmentApi;
 }
 
@@ -316,6 +326,16 @@ export function improvePromptForEnvironment(
   input: import("@t3tools/contracts").ImprovePromptInput,
 ) {
   return runEnvironmentCommand(serverEnvironment.improvePrompt, {
+    environmentId,
+    input,
+  });
+}
+
+export function reviewPlanParallelismForEnvironment(
+  environmentId: EnvironmentId,
+  input: PlanParallelismReviewInput,
+) {
+  return runEnvironmentCommand(serverEnvironment.reviewPlanParallelism, {
     environmentId,
     input,
   });

@@ -220,6 +220,10 @@ export function mergeEnvironmentSettings(
       ...DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
       ...serverSettings.textGenerationModelSelection,
     },
+    parallelPlanReviewModelSelection: {
+      ...DEFAULT_SERVER_SETTINGS.parallelPlanReviewModelSelection,
+      ...serverSettings.parallelPlanReviewModelSelection,
+    },
     sourceControlWritingStyle: {
       ...DEFAULT_SERVER_SETTINGS.sourceControlWritingStyle,
       ...sourceControlWritingStyle,

@@ -421,6 +421,27 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
+  it.effect("reviews plan parallelism through Codex structured output", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ recommendedSubagents: 7 }),
+        stdinMustContain: "between 2 and 12",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.reviewPlanParallelism({
+            cwd: process.cwd(),
+            planMarkdown: "## Server\nImplement the RPC.\n\n## Web\nAdd the review state.",
+            userRequest: "Implement the complete plan.",
+            maxSubagents: 12,
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+
+          expect(generated).toEqual({ recommendedSubagents: 7 });
+        }),
+    ),
+  );
+
   it.effect("falls back when thread title normalization becomes whitespace-only", () =>
     withFakeCodexEnv(
       {

@@ -50,6 +50,7 @@ import {
   resolvePlanImplementationSuggestion,
   type PlanImplementationStrategy,
   type PlanImplementationSuggestion,
+  type PlanParallelismReviewStatus,
 } from "../../planImplementation";
 import {
   deriveComposerSendState,
@@ -205,7 +206,11 @@ import {
   sortProviderInstanceEntries,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
-import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
+import {
+  type AppModelOption,
+  getAppModelOptionsForInstance,
+  resolveParallelPlanReviewModelSelectionState,
+} from "../../modelSelection";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
@@ -219,6 +224,7 @@ import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 import { useAssemblyAiDictation } from "../../hooks/useAssemblyAiDictation";
+import { usePlanParallelismReview } from "../../hooks/usePlanParallelismReview";
 import {
   createAssemblyAiStreamingTokenForEnvironment,
   translateSpeechTranscriptForEnvironment,
@@ -446,6 +452,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   planImplementationSuggestion: PlanImplementationSuggestion | null;
+  planParallelismReviewStatus: PlanParallelismReviewStatus;
   onImplementPlan: (strategy: PlanImplementationStrategy) => void;
   onImplementPlanInNewThread: (strategy: PlanImplementationStrategy) => void;
 }) {
@@ -477,6 +484,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
         planImplementationSuggestion={props.planImplementationSuggestion}
+        planParallelismReviewStatus={props.planParallelismReviewStatus}
         onImplementPlan={props.onImplementPlan}
         onImplementPlanInNewThread={props.onImplementPlanInNewThread}
       />
@@ -911,6 +919,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => selectedProviderEntry?.models ?? [],
     [selectedProviderEntry],
   );
+  const planReviewerSelection = useMemo(
+    () => resolveParallelPlanReviewModelSelectionState(settings, providerStatuses),
+    [providerStatuses, settings],
+  );
+  const planReviewerProviderStatus = useMemo(
+    () =>
+      providerStatuses.find(
+        (provider) => provider.instanceId === planReviewerSelection.instanceId,
+      ) ?? null,
+    [planReviewerSelection.instanceId, providerStatuses],
+  );
+  const planParallelismReview = usePlanParallelismReview({
+    enabled:
+      settings.experimentalParallelPlanImplementation &&
+      showPlanFollowUpPrompt &&
+      environmentUnavailable === null,
+    environmentId,
+    threadId: activeThreadId,
+    plan: activeProposedPlan,
+    implementationProvider: selectedProviderStatus,
+    reviewerProvider: planReviewerProviderStatus,
+    reviewerSelection: planReviewerSelection,
+  });
   const planImplementationSuggestion = useMemo(
     () =>
       activeProposedPlan
@@ -918,9 +949,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             featureEnabled: settings.experimentalParallelPlanImplementation,
             planMarkdown: activeProposedPlan.planMarkdown,
             provider: selectedProviderStatus,
+            reviewedSubagentCount: planParallelismReview.reviewedSubagentCount,
           })
         : null,
-    [activeProposedPlan, selectedProviderStatus, settings.experimentalParallelPlanImplementation],
+    [
+      activeProposedPlan,
+      planParallelismReview.reviewedSubagentCount,
+      selectedProviderStatus,
+      settings.experimentalParallelPlanImplementation,
+    ],
   );
 
   const composerPromptInjectionState = useMemo(
@@ -1960,6 +1997,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         event?.preventDefault();
         return;
       }
+      if (
+        planParallelismReview.status === "reviewing" &&
+        showPlanFollowUpPrompt &&
+        promptRef.current.trim().length === 0
+      ) {
+        event?.preventDefault();
+        return;
+      }
       // A send while a pasted image is still compressing would strand that
       // image: the turn snapshot wouldn't include it, and it would surface
       // in the *next* draft instead. Only oversized images hit this — small
@@ -1985,7 +2030,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       isSendDisabled,
       noProviderAvailable,
       onSend,
+      planParallelismReview.status,
+      promptRef,
       shouldBlurMobileComposerOnSubmit,
+      showPlanFollowUpPrompt,
       voiceRecordingActive,
     ],
   );
@@ -3409,6 +3457,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                   onInterrupt={handleInterruptPrimaryAction}
                   planImplementationSuggestion={planImplementationSuggestion}
+                  planParallelismReviewStatus={planParallelismReview.status}
                   onImplementPlan={handleImplementPlanPrimaryAction}
                   onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
                 />

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildPlanImplementationActionPresentation,
   formatPendingPrimaryActionLabel,
+  resolvePlanImplementationReviewPresentation,
 } from "./ComposerPrimaryActions";
 
 describe("formatPendingPrimaryActionLabel", () => {
@@ -187,5 +188,55 @@ describe("buildPlanImplementationActionPresentation", () => {
 
     expect(presentation.primaryLabel).toBe("2 subagents");
     expect(presentation.primaryAriaLabel).toBe("Implement with 2 subagents");
+  });
+
+  it("offers every count advertised by a provider above eight", () => {
+    const supportedCounts = Array.from({ length: 11 }, (_, index) => index + 2);
+    const presentation = buildPlanImplementationActionPresentation({
+      compact: false,
+      suggestion: {
+        strategy: { kind: "subagents", count: 10 },
+        supportedCounts,
+      },
+    });
+
+    expect(presentation.menuActions).toContainEqual({
+      id: "subagents:12:same-thread",
+      label: "Implement with 12 subagents",
+      target: "same-thread",
+      strategy: { kind: "subagents", count: 12 },
+      suggested: false,
+    });
+  });
+});
+
+describe("resolvePlanImplementationReviewPresentation", () => {
+  it("blocks both implementation actions while the plan is being analyzed", () => {
+    expect(resolvePlanImplementationReviewPresentation("reviewing")).toEqual({
+      actionsDisabled: true,
+      primaryLabel: "Analyzing plan…",
+      tooltip: null,
+    });
+  });
+
+  it("quietly explains when the structural estimate is used", () => {
+    expect(resolvePlanImplementationReviewPresentation("fallback")).toEqual({
+      actionsDisabled: false,
+      primaryLabel: null,
+      tooltip: "AI review unavailable; using plan structure estimate.",
+    });
+  });
+
+  it("does not alter ready or idle implementation actions", () => {
+    expect(resolvePlanImplementationReviewPresentation("ready")).toEqual({
+      actionsDisabled: false,
+      primaryLabel: null,
+      tooltip: null,
+    });
+    expect(resolvePlanImplementationReviewPresentation("idle")).toEqual({
+      actionsDisabled: false,
+      primaryLabel: null,
+      tooltip: null,
+    });
   });
 });

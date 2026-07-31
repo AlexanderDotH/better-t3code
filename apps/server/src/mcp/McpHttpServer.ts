@@ -22,6 +22,8 @@ import {
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
+import { WorkspaceToolkitHandlersLive } from "./toolkits/workspace/handlers.ts";
+import { WorkspaceToolkit } from "./toolkits/workspace/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -63,38 +65,53 @@ export const normalizeMcpHttpResponse = (
     : response;
 };
 
-const makeMcpAuthMiddleware = McpSessionRegistry.McpSessionRegistry.pipe(
-  Effect.map(
-    (registry): McpAuthMiddleware =>
-      Effect.fn("McpHttpServer.authenticateRequest")(function* (httpEffect) {
-        const request = yield* HttpServerRequest.HttpServerRequest;
-        const authorization = request.headers.authorization;
-        const token =
-          authorization?.startsWith("Bearer ") === true
-            ? authorization.slice("Bearer ".length).trim()
-            : "";
-        const invocation = yield* registry.resolve(token);
-        if (!invocation) {
-          // Without this the only symptom of a dead credential is the agent
-          // quietly losing the whole `t3-code` toolkit for the rest of its
-          // session, with nothing on the server to explain why.
-          yield* Effect.logWarning("rejected MCP request with an unusable credential", {
-            reason: token.length === 0 ? "missing_bearer_token" : "unknown_or_expired_token",
-          });
-          return unauthorized;
-        }
-        return yield* httpEffect.pipe(
-          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
-          Effect.map(normalizeMcpHttpResponse),
-        );
-      }),
-  ),
-  Effect.withSpan("McpHttpServer.makeAuthMiddleware"),
-);
+const makeMcpAuthMiddleware = (requiredCapability?: McpInvocationContext.McpCapability) =>
+  McpSessionRegistry.McpSessionRegistry.pipe(
+    Effect.map(
+      (registry): McpAuthMiddleware =>
+        Effect.fn("McpHttpServer.authenticateRequest")(function* (httpEffect) {
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          const authorization = request.headers.authorization;
+          const token =
+            authorization?.startsWith("Bearer ") === true
+              ? authorization.slice("Bearer ".length).trim()
+              : "";
+          const invocation = yield* registry.resolve(token);
+          if (!invocation) {
+            // Without this the only symptom of a dead credential is the agent
+            // quietly losing the whole `t3-code` toolkit for the rest of its
+            // session, with nothing on the server to explain why.
+            yield* Effect.logWarning("rejected MCP request with an unusable credential", {
+              reason: token.length === 0 ? "missing_bearer_token" : "unknown_or_expired_token",
+            });
+            return unauthorized;
+          }
+          if (
+            requiredCapability !== undefined &&
+            !invocation.capabilities.has(requiredCapability)
+          ) {
+            yield* Effect.logWarning("rejected MCP request without endpoint capability", {
+              requiredCapability,
+            });
+            return unauthorized;
+          }
+          return yield* httpEffect.pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+            Effect.map(normalizeMcpHttpResponse),
+          );
+        }),
+    ),
+    Effect.withSpan("McpHttpServer.makeAuthMiddleware", {
+      attributes: {
+        "mcp.required_capability": requiredCapability ?? "preview",
+      },
+    }),
+  );
 
-const McpAuthMiddlewareLive = HttpRouter.middleware<{
-  provides: McpInvocationContext.McpInvocationContext;
-}>()(makeMcpAuthMiddleware).layer;
+const makeMcpAuthMiddlewareLive = (requiredCapability?: McpInvocationContext.McpCapability) =>
+  HttpRouter.middleware<{
+    provides: McpInvocationContext.McpInvocationContext;
+  }>()(makeMcpAuthMiddleware(requiredCapability)).layer;
 
 const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
   if (Cause.hasInterrupts(cause) || cause.reasons.some(Cause.isDieReason)) {
@@ -216,10 +233,33 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
   PreviewSnapshotRegistrationLive,
 );
 
-const McpTransportLive = McpServer.layerHttp({
-  name: "T3 Code",
-  version: packageJson.version,
-  path: "/mcp",
-}).pipe(Layer.provide(McpAuthMiddlewareLive));
+export const WorkspaceToolkitRegistrationLive = McpServer.toolkit(WorkspaceToolkit).pipe(
+  Layer.provide(WorkspaceToolkitHandlersLive),
+);
 
-export const layer = PreviewToolkitRegistrationLive.pipe(Layer.provideMerge(McpTransportLive));
+export const WorkspaceEnabledToolkitRegistrationLive = Layer.mergeAll(
+  PreviewToolkitRegistrationLive,
+  WorkspaceToolkitRegistrationLive,
+);
+
+const makeMcpTransportLive = (
+  path: "/mcp" | "/mcp/workspace",
+  requiredCapability?: McpInvocationContext.McpCapability,
+) =>
+  McpServer.layerHttp({
+    name: "T3 Code",
+    version: packageJson.version,
+    path,
+  }).pipe(Layer.provide(makeMcpAuthMiddlewareLive(requiredCapability)));
+
+const PreviewMcpEndpointLive = Layer.fresh(
+  PreviewToolkitRegistrationLive.pipe(Layer.provideMerge(makeMcpTransportLive("/mcp"))),
+);
+
+const WorkspaceMcpEndpointLive = Layer.fresh(
+  WorkspaceEnabledToolkitRegistrationLive.pipe(
+    Layer.provideMerge(makeMcpTransportLive("/mcp/workspace", "workspace")),
+  ),
+);
+
+export const layer = Layer.mergeAll(PreviewMcpEndpointLive, WorkspaceMcpEndpointLive);

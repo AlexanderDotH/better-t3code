@@ -34,12 +34,21 @@ describe("makeUnsupportedTextGeneration", () => {
             modelSelection,
           }),
         ),
+        Effect.flip(
+          textGeneration.reviewPlanParallelism({
+            cwd: "/repo",
+            planMarkdown: "## Plan",
+            maxSubagents: 8,
+            modelSelection,
+          }),
+        ),
       ]);
 
       expect(errors.map((error) => error.operation)).toEqual([
         "generateCommitMessage",
         "translateTranscriptToEnglish",
         "improvePrompt",
+        "reviewPlanParallelism",
       ]);
       expect(errors.every((error) => error.detail.includes("Hyperagent"))).toBe(true);
     }),

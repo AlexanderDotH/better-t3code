@@ -57,7 +57,7 @@ const CLAUDE_PRESENTATION = {
   showInteractionModeToggle: true,
   nativeSubagents: {
     toolName: "Agent",
-    maxRecommendedSubagents: 4,
+    maxRecommendedSubagents: 8,
   },
 } as const;
 const MINIMUM_CLAUDE_OPUS_5_VERSION = "2.1.219";

@@ -64,6 +64,7 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.speechCreateBasicProjectProfile,
       WS_METHODS.speechTranslateTranscript,
       WS_METHODS.promptImprove,
+      WS_METHODS.planReviewParallelism,
       WS_METHODS.chatImportRun,
       WS_METHODS.skillsImportSources,
       WS_METHODS.skillsCreate,

@@ -29,7 +29,7 @@ const OPENCODE_PRESENTATION = {
   showInteractionModeToggle: false,
   nativeSubagents: {
     toolName: "Task",
-    maxRecommendedSubagents: 4,
+    maxRecommendedSubagents: 8,
   },
 } as const;
 const MINIMUM_OPENCODE_VERSION = "1.14.19";

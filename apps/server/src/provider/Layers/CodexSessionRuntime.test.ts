@@ -307,6 +307,18 @@ describe("T3 browser developer instructions", () => {
       NodeAssert.match(instructions, /Do not switch to global browser skills/);
     }
   });
+
+  it("prefers batched workspace context before native repository exploration", () => {
+    for (const instructions of [
+      CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+      CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+    ]) {
+      NodeAssert.match(instructions, /workspace_context/);
+      NodeAssert.match(instructions, /batch independent searches and reads/i);
+      NodeAssert.match(instructions, /fall back to.*rg/i);
+      NodeAssert.match(instructions, /reuse.*results/i);
+    }
+  });
 });
 
 describe("hasConfiguredMcpServer", () => {

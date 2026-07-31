@@ -135,6 +135,7 @@ interface TimelineRowSharedState {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorElement?: HTMLElement) => void;
+  shouldAnimateInitialStreamChunk: (messageId: MessageId, isStreaming: boolean) => boolean;
 }
 
 interface TimelineRowActivityState {
@@ -150,6 +151,25 @@ const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = <div className="h-10 sm:h-12" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+const EMPTY_COMMITTED_MESSAGE_IDS: ReadonlySet<string> = new Set();
+
+interface InitialStreamAnimationInput {
+  readonly committedScopeId: string | null;
+  readonly committedMessageIds: ReadonlySet<string>;
+  readonly currentScopeId: string;
+  readonly messageId: string;
+  readonly isStreaming: boolean;
+}
+
+export function resolveInitialStreamAnimation({
+  committedScopeId,
+  committedMessageIds,
+  currentScopeId,
+  messageId,
+  isStreaming,
+}: InitialStreamAnimationInput): boolean {
+  return isStreaming && committedScopeId === currentScopeId && !committedMessageIds.has(messageId);
+}
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -324,6 +344,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
+  const shouldAnimateInitialStreamChunk = useInitialStreamAnimationRegistry(
+    routeThreadKey,
+    timelineEntries,
+  );
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
@@ -430,6 +454,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      shouldAnimateInitialStreamChunk,
     }),
     [
       timestampFormat,
@@ -444,6 +469,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      shouldAnimateInitialStreamChunk,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -1018,6 +1044,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const isStreaming = Boolean(row.message.streaming);
 
   return (
     <>
@@ -1026,7 +1053,12 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           text={messageText}
           cwd={ctx.markdownCwd}
           threadRef={ctx.threadRef ?? undefined}
-          isStreaming={Boolean(row.message.streaming)}
+          isStreaming={isStreaming}
+          streamId={`${ctx.routeThreadKey}:${String(row.message.id)}`}
+          animateInitialStreamChunk={ctx.shouldAnimateInitialStreamChunk(
+            row.message.id,
+            isStreaming,
+          )}
           skills={ctx.skills}
         />
         <AssistantChangedFilesSection
@@ -1716,6 +1748,36 @@ function useStableRows(rows: MessagesTimelineRow[]): MessagesTimelineRow[] {
     prevState.current = nextState;
     return nextState.result;
   }, [rows]);
+}
+
+function useInitialStreamAnimationRegistry(scopeId: string, entries: ReadonlyArray<TimelineEntry>) {
+  const committedRef = useRef<{
+    readonly scopeId: string;
+    readonly messageIds: ReadonlySet<string>;
+  } | null>(null);
+  const currentMessageIds = useMemo(
+    () =>
+      new Set(
+        entries.flatMap((entry) => (entry.kind === "message" ? [String(entry.message.id)] : [])),
+      ),
+    [entries],
+  );
+
+  useEffect(() => {
+    committedRef.current = { scopeId, messageIds: currentMessageIds };
+  }, [currentMessageIds, scopeId]);
+
+  return useCallback(
+    (messageId: MessageId, isStreaming: boolean) =>
+      resolveInitialStreamAnimation({
+        committedScopeId: committedRef.current?.scopeId ?? null,
+        committedMessageIds: committedRef.current?.messageIds ?? EMPTY_COMMITTED_MESSAGE_IDS,
+        currentScopeId: scopeId,
+        messageId: String(messageId),
+        isStreaming,
+      }),
+    [scopeId],
+  );
 }
 
 // ---------------------------------------------------------------------------

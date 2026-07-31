@@ -44,7 +44,7 @@ export const SidebarThreadPreviewCount = Schema.Int.check(
   }),
 );
 export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
-export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
+export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 4;
 export const MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 1;
 export const MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 90;
 export const SidebarAutoSettleAfterDays = Schema.Number.check(
@@ -901,6 +901,15 @@ export const BackgroundActivitySettings = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 
+export const DEFAULT_PARALLEL_PLAN_REVIEW_MODEL_SELECTION: ModelSelection = {
+  instanceId: ProviderInstanceId.make("codex"),
+  model: DEFAULT_TEXT_GENERATION_MODEL,
+  options: [
+    { id: "reasoningEffort", value: "low" },
+    { id: "serviceTier", value: "priority" },
+  ],
+};
+
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -934,6 +943,9 @@ export const ServerSettings = Schema.Struct({
         model: DEFAULT_TEXT_GENERATION_MODEL,
       }),
     ),
+  ),
+  parallelPlanReviewModelSelection: ModelSelection.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PARALLEL_PLAN_REVIEW_MODEL_SELECTION)),
   ),
   sourceControlWritingStyle: SourceControlWritingStyleSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -1184,6 +1196,7 @@ export const ServerSettingsPatch = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  parallelPlanReviewModelSelection: Schema.optionalKey(ModelSelectionPatch),
   agentEnhancement: Schema.optionalKey(AgentEnhancementSettingsPatch),
   sourceControlWritingStyle: Schema.optionalKey(
     Schema.Struct({

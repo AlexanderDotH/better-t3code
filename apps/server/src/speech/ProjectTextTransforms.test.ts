@@ -65,6 +65,7 @@ function textGenerationLayer(overrides: Partial<TextGeneration.TextGeneration["S
       generateThreadTitle: () => Effect.die("unused"),
       translateTranscriptToEnglish: () => Effect.die("unused"),
       improvePrompt: () => Effect.die("unused"),
+      reviewPlanParallelism: () => Effect.die("unused"),
       ...overrides,
     }),
   );

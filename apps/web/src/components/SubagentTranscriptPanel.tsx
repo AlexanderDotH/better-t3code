@@ -12,7 +12,7 @@ import {
   MessageSquareIcon,
   WrenchIcon,
 } from "lucide-react";
-import { memo, useMemo, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -30,6 +30,8 @@ import { Badge } from "./ui/badge";
 import { ScrollArea } from "./ui/scroll-area";
 import { Spinner } from "./ui/spinner";
 
+const EMPTY_COMMITTED_MESSAGE_IDS: ReadonlySet<string> = new Set();
+
 export interface SubagentTranscriptPanelProps {
   readonly subagent: OrchestrationSubagentDetail | null;
   readonly isLoading?: boolean;
@@ -38,6 +40,31 @@ export interface SubagentTranscriptPanelProps {
   readonly threadRef?: ScopedThreadRef;
   readonly timestampFormat?: TimestampFormat;
   readonly className?: string;
+}
+
+interface SubagentInitialStreamAnimationInput {
+  readonly committedScopeId: string | null;
+  readonly committedMessageIds: ReadonlySet<string>;
+  readonly currentScopeId: string;
+  readonly messageId: string;
+  readonly isAssistant: boolean;
+  readonly isStreaming: boolean;
+}
+
+export function resolveSubagentInitialStreamAnimation({
+  committedScopeId,
+  committedMessageIds,
+  currentScopeId,
+  messageId,
+  isAssistant,
+  isStreaming,
+}: SubagentInitialStreamAnimationInput): boolean {
+  return (
+    isAssistant &&
+    isStreaming &&
+    committedScopeId === currentScopeId &&
+    !committedMessageIds.has(messageId)
+  );
 }
 
 export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
@@ -52,6 +79,11 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
   const entries = useMemo(
     () => (subagent ? deriveSubagentTranscriptEntries(subagent) : []),
     [subagent],
+  );
+  const streamScopeId = subagent ? String(subagent.id) : "";
+  const shouldAnimateInitialStreamChunk = useSubagentInitialStreamAnimationRegistry(
+    streamScopeId,
+    entries,
   );
 
   if (isLoading && !subagent) {
@@ -106,6 +138,15 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
                 markdownCwd={markdownCwd}
                 threadRef={threadRef}
                 timestampFormat={timestampFormat}
+                streamScopeId={streamScopeId}
+                animateInitialStreamChunk={
+                  entry.kind === "message" &&
+                  shouldAnimateInitialStreamChunk(
+                    entry.message.id,
+                    entry.message.role === "assistant",
+                    entry.message.streaming,
+                  )
+                }
               />
             </li>
           ))}
@@ -163,7 +204,7 @@ function SubagentTranscriptHeader({
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <h2 className="min-w-0 truncate text-sm font-semibold text-foreground">{name}</h2>
-            <Badge variant={statusBadgeVariant(status.tone)} size="sm">
+            <Badge variant="outline" size="sm">
               <SubagentStatusDot presentation={status} className="size-1.5" />
               {status.label}
             </Badge>
@@ -209,12 +250,16 @@ function SubagentTranscriptEntryView({
   markdownCwd,
   threadRef,
   timestampFormat,
+  streamScopeId,
+  animateInitialStreamChunk,
 }: {
   readonly entry: SubagentTranscriptEntry;
   readonly agentName: string;
   readonly markdownCwd: string | undefined;
   readonly threadRef: ScopedThreadRef | undefined;
   readonly timestampFormat: TimestampFormat;
+  readonly streamScopeId: string;
+  readonly animateInitialStreamChunk: boolean;
 }) {
   if (entry.kind === "message") {
     return (
@@ -224,6 +269,8 @@ function SubagentTranscriptEntryView({
         markdownCwd={markdownCwd}
         threadRef={threadRef}
         timestampFormat={timestampFormat}
+        streamId={`${streamScopeId}:${String(entry.message.id)}`}
+        animateInitialStreamChunk={animateInitialStreamChunk}
       />
     );
   }
@@ -257,12 +304,16 @@ function TranscriptMessage({
   markdownCwd,
   threadRef,
   timestampFormat,
+  streamId,
+  animateInitialStreamChunk,
 }: {
   readonly message: OrchestrationMessage;
   readonly agentName: string;
   readonly markdownCwd: string | undefined;
   readonly threadRef: ScopedThreadRef | undefined;
   readonly timestampFormat: TimestampFormat;
+  readonly streamId: string;
+  readonly animateInitialStreamChunk: boolean;
 }) {
   const roleLabel =
     message.role === "assistant" ? agentName : message.role === "user" ? "Input" : "System";
@@ -289,9 +340,45 @@ function TranscriptMessage({
         cwd={markdownCwd}
         threadRef={threadRef}
         isStreaming={message.streaming}
+        streamId={message.role === "assistant" ? streamId : undefined}
+        animateInitialStreamChunk={message.role === "assistant" ? animateInitialStreamChunk : false}
         lineBreaks={message.role === "user"}
       />
     </article>
+  );
+}
+
+function useSubagentInitialStreamAnimationRegistry(
+  scopeId: string,
+  entries: ReadonlyArray<SubagentTranscriptEntry>,
+) {
+  const committedRef = useRef<{
+    readonly scopeId: string;
+    readonly messageIds: ReadonlySet<string>;
+  } | null>(null);
+  const currentMessageIds = useMemo(
+    () =>
+      new Set(
+        entries.flatMap((entry) => (entry.kind === "message" ? [String(entry.message.id)] : [])),
+      ),
+    [entries],
+  );
+
+  useEffect(() => {
+    committedRef.current = { scopeId, messageIds: currentMessageIds };
+  }, [currentMessageIds, scopeId]);
+
+  return useCallback(
+    (messageId: OrchestrationMessage["id"], isAssistant: boolean, isStreaming: boolean) =>
+      resolveSubagentInitialStreamAnimation({
+        committedScopeId: committedRef.current?.scopeId ?? null,
+        committedMessageIds: committedRef.current?.messageIds ?? EMPTY_COMMITTED_MESSAGE_IDS,
+        currentScopeId: scopeId,
+        messageId: String(messageId),
+        isAssistant,
+        isStreaming,
+      }),
+    [scopeId],
   );
 }
 
@@ -365,24 +452,6 @@ function EntryHeading({
       </time>
     </div>
   );
-}
-
-function statusBadgeVariant(
-  tone: SubagentStatusPresentation["tone"],
-): "info" | "warning" | "success" | "error" | "secondary" {
-  if (tone === "progress") {
-    return "info";
-  }
-  if (tone === "warning") {
-    return "warning";
-  }
-  if (tone === "success") {
-    return "success";
-  }
-  if (tone === "danger") {
-    return "error";
-  }
-  return "secondary";
 }
 
 function serializeActivityPayload(payload: unknown): string | null {

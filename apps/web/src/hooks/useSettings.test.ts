@@ -88,6 +88,9 @@ describe("mergeEnvironmentSettings", () => {
       textGenerationModelSelection: {
         instanceId: ProviderInstanceId.make("codex"),
       },
+      parallelPlanReviewModelSelection: {
+        model: "gpt-5.6-terra",
+      },
       speechTranscription: {
         assemblyAi: {
           apiKey: {
@@ -117,6 +120,10 @@ describe("mergeEnvironmentSettings", () => {
     expect(settings.textGenerationModelSelection).toEqual(
       DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
     );
+    expect(settings.parallelPlanReviewModelSelection).toEqual({
+      ...DEFAULT_SERVER_SETTINGS.parallelPlanReviewModelSelection,
+      model: "gpt-5.6-terra",
+    });
     expect(settings.speechTranscription.assemblyAi.apiKey).toEqual({
       value: "",
       valueRedacted: true,

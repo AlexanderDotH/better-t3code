@@ -236,6 +236,29 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
     ),
   );
 
+  it.effect("reviews plan parallelism through Cursor ACP", () =>
+    withFakeAcpAgent(
+      {
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({ recommendedSubagents: 5 }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.reviewPlanParallelism({
+            cwd: process.cwd(),
+            planMarkdown: "## Web\nAdd loading and fallback states.",
+            userRequest: "Implement the plan.",
+            maxSubagents: 8,
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("cursor"),
+              model: "composer-2",
+            },
+          });
+
+          expect(generated).toEqual({ recommendedSubagents: 5 });
+        }),
+    ),
+  );
+
   it.effect("closes the ACP child process after text generation completes", () => {
     const exitLogDir = NodeFS.mkdtempSync(
       NodePath.join(NodeOS.tmpdir(), "t3code-cursor-text-exit-log-"),

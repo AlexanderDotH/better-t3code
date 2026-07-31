@@ -635,6 +635,26 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("persists the plan review model selection as one atomic value", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const selection = {
+        instanceId: DEFAULT_SERVER_SETTINGS.parallelPlanReviewModelSelection.instanceId,
+        model: DEFAULT_SERVER_SETTINGS.parallelPlanReviewModelSelection.model,
+        options: [{ id: "reasoningEffort", value: "medium" as const }],
+      };
+
+      yield* serverSettings.updateSettings({ parallelPlanReviewModelSelection: selection });
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const persisted = JSON.parse(raw);
+      assert.deepEqual(persisted.parallelPlanReviewModelSelection, selection);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;

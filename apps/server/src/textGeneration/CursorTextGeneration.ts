@@ -14,6 +14,7 @@ import * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildPlanParallelismReviewPrompt,
   buildPromptImprovementPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
@@ -58,7 +59,8 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       | "generateBranchName"
       | "generateThreadTitle"
       | "translateTranscriptToEnglish"
-      | "improvePrompt";
+      | "improvePrompt"
+      | "reviewPlanParallelism";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -292,6 +294,20 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
     return { text: generated.text.trim() };
   });
 
+  const reviewPlanParallelism: TextGeneration.TextGeneration["Service"]["reviewPlanParallelism"] =
+    Effect.fn("CursorTextGeneration.reviewPlanParallelism")(function* (input) {
+      const { prompt, outputSchema } = buildPlanParallelismReviewPrompt(input);
+      const generated = yield* runCursorJson({
+        operation: "reviewPlanParallelism",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return { recommendedSubagents: generated.recommendedSubagents };
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
@@ -299,5 +315,6 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
     generateThreadTitle,
     translateTranscriptToEnglish,
     improvePrompt,
+    reviewPlanParallelism,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

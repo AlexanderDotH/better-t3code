@@ -252,9 +252,16 @@ const make = Effect.gen(function* () {
       checkpointRef: targetCheckpointRef,
     });
 
-    // Refresh the workspace entry index so the @-mention file picker
-    // reflects files created or deleted during this turn.
-    yield* workspaceEntries.refresh(input.cwd);
+    // Evict the workspace entry index without delaying checkpoint completion.
+    // The next @-mention file picker lookup rebuilds it from current files.
+    yield* workspaceEntries.invalidate(input.cwd).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Failed to invalidate workspace search index after checkpoint capture", {
+          cwd: input.cwd,
+          cause,
+        }),
+      ),
+    );
 
     const files = yield* checkpointStore
       .diffCheckpoints({
@@ -690,9 +697,16 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    // Refresh the workspace entry index so the @-mention file picker
-    // reflects the reverted filesystem state.
-    yield* workspaceEntries.refresh(sessionRuntime.value.cwd);
+    // Evict the workspace entry index without delaying checkpoint revert.
+    // The next @-mention file picker lookup rebuilds it from restored files.
+    yield* workspaceEntries.invalidate(sessionRuntime.value.cwd).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Failed to invalidate workspace search index after checkpoint revert", {
+          cwd: sessionRuntime.value.cwd,
+          cause,
+        }),
+      ),
+    );
 
     const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
     if (rolledBackTurns > 0) {

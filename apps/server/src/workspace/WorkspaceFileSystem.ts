@@ -293,7 +293,14 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    yield* workspaceEntries.refresh(input.cwd);
+    yield* workspaceEntries.invalidate(input.cwd).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Failed to invalidate workspace search index after file write", {
+          cwd: input.cwd,
+          cause,
+        }),
+      ),
+    );
     return { relativePath: target.relativePath };
   });
 

@@ -3,9 +3,11 @@ import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contrac
 import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "./providerInstances";
 import {
+  filterPlanParallelismReviewProviders,
   getAppModelOptionsForInstance,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
+  resolveParallelPlanReviewModelSelectionState,
 } from "./modelSelection";
 
 function provider(input: {
@@ -300,6 +302,104 @@ describe("instance-scoped model selection", () => {
     expect(resolveAppModelSelectionState(settings, providers)).toEqual({
       instanceId: ProviderInstanceId.make("claude_openrouter"),
       model: "openai/gpt-5.5",
+    });
+  });
+});
+
+describe("plan parallelism review model selection", () => {
+  it("keeps supported custom instances while excluding Gemini and unknown drivers", () => {
+    const providers = [
+      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex_personal" }),
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claude_openrouter",
+      }),
+      provider({ provider: ProviderDriverKind.make("cursor"), instanceId: "cursor" }),
+      provider({ provider: ProviderDriverKind.make("grok"), instanceId: "grok" }),
+      provider({ provider: ProviderDriverKind.make("opencode"), instanceId: "opencode" }),
+      provider({ provider: ProviderDriverKind.make("gemini"), instanceId: "gemini" }),
+      provider({ provider: ProviderDriverKind.make("hyperagent"), instanceId: "hyperagent" }),
+    ];
+
+    expect(
+      filterPlanParallelismReviewProviders(providers).map((candidate) => candidate.instanceId),
+    ).toEqual([
+      ProviderInstanceId.make("codex_personal"),
+      ProviderInstanceId.make("claude_openrouter"),
+      ProviderInstanceId.make("cursor"),
+      ProviderInstanceId.make("grok"),
+      ProviderInstanceId.make("opencode"),
+    ]);
+  });
+
+  it("preserves a selected custom instance and model", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claude_openrouter",
+        models: ["openai/gpt-5.5"],
+      }),
+    ];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      parallelPlanReviewModelSelection: {
+        instanceId: ProviderInstanceId.make("claude_openrouter"),
+        model: "openai/gpt-5.5",
+      },
+    };
+
+    expect(resolveParallelPlanReviewModelSelectionState(settings, providers)).toEqual({
+      instanceId: ProviderInstanceId.make("claude_openrouter"),
+      model: "openai/gpt-5.5",
+    });
+  });
+
+  it("does not let a stored Gemini selection escape the reviewer allowlist", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("gemini"),
+        instanceId: "gemini",
+        models: ["gemini-2.5-flash"],
+      }),
+      provider({
+        provider: ProviderDriverKind.make("codex"),
+        instanceId: "codex",
+        models: ["gpt-5.6-luna"],
+      }),
+    ];
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      parallelPlanReviewModelSelection: {
+        instanceId: ProviderInstanceId.make("gemini"),
+        model: "gemini-2.5-flash",
+      },
+    };
+
+    expect(resolveParallelPlanReviewModelSelectionState(settings, providers)).toMatchObject({
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.6-luna",
+    });
+  });
+
+  it("leaves the normal text-generation resolver unrestricted", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("gemini"),
+        instanceId: "gemini",
+        models: ["gemini-2.5-flash"],
+      }),
+    ];
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      textGenerationModelSelection: {
+        instanceId: ProviderInstanceId.make("gemini"),
+        model: "gemini-2.5-flash",
+      },
+    };
+
+    expect(resolveAppModelSelectionState(settings, providers)).toMatchObject({
+      instanceId: ProviderInstanceId.make("gemini"),
+      model: "gemini-2.5-flash",
     });
   });
 });

@@ -21,7 +21,7 @@ import { DraftComposerImageAttachmentSchema } from "../lib/composer-image-schema
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 
-const THREAD_OUTBOX_SCHEMA_VERSION = 3;
+const THREAD_OUTBOX_SCHEMA_VERSION = 4;
 const THREAD_OUTBOX_MAX_RETRY_DELAY_MS = 16_000;
 
 const QueuedThreadCreationSchema = Schema.Struct({
@@ -37,7 +37,7 @@ const QueuedThreadCreationSchema = Schema.Struct({
 });
 
 export const QueuedThreadMessageSchema = Schema.Struct({
-  schemaVersion: Schema.Literals([1, 2, THREAD_OUTBOX_SCHEMA_VERSION]),
+  schemaVersion: Schema.Literals([1, 2, 3, THREAD_OUTBOX_SCHEMA_VERSION]),
   environmentId: EnvironmentId,
   threadId: ThreadId,
   messageId: MessageId,
@@ -45,6 +45,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   text: Schema.String,
   attachments: Schema.Array(DraftComposerImageAttachmentSchema),
   modelSelection: Schema.optional(ModelSelection),
+  turnModelSelection: Schema.optional(ModelSelection),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
   // Present when the queued item creates a brand-new thread (pending task)
@@ -74,6 +75,7 @@ export interface QueuedThreadMessage {
   readonly text: string;
   readonly attachments: ReadonlyArray<DraftComposerImageAttachment>;
   readonly modelSelection?: ModelSelectionType;
+  readonly turnModelSelection?: ModelSelectionType;
   readonly runtimeMode?: RuntimeModeType;
   readonly interactionMode?: ProviderInteractionModeType;
   readonly creation?: QueuedThreadCreation;
@@ -95,6 +97,13 @@ export function resolveQueuedThreadSettings(
     runtimeMode: message.runtimeMode ?? thread.runtimeMode,
     interactionMode: message.interactionMode ?? thread.interactionMode,
   };
+}
+
+export function resolveQueuedThreadTurnModelSelection(
+  message: QueuedThreadMessage,
+  thread: ThreadSettingsSnapshot,
+): ModelSelectionType {
+  return message.turnModelSelection ?? message.modelSelection ?? thread.modelSelection;
 }
 
 export function modelSelectionsEqual(left: ModelSelectionType, right: ModelSelectionType): boolean {

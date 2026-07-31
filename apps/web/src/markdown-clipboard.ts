@@ -291,6 +291,17 @@ function sanitizedHtmlFrom(container: Element): string {
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
 
+function unwrapStreamingMotion(container: Element): void {
+  const wrappers = [...container.querySelectorAll("*")].filter((element) =>
+    element.getAttributeNames().some((name) => name.startsWith("data-stream-")),
+  );
+  for (let index = wrappers.length - 1; index >= 0; index -= 1) {
+    const wrapper = wrappers[index];
+    if (!wrapper) continue;
+    wrapper.replaceWith(...wrapper.childNodes);
+  }
+}
+
 export function chatMarkdownClipboardPayload(
   selection: Selection,
 ): MarkdownClipboardPayload | null {
@@ -301,6 +312,7 @@ export function chatMarkdownClipboardPayload(
     if (range.collapsed) continue;
     const container = document.createElement("div");
     container.appendChild(range.cloneContents());
+    unwrapStreamingMotion(container);
     const text = serializeRenderedMarkdownFragment(container);
     if (!text) continue;
     texts.push(text);

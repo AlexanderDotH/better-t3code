@@ -21,6 +21,7 @@ import { resolveAttachmentPath } from "../attachmentStore.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildPlanParallelismReviewPrompt,
   buildPromptImprovementPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
@@ -43,6 +44,7 @@ const OpenCodeTextGenerationOperation = Schema.Literals([
   "generateThreadTitle",
   "translateTranscriptToEnglish",
   "improvePrompt",
+  "reviewPlanParallelism",
 ]);
 
 type OpenCodeTextGenerationOperation = typeof OpenCodeTextGenerationOperation.Type;
@@ -259,7 +261,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       | "generateBranchName"
       | "generateThreadTitle"
       | "translateTranscriptToEnglish"
-      | "improvePrompt";
+      | "improvePrompt"
+      | "reviewPlanParallelism";
   }) =>
     sharedServerMutex.withPermit(
       Effect.gen(function* () {
@@ -425,14 +428,17 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         };
 
         const result = yield* Effect.tryPromise({
-          try: () =>
-            client.session.prompt({
-              sessionID: session.data.id,
-              model: parsedModel,
-              ...(selectedAgent ? { agent: selectedAgent } : {}),
-              ...(selectedVariant ? { variant: selectedVariant } : {}),
-              parts: [{ type: "text", text: input.prompt }, ...fileParts],
-            }),
+          try: (signal) =>
+            client.session.prompt(
+              {
+                sessionID: session.data.id,
+                model: parsedModel,
+                ...(selectedAgent ? { agent: selectedAgent } : {}),
+                ...(selectedVariant ? { variant: selectedVariant } : {}),
+                parts: [{ type: "text", text: input.prompt }, ...fileParts],
+              },
+              { signal },
+            ),
           catch: (cause) =>
             new OpenCodeTextGenerationPromptRequestError({
               ...promptContext,
@@ -650,6 +656,20 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     return { text: generated.text.trim() };
   });
 
+  const reviewPlanParallelism: TextGeneration.TextGeneration["Service"]["reviewPlanParallelism"] =
+    Effect.fn("OpenCodeTextGeneration.reviewPlanParallelism")(function* (input) {
+      const { prompt, outputSchema } = buildPlanParallelismReviewPrompt(input);
+      const generated = yield* runOpenCodeJson({
+        operation: "reviewPlanParallelism",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return { recommendedSubagents: generated.recommendedSubagents };
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
@@ -657,5 +677,6 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     generateThreadTitle,
     translateTranscriptToEnglish,
     improvePrompt,
+    reviewPlanParallelism,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

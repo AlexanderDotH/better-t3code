@@ -1,4 +1,8 @@
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import type {
+  PendingReasoningOverride,
+  ReasoningRecommendation,
+} from "@t3tools/client-runtime/reasoning-recommendation";
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import type { LegendListRef } from "@legendapp/list/react-native";
@@ -34,6 +38,7 @@ import type {
 } from "../../lib/threadActivity";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { PendingUserInputCard } from "./PendingUserInputCard";
+import { ReasoningRecommendationCard } from "./ReasoningRecommendationCard";
 import {
   COMPOSER_COLLAPSED_CHROME,
   COMPOSER_EXPANDED_CHROME,
@@ -56,6 +61,8 @@ export interface ThreadDetailScreenProps {
   readonly activePendingUserInputDrafts: Record<string, PendingUserInputDraftAnswer>;
   readonly activePendingUserInputAnswers: Record<string, string> | null;
   readonly respondingUserInputId: ApprovalRequestId | null;
+  readonly reasoningRecommendation: ReasoningRecommendation | null;
+  readonly pendingReasoningOverride: PendingReasoningOverride | null;
   readonly draftMessage: string;
   readonly draftAttachments: ReadonlyArray<DraftComposerImageAttachment>;
   readonly connectionStateLabel: EnvironmentConnectionPhase;
@@ -96,6 +103,9 @@ export interface ThreadDetailScreenProps {
     customAnswer: string,
   ) => void;
   readonly onSubmitUserInput: () => Promise<unknown>;
+  readonly onAcceptReasoningRecommendation: () => void;
+  readonly onDismissReasoningRecommendation: () => void;
+  readonly onUndoReasoningRecommendation: () => void;
   readonly showContent?: boolean;
 }
 
@@ -412,6 +422,21 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                       onSubmit={props.onSubmitUserInput}
                     />
                   ) : null}
+                </Animated.View>
+              ) : null}
+              {props.reasoningRecommendation || props.pendingReasoningOverride ? (
+                <Animated.View
+                  className="shrink-0 px-4 pb-3"
+                  entering={FadeInDown.duration(220)}
+                  exiting={FadeOut.duration(140)}
+                >
+                  <ReasoningRecommendationCard
+                    recommendation={props.reasoningRecommendation}
+                    pendingOverride={props.pendingReasoningOverride}
+                    onAccept={props.onAcceptReasoningRecommendation}
+                    onDismiss={props.onDismissReasoningRecommendation}
+                    onUndo={props.onUndoReasoningRecommendation}
+                  />
                 </Animated.View>
               ) : null}
             </View>

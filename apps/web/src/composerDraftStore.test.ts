@@ -523,6 +523,87 @@ describe("composerDraftStore terminal contexts", () => {
   });
 });
 
+describe("composerDraftStore reasoning recommendation", () => {
+  const threadId = ThreadId.make("thread-reasoning-recommendation");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("keeps the thread-scoped pending override when composer content is cleared", () => {
+    useComposerDraftStore.getState().setPrompt(threadRef, "send this");
+    useComposerDraftStore.getState().setReasoningRecommendation(threadRef, {
+      handledEvidenceTurnId: "turn-1",
+      pendingOverride: {
+        evidenceTurnId: "turn-1",
+        instanceId: "codex",
+        model: "gpt-5.6-sol",
+        optionId: "reasoningEffort",
+        fromValue: "max",
+        fromLabel: "Max",
+        targetValue: "high",
+        targetLabel: "High",
+      },
+    });
+
+    useComposerDraftStore.getState().clearComposerContent(threadRef);
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.reasoningRecommendation).toMatchObject({
+      handledEvidenceTurnId: "turn-1",
+      pendingOverride: { targetValue: "high" },
+    });
+  });
+
+  it("removes an otherwise empty thread draft when its recommendation state is cleared", () => {
+    useComposerDraftStore.getState().setReasoningRecommendation(threadRef, {
+      handledEvidenceTurnId: "turn-1",
+    });
+
+    useComposerDraftStore.getState().setReasoningRecommendation(threadRef, null);
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
+  it("round-trips dismissal and pending state through composer persistence", () => {
+    useComposerDraftStore.getState().setReasoningRecommendation(threadRef, {
+      handledEvidenceTurnId: "turn-1",
+      pendingOverride: {
+        evidenceTurnId: "turn-1",
+        instanceId: "codex",
+        model: "gpt-5.6-sol",
+        optionId: "reasoningEffort",
+        fromValue: "max",
+        fromLabel: "Max",
+        targetValue: "high",
+        targetLabel: "High",
+      },
+    });
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+
+    const persisted = persistApi.getOptions().partialize(useComposerDraftStore.getState());
+    const rehydrated = persistApi
+      .getOptions()
+      .merge(persisted, useComposerDraftStore.getInitialState());
+
+    expect(
+      rehydrated.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]
+        ?.reasoningRecommendation,
+    ).toMatchObject({
+      handledEvidenceTurnId: "turn-1",
+      pendingOverride: { targetValue: "high" },
+    });
+  });
+});
+
 describe("composerDraftStore element contexts", () => {
   const threadId = ThreadId.make("thread-element");
   const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);

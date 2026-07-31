@@ -93,6 +93,18 @@ export interface PromptImprovementResult {
   text: string;
 }
 
+export interface PlanParallelismReviewGenerationInput {
+  cwd: string;
+  planMarkdown: string;
+  userRequest?: string | undefined;
+  maxSubagents: number;
+  modelSelection: ModelSelection;
+}
+
+export interface PlanParallelismReviewGenerationResult {
+  recommendedSubagents: number;
+}
+
 export interface TextGenerationService {
   generateCommitMessage(
     input: CommitMessageGenerationInput,
@@ -104,6 +116,9 @@ export interface TextGenerationService {
     input: TranscriptTranslationInput,
   ): Promise<TranscriptTranslationResult>;
   improvePrompt(input: PromptImprovementInput): Promise<PromptImprovementResult>;
+  reviewPlanParallelism(
+    input: PlanParallelismReviewGenerationInput,
+  ): Promise<PlanParallelismReviewGenerationResult>;
 }
 
 /**
@@ -145,6 +160,10 @@ export class TextGeneration extends Context.Service<
     readonly improvePrompt: (
       input: PromptImprovementInput,
     ) => Effect.Effect<PromptImprovementResult, TextGenerationError>;
+
+    readonly reviewPlanParallelism: (
+      input: PlanParallelismReviewGenerationInput,
+    ) => Effect.Effect<PlanParallelismReviewGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -157,7 +176,8 @@ type TextGenerationOp =
   | "generateBranchName"
   | "generateThreadTitle"
   | "translateTranscriptToEnglish"
-  | "improvePrompt";
+  | "improvePrompt"
+  | "reviewPlanParallelism";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -208,6 +228,10 @@ export const makeTextGenerationFromRegistry = (
     improvePrompt: (input) =>
       resolveInstance(registry, "improvePrompt", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.improvePrompt(input)),
+      ),
+    reviewPlanParallelism: (input) =>
+      resolveInstance(registry, "reviewPlanParallelism", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.reviewPlanParallelism(input)),
       ),
   });
 

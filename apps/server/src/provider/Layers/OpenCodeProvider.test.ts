@@ -136,7 +136,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       NodeAssert.equal(snapshot.installed, false);
       NodeAssert.deepStrictEqual(snapshot.nativeSubagents, {
         toolName: "Task",
-        maxRecommendedSubagents: 4,
+        maxRecommendedSubagents: 8,
       });
       NodeAssert.equal(
         snapshot.message,

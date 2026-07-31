@@ -35,7 +35,7 @@ function provider(
       ? {
           nativeSubagents: {
             toolName: input.toolName ?? "spawn_agent",
-            maxRecommendedSubagents: input.maxRecommendedSubagents ?? 4,
+            maxRecommendedSubagents: input.maxRecommendedSubagents ?? 8,
           },
         }
       : {}),
@@ -118,9 +118,15 @@ describe("estimatePlanImplementationWorkUnits", () => {
 
 describe("getSupportedPlanSubagentCounts", () => {
   it("returns every selectable count through the provider ceiling", () => {
-    expect(getSupportedPlanSubagentCounts(provider())).toEqual([2, 3, 4]);
+    expect(getSupportedPlanSubagentCounts(provider())).toEqual([2, 3, 4, 5, 6, 7, 8]);
     expect(getSupportedPlanSubagentCounts(provider({ maxRecommendedSubagents: 3 }))).toEqual([
       2, 3,
+    ]);
+  });
+
+  it("follows provider capabilities above eight without a web-owned ceiling", () => {
+    expect(getSupportedPlanSubagentCounts(provider({ maxRecommendedSubagents: 12 }))).toEqual([
+      2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
     ]);
   });
 
@@ -144,7 +150,7 @@ describe("resolvePlanImplementationSuggestion", () => {
       }),
     ).toEqual({
       strategy: { kind: "subagents", count: 2 },
-      supportedCounts: [2, 3, 4],
+      supportedCounts: [2, 3, 4, 5, 6, 7, 8],
     });
 
     expect(
@@ -157,6 +163,53 @@ describe("resolvePlanImplementationSuggestion", () => {
       strategy: { kind: "subagents", count: 3 },
       supportedCounts: [2, 3],
     });
+  });
+
+  it("recommends eight subagents when a plan has eight independent work units", () => {
+    expect(
+      resolvePlanImplementationSuggestion({
+        featureEnabled: true,
+        planMarkdown: [
+          "- contracts",
+          "- server",
+          "- web",
+          "- desktop",
+          "- mobile",
+          "- tests",
+          "- docs",
+          "- release",
+        ].join("\n"),
+        provider: provider(),
+      }),
+    ).toEqual({
+      strategy: { kind: "subagents", count: 8 },
+      supportedCounts: [2, 3, 4, 5, 6, 7, 8],
+    });
+  });
+
+  it("uses a reviewed count instead of the structural estimate", () => {
+    expect(
+      resolvePlanImplementationSuggestion({
+        featureEnabled: true,
+        planMarkdown: "- one small task",
+        provider: provider({ maxRecommendedSubagents: 12 }),
+        reviewedSubagentCount: 10,
+      }),
+    ).toEqual({
+      strategy: { kind: "subagents", count: 10 },
+      supportedCounts: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+    });
+  });
+
+  it("defensively clamps a reviewed count to the current provider capability", () => {
+    expect(
+      resolvePlanImplementationSuggestion({
+        featureEnabled: true,
+        planMarkdown: "- one\n- two",
+        provider: provider({ maxRecommendedSubagents: 5 }),
+        reviewedSubagentCount: 8,
+      })?.strategy,
+    ).toEqual({ kind: "subagents", count: 5 });
   });
 
   it("returns no suggestion when the experiment is off or the provider is ineligible", () => {
@@ -209,6 +262,26 @@ PLAN:
 ## Ship it
 
 - step 1`);
+  });
+
+  it("builds an eight-subagent execution contract for a provider that advertises it", () => {
+    const prompt = buildPlanImplementationPrompt("- one\n- two\n- three\n- four", {
+      strategy: { kind: "subagents", count: 8 },
+      provider: provider(),
+    });
+
+    expect(prompt).toContain("USING EXACTLY 8 SUBAGENTS");
+    expect(prompt).toContain("spawn exactly 8 direct child subagents");
+  });
+
+  it("builds a contract above eight when the provider advertises the capability", () => {
+    const prompt = buildPlanImplementationPrompt("- one", {
+      strategy: { kind: "subagents", count: 12 },
+      provider: provider({ maxRecommendedSubagents: 12 }),
+    });
+
+    expect(prompt).toContain("USING EXACTLY 12 SUBAGENTS");
+    expect(prompt).toContain("spawn exactly 12 direct child subagents");
   });
 
   it("rejects a subagent strategy when the exact provider snapshot cannot support it", () => {

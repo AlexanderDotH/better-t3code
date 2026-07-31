@@ -391,7 +391,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.auth.status, "authenticated");
           assert.deepStrictEqual(status.nativeSubagents, {
             toolName: "spawn_agent",
-            maxRecommendedSubagents: 4,
+            maxRecommendedSubagents: 8,
           });
           assert.strictEqual(status.auth.type, "chatgpt");
           assert.strictEqual(status.auth.label, "ChatGPT Pro 20x Subscription");
@@ -1895,7 +1895,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.auth.status, "authenticated");
           assert.deepStrictEqual(status.nativeSubagents, {
             toolName: "Agent",
-            maxRecommendedSubagents: 4,
+            maxRecommendedSubagents: 8,
           });
         }).pipe(
           Effect.provide(

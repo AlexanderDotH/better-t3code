@@ -4,11 +4,13 @@
 - Architecture
   - [Overview](./architecture/overview.md)
   - [Connection runtime](./architecture/connection-runtime.md)
+  - [Internal provider MCP](./architecture/internal-mcp.md)
+  - [Provider architecture](./architecture/providers.md)
   - [Remote environments](./architecture/remote.md)
   - [Server updates](./architecture/server-updates.md)
 - User guides
   - [Background service](./user/background-service.md)
-  - [Stopping a generation](./user/chat-controls.md)
+  - [Chat controls](./user/chat-controls.md)
   - [Remote access](./user/remote-access.md)
   - [Keeping T3 Code in sync](./user/server-updates.md)
   - [Keybindings](./user/keybindings.md)

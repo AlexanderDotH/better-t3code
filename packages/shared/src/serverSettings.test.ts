@@ -167,6 +167,37 @@ describe("serverSettings helpers", () => {
     });
   });
 
+  it("replaces the parallel plan reviewer selection without leaking Codex options", () => {
+    expect(
+      applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+        parallelPlanReviewModelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      }).parallelPlanReviewModelSelection,
+    ).toEqual({
+      instanceId: "opencode",
+      model: "openai/gpt-5",
+    });
+  });
+
+  it("merges option-only parallel plan reviewer patches by option id", () => {
+    expect(
+      applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+        parallelPlanReviewModelSelection: {
+          options: [{ id: "serviceTier", value: "standard" }],
+        },
+      }).parallelPlanReviewModelSelection,
+    ).toEqual({
+      instanceId: "codex",
+      model: "gpt-5.6-luna",
+      options: [
+        { id: "reasoningEffort", value: "low" },
+        { id: "serviceTier", value: "standard" },
+      ],
+    });
+  });
+
   it("replaces source control writer selection without retaining stale options", () => {
     const current = {
       ...DEFAULT_SERVER_SETTINGS,

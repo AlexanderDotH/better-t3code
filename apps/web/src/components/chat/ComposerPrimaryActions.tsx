@@ -4,6 +4,7 @@ import type { OrchestrationTurnAbortPhase } from "@t3tools/contracts";
 import type {
   PlanImplementationStrategy,
   PlanImplementationSuggestion,
+  PlanParallelismReviewStatus,
 } from "../../planImplementation";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
@@ -11,6 +12,7 @@ import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../Sideb
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 interface PendingActionState {
   questionIndex: number;
@@ -37,6 +39,7 @@ interface ComposerPrimaryActionsProps {
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   planImplementationSuggestion?: PlanImplementationSuggestion | null;
+  planParallelismReviewStatus?: PlanParallelismReviewStatus;
   onImplementPlan: (strategy: PlanImplementationStrategy) => void;
   onImplementPlanInNewThread: (strategy: PlanImplementationStrategy) => void;
 }
@@ -56,6 +59,37 @@ interface PlanImplementationActionPresentation {
 }
 
 const STANDARD_IMPLEMENTATION_STRATEGY = { kind: "standard" } as const;
+const PLAN_REVIEW_FALLBACK_TOOLTIP = "AI review unavailable; using plan structure estimate.";
+
+interface PlanImplementationReviewPresentation {
+  readonly actionsDisabled: boolean;
+  readonly primaryLabel: string | null;
+  readonly tooltip: string | null;
+}
+
+export function resolvePlanImplementationReviewPresentation(
+  status: PlanParallelismReviewStatus,
+): PlanImplementationReviewPresentation {
+  if (status === "reviewing") {
+    return {
+      actionsDisabled: true,
+      primaryLabel: "Analyzing plan…",
+      tooltip: null,
+    };
+  }
+  if (status === "fallback") {
+    return {
+      actionsDisabled: false,
+      primaryLabel: null,
+      tooltip: PLAN_REVIEW_FALLBACK_TOOLTIP,
+    };
+  }
+  return {
+    actionsDisabled: false,
+    primaryLabel: null,
+    tooltip: null,
+  };
+}
 
 export function buildPlanImplementationActionPresentation(input: {
   readonly compact: boolean;
@@ -167,6 +201,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onPreviousPendingQuestion,
   onInterrupt,
   planImplementationSuggestion = null,
+  planParallelismReviewStatus = "idle",
   onImplementPlan,
   onImplementPlanInNewThread,
 }: ComposerPrimaryActionsProps) {
@@ -272,22 +307,49 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       compact,
       suggestion: planImplementationSuggestion,
     });
+    const reviewPresentation = resolvePlanImplementationReviewPresentation(
+      planParallelismReviewStatus,
+    );
     const hasSubagentSuggestion = planImplementationSuggestion !== null;
     const actionsDisabled =
-      isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable;
+      isSendBusy ||
+      isSendDisabled ||
+      isConnecting ||
+      isEnvironmentUnavailable ||
+      reviewPresentation.actionsDisabled;
+    const primaryLabel =
+      isConnecting || isSendBusy
+        ? "Sending..."
+        : (reviewPresentation.primaryLabel ?? implementationActions.primaryLabel);
+    const primaryButton = (
+      <Button
+        type="submit"
+        size="sm"
+        className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
+        {...pointerFocusProps}
+        disabled={actionsDisabled}
+        aria-busy={planParallelismReviewStatus === "reviewing" || undefined}
+        aria-label={
+          reviewPresentation.primaryLabel ?? implementationActions.primaryAriaLabel ?? undefined
+        }
+      >
+        {planParallelismReviewStatus === "reviewing" ? (
+          <Spinner className="size-3.5" aria-hidden="true" />
+        ) : null}
+        {primaryLabel}
+      </Button>
+    );
 
     return (
       <div data-chat-composer-implement-actions="true" className="flex items-center justify-end">
-        <Button
-          type="submit"
-          size="sm"
-          className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
-          {...pointerFocusProps}
-          disabled={actionsDisabled}
-          aria-label={implementationActions.primaryAriaLabel ?? undefined}
-        >
-          {isConnecting || isSendBusy ? "Sending..." : implementationActions.primaryLabel}
-        </Button>
+        {reviewPresentation.tooltip ? (
+          <Tooltip>
+            <TooltipTrigger render={primaryButton} />
+            <TooltipPopup side="top">{reviewPresentation.tooltip}</TooltipPopup>
+          </Tooltip>
+        ) : (
+          primaryButton
+        )}
         <Menu>
           <MenuTrigger
             render={

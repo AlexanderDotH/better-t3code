@@ -1,7 +1,9 @@
 import {
+  DEFAULT_PARALLEL_PLAN_REVIEW_MODEL_SELECTION,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
+  isPlanParallelismReviewDriverKind,
   type ModelSelection,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -279,10 +281,38 @@ export function resolveAppModelSelectionState(
   settings: UnifiedSettings,
   providers: ReadonlyArray<ServerProvider>,
 ): ModelSelection {
-  const selection = settings.textGenerationModelSelection ?? {
-    instanceId: DEFAULT_TEXT_GENERATION_INSTANCE_ID,
-    model: DEFAULT_TEXT_GENERATION_MODEL,
-  };
+  return resolveModelSelectionState(
+    settings,
+    providers,
+    settings.textGenerationModelSelection ?? {
+      instanceId: DEFAULT_TEXT_GENERATION_INSTANCE_ID,
+      model: DEFAULT_TEXT_GENERATION_MODEL,
+    },
+  );
+}
+
+export function filterPlanParallelismReviewProviders(
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<ServerProvider> {
+  return providers.filter((provider) => isPlanParallelismReviewDriverKind(provider.driver));
+}
+
+export function resolveParallelPlanReviewModelSelectionState(
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
+): ModelSelection {
+  return resolveModelSelectionState(
+    settings,
+    filterPlanParallelismReviewProviders(providers),
+    settings.parallelPlanReviewModelSelection ?? DEFAULT_PARALLEL_PLAN_REVIEW_MODEL_SELECTION,
+  );
+}
+
+function resolveModelSelectionState(
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
+  selection: ModelSelection,
+): ModelSelection {
   const entries = deriveProviderInstanceEntries(providers);
   const selectedEntry = entries.find(
     (entry) => entry.instanceId === selection.instanceId && entry.enabled && entry.isAvailable,

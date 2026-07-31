@@ -4,11 +4,16 @@ import * as Schema from "effect/Schema";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildPlanParallelismReviewPrompt,
   buildPromptImprovementPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
   buildTranscriptTranslationPrompt,
+  PLAN_PARALLELISM_REVIEW_PLAN_MAX_CHARS,
+  PLAN_PARALLELISM_REVIEW_REQUEST_MAX_CHARS,
+  PlanParallelismReviewOutputSchema,
   PromptImprovementOutputSchema,
+  truncatePlanParallelismReviewContext,
   TranscriptTranslationOutputSchema,
 } from "./TextGenerationPrompts.ts";
 import { normalizeCliError, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
@@ -17,6 +22,9 @@ import { TextGenerationError } from "@t3tools/contracts";
 const decodePromptImprovementOutput = Schema.decodeUnknownSync(PromptImprovementOutputSchema);
 const decodeTranscriptTranslationOutput = Schema.decodeUnknownSync(
   TranscriptTranslationOutputSchema,
+);
+const decodePlanParallelismReviewOutput = Schema.decodeUnknownSync(
+  PlanParallelismReviewOutputSchema,
 );
 
 describe("buildCommitMessagePrompt", () => {
@@ -257,6 +265,54 @@ describe("buildPromptImprovementPrompt", () => {
     expect(decodePromptImprovementOutput({ text: "Corrige `reconnectSession`." })).toEqual({
       text: "Corrige `reconnectSession`.",
     });
+  });
+});
+
+describe("buildPlanParallelismReviewPrompt", () => {
+  it("asks only for a direct-child count within the implementation provider ceiling", () => {
+    const result = buildPlanParallelismReviewPrompt({
+      planMarkdown: "## Server\nAdd the RPC.\n\n## Web\nAdd the review state.",
+      userRequest: "Implement the plan with useful parallelism.",
+      maxSubagents: 12,
+    });
+
+    expect(result.prompt).toContain("direct child subagents");
+    expect(result.prompt).toContain("between 2 and 12");
+    expect(result.prompt).toContain("Do not artificially stop at four");
+    expect(result.prompt).toContain("Do not execute the plan, use tools, inspect the filesystem");
+    expect(result.prompt).toContain("Originating user request:");
+    expect(result.prompt).toContain("Proposed plan:");
+    expect(result.prompt).not.toContain('workstreams":');
+    expect(decodePlanParallelismReviewOutput({ recommendedSubagents: 6 })).toEqual({
+      recommendedSubagents: 6,
+    });
+    expect(() => decodePlanParallelismReviewOutput({ recommendedSubagents: 2.5 })).toThrow();
+  });
+
+  it("keeps each review context inside its exact character budget", () => {
+    const plan = `${"p".repeat(PLAN_PARALLELISM_REVIEW_PLAN_MAX_CHARS)}PLAN_TAIL`;
+    const request = `${"r".repeat(PLAN_PARALLELISM_REVIEW_REQUEST_MAX_CHARS)}REQUEST_TAIL`;
+
+    const truncatedPlan = truncatePlanParallelismReviewContext(
+      plan,
+      PLAN_PARALLELISM_REVIEW_PLAN_MAX_CHARS,
+    );
+    const truncatedRequest = truncatePlanParallelismReviewContext(
+      request,
+      PLAN_PARALLELISM_REVIEW_REQUEST_MAX_CHARS,
+    );
+    const result = buildPlanParallelismReviewPrompt({
+      planMarkdown: plan,
+      userRequest: request,
+      maxSubagents: 8,
+    });
+
+    expect(truncatedPlan).toHaveLength(PLAN_PARALLELISM_REVIEW_PLAN_MAX_CHARS);
+    expect(truncatedRequest).toHaveLength(PLAN_PARALLELISM_REVIEW_REQUEST_MAX_CHARS);
+    expect(truncatedPlan).toContain("[truncated]");
+    expect(truncatedRequest).toContain("[truncated]");
+    expect(result.prompt).not.toContain("PLAN_TAIL");
+    expect(result.prompt).not.toContain("REQUEST_TAIL");
   });
 });
 

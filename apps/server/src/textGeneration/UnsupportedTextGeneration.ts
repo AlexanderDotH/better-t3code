@@ -9,7 +9,8 @@ type UnsupportedOperation =
   | "generateBranchName"
   | "generateThreadTitle"
   | "translateTranscriptToEnglish"
-  | "improvePrompt";
+  | "improvePrompt"
+  | "reviewPlanParallelism";
 
 export function makeUnsupportedTextGeneration(
   providerName: string,
@@ -29,5 +30,6 @@ export function makeUnsupportedTextGeneration(
     generateThreadTitle: () => fail("generateThreadTitle"),
     translateTranscriptToEnglish: () => fail("translateTranscriptToEnglish"),
     improvePrompt: () => fail("improvePrompt"),
+    reviewPlanParallelism: () => fail("reviewPlanParallelism"),
   });
 }

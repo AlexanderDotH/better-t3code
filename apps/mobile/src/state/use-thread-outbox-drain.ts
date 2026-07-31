@@ -17,7 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
-import { toUploadChatImageAttachments } from "../lib/composerImages";
+import { toUploadChatImageAttachments } from "../lib/composerImageUploads";
 import { randomHex } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
 import { useProjects, useThreadShells } from "./entities";
@@ -28,9 +28,11 @@ import {
 } from "./thread-outbox";
 import {
   isQueuedThreadCreationSendable,
+  modelSelectionsEqual,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxFailureAction,
   resolveQueuedThreadSettings,
+  resolveQueuedThreadTurnModelSelection,
   threadOutboxRetryDelayMs,
   type QueuedThreadCreation,
   type QueuedThreadMessage,
@@ -87,6 +89,9 @@ function settingsCommandId(message: QueuedThreadMessage, setting: string): Comma
 export function useThreadOutboxDrain(): void {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const setThreadRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, {
+    reportFailure: false,
+  });
+  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
   const setThreadInteractionMode = useAtomCommand(threadEnvironment.setInteractionMode, {
@@ -166,6 +171,21 @@ export function useThreadOutboxDrain(): void {
       const settings = resolveQueuedThreadSettings(queuedMessage, thread);
       const { reportFailure, completeDelivery } = makeDeliveryHelpers(queuedMessage);
 
+      if (!modelSelectionsEqual(settings.modelSelection, thread.modelSelection)) {
+        const metadataResult = await updateThreadMetadata({
+          environmentId: queuedMessage.environmentId,
+          input: {
+            commandId: settingsCommandId(queuedMessage, "model-selection"),
+            threadId: queuedMessage.threadId,
+            modelSelection: settings.modelSelection,
+          },
+        });
+        if (AsyncResult.isFailure(metadataResult)) {
+          reportFailure(metadataResult, "settings-sync");
+          return false;
+        }
+      }
+
       if (settings.runtimeMode !== thread.runtimeMode) {
         const runtimeResult = await setThreadRuntimeMode({
           environmentId: queuedMessage.environmentId,
@@ -209,7 +229,7 @@ export function useThreadOutboxDrain(): void {
             text: queuedMessage.text,
             attachments: toUploadChatImageAttachments(queuedMessage.attachments),
           },
-          modelSelection: settings.modelSelection,
+          modelSelection: resolveQueuedThreadTurnModelSelection(queuedMessage, thread),
           runtimeMode: settings.runtimeMode,
           interactionMode: settings.interactionMode,
           createdAt: queuedMessage.createdAt,
@@ -217,7 +237,13 @@ export function useThreadOutboxDrain(): void {
       });
       return completeDelivery(deliveryResult);
     },
-    [makeDeliveryHelpers, setThreadInteractionMode, setThreadRuntimeMode, startTurn],
+    [
+      makeDeliveryHelpers,
+      setThreadInteractionMode,
+      setThreadRuntimeMode,
+      startTurn,
+      updateThreadMetadata,
+    ],
   );
 
   const sendQueuedCreation = useCallback(
@@ -242,7 +268,10 @@ export function useThreadOutboxDrain(): void {
           createdAt: queuedMessage.createdAt,
           text: queuedMessage.text.trim(),
           attachments: queuedMessage.attachments,
-          modelSelection,
+          durableModelSelection: modelSelection,
+          ...(queuedMessage.turnModelSelection
+            ? { turnModelSelection: queuedMessage.turnModelSelection }
+            : {}),
           runtimeMode: queuedMessage.runtimeMode ?? DEFAULT_RUNTIME_MODE,
           interactionMode: queuedMessage.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
           workspaceMode: creation.workspaceMode,

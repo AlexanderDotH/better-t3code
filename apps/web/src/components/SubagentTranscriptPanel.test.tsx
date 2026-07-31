@@ -7,7 +7,10 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { SubagentTranscriptPanel } from "./SubagentTranscriptPanel";
+import {
+  resolveSubagentInitialStreamAnimation,
+  SubagentTranscriptPanel,
+} from "./SubagentTranscriptPanel";
 
 function makeDetail(): OrchestrationSubagentDetail {
   return {
@@ -71,6 +74,64 @@ function makeDetail(): OrchestrationSubagentDetail {
 }
 
 describe("SubagentTranscriptPanel", () => {
+  it("animates only a newly inserted live assistant message after transcript hydration", () => {
+    const committedMessageIds = new Set(["message-existing"]);
+
+    expect(
+      resolveSubagentInitialStreamAnimation({
+        committedScopeId: null,
+        committedMessageIds,
+        currentScopeId: "agent-review",
+        messageId: "message-new",
+        isAssistant: true,
+        isStreaming: true,
+      }),
+    ).toBe(false);
+    expect(
+      resolveSubagentInitialStreamAnimation({
+        committedScopeId: "agent-review",
+        committedMessageIds,
+        currentScopeId: "agent-review",
+        messageId: "message-existing",
+        isAssistant: true,
+        isStreaming: true,
+      }),
+    ).toBe(false);
+    expect(
+      resolveSubagentInitialStreamAnimation({
+        committedScopeId: "agent-review",
+        committedMessageIds,
+        currentScopeId: "agent-review",
+        messageId: "message-new",
+        isAssistant: false,
+        isStreaming: true,
+      }),
+    ).toBe(false);
+    expect(
+      resolveSubagentInitialStreamAnimation({
+        committedScopeId: "agent-review",
+        committedMessageIds,
+        currentScopeId: "agent-review",
+        messageId: "message-new",
+        isAssistant: true,
+        isStreaming: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("treats selecting another agent as hydration", () => {
+    expect(
+      resolveSubagentInitialStreamAnimation({
+        committedScopeId: "agent-review",
+        committedMessageIds: new Set(),
+        currentScopeId: "agent-implementation",
+        messageId: "message-new",
+        isAssistant: true,
+        isStreaming: true,
+      }),
+    ).toBe(false);
+  });
+
   it("renders loading and unselected states without control actions", () => {
     expect(renderToStaticMarkup(<SubagentTranscriptPanel subagent={null} isLoading />)).toContain(
       "Loading agent transcript",
@@ -93,6 +154,8 @@ describe("SubagentTranscriptPanel", () => {
     expect(html).toContain("Replay buffered events");
     expect(html).toContain("Inspected WebSocket transport");
     expect(html).toContain("Read ws.ts");
+    expect(html).toContain("bg-sky-500");
+    expect(html).not.toContain("bg-info/8");
     expect(html).not.toContain("Interrupt");
     expect(html).not.toContain("Resume");
   });

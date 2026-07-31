@@ -8,6 +8,7 @@ This is a living glossary for T3 Code. It explains what common terms mean in thi
 - [Thread timeline](#thread-timeline)
 - [Orchestration](#orchestration)
 - [Provider runtime](#provider-runtime)
+- [Internal MCP](#internal-mcp)
 - [Checkpointing](#checkpointing)
 
 ## Concepts
@@ -109,11 +110,23 @@ The agent interaction style for a thread. In [the contracts][1], the main values
 
 #### Assistant delivery mode
 
-Controls how assistant text reaches the thread timeline. In [the contracts][1], `streaming` updates incrementally and `buffered` delivers a completed result. See [ProviderService.ts][14].
+Controls how assistant text reaches the thread timeline. In [the contracts][1], `streaming` updates incrementally and `buffered` delivers a completed result. Web and desktop give newly appended streamed characters a short reveal that adapts to the observed output speed; mobile keeps its existing rendering. See [ProviderService.ts][14].
 
 #### Snapshot
 
 A point-in-time view of state. The word is used in multiple layers, including orchestration, provider, and checkpointing. See [ProjectionSnapshotQuery.ts][10], [ProviderAdapter.ts][15], and [CheckpointStore.ts][19].
+
+### Internal MCP
+
+The authenticated MCP server that T3 Code injects into supported provider sessions. It exposes
+T3-owned tools with trusted environment and thread context and is separate from user-configured MCP
+servers. See [internal-mcp.md][25].
+
+#### Workspace context
+
+The read-only `workspace_context` internal MCP tool. It batches deterministic repository path and
+content searches with targeted line-range reads. Its workspace root comes from the authenticated
+thread and project rather than tool input. See [internal-mcp.md][25].
 
 ### Checkpointing
 
@@ -153,6 +166,7 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 - [provider-architecture.md][16]
 - [runtime-modes.md][18]
 - [workspace-layout.md][2]
+- [internal-mcp.md][25]
 
 [1]: ../packages/contracts/src/orchestration.ts
 [2]: ./workspace-layout.md
@@ -178,3 +192,4 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [22]: ../apps/server/src/checkpointing/Utils.ts
 [23]: ../apps/server/src/checkpointing/Diffs.ts
 [24]: ./architecture.md
+[25]: ../architecture/internal-mcp.md

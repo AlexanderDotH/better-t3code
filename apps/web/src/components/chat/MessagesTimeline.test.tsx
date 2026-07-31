@@ -131,6 +131,7 @@ function matchMedia() {
 }
 
 let MessagesTimeline: typeof import("./MessagesTimeline").MessagesTimeline;
+let resolveInitialStreamAnimation: typeof import("./MessagesTimeline").resolveInitialStreamAnimation;
 
 beforeAll(async () => {
   const classList = {
@@ -164,7 +165,7 @@ beforeAll(async () => {
     },
   });
 
-  ({ MessagesTimeline } = await import("./MessagesTimeline"));
+  ({ MessagesTimeline, resolveInitialStreamAnimation } = await import("./MessagesTimeline"));
 }, 30_000);
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
@@ -223,6 +224,59 @@ function buildUserTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("animates only a newly inserted streaming assistant after the thread has committed", () => {
+    const committedMessageIds = new Set(["message-existing"]);
+
+    expect(
+      resolveInitialStreamAnimation({
+        committedScopeId: null,
+        committedMessageIds,
+        currentScopeId: "environment-local:thread-1",
+        messageId: "message-new",
+        isStreaming: true,
+      }),
+    ).toBe(false);
+    expect(
+      resolveInitialStreamAnimation({
+        committedScopeId: "environment-local:thread-1",
+        committedMessageIds,
+        currentScopeId: "environment-local:thread-1",
+        messageId: "message-existing",
+        isStreaming: true,
+      }),
+    ).toBe(false);
+    expect(
+      resolveInitialStreamAnimation({
+        committedScopeId: "environment-local:thread-1",
+        committedMessageIds,
+        currentScopeId: "environment-local:thread-1",
+        messageId: "message-new",
+        isStreaming: false,
+      }),
+    ).toBe(false);
+    expect(
+      resolveInitialStreamAnimation({
+        committedScopeId: "environment-local:thread-1",
+        committedMessageIds,
+        currentScopeId: "environment-local:thread-1",
+        messageId: "message-new",
+        isStreaming: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("treats a thread switch as hydration instead of replaying streamed text", () => {
+    expect(
+      resolveInitialStreamAnimation({
+        committedScopeId: "environment-local:thread-1",
+        committedMessageIds: new Set(),
+        currentScopeId: "environment-local:thread-2",
+        messageId: "message-new",
+        isStreaming: true,
+      }),
+    ).toBe(false);
+  });
+
   it("uses the larger leading inset only when the top fade is enabled", () => {
     const timelineEntries = [buildUserTimelineEntry("Hello")];
 

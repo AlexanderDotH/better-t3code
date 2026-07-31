@@ -46,7 +46,7 @@ const CODEX_PRESENTATION = {
   showInteractionModeToggle: true,
   nativeSubagents: {
     toolName: "spawn_agent",
-    maxRecommendedSubagents: 4,
+    maxRecommendedSubagents: 8,
   },
 } as const;
 

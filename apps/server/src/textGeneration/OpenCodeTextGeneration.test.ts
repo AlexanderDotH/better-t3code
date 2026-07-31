@@ -377,6 +377,32 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
     ),
   );
 
+  it.effect("reviews plan parallelism through OpenCode structured output", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.promptResult = {
+          data: {
+            parts: [
+              {
+                type: "text",
+                text: JSON.stringify({ recommendedSubagents: 6 }),
+              },
+            ],
+          },
+        };
+
+        const result = yield* textGeneration.reviewPlanParallelism({
+          cwd: process.cwd(),
+          planMarkdown: "## Provider\nAdd structured plan review.",
+          maxSubagents: 8,
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
+
+        expect(result).toEqual({ recommendedSubagents: 6 });
+      }),
+    ),
+  );
+
   it.effect("surfaces the upstream OpenCode structured-output error message", () =>
     withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {

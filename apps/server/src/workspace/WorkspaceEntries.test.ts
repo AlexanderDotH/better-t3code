@@ -290,6 +290,53 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(createSpy).toHaveBeenCalledTimes(2);
       }),
     );
+
+    it.effect("invalidates a cached index without starting a refresh scan", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-invalidate-" });
+        yield* writeTextFile(cwd, "src/index.ts", "export {};\n");
+
+        const path = yield* Path.Path;
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const createSpy = vi.spyOn(FileFinder, "create");
+        yield* workspaceEntries.list({ cwd });
+        expect(createSpy).toHaveBeenCalledTimes(1);
+
+        yield* writeTextFile(cwd, "src/added.ts", "export {};\n");
+        const scanSpy = vi.spyOn(FileFinder.prototype, "scanFiles");
+        yield* workspaceEntries.invalidate(`${cwd}${path.sep}src${path.sep}..`);
+
+        expect(scanSpy).not.toHaveBeenCalled();
+        const rebuilt = yield* workspaceEntries.list({ cwd });
+        expect(createSpy).toHaveBeenCalledTimes(2);
+        expect(rebuilt.entries).toContainEqual({ path: "src/added.ts", kind: "file" });
+      }),
+    );
+
+    it.effect("shares one rebuilt index across concurrent lookups after invalidation", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-invalidate-concurrent-" });
+        yield* writeTextFile(cwd, "src/index.ts", "export {};\n");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const createSpy = vi.spyOn(FileFinder, "create");
+        yield* workspaceEntries.list({ cwd });
+        yield* writeTextFile(cwd, "src/added.ts", "export {};\n");
+        yield* workspaceEntries.invalidate(cwd);
+
+        const [listed, searched] = yield* Effect.all(
+          [
+            workspaceEntries.list({ cwd }),
+            workspaceEntries.search({ cwd, query: "added", limit: 10 }),
+          ],
+          { concurrency: "unbounded" },
+        );
+
+        expect(createSpy).toHaveBeenCalledTimes(2);
+        expect(listed.entries).toContainEqual({ path: "src/added.ts", kind: "file" });
+        expect(searched.entries).toContainEqual({ path: "src/added.ts", kind: "file" });
+      }),
+    );
   });
 
   describe("browse", () => {

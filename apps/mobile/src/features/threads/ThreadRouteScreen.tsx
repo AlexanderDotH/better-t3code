@@ -9,6 +9,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import * as Option from "effect/Option";
 import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
 import { resolveThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
+import {
+  acceptReasoningRecommendation,
+  deriveReasoningRecommendation,
+  dismissReasoningRecommendation,
+  pendingReasoningOverrideMatchesSelection,
+  undoReasoningRecommendationOverride,
+} from "@t3tools/client-runtime/reasoning-recommendation";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -193,6 +200,8 @@ function ThreadRouteContent(
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const composer = useThreadComposerState();
+  const reasoningRecommendationState = composer.reasoningRecommendationState;
+  const setReasoningRecommendation = composer.onSetReasoningRecommendation;
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
@@ -263,6 +272,7 @@ function ThreadRouteContent(
     }, [props.renderInspector]),
   );
   const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
+  const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
@@ -278,6 +288,73 @@ function ThreadRouteContent(
         : null,
     [composer.interactionMode, composer.modelSelection, composer.runtimeMode, selectedThread],
   );
+  const reasoningRecommendationSelection = selectedThreadWithDraftSettings?.modelSelection ?? null;
+  const reasoningRecommendationCapabilities = useMemo(() => {
+    if (reasoningRecommendationSelection === null) {
+      return null;
+    }
+    const provider = serverConfig?.providers.find(
+      (candidate) => candidate.instanceId === reasoningRecommendationSelection.instanceId,
+    );
+    return (
+      provider?.models.find((model) => model.slug === reasoningRecommendationSelection.model)
+        ?.capabilities ?? null
+    );
+  }, [reasoningRecommendationSelection, serverConfig]);
+  const validPendingReasoningOverride =
+    reasoningRecommendationSelection !== null &&
+    pendingReasoningOverrideMatchesSelection(
+      reasoningRecommendationState?.pendingOverride,
+      reasoningRecommendationSelection,
+    )
+      ? (reasoningRecommendationState?.pendingOverride ?? null)
+      : null;
+  const reasoningRecommendation = useMemo(
+    () =>
+      reasoningRecommendationSelection === null || selectedThreadDetail === null
+        ? null
+        : deriveReasoningRecommendation({
+            activities: selectedThreadDetail.activities,
+            capabilities: reasoningRecommendationCapabilities,
+            durableSelection: reasoningRecommendationSelection,
+            latestCompletedTurnId:
+              selectedThreadDetail.latestTurn?.state === "completed"
+                ? selectedThreadDetail.latestTurn.turnId
+                : null,
+            threadIdle: !composer.activeThreadBusy && composer.selectedThreadQueueCount === 0,
+            handledEvidenceTurnId: reasoningRecommendationState?.handledEvidenceTurnId ?? null,
+          }),
+    [
+      composer.activeThreadBusy,
+      composer.selectedThreadQueueCount,
+      reasoningRecommendationCapabilities,
+      reasoningRecommendationSelection,
+      reasoningRecommendationState?.handledEvidenceTurnId,
+      selectedThreadDetail,
+    ],
+  );
+  const handleAcceptReasoningRecommendation = useCallback(() => {
+    if (reasoningRecommendation === null) {
+      return;
+    }
+    setReasoningRecommendation(
+      acceptReasoningRecommendation(reasoningRecommendationState, reasoningRecommendation),
+    );
+  }, [reasoningRecommendation, reasoningRecommendationState, setReasoningRecommendation]);
+  const handleDismissReasoningRecommendation = useCallback(() => {
+    if (reasoningRecommendation === null) {
+      return;
+    }
+    setReasoningRecommendation(
+      dismissReasoningRecommendation(reasoningRecommendationState, reasoningRecommendation),
+    );
+  }, [reasoningRecommendation, reasoningRecommendationState, setReasoningRecommendation]);
+  const handleUndoReasoningRecommendation = useCallback(() => {
+    if (reasoningRecommendationState === null) {
+      return;
+    }
+    setReasoningRecommendation(undoReasoningRecommendationOverride(reasoningRecommendationState));
+  }, [reasoningRecommendationState, setReasoningRecommendation]);
 
   /* ─── Native header theming ──────────────────────────────────────── */
   const usesNativeHeaderGlass = NATIVE_LIQUID_GLASS_SUPPORTED;
@@ -740,7 +817,6 @@ function ThreadRouteContent(
     detailDeleted: selectedThreadDetailState.status === "deleted",
     connectionState: routeConnectionState,
   });
-  const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = (showActionControls: boolean) => (
     <>
       <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />
@@ -762,6 +838,8 @@ function ThreadRouteContent(
           activePendingUserInputDrafts={requests.activePendingUserInputDrafts}
           activePendingUserInputAnswers={requests.activePendingUserInputAnswers}
           respondingUserInputId={requests.respondingUserInputId}
+          reasoningRecommendation={reasoningRecommendation}
+          pendingReasoningOverride={validPendingReasoningOverride}
           draftMessage={composer.draftMessage}
           draftAttachments={composer.draftAttachments}
           connectionStateLabel={routeConnectionState}
@@ -789,6 +867,9 @@ function ThreadRouteContent(
           onSelectUserInputOption={requests.onSelectUserInputOption}
           onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}
           onSubmitUserInput={requests.onSubmitUserInput}
+          onAcceptReasoningRecommendation={handleAcceptReasoningRecommendation}
+          onDismissReasoningRecommendation={handleDismissReasoningRecommendation}
+          onUndoReasoningRecommendation={handleUndoReasoningRecommendation}
         />
       </View>
     </>

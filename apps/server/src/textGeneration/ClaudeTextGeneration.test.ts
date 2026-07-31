@@ -507,6 +507,31 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     ),
   );
 
+  it.effect("reviews plan parallelism through Claude structured output", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: { recommendedSubagents: 6 },
+        }),
+        stdinMustContain: "between 2 and 10",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.reviewPlanParallelism({
+            cwd: process.cwd(),
+            planMarkdown: "## Contracts\nAdd schemas.\n\n## Server\nAdd routing.",
+            maxSubagents: 10,
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              "claude-fable-5",
+            ),
+          });
+
+          expect(generated).toEqual({ recommendedSubagents: 6 });
+        }),
+    ),
+  );
+
   it.effect("runs Claude text generation with the configured CLAUDE_CONFIG_DIR", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

@@ -114,14 +114,74 @@ describe("mobile composer drafts", () => {
         branch: "main",
         worktreePath: null,
       },
+      reasoningRecommendation: {
+        handledEvidenceTurnId: "turn-1",
+        pendingOverride: {
+          evidenceTurnId: "turn-1",
+          instanceId: "codex",
+          model: "gpt-5.4",
+          optionId: "reasoningEffort",
+          fromValue: "xhigh",
+          fromLabel: "Extra high",
+          targetValue: "high",
+          targetLabel: "High",
+        },
+      },
     };
 
     expect(clearComposerDraftContentState({ [draftKey]: draft }, draftKey)).toEqual({
       [draftKey]: {
         modelSelection: draft.modelSelection,
         workspaceSelection: draft.workspaceSelection,
+        reasoningRecommendation: draft.reasoningRecommendation,
         text: "",
         attachments: [],
+      },
+    });
+  });
+
+  it("hydrates a dismissed or pending recommendation without message content", () => {
+    expect(
+      decodePersistedComposerDrafts({
+        schemaVersion: 1,
+        drafts: {
+          "environment-1:thread-dismissed": {
+            text: "",
+            attachments: [],
+            reasoningRecommendation: {
+              handledEvidenceTurnId: "turn-dismissed",
+            },
+          },
+          "environment-1:thread-1": {
+            text: "",
+            attachments: [],
+            reasoningRecommendation: {
+              handledEvidenceTurnId: "turn-1",
+              pendingOverride: {
+                evidenceTurnId: "turn-1",
+                instanceId: "codex",
+                model: "gpt-5.6-sol",
+                optionId: "reasoningEffort",
+                fromValue: "max",
+                fromLabel: "Max",
+                targetValue: "high",
+                targetLabel: "High",
+              },
+            },
+          },
+        },
+      }),
+    ).toMatchObject({
+      "environment-1:thread-dismissed": {
+        reasoningRecommendation: {
+          handledEvidenceTurnId: "turn-dismissed",
+        },
+      },
+      "environment-1:thread-1": {
+        reasoningRecommendation: {
+          handledEvidenceTurnId: "turn-1",
+          pendingOverride: { targetValue: "high" },
+        },
       },
     });
   });

@@ -93,6 +93,7 @@ export class WorkspaceEntries extends Context.Service<
     readonly search: (
       input: ProjectSearchEntriesInput,
     ) => Effect.Effect<ProjectSearchEntriesResult, WorkspaceEntriesError>;
+    readonly invalidate: (cwd: string) => Effect.Effect<void, WorkspaceEntriesError>;
     readonly refresh: (cwd: string) => Effect.Effect<void>;
   }
 >()("t3/workspace/WorkspaceEntries") {}
@@ -178,6 +179,16 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const invalidate: WorkspaceEntries["Service"]["invalidate"] = Effect.fn(
+    "WorkspaceEntries.invalidate",
+  )(function* (cwd) {
+    const normalizedCwd = yield* normalizeWorkspaceRoot(cwd);
+    if (!(yield* RcMap.has(workspaceSearchIndexes.rcMap, normalizedCwd))) {
+      return;
+    }
+    yield* workspaceSearchIndexes.invalidate(normalizedCwd);
+  });
+
   const browse: WorkspaceEntries["Service"]["browse"] = Effect.fn("WorkspaceEntries.browse")(
     function* (input) {
       const resolvedInputPath = yield* resolveBrowseTarget(input, path);
@@ -251,7 +262,7 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  return WorkspaceEntries.of({ browse, list, refresh, search });
+  return WorkspaceEntries.of({ browse, invalidate, list, refresh, search });
 });
 
 export const layer = Layer.effect(WorkspaceEntries, make).pipe(

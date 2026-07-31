@@ -24,6 +24,8 @@ const makeStubTextGeneration = (
     translateTranscriptToEnglish: () =>
       Effect.die("translateTranscriptToEnglish stub not configured for this test"),
     improvePrompt: () => Effect.die("improvePrompt stub not configured for this test"),
+    reviewPlanParallelism: () =>
+      Effect.die("reviewPlanParallelism stub not configured for this test"),
     ...overrides,
   });
 
@@ -141,6 +143,39 @@ describe("makeTextGenerationFromRegistry", () => {
       expect(translated).toEqual({ text: "Update useThreadOutbox." });
       expect(improved).toEqual({ text: "Clarify the reconnect requirements." });
       expect(calls).toEqual(["translate:Actualiza useThreadOutbox.", "improve:Clarify reconnect."]);
+    }),
+  );
+
+  it.effect("routes plan parallelism review to the selected provider instance", () =>
+    Effect.gen(function* () {
+      const reviewerId = ProviderInstanceId.make("codex_reviewer");
+      const calls: Array<{ readonly planMarkdown: string; readonly maxSubagents: number }> = [];
+      const reviewer = makeStubInstance(
+        reviewerId,
+        makeStubTextGeneration({
+          reviewPlanParallelism: (input) => {
+            calls.push({
+              planMarkdown: input.planMarkdown,
+              maxSubagents: input.maxSubagents,
+            });
+            return Effect.succeed({ recommendedSubagents: 7 });
+          },
+        }),
+      );
+      const textGeneration = TextGeneration.makeTextGenerationFromRegistry(
+        makeStubRegistry([reviewer]),
+      );
+
+      const generated = yield* textGeneration.reviewPlanParallelism({
+        cwd: "/repo/worktree",
+        planMarkdown: "## Server\nImplement the RPC.",
+        userRequest: "Implement this plan.",
+        maxSubagents: 8,
+        modelSelection: createModelSelection(reviewerId, "gpt-5.6-luna"),
+      });
+
+      expect(generated).toEqual({ recommendedSubagents: 7 });
+      expect(calls).toEqual([{ planMarkdown: "## Server\nImplement the RPC.", maxSubagents: 8 }]);
     }),
   );
 

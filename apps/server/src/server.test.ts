@@ -25,6 +25,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  OrchestrationProposedPlanId,
   ResolvedKeybindingRule,
   ThreadId,
   WS_METHODS,
@@ -97,6 +98,7 @@ import * as ProjectSpeechProfileStore from "./speech/ProjectSpeechProfileStore.t
 import * as ProjectSpeechWorkspaceScanner from "./speech/ProjectSpeechWorkspaceScanner.ts";
 import { NoOpSkillEngineLayer } from "./skills/testUtils/NoOpSkillEngine.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
+import * as PlanParallelismReview from "./plan/PlanParallelismReview.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -354,6 +356,7 @@ const buildAppUnderTest = (options?: {
     terminalManager?: Partial<TerminalManager.TerminalManager["Service"]>;
     orchestrationEngine?: Partial<OrchestrationEngine.OrchestrationEngineService["Service"]>;
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]>;
+    planParallelismReview?: Partial<PlanParallelismReview.PlanParallelismReview["Service"]>;
     checkpointDiffQuery?: Partial<CheckpointDiffQuery.CheckpointDiffQuery["Service"]>;
     browserTraceCollector?: Partial<BrowserTraceCollector.BrowserTraceCollector["Service"]>;
     serverLifecycleEvents?: Partial<ServerLifecycleEvents.ServerLifecycleEvents["Service"]>;
@@ -534,6 +537,7 @@ const buildAppUnderTest = (options?: {
         generateThreadTitle: () => Effect.die("TextGeneration not stubbed in this test"),
         translateTranscriptToEnglish: () => Effect.die("TextGeneration not stubbed in this test"),
         improvePrompt: () => Effect.die("TextGeneration not stubbed in this test"),
+        reviewPlanParallelism: () => Effect.die("TextGeneration not stubbed in this test"),
       }),
       ProjectFaviconResolver.layer.pipe(
         Layer.provide(WorkspacePaths.layer),
@@ -773,6 +777,12 @@ const buildAppUnderTest = (options?: {
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),
           ...options?.layers?.projectionSnapshotQuery,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(PlanParallelismReview.PlanParallelismReview)({
+          review: () => Effect.die("PlanParallelismReview not stubbed in this test"),
+          ...options?.layers?.planParallelismReview,
         }),
       ),
       Layer.provide(
@@ -3925,6 +3935,46 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.auth.policy, "desktop-managed-local");
       assert.equal(response.shellResumeCompletionMarker, true);
       assert.equal(response.threadResumeCompletionMarker, true);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes plan parallelism review requests over websocket rpc", () =>
+    Effect.gen(function* () {
+      const planId = OrchestrationProposedPlanId.make("plan-review-1");
+      const implementationProviderInstanceId = ProviderInstanceId.make("codex");
+      const planUpdatedAt = "2026-01-01T00:00:00.000Z";
+      yield* buildAppUnderTest({
+        layers: {
+          planParallelismReview: {
+            review: (input) =>
+              Effect.succeed({
+                planId: input.planId,
+                planUpdatedAt: input.expectedPlanUpdatedAt,
+                implementationProviderInstanceId: input.implementationProviderInstanceId,
+                recommendedSubagents: 6,
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.planReviewParallelism]({
+            threadId: defaultThreadId,
+            planId,
+            expectedPlanUpdatedAt: planUpdatedAt,
+            implementationProviderInstanceId,
+          }),
+        ),
+      );
+
+      assert.deepEqual(response, {
+        planId,
+        planUpdatedAt,
+        implementationProviderInstanceId,
+        recommendedSubagents: 6,
+      });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

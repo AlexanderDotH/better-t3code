@@ -18,6 +18,7 @@ import {
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxFailureAction,
   resolveQueuedThreadSettings,
+  resolveQueuedThreadTurnModelSelection,
   shouldRetryThreadOutboxDelivery,
   threadOutboxRetryDelayMs,
   type QueuedThreadMessage,
@@ -92,6 +93,11 @@ describe("thread outbox", () => {
       },
       runtimeMode: "approval-required",
       interactionMode: "plan",
+      turnModelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      },
     } satisfies QueuedThreadMessage;
 
     expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(selectedMessage))).toEqual(
@@ -108,6 +114,41 @@ describe("thread outbox", () => {
       runtimeMode: selectedMessage.runtimeMode,
       interactionMode: selectedMessage.interactionMode,
     });
+  });
+
+  it("keeps the durable selector separate from a one-turn override", () => {
+    const durable = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.6-sol",
+      options: [{ id: "reasoningEffort", value: "max" }],
+    } as const;
+    const turn = {
+      ...durable,
+      options: [{ id: "reasoningEffort", value: "high" }],
+    } as const;
+    const message = {
+      ...queuedMessage({
+        messageId: "message-transient",
+        createdAt: "2026-06-08T10:00:01.000Z",
+      }),
+      modelSelection: durable,
+      turnModelSelection: turn,
+    } satisfies QueuedThreadMessage;
+
+    expect(
+      resolveQueuedThreadSettings(message, {
+        modelSelection: durable,
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+      }).modelSelection,
+    ).toEqual(durable);
+    expect(
+      resolveQueuedThreadTurnModelSelection(message, {
+        modelSelection: durable,
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+      }),
+    ).toEqual(turn);
   });
 
   it("compares model options as part of the queued settings change", () => {

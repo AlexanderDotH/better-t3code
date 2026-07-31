@@ -33,6 +33,10 @@ import type {
 } from "./project.ts";
 import type { ProviderInstanceId } from "./providerInstance.ts";
 import type {
+  PlanParallelismReviewInput,
+  PlanParallelismReviewResult,
+} from "./planParallelismReview.ts";
+import type {
   AssemblyAiStreamingTokenResult,
   ServerConfig,
   ServerProcessDiagnosticsResult,
@@ -1269,6 +1273,9 @@ export interface EnvironmentApi {
   };
   prompt: {
     improve: (input: ImprovePromptInput) => Promise<ProjectTextTransformResult>;
+  };
+  plan: {
+    reviewParallelism: (input: PlanParallelismReviewInput) => Promise<PlanParallelismReviewResult>;
   };
   chatImport: {
     discover: (input?: T3ChatImportDiscoverInput) => Promise<T3ChatImportDiscoverResult>;

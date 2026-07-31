@@ -4,6 +4,7 @@ import {
   PreviewAutomationUnavailableError,
   ProviderInstanceId,
   ThreadId,
+  WorkspaceContextUnavailableError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
@@ -34,5 +35,26 @@ it.effect("reports the scoped credential context when preview capability is unav
       providerInstanceId: invocation.providerInstanceId,
     });
     expect(error.message).toBe("MCP credential does not grant the preview capability.");
+  });
+});
+
+it.effect("rejects workspace access when a credential grants preview only", () => {
+  const invocation: McpInvocationContext.McpInvocationScope = {
+    environmentId: EnvironmentId.make("environment-1"),
+    threadId: ThreadId.make("thread-1"),
+    providerSessionId: "provider-session-1",
+    providerInstanceId: ProviderInstanceId.make("grok"),
+    capabilities: new Set(["preview"]),
+    issuedAt: 1,
+  };
+
+  return Effect.gen(function* () {
+    const error = yield* McpInvocationContext.requireWorkspaceMcpCapability().pipe(
+      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+      Effect.flip,
+    );
+
+    expect(error).toBeInstanceOf(WorkspaceContextUnavailableError);
+    expect(error.reason).toBe("credential_not_authorized");
   });
 });

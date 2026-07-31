@@ -47,6 +47,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.speechCreateBasicProjectProfile]: AuthOrchestrationOperateScope,
   [WS_METHODS.speechTranslateTranscript]: AuthOrchestrationOperateScope,
   [WS_METHODS.promptImprove]: AuthOrchestrationOperateScope,
+  [WS_METHODS.planReviewParallelism]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetTraceDiagnostics]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetProcessDiagnostics]: AuthOrchestrationReadScope,

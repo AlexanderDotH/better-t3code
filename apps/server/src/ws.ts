@@ -119,6 +119,7 @@ import { makeT3ChatImport } from "./t3ChatImport.ts";
 import { AssemblyAiStreamingToken } from "./speech/Layers/AssemblyAiStreamingToken.ts";
 import * as ProjectSpeechProfiles from "./speech/ProjectSpeechProfiles.ts";
 import * as ProjectTextTransforms from "./speech/ProjectTextTransforms.ts";
+import * as PlanParallelismReview from "./plan/PlanParallelismReview.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
@@ -381,6 +382,7 @@ const makeWsRpcLayer = (
       const assemblyAiStreamingToken = yield* AssemblyAiStreamingToken;
       const projectSpeechProfiles = yield* ProjectSpeechProfiles.make;
       const projectTextTransforms = yield* ProjectTextTransforms.make;
+      const planParallelismReview = yield* PlanParallelismReview.PlanParallelismReview;
       const mcpConfigEngine = yield* McpConfigEngine;
       const skillEngine = yield* SkillEngine;
       const t3ChatImport = yield* makeT3ChatImport();
@@ -1554,6 +1556,10 @@ const makeWsRpcLayer = (
         [WS_METHODS.promptImprove]: (input) =>
           observeRpcEffect(WS_METHODS.promptImprove, projectTextTransforms.improvePrompt(input), {
             "rpc.aggregate": "prompt",
+          }),
+        [WS_METHODS.planReviewParallelism]: (input) =>
+          observeRpcEffect(WS_METHODS.planReviewParallelism, planParallelismReview.review(input), {
+            "rpc.aggregate": "plan",
           }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(

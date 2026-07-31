@@ -1,16 +1,27 @@
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  PreviewTabId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  type WorkspaceContextResult,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as McpSessionRegistry from "./McpSessionRegistry.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import * as WorkspaceContext from "../workspace/WorkspaceContext.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -23,6 +34,10 @@ const invocation = {
   providerInstanceId: ProviderInstanceId.make("codex"),
   capabilities: new Set(["preview"] as const),
   issuedAt: 1,
+};
+const workspaceInvocation: McpInvocationContext.McpInvocationScope = {
+  ...invocation,
+  capabilities: new Set(["preview", "workspace"]),
 };
 const client = McpSchema.McpServerClient.of({
   clientId: 1,
@@ -149,6 +164,136 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect(
+  "keeps preview tools isolated and rejects preview-only credentials on workspace MCP",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const emptyWorkspaceResult: WorkspaceContextResult = {
+          queries: [],
+          reads: [],
+          truncated: false,
+          warnings: [],
+        };
+        const registryLayer = Layer.succeed(McpSessionRegistry.McpSessionRegistry, {
+          issue: () => Effect.die("unused"),
+          resolve: (token) =>
+            Effect.succeed(
+              token === "preview-token"
+                ? invocation
+                : token === "workspace-token"
+                  ? workspaceInvocation
+                  : undefined,
+            ),
+          touch: () => Effect.void,
+          revokeProviderSession: () => Effect.void,
+          revokeThread: () => Effect.void,
+          revokeAll: Effect.void,
+        });
+        const projectionLayer = Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+          getThreadCheckpointContext: () =>
+            Effect.succeed(
+              Option.some({
+                threadId,
+                projectId: ProjectId.make("project-mcp-test"),
+                workspaceRoot: "/workspace/project",
+                worktreePath: null,
+                checkpoints: [],
+              }),
+            ),
+        } as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape);
+        const workspaceLayer = Layer.succeed(WorkspaceContext.WorkspaceContext, {
+          execute: () => Effect.succeed(emptyWorkspaceResult),
+        });
+        const routes = McpHttpServer.layer.pipe(
+          Layer.provide(registryLayer),
+          Layer.provide(projectionLayer),
+          Layer.provide(workspaceLayer),
+          Layer.provide(PreviewAutomationBroker.layer.pipe(Layer.provide(NodeServices.layer))),
+        );
+        yield* HttpRouter.serve(routes, {
+          disableListenLog: true,
+          disableLogger: true,
+        }).pipe(Layer.build);
+        const httpClient = yield* HttpClient.HttpClient;
+        const initializeBody = HttpBody.text(
+          `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"mcp-test","version":"1.0.0"}}}`,
+          "application/json",
+        );
+        const initialize = (path: string, token: string) =>
+          httpClient.post(path, {
+            headers: {
+              accept: "application/json, text/event-stream",
+              authorization: `Bearer ${token}`,
+            },
+            body: initializeBody,
+          });
+        const listTools = Effect.fn("McpHttpServer.test.listTools")(function* (
+          path: string,
+          token: string,
+          sessionId: string,
+        ) {
+          const response = yield* httpClient.post(path, {
+            headers: {
+              accept: "application/json, text/event-stream",
+              authorization: `Bearer ${token}`,
+              "mcp-session-id": sessionId,
+            },
+            body: HttpBody.text(
+              `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+              "application/json",
+            ),
+          });
+          const body = JSON.parse(yield* response.text) as {
+            readonly result: {
+              readonly tools: ReadonlyArray<{
+                readonly name: string;
+                readonly annotations?: {
+                  readonly readOnlyHint?: boolean;
+                  readonly destructiveHint?: boolean;
+                  readonly idempotentHint?: boolean;
+                  readonly openWorldHint?: boolean;
+                };
+              }>;
+            };
+          };
+          return body.result.tools;
+        });
+
+        const rejected = yield* initialize("/mcp/workspace", "preview-token");
+        expect(rejected.status).toBe(401);
+
+        const preview = yield* initialize("/mcp", "preview-token");
+        expect(preview.status).toBe(200);
+        const previewTools = yield* listTools(
+          "/mcp",
+          "preview-token",
+          preview.headers["mcp-session-id"]!,
+        );
+        expect(previewTools.map(({ name }) => name)).toContain("preview_status");
+        expect(previewTools.map(({ name }) => name)).not.toContain("workspace_context");
+
+        const workspace = yield* initialize("/mcp/workspace", "workspace-token");
+        expect(workspace.status).toBe(200);
+        const workspaceTools = yield* listTools(
+          "/mcp/workspace",
+          "workspace-token",
+          workspace.headers["mcp-session-id"]!,
+        );
+        expect(workspaceTools.map(({ name }) => name)).toContain("preview_status");
+        expect(
+          workspaceTools.find(({ name }) => name === "workspace_context")?.annotations,
+        ).toEqual({
+          title: "Search and read workspace context",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        });
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("registers annotated tools and preserves authenticated request context", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -202,6 +347,8 @@ it.effect("registers annotated tools and preserves authenticated request context
         });
       }).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
+
+      expect(server.tools.some(({ tool }) => tool.name === "workspace_context")).toBe(false);
 
       const statusTool = server.tools.find(({ tool }) => tool.name === "preview_status");
       expect(statusTool?.tool.annotations?.readOnlyHint).toBe(true);

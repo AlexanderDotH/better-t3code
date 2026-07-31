@@ -1,6 +1,11 @@
 /* eslint-disable react/no-unstable-nested-components */
 import { useAtomValue } from "@effect/atom-react";
-import { DiffsHighlighter, getSharedHighlighter, SupportedLanguages } from "@pierre/diffs";
+import {
+  DiffsHighlighter,
+  getSharedHighlighter,
+  type ShikiTransformer,
+  SupportedLanguages,
+} from "@pierre/diffs";
 import {
   CheckIcon,
   ChevronRightIcon,
@@ -20,6 +25,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import React, {
   Children,
+  cloneElement,
   Suspense,
   type ClipboardEvent as ReactClipboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -31,6 +37,7 @@ import React, {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import type { Components, Options as ReactMarkdownOptions } from "react-markdown";
@@ -41,13 +48,30 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
-import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
+import {
+  getStreamingTextMotionDelayMs,
+  mapSourceAppendToRenderedSuffix,
+  segmentStreamingTextGraphemes,
+  type RenderedStreamingTextSuffix,
+  type StreamingTextGrapheme,
+  type StreamingTextMotionFrame,
+} from "./chat/streamingTextMotion";
+import { useStreamingTextMotion } from "./chat/useStreamingTextMotion";
+import { CHAT_FILE_TAG_CHIP_CLASS_NAME } from "./chat/FileTagChip";
+import {
+  CHAT_INLINE_CHIP_LABEL_CLASS_NAME,
+  COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
+} from "./composerInlineChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import {
   resolveExternalWebLinkHost,
   showExternalLinkContextMenu,
 } from "./chat/externalLinkContextMenu";
-import { hasSpecificPierreIconForFileName, syntheticFileNameForLanguageId } from "../pierre-icons";
+import {
+  hasSpecificPierreIconForFileName,
+  inferEntryKindFromPath,
+  syntheticFileNameForLanguageId,
+} from "../pierre-icons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "./ui/collapsible";
@@ -119,6 +143,8 @@ interface ChatMarkdownProps {
   threadRef?: ScopedThreadRef | undefined;
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
   isStreaming?: boolean;
+  streamId?: string | undefined;
+  animateInitialStreamChunk?: boolean | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   className?: string;
   /** Treat single newlines as hard breaks — chat-style user input. */
@@ -239,6 +265,385 @@ type MarkdownAstNode = {
   children?: MarkdownAstNode[];
 };
 
+const STREAM_TEXT_TAG_NAME = "stream-text";
+const STREAMING_WORD_WRAP_GRAPHEME_LIMIT = 24;
+const STREAMING_SKILL_TOKEN_PATTERN = /^[$/]([a-zA-Z][a-zA-Z0-9:_-]*)$/;
+
+interface ChatMarkdownHastPoint {
+  readonly offset?: number;
+}
+
+interface ChatMarkdownHastPosition {
+  readonly start: ChatMarkdownHastPoint;
+  readonly end: ChatMarkdownHastPoint;
+}
+
+interface ChatMarkdownHastNode {
+  type?: string;
+  tagName?: string;
+  value?: string;
+  properties?: Record<string, unknown>;
+  children?: ChatMarkdownHastNode[];
+  position?: ChatMarkdownHastPosition;
+}
+
+interface SourceRange {
+  readonly start: number;
+  readonly end: number;
+}
+
+interface StreamingRehypeOptions {
+  readonly frame: StreamingTextMotionFrame;
+  readonly source: string;
+}
+
+interface StreamingTextNodeProps {
+  readonly node?: ChatMarkdownHastNode;
+  readonly children?: ReactNode;
+}
+
+interface StreamingTextRunProps {
+  readonly frame: StreamingTextMotionFrame;
+  readonly graphemeIndexStart: number;
+  readonly skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  readonly sourceStart: number;
+  readonly text: string;
+}
+
+interface StreamingLabelMotion {
+  readonly frame: StreamingTextMotionFrame;
+  readonly graphemeIndexStart: number;
+  readonly sourceStart: number;
+}
+
+type StreamingCharacterStyle = CSSProperties & {
+  readonly "--stream-character-delay": string;
+  readonly "--stream-character-duration": string;
+};
+
+/**
+ * Runs after sanitization, so the custom node can only carry text that already
+ * passed through the normal Markdown safety boundary. Fenced code stays on its
+ * own Shiki path because token offsets are the only reliable rendered mapping
+ * once syntax highlighting changes the text-node structure.
+ */
+function rehypeMarkStreamingText({ frame, source }: StreamingRehypeOptions) {
+  return (tree: ChatMarkdownHastNode) => {
+    const visit = (node: ChatMarkdownHastNode) => {
+      if (
+        node.type === "element" &&
+        node.tagName === "pre" &&
+        node.children?.some((child) => child.type === "element" && child.tagName === "code")
+      ) {
+        return;
+      }
+      if (!node.children) {
+        return;
+      }
+
+      const nextChildren: ChatMarkdownHastNode[] = [];
+      for (const child of node.children) {
+        if (child.type !== "text" || typeof child.value !== "string" || child.value.length === 0) {
+          visit(child);
+          nextChildren.push(child);
+          continue;
+        }
+
+        const suffix = findStreamingRenderedSuffix({
+          child,
+          parent: node,
+          frame,
+          source,
+        });
+        if (!suffix) {
+          nextChildren.push(child);
+          continue;
+        }
+
+        const prefix = child.value.slice(0, suffix.renderedStart);
+        if (prefix.length > 0) {
+          nextChildren.push({ ...child, value: prefix });
+        }
+        nextChildren.push({
+          type: "element",
+          tagName: STREAM_TEXT_TAG_NAME,
+          properties: {
+            streamGraphemeIndexStart: suffix.graphemes[0]?.index ?? 0,
+            streamSourceStart: suffix.sourceStart,
+          },
+          children: [{ type: "text", value: suffix.text }],
+          ...(child.position ? { position: child.position } : {}),
+        });
+      }
+      node.children = nextChildren;
+    };
+
+    visit(tree);
+  };
+}
+
+function findStreamingRenderedSuffix({
+  child,
+  parent,
+  frame,
+  source,
+}: {
+  readonly child: ChatMarkdownHastNode;
+  readonly parent: ChatMarkdownHastNode;
+  readonly frame: StreamingTextMotionFrame;
+  readonly source: string;
+}): RenderedStreamingTextSuffix | null {
+  const renderedText = child.value;
+  if (typeof renderedText !== "string") {
+    return null;
+  }
+  for (const range of renderedTextSourceRanges(source, renderedText, child, parent)) {
+    const suffix = mapSourceAppendToRenderedSuffix({
+      frame,
+      source,
+      sourceStart: range.start,
+      sourceEnd: range.end,
+      renderedText,
+    });
+    if (suffix) {
+      return suffix;
+    }
+  }
+  return null;
+}
+
+function renderedTextSourceRanges(
+  source: string,
+  renderedText: string,
+  node: ChatMarkdownHastNode,
+  parent: ChatMarkdownHastNode,
+): readonly SourceRange[] {
+  const ranges: SourceRange[] = [];
+  const directRange = readNodeSourceRange(node);
+  if (directRange) {
+    ranges.push(directRange);
+    pushExactRenderedTextRange(ranges, source, renderedText, directRange);
+  }
+
+  const parentRange = readNodeSourceRange(parent);
+  if (parentRange) {
+    pushExactRenderedTextRange(ranges, source, renderedText, parentRange);
+  }
+  return uniqueSourceRanges(ranges);
+}
+
+function readNodeSourceRange(node: ChatMarkdownHastNode): SourceRange | null {
+  const start = node.position?.start.offset;
+  const end = node.position?.end.offset;
+  if (
+    !Number.isInteger(start) ||
+    !Number.isInteger(end) ||
+    start === undefined ||
+    end === undefined
+  ) {
+    return null;
+  }
+  return start >= 0 && start < end ? { start, end } : null;
+}
+
+function pushExactRenderedTextRange(
+  ranges: SourceRange[],
+  source: string,
+  renderedText: string,
+  container: SourceRange,
+): void {
+  const containerText = source.slice(container.start, container.end);
+  const relativeStart = containerText.indexOf(renderedText);
+  if (relativeStart < 0 || relativeStart !== containerText.lastIndexOf(renderedText)) {
+    return;
+  }
+  const start = container.start + relativeStart;
+  ranges.push({ start, end: start + renderedText.length });
+}
+
+function uniqueSourceRanges(ranges: readonly SourceRange[]): readonly SourceRange[] {
+  const seen = new Set<string>();
+  return ranges.filter((range) => {
+    const key = `${range.start}:${range.end}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function StreamingTextRun({
+  frame,
+  graphemeIndexStart,
+  skills,
+  sourceStart,
+  text,
+}: StreamingTextRunProps) {
+  const graphemes = segmentStreamingTextGraphemes(text, sourceStart);
+  const groups = groupStreamingTextGraphemes(graphemes);
+  return (
+    <span data-stream-text="" data-stream-generation={frame.generation}>
+      {groups.map((group) => {
+        const groupKey = `${frame.generation}:${group[0]?.sourceOffset ?? sourceStart}`;
+        const groupText = group.map((grapheme) => grapheme.text).join("");
+        if (group.every(isWhitespaceGrapheme)) {
+          return <React.Fragment key={groupKey}>{groupText}</React.Fragment>;
+        }
+        if (isKnownSkillToken(groupText, skills)) {
+          return (
+            <React.Fragment key={groupKey}>
+              {renderSkillInlineMarkdownChildren(groupText, skills)}
+            </React.Fragment>
+          );
+        }
+
+        const characters = group.map((grapheme) => (
+          <StreamingCharacter
+            key={`${frame.generation}:${grapheme.sourceOffset}:${grapheme.text}`}
+            frame={frame}
+            grapheme={grapheme}
+            graphemeIndex={graphemeIndexStart + grapheme.index}
+          />
+        ));
+        if (group.length <= STREAMING_WORD_WRAP_GRAPHEME_LIMIT) {
+          return (
+            <span key={groupKey} className="inline-block" data-stream-word="">
+              {characters}
+            </span>
+          );
+        }
+        return <React.Fragment key={groupKey}>{characters}</React.Fragment>;
+      })}
+    </span>
+  );
+}
+
+function StreamingLabelText({
+  motion,
+  text,
+}: {
+  readonly motion: StreamingLabelMotion | null | undefined;
+  readonly text: string;
+}) {
+  if (!motion) {
+    return <>{text}</>;
+  }
+  return (
+    <StreamingTextRun
+      frame={motion.frame}
+      graphemeIndexStart={motion.graphemeIndexStart}
+      skills={EMPTY_MARKDOWN_SKILLS}
+      sourceStart={motion.sourceStart}
+      text={text}
+    />
+  );
+}
+
+function resolveMaterializedLabelMotion({
+  frame,
+  node,
+  source,
+}: {
+  readonly frame: StreamingTextMotionFrame | null;
+  readonly node: ChatMarkdownHastNode;
+  readonly source: string;
+}): StreamingLabelMotion | null {
+  if (!frame) {
+    return null;
+  }
+  const range = readNodeSourceRange(node);
+  if (!range || range.start < frame.sourceStart || range.end > frame.sourceEnd) {
+    return null;
+  }
+  return {
+    frame,
+    graphemeIndexStart: segmentStreamingTextGraphemes(source.slice(frame.sourceStart, range.start))
+      .length,
+    sourceStart: range.start,
+  };
+}
+
+function StreamingCharacter({
+  frame,
+  grapheme,
+  graphemeIndex,
+}: {
+  readonly frame: StreamingTextMotionFrame;
+  readonly grapheme: StreamingTextGrapheme;
+  readonly graphemeIndex: number;
+}) {
+  const style: StreamingCharacterStyle = {
+    "--stream-character-delay": `${getStreamingTextMotionDelayMs(frame, graphemeIndex)}ms`,
+    "--stream-character-duration": `${frame.durationMs}ms`,
+  };
+  return (
+    <span
+      data-stream-character=""
+      data-stream-generation={frame.generation}
+      data-stream-source-offset={grapheme.sourceOffset}
+      style={style}
+    >
+      {grapheme.text}
+    </span>
+  );
+}
+
+function groupStreamingTextGraphemes(
+  graphemes: readonly StreamingTextGrapheme[],
+): readonly (readonly StreamingTextGrapheme[])[] {
+  const groups: StreamingTextGrapheme[][] = [];
+  for (const grapheme of graphemes) {
+    const previous = groups.at(-1);
+    if (previous && isWhitespaceGrapheme(previous[0]) === isWhitespaceGrapheme(grapheme)) {
+      previous.push(grapheme);
+      continue;
+    }
+    groups.push([grapheme]);
+  }
+  return groups;
+}
+
+function isWhitespaceGrapheme(grapheme: StreamingTextGrapheme | undefined): boolean {
+  return grapheme !== undefined && /^\s+$/u.test(grapheme.text);
+}
+
+function isKnownSkillToken(
+  text: string,
+  skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>,
+): boolean {
+  const name = STREAMING_SKILL_TOKEN_PATTERN.exec(text)?.[1];
+  return name !== undefined && skills.some((skill) => skill.name === name);
+}
+
+function renderSkillAwareMarkdownChildren(
+  children: ReactNode,
+  skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>,
+): ReactNode {
+  return Children.map(children, (child) => {
+    if (typeof child === "string") {
+      return renderSkillInlineMarkdownChildren(child, skills);
+    }
+    if (!isValidElement<{ children?: ReactNode; node?: { tagName?: string } }>(child)) {
+      return child;
+    }
+    const markdownTagName = typeof child.type === "string" ? child.type : child.props.node?.tagName;
+    if (
+      markdownTagName === STREAM_TEXT_TAG_NAME ||
+      markdownTagName === "code" ||
+      markdownTagName === "a" ||
+      !("children" in child.props)
+    ) {
+      return child;
+    }
+    return cloneElement(
+      child,
+      undefined,
+      renderSkillAwareMarkdownChildren(child.props.children, skills),
+    );
+  });
+}
+
 function remarkPreserveCodeMeta() {
   return (tree: MarkdownAstNode) => {
     const visit = (node: MarkdownAstNode) => {
@@ -353,6 +758,84 @@ function getHighlighterPromise(language: string): Promise<DiffsHighlighter> {
   });
   highlighterPromiseCache.set(language, promise);
   return promise;
+}
+
+function createStreamingCodeTransformer({
+  codeSourceStart,
+  frame,
+  source,
+}: {
+  readonly codeSourceStart: number;
+  readonly frame: StreamingTextMotionFrame;
+  readonly source: string;
+}): ShikiTransformer {
+  return {
+    name: "t3-streaming-text-motion",
+    span(hast, _line, _column, _lineElement, token) {
+      const tokenSourceStart = codeSourceStart + token.offset;
+      const tokenSourceEnd = tokenSourceStart + token.content.length;
+      const suffix = mapSourceAppendToRenderedSuffix({
+        frame,
+        source,
+        sourceStart: tokenSourceStart,
+        sourceEnd: tokenSourceEnd,
+        renderedText: token.content,
+      });
+      if (!suffix) {
+        return;
+      }
+
+      const prefix = token.content.slice(0, suffix.renderedStart);
+      const children: typeof hast.children = [];
+      if (prefix.length > 0) {
+        children.push({ type: "text", value: prefix });
+      }
+      for (const grapheme of suffix.graphemes) {
+        const delayMs = getStreamingTextMotionDelayMs(frame, grapheme.index);
+        children.push({
+          type: "element",
+          tagName: "span",
+          properties: {
+            "data-stream-character": "",
+            "data-stream-generation": String(frame.generation),
+            "data-stream-source-offset": String(grapheme.sourceOffset),
+            style: `--stream-character-delay:${delayMs}ms;--stream-character-duration:${frame.durationMs}ms`,
+          },
+          children: [{ type: "text", value: grapheme.text }],
+        });
+      }
+      hast.children = children;
+    },
+  };
+}
+
+function resolveFencedCodeSourceStart(
+  source: string,
+  node: ChatMarkdownHastNode,
+  code: string,
+): number | null {
+  const blockRange = readNodeSourceRange(node);
+  if (!blockRange) {
+    return null;
+  }
+  const openingFenceEnd = source.indexOf("\n", blockRange.start);
+  if (openingFenceEnd < 0 || openingFenceEnd >= blockRange.end) {
+    return null;
+  }
+  const codeSourceStart = openingFenceEnd + 1;
+  const sourceComparableCode = code.endsWith("\n") ? code.slice(0, -1) : code;
+  if (!source.startsWith(sourceComparableCode, codeSourceStart)) {
+    return null;
+  }
+  return codeSourceStart;
+}
+
+function createCodeBlockStreamKey(
+  streamId: string | undefined,
+  node: ChatMarkdownHastNode,
+): string | null {
+  const blockStart = readNodeSourceRange(node)?.start;
+  return streamId !== undefined && blockStart !== undefined ? `${streamId}:${blockStart}` : null;
 }
 
 function readInitialWordWrapSetting(): boolean {
@@ -545,24 +1028,32 @@ function MarkdownDetails({
 function MarkdownCodeBlockTitleContent({
   fenceTitle,
   language,
+  labelMotion,
   theme,
 }: {
   fenceTitle: string | null;
   language: string;
+  labelMotion?: StreamingLabelMotion | null | undefined;
   theme: "light" | "dark";
 }) {
   if (fenceTitle) {
     return (
       <>
         <PierreEntryIcon pathValue={fenceTitle} kind="file" theme={theme} className="size-3.5" />
-        <span className="truncate">{fenceTitle}</span>
+        <span className="truncate">
+          <StreamingLabelText motion={labelMotion} text={fenceTitle} />
+        </span>
       </>
     );
   }
 
   const fileName = syntheticFileNameForLanguageId(language);
   if (!hasSpecificPierreIconForFileName(fileName)) {
-    return <span className="truncate">{language}</span>;
+    return (
+      <span className="truncate">
+        <StreamingLabelText motion={labelMotion} text={language} />
+      </span>
+    );
   }
   return (
     <Tooltip>
@@ -582,12 +1073,14 @@ function MarkdownCodeBlock({
   code,
   language,
   fenceTitle,
+  labelMotion,
   theme,
   children,
 }: {
   code: string;
   language: string;
   fenceTitle: string | null;
+  labelMotion?: StreamingLabelMotion | null;
   theme: "light" | "dark";
   children: ReactNode;
 }) {
@@ -646,6 +1139,7 @@ function MarkdownCodeBlock({
           <MarkdownCodeBlockTitleContent
             fenceTitle={fenceTitle}
             language={language}
+            labelMotion={labelMotion}
             theme={theme}
           />
         </span>
@@ -697,6 +1191,9 @@ interface SuspenseShikiCodeBlockProps {
   code: string;
   themeName: DiffThemeName;
   isStreaming: boolean;
+  streamingFrame: StreamingTextMotionFrame | null;
+  source: string;
+  codeSourceStart: number | null;
 }
 
 function SuspenseShikiCodeBlock({
@@ -704,6 +1201,9 @@ function SuspenseShikiCodeBlock({
   code,
   themeName,
   isStreaming,
+  streamingFrame,
+  source,
+  codeSourceStart,
 }: SuspenseShikiCodeBlockProps) {
   const language = extractFenceLanguage(className);
   const cacheKey = createHighlightCacheKey(code, language, themeName);
@@ -725,6 +1225,9 @@ function SuspenseShikiCodeBlock({
       themeName={themeName}
       cacheKey={cacheKey}
       isStreaming={isStreaming}
+      streamingFrame={streamingFrame}
+      source={source}
+      codeSourceStart={codeSourceStart}
     />
   );
 }
@@ -735,6 +1238,9 @@ interface UncachedShikiCodeBlockProps {
   themeName: DiffThemeName;
   cacheKey: string;
   isStreaming: boolean;
+  streamingFrame: StreamingTextMotionFrame | null;
+  source: string;
+  codeSourceStart: number | null;
 }
 
 function UncachedShikiCodeBlock({
@@ -743,11 +1249,30 @@ function UncachedShikiCodeBlock({
   themeName,
   cacheKey,
   isStreaming,
+  streamingFrame,
+  source,
+  codeSourceStart,
 }: UncachedShikiCodeBlockProps) {
   const highlighter = use(getHighlighterPromise(language));
   const highlightedHtml = useMemo(() => {
+    const highlight = (highlightLanguage: string) =>
+      highlighter.codeToHtml(code, {
+        lang: highlightLanguage,
+        theme: themeName,
+        ...(streamingFrame !== null && codeSourceStart !== null
+          ? {
+              transformers: [
+                createStreamingCodeTransformer({
+                  codeSourceStart,
+                  frame: streamingFrame,
+                  source,
+                }),
+              ],
+            }
+          : {}),
+      });
     try {
-      return highlighter.codeToHtml(code, { lang: language, theme: themeName });
+      return highlight(language);
     } catch (error) {
       // Log highlighting failures for debugging while falling back to plain text
       console.warn(
@@ -755,9 +1280,9 @@ function UncachedShikiCodeBlock({
         error instanceof Error ? error.message : error,
       );
       // If highlighting fails for this language, render as plain text
-      return highlighter.codeToHtml(code, { lang: "text", theme: themeName });
+      return highlight("text");
     }
-  }, [code, highlighter, language, themeName]);
+  }, [code, codeSourceStart, highlighter, language, source, streamingFrame, themeName]);
 
   useEffect(() => {
     if (!isStreaming) {
@@ -782,6 +1307,7 @@ interface MarkdownFileLinkProps {
   workspaceRelativePath: string | null;
   line?: number | undefined;
   label: string;
+  labelMotion?: StreamingLabelMotion | null;
   copyMarkdown: string;
   theme: "light" | "dark";
   threadRef?: ScopedThreadRef | undefined;
@@ -1065,6 +1591,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   workspaceRelativePath,
   line,
   label,
+  labelMotion,
   copyMarkdown,
   theme,
   threadRef,
@@ -1257,7 +1784,15 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             }}
             onContextMenu={handleContextMenu}
           >
-            <FileTagChipContent path={iconPath} label={label} theme={theme} selectable />
+            <PierreEntryIcon
+              pathValue={iconPath}
+              kind={inferEntryKindFromPath(iconPath)}
+              theme={theme}
+              className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
+            />
+            <span className={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}>
+              <StreamingLabelText motion={labelMotion} text={label} />
+            </span>
           </a>
         }
       />
@@ -1285,6 +1820,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.workspaceRelativePath === next.workspaceRelativePath &&
     previous.line === next.line &&
     previous.label === next.label &&
+    previous.labelMotion === next.labelMotion &&
     previous.copyMarkdown === next.copyMarkdown &&
     previous.theme === next.theme &&
     previous.threadRef === next.threadRef &&
@@ -1300,11 +1836,28 @@ function ChatMarkdown({
   threadRef,
   onTaskListChange,
   isStreaming = false,
+  streamId,
+  animateInitialStreamChunk = false,
   skills = EMPTY_MARKDOWN_SKILLS,
   className,
   lineBreaks = false,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
+  const streamingFrame = useStreamingTextMotion({
+    text,
+    streamId,
+    isStreaming,
+    animateInitialStreamChunk,
+  });
+  const markdownRehypePlugins = useMemo<NonNullable<ReactMarkdownOptions["rehypePlugins"]>>(() => {
+    if (!streamingFrame) {
+      return CHAT_MARKDOWN_REHYPE_PLUGINS;
+    }
+    return [
+      ...CHAT_MARKDOWN_REHYPE_PLUGINS,
+      [rehypeMarkStreamingText, { frame: streamingFrame, source: text }],
+    ];
+  }, [streamingFrame, text]);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
   });
@@ -1411,6 +1964,7 @@ function ChatMarkdown({
       fileLinkMeta: MarkdownFileLinkMeta,
       copyMarkdown: string,
       className?: string,
+      sourceNode?: ChatMarkdownHastNode,
     ) => {
       const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);
       const labelParts = [fileLinkMeta.basename];
@@ -1422,6 +1976,13 @@ function ChatMarkdown({
           `L${fileLinkMeta.line}${fileLinkMeta.column ? `:C${fileLinkMeta.column}` : ""}`,
         );
       }
+      const labelMotion = sourceNode
+        ? resolveMaterializedLabelMotion({
+            frame: streamingFrame,
+            node: sourceNode,
+            source: text,
+          })
+        : null;
 
       return (
         <MarkdownFileLink
@@ -1432,6 +1993,7 @@ function ChatMarkdown({
           workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
           line={fileLinkMeta.line}
           label={labelParts.join(" · ")}
+          labelMotion={labelMotion}
           copyMarkdown={copyMarkdown}
           theme={resolvedTheme}
           threadRef={threadRef}
@@ -1449,8 +2011,32 @@ function ChatMarkdown({
     };
 
     return {
+      // Keep this key literal: the React compiler currently preserves it here
+      // but serializes a computed custom-element key as its identifier name.
+      "stream-text"({ node, children }: StreamingTextNodeProps) {
+        const sourceStart = node?.properties?.streamSourceStart;
+        const graphemeIndexStart = node?.properties?.streamGraphemeIndexStart;
+        const streamedText = nodeToPlainText(children);
+        if (
+          !streamingFrame ||
+          typeof sourceStart !== "number" ||
+          typeof graphemeIndexStart !== "number" ||
+          streamedText.length === 0
+        ) {
+          return <>{children}</>;
+        }
+        return (
+          <StreamingTextRun
+            frame={streamingFrame}
+            graphemeIndexStart={graphemeIndexStart}
+            skills={skills}
+            sourceStart={sourceStart}
+            text={streamedText}
+          />
+        );
+      },
       p({ node: _node, children, ...props }) {
-        return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
+        return <p {...props}>{renderSkillAwareMarkdownChildren(children, skills)}</p>;
       },
       li({ node, children, ...props }) {
         const listItemStart = node?.position?.start.offset;
@@ -1458,7 +2044,7 @@ function ChatMarkdown({
           typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
         return (
           <li {...props} data-task-marker-offset={markerOffset ?? undefined}>
-            {renderSkillInlineMarkdownChildren(children, skills)}
+            {renderSkillAwareMarkdownChildren(children, skills)}
           </li>
         );
       },
@@ -1567,6 +2153,7 @@ function ChatMarkdown({
           fileLinkMeta,
           `[${fileLinkMeta.basename}](${normalizedHref})`,
           props.className,
+          node as ChatMarkdownHastNode,
         );
       },
       code({ node, children, className, ...props }) {
@@ -1576,7 +2163,12 @@ function ChatMarkdown({
             inlineCodeFileLinkMetaByText.get(codeText.trim()) ??
             resolveInlineCodeFileLinkMeta(codeText, cwd);
           if (fileLinkMeta) {
-            return fileLinkChip(fileLinkMeta, `\`${codeText}\``);
+            return fileLinkChip(
+              fileLinkMeta,
+              `\`${codeText}\``,
+              undefined,
+              node as ChatMarkdownHastNode,
+            );
           }
         }
         return (
@@ -1599,20 +2191,33 @@ function ChatMarkdown({
 
         const language = extractFenceLanguage(codeBlock.className);
         const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
+        const hastNode = node as ChatMarkdownHastNode;
+        const codeSourceStart = resolveFencedCodeSourceStart(text, hastNode, codeBlock.code);
+        const codeBlockStreamKey = createCodeBlockStreamKey(streamId, hastNode);
+        const labelMotion = resolveMaterializedLabelMotion({
+          frame: streamingFrame,
+          node: hastNode,
+          source: text,
+        });
         return (
           <MarkdownCodeBlock
             code={codeBlock.code}
             language={language}
             fenceTitle={fenceTitle}
+            labelMotion={labelMotion}
             theme={resolvedTheme}
           >
             <CodeHighlightErrorBoundary fallback={<pre {...props}>{children}</pre>}>
               <Suspense fallback={<pre {...props}>{children}</pre>}>
                 <SuspenseShikiCodeBlock
+                  key={codeBlockStreamKey ?? undefined}
                   className={codeBlock.className}
                   code={codeBlock.code}
                   themeName={diffThemeName}
                   isStreaming={isStreaming}
+                  streamingFrame={streamingFrame}
+                  source={text}
+                  codeSourceStart={codeSourceStart}
                 />
               </Suspense>
             </CodeHighlightErrorBoundary>
@@ -1633,6 +2238,8 @@ function ChatMarkdown({
     openMarkdownFileInPreview,
     resolvedTheme,
     skills,
+    streamId,
+    streamingFrame,
     text,
     threadRef,
   ]);
@@ -1649,7 +2256,7 @@ function ChatMarkdown({
         remarkPlugins={
           lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
         }
-        rehypePlugins={CHAT_MARKDOWN_REHYPE_PLUGINS}
+        rehypePlugins={markdownRehypePlugins}
         components={markdownComponents}
         urlTransform={markdownUrlTransform}
       >

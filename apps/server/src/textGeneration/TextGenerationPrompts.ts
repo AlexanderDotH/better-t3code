@@ -322,3 +322,64 @@ export function buildPromptImprovementPrompt(input: PromptImprovementPromptInput
 
   return { prompt, outputSchema: PromptImprovementOutputSchema };
 }
+
+// ---------------------------------------------------------------------------
+// Proposed-plan parallelism review
+// ---------------------------------------------------------------------------
+
+export const PLAN_PARALLELISM_REVIEW_PLAN_MAX_CHARS = 64_000;
+export const PLAN_PARALLELISM_REVIEW_REQUEST_MAX_CHARS = 16_000;
+
+const REVIEW_CONTEXT_TRUNCATION_MARKER = "\n\n[truncated]";
+
+export function truncatePlanParallelismReviewContext(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  const retainedChars = Math.max(0, maxChars - REVIEW_CONTEXT_TRUNCATION_MARKER.length);
+  return `${value.slice(0, retainedChars)}${REVIEW_CONTEXT_TRUNCATION_MARKER}`;
+}
+
+export const PlanParallelismReviewOutputSchema = Schema.Struct({
+  recommendedSubagents: Schema.Int,
+});
+
+export interface PlanParallelismReviewPromptInput {
+  readonly planMarkdown: string;
+  readonly userRequest?: string | undefined;
+  readonly maxSubagents: number;
+}
+
+export function buildPlanParallelismReviewPrompt(input: PlanParallelismReviewPromptInput) {
+  const planMarkdown = truncatePlanParallelismReviewContext(
+    input.planMarkdown,
+    PLAN_PARALLELISM_REVIEW_PLAN_MAX_CHARS,
+  );
+  const userRequest = input.userRequest
+    ? truncatePlanParallelismReviewContext(
+        input.userRequest,
+        PLAN_PARALLELISM_REVIEW_REQUEST_MAX_CHARS,
+      )
+    : "(not available)";
+  const prompt = [
+    "You estimate the useful number of direct child subagents for implementing a coding plan.",
+    "Return a JSON object with exactly one key: recommendedSubagents.",
+    "Rules:",
+    `- recommendedSubagents must be an integer between 2 and ${input.maxSubagents}.`,
+    "- Prefer the highest useful parallelism supported by genuinely independent, non-overlapping workstreams.",
+    "- Do not artificially stop at four when more independent workstreams exist.",
+    "- Reduce the count for sequential dependencies, shared-file conflicts, or work that must be integrated before another part starts.",
+    "- Ambiguity alone does not justify more subagents.",
+    "- Count discovery separately only when it is a substantial, independently useful workstream.",
+    "- Do not create dummy, duplicate, or observation-only roles.",
+    "- Do not count the parent agent, which retains integration and final verification.",
+    "- Do not execute the plan, use tools, inspect the filesystem, or modify files.",
+    "- Return only the JSON object. Do not include rationale, names, tasks, or workstreams.",
+    "",
+    "Originating user request:",
+    userRequest,
+    "",
+    "Proposed plan:",
+    planMarkdown,
+  ].join("\n");
+
+  return { prompt, outputSchema: PlanParallelismReviewOutputSchema };
+}

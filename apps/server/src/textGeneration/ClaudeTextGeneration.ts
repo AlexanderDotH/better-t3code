@@ -22,6 +22,7 @@ import * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildPlanParallelismReviewPrompt,
   buildPromptImprovementPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
@@ -97,7 +98,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       | "generateBranchName"
       | "generateThreadTitle"
       | "translateTranscriptToEnglish"
-      | "improvePrompt",
+      | "improvePrompt"
+      | "reviewPlanParallelism",
     value: unknown,
     detail: string,
   ): Effect.Effect<string, TextGenerationError> =>
@@ -129,7 +131,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       | "generateBranchName"
       | "generateThreadTitle"
       | "translateTranscriptToEnglish"
-      | "improvePrompt";
+      | "improvePrompt"
+      | "reviewPlanParallelism";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -410,6 +413,20 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     return { text: generated.text.trim() };
   });
 
+  const reviewPlanParallelism: TextGeneration.TextGeneration["Service"]["reviewPlanParallelism"] =
+    Effect.fn("ClaudeTextGeneration.reviewPlanParallelism")(function* (input) {
+      const { prompt, outputSchema } = buildPlanParallelismReviewPrompt(input);
+      const generated = yield* runClaudeJson({
+        operation: "reviewPlanParallelism",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return { recommendedSubagents: generated.recommendedSubagents };
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
@@ -417,5 +434,6 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     generateThreadTitle,
     translateTranscriptToEnglish,
     improvePrompt,
+    reviewPlanParallelism,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

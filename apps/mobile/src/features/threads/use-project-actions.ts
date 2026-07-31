@@ -67,7 +67,7 @@ export function useCreateProjectThread() {
           createdAt: metadata.createdAt,
           text: initialMessageText,
           attachments: input.initialAttachments,
-          modelSelection: input.modelSelection,
+          durableModelSelection: input.modelSelection,
           runtimeMode: input.runtimeMode,
           interactionMode: input.interactionMode,
           workspaceMode: input.envMode,

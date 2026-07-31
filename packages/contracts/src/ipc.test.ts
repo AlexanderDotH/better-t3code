@@ -1,7 +1,11 @@
 import * as Schema from "effect/Schema";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, expectTypeOf, it } from "vite-plus/test";
 
-import { DesktopEnvironmentBootstrapSchema } from "./ipc.ts";
+import type {
+  PlanParallelismReviewInput,
+  PlanParallelismReviewResult,
+} from "./planParallelismReview.ts";
+import { DesktopEnvironmentBootstrapSchema, type EnvironmentApi } from "./ipc.ts";
 
 describe("DesktopEnvironmentBootstrapSchema", () => {
   const decode = Schema.decodeUnknownSync(DesktopEnvironmentBootstrapSchema);
@@ -34,5 +38,13 @@ describe("DesktopEnvironmentBootstrapSchema", () => {
         wsBaseUrl: null,
       }).runningDistro,
     ).toBeNull();
+  });
+});
+
+describe("EnvironmentApi plan reviews", () => {
+  it("exposes the typed plan parallelism review operation", () => {
+    expectTypeOf<EnvironmentApi["plan"]["reviewParallelism"]>().toEqualTypeOf<
+      (input: PlanParallelismReviewInput) => Promise<PlanParallelismReviewResult>
+    >();
   });
 });

@@ -365,8 +365,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     return runtimeSessionId;
   });
 
-  const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
-    McpSessionRegistry.issueActiveMcpCredential({ threadId, providerInstanceId }).pipe(
+  const prepareMcpSession = (
+    threadId: ThreadId,
+    providerInstanceId: ProviderInstanceId,
+    provider: ProviderDriverKind,
+  ) =>
+    McpSessionRegistry.issueActiveMcpCredential({ threadId, providerInstanceId, provider }).pipe(
       Effect.tap((credential) =>
         credential
           ? Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config))
@@ -433,7 +437,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       );
     }
     const startExit = yield* Effect.exit(
-      prepareMcpSession(input.sessionInput.threadId, input.providerInstanceId).pipe(
+      prepareMcpSession(
+        input.sessionInput.threadId,
+        input.providerInstanceId,
+        input.adapter.provider,
+      ).pipe(
         Effect.andThen(Deferred.succeed(startGate, undefined)),
         Effect.andThen(Fiber.join(startFiber)),
       ),

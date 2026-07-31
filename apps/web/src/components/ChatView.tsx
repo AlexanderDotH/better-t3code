@@ -29,6 +29,17 @@ import {
 import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { resolveThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
 import {
+  acceptReasoningRecommendation,
+  consumeReasoningRecommendationOverride,
+  deriveReasoningRecommendation,
+  dismissReasoningRecommendation,
+  pendingReasoningOverrideMatchesSelection,
+  reconcileReasoningRecommendationState,
+  resolveReasoningTurnModelSelection,
+  undoReasoningRecommendationOverride,
+  type PendingReasoningOverride,
+} from "@t3tools/client-runtime/reasoning-recommendation";
+import {
   parseScopedThreadKey,
   scopedThreadKey,
   scopeProjectRef,
@@ -249,6 +260,7 @@ import {
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { resolveThreadPr } from "./ThreadStatusIndicators";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import { buildReasoningRecommendationBannerItem } from "./chat/ReasoningRecommendationBanner";
 import { ThreadSyncStatusPill } from "./chat/ThreadSyncStatusPill";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
@@ -329,6 +341,9 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
+const EMPTY_MODEL_SELECTION_BY_PROVIDER: Readonly<
+  Partial<Record<ProviderInstanceId, ModelSelection>>
+> = Object.freeze({});
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
   const transitionGroupRef = useRef<HTMLDivElement | null>(null);
@@ -1154,6 +1169,21 @@ function chatActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
 }
 
+function consumeComposerReasoningOverride(
+  threadRef: ScopedThreadRef,
+  pendingOverride: PendingReasoningOverride,
+): void {
+  const store = useComposerDraftStore.getState();
+  const state = store.getComposerDraft(threadRef)?.reasoningRecommendation;
+  if (!state) {
+    return;
+  }
+  const next = consumeReasoningRecommendationOverride(state, pendingOverride);
+  if (next !== state) {
+    store.setReasoningRecommendation(threadRef, next);
+  }
+}
+
 function ChatViewContent(props: ChatViewProps) {
   const {
     environmentId,
@@ -1261,6 +1291,14 @@ function ChatViewContent(props: ChatViewProps) {
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
+  const composerModelSelectionByProvider = useComposerDraftStore(
+    (store) =>
+      store.getComposerDraft(composerDraftTarget)?.modelSelectionByProvider ??
+      EMPTY_MODEL_SELECTION_BY_PROVIDER,
+  );
+  const reasoningRecommendationState = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.reasoningRecommendation ?? null,
+  );
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const setComposerDraftTerminalContexts = useComposerDraftStore(
@@ -1277,6 +1315,9 @@ function ChatViewContent(props: ChatViewProps) {
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
+  );
+  const setComposerReasoningRecommendation = useComposerDraftStore(
+    (store) => store.setReasoningRecommendation,
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
@@ -2270,6 +2311,134 @@ function ChatViewContent(props: ChatViewProps) {
     threadError,
   });
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const reasoningRecommendationSelection = useMemo(() => {
+    const instanceId =
+      composerActiveProvider ??
+      activeThread?.modelSelection.instanceId ??
+      activeProject?.defaultModelSelection?.instanceId ??
+      null;
+    if (instanceId === null) {
+      return null;
+    }
+    return (
+      composerModelSelectionByProvider[instanceId] ??
+      (activeThread?.modelSelection.instanceId === instanceId
+        ? activeThread.modelSelection
+        : activeProject?.defaultModelSelection?.instanceId === instanceId
+          ? activeProject.defaultModelSelection
+          : null)
+    );
+  }, [
+    activeProject?.defaultModelSelection,
+    activeThread?.modelSelection,
+    composerActiveProvider,
+    composerModelSelectionByProvider,
+  ]);
+  const reasoningRecommendationCapabilities = useMemo(() => {
+    if (reasoningRecommendationSelection === null) {
+      return null;
+    }
+    const provider = providerStatuses.find(
+      (candidate) => candidate.instanceId === reasoningRecommendationSelection.instanceId,
+    );
+    return (
+      provider?.models.find((model) => model.slug === reasoningRecommendationSelection.model)
+        ?.capabilities ?? null
+    );
+  }, [providerStatuses, reasoningRecommendationSelection]);
+  const validPendingReasoningOverride =
+    reasoningRecommendationSelection !== null &&
+    pendingReasoningOverrideMatchesSelection(
+      reasoningRecommendationState?.pendingOverride,
+      reasoningRecommendationSelection,
+    )
+      ? (reasoningRecommendationState?.pendingOverride ?? null)
+      : null;
+  const reasoningRecommendation = useMemo(
+    () =>
+      reasoningRecommendationSelection === null
+        ? null
+        : deriveReasoningRecommendation({
+            activities: threadActivities,
+            capabilities: reasoningRecommendationCapabilities,
+            durableSelection: reasoningRecommendationSelection,
+            latestCompletedTurnId:
+              activeLatestTurn?.state === "completed" ? activeLatestTurn.turnId : null,
+            threadIdle: latestTurnSettled && !isWorking,
+            handledEvidenceTurnId: reasoningRecommendationState?.handledEvidenceTurnId ?? null,
+          }),
+    [
+      activeLatestTurn,
+      isWorking,
+      latestTurnSettled,
+      reasoningRecommendationCapabilities,
+      reasoningRecommendationSelection,
+      reasoningRecommendationState?.handledEvidenceTurnId,
+      threadActivities,
+    ],
+  );
+  useEffect(() => {
+    if (
+      activeThreadRef === null ||
+      reasoningRecommendationSelection === null ||
+      reasoningRecommendationState === null
+    ) {
+      return;
+    }
+    const reconciled = reconcileReasoningRecommendationState(
+      reasoningRecommendationState,
+      reasoningRecommendationSelection,
+    );
+    if (reconciled !== reasoningRecommendationState) {
+      setComposerReasoningRecommendation(activeThreadRef, reconciled);
+    }
+  }, [
+    activeThreadRef,
+    reasoningRecommendationSelection,
+    reasoningRecommendationState,
+    setComposerReasoningRecommendation,
+  ]);
+  const reasoningRecommendationBannerItem = useMemo(
+    () =>
+      buildReasoningRecommendationBannerItem({
+        recommendation: reasoningRecommendation,
+        pendingOverride: validPendingReasoningOverride,
+        onAccept: () => {
+          if (activeThreadRef === null || reasoningRecommendation === null) {
+            return;
+          }
+          setComposerReasoningRecommendation(
+            activeThreadRef,
+            acceptReasoningRecommendation(reasoningRecommendationState, reasoningRecommendation),
+          );
+        },
+        onDismiss: () => {
+          if (activeThreadRef === null || reasoningRecommendation === null) {
+            return;
+          }
+          setComposerReasoningRecommendation(
+            activeThreadRef,
+            dismissReasoningRecommendation(reasoningRecommendationState, reasoningRecommendation),
+          );
+        },
+        onUndo: () => {
+          if (activeThreadRef === null || reasoningRecommendationState === null) {
+            return;
+          }
+          setComposerReasoningRecommendation(
+            activeThreadRef,
+            undoReasoningRecommendationOverride(reasoningRecommendationState),
+          );
+        },
+      }),
+    [
+      activeThreadRef,
+      reasoningRecommendation,
+      reasoningRecommendationState,
+      setComposerReasoningRecommendation,
+      validPendingReasoningOverride,
+    ],
+  );
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
     activeThread?.session ?? null,
@@ -4308,8 +4477,8 @@ function ChatViewContent(props: ChatViewProps) {
     updateThreadMetadata,
   ]);
   // The stack renders items[0] front-most and tucks the rest behind hover, so
-  // ordering is priority: system banners, then the branch-mismatch notice,
-  // and the informational parked-thread banner last — it must never cover another.
+  // ordering is priority: system banners, branch mismatch, parked-thread
+  // status, then the optional reasoning suggestion at the very back.
   const parkedThreadBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (!activeThreadSnoozed && !activeThreadSettled) {
       return null;
@@ -4360,8 +4529,10 @@ function ChatViewContent(props: ChatViewProps) {
   }, [gitStatusQuery.data?.hasWorkingTreeChanges, handleSwitchCheckoutToThread]);
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
+    const reasoningItems =
+      reasoningRecommendationBannerItem === null ? [] : [reasoningRecommendationBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
-      return [...systemComposerBannerItems, ...parkedThreadItems];
+      return [...systemComposerBannerItems, ...parkedThreadItems, ...reasoningItems];
     }
     return [
       ...systemComposerBannerItems,
@@ -4405,6 +4576,7 @@ function ChatViewContent(props: ChatViewProps) {
         },
       },
       ...parkedThreadItems,
+      ...reasoningItems,
     ];
   }, [
     activeBranchMismatchKey,
@@ -4412,6 +4584,7 @@ function ChatViewContent(props: ChatViewProps) {
     isRestoringThreadBranch,
     localCheckoutBranchMismatch,
     parkedThreadBannerItem,
+    reasoningRecommendationBannerItem,
     showBranchMismatchBanner,
     systemComposerBannerItems,
   ]);
@@ -4729,6 +4902,16 @@ function ChatViewContent(props: ChatViewProps) {
       selectedModelSelection: ctxSelectedModelSelection,
       planImplementationSuggestion,
     } = sendCtx;
+    const pendingReasoningOverride = useComposerDraftStore
+      .getState()
+      .getComposerDraft(composerDraftTarget)?.reasoningRecommendation?.pendingOverride;
+    const reasoningTurnSelection = resolveReasoningTurnModelSelection(
+      ctxSelectedModelSelection,
+      pendingReasoningOverride,
+    );
+    const turnPromptEffort = reasoningTurnSelection.applied
+      ? (pendingReasoningOverride?.targetValue ?? ctxSelectedPromptEffort)
+      : ctxSelectedPromptEffort;
     const promptForSend = promptRef.current;
     const {
       trimmedPrompt: trimmed,
@@ -4893,7 +5076,7 @@ function ChatViewContent(props: ChatViewProps) {
       provider: ctxSelectedProvider,
       model: ctxSelectedModel,
       models: ctxSelectedProviderModels,
-      effort: ctxSelectedPromptEffort,
+      effort: turnPromptEffort,
       text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
     });
     const turnAttachmentsPromise = Promise.all(
@@ -5063,7 +5246,7 @@ function ChatViewContent(props: ChatViewProps) {
             text: outgoingMessageText,
             attachments: turnAttachmentsResult.value,
           },
-          modelSelection: ctxSelectedModelSelection,
+          modelSelection: reasoningTurnSelection.turnModelSelection,
           titleSeed: title,
           runtimeMode,
           interactionMode,
@@ -5075,6 +5258,12 @@ function ChatViewContent(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        if (reasoningTurnSelection.applied && pendingReasoningOverride) {
+          consumeComposerReasoningOverride(
+            scopeThreadRef(activeThread.environmentId, threadIdForSend),
+            pendingReasoningOverride,
+          );
+        }
       }
     }
 
@@ -5343,6 +5532,17 @@ function ChatViewContent(props: ChatViewProps) {
         selectedPromptEffort: ctxSelectedPromptEffort,
         selectedModelSelection: ctxSelectedModelSelection,
       } = sendCtx;
+      const pendingReasoningOverride = useComposerDraftStore
+        .getState()
+        .getComposerDraft(scopeThreadRef(activeThread.environmentId, activeThread.id))
+        ?.reasoningRecommendation?.pendingOverride;
+      const reasoningTurnSelection = resolveReasoningTurnModelSelection(
+        ctxSelectedModelSelection,
+        pendingReasoningOverride,
+      );
+      const turnPromptEffort = reasoningTurnSelection.applied
+        ? (pendingReasoningOverride?.targetValue ?? ctxSelectedPromptEffort)
+        : ctxSelectedPromptEffort;
 
       const threadIdForSend = activeThread.id;
       const messageIdForSend = newMessageId();
@@ -5351,7 +5551,7 @@ function ChatViewContent(props: ChatViewProps) {
         provider: ctxSelectedProvider,
         model: ctxSelectedModel,
         models: ctxSelectedProviderModels,
-        effort: ctxSelectedPromptEffort,
+        effort: turnPromptEffort,
         text: trimmed,
       });
 
@@ -5416,7 +5616,7 @@ function ChatViewContent(props: ChatViewProps) {
               text: outgoingMessageText,
               attachments: [],
             },
-            modelSelection: ctxSelectedModelSelection,
+            modelSelection: reasoningTurnSelection.turnModelSelection,
             titleSeed: activeThread.title,
             runtimeMode,
             interactionMode: nextInteractionMode,
@@ -5432,6 +5632,12 @@ function ChatViewContent(props: ChatViewProps) {
           },
         });
         failure = startResult._tag === "Failure" ? startResult : null;
+        if (failure === null && reasoningTurnSelection.applied && pendingReasoningOverride) {
+          consumeComposerReasoningOverride(
+            scopeThreadRef(activeThread.environmentId, threadIdForSend),
+            pendingReasoningOverride,
+          );
+        }
       }
 
       if (failure === null) {

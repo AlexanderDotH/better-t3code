@@ -704,6 +704,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:prompt:improve",
       tag: WS_METHODS.promptImprove,
     }),
+    reviewPlanParallelism: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:plan:review-parallelism",
+      tag: WS_METHODS.planReviewParallelism,
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,

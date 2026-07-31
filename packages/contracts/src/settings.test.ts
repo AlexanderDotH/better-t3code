@@ -7,6 +7,7 @@ import {
   ClientSettingsPatch,
   DEFAULT_AGENT_ENHANCEMENT_SETTINGS,
   DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_PARALLEL_PLAN_REVIEW_MODEL_SELECTION,
   DEFAULT_SERVER_SETTINGS,
   ServerSettings,
   ServerSettingsPatch,
@@ -86,6 +87,22 @@ describe("ClientSettings environment identification", () => {
   it("rejects unsupported presentation modes", () => {
     expect(() => decodeClientSettings({ environmentIdentificationMode: "badge" })).toThrow();
     expect(() => decodeClientSettingsPatch({ environmentIdentificationMode: "badge" })).toThrow();
+  });
+});
+
+describe("ClientSettings sidebar thread preview count", () => {
+  it("defaults to four visible chats per project when omitted", () => {
+    expect(decodeClientSettings({}).sidebarThreadPreviewCount).toBe(4);
+  });
+
+  it("exposes four as the default client setting", () => {
+    expect(DEFAULT_CLIENT_SETTINGS.sidebarThreadPreviewCount).toBe(4);
+  });
+
+  it("preserves an explicitly configured six-chat preview", () => {
+    expect(decodeClientSettings({ sidebarThreadPreviewCount: 6 }).sidebarThreadPreviewCount).toBe(
+      6,
+    );
   });
 });
 
@@ -326,6 +343,40 @@ describe("ServerSettings worktree defaults", () => {
     expect(
       decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false }).newWorktreesStartFromOrigin,
     ).toBe(false);
+  });
+});
+
+describe("ServerSettings parallel plan review model", () => {
+  it("hydrates legacy settings with the fast Codex reviewer default", () => {
+    const settings = decodeServerSettings({});
+
+    expect(settings.parallelPlanReviewModelSelection).toEqual({
+      instanceId: "codex",
+      model: "gpt-5.6-luna",
+      options: [
+        { id: "reasoningEffort", value: "low" },
+        { id: "serviceTier", value: "priority" },
+      ],
+    });
+    expect(DEFAULT_SERVER_SETTINGS.parallelPlanReviewModelSelection).toEqual(
+      DEFAULT_PARALLEL_PLAN_REVIEW_MODEL_SELECTION,
+    );
+  });
+
+  it("accepts partial reviewer selection patches", () => {
+    const patch = decodeServerSettingsPatch({
+      parallelPlanReviewModelSelection: {
+        instanceId: "opencode_work",
+        model: " openai/gpt-5 ",
+        options: [{ id: "variant", value: "fast" }],
+      },
+    });
+
+    expect(patch.parallelPlanReviewModelSelection).toEqual({
+      instanceId: "opencode_work",
+      model: "openai/gpt-5",
+      options: [{ id: "variant", value: "fast" }],
+    });
   });
 });
 

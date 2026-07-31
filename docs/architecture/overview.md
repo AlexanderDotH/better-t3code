@@ -41,6 +41,8 @@ T3 Code runs as a **Node.js WebSocket server** that wraps `codex app-server` (JS
 
 Related design:
 
+- [Internal provider MCP](./internal-mcp.md)
+- [Provider architecture](./providers.md)
 - [Resource telemetry architecture](./resource-telemetry.md)
 
 ## Event Lifecycle

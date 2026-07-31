@@ -43,7 +43,8 @@ type GeminiTextGenerationOperation =
   | "generateBranchName"
   | "generateThreadTitle"
   | "translateTranscriptToEnglish"
-  | "improvePrompt";
+  | "improvePrompt"
+  | "reviewPlanParallelism";
 
 function compactError(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message.trim();
@@ -312,6 +313,14 @@ export function makeGeminiTextGeneration(
       return { text: generated.text.trim() };
     });
 
+    const reviewPlanParallelism: TextGeneration.TextGeneration["Service"]["reviewPlanParallelism"] =
+      Effect.fn("GeminiTextGeneration.reviewPlanParallelism")(function* () {
+        return yield* textGenerationError(
+          "reviewPlanParallelism",
+          "Gemini does not support plan parallelism review.",
+        );
+      });
+
     return TextGeneration.TextGeneration.of({
       generateCommitMessage,
       generatePrContent,
@@ -319,6 +328,7 @@ export function makeGeminiTextGeneration(
       generateThreadTitle,
       translateTranscriptToEnglish,
       improvePrompt,
+      reviewPlanParallelism,
     });
   });
 }

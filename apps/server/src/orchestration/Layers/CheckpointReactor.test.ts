@@ -280,6 +280,7 @@ describe("CheckpointReactor", () => {
     readonly providerSessionCwd?: string;
     readonly providerName?: ProviderDriverKind;
     readonly gitStatusRefreshCalls?: Array<string>;
+    readonly workspaceEntryIndexCalls?: Array<string>;
   }) {
     const cwd = createGitRepository();
     tempDirs.push(cwd);
@@ -323,6 +324,27 @@ describe("CheckpointReactor", () => {
       refreshStatus: () => Effect.die("refreshStatus should not be called in this test"),
       streamStatus: () => Stream.empty,
     });
+    const workspaceEntriesLayer = options?.workspaceEntryIndexCalls
+      ? Layer.succeed(
+          WorkspaceEntries.WorkspaceEntries,
+          WorkspaceEntries.WorkspaceEntries.of({
+            browse: () => Effect.die("browse should not be called in this test"),
+            list: () => Effect.die("list should not be called in this test"),
+            search: () => Effect.die("search should not be called in this test"),
+            refresh: (cwd) =>
+              Effect.sync(() => {
+                options.workspaceEntryIndexCalls?.push(`refresh:${cwd}`);
+              }),
+            invalidate: (cwd) =>
+              Effect.sync(() => {
+                options.workspaceEntryIndexCalls?.push(`invalidate:${cwd}`);
+              }),
+          }),
+        )
+      : WorkspaceEntries.layer.pipe(
+          Layer.provide(WorkspacePaths.layer),
+          Layer.provideMerge(VcsDriverRegistry.layer),
+        );
 
     const layer = CheckpointReactorLive.pipe(
       Layer.provideMerge(orchestrationLayer),
@@ -331,12 +353,7 @@ describe("CheckpointReactor", () => {
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(vcsStatusBroadcasterLayer),
       Layer.provideMerge(CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistry.layer))),
-      Layer.provideMerge(
-        WorkspaceEntries.layer.pipe(
-          Layer.provide(WorkspacePaths.layer),
-          Layer.provideMerge(VcsDriverRegistry.layer),
-        ),
-      ),
+      Layer.provideMerge(workspaceEntriesLayer),
       Layer.provideMerge(WorkspacePaths.layer),
       Layer.provideMerge(VcsProcess.layer),
       Layer.provideMerge(ServerConfigLayer),
@@ -421,7 +438,11 @@ describe("CheckpointReactor", () => {
   }
 
   it("captures pre-turn baseline on turn.started and post-turn checkpoint on turn.completed", async () => {
-    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const workspaceEntryIndexCalls: string[] = [];
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      workspaceEntryIndexCalls,
+    });
     const createdAt = "2026-01-01T00:00:00.000Z";
 
     await Effect.runPromise(
@@ -494,6 +515,7 @@ describe("CheckpointReactor", () => {
         "README.md",
       ),
     ).toBe("v2\n");
+    expect(workspaceEntryIndexCalls).toEqual([`invalidate:${harness.cwd}`]);
   });
 
   it("refreshes local git status state on turn completion using the session cwd", async () => {
@@ -889,7 +911,8 @@ describe("CheckpointReactor", () => {
   });
 
   it("executes provider revert and emits thread.reverted for checkpoint revert requests", async () => {
-    const harness = await createHarness();
+    const workspaceEntryIndexCalls: string[] = [];
+    const harness = await createHarness({ workspaceEntryIndexCalls });
     const createdAt = "2026-01-01T00:00:00.000Z";
 
     await Effect.runPromise(
@@ -967,6 +990,7 @@ describe("CheckpointReactor", () => {
     expect(
       gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 2)),
     ).toBe(false);
+    expect(workspaceEntryIndexCalls).toEqual([`invalidate:${harness.cwd}`]);
   });
 
   it("executes provider revert and emits thread.reverted for claude sessions", async () => {

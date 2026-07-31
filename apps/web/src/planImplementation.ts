@@ -1,6 +1,7 @@
 import type { ServerProvider } from "@t3tools/contracts";
 
-export type PlanSubagentCount = 2 | 3 | 4;
+export type PlanSubagentCount = number;
+export type PlanParallelismReviewStatus = "idle" | "reviewing" | "ready" | "fallback";
 
 export type PlanImplementationStrategy =
   | { readonly kind: "standard" }
@@ -16,7 +17,6 @@ export interface BuildPlanImplementationPromptOptions {
   readonly provider?: ServerProvider;
 }
 
-const PLAN_SUBAGENT_COUNTS = [2, 3, 4] as const satisfies ReadonlyArray<PlanSubagentCount>;
 const EXCLUDED_SECTION_TITLES = new Set([
   "summary",
   "assumptions",
@@ -166,7 +166,7 @@ function planSubagentCeiling(
     return null;
   }
 
-  const ceiling = Math.min(4, Math.floor(capability.maxRecommendedSubagents));
+  const ceiling = Math.floor(capability.maxRecommendedSubagents);
   if (ceiling < 2) {
     return null;
   }
@@ -181,13 +181,14 @@ export function getSupportedPlanSubagentCounts(
   if (ceiling === null) {
     return [];
   }
-  return PLAN_SUBAGENT_COUNTS.filter((count) => count <= ceiling);
+  return Array.from({ length: ceiling - 1 }, (_, index) => index + 2);
 }
 
 export function resolvePlanImplementationSuggestion(input: {
   readonly featureEnabled: boolean;
   readonly planMarkdown: string;
   readonly provider: ServerProvider | null | undefined;
+  readonly reviewedSubagentCount?: number | null;
 }): PlanImplementationSuggestion | null {
   if (!input.featureEnabled) {
     return null;
@@ -199,7 +200,13 @@ export function resolvePlanImplementationSuggestion(input: {
     return null;
   }
 
-  const workUnitCount = estimatePlanImplementationWorkUnits(input.planMarkdown);
+  const reviewedSubagentCount = input.reviewedSubagentCount;
+  const workUnitCount =
+    typeof reviewedSubagentCount === "number" &&
+    Number.isInteger(reviewedSubagentCount) &&
+    reviewedSubagentCount >= 2
+      ? reviewedSubagentCount
+      : estimatePlanImplementationWorkUnits(input.planMarkdown);
   const count = Math.max(2, Math.min(workUnitCount, ceiling)) as PlanSubagentCount;
   return {
     strategy: { kind: "subagents", count },
