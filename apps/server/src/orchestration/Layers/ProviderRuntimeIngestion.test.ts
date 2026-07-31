@@ -272,6 +272,7 @@ describe("ProviderRuntimeIngestion", () => {
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(ingestion.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(ingestion.drain);
+    const runEffect = <A, E>(effect: Effect.Effect<A, E, never>) => runtime!.runPromise(effect);
 
     const createdAt = "2026-01-01T00:00:00.000Z";
     await Effect.runPromise(
@@ -345,6 +346,7 @@ describe("ProviderRuntimeIngestion", () => {
       setProviderSession: provider.setSession,
       abortSettlements,
       drain,
+      runEffect,
     };
   }
 
@@ -506,14 +508,15 @@ describe("ProviderRuntimeIngestion", () => {
               "Buffered reasoning before abort.",
         ),
     );
-    expect(
-      (
-        thread.activities.find((activity) => activity.kind === "reasoning.text")?.payload as Record<
-          string,
-          unknown
-        >
-      ).flushReason,
-    ).toBe("thread.turn-abort-settled");
+    const reasoningActivity = thread.activities.find(
+      (activity) => activity.kind === "reasoning.text",
+    );
+    if (!reasoningActivity) {
+      throw new Error("Expected buffered reasoning activity.");
+    }
+    expect((reasoningActivity.payload as Record<string, unknown>).flushReason).toBe(
+      "thread.turn-abort-settled",
+    );
     expect(harness.abortSettlements).toEqual([
       {
         threadId,
@@ -634,12 +637,15 @@ describe("ProviderRuntimeIngestion", () => {
       activeTurnId: null,
       abortState: null,
     });
-    expect(
-      (
-        thread.activities.find((activity) => activity.kind === "stream.command-output")
-          ?.payload as Record<string, unknown>
-      ).flushReason,
-    ).toBe("thread.turn-abort-settled");
+    const commandOutputActivity = thread.activities.find(
+      (activity) => activity.kind === "stream.command-output",
+    );
+    if (!commandOutputActivity) {
+      throw new Error("Expected buffered command output activity.");
+    }
+    expect((commandOutputActivity.payload as Record<string, unknown>).flushReason).toBe(
+      "thread.turn-abort-settled",
+    );
     expect(harness.abortSettlements).toEqual([]);
   });
 
@@ -2078,7 +2084,7 @@ describe("ProviderRuntimeIngestion", () => {
         createdAt,
       }),
     );
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.create",
         commandId: CommandId.make("cmd-thread-create-plan-target-unrelated"),
@@ -2096,7 +2102,7 @@ describe("ProviderRuntimeIngestion", () => {
         createdAt,
       }),
     );
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-plan-target-unrelated"),
@@ -2760,7 +2766,7 @@ describe("ProviderRuntimeIngestion", () => {
     const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
     const now = "2026-01-01T00:00:00.000Z";
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-streaming-mode"),

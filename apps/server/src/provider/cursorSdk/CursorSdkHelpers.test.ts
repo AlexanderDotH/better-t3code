@@ -78,7 +78,7 @@ describe("CursorSdk helpers", () => {
       },
       activeRun: {
         stream: async function* () {
-          return;
+          yield* [];
         },
         wait: async () => ({}),
         supports: (capability: string) => capability === "cancel",
@@ -134,7 +134,7 @@ describe("CursorSdk helpers", () => {
       agent: undefined,
       activeRun: {
         stream: async function* () {
-          return;
+          yield* [];
         },
         wait: async () => ({}),
         cancel: async () => undefined,

@@ -1,15 +1,16 @@
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import { describe, expect } from "vite-plus/test";
 
 import { makeUnsupportedTextGeneration } from "./UnsupportedTextGeneration.ts";
 
 describe("makeUnsupportedTextGeneration", () => {
-  it("fails every operation with the provider name and operation", async () => {
-    const textGeneration = makeUnsupportedTextGeneration("Hyperagent");
-    const modelSelection = { instanceId: "hyperagent" as never, model: "sonnet-latest" };
+  it.effect("fails every operation with the provider name and operation", () =>
+    Effect.gen(function* () {
+      const textGeneration = makeUnsupportedTextGeneration("Hyperagent");
+      const modelSelection = { instanceId: "hyperagent" as never, model: "sonnet-latest" };
 
-    const errors = await Promise.all([
-      Effect.runPromise(
+      const errors = yield* Effect.all([
         Effect.flip(
           textGeneration.generateCommitMessage({
             cwd: "/repo",
@@ -19,8 +20,6 @@ describe("makeUnsupportedTextGeneration", () => {
             modelSelection,
           }),
         ),
-      ),
-      Effect.runPromise(
         Effect.flip(
           textGeneration.translateTranscriptToEnglish({
             cwd: "/repo",
@@ -28,8 +27,6 @@ describe("makeUnsupportedTextGeneration", () => {
             modelSelection,
           }),
         ),
-      ),
-      Effect.runPromise(
         Effect.flip(
           textGeneration.improvePrompt({
             cwd: "/repo",
@@ -37,14 +34,14 @@ describe("makeUnsupportedTextGeneration", () => {
             modelSelection,
           }),
         ),
-      ),
-    ]);
+      ]);
 
-    expect(errors.map((error) => error.operation)).toEqual([
-      "generateCommitMessage",
-      "translateTranscriptToEnglish",
-      "improvePrompt",
-    ]);
-    expect(errors.every((error) => error.detail.includes("Hyperagent"))).toBe(true);
-  });
+      expect(errors.map((error) => error.operation)).toEqual([
+        "generateCommitMessage",
+        "translateTranscriptToEnglish",
+        "improvePrompt",
+      ]);
+      expect(errors.every((error) => error.detail.includes("Hyperagent"))).toBe(true);
+    }),
+  );
 });
