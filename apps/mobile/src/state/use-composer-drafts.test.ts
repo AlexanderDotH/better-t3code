@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it } from "@effect/vitest";
-import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
+import { EnvironmentId, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 
 import { appAtomRegistry } from "./atom-registry";
 import {
   clearComposerDraftContentState,
+  clearNewTaskComposerDraftContentState,
   composerDraftsAtom,
   decodePersistedComposerDrafts,
   type ComposerDraft,
@@ -121,6 +122,47 @@ describe("mobile composer drafts", () => {
         workspaceSelection: draft.workspaceSelection,
         text: "",
         attachments: [],
+      },
+    });
+  });
+
+  it("clears transient fast mode after a new task while retaining other model settings", () => {
+    const draftKey = "new-task:environment-1:project-1";
+    const draft: ComposerDraft = {
+      text: "send this fast",
+      attachments: [],
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+        options: [
+          { id: "reasoningEffort", value: "xhigh" },
+          { id: "serviceTier", value: "priority" },
+          { id: "fastMode", value: true },
+        ],
+      },
+      workspaceSelection: {
+        mode: "local",
+        branch: "main",
+        worktreePath: null,
+      },
+    };
+
+    expect(
+      clearNewTaskComposerDraftContentState(
+        { [draftKey]: draft },
+        draftKey,
+        ProviderDriverKind.make("codex"),
+      ),
+    ).toEqual({
+      [draftKey]: {
+        text: "",
+        attachments: [],
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+          options: [{ id: "reasoningEffort", value: "xhigh" }],
+        },
+        workspaceSelection: draft.workspaceSelection,
       },
     });
   });

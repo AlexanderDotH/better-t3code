@@ -6,9 +6,11 @@ import {
   RuntimeMode as RuntimeModeSchema,
   type EnvironmentId,
   type ModelSelection,
+  type ProviderDriverKind,
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import { toStickyModelSelection } from "@t3tools/client-runtime/model-options";
 import * as Schema from "effect/Schema";
 import { useEffect } from "react";
 import { Atom } from "effect/unstable/reactivity";
@@ -394,6 +396,28 @@ export function clearComposerDraftContentState(
   };
 }
 
+export function clearNewTaskComposerDraftContentState(
+  current: Record<string, ComposerDraft>,
+  draftKey: string,
+  provider: ProviderDriverKind,
+): Record<string, ComposerDraft> {
+  const existing = current[draftKey];
+  const cleared = clearComposerDraftContentState(current, draftKey);
+  if (!existing?.modelSelection || !cleared[draftKey]) {
+    return cleared;
+  }
+  return {
+    ...cleared,
+    [draftKey]: {
+      ...cleared[draftKey],
+      modelSelection: toStickyModelSelection({
+        provider,
+        selection: existing.modelSelection,
+      }),
+    },
+  };
+}
+
 export function restoreComposerDraftSnapshotState(
   current: Record<string, ComposerDraft>,
   draftKey: string,
@@ -528,6 +552,15 @@ export async function restoreComposerDraftSnapshot(
 
 export function clearComposerDraftContent(draftKey: string): void {
   updateComposerDrafts((current) => clearComposerDraftContentState(current, draftKey));
+}
+
+export function clearNewTaskComposerDraftContent(
+  draftKey: string,
+  provider: ProviderDriverKind,
+): void {
+  updateComposerDrafts((current) =>
+    clearNewTaskComposerDraftContentState(current, draftKey, provider),
+  );
 }
 
 export function clearComposerDraft(draftKey: string): void {

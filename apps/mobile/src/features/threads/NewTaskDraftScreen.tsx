@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useFontFamily } from "../../lib/useFontFamily";
 
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ProviderDriverKind } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -37,6 +37,7 @@ import {
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import {
   clearComposerDraftContent,
+  clearNewTaskComposerDraftContent,
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
   restoreComposerDraftSnapshot,
@@ -815,6 +816,14 @@ export function NewTaskDraftScreen(props: {
     }
 
     const editingPendingTask = flow.editingPendingTask;
+    const clearSubmittedNewTaskDraft = () => {
+      const providerDriver = flow.selectedModelOption?.providerDriver;
+      if (providerDriver === undefined) {
+        clearComposerDraftContent(draftKey);
+        return;
+      }
+      clearNewTaskComposerDraftContent(draftKey, ProviderDriverKind.make(providerDriver));
+    };
 
     if (!environmentConnected) {
       // Offline: park the task in the outbox; the drain sends it when the
@@ -847,7 +856,7 @@ export function NewTaskDraftScreen(props: {
       if (editingPendingTask) {
         flow.finishEditingPendingTask();
       } else {
-        clearComposerDraftContent(draftKey);
+        clearSubmittedNewTaskDraft();
       }
       navigation.getParent()?.goBack();
       return;
@@ -905,7 +914,7 @@ export function NewTaskDraftScreen(props: {
       }
       flow.finishEditingPendingTask();
     } else {
-      clearComposerDraftContent(draftKey);
+      clearSubmittedNewTaskDraft();
     }
     navigation.dispatch(
       StackActions.replace("Thread", {
