@@ -203,7 +203,7 @@ it.effect("arms the watchdog while provider startup has a lease but no projectio
   }),
 );
 
-it.effect("treats repeated clicks for the same runtime and turn as idempotent", () =>
+it.effect("force-stops immediately on the second click for the same runtime and turn", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness();
     yield* Effect.gen(function* () {
@@ -214,11 +214,33 @@ it.effect("treats repeated clicks for the same runtime and turn as idempotent", 
 
       assert.strictEqual(harness.resolveAbortTarget.mock.calls.length, 2);
       assert.strictEqual(harness.interruptAbortTarget.mock.calls.length, 1);
+      assert.strictEqual(harness.forceStopAbortTarget.mock.calls.length, 1);
+      assert.strictEqual((yield* Ref.get(harness.sessionRef))?.status, "stopped");
       const commands = yield* Ref.get(harness.commandsRef);
       assert.strictEqual(
         commands.filter((command) => command.type === "thread.session.set").length,
-        1,
+        2,
       );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("force-stops exactly once when the second click races the watchdog", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* Effect.gen(function* () {
+      const coordinator = yield* TurnAbortCoordinator;
+      yield* coordinator.requestAbort({ threadId, turnId, requestedAt });
+      yield* TestClock.adjust("4999 millis");
+
+      yield* Effect.all(
+        [coordinator.requestAbort({ threadId, turnId, requestedAt }), TestClock.adjust("1 millis")],
+        { concurrency: "unbounded", discard: true },
+      );
+      yield* Effect.yieldNow;
+
+      assert.strictEqual(harness.forceStopAbortTarget.mock.calls.length, 1);
+      assert.strictEqual((yield* Ref.get(harness.sessionRef))?.status, "stopped");
     }).pipe(Effect.provide(harness.layer));
   }),
 );

@@ -5,6 +5,7 @@ import {
   type ModelSelection,
   type OrchestrationEvent,
   type OrchestrationMessage,
+  type OrchestrationReadModel,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderDriverKind,
   type ProjectId,
@@ -18,6 +19,7 @@ import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shar
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -942,10 +944,97 @@ const make = Effect.gen(function* () {
       ...(input.title !== undefined ? { title: input.title } : {}),
     });
   });
+  const reconcileOrphanedSessionAtStartup = Effect.fn("reconcileOrphanedSessionAtStartup")(
+    function* (thread: OrchestrationReadModel["threads"][number], reconciledAt: string) {
+      const session = thread.session;
+      if (session === null) {
+        return;
+      }
+
+      yield* setThreadSession({
+        threadId: thread.id,
+        session: {
+          ...session,
+          status: "interrupted",
+          runtimeSessionId: null,
+          activeTurnId: null,
+          abortState: null,
+          lastError: null,
+          updatedAt: reconciledAt,
+        },
+        createdAt: reconciledAt,
+      });
+
+      const threadDetail = yield* resolveThread(thread.id);
+      if (!threadDetail) {
+        return;
+      }
+      yield* Effect.forEach(
+        threadDetail.messages.filter(
+          (message) => message.role === "assistant" && message.streaming,
+        ),
+        (message) =>
+          serverCommandId("startup-assistant-message-complete").pipe(
+            Effect.flatMap((commandId) =>
+              orchestrationEngine.dispatch({
+                type: "thread.message.assistant.complete",
+                commandId,
+                threadId: thread.id,
+                messageId: message.id,
+                ...(message.turnId !== null ? { turnId: message.turnId } : {}),
+                createdAt: reconciledAt,
+              }),
+            ),
+          ),
+        { concurrency: 1, discard: true },
+      );
+    },
+  );
+  const reconcileOrphanedSessionsAtStartup = Effect.fn("reconcileOrphanedSessionsAtStartup")(
+    function* (readModel: OrchestrationReadModel) {
+      const projectedInFlightThreads = readModel.threads.filter(
+        (thread) =>
+          thread.deletedAt === null &&
+          (thread.session?.status === "starting" || thread.session?.status === "running"),
+      );
+      const liveSessions = yield* providerService.listSessions();
+      const liveThreadIds = new Set(liveSessions.map((session) => session.threadId));
+      const orphanedThreads = projectedInFlightThreads.filter(
+        (thread) => !liveThreadIds.has(thread.id),
+      );
+      const reconciledAt = DateTime.formatIso(yield* DateTime.now);
+      const outcomes = yield* Effect.forEach(
+        orphanedThreads,
+        (thread) =>
+          reconcileOrphanedSessionAtStartup(thread, reconciledAt).pipe(
+            Effect.as(true),
+            Effect.catchCause((cause) => {
+              if (Cause.hasInterruptsOnly(cause)) {
+                return Effect.interrupt;
+              }
+              return Effect.logWarning(
+                "provider command reactor failed to reconcile orphaned startup session",
+                {
+                  threadId: thread.id,
+                  cause: Cause.pretty(cause),
+                },
+              ).pipe(Effect.as(false));
+            }),
+          ),
+        { concurrency: 1 },
+      );
+
+      yield* Effect.logInfo("provider command reactor reconciled startup sessions", {
+        projectedInFlightSessionCount: projectedInFlightThreads.length,
+        liveProviderSessionCount: liveSessions.length,
+        orphanedSessionCount: orphanedThreads.length,
+        reconciledSessionCount: outcomes.filter(Boolean).length,
+      });
+    },
+  );
   const clearInterruptedThreadTitleRegenerations = Effect.fn(
     "clearInterruptedThreadTitleRegenerations",
-  )(function* () {
-    const readModel = yield* projectionSnapshotQuery.getCommandReadModel();
+  )(function* (readModel: OrchestrationReadModel) {
     yield* Effect.forEach(
       readModel.threads,
       (thread) => {
@@ -1384,10 +1473,42 @@ const make = Effect.gen(function* () {
       Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
     );
 
+    const startupReadModel = yield* projectionSnapshotQuery.getCommandReadModel().pipe(
+      Effect.map(Option.some),
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.interrupt;
+        }
+        return Effect.logWarning(
+          "provider command reactor failed to load startup reconciliation state",
+          {
+            cause: Cause.pretty(cause),
+          },
+        ).pipe(Effect.as(Option.none<OrchestrationReadModel>()));
+      }),
+    );
+    if (Option.isNone(startupReadModel)) {
+      return;
+    }
+
+    yield* reconcileOrphanedSessionsAtStartup(startupReadModel.value).pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.interrupt;
+        }
+        return Effect.logWarning(
+          "provider command reactor failed to reconcile orphaned startup sessions",
+          {
+            cause: Cause.pretty(cause),
+          },
+        );
+      }),
+    );
+
     // The domain event stream is hot, so work pending before this reactor
     // starts cannot be resumed. Correlated completions only clear the request
     // captured here, leaving any newer request untouched.
-    yield* clearInterruptedThreadTitleRegenerations().pipe(
+    yield* clearInterruptedThreadTitleRegenerations(startupReadModel.value).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.interrupt;

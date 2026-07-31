@@ -286,7 +286,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
   const isExpanded = isFocused;
   const stopAction = resolveThreadAbortPresentation(props.selectedThread.session);
-  const canSend = hasContent && !stopAction.disabled;
+  const isForceStopping = stopAction.phase === "force-stopping";
+  const canSend = hasContent && stopAction.phase === null;
 
   const onPressImage = useCallback(
     (uri: string) => {
@@ -858,14 +859,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               {stopAction.showStopAction ? (
                 <ControlPill
                   accessibilityLabel={stopAction.accessibilityLabel}
-                  icon={stopAction.disabled ? undefined : "stop.fill"}
+                  icon={isForceStopping ? undefined : "stop.fill"}
                   iconNode={
-                    stopAction.disabled ? (
+                    isForceStopping ? (
                       <ActivityIndicator size="small" color={dangerForegroundColor} />
                     ) : undefined
                   }
                   variant="danger"
-                  disabled={stopAction.disabled}
+                  disabled={isForceStopping}
                   onPress={props.onStopThread}
                 />
               ) : (
@@ -919,14 +920,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 {stopAction.showStopAction ? (
                   <ComposerToolbarButton
                     accessibilityLabel={stopAction.accessibilityLabel}
-                    icon={stopAction.disabled ? undefined : "stop.fill"}
+                    icon={isForceStopping ? undefined : "stop.fill"}
                     iconNode={
-                      stopAction.disabled ? (
+                      isForceStopping ? (
                         <ActivityIndicator size="small" color={dangerForegroundColor} />
                       ) : undefined
                     }
                     variant="danger"
-                    disabled={stopAction.disabled}
+                    disabled={isForceStopping}
                     onPress={props.onStopThread}
                     showChevron={false}
                   />

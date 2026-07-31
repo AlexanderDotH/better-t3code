@@ -9,6 +9,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  ASTERIX_AGENT_NAMES,
   deriveSubagentTranscriptEntries,
   groupSubagents,
   resolveSubagentDisplayName,
@@ -46,20 +47,36 @@ function makeSubagent(
 }
 
 describe("subagent presentation", () => {
-  it("uses provider nickname first and falls back to a stable accessible agent name", () => {
+  it("uses the Codex nickname and falls back to a stable Asterix character name", () => {
     const named = makeSubagent("agent-review", "running", {
       name: "Review worker",
       nickname: "Bernoulli",
     });
     const unnamed = makeSubagent("codex:thread-agent-9f31c2", "starting", {
-      name: " ",
+      name: "stream_routing_retry",
       nickname: null,
-      role: null,
-      path: null,
+      role: "worker",
+      path: "/root/stream_routing_retry",
     });
 
     expect(resolveSubagentDisplayName(named)).toBe("Bernoulli");
-    expect(resolveSubagentDisplayName(unnamed)).toBe("Agent 9f31c2");
+    expect(ASTERIX_AGENT_NAMES).toContain(resolveSubagentDisplayName(unnamed));
+    expect(resolveSubagentDisplayName(unnamed)).toBe(resolveSubagentDisplayName(unnamed));
+    expect(resolveSubagentDisplayName(unnamed)).not.toContain("stream_routing_retry");
+  });
+
+  it("gives different unnamed agents different character names", () => {
+    const names = ["agent-one", "agent-two", "agent-three"].map((id) =>
+      resolveSubagentDisplayName(
+        makeSubagent(`codex:${id}`, "running", {
+          name: id,
+          nickname: null,
+          path: `/root/${id}`,
+        }),
+      ),
+    );
+
+    expect(new Set(names).size).toBe(names.length);
   });
 
   it("groups live states under Active and terminal states under Finished deterministically", () => {

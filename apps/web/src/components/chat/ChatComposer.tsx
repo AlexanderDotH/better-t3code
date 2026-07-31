@@ -736,6 +736,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerReviewComments = composerDraft.reviewComments;
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
   const abortPresentation = resolveThreadAbortPresentation(activeThread?.session ?? null);
+  const isAbortPending = abortPresentation.phase !== null;
 
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImage = useComposerDraftStore((store) => store.addImage);
@@ -1315,7 +1316,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const collapsedComposerPrimaryActionDisabled =
     phase === "running" ||
-    abortPresentation.disabled ||
+    isAbortPending ||
     isSendBusy ||
     isSendDisabled ||
     isConnecting ||
@@ -1864,7 +1865,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (
       isSendBusy ||
       isSendDisabled ||
-      abortPresentation.disabled ||
+      isAbortPending ||
       isConnecting ||
       noProviderAvailable ||
       environmentUnavailable !== null ||
@@ -1879,7 +1880,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [
     activePendingProgress,
     activePendingResolvedAnswers,
-    abortPresentation.disabled,
+    isAbortPending,
     composerSendState.hasSendableContent,
     environmentUnavailable,
     isConnecting,
@@ -1955,12 +1956,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const stopVoiceRecording = voiceDictation.stop;
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }) => {
-      if (
-        noProviderAvailable ||
-        isSendDisabled ||
-        abortPresentation.disabled ||
-        voiceRecordingActive
-      ) {
+      if (noProviderAvailable || isSendDisabled || isAbortPending || voiceRecordingActive) {
         event?.preventDefault();
         return;
       }
@@ -1984,7 +1980,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
     [
       activeThreadId,
-      abortPresentation.disabled,
+      isAbortPending,
       blurMobileComposerAfterSend,
       isSendDisabled,
       noProviderAvailable,
@@ -3378,7 +3374,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       isConnecting ||
                       isSendBusy ||
                       isSendDisabled ||
-                      abortPresentation.disabled ||
+                      isAbortPending ||
                       noProviderAvailable ||
                       projectSelectionRequired ||
                       phase === "running" ||

@@ -36,14 +36,14 @@ describe("ComposerPrimaryActions stop action", () => {
     expect(markup).toContain("<rect");
   });
 
-  it("shows a disabled stopping indicator during cooperative cancellation", () => {
+  it("offers an enabled force-stop action during cooperative cancellation", () => {
     const markup = renderStopAction("interrupting");
 
-    expect(markup).toContain('aria-label="Stopping generation"');
-    expect(markup).toContain(" disabled=");
-    expect(markup).toContain('aria-busy="true"');
-    expect(markup).toContain("animate-spin");
-    expect(markup).not.toContain("<rect");
+    expect(markup).toContain('aria-label="Force stop generation"');
+    expect(markup).not.toContain(" disabled=");
+    expect(markup).not.toContain('aria-busy="true"');
+    expect(markup).not.toContain("animate-spin");
+    expect(markup).toContain("<rect");
   });
 
   it("shows a disabled force-stopping indicator during forced termination", () => {

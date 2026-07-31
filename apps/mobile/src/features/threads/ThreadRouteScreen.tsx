@@ -467,7 +467,7 @@ function ThreadRouteContent(
     }
     const session = selectedThread.session;
     const stopAction = resolveThreadAbortPresentation(session);
-    if (session === null || !stopAction.showStopAction || stopAction.disabled) {
+    if (session === null || !stopAction.showStopAction || stopAction.phase === "force-stopping") {
       return;
     }
     return interruptThreadTurn({

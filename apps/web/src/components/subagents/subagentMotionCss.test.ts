@@ -24,7 +24,7 @@ describe("subagent stack motion CSS", () => {
     Effect.gen(function* () {
       const indexCss = yield* readIndexCss;
       expect(indexCss).toMatch(
-        /\.chat-agent-floating-layer\s*\{[^}]*left:\s*0\.75rem;[^}]*display:\s*block;/,
+        /\.chat-agent-floating-layer\s*\{[^}]*left:\s*2rem;[^}]*display:\s*block;/,
       );
       expect(indexCss).toMatch(
         /\.subagent-stack-compact-trigger[\s\S]*?display:\s*flex[\s\S]*?\.subagent-stack-content[\s\S]*?display:\s*none/,
@@ -35,7 +35,17 @@ describe("subagent stack motion CSS", () => {
       expect(indexCss).toMatch(
         /@container chat-column \(min-width: 77rem\)[\s\S]*?\.subagent-stack-compact-trigger[\s\S]*?display:\s*none[\s\S]*?\.subagent-stack-content[\s\S]*?display:\s*block/,
       );
-      expect(indexCss).toContain("left: calc(50% - 24rem - 13rem - 0.75rem)");
+      expect(indexCss).not.toContain("left: calc(50% - 24rem - 13rem - 0.75rem)");
+    }),
+  );
+
+  it.effect("places the expanded agent list below the top area and left of the chat", () =>
+    Effect.gen(function* () {
+      const indexCss = yield* readIndexCss;
+      expect(indexCss).toMatch(
+        /\.chat-agent-floating-layer\s*\{[^}]*top:\s*2rem;[^}]*left:\s*2rem;/,
+      );
+      expect(indexCss).not.toContain("left: calc(50% - 24rem - 13rem - 0.75rem)");
     }),
   );
 

@@ -16,15 +16,27 @@ These are hard local overrides for agent work on this machine:
   restart jobs, and processes owned by another session.
 - Never invoke `app2unit`, `systemctl`, or a user-scope handoff to manage T3 Code. Do not arrange a
   delayed command that performs one of those actions after the current agent exits.
-- Never install from an agent session. Do not modify `/opt/t3code-git/t3code`,
-  `/opt/t3code-bin/t3code`, launchers, desktop entries, wrapper scripts, install-profile selectors, or
-  immutable flags. Installation is a separate, explicit later user action after active chats finish.
+- After successfully verifying a source change that affects the shipped T3 Code application, build
+  and refresh the user-local T3 Code Local installation on disk before reporting completion unless
+  the developer explicitly opts out. Run
+  `scripts/build-and-install-t3code-local-linux.sh --no-install-deps`, then run
+  `scripts/install-t3code-local-linux.sh --confirm-install apps/desktop/release/T3Code.AppImage`.
+  Preserve the currently selected local install profile; pass `--profile` only when the developer
+  explicitly requests a profile change. Documentation-only and test-only changes do not require an
+  AppImage refresh.
+- The on-disk refresh is limited to the user-local T3 Code Local targets under
+  `~/.local/share/t3code-local`, `~/.local/bin/t3code-local`, and the corresponding user-local
+  desktop entry/icon. Never modify `/opt/t3code-git/t3code`, `/opt/t3code-bin/t3code`, the
+  package-managed installation, or immutable flags.
+- Replacing the user-local AppImage on disk does not authorize process management. Never start,
+  stop, restart, hand off, or otherwise disturb the currently running T3 Code process; it continues
+  using its already-mounted AppImage until the developer restarts it later.
 - Never open `~/.t3/userdata` read-write, run a server against it, migrate it, or otherwise mutate live
   T3 home state. Read-only inspection and a consistent copy into this checkout's gitignored `.t3` are
   allowed.
-- Build-only verification is allowed. `scripts/build-and-install-t3code-local-linux.sh` is retained
-  under its legacy name but only builds and verifies an AppImage; it does not install or manage a
-  process. Agents must not invoke `scripts/install-t3code-local-linux.sh`.
+- `scripts/build-and-install-t3code-local-linux.sh` is retained under its legacy name but only builds
+  and verifies an AppImage. `scripts/install-t3code-local-linux.sh` performs the permitted
+  user-local on-disk refresh and must not manage a process.
 
 ## What makes T3 Code special?
 

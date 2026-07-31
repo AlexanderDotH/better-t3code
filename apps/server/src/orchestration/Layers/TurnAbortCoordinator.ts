@@ -181,84 +181,87 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const forceStopAttempt = Effect.fn("TurnAbortCoordinator.forceStopAttempt")(
+    function* (target: ProviderAbortTarget) {
+      const currentAttempt = (yield* Ref.get(attempts)).get(target.threadId);
+      if (
+        !currentAttempt ||
+        currentAttempt.phase !== "interrupting" ||
+        !targetMatches(currentAttempt.target, target)
+      ) {
+        return;
+      }
+
+      const session = yield* resolveSession(target.threadId);
+      if (session === null || !sessionTargetsActiveAttempt(session, currentAttempt)) {
+        yield* cleanupAttempt(yield* removeAttempt(target));
+        return;
+      }
+      const providerTargetIsCurrent = yield* providerService.isAbortTargetCurrent(target);
+      if (!providerTargetIsCurrent) {
+        yield* cleanupAttempt(yield* removeAttempt(target));
+        return;
+      }
+
+      const forceStartedAt = DateTime.formatIso(yield* DateTime.now);
+      const abortState = session.abortState;
+      if (abortState == null) {
+        yield* cleanupAttempt(yield* removeAttempt(target));
+        return;
+      }
+      yield* updateSession(
+        {
+          ...session,
+          abortState: {
+            ...abortState,
+            phase: "force-stopping",
+          },
+          updatedAt: forceStartedAt,
+        },
+        forceStartedAt,
+      );
+      yield* Ref.update(attempts, (current) => {
+        const existing = current.get(target.threadId);
+        if (!existing || !targetMatches(existing.target, target)) {
+          return current;
+        }
+        const next = new Map(current);
+        next.set(target.threadId, {
+          ...existing,
+          phase: "force-stopping",
+        });
+        return next;
+      });
+
+      const settled = yield* providerService.forceStopAbortTarget(target).pipe(
+        Effect.map(forceOutcome),
+        Effect.catchCause((cause) =>
+          Effect.succeed({
+            outcome: "force-failed" as const,
+            detail: Cause.pretty(cause),
+          }),
+        ),
+      );
+      const settledAt = DateTime.formatIso(yield* DateTime.now);
+      const settlementExit = yield* Effect.exit(
+        dispatchSettlement({
+          target,
+          ...settled,
+          settledAt,
+        }),
+      );
+      yield* cleanupAttempt(yield* removeAttempt(target));
+      if (Exit.isFailure(settlementExit)) {
+        return yield* Effect.failCause(settlementExit.cause);
+      }
+    },
+    (effect) => lock.withPermits(1)(effect),
+  );
+
   const watchdog = Effect.fn("TurnAbortCoordinator.watchdog")(
     function* (target: ProviderAbortTarget) {
       yield* Effect.sleep(TURN_ABORT_FORCE_DELAY);
-      yield* lock.withPermits(1)(
-        Effect.gen(function* () {
-          const currentAttempt = (yield* Ref.get(attempts)).get(target.threadId);
-          if (
-            !currentAttempt ||
-            currentAttempt.phase !== "interrupting" ||
-            !targetMatches(currentAttempt.target, target)
-          ) {
-            return;
-          }
-
-          const session = yield* resolveSession(target.threadId);
-          if (session === null || !sessionTargetsActiveAttempt(session, currentAttempt)) {
-            yield* cleanupAttempt(yield* removeAttempt(target));
-            return;
-          }
-          const providerTargetIsCurrent = yield* providerService.isAbortTargetCurrent(target);
-          if (!providerTargetIsCurrent) {
-            yield* cleanupAttempt(yield* removeAttempt(target));
-            return;
-          }
-
-          const forceStartedAt = DateTime.formatIso(yield* DateTime.now);
-          const abortState = session.abortState;
-          if (abortState == null) {
-            yield* cleanupAttempt(yield* removeAttempt(target));
-            return;
-          }
-          yield* updateSession(
-            {
-              ...session,
-              abortState: {
-                ...abortState,
-                phase: "force-stopping",
-              },
-              updatedAt: forceStartedAt,
-            },
-            forceStartedAt,
-          );
-          yield* Ref.update(attempts, (current) => {
-            const existing = current.get(target.threadId);
-            if (!existing || !targetMatches(existing.target, target)) {
-              return current;
-            }
-            const next = new Map(current);
-            next.set(target.threadId, {
-              ...existing,
-              phase: "force-stopping",
-            });
-            return next;
-          });
-
-          const settled = yield* providerService.forceStopAbortTarget(target).pipe(
-            Effect.map(forceOutcome),
-            Effect.catchCause((cause) =>
-              Effect.succeed({
-                outcome: "force-failed" as const,
-                detail: Cause.pretty(cause),
-              }),
-            ),
-          );
-          const settledAt = DateTime.formatIso(yield* DateTime.now);
-          const settlementExit = yield* Effect.exit(
-            dispatchSettlement({
-              target,
-              ...settled,
-              settledAt,
-            }),
-          );
-          yield* cleanupAttempt(yield* removeAttempt(target));
-          if (Exit.isFailure(settlementExit)) {
-            return yield* Effect.failCause(settlementExit.cause);
-          }
-        }),
-      );
+      yield* forceStopAttempt(target);
     },
     (effect, target) =>
       Effect.catchCause(effect, (cause) =>
@@ -283,17 +286,17 @@ const make = Effect.gen(function* () {
       ...(targetTurnId !== undefined && targetTurnId !== null ? { turnId: targetTurnId } : {}),
     });
 
-    const started = yield* lock.withPermits(1)(
+    const action = yield* lock.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* Ref.get(attempts);
         const existing = current.get(input.threadId);
         if (existing && targetMatches(existing.target, target)) {
-          return false;
+          return existing.phase === "interrupting" ? "force" : "ignore";
         }
 
         const thread = yield* resolveThread(input.threadId);
         if (thread === undefined) {
-          return false;
+          return "ignore";
         }
         const session: OrchestrationSession = thread.session ?? {
           threadId: input.threadId,
@@ -311,7 +314,7 @@ const make = Effect.gen(function* () {
           session.status === "stopped" ||
           (target.turnId !== null && session.activeTurnId !== target.turnId)
         ) {
-          return false;
+          return "ignore";
         }
 
         const forceAt = DateTime.formatIso(
@@ -343,10 +346,14 @@ const make = Effect.gen(function* () {
         });
         yield* Ref.set(attempts, next);
         yield* cleanupAttempt(existing);
-        return true;
+        return "start";
       }),
     );
-    if (!started) {
+    if (action === "force") {
+      yield* forceStopAttempt(target);
+      return;
+    }
+    if (action === "ignore") {
       return;
     }
 

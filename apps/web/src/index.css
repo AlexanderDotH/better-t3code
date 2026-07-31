@@ -1699,8 +1699,8 @@ label:has(> select#reasoning-effort) select {
 .chat-agent-floating-layer {
   pointer-events: none;
   position: absolute;
-  top: 0.75rem;
-  left: 0.75rem;
+  top: 2rem;
+  left: 2rem;
   z-index: 30;
   display: block;
 }
@@ -1722,10 +1722,6 @@ label:has(> select#reasoning-effort) select {
 }
 
 @container chat-column (min-width: 77rem) {
-  .chat-agent-floating-layer {
-    left: calc(50% - 24rem - 13rem - 0.75rem);
-  }
-
   .subagent-stack-compact-trigger {
     display: none;
   }

@@ -106,6 +106,25 @@ describe("thread stream routing", () => {
     });
   });
 
+  it("delivers turn abort settlement to the root thread while cursoring the subagent stream", () => {
+    const abortSettledEvent = event(4, "thread.turn-abort-settled", {
+      threadId,
+      runtimeSessionId: "runtime-session-1",
+      turnId: null,
+      outcome: "force-terminated",
+      settledAt: occurredAt,
+    });
+
+    expect(toRootThreadStreamItem(abortSettledEvent)).toEqual({
+      kind: "event",
+      event: abortSettledEvent,
+    });
+    expect(toSubagentStreamItem(abortSettledEvent, selectedSubagentId)).toEqual({
+      kind: "cursor",
+      sequence: 4,
+    });
+  });
+
   it("sends only the selected subagent transcript and summary updates", () => {
     const selectedMessage = messageEvent(1, selectedSubagentId);
     expect(toSubagentStreamItem(selectedMessage, selectedSubagentId)).toEqual({

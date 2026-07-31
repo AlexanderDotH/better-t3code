@@ -3,7 +3,7 @@ import type { OrchestrationSession, OrchestrationTurnAbortPhase } from "@t3tools
 export interface ThreadAbortPresentation {
   readonly accessibilityLabel:
     | "Stop generation"
-    | "Stopping generation"
+    | "Force stop generation"
     | "Force stopping generation";
   readonly disabled: boolean;
   readonly phase: OrchestrationTurnAbortPhase | null;
@@ -42,8 +42,8 @@ export function resolveThreadAbortPresentation(
   }
   if (phase === "interrupting") {
     return {
-      accessibilityLabel: "Stopping generation",
-      disabled: true,
+      accessibilityLabel: "Force stop generation",
+      disabled: false,
       phase,
       showStopAction,
     };

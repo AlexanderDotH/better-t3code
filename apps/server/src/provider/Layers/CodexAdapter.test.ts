@@ -25,6 +25,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, vi } from "@effect/vitest";
 
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -311,6 +312,7 @@ describe("Codex subagent event mapping", () => {
 class FakeCodexRuntime implements CodexSessionRuntimeShape {
   private readonly eventQueue = Effect.runSync(Queue.unbounded<ProviderEvent>());
   private readonly now = "2026-01-01T00:00:00.000Z";
+  public eventStreamFinalized = false;
 
   public readonly startImpl = vi.fn(() =>
     Promise.resolve({
@@ -368,12 +370,17 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
 
   readonly options: CodexSessionRuntimeOptions;
 
-  constructor(options: CodexSessionRuntimeOptions) {
+  constructor(
+    options: CodexSessionRuntimeOptions,
+    private readonly eventStreamStarted: Deferred.Deferred<void>,
+  ) {
     this.options = options;
   }
 
   start() {
-    return Effect.promise(() => this.startImpl());
+    return Deferred.await(this.eventStreamStarted).pipe(
+      Effect.andThen(Effect.promise(() => this.startImpl())),
+    );
   }
 
   getSession = Effect.promise(() => this.startImpl());
@@ -401,7 +408,16 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   }
 
   get events() {
-    return Stream.fromQueue(this.eventQueue);
+    return Stream.concat(
+      Stream.fromEffect(Deferred.succeed(this.eventStreamStarted, undefined)).pipe(Stream.drain),
+      Stream.fromQueue(this.eventQueue),
+    ).pipe(
+      Stream.ensuring(
+        Effect.sync(() => {
+          this.eventStreamFinalized = true;
+        }),
+      ),
+    );
   }
 
   close = Effect.promise(() => this.closeImpl());
@@ -414,11 +430,14 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
 
 function makeRuntimeFactory() {
   const runtimes: Array<FakeCodexRuntime> = [];
-  const factory = vi.fn((options: CodexSessionRuntimeOptions) => {
-    const runtime = new FakeCodexRuntime(options);
-    runtimes.push(runtime);
-    return Effect.succeed(runtime);
-  });
+  const factory = vi.fn((options: CodexSessionRuntimeOptions) =>
+    Effect.gen(function* () {
+      const eventStreamStarted = yield* Deferred.make<void>();
+      const runtime = new FakeCodexRuntime(options, eventStreamStarted);
+      runtimes.push(runtime);
+      return runtime;
+    }),
+  );
 
   return {
     factory,
@@ -448,7 +467,8 @@ function makeScopedRuntimeFactory(options?: { readonly failConstruction?: boolea
         });
       }
 
-      const runtime = new FakeCodexRuntime(runtimeOptions);
+      const eventStreamStarted = yield* Deferred.make<void>();
+      const runtime = new FakeCodexRuntime(runtimeOptions, eventStreamStarted);
       runtimes.push(runtime);
       return runtime;
     }),
@@ -765,6 +785,25 @@ function startLifecycleRuntime() {
 }
 
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+  it.effect("keeps the runtime event pump alive after the session starter fiber completes", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const startFiber = yield* adapter
+        .startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-event-pump"),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.forkChild);
+
+      yield* Fiber.join(startFiber);
+
+      const runtime = lifecycleRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      NodeAssert.equal(runtime.eventStreamFinalized, false);
+    }),
+  );
+
   it.effect("force-stops the exact owned Codex runtime without cooperative close", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

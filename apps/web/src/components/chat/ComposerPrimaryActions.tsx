@@ -141,7 +141,7 @@ export const formatStopGenerationLabel = (abortPhase: OrchestrationTurnAbortPhas
     return "Force stopping generation";
   }
   if (abortPhase === "interrupting") {
-    return "Stopping generation";
+    return "Force stop generation";
   }
   return "Stop generation";
 };
@@ -231,18 +231,18 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   }
 
   if (isRunning) {
-    const abortPending = abortPhase !== null;
+    const forceStopPending = abortPhase === "force-stopping";
     return (
       <button
         type="button"
         className="flex size-8 enabled:cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-[0_1px_--theme(--color-white/16%)] transition-all duration-150 enabled:hover:bg-destructive enabled:hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:cursor-wait disabled:opacity-80 disabled:hover:scale-100 sm:h-8 sm:w-8"
         {...pointerFocusProps}
         onClick={onInterrupt}
-        disabled={abortPending}
-        aria-busy={abortPending || undefined}
+        disabled={forceStopPending}
+        aria-busy={forceStopPending || undefined}
         aria-label={formatStopGenerationLabel(abortPhase)}
       >
-        {abortPending ? (
+        {forceStopPending ? (
           <Spinner className="size-3.5" aria-hidden="true" />
         ) : (
           <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">

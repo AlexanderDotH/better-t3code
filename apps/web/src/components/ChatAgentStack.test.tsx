@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import { ChatAgentStack } from "./ChatAgentStack";
+import { ASTERIX_AGENT_NAMES } from "./subagents/subagentPresentation";
 
 function makeSubagent(
   id: string,
@@ -81,5 +82,22 @@ describe("ChatAgentStack", () => {
     expect(html).toContain(">History<");
     expect(html).toContain('aria-expanded="true"');
     expect(html).toContain('data-subagent-tone="archived"');
+  });
+
+  it("replaces technical task ids with Asterix character names", () => {
+    const html = renderToStaticMarkup(
+      <ChatAgentStack
+        subagents={[
+          makeSubagent("stream_routing_retry", "running", {
+            path: "/root/stream_routing_retry",
+          }),
+        ]}
+        selectedSubagentId={null}
+        onSelectSubagent={() => {}}
+      />,
+    );
+
+    expect(html).not.toContain(">stream_routing_retry<");
+    expect(ASTERIX_AGENT_NAMES.some((name) => html.includes(`>${name}<`))).toBe(true);
   });
 });

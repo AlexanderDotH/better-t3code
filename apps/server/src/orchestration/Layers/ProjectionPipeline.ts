@@ -937,9 +937,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           if (Option.isNone(existingRow)) {
             return;
           }
+          const session = event.payload.session;
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            latestTurnId: event.payload.session.activeTurnId,
+            latestTurnId:
+              session.activeTurnId ??
+              (settledTurnStateForSessionStatus(session.status) !== null
+                ? existingRow.value.latestTurnId
+                : null),
             updatedAt: event.occurredAt,
           });
           yield* refreshThreadShellSummary(event.payload.threadId);

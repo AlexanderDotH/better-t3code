@@ -1963,7 +1963,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               ),
             );
           }),
-        ).pipe(Effect.forkChild);
+        ).pipe(Effect.forkIn(sessionScope));
 
         const started = yield* runtime.start().pipe(
           Effect.mapError(

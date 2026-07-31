@@ -4,11 +4,14 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  type ChatAttachment,
   ModelSelection,
+  type OrchestrationSession,
   ProviderRuntimeEvent,
   ProviderSession,
   ProviderDriverKind,
   ProviderInstanceId,
+  RuntimeSessionId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import {
@@ -150,6 +153,24 @@ describe("ProviderCommandReactor", () => {
     readonly requiresNewThreadForModelChange?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
+    readonly projectedSessionBeforeStart?: {
+      readonly status: OrchestrationSession["status"];
+      readonly providerName?: string | null;
+      readonly providerInstanceId?: ProviderInstanceId;
+      readonly runtimeSessionId?: OrchestrationSession["runtimeSessionId"];
+      readonly runtimeMode?: OrchestrationSession["runtimeMode"];
+      readonly activeTurnId?: OrchestrationSession["activeTurnId"];
+      readonly abortState?: OrchestrationSession["abortState"];
+      readonly lastError?: string | null;
+      readonly updatedAt?: string;
+      readonly partialAssistantMessage?: {
+        readonly id: MessageId;
+        readonly text: string;
+        readonly attachments: ReadonlyArray<ChatAttachment>;
+        readonly turnId?: TurnId | null;
+      };
+    };
+    readonly seedMatchingLiveProviderSession?: boolean;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -494,8 +515,90 @@ describe("ProviderCommandReactor", () => {
       );
     }
 
+    const projectedSessionBeforeStart = input?.projectedSessionBeforeStart;
+    if (projectedSessionBeforeStart) {
+      const projectedSession: OrchestrationSession = {
+        threadId: ThreadId.make("thread-1"),
+        status: projectedSessionBeforeStart.status,
+        providerName: projectedSessionBeforeStart.providerName ?? "codex",
+        providerInstanceId:
+          projectedSessionBeforeStart.providerInstanceId ?? ProviderInstanceId.make("codex"),
+        runtimeSessionId: projectedSessionBeforeStart.runtimeSessionId ?? null,
+        runtimeMode: projectedSessionBeforeStart.runtimeMode ?? "approval-required",
+        activeTurnId: projectedSessionBeforeStart.activeTurnId ?? null,
+        abortState: projectedSessionBeforeStart.abortState ?? null,
+        lastError: projectedSessionBeforeStart.lastError ?? null,
+        updatedAt: projectedSessionBeforeStart.updatedAt ?? now,
+      };
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-set-before-reactor-start"),
+          threadId: ThreadId.make("thread-1"),
+          session: projectedSession,
+          createdAt: projectedSession.updatedAt,
+        }),
+      );
+
+      const partialAssistantMessage = projectedSessionBeforeStart.partialAssistantMessage;
+      if (partialAssistantMessage) {
+        const messageTurnId = partialAssistantMessage.turnId ?? projectedSession.activeTurnId;
+        await Effect.runPromise(
+          engine.dispatch({
+            type: "thread.message.import",
+            commandId: CommandId.make("cmd-assistant-import-before-reactor-start"),
+            threadId: ThreadId.make("thread-1"),
+            message: {
+              id: partialAssistantMessage.id,
+              role: "assistant",
+              text: "",
+              attachments: partialAssistantMessage.attachments,
+              turnId: messageTurnId,
+              streaming: false,
+              createdAt: projectedSession.updatedAt,
+              updatedAt: projectedSession.updatedAt,
+            },
+          }),
+        );
+        await Effect.runPromise(
+          engine.dispatch({
+            type: "thread.message.assistant.delta",
+            commandId: CommandId.make("cmd-assistant-delta-before-reactor-start"),
+            threadId: ThreadId.make("thread-1"),
+            messageId: partialAssistantMessage.id,
+            delta: partialAssistantMessage.text,
+            ...(messageTurnId !== null ? { turnId: messageTurnId } : {}),
+            createdAt: projectedSession.updatedAt,
+          }),
+        );
+      }
+
+      if (input?.seedMatchingLiveProviderSession === true) {
+        runtimeSessions.push({
+          provider: ProviderDriverKind.make(projectedSession.providerName ?? "codex"),
+          providerInstanceId:
+            projectedSession.providerInstanceId ?? ProviderInstanceId.make("codex"),
+          status: projectedSession.status === "starting" ? "connecting" : "running",
+          runtimeMode: projectedSession.runtimeMode,
+          cwd: "/tmp/provider-project",
+          model: modelSelection.model,
+          threadId: projectedSession.threadId,
+          ...(projectedSession.runtimeSessionId !== null
+            ? { runtimeSessionId: projectedSession.runtimeSessionId }
+            : {}),
+          resumeCursor: { opaque: "resume-before-restart" },
+          ...(projectedSession.activeTurnId !== null
+            ? { activeTurnId: projectedSession.activeTurnId }
+            : {}),
+          createdAt: projectedSession.updatedAt,
+          updatedAt: projectedSession.updatedAt,
+        });
+      }
+    }
+
     scope = await Effect.runPromise(Scope.make("sequential"));
-    await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
+    const startReactor = () => Effect.runPromise(reactor.start().pipe(Scope.provide(scope!)));
+    await startReactor();
     const drain = () => Effect.runPromise(reactor.drain);
 
     return {
@@ -515,12 +618,272 @@ describe("ProviderCommandReactor", () => {
       runtimeSessions,
       stateDir,
       drain,
+      startReactor,
+      readEvents: () =>
+        runtime!.runPromise(
+          Stream.runCollect(engine.readEvents(0)).pipe(Effect.map((events) => Array.from(events))),
+        ),
       runEffect,
       get titleRegenerationCompletionDispatchAttempts() {
         return titleRegenerationCompletionDispatchAttempts;
       },
     };
   }
+
+  describe("startup session reconciliation", () => {
+    const projectedAt = "2025-12-31T23:59:00.000Z";
+    const runtimeSessionId = RuntimeSessionId.make("runtime-before-restart");
+    const activeTurnId = asTurnId("turn-before-restart");
+    const partialAssistantMessageId = asMessageId("assistant-before-restart");
+    const partialAssistantAttachments = [
+      {
+        type: "image" as const,
+        id: "attachment-before-restart",
+        name: "reproduction.png",
+        mimeType: "image/png",
+        sizeBytes: 321,
+      },
+    ];
+    const abortState: NonNullable<OrchestrationSession["abortState"]> = {
+      runtimeSessionId,
+      targetTurnId: activeTurnId,
+      phase: "interrupting",
+      requestedAt: "2025-12-31T23:59:30.000Z",
+      forceAt: "2025-12-31T23:59:35.000Z",
+    };
+
+    it("interrupts an orphaned running turn and finalizes its partial assistant output", async () => {
+      const harness = await createHarness({
+        projectedSessionBeforeStart: {
+          status: "running",
+          runtimeSessionId,
+          runtimeMode: "full-access",
+          activeTurnId,
+          abortState,
+          lastError: "stale runtime error",
+          updatedAt: projectedAt,
+          partialAssistantMessage: {
+            id: partialAssistantMessageId,
+            text: "Partial response before shutdown",
+            attachments: partialAssistantAttachments,
+          },
+        },
+      });
+
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(thread?.session).toMatchObject({
+        status: "interrupted",
+        providerName: "codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        runtimeSessionId: null,
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        abortState: null,
+        lastError: null,
+      });
+      expect(thread?.session?.updatedAt).not.toBe(projectedAt);
+      expect(thread?.latestTurn).toMatchObject({
+        turnId: activeTurnId,
+        state: "interrupted",
+        completedAt: thread?.session?.updatedAt,
+      });
+      expect(thread?.latestTurn?.state).not.toBe("completed");
+      expect(
+        thread?.messages.find((message) => message.id === partialAssistantMessageId),
+      ).toMatchObject({
+        text: "Partial response before shutdown",
+        attachments: partialAssistantAttachments,
+        turnId: activeTurnId,
+        streaming: false,
+      });
+      expect(harness.stopSession).not.toHaveBeenCalled();
+
+      const events = await harness.readEvents();
+      const interruptionIndex = events.findIndex(
+        (event) =>
+          event.type === "thread.session-set" && event.payload.session.status === "interrupted",
+      );
+      expect(interruptionIndex).toBeGreaterThan(-1);
+      expect(
+        events
+          .slice(interruptionIndex + 1)
+          .some(
+            (event) =>
+              event.type === "thread.message-sent" &&
+              event.payload.messageId === partialAssistantMessageId &&
+              event.payload.streaming === false,
+          ),
+      ).toBe(true);
+    });
+
+    it("interrupts an orphaned starting session and clears its runtime identifiers", async () => {
+      const harness = await createHarness({
+        projectedSessionBeforeStart: {
+          status: "starting",
+          runtimeSessionId,
+          abortState: {
+            ...abortState,
+            targetTurnId: null,
+          },
+          lastError: "stale startup error",
+          updatedAt: projectedAt,
+        },
+      });
+
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(thread?.session).toMatchObject({
+        status: "interrupted",
+        providerName: "codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        runtimeSessionId: null,
+        runtimeMode: "approval-required",
+        activeTurnId: null,
+        abortState: null,
+        lastError: null,
+      });
+      expect(thread?.latestTurn).toBeNull();
+    });
+
+    it("leaves a projected running session untouched when its provider runtime is live", async () => {
+      const harness = await createHarness({
+        projectedSessionBeforeStart: {
+          status: "running",
+          runtimeSessionId,
+          runtimeMode: "full-access",
+          activeTurnId,
+          abortState,
+          updatedAt: projectedAt,
+          partialAssistantMessage: {
+            id: partialAssistantMessageId,
+            text: "Provider is still streaming",
+            attachments: partialAssistantAttachments,
+          },
+        },
+        seedMatchingLiveProviderSession: true,
+      });
+
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(thread?.session).toMatchObject({
+        status: "running",
+        runtimeSessionId,
+        activeTurnId,
+        abortState,
+        updatedAt: projectedAt,
+      });
+      expect(
+        thread?.messages.find((message) => message.id === partialAssistantMessageId),
+      ).toMatchObject({
+        text: "Provider is still streaming",
+        attachments: partialAssistantAttachments,
+        streaming: true,
+      });
+      expect(harness.runtimeSessions).toHaveLength(1);
+      expect(harness.runtimeSessions[0]).toMatchObject({
+        threadId: ThreadId.make("thread-1"),
+        runtimeSessionId,
+        resumeCursor: { opaque: "resume-before-restart" },
+      });
+      expect(harness.stopSession).not.toHaveBeenCalled();
+
+      const sessionSetEvents = (await harness.readEvents()).filter(
+        (event) => event.type === "thread.session-set",
+      );
+      expect(sessionSetEvents).toHaveLength(1);
+    });
+
+    it.each(["ready", "error", "stopped", "interrupted"] as const)(
+      "leaves an existing %s session unchanged",
+      async (status) => {
+        const harness = await createHarness({
+          projectedSessionBeforeStart: {
+            status,
+            runtimeSessionId,
+            lastError: status === "error" ? "existing provider failure" : null,
+            updatedAt: projectedAt,
+          },
+        });
+
+        const readModel = await harness.readModel();
+        const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+        expect(thread?.session).toMatchObject({
+          status,
+          runtimeSessionId,
+          lastError: status === "error" ? "existing provider failure" : null,
+          updatedAt: projectedAt,
+        });
+        const sessionSetEvents = (await harness.readEvents()).filter(
+          (event) => event.type === "thread.session-set",
+        );
+        expect(sessionSetEvents).toHaveLength(1);
+      },
+    );
+
+    it("does not append more repair events when startup reconciliation runs again", async () => {
+      const harness = await createHarness({
+        projectedSessionBeforeStart: {
+          status: "running",
+          runtimeSessionId,
+          activeTurnId,
+          updatedAt: projectedAt,
+        },
+      });
+      const eventCountAfterFirstReconciliation = (await harness.readEvents()).length;
+
+      await harness.startReactor();
+
+      expect((await harness.readEvents()).length).toBe(eventCountAfterFirstReconciliation);
+    });
+
+    it("starts the existing provider recovery path when the user continues an interrupted thread", async () => {
+      const harness = await createHarness({
+        projectedSessionBeforeStart: {
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeSessionId,
+          activeTurnId,
+          updatedAt: projectedAt,
+        },
+      });
+
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-after-startup-reconciliation"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-after-startup-reconciliation"),
+            role: "user",
+            text: "Continue after restart",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:01:00.000Z",
+        }),
+      );
+
+      await waitFor(() => harness.startSession.mock.calls.length === 1);
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+        threadId: ThreadId.make("thread-1"),
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+      });
+      expect(harness.startSession.mock.calls[0]?.[1]).not.toHaveProperty("freshSession");
+      expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+        threadId: ThreadId.make("thread-1"),
+        input: "Continue after restart",
+      });
+    });
+  });
 
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {
     const harness = await createHarness();
@@ -2610,7 +2973,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.user-input.respond",
         commandId: CommandId.make("cmd-user-input-respond"),

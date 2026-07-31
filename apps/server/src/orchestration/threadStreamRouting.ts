@@ -16,6 +16,7 @@ function isRootThreadDetailEvent(event: OrchestrationEvent): boolean {
     case "thread.proposed-plan-upserted":
     case "thread.activity-appended":
       return event.payload.subagentId === undefined;
+    case "thread.turn-abort-settled":
     case "thread.turn-diff-completed":
     case "thread.reverted":
     case "thread.session-set":

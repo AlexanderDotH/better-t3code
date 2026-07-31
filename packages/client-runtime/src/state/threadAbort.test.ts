@@ -31,7 +31,7 @@ describe("resolveThreadAbortPresentation", () => {
     });
   });
 
-  it("shows cooperative cancellation for the matching runtime", () => {
+  it("offers force stop while cooperative cancellation is pending", () => {
     expect(
       resolveThreadAbortPresentation(
         makeSession({
@@ -45,8 +45,8 @@ describe("resolveThreadAbortPresentation", () => {
         }),
       ),
     ).toEqual({
-      accessibilityLabel: "Stopping generation",
-      disabled: true,
+      accessibilityLabel: "Force stop generation",
+      disabled: false,
       phase: "interrupting",
       showStopAction: true,
     });

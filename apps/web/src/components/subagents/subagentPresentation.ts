@@ -70,10 +70,42 @@ export interface SubagentGroups {
   readonly finished: ReadonlyArray<OrchestrationSubagentSummary>;
 }
 
-type SubagentNameSource = Pick<
-  OrchestrationSubagentSummary,
-  "id" | "name" | "nickname" | "role" | "path"
->;
+type SubagentNameSource = Pick<OrchestrationSubagentSummary, "id" | "nickname">;
+
+export const ASTERIX_AGENT_NAMES = [
+  "Asterix",
+  "Obelix",
+  "Idefix",
+  "Miraculix",
+  "Majestix",
+  "Gutemine",
+  "Troubadix",
+  "Automatix",
+  "Verleihnix",
+  "Falbala",
+  "Methusalix",
+  "Numerobis",
+  "Kleopatra",
+  "Julius Cäsar",
+  "Teefax",
+  "Grautvornix",
+  "Osolemirnix",
+  "Stellartoix",
+  "Maestria",
+  "Orthopädix",
+  "Goudurix",
+  "Pepe",
+  "Pyradonis",
+  "Epidemais",
+  "Adrenaline",
+  "Selfix",
+  "Aspix",
+  "Greulix",
+  "Acidenitrix",
+  "Caligula Minus",
+  "Tullius Destructivus",
+  "Marcus Sacapus",
+] as const;
 
 export type SubagentTranscriptEntry =
   | {
@@ -96,17 +128,7 @@ export type SubagentTranscriptEntry =
     };
 
 export function resolveSubagentDisplayName(agent: SubagentNameSource): string {
-  const explicitName = firstNonEmpty(agent.nickname, agent.name, agent.role);
-  if (explicitName) {
-    return explicitName;
-  }
-
-  const pathName = lastPathSegment(agent.path);
-  if (pathName) {
-    return `Agent ${pathName}`;
-  }
-
-  return `Agent ${fallbackIdentifier(agent.id)}`;
+  return firstNonEmpty(agent.nickname) ?? asterixAgentName(agent.id);
 }
 
 export function isSubagentActiveStatus(status: OrchestrationSubagentStatus): boolean {
@@ -177,19 +199,13 @@ function firstNonEmpty(...values: ReadonlyArray<string | null | undefined>): str
   return null;
 }
 
-function lastPathSegment(path: string | null): string | null {
-  if (!path) {
-    return null;
+function asterixAgentName(id: SubagentId): string {
+  let hash = 2166136261;
+  for (const character of String(id)) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
   }
-  const segments = path.split("/").filter(Boolean);
-  return firstNonEmpty(segments.at(-1));
-}
-
-function fallbackIdentifier(id: SubagentId): string {
-  const providerTail = /([^:/]+)$/.exec(String(id))?.[1] ?? String(id);
-  const token = /([^-]+)$/.exec(providerTail)?.[1] ?? providerTail;
-  const normalized = token.replace(/[^a-z0-9]+/gi, "").slice(-8);
-  return normalized || "unknown";
+  return ASTERIX_AGENT_NAMES[(hash >>> 0) % ASTERIX_AGENT_NAMES.length] ?? "Asterix";
 }
 
 function compareActiveAgents(
