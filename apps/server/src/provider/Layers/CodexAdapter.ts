@@ -458,7 +458,7 @@ function toSubagentStateFromThreadStatus(
     case "active":
       return status.activeFlags.length > 0 ? "waiting" : "running";
     case "idle":
-      return "waiting";
+      return "completed";
     case "systemError":
       return "error";
     case "notLoaded":
@@ -649,6 +649,7 @@ function parentSubagentId(
 function mapSubagentActivityEvents(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
+  rootProviderThreadId: string | undefined,
 ): ReadonlyArray<ProviderRuntimeEvent> {
   const item = lifecycleItemFromEvent(event);
   if (item?.type !== "subAgentActivity") {
@@ -657,21 +658,15 @@ function mapSubagentActivityEvents(
   const providerThreadId = trimText(
     typeof item.agentThreadId === "string" ? item.agentThreadId : undefined,
   );
-  if (!providerThreadId) {
+  const agentPath = trimText(typeof item.agentPath === "string" ? item.agentPath : undefined);
+  if (!providerThreadId || providerThreadId === rootProviderThreadId || agentPath === "/root") {
     return [];
   }
-  const agentPath = trimText(typeof item.agentPath === "string" ? item.agentPath : undefined);
   const depth = subagentDepthFromPath(agentPath);
   const subagentId = makeCodexSubagentId(providerThreadId);
   const kind = item.kind;
   const state =
-    kind === "started"
-      ? "starting"
-      : kind === "interacted"
-        ? "running"
-        : kind === "interrupted"
-          ? "interrupted"
-          : undefined;
+    kind === "started" ? "starting" : kind === "interrupted" ? "interrupted" : undefined;
   return [
     makeSubagentDiscoveredEvent(event, canonicalThreadId, providerThreadId, {
       ...(event.subagentId ? { parentSubagentId: event.subagentId } : {}),
@@ -701,7 +696,6 @@ function collabToolFallbackState(tool: unknown, status: unknown): RuntimeSubagen
   switch (tool) {
     case "spawnAgent":
       return "starting";
-    case "sendInput":
     case "resumeAgent":
       return "running";
     case "closeAgent":
@@ -725,7 +719,10 @@ function mapCollabAgentEvents(
   const receiverThreadIds = stringArray(item.receiverThreadIds);
   const providerThreadIds = Array.from(
     new Set([...receiverThreadIds, ...Object.keys(agentStates)]),
-  ).filter((providerThreadId) => providerThreadId.trim().length > 0);
+  ).filter(
+    (providerThreadId) =>
+      providerThreadId.trim().length > 0 && providerThreadId !== rootProviderThreadId,
+  );
   const senderThreadId = trimText(
     typeof item.senderThreadId === "string" ? item.senderThreadId : undefined,
   );
@@ -918,7 +915,7 @@ export function makeCodexRuntimeEventMapper(initialRootProviderThreadId?: string
     }
 
     const explicitEvents = [
-      ...mapSubagentActivityEvents(event, canonicalThreadId),
+      ...mapSubagentActivityEvents(event, canonicalThreadId, rootProviderThreadId),
       ...mapCollabAgentEvents(event, canonicalThreadId, rootProviderThreadId),
       ...mapChildThreadEvents(event, canonicalThreadId, rootProviderThreadId),
     ];

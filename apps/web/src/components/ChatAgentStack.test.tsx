@@ -84,6 +84,28 @@ describe("ChatAgentStack", () => {
     expect(html).toContain('data-subagent-tone="archived"');
   });
 
+  it("keeps active and archived agent pills flush-left regardless of depth", () => {
+    const oldTerminal = new Date(Date.now() - 31_000).toISOString();
+    const html = renderToStaticMarkup(
+      <ChatAgentStack
+        subagents={[
+          makeSubagent("nested-active", "running", { depth: 1 }),
+          makeSubagent("deep-archive", "completed", {
+            depth: 3,
+            completedAt: oldTerminal,
+            updatedAt: oldTerminal,
+          }),
+        ]}
+        selectedSubagentId={SubagentId.make("deep-archive")}
+        onSelectSubagent={() => {}}
+      />,
+    );
+
+    expect(html).toContain('data-subagent-id="nested-active"');
+    expect(html).toContain('data-subagent-id="deep-archive"');
+    expect(html).not.toContain("padding-inline-start");
+  });
+
   it("replaces technical task ids with Asterix character names", () => {
     const html = renderToStaticMarkup(
       <ChatAgentStack

@@ -285,4 +285,280 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
       assert.equal(missingSnapshot._tag, "None");
     }),
   );
+
+  it.effect("hides legacy root rows and repairs stale active summaries with terminal turns", () =>
+    Effect.gen(function* () {
+      const query = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const legacyThreadId = ThreadId.make("thread-legacy-subagents");
+      const legacyRootId = SubagentId.make("codex:provider-root");
+      const staleChildId = SubagentId.make("codex:provider-child");
+      const activeChildId = SubagentId.make("codex:provider-active");
+      const rootTurnId = "root-turn";
+      const completedAt = "2026-07-30T12:05:00.000Z";
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          created_at,
+          updated_at,
+          archived_at,
+          deleted_at
+        )
+        VALUES (
+          ${legacyThreadId},
+          'project-legacy-subagents',
+          'Legacy subagents',
+          '{"instanceId":"codex","model":"gpt-5.6"}',
+          'full-access',
+          'default',
+          NULL,
+          NULL,
+          ${rootTurnId},
+          NULL,
+          0,
+          0,
+          0,
+          ${createdAt},
+          ${completedAt},
+          NULL,
+          NULL
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id,
+          turn_id,
+          pending_message_id,
+          source_proposed_plan_thread_id,
+          source_proposed_plan_id,
+          assistant_message_id,
+          state,
+          requested_at,
+          started_at,
+          completed_at,
+          checkpoint_turn_count,
+          checkpoint_ref,
+          checkpoint_status,
+          checkpoint_files_json
+        )
+        VALUES (
+          ${legacyThreadId},
+          ${rootTurnId},
+          'root-user-message',
+          NULL,
+          NULL,
+          'root-assistant-message',
+          'completed',
+          ${createdAt},
+          ${createdAt},
+          ${completedAt},
+          NULL,
+          NULL,
+          NULL,
+          '[]'
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_subagents (
+          thread_id,
+          subagent_id,
+          provider_thread_id,
+          parent_subagent_id,
+          path,
+          name,
+          nickname,
+          role,
+          task,
+          model,
+          reasoning_effort,
+          depth,
+          status,
+          status_message,
+          latest_progress_json,
+          latest_turn_json,
+          started_at,
+          updated_at,
+          completed_at
+        )
+        VALUES
+          (
+            ${legacyThreadId},
+            ${legacyRootId},
+            'provider-root',
+            ${staleChildId},
+            '/root',
+            'root',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            0,
+            'running',
+            'Running',
+            '{"kind":"state.running","summary":"Running","detail":null,"createdAt":"2026-07-30T12:04:00.000Z"}',
+            NULL,
+            ${createdAt},
+            '2026-07-30T12:04:00.000Z',
+            NULL
+          ),
+          (
+            ${legacyThreadId},
+            ${staleChildId},
+            'provider-child',
+            NULL,
+            '/root/research',
+            'research',
+            'Researcher',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            1,
+            'running',
+            'Running',
+            '{"kind":"state.running","summary":"Running","detail":null,"createdAt":"2026-07-30T12:04:00.000Z"}',
+            ${JSON.stringify({
+              turnId: "child-turn",
+              state: "completed",
+              requestedAt: createdAt,
+              startedAt: createdAt,
+              completedAt,
+              assistantMessageId: null,
+            })},
+            ${createdAt},
+            '2026-07-30T12:04:00.000Z',
+            NULL
+          ),
+          (
+            ${legacyThreadId},
+            ${activeChildId},
+            'provider-active',
+            NULL,
+            '/root/active',
+            'active',
+            'Active agent',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            1,
+            'running',
+            'Running',
+            '{"kind":"state.running","summary":"Running","detail":null,"createdAt":"2026-07-30T12:04:00.000Z"}',
+            ${JSON.stringify({
+              turnId: "active-turn",
+              state: "running",
+              requestedAt: createdAt,
+              startedAt: createdAt,
+              completedAt: null,
+              assistantMessageId: null,
+            })},
+            ${createdAt},
+            '2026-07-30T12:04:00.000Z',
+            NULL
+          )
+      `;
+
+      const detail = yield* query.getThreadDetailById(legacyThreadId);
+      assert.equal(detail._tag, "Some");
+      if (detail._tag === "Some") {
+        assert.deepEqual(
+          new Set(detail.value.subagents.map((subagent) => subagent.id)),
+          new Set([staleChildId, activeChildId]),
+        );
+        assert.deepEqual(
+          detail.value.subagents.find((subagent) => subagent.id === staleChildId),
+          {
+            id: staleChildId,
+            providerThreadId: "provider-child",
+            parentId: null,
+            path: "/root/research",
+            name: "research",
+            nickname: "Researcher",
+            role: null,
+            task: null,
+            model: null,
+            reasoningEffort: null,
+            depth: 1,
+            status: "completed",
+            statusMessage: null,
+            latestProgress: {
+              kind: "state.completed",
+              summary: "Completed",
+              detail: null,
+              createdAt: completedAt,
+            },
+            latestTurn: {
+              turnId: "child-turn",
+              state: "completed",
+              requestedAt: createdAt,
+              startedAt: createdAt,
+              completedAt,
+              assistantMessageId: null,
+            },
+            startedAt: createdAt,
+            updatedAt: "2026-07-30T12:04:00.000Z",
+            completedAt,
+          },
+        );
+        assert.equal(
+          detail.value.subagents.find((subagent) => subagent.id === activeChildId)?.status,
+          "running",
+        );
+      }
+
+      const rootDetail = yield* query.getSubagentDetailById(legacyThreadId, legacyRootId);
+      assert.equal(rootDetail._tag, "None");
+
+      const snapshot = yield* query.getSnapshot();
+      const snapshotThread = snapshot.threads.find((thread) => thread.id === legacyThreadId);
+      assert.deepEqual(
+        new Set(snapshotThread?.subagents.map((subagent) => subagent.id)),
+        new Set([staleChildId, activeChildId]),
+      );
+      assert.equal(
+        snapshotThread?.subagents.find((subagent) => subagent.id === staleChildId)?.status,
+        "completed",
+      );
+
+      yield* sql`
+        UPDATE projection_turns
+        SET state = 'running', completed_at = NULL
+        WHERE thread_id = ${legacyThreadId}
+          AND turn_id = ${rootTurnId}
+      `;
+      const activeRootDetail = yield* query.getThreadDetailById(legacyThreadId);
+      assert.equal(activeRootDetail._tag, "Some");
+      if (activeRootDetail._tag === "Some") {
+        assert.deepInclude(
+          activeRootDetail.value.subagents.find((subagent) => subagent.id === staleChildId),
+          {
+            status: "running",
+            statusMessage: "Running",
+            latestProgress: {
+              kind: "state.running",
+              summary: "Running",
+              detail: null,
+              createdAt: "2026-07-30T12:04:00.000Z",
+            },
+            completedAt: null,
+          },
+        );
+      }
+    }),
+  );
 });

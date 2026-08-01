@@ -147,7 +147,6 @@ function PresenceAgentItem({
     <li
       className="subagent-stack-slot"
       data-subagent-presence={entry.phase}
-      style={{ paddingInlineStart: `${Math.min(entry.agent.depth, 3) * 6}px` }}
       onAnimationEnd={completeCollapsingPhase}
     >
       <ChatAgentPill
@@ -261,11 +260,7 @@ function ArchivedAgentSection({
       <CollapsiblePanel className="mt-1 w-full transition-[height,opacity] data-starting-style:opacity-0 data-ending-style:opacity-0">
         <ul className="w-full" role="list" aria-label="Archived agents">
           {agents.map((agent) => (
-            <li
-              key={agent.id}
-              className="mb-1 h-7"
-              style={{ paddingInlineStart: `${Math.min(agent.depth, 3) * 6}px` }}
-            >
+            <li key={agent.id} className="mb-1 h-7">
               <ChatAgentPill
                 agent={agent}
                 tone="archived"

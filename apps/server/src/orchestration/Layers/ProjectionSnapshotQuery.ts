@@ -330,7 +330,35 @@ function mapProposedPlanRow(
   };
 }
 
-function mapSubagentSummaryRow(row: ProjectionThreadSubagent): OrchestrationSubagentSummary {
+function shouldReconcileTerminalSubagents(
+  latestTurn: OrchestrationLatestTurn | null,
+  session: OrchestrationSession | null,
+): boolean {
+  return (
+    latestTurn !== null &&
+    latestTurn.state !== "running" &&
+    session?.status !== "starting" &&
+    session?.status !== "running"
+  );
+}
+
+function mapSubagentSummaryRow(
+  row: ProjectionThreadSubagent,
+  reconcileTerminalTurn = false,
+): OrchestrationSubagentSummary {
+  const terminalTurnStatus =
+    reconcileTerminalTurn &&
+    (row.status === "starting" || row.status === "running" || row.status === "waiting") &&
+    row.latestTurn !== null &&
+    (row.latestTurn.state === "completed" ||
+      row.latestTurn.state === "interrupted" ||
+      row.latestTurn.state === "error")
+      ? row.latestTurn.state
+      : undefined;
+  const terminalAt = terminalTurnStatus
+    ? (row.latestTurn?.completedAt ?? row.completedAt ?? row.updatedAt)
+    : null;
+
   return {
     id: row.id,
     providerThreadId: row.providerThreadId,
@@ -343,14 +371,30 @@ function mapSubagentSummaryRow(row: ProjectionThreadSubagent): OrchestrationSuba
     model: row.model,
     reasoningEffort: row.reasoningEffort,
     depth: row.depth,
-    status: row.status,
-    statusMessage: row.statusMessage,
-    latestProgress: row.latestProgress,
+    status: terminalTurnStatus ?? row.status,
+    statusMessage: terminalTurnStatus ? null : row.statusMessage,
+    latestProgress: terminalTurnStatus
+      ? {
+          kind: `state.${terminalTurnStatus}`,
+          summary:
+            terminalTurnStatus === "completed"
+              ? "Completed"
+              : terminalTurnStatus === "interrupted"
+                ? "Interrupted"
+                : "Error",
+          detail: null,
+          createdAt: terminalAt ?? row.updatedAt,
+        }
+      : row.latestProgress,
     latestTurn: row.latestTurn,
     startedAt: row.startedAt,
     updatedAt: row.updatedAt,
-    completedAt: row.completedAt,
+    completedAt: terminalAt ?? row.completedAt,
   };
+}
+
+function isLegacyRootSubagentRow(row: ProjectionThreadSubagent): boolean {
+  return row.path === "/root" && row.depth === 0;
 }
 
 function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
@@ -1311,6 +1355,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               const checkpointsByThread = new Map<string, Array<OrchestrationCheckpointSummary>>();
               const sessionsByThread = new Map<string, OrchestrationSession>();
               const latestTurnByThread = new Map<string, OrchestrationLatestTurn>();
+              const activeRootThreadIds = new Set(
+                sessionRows
+                  .filter((row) => row.status === "starting" || row.status === "running")
+                  .map((row) => row.threadId),
+              );
+              const settledRootThreadIds = new Set(
+                latestTurnRows
+                  .filter(
+                    (row) => row.state !== "running" && !activeRootThreadIds.has(row.threadId),
+                  )
+                  .map((row) => row.threadId),
+              );
 
               let updatedAt: string | null = null;
 
@@ -1356,9 +1412,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               }
 
               for (const row of subagentRows) {
+                if (isLegacyRootSubagentRow(row)) {
+                  continue;
+                }
                 updatedAt = maxIso(updatedAt, row.updatedAt);
                 const threadSubagents = subagentsByThread.get(row.threadId) ?? [];
-                threadSubagents.push(mapSubagentSummaryRow(row));
+                threadSubagents.push(
+                  mapSubagentSummaryRow(row, settledRootThreadIds.has(row.threadId)),
+                );
                 subagentsByThread.set(row.threadId, threadSubagents);
               }
 
@@ -2314,6 +2375,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         return Option.none<OrchestrationThread>();
       }
 
+      const latestTurn = Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null;
+      const session = Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null;
+      const reconcileTerminalSubagents = shouldReconcileTerminalSubagents(latestTurn, session);
+
       const thread = {
         id: threadRow.value.threadId,
         projectId: threadRow.value.projectId,
@@ -2323,7 +2388,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         interactionMode: threadRow.value.interactionMode,
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
-        latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
+        latestTurn,
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,
@@ -2349,7 +2414,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           return message;
         }),
         proposedPlans: proposedPlanRows.map(mapProposedPlanRow),
-        subagents: subagentRows.map(mapSubagentSummaryRow),
+        subagents: subagentRows
+          .filter((row) => !isLegacyRootSubagentRow(row))
+          .map((row) => mapSubagentSummaryRow(row, reconcileTerminalSubagents)),
         activities: activityRows.map((row) => {
           const activity = {
             id: row.activityId,
@@ -2374,7 +2441,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           assistantMessageId: row.assistantMessageId,
           completedAt: row.completedAt,
         })),
-        session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
+        session,
       };
 
       return Option.some(
@@ -2398,24 +2465,50 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       if (Option.isNone(summaryRow)) {
         return Option.none<OrchestrationSubagentDetail>();
       }
+      if (isLegacyRootSubagentRow(summaryRow.value)) {
+        return Option.none<OrchestrationSubagentDetail>();
+      }
 
-      const [messageRows, proposedPlanRows, activityRows] = yield* Effect.all([
-        projectionThreadSubagentMessageRepository.listBySubagentId({
-          threadId,
-          subagentId,
-        }),
-        projectionThreadSubagentProposedPlanRepository.listBySubagentId({
-          threadId,
-          subagentId,
-        }),
-        projectionThreadSubagentActivityRepository.listBySubagentId({
-          threadId,
-          subagentId,
-        }),
-      ]);
+      const [messageRows, proposedPlanRows, activityRows, latestTurnRow, sessionRow] =
+        yield* Effect.all([
+          projectionThreadSubagentMessageRepository.listBySubagentId({
+            threadId,
+            subagentId,
+          }),
+          projectionThreadSubagentProposedPlanRepository.listBySubagentId({
+            threadId,
+            subagentId,
+          }),
+          projectionThreadSubagentActivityRepository.listBySubagentId({
+            threadId,
+            subagentId,
+          }),
+          getLatestTurnRowByThread({ threadId }).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSubagentDetailById:getLatestTurn:query",
+                "ProjectionSnapshotQuery.getSubagentDetailById:getLatestTurn:decodeRow",
+              ),
+            ),
+          ),
+          getThreadSessionRowByThread({ threadId }).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSubagentDetailById:getSession:query",
+                "ProjectionSnapshotQuery.getSubagentDetailById:getSession:decodeRow",
+              ),
+            ),
+          ),
+        ]);
+
+      const latestTurn = Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null;
+      const session = Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null;
 
       const detail = {
-        ...mapSubagentSummaryRow(summaryRow.value),
+        ...mapSubagentSummaryRow(
+          summaryRow.value,
+          shouldReconcileTerminalSubagents(latestTurn, session),
+        ),
         messages: messageRows.map((row) => ({
           id: row.messageId,
           role: row.role,

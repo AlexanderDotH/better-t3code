@@ -192,6 +192,194 @@ describe("Codex subagent event mapping", () => {
     });
   });
 
+  it("never discovers the root provider thread as a subagent", () => {
+    const mapEvent = makeCodexRuntimeEventMapper("provider-root");
+    const rootSubagentId = SubagentId.make("codex:provider-root");
+
+    const unknownRootEvents = makeCodexRuntimeEventMapper()(
+      makeProviderNotification({
+        id: asEventId("evt-unknown-root-subagent-activity"),
+        method: "item/completed",
+        providerThreadId: "provider-child",
+        subagentId: SubagentId.make("codex:provider-child"),
+        turnId: asTurnId("child-turn"),
+        itemId: asItemId("unknown-root-activity"),
+        payload: {
+          threadId: "provider-child",
+          turnId: "child-turn",
+          item: {
+            id: "unknown-root-activity",
+            type: "subAgentActivity",
+            agentThreadId: "provider-root",
+            agentPath: "/root",
+            kind: "interacted",
+          },
+        },
+      }),
+      asThreadId("thread-1"),
+    );
+    const activityEvents = mapEvent(
+      makeProviderNotification({
+        id: asEventId("evt-root-subagent-activity"),
+        method: "item/completed",
+        providerThreadId: "provider-child",
+        subagentId: SubagentId.make("codex:provider-child"),
+        turnId: asTurnId("child-turn"),
+        itemId: asItemId("root-activity"),
+        payload: {
+          threadId: "provider-child",
+          turnId: "child-turn",
+          item: {
+            id: "root-activity",
+            type: "subAgentActivity",
+            agentThreadId: "provider-root",
+            agentPath: "/root",
+            kind: "interacted",
+          },
+        },
+      }),
+      asThreadId("thread-1"),
+    );
+    const collabEvents = mapEvent(
+      makeProviderNotification({
+        id: asEventId("evt-root-collab-target"),
+        method: "item/completed",
+        providerThreadId: "provider-child",
+        subagentId: SubagentId.make("codex:provider-child"),
+        turnId: asTurnId("child-turn"),
+        itemId: asItemId("root-collab"),
+        payload: {
+          threadId: "provider-child",
+          turnId: "child-turn",
+          item: {
+            id: "root-collab",
+            type: "collabAgentToolCall",
+            tool: "sendInput",
+            senderThreadId: "provider-child",
+            receiverThreadIds: ["provider-root"],
+            agentsStates: {
+              "provider-root": { status: "running" },
+            },
+            status: "completed",
+          },
+        },
+      }),
+      asThreadId("thread-1"),
+    );
+
+    const rootLifecycleEvents = [...unknownRootEvents, ...activityEvents, ...collabEvents].filter(
+      (event) =>
+        (event.type === "subagent.discovered" || event.type === "subagent.state.changed") &&
+        event.payload.subagentId === rootSubagentId,
+    );
+    NodeAssert.deepStrictEqual(rootLifecycleEvents, []);
+  });
+
+  it("treats subagent interaction as metadata instead of proof that the agent is running", () => {
+    const mapEvent = makeCodexRuntimeEventMapper("provider-root");
+
+    const events = mapEvent(
+      makeProviderNotification({
+        id: asEventId("evt-child-interacted"),
+        method: "item/completed",
+        providerThreadId: "provider-root",
+        turnId: asTurnId("root-turn"),
+        itemId: asItemId("child-interacted"),
+        payload: {
+          threadId: "provider-root",
+          turnId: "root-turn",
+          item: {
+            id: "child-interacted",
+            type: "subAgentActivity",
+            agentThreadId: "provider-child",
+            agentPath: "/root/research",
+            kind: "interacted",
+          },
+        },
+      }),
+      asThreadId("thread-1"),
+    );
+
+    NodeAssert.ok(events.some((event) => event.type === "subagent.discovered"));
+    NodeAssert.equal(
+      events.some((event) => event.type === "subagent.state.changed"),
+      false,
+    );
+  });
+
+  it("does not revive a subagent from sendInput without an authoritative agent state", () => {
+    const mapEvent = makeCodexRuntimeEventMapper("provider-root");
+
+    const events = mapEvent(
+      makeProviderNotification({
+        id: asEventId("evt-child-send-input"),
+        method: "item/completed",
+        providerThreadId: "provider-root",
+        turnId: asTurnId("root-turn"),
+        itemId: asItemId("child-send-input"),
+        payload: {
+          threadId: "provider-root",
+          turnId: "root-turn",
+          item: {
+            id: "child-send-input",
+            type: "collabAgentToolCall",
+            tool: "sendInput",
+            senderThreadId: "provider-root",
+            receiverThreadIds: ["provider-child"],
+            agentsStates: {},
+            status: "completed",
+          },
+        },
+      }),
+      asThreadId("thread-1"),
+    );
+
+    NodeAssert.ok(events.some((event) => event.type === "subagent.discovered"));
+    NodeAssert.equal(
+      events.some((event) => event.type === "subagent.state.changed"),
+      false,
+    );
+  });
+
+  it("maps an idle child thread to completed until an explicit turn starts", () => {
+    const mapEvent = makeCodexRuntimeEventMapper("provider-root");
+    const childId = SubagentId.make("codex:provider-child");
+
+    const idleEvents = mapEvent(
+      makeProviderNotification({
+        id: asEventId("evt-child-idle"),
+        method: "thread/status/changed",
+        providerThreadId: "provider-child",
+        subagentId: childId,
+        payload: {
+          threadId: "provider-child",
+          status: { type: "idle" },
+        },
+      }),
+      asThreadId("thread-1"),
+    );
+    const startedEvents = mapEvent(
+      makeProviderNotification({
+        id: asEventId("evt-child-turn-started"),
+        method: "turn/started",
+        providerThreadId: "provider-child",
+        subagentId: childId,
+        turnId: asTurnId("child-turn-2"),
+        payload: {},
+      }),
+      asThreadId("thread-1"),
+    );
+
+    NodeAssert.deepStrictEqual(
+      idleEvents.find((event) => event.type === "subagent.state.changed")?.payload,
+      { subagentId: childId, state: "completed" },
+    );
+    NodeAssert.deepStrictEqual(
+      startedEvents.find((event) => event.type === "subagent.state.changed")?.payload,
+      { subagentId: childId, state: "running" },
+    );
+  });
+
   it("enriches nested agents from thread metadata", () => {
     const mapEvent = makeCodexRuntimeEventMapper();
     const childId = SubagentId.make("codex:provider-child");
