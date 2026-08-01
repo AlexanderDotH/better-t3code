@@ -31,6 +31,18 @@ pending one-turn override; changing an unrelated option does not.
 Suggestion and pending-override state is stored locally by each client. It is not synchronized
 between web, desktop, and mobile, and T3 Code never silently lowers the saved thread default.
 
+## Exploring repositories with Fetch
+
+Enable **Fetch** in **Settings > Experimental** to let supported providers explore repository tasks
+with three native subagents in parallel. Fetch gives each subagent a distinct, read-only discovery
+scope, allows the primary agent to keep exploring while they run, and requires their findings to be
+collected before the first file change. The user message shown in the transcript stays unchanged;
+the narrow Fetch mode is attached separately to that provider turn.
+
+Fetch does not run for conversational or other non-repository requests. It also stays inactive when
+the selected provider does not advertise support for at least three native subagents. The setting is
+device-local, defaults off, and is currently available in web and desktop.
+
 ## Implementing a plan with subagents
 
 Enable **Parallel plan implementation** in **Settings > Experimental** to let supported providers

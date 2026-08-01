@@ -16,6 +16,7 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
+import { buildFetchProviderInstructions } from "@t3tools/shared/fetchMode";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -674,6 +675,7 @@ const make = Effect.gen(function* () {
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly messageText: string;
+    readonly fetchMode?: "repository-exploration";
     readonly boundaryMessageId: OrchestrationMessage["id"];
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
@@ -708,15 +710,33 @@ const make = Effect.gen(function* () {
             ...(project ? { projectCwd: project.workspaceRoot } : {}),
             prompt: input.messageText,
           });
+    const fetchProvider =
+      input.fetchMode === undefined
+        ? undefined
+        : (yield* providerRegistry.getProviders).find(
+            (provider) =>
+              provider.instanceId ===
+              (activeSession?.providerInstanceId ?? sessionPreparation.modelSelection.instanceId),
+          );
+    const providerInstructions = buildFetchProviderInstructions(fetchProvider);
+    const providerInputWithInstructions = providerInstructions
+      ? [
+          "T3 TURN INSTRUCTIONS:",
+          providerInstructions,
+          "",
+          "USER REQUEST:",
+          providerMessageText,
+        ].join("\n")
+      : providerMessageText;
     const providerInputWithHandoff = sessionPreparation.transcriptHandoffRequired
       ? prependProviderTranscriptHandoff({
           handoff: buildProviderTranscriptHandoff({
             messages: thread.messages,
             boundaryMessageId: input.boundaryMessageId,
           }),
-          providerInput: providerMessageText,
+          providerInput: providerInputWithInstructions,
         })
-      : providerMessageText;
+      : providerInputWithInstructions;
     if (providerInputWithHandoff.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
       return yield* new ProviderAdapterRequestError({
         provider: providerErrorLabel(activeSession?.provider),
@@ -1224,6 +1244,7 @@ const make = Effect.gen(function* () {
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
       messageText: message.text,
+      ...(event.payload.fetchMode !== undefined ? { fetchMode: event.payload.fetchMode } : {}),
       boundaryMessageId: message.id,
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.modelSelection !== undefined

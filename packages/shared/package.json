@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./fetchMode": {
+      "types": "./src/fetchMode.ts",
+      "import": "./src/fetchMode.ts"
+    },
     "./projectFavicon": {
       "types": "./src/projectFavicon.ts",
       "import": "./src/projectFavicon.ts"

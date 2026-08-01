@@ -56,6 +56,20 @@ describe("ClientSettings experimental parallel plan implementation", () => {
   });
 });
 
+describe("ClientSettings experimental Fetch", () => {
+  it("defaults the experiment off when legacy settings omit it", () => {
+    const decoded = decodeClientSettings({});
+
+    expect(decoded.experimentalFetch).toBe(false);
+    expect(DEFAULT_CLIENT_SETTINGS.experimentalFetch).toBe(false);
+  });
+
+  it("accepts explicit enable and disable patches", () => {
+    expect(decodeClientSettingsPatch({ experimentalFetch: true }).experimentalFetch).toBe(true);
+    expect(decodeClientSettingsPatch({ experimentalFetch: false }).experimentalFetch).toBe(false);
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);

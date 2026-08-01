@@ -228,8 +228,74 @@ it.effect("decodes thread.turn.start defaults for provider and runtime mode", ()
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.modelSelection, undefined);
+    assert.strictEqual(parsed.fetchMode, undefined);
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
     assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+  }),
+);
+
+it.effect("preserves Fetch mode in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-instructions",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-turn-instructions",
+        role: "user",
+        text: "inspect the repository",
+        attachments: [],
+      },
+      fetchMode: "repository-exploration",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.message.text, "inspect the repository");
+    assert.strictEqual(parsed.fetchMode, "repository-exploration");
+  }),
+);
+
+it.effect("keeps Fetch mode narrow on client turn-start commands", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeClientOrchestrationCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-client-fetch",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-client-fetch",
+        role: "user",
+        text: "inspect the repository",
+        attachments: [],
+      },
+      fetchMode: "repository-exploration",
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.type, "thread.turn.start");
+    if (parsed.type !== "thread.turn.start") {
+      return;
+    }
+    assert.strictEqual(parsed.fetchMode, "repository-exploration");
+
+    const invalid = yield* Effect.exit(
+      decodeClientOrchestrationCommand({
+        type: "thread.turn.start",
+        commandId: "cmd-client-fetch-invalid",
+        threadId: "thread-1",
+        message: {
+          messageId: "msg-client-fetch-invalid",
+          role: "user",
+          text: "inspect the repository",
+          attachments: [],
+        },
+        fetchMode: "arbitrary-hidden-prompt",
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    assert.strictEqual(invalid._tag, "Failure");
   }),
 );
 
@@ -727,8 +793,22 @@ it.effect(
       assert.strictEqual(parsed.modelSelection, undefined);
       assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
       assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+      assert.strictEqual(parsed.fetchMode, undefined);
       assert.strictEqual(parsed.sourceProposedPlan, undefined);
     }),
+);
+
+it.effect("decodes Fetch mode on a turn-start request", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartRequestedPayload({
+      threadId: "thread-1",
+      messageId: "msg-1",
+      fetchMode: "repository-exploration",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.fetchMode, "repository-exploration");
+  }),
 );
 
 it.effect("decodes thread.turn-start-requested source proposed plan metadata when present", () =>

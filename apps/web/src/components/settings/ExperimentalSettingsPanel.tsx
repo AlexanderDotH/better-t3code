@@ -38,19 +38,25 @@ import {
 } from "./settingsLayout";
 
 export interface ExperimentalSettingsPanelViewProps {
+  readonly fetchEnabled: boolean;
   readonly parallelPlanImplementationEnabled: boolean;
   readonly planReviewModelControl: ReactNode;
   readonly planReviewModelDirty: boolean;
+  readonly onFetchChange: (enabled: boolean) => void;
   readonly onParallelPlanImplementationChange: (enabled: boolean) => void;
+  readonly onResetFetch: () => void;
   readonly onResetParallelPlanImplementation: () => void;
   readonly onResetPlanReviewModel: () => void;
 }
 
 export function ExperimentalSettingsPanelView({
+  fetchEnabled,
   parallelPlanImplementationEnabled,
   planReviewModelControl,
   planReviewModelDirty,
+  onFetchChange,
   onParallelPlanImplementationChange,
+  onResetFetch,
   onResetParallelPlanImplementation,
   onResetPlanReviewModel,
 }: ExperimentalSettingsPanelViewProps) {
@@ -68,6 +74,23 @@ export function ExperimentalSettingsPanelView({
       </div>
 
       <SettingsSection title="Experimental">
+        <SettingsRow
+          title="Fetch"
+          description="On supported providers, start three read-only subagents to explore repository tasks in parallel before edits."
+          resetAction={
+            fetchEnabled !== DEFAULT_CLIENT_SETTINGS.experimentalFetch ? (
+              <SettingResetButton label="Fetch" onClick={onResetFetch} />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={fetchEnabled}
+              onCheckedChange={(checked) => onFetchChange(Boolean(checked))}
+              aria-label="Enable Fetch repository exploration"
+            />
+          }
+        />
+
         <SettingsRow
           title="Parallel plan implementation"
           description="Suggest a provider-native subagent strategy when implementing a completed plan."
@@ -116,6 +139,7 @@ export function ExperimentalSettingsPanelView({
 }
 
 export function ExperimentalSettingsPanel() {
+  const fetchEnabled = useClientSettings((settings) => settings.experimentalFetch);
   const parallelPlanImplementationEnabled = useClientSettings(
     (settings) => settings.experimentalParallelPlanImplementation,
   );
@@ -158,6 +182,7 @@ export function ExperimentalSettingsPanel() {
 
   return (
     <ExperimentalSettingsPanelView
+      fetchEnabled={fetchEnabled}
       parallelPlanImplementationEnabled={parallelPlanImplementationEnabled}
       planReviewModelDirty={planReviewModelDirty}
       planReviewModelControl={
@@ -205,8 +230,12 @@ export function ExperimentalSettingsPanel() {
           />
         </>
       }
+      onFetchChange={(enabled) => updateClientSettings({ experimentalFetch: enabled })}
       onParallelPlanImplementationChange={(enabled) =>
         updateClientSettings({ experimentalParallelPlanImplementation: enabled })
+      }
+      onResetFetch={() =>
+        updateClientSettings({ experimentalFetch: DEFAULT_CLIENT_SETTINGS.experimentalFetch })
       }
       onResetParallelPlanImplementation={() =>
         updateClientSettings({

@@ -323,6 +323,12 @@ describe("ProviderCommandReactor", () => {
     const providerSnapshots = [
       {
         instanceId: modelSelection.instanceId,
+        enabled: true,
+        installed: true,
+        nativeSubagents: {
+          toolName: "spawn_agent",
+          maxRecommendedSubagents: 8,
+        },
         ...(input?.requiresNewThreadForModelChange === true
           ? { requiresNewThreadForModelChange: true }
           : {}),
@@ -900,6 +906,7 @@ describe("ProviderCommandReactor", () => {
           text: "hello reactor",
           attachments: [],
         },
+        fetchMode: "repository-exploration",
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
@@ -923,6 +930,17 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+    expect(thread?.messages.at(-1)?.text).toBe("hello reactor");
+    const providerInput = harness.sendTurn.mock.calls[0]?.[0]?.input;
+    expect(providerInput).toMatch(/^T3 TURN INSTRUCTIONS:\n/);
+    expect(providerInput).toContain("exactly 3 direct child subagents");
+    expect(providerInput).toContain("`spawn_agent`");
+    expect(providerInput).toContain("one parallel batch");
+    expect(providerInput).toContain("must not modify files");
+    expect(providerInput).toContain(
+      "wait for all three results before the first file modification",
+    );
+    expect(providerInput).toMatch(/\n\nUSER REQUEST:\nhello reactor$/);
   });
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>

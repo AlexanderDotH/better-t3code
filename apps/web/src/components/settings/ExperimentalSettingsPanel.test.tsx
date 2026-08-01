@@ -18,10 +18,13 @@ describe("ExperimentalSettingsPanelView", () => {
   it("warns that experiments may change and defaults parallel plan implementation off", () => {
     const markup = renderToStaticMarkup(
       <ExperimentalSettingsPanelView
+        fetchEnabled={false}
         parallelPlanImplementationEnabled={false}
         planReviewModelControl={<button aria-label="Agent count review model">Luna</button>}
         planReviewModelDirty={false}
         onParallelPlanImplementationChange={() => {}}
+        onFetchChange={() => {}}
+        onResetFetch={() => {}}
         onResetParallelPlanImplementation={() => {}}
         onResetPlanReviewModel={() => {}}
       />,
@@ -29,21 +32,27 @@ describe("ExperimentalSettingsPanelView", () => {
 
     expect(markup).toContain("Experimental features may change");
     expect(markup).toContain("Parallel plan implementation");
+    expect(markup).toContain("Fetch");
     expect(markup).toContain("Agent count review model");
     expect(markup).toContain('aria-label="Agent count review model"');
     expect(markup).toContain('<fieldset disabled=""');
     expect(markup).toContain('aria-label="Use subagents when implementing plans"');
+    expect(markup).toContain('aria-label="Enable Fetch repository exploration"');
     expect(markup).toContain('aria-checked="false"');
+    expect(markup).not.toContain("Reset Fetch to default");
     expect(markup).not.toContain("Reset parallel plan implementation to default");
   });
 
   it("offers a per-row reset when parallel plan implementation is enabled", () => {
     const markup = renderToStaticMarkup(
       <ExperimentalSettingsPanelView
+        fetchEnabled
         parallelPlanImplementationEnabled
         planReviewModelControl={<button aria-label="Agent count review model">Luna</button>}
         planReviewModelDirty
         onParallelPlanImplementationChange={() => {}}
+        onFetchChange={() => {}}
+        onResetFetch={() => {}}
         onResetParallelPlanImplementation={() => {}}
         onResetPlanReviewModel={() => {}}
       />,
@@ -51,6 +60,7 @@ describe("ExperimentalSettingsPanelView", () => {
 
     expect(markup).toContain('aria-checked="true"');
     expect(markup).toContain("Reset parallel plan implementation to default");
+    expect(markup).toContain("Reset Fetch to default");
     expect(markup).toContain("Reset agent count review model to default");
     expect(markup).not.toContain('<fieldset disabled=""');
   });
