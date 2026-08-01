@@ -11,7 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ServerSettingsService } from "../serverSettings.ts";
+import { resolveVoiceTranslationModelSelection, ServerSettingsService } from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 
 type ProjectTextTransformInput = TranslateTranscriptInput | ImprovePromptInput;
@@ -67,7 +67,10 @@ export const make = Effect.gen(function* () {
     const generated = yield* generate({
       cwd: project.value.workspaceRoot,
       text: input.text,
-      modelSelection: settings.textGenerationModelSelection,
+      modelSelection:
+        operation === "translate-transcript"
+          ? resolveVoiceTranslationModelSelection(settings)
+          : settings.textGenerationModelSelection,
     }).pipe(
       Effect.mapError(() => transformError(operation, input.projectId, "Text generation failed.")),
     );

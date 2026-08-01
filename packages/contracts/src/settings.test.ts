@@ -372,6 +372,33 @@ describe("ServerSettings parallel plan review model", () => {
   });
 });
 
+describe("ServerSettings voice translation model", () => {
+  it("inherits the global text generation model for legacy settings", () => {
+    const settings = decodeServerSettings({});
+
+    expect(settings.voiceTranslationModelSelection).toBeNull();
+    expect(DEFAULT_SERVER_SETTINGS.voiceTranslationModelSelection).toBeNull();
+  });
+
+  it("accepts a dedicated provider model or null", () => {
+    const selectionPatch = decodeServerSettingsPatch({
+      voiceTranslationModelSelection: {
+        instanceId: "codex_personal",
+        model: "  gpt-5.6-luna  ",
+        options: [{ id: "reasoningEffort", value: "low" }],
+      },
+    });
+    const inheritedPatch = decodeServerSettingsPatch({ voiceTranslationModelSelection: null });
+
+    expect(selectionPatch.voiceTranslationModelSelection).toEqual({
+      instanceId: "codex_personal",
+      model: "gpt-5.6-luna",
+      options: [{ id: "reasoningEffort", value: "low" }],
+    });
+    expect(inheritedPatch.voiceTranslationModelSelection).toBeNull();
+  });
+});
+
 describe("ServerSettings.sourceControlWritingStyle", () => {
   it("defaults all style settings for legacy configs", () => {
     const settings = decodeServerSettings({});

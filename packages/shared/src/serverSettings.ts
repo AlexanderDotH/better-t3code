@@ -45,11 +45,11 @@ export function isModelSelectionProviderEnabled(
   );
 }
 
-export function resolveSourceControlWriterModelSelection(
+function resolveTextGenerationModelOverride(
   settings: ServerSettings,
+  selection: ModelSelection | null,
   providers?: ReadonlyArray<ServerProvider>,
 ): ModelSelection {
-  const selection = settings.sourceControlWriterModelSelection;
   if (!selection || !isModelSelectionProviderEnabled(settings, selection)) {
     return settings.textGenerationModelSelection;
   }
@@ -61,6 +61,28 @@ export function resolveSourceControlWriterModelSelection(
   return provider?.enabled === true && isProviderAvailable(provider)
     ? selection
     : settings.textGenerationModelSelection;
+}
+
+export function resolveSourceControlWriterModelSelection(
+  settings: ServerSettings,
+  providers?: ReadonlyArray<ServerProvider>,
+): ModelSelection {
+  return resolveTextGenerationModelOverride(
+    settings,
+    settings.sourceControlWriterModelSelection,
+    providers,
+  );
+}
+
+export function resolveVoiceTranslationModelSelection(
+  settings: ServerSettings,
+  providers?: ReadonlyArray<ServerProvider>,
+): ModelSelection {
+  return resolveTextGenerationModelOverride(
+    settings,
+    settings.voiceTranslationModelSelection,
+    providers,
+  );
 }
 
 export interface PersistedServerObservabilitySettings {
@@ -138,6 +160,7 @@ export function applyServerSettingsPatch(
   patch: ServerSettingsPatch,
 ): ServerSettings {
   const textGenerationSelectionPatch = patch.textGenerationModelSelection;
+  const voiceTranslationSelectionPatch = patch.voiceTranslationModelSelection;
   const parallelPlanReviewSelectionPatch = patch.parallelPlanReviewModelSelection;
   const {
     automaticGitFetchInterval,
@@ -145,6 +168,7 @@ export function applyServerSettingsPatch(
     backgroundActivityProfile,
     backgroundActivity,
     textGenerationModelSelection: _textGenerationModelSelection,
+    voiceTranslationModelSelection: _voiceTranslationModelSelection,
     parallelPlanReviewModelSelection: _parallelPlanReviewModelSelection,
     ...patchForMerge
   } = patch;
@@ -204,6 +228,9 @@ export function applyServerSettingsPatch(
       : {}),
     ...(patch.sourceControlWriterModelSelection !== undefined
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }
+      : {}),
+    ...(voiceTranslationSelectionPatch !== undefined
+      ? { voiceTranslationModelSelection: voiceTranslationSelectionPatch }
       : {}),
     ...(patch.mcp?.servers !== undefined
       ? { mcp: { ...next.mcp, servers: patch.mcp.servers } }

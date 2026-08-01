@@ -3412,7 +3412,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 data-chat-composer-primary-actions-compact={
                   isComposerPrimaryActionsCompact ? "true" : "false"
                 }
-                className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
+                className="flex shrink-0 flex-nowrap items-center justify-end gap-3"
               >
                 {voiceInputConfigured || voiceRecordingActive ? (
                   <VoiceDictationControl

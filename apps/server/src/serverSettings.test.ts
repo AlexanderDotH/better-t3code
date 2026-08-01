@@ -100,6 +100,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.deepEqual(legacySettings.speechTranscription, {
         assemblyAi: { apiKey: { value: "" } },
       });
+      assert.equal(legacySettings.voiceTranslationModelSelection, null);
 
       assert.deepEqual(
         yield* decodeSettingsPatch({ providers: { codex: { binaryPath: "/tmp/codex" } } }),
@@ -882,6 +883,29 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         },
       });
       assert.equal(afterResetRoundTrip.speechTranscription.assemblyAi.apiKey.value, "");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("stores and clears the dedicated voice translation model", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const selection = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-luna", [
+        { id: "reasoningEffort", value: "low" },
+      ]);
+
+      const saved = yield* serverSettings.updateSettings({
+        voiceTranslationModelSelection: selection,
+      });
+      assert.deepEqual(saved.voiceTranslationModelSelection, selection);
+      const savedRaw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.deepEqual(JSON.parse(savedRaw).voiceTranslationModelSelection, selection);
+
+      const reset = yield* serverSettings.updateSettings({ voiceTranslationModelSelection: null });
+      assert.equal(reset.voiceTranslationModelSelection, null);
+      const resetRaw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.equal(JSON.parse(resetRaw).voiceTranslationModelSelection, undefined);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 });

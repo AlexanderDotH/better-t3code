@@ -54,11 +54,11 @@ describe("VoiceDictationControl", () => {
     const configBarRect = configBarControl!.getBoundingClientRect();
 
     expect(Math.abs(stopRect.left - startRect.left)).toBeLessThanOrEqual(1);
-    expect(waveformRect.right).toBeLessThanOrEqual(stopRect.left - 8);
-    expect(waveformRect.left).toBeGreaterThanOrEqual(configBarRect.right + 8);
+    expect(waveformRect.right).toBeLessThanOrEqual(stopRect.left - 12);
+    expect(waveformRect.left).toBeGreaterThanOrEqual(configBarRect.right + 12);
   });
 
-  it("shows one red stop indicator and a live waveform while recording", async () => {
+  it("shows one orange stop indicator and a live waveform while recording", async () => {
     const onStop = vi.fn(async () => undefined);
     render(
       <VoiceDictationControl
@@ -78,8 +78,29 @@ describe("VoiceDictationControl", () => {
     expect(document.querySelectorAll("button")).toHaveLength(1);
     expect(document.querySelector('[aria-label="Cancel voice input"]')).toBeNull();
     expect(document.querySelectorAll("[data-voice-wave-bar]")).toHaveLength(14);
+    expect(document.querySelector('[data-voice-dictation-tone="ready"]')).not.toBeNull();
+    expect(document.querySelector(".bg-orange-500")).not.toBeNull();
 
     await stopButton.click();
     expect(onStop).toHaveBeenCalledOnce();
+  });
+
+  it("uses a gray waiting state until the connection is ready", async () => {
+    render(
+      <VoiceDictationControl
+        state="starting"
+        audioWaveform={Array.from({ length: 14 }, () => 0)}
+        disabled={false}
+        onStart={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+
+    await expect
+      .element(page.getByRole("button", { name: "Cancel voice input connection" }))
+      .toBeVisible();
+    expect(document.querySelector('[data-voice-dictation-tone="waiting"]')).not.toBeNull();
+    expect(document.querySelector(".bg-muted")).not.toBeNull();
+    expect(document.querySelector(".bg-orange-500")).toBeNull();
   });
 });

@@ -618,6 +618,9 @@ export const ServerSettings = Schema.Struct({
       }),
     ),
   ),
+  voiceTranslationModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   parallelPlanReviewModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PARALLEL_PLAN_REVIEW_MODEL_SELECTION)),
   ),
@@ -788,6 +791,7 @@ export const ServerSettingsPatch = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  voiceTranslationModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   parallelPlanReviewModelSelection: Schema.optionalKey(ModelSelectionPatch),
   agentEnhancement: Schema.optionalKey(AgentEnhancementSettingsPatch),
   sourceControlWritingStyle: Schema.optionalKey(

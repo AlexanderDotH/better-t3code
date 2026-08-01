@@ -7,7 +7,13 @@ import type {
 } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { type EnvironmentId, ProjectId, type ProjectSpeechProfile } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type ModelSelection,
+  ProjectId,
+  type ProjectSpeechProfile,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
@@ -15,6 +21,11 @@ const testState = vi.hoisted(() => ({
     speechTranscription: {
       assemblyAi: { apiKey: { value: "", valueRedacted: false } },
     },
+    textGenerationModelSelection: {
+      instanceId: "codex" as ReturnType<typeof ProviderInstanceId.make>,
+      model: "gpt-5.6-luna",
+    } satisfies ModelSelection,
+    voiceTranslationModelSelection: null as ModelSelection | null,
     voiceInputOutputLanguage: "native",
   },
   projects: [] as EnvironmentProject[],
@@ -25,7 +36,11 @@ const testState = vi.hoisted(() => ({
   indexProfile: vi.fn(),
   createBasicProfile: vi.fn(),
   selectOnValueChange: undefined as undefined | ((value: string | null) => void),
+  modelPickerOnChange: undefined as
+    | undefined
+    | ((instanceId: ReturnType<typeof ProviderInstanceId.make>, model: string) => void),
   buttonOnClickByLabel: new Map<string, () => void>(),
+  resetOnClickByLabel: new Map<string, () => void>(),
 }));
 
 const hooks = vi.hoisted(() => {
@@ -111,6 +126,15 @@ vi.mock("react/compiler-runtime", () => ({
   c: hooks.useMemoCache,
 }));
 
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: () => [],
+}));
+
+vi.mock("@t3tools/shared/serverSettings", () => ({
+  resolveVoiceTranslationModelSelection: (settings: typeof testState.settings) =>
+    settings.voiceTranslationModelSelection ?? settings.textGenerationModelSelection,
+}));
+
 vi.mock("../../environmentApi", () => ({
   listProjectSpeechProfilesForEnvironment: testState.listProfiles,
   indexProjectSpeechProfileForEnvironment: testState.indexProfile,
@@ -123,6 +147,22 @@ vi.mock("../../hooks/useSettings", () => ({
   useUpdateClientSettings: () => testState.updateClientSettings,
 }));
 
+vi.mock("../../modelSelection", () => ({
+  getCustomModelOptionsByInstance: () => new Map(),
+  resolveAppModelSelectionState: (settings: typeof testState.settings) =>
+    settings.textGenerationModelSelection,
+}));
+
+vi.mock("../../providerInstances", () => ({
+  applyProviderInstanceSettings: (entries: ReadonlyArray<unknown>) => entries,
+  deriveProviderInstanceEntries: () => [],
+  sortProviderInstanceEntries: (entries: ReadonlyArray<unknown>) => entries,
+}));
+
+vi.mock("../../state/server", () => ({
+  primaryServerProvidersAtom: Symbol("primaryServerProvidersAtom"),
+}));
+
 vi.mock("../../state/entities", () => ({
   useProjects: () => testState.projects,
 }));
@@ -133,6 +173,30 @@ vi.mock("../../state/environments", () => ({
 
 vi.mock("../ui/badge", () => ({
   Badge: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
+}));
+
+vi.mock("../chat/ProviderModelPicker", () => ({
+  ProviderModelPicker: ({
+    activeInstanceId,
+    model,
+    triggerAriaLabel,
+    onInstanceModelChange,
+  }: {
+    activeInstanceId: ReturnType<typeof ProviderInstanceId.make>;
+    model: string;
+    triggerAriaLabel?: string;
+    onInstanceModelChange: (
+      instanceId: ReturnType<typeof ProviderInstanceId.make>,
+      model: string,
+    ) => void;
+  }) => {
+    testState.modelPickerOnChange = onInstanceModelChange;
+    return (
+      <button aria-label={triggerAriaLabel} data-instance-id={activeInstanceId}>
+        {model}
+      </button>
+    );
+  },
 }));
 
 vi.mock("../ui/button", () => ({
@@ -237,9 +301,10 @@ vi.mock("./settingsLayout", () => ({
       {children}
     </div>
   ),
-  SettingResetButton: ({ label, onClick }: { label: string; onClick: () => void }) => (
-    <button aria-label={`Reset ${label} to default`} onClick={onClick} />
-  ),
+  SettingResetButton: ({ label, onClick }: { label: string; onClick: () => void }) => {
+    testState.resetOnClickByLabel.set(label, onClick);
+    return <button aria-label={`Reset ${label} to default`} onClick={onClick} />;
+  },
 }));
 
 import { VoiceInputSettings } from "./VoiceInputSettings";
@@ -300,12 +365,19 @@ describe("VoiceInputSettings", () => {
       speechTranscription: {
         assemblyAi: { apiKey: { value: "", valueRedacted: false } },
       },
+      textGenerationModelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.6-luna",
+      },
+      voiceTranslationModelSelection: null,
       voiceInputOutputLanguage: "native",
     };
     testState.projects = [];
     testState.environments = [];
     testState.selectOnValueChange = undefined;
+    testState.modelPickerOnChange = undefined;
     testState.buttonOnClickByLabel.clear();
+    testState.resetOnClickByLabel.clear();
     testState.updateSettings.mockReset();
     testState.updateClientSettings.mockReset();
     testState.listProfiles.mockReset();
@@ -372,6 +444,36 @@ describe("VoiceInputSettings", () => {
       voiceInputOutputLanguage: "english",
     });
     expect(testState.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("configures a dedicated voice post-processing model without changing the global model", () => {
+    const inheritedMarkup = renderSettings();
+
+    expect(inheritedMarkup).toContain("Voice post-processing model");
+    expect(inheritedMarkup).toContain("AssemblyAI still handles live speech recognition");
+    expect(inheritedMarkup).toContain('aria-label="Voice post-processing model"');
+    expect(inheritedMarkup).toContain("gpt-5.6-luna");
+
+    testState.modelPickerOnChange?.(ProviderInstanceId.make("codex_personal"), "gpt-5.6-terra");
+
+    expect(testState.updateSettings).toHaveBeenCalledWith({
+      voiceTranslationModelSelection: {
+        instanceId: "codex_personal",
+        model: "gpt-5.6-terra",
+      },
+    });
+
+    testState.updateSettings.mockReset();
+    testState.settings.voiceTranslationModelSelection = {
+      instanceId: ProviderInstanceId.make("codex_personal"),
+      model: "gpt-5.6-terra",
+    };
+    renderSettings();
+    testState.resetOnClickByLabel.get("voice post-processing model")?.();
+
+    expect(testState.updateSettings).toHaveBeenCalledWith({
+      voiceTranslationModelSelection: null,
+    });
   });
 
   it("indexes and creates basic context through the environment helpers, then refreshes", async () => {

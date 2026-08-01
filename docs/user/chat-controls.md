@@ -1,5 +1,19 @@
 # Chat controls
 
+## Voice input
+
+Web and desktop can stream microphone input to AssemblyAI from the chat composer. The waveform and
+stop control stay gray while the connection is opening, turn orange once the microphone stream is
+ready for speech, and return to gray while the final transcript is being finished. Press **Escape**
+to cancel and restore the draft from before recording.
+
+In **Settings > Connections > Voice input**, **Output language** can keep the spoken language or
+translate the finished transcript to English. **Voice post-processing model** selects the agent model
+used only for that optional English translation; AssemblyAI still performs the live speech
+recognition. The selection inherits the global text generation model until a dedicated override is
+chosen. This setting belongs to the server environment, so configure it on the environment that owns
+the project. Mobile does not currently expose voice input.
+
 ## Stopping a generation
 
 The stop button uses two stages so an agent gets a chance to finish cleanly without leaving the

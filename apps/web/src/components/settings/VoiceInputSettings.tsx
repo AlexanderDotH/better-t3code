@@ -1,5 +1,8 @@
+import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ProjectId, ProjectSpeechProfile } from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
+import { resolveVoiceTranslationModelSelection } from "@t3tools/shared/serverSettings";
 import {
   ChevronDownIcon,
   FolderSearchIcon,
@@ -20,8 +23,19 @@ import {
   useUpdatePrimarySettings,
 } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+import {
+  getCustomModelOptionsByInstance,
+  resolveAppModelSelectionState,
+} from "../../modelSelection";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  sortProviderInstanceEntries,
+} from "../../providerInstances";
 import { useEnvironments } from "../../state/environments";
 import { useProjects } from "../../state/entities";
+import { primaryServerProvidersAtom } from "../../state/server";
+import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -243,9 +257,28 @@ export function VoiceInputSettings() {
   const updateClientSettings = useUpdateClientSettings();
   const projects = useProjects();
   const { environments } = useEnvironments();
+  const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const assemblyAiApiKey = settings.speechTranscription.assemblyAi.apiKey;
   const assemblyAiApiKeyConfigured =
     assemblyAiApiKey.value.trim().length > 0 || Boolean(assemblyAiApiKey.valueRedacted);
+  const defaultModelSelection = resolveAppModelSelectionState(settings, serverProviders);
+  const resolvedVoiceTranslationModelSelection = resolveVoiceTranslationModelSelection(
+    settings,
+    serverProviders,
+  );
+  const voiceTranslationModelSelection =
+    resolvedVoiceTranslationModelSelection === settings.textGenerationModelSelection
+      ? defaultModelSelection
+      : resolvedVoiceTranslationModelSelection;
+  const modelInstanceEntries = sortProviderInstanceEntries(
+    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
+  );
+  const modelOptionsByInstance = getCustomModelOptionsByInstance(
+    settings,
+    serverProviders,
+    voiceTranslationModelSelection.instanceId,
+    voiceTranslationModelSelection.model,
+  );
   const [profileStateByEnvironment, setProfileStateByEnvironment] = useState<
     ReadonlyMap<EnvironmentId, EnvironmentProfileState>
   >(() => new Map());
@@ -444,6 +477,35 @@ export function VoiceInputSettings() {
                 <SelectItem value="english">English</SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+        <SettingsRow
+          title="Voice post-processing model"
+          description="Model used only for optional English translation after you stop recording. AssemblyAI still handles live speech recognition. By default, this follows the global text generation model."
+          resetAction={
+            settings.voiceTranslationModelSelection !== null ? (
+              <SettingResetButton
+                label="voice post-processing model"
+                onClick={() => updateSettings({ voiceTranslationModelSelection: null })}
+              />
+            ) : null
+          }
+          control={
+            <ProviderModelPicker
+              activeInstanceId={voiceTranslationModelSelection.instanceId}
+              model={voiceTranslationModelSelection.model}
+              lockedProvider={null}
+              instanceEntries={modelInstanceEntries}
+              modelOptionsByInstance={modelOptionsByInstance}
+              triggerVariant="outline"
+              triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+              triggerAriaLabel="Voice post-processing model"
+              onInstanceModelChange={(instanceId, model) =>
+                updateSettings({
+                  voiceTranslationModelSelection: createModelSelection(instanceId, model),
+                })
+              }
+            />
           }
         />
       </SettingsSection>

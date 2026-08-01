@@ -16,6 +16,7 @@ import {
   normalizePersistedServerSettingString,
   parsePersistedServerObservabilitySettings,
   resolveSourceControlWriterModelSelection,
+  resolveVoiceTranslationModelSelection,
 } from "./serverSettings.ts";
 
 describe("serverSettings helpers", () => {
@@ -235,6 +236,53 @@ describe("serverSettings helpers", () => {
         sourceControlWriterModelSelection: null,
       }).sourceControlWriterModelSelection,
     ).toBeNull();
+  });
+
+  it("replaces and clears the voice translation model without retaining stale options", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      voiceTranslationModelSelection: createModelSelection(
+        ProviderInstanceId.make("codex"),
+        "gpt-5.6-luna",
+        [{ id: "reasoningEffort", value: "high" }],
+      ),
+    };
+    const replacement = applyServerSettingsPatch(current, {
+      voiceTranslationModelSelection: {
+        instanceId: ProviderInstanceId.make("opencode"),
+        model: "openai/gpt-5",
+      },
+    });
+
+    expect(replacement.voiceTranslationModelSelection).toEqual({
+      instanceId: "opencode",
+      model: "openai/gpt-5",
+    });
+    expect(
+      applyServerSettingsPatch(replacement, { voiceTranslationModelSelection: null })
+        .voiceTranslationModelSelection,
+    ).toBeNull();
+  });
+
+  it("falls back from a disabled voice translation provider without clearing the override", () => {
+    const instanceId = ProviderInstanceId.make("codex_voice");
+    const voiceTranslationModelSelection = createModelSelection(instanceId, "gpt-5.6-luna");
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [instanceId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: false,
+          config: {},
+        },
+      },
+      voiceTranslationModelSelection,
+    };
+
+    expect(resolveVoiceTranslationModelSelection(settings)).toBe(
+      settings.textGenerationModelSelection,
+    );
+    expect(settings.voiceTranslationModelSelection).toBe(voiceTranslationModelSelection);
   });
 
   it("falls back from a disabled source control writer provider without clearing its selection", () => {

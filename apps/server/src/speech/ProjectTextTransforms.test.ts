@@ -32,6 +32,11 @@ const modelSelection = createModelSelection(
   "claude-sonnet-4-6",
   [{ id: "effort", value: "high" }],
 );
+const voiceTranslationModelSelection = createModelSelection(
+  ProviderInstanceId.make("codex-voice"),
+  "gpt-5.6-luna",
+  [{ id: "reasoningEffort", value: "low" }],
+);
 
 function projectionLayer(projectResult: Option.Option<OrchestrationProjectShell>) {
   return Layer.succeed(
@@ -74,9 +79,11 @@ function textGenerationLayer(overrides: Partial<TextGeneration.TextGeneration["S
 function serviceLayer(input: {
   readonly project?: Option.Option<OrchestrationProjectShell>;
   readonly modelSelection?: ModelSelection;
+  readonly voiceTranslationModelSelection?: ModelSelection | null;
   readonly textGeneration: Partial<TextGeneration.TextGeneration["Service"]>;
 }) {
   const selectedModel = input.modelSelection ?? modelSelection;
+  const voiceModel = input.voiceTranslationModelSelection ?? null;
   return ProjectTextTransforms.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -88,8 +95,18 @@ function serviceLayer(input: {
               enabled: true,
               config: {},
             },
+            ...(voiceModel
+              ? {
+                  [voiceModel.instanceId]: {
+                    driver: ProviderDriverKind.make("codex"),
+                    enabled: true,
+                    config: {},
+                  },
+                }
+              : {}),
           },
           textGenerationModelSelection: selectedModel,
+          voiceTranslationModelSelection: voiceModel,
         }),
         textGenerationLayer(input.textGeneration),
       ),
@@ -98,10 +115,11 @@ function serviceLayer(input: {
 }
 
 describe("ProjectTextTransforms", () => {
-  it.effect("routes both transforms through the trusted project cwd and configured model", () => {
+  it.effect("uses the voice override only for transcript translation", () => {
     const translateCalls: Array<TextGeneration.TranscriptTranslationInput> = [];
     const improveCalls: Array<TextGeneration.PromptImprovementInput> = [];
     const layer = serviceLayer({
+      voiceTranslationModelSelection,
       textGeneration: {
         translateTranscriptToEnglish: (input) => {
           translateCalls.push(input);
@@ -131,7 +149,7 @@ describe("ProjectTextTransforms", () => {
         {
           cwd: project.workspaceRoot,
           text: "Actualiza la lógica de reconexión.",
-          modelSelection,
+          modelSelection: voiceTranslationModelSelection,
         },
       ]);
       expect(improveCalls).toEqual([
