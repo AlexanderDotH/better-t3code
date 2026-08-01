@@ -4837,6 +4837,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
       },
       resolveRpc: (body) => {
         if (body._tag === WS_METHODS.filesystemBrowse) {
+          if (body.partialPath === "~/Development/") {
+            return {
+              parentPath: "~/Development",
+              entries: [],
+            };
+          }
           return {
             parentPath: "~/",
             entries: [{ name: "Development", fullPath: "~/Development" }],
@@ -4894,19 +4900,18 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(document.body.textContent).toContain("Repository");
           expect(document.body.textContent).toContain("t3-oss/t3-env");
           expect(document.body.textContent).toContain("https://github.com/t3-oss/t3-env");
-          expect(document.body.textContent).toContain("Select where to clone");
+          expect(document.body.textContent).toContain("Select a folder to clone into");
           expect(document.body.textContent).toContain("Development");
           expect(document.body.textContent).toContain("Clone");
         },
         { timeout: 8_000, interval: 16 },
       );
 
-      await page
-        .getByPlaceholder("Enter path (e.g. ~/projects/my-app)")
-        .fill("~/Development/t3env");
+      await palette.getByText("Development", { exact: true }).click();
       const clonePathInput = await waitForCommandPaletteInput(
         "Enter path (e.g. ~/projects/my-app)",
       );
+      expect(clonePathInput.value).toBe("~/Development/");
       await dispatchInputKey(clonePathInput, { key: "Enter" });
 
       await vi.waitFor(
@@ -4916,7 +4921,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           ) as { destinationPath?: string; remoteUrl?: string } | undefined;
           expect(cloneRequest).toMatchObject({
             remoteUrl: "git@github.com:t3-oss/t3-env.git",
-            destinationPath: "~/Development/t3env",
+            destinationPath: "~/Development/t3-env",
           });
         },
         { timeout: 8_000, interval: 16 },

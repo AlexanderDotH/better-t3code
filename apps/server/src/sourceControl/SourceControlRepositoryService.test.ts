@@ -195,6 +195,45 @@ it.effect("clones a looked-up repository into the requested destination", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("rejects an explicit destination that already contains files", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const parent = yield* fs.makeTempDirectoryScoped({
+      prefix: "t3-source-control-clone-non-empty-",
+    });
+    const destinationPath = `${parent}/t3code`;
+    yield* fs.makeDirectory(destinationPath);
+    yield* fs.writeFileString(`${destinationPath}/README.md`, "existing work");
+    let cloneAttempts = 0;
+
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const error = yield* Effect.flip(
+        service.cloneRepository({
+          remoteUrl: CLONE_URLS.sshUrl,
+          destinationPath,
+        }),
+      );
+
+      assert.strictEqual(error.operation, "cloneRepository");
+      assert.strictEqual(error.detail, "Destination path already exists and is not empty.");
+      assert.strictEqual(cloneAttempts, 0);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          git: {
+            execute: () =>
+              Effect.sync(() => {
+                cloneAttempts += 1;
+                return processOutput();
+              }),
+          },
+        }),
+      ),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("preserves destination probe failures instead of treating them as missing paths", () => {
   const fileSystemCause = PlatformError.systemError({
     _tag: "PermissionDenied",

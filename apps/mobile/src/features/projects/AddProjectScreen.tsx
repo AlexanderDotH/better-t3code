@@ -8,6 +8,7 @@ import {
   findExistingAddProject,
   getAddProjectInitialQuery,
   resolveAddProjectPath,
+  resolveCloneDestinationPath,
   sortAddProjectProviderSources,
   type AddProjectRemoteSource,
 } from "@t3tools/client-runtime/operations/projects";
@@ -24,6 +25,7 @@ import {
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
+  hasTrailingPathSeparator,
   inferProjectTitleFromPath,
 } from "@t3tools/client-runtime/state/projects";
 import { CommandId, type EnvironmentId, ProjectId } from "@t3tools/contracts";
@@ -840,10 +842,13 @@ export function AddProjectDestinationScreen(props: {
   const submitPath = useCallback(async () => {
     if (!environment || !remoteUrl || isBrowseNavigating || isSubmitting) return;
     setError(null);
-    const resolved = resolveAddProjectPath({
+    const resolved = resolveCloneDestinationPath({
       rawPath: pathInput,
       currentProjectCwd: null,
       platform: environment.platform,
+      destinationIsParent: hasTrailingPathSeparator(pathInput),
+      repositoryNameWithOwner: repositoryTitle,
+      remoteUrl,
     });
     if (!resolved.ok) {
       setError(resolved.error);
@@ -874,6 +879,7 @@ export function AddProjectDestinationScreen(props: {
     isBrowseNavigating,
     isSubmitting,
     pathInput,
+    repositoryTitle,
     remoteUrl,
   ]);
 

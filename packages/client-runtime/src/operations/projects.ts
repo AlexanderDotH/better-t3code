@@ -13,6 +13,7 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 
 import {
+  appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
   findProjectByPath,
   inferProjectTitleFromPath,
@@ -193,6 +194,54 @@ export function resolveAddProjectPath(input: {
   }
   const path = resolveProjectPathForDispatch(rawPath, input.currentProjectCwd);
   return path.length === 0 ? { ok: false, error: "Enter a project path." } : { ok: true, path };
+}
+
+function cloneDirectoryNameFromReference(reference: string | null | undefined): string | null {
+  const trimmed = reference?.trim() ?? "";
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const withoutQuery = trimmed.split(/[?#]/u, 1)[0]?.replace(/[\\/]+$/u, "") ?? "";
+  const encodedName = withoutQuery.split(/[\\/]/u).findLast(Boolean) ?? "";
+  const withoutGitSuffix = encodedName.replace(/\.git$/iu, "");
+  let name = withoutGitSuffix;
+  try {
+    name = decodeURIComponent(withoutGitSuffix);
+  } catch {
+    // Keep the literal segment when a remote contains malformed percent encoding.
+  }
+
+  if (name.length === 0 || name === "." || name === ".." || /[\\/]/u.test(name)) {
+    return null;
+  }
+  return name;
+}
+
+export function resolveCloneDestinationPath(input: {
+  readonly rawPath: string;
+  readonly currentProjectCwd?: string | null;
+  readonly platform: string;
+  readonly destinationIsParent: boolean;
+  readonly repositoryNameWithOwner?: string | null;
+  readonly remoteUrl: string;
+}): { readonly ok: true; readonly path: string } | { readonly ok: false; readonly error: string } {
+  const destination = resolveAddProjectPath(input);
+  if (!destination.ok || !input.destinationIsParent) {
+    return destination;
+  }
+
+  const directoryName =
+    cloneDirectoryNameFromReference(input.repositoryNameWithOwner) ??
+    cloneDirectoryNameFromReference(input.remoteUrl);
+  if (!directoryName) {
+    return { ok: false, error: "Could not determine a folder name for this repository." };
+  }
+
+  return resolveAddProjectPath({
+    ...input,
+    rawPath: appendBrowsePathSegment(ensureBrowseDirectoryPath(input.rawPath), directoryName),
+  });
 }
 
 export function findExistingAddProject(input: {

@@ -2,7 +2,10 @@
 "use client";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { canCreateProjectInEnvironment } from "@t3tools/client-runtime/operations/projects";
+import {
+  canCreateProjectInEnvironment,
+  resolveCloneDestinationPath,
+} from "@t3tools/client-runtime/operations/projects";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import {
@@ -1672,33 +1675,25 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
-    if (isUnsupportedWindowsProjectPath(rawDestination, browseEnvironmentPlatform)) {
+    const destination = resolveCloneDestinationPath({
+      rawPath: rawDestination,
+      currentProjectCwd: currentProjectCwdForBrowse,
+      platform: browseEnvironmentPlatform,
+      destinationIsParent:
+        hasTrailingPathSeparator(rawDestination) ||
+        hasTrailingPathSeparator(query) ||
+        (exactBrowseEntry !== null && rawDestination === exactBrowseEntry.fullPath),
+      repositoryNameWithOwner: addProjectCloneFlow.repository?.nameWithOwner ?? null,
+      remoteUrl: addProjectCloneFlow.remoteUrl,
+    });
+    if (!destination.ok) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
           title: "Clone failed",
-          description: "Windows-style paths are only supported on Windows.",
+          description: destination.error,
         }),
       );
-      return;
-    }
-
-    if (isExplicitRelativeProjectPath(rawDestination) && !currentProjectCwdForBrowse) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Clone failed",
-          description: "Relative paths require an active project.",
-        }),
-      );
-      return;
-    }
-
-    const destinationPath = resolveProjectPathForDispatch(
-      rawDestination,
-      currentProjectCwdForBrowse,
-    );
-    if (destinationPath.length === 0) {
       return;
     }
 
@@ -1707,7 +1702,7 @@ function OpenCommandPaletteDialog(props: {
       environmentId: addProjectCloneFlow.environmentId,
       input: {
         remoteUrl: addProjectCloneFlow.remoteUrl,
-        destinationPath,
+        destinationPath: destination.path,
       },
     });
     setIsRemoteProjectCloning(false);
@@ -1779,7 +1774,9 @@ function OpenCommandPaletteDialog(props: {
   const cloneDestinationBrowseGroups = useMemo(
     () =>
       browseGroups.map((group) =>
-        group.value === "directories" ? { ...group, label: "Select where to clone" } : group,
+        group.value === "directories"
+          ? { ...group, label: "Select a folder to clone into" }
+          : group,
       ),
     [browseGroups],
   );
@@ -2040,6 +2037,10 @@ function OpenCommandPaletteDialog(props: {
         );
         return;
       }
+      if (addProjectCloneFlow?.step === "confirm") {
+        await submitAddProjectCloneFlow(ensureBrowseDirectoryPath(selection.linuxPath));
+        return;
+      }
       await handleAddProjectForEnvironment({
         environmentId: selection.environmentId,
         rawCwd: selection.linuxPath,
@@ -2048,12 +2049,17 @@ function OpenCommandPaletteDialog(props: {
       });
       return;
     }
+    if (addProjectCloneFlow?.step === "confirm") {
+      await submitAddProjectCloneFlow(ensureBrowseDirectoryPath(pickedPath));
+      return;
+    }
     await handleAddProject(pickedPath);
   }, [
     browseDesktopInstanceId,
     browseEnvironmentId,
     browseEnvironmentPlatform,
     canOpenProjectFromFileManager,
+    addProjectCloneFlow,
     desktopLocalBootstraps,
     environments,
     fileManagerInitialPath,
@@ -2061,6 +2067,7 @@ function OpenCommandPaletteDialog(props: {
     handleAddProjectForEnvironment,
     isPickingProjectFolder,
     primaryEnvironmentId,
+    submitAddProjectCloneFlow,
   ]);
 
   return (
