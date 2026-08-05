@@ -43,6 +43,7 @@ import {
 } from "../../process/OwnedChildProcess.ts";
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
+import { managedMcpProviderKey } from "../../mcp/McpConfigEngine.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
 import { codexManagedFeatureArgs } from "../CodexProcessArgs.ts";
@@ -67,8 +68,57 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "does not exist",
 ];
 
-export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | undefined): boolean {
-  return appServerArgs?.some((argument) => argument.includes("mcp_servers.")) === true;
+export type CodexMcpServerStatus =
+  CodexRpc.ClientRequestResponsesByMethod["mcpServerStatus/list"]["data"][number];
+type CodexMcpServerStatusListParams = CodexRpc.ClientRequestParamsByMethod["mcpServerStatus/list"];
+type CodexMcpServerStatusListResponse =
+  CodexRpc.ClientRequestResponsesByMethod["mcpServerStatus/list"];
+
+export function listCodexMcpServerStatuses<E>(
+  requestPage: (
+    params: CodexMcpServerStatusListParams,
+  ) => Effect.Effect<CodexMcpServerStatusListResponse, E>,
+  input: Omit<CodexMcpServerStatusListParams, "cursor">,
+): Effect.Effect<ReadonlyArray<CodexMcpServerStatus>, E> {
+  return Effect.gen(function* () {
+    const statuses: Array<CodexMcpServerStatus> = [];
+    const visitedCursors = new Set<string>();
+    let cursor: string | undefined;
+
+    do {
+      const response = yield* requestPage({
+        ...input,
+        ...(cursor ? { cursor } : {}),
+      });
+      statuses.push(...response.data);
+      cursor = response.nextCursor ?? undefined;
+      if (cursor && visitedCursors.has(cursor)) {
+        break;
+      }
+      if (cursor) {
+        visitedCursors.add(cursor);
+      }
+    } while (cursor);
+
+    return statuses;
+  });
+}
+
+export function requestCodexMcpOauth<E>(
+  request: (
+    params: CodexRpc.ClientRequestParamsByMethod["mcpServer/oauth/login"],
+  ) => Effect.Effect<CodexRpc.ClientRequestResponsesByMethod["mcpServer/oauth/login"], E>,
+  input: {
+    readonly providerThreadId: string;
+    readonly serverName: string;
+    readonly scopes?: ReadonlyArray<string>;
+  },
+): Effect.Effect<CodexRpc.ClientRequestResponsesByMethod["mcpServer/oauth/login"], E> {
+  return request({
+    name: input.serverName,
+    threadId: input.providerThreadId,
+    ...(input.scopes ? { scopes: input.scopes } : {}),
+  });
 }
 
 export const CodexResumeCursorSchema = Schema.Struct({
@@ -157,6 +207,14 @@ export interface CodexSessionRuntimeShape {
     requestId: ApprovalRequestId,
     answers: ProviderUserInputAnswers,
   ) => Effect.Effect<void, CodexSessionRuntimeError>;
+  readonly listMcpServerStatuses: (
+    detail?: EffectCodexSchema.V2ListMcpServerStatusParams__McpServerStatusDetail,
+  ) => Effect.Effect<ReadonlyArray<CodexMcpServerStatus>, CodexSessionRuntimeError>;
+  readonly reloadMcpServers: Effect.Effect<void, CodexSessionRuntimeError>;
+  readonly startMcpOauth: (input: {
+    readonly serverName: string;
+    readonly scopes?: ReadonlyArray<string>;
+  }) => Effect.Effect<{ readonly authorizationUrl: string }, CodexSessionRuntimeError>;
   readonly events: Stream.Stream<ProviderEvent, never>;
   readonly close: Effect.Effect<void>;
   readonly forceClose: Effect.Effect<void, OwnedChildProcessTerminationError>;
@@ -341,7 +399,7 @@ function codexThreadMcpConfig(
   }
   return {
     mcp_servers: Object.fromEntries(
-      servers.map((server) => [server.id, codexMcpServerConfig(server)]),
+      servers.map((server) => [managedMcpProviderKey(server.id), codexMcpServerConfig(server)]),
     ),
   };
 }
@@ -1352,15 +1410,6 @@ export const makeCodexSessionRuntime = (
       sendTurn: (input) =>
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
-          if (hasConfiguredMcpServer(options.appServerArgs)) {
-            yield* client.request("config/mcpServer/reload", undefined).pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("Failed to refresh Codex MCP tool catalog before turn.", {
-                  cause,
-                }),
-              ),
-            );
-          }
           const normalizedModel = normalizeCodexModelSlug(
             input.model ?? (yield* Ref.get(sessionRef)).model,
           );
@@ -1492,6 +1541,33 @@ export const makeCodexSessionRuntime = (
               answers: codexAnswers,
             },
           });
+        }),
+      listMcpServerStatuses: (detail = "toolsAndAuthOnly") =>
+        Effect.gen(function* () {
+          const providerThreadId = yield* readProviderThreadId;
+          return yield* listCodexMcpServerStatuses(
+            (params) => client.request("mcpServerStatus/list", params),
+            {
+              threadId: providerThreadId,
+              detail,
+            },
+          );
+        }),
+      reloadMcpServers: Effect.gen(function* () {
+        yield* readProviderThreadId;
+        yield* client.request("config/mcpServer/reload", undefined);
+      }),
+      startMcpOauth: (input) =>
+        Effect.gen(function* () {
+          const providerThreadId = yield* readProviderThreadId;
+          return yield* requestCodexMcpOauth(
+            (params) => client.request("mcpServer/oauth/login", params),
+            {
+              providerThreadId,
+              serverName: input.serverName,
+              ...(input.scopes ? { scopes: input.scopes } : {}),
+            },
+          );
         }),
       events: Stream.fromQueue(events),
       close,

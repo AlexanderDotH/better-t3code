@@ -115,12 +115,19 @@ export function SettingResetButton({ label, onClick }: { label: string; onClick:
 export function SettingsPageContainer({
   children,
   className,
+  viewportClassName,
 }: {
   children: ReactNode;
   className?: string;
+  viewportClassName?: string;
 }) {
   return (
-    <div className="settings-page-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto px-4 pt-10 pb-7 sm:px-8 sm:pt-12 sm:pb-10">
+    <div
+      className={cn(
+        "settings-page-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto px-4 pt-10 pb-7 sm:px-8 sm:pt-12 sm:pb-10",
+        viewportClassName,
+      )}
+    >
       <div className={cn("mx-auto flex w-full max-w-4xl flex-col gap-12", className)}>
         {children}
       </div>

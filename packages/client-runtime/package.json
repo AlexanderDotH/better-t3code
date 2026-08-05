@@ -43,6 +43,14 @@
       "types": "./src/reasoningRecommendation.ts",
       "default": "./src/reasoningRecommendation.ts"
     },
+    "./git-workbench": {
+      "types": "./src/git-workbench/index.ts",
+      "default": "./src/git-workbench/index.ts"
+    },
+    "./mcp": {
+      "types": "./src/mcp/index.ts",
+      "default": "./src/mcp/index.ts"
+    },
     "./platform": {
       "types": "./src/platform/index.ts",
       "default": "./src/platform/index.ts"

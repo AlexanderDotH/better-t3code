@@ -54,6 +54,7 @@ import Migration0038 from "./Migrations/038_ProjectionThreadsSnoozedCompatibilit
 import Migration0039 from "./Migrations/039_ProjectionThreadSessionAbortState.ts";
 import Migration0040 from "./Migrations/040_ProjectionCompatibility.ts";
 import Migration0041 from "./Migrations/041_ProjectionThreadSubagents.ts";
+import Migration0042 from "./Migrations/042_GitWorkbenchState.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -107,6 +108,7 @@ export const migrationEntries = [
   [39, "ProjectionThreadSessionAbortState", Migration0039],
   [40, "ProjectionCompatibility", Migration0040],
   [41, "ProjectionThreadSubagents", Migration0041],
+  [42, "GitWorkbenchState", Migration0042],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

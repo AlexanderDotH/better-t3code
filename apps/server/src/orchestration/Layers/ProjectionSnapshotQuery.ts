@@ -75,6 +75,7 @@ import {
   type ProjectionThreadCheckpointContext,
   type ProjectionSnapshotQueryShape,
 } from "../Services/ProjectionSnapshotQuery.ts";
+import { reconcileSubagentTerminalTurn } from "../subagentLifecycle.ts";
 
 const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const decodeShellSnapshot = Schema.decodeUnknownEffect(OrchestrationShellSnapshot);
@@ -330,35 +331,9 @@ function mapProposedPlanRow(
   };
 }
 
-function shouldReconcileTerminalSubagents(
-  latestTurn: OrchestrationLatestTurn | null,
-  session: OrchestrationSession | null,
-): boolean {
-  return (
-    latestTurn !== null &&
-    latestTurn.state !== "running" &&
-    session?.status !== "starting" &&
-    session?.status !== "running"
-  );
-}
-
-function mapSubagentSummaryRow(
+function mapPersistedSubagentSummaryRow(
   row: ProjectionThreadSubagent,
-  reconcileTerminalTurn = false,
 ): OrchestrationSubagentSummary {
-  const terminalTurnStatus =
-    reconcileTerminalTurn &&
-    (row.status === "starting" || row.status === "running" || row.status === "waiting") &&
-    row.latestTurn !== null &&
-    (row.latestTurn.state === "completed" ||
-      row.latestTurn.state === "interrupted" ||
-      row.latestTurn.state === "error")
-      ? row.latestTurn.state
-      : undefined;
-  const terminalAt = terminalTurnStatus
-    ? (row.latestTurn?.completedAt ?? row.completedAt ?? row.updatedAt)
-    : null;
-
   return {
     id: row.id,
     providerThreadId: row.providerThreadId,
@@ -371,26 +346,18 @@ function mapSubagentSummaryRow(
     model: row.model,
     reasoningEffort: row.reasoningEffort,
     depth: row.depth,
-    status: terminalTurnStatus ?? row.status,
-    statusMessage: terminalTurnStatus ? null : row.statusMessage,
-    latestProgress: terminalTurnStatus
-      ? {
-          kind: `state.${terminalTurnStatus}`,
-          summary:
-            terminalTurnStatus === "completed"
-              ? "Completed"
-              : terminalTurnStatus === "interrupted"
-                ? "Interrupted"
-                : "Error",
-          detail: null,
-          createdAt: terminalAt ?? row.updatedAt,
-        }
-      : row.latestProgress,
+    status: row.status,
+    statusMessage: row.statusMessage,
+    latestProgress: row.latestProgress,
     latestTurn: row.latestTurn,
     startedAt: row.startedAt,
     updatedAt: row.updatedAt,
-    completedAt: terminalAt ?? row.completedAt,
+    completedAt: row.completedAt,
   };
+}
+
+function mapSubagentSummaryRow(row: ProjectionThreadSubagent): OrchestrationSubagentSummary {
+  return reconcileSubagentTerminalTurn(mapPersistedSubagentSummaryRow(row));
 }
 
 function isLegacyRootSubagentRow(row: ProjectionThreadSubagent): boolean {
@@ -637,6 +604,37 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           updated_at AS "updatedAt",
           completed_at AS "completedAt"
         FROM projection_thread_subagents
+        ORDER BY thread_id ASC, updated_at DESC, subagent_id ASC
+      `,
+  });
+
+  const listActiveThreadSubagentRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionThreadSubagentDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          subagent_id AS "id",
+          provider_thread_id AS "providerThreadId",
+          parent_subagent_id AS "parentId",
+          path,
+          name,
+          nickname,
+          role,
+          task,
+          model,
+          reasoning_effort AS "reasoningEffort",
+          depth,
+          status,
+          status_message AS "statusMessage",
+          latest_progress_json AS "latestProgress",
+          latest_turn_json AS "latestTurn",
+          started_at AS "startedAt",
+          updated_at AS "updatedAt",
+          completed_at AS "completedAt"
+        FROM projection_thread_subagents
+        WHERE status IN ('starting', 'running', 'waiting')
         ORDER BY thread_id ASC, updated_at DESC, subagent_id ASC
       `,
   });
@@ -1355,19 +1353,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               const checkpointsByThread = new Map<string, Array<OrchestrationCheckpointSummary>>();
               const sessionsByThread = new Map<string, OrchestrationSession>();
               const latestTurnByThread = new Map<string, OrchestrationLatestTurn>();
-              const activeRootThreadIds = new Set(
-                sessionRows
-                  .filter((row) => row.status === "starting" || row.status === "running")
-                  .map((row) => row.threadId),
-              );
-              const settledRootThreadIds = new Set(
-                latestTurnRows
-                  .filter(
-                    (row) => row.state !== "running" && !activeRootThreadIds.has(row.threadId),
-                  )
-                  .map((row) => row.threadId),
-              );
-
               let updatedAt: string | null = null;
 
               for (const row of projectRows) {
@@ -1417,9 +1402,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 }
                 updatedAt = maxIso(updatedAt, row.updatedAt);
                 const threadSubagents = subagentsByThread.get(row.threadId) ?? [];
-                threadSubagents.push(
-                  mapSubagentSummaryRow(row, settledRootThreadIds.has(row.threadId)),
-                );
+                threadSubagents.push(mapSubagentSummaryRow(row));
                 subagentsByThread.set(row.threadId, threadSubagents);
               }
 
@@ -1602,6 +1585,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listActiveThreadSubagentRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getCommandReadModel:listActiveSubagents:query",
+                "ProjectionSnapshotQuery.getCommandReadModel:listActiveSubagents:decodeRows",
+              ),
+            ),
+          ),
           listThreadSessionRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -1630,7 +1621,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       )
       .pipe(
         Effect.flatMap(
-          ([projectRows, threadRows, proposedPlanRows, sessionRows, latestTurnRows, stateRows]) =>
+          ([
+            projectRows,
+            threadRows,
+            proposedPlanRows,
+            subagentRows,
+            sessionRows,
+            latestTurnRows,
+            stateRows,
+          ]) =>
             Effect.sync(() => {
               let updatedAt: string | null = null;
               const projects: OrchestrationProject[] = [];
@@ -1663,6 +1662,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               for (let index = 0; index < proposedPlanRows.length; index += 1) {
                 const row = proposedPlanRows[index];
                 if (!row) {
+                  continue;
+                }
+                updatedAt = maxIso(updatedAt, row.updatedAt);
+              }
+              for (let index = 0; index < subagentRows.length; index += 1) {
+                const row = subagentRows[index];
+                if (!row || isLegacyRootSubagentRow(row)) {
                   continue;
                 }
                 updatedAt = maxIso(updatedAt, row.updatedAt);
@@ -1704,6 +1710,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 latestTurnByThread.set(row.threadId, mapLatestTurn(row));
               }
               const proposedPlansByThread = new Map<string, Array<OrchestrationProposedPlan>>();
+              const subagentsByThread = new Map<string, Array<OrchestrationSubagentSummary>>();
               const sessionByThread = new Map<string, OrchestrationSession>();
 
               for (let index = 0; index < sessionRows.length; index += 1) {
@@ -1722,6 +1729,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 const threadProposedPlans = proposedPlansByThread.get(row.threadId) ?? [];
                 threadProposedPlans.push(mapProposedPlanRow(row));
                 proposedPlansByThread.set(row.threadId, threadProposedPlans);
+              }
+
+              for (let index = 0; index < subagentRows.length; index += 1) {
+                const row = subagentRows[index];
+                if (!row || isLegacyRootSubagentRow(row)) {
+                  continue;
+                }
+                const threadSubagents = subagentsByThread.get(row.threadId) ?? [];
+                threadSubagents.push(mapPersistedSubagentSummaryRow(row));
+                subagentsByThread.set(row.threadId, threadSubagents);
               }
 
               for (let index = 0; index < threadRows.length; index += 1) {
@@ -1751,7 +1768,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   messages: [],
                   proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                   activities: [],
-                  subagents: [],
+                  subagents: subagentsByThread.get(row.threadId) ?? [],
                   checkpoints: [],
                   session: sessionByThread.get(row.threadId) ?? null,
                 });
@@ -2377,8 +2394,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
       const latestTurn = Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null;
       const session = Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null;
-      const reconcileTerminalSubagents = shouldReconcileTerminalSubagents(latestTurn, session);
-
       const thread = {
         id: threadRow.value.threadId,
         projectId: threadRow.value.projectId,
@@ -2416,7 +2431,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         proposedPlans: proposedPlanRows.map(mapProposedPlanRow),
         subagents: subagentRows
           .filter((row) => !isLegacyRootSubagentRow(row))
-          .map((row) => mapSubagentSummaryRow(row, reconcileTerminalSubagents)),
+          .map(mapSubagentSummaryRow),
         activities: activityRows.map((row) => {
           const activity = {
             id: row.activityId,
@@ -2469,46 +2484,23 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         return Option.none<OrchestrationSubagentDetail>();
       }
 
-      const [messageRows, proposedPlanRows, activityRows, latestTurnRow, sessionRow] =
-        yield* Effect.all([
-          projectionThreadSubagentMessageRepository.listBySubagentId({
-            threadId,
-            subagentId,
-          }),
-          projectionThreadSubagentProposedPlanRepository.listBySubagentId({
-            threadId,
-            subagentId,
-          }),
-          projectionThreadSubagentActivityRepository.listBySubagentId({
-            threadId,
-            subagentId,
-          }),
-          getLatestTurnRowByThread({ threadId }).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getSubagentDetailById:getLatestTurn:query",
-                "ProjectionSnapshotQuery.getSubagentDetailById:getLatestTurn:decodeRow",
-              ),
-            ),
-          ),
-          getThreadSessionRowByThread({ threadId }).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getSubagentDetailById:getSession:query",
-                "ProjectionSnapshotQuery.getSubagentDetailById:getSession:decodeRow",
-              ),
-            ),
-          ),
-        ]);
-
-      const latestTurn = Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null;
-      const session = Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null;
+      const [messageRows, proposedPlanRows, activityRows] = yield* Effect.all([
+        projectionThreadSubagentMessageRepository.listBySubagentId({
+          threadId,
+          subagentId,
+        }),
+        projectionThreadSubagentProposedPlanRepository.listBySubagentId({
+          threadId,
+          subagentId,
+        }),
+        projectionThreadSubagentActivityRepository.listBySubagentId({
+          threadId,
+          subagentId,
+        }),
+      ]);
 
       const detail = {
-        ...mapSubagentSummaryRow(
-          summaryRow.value,
-          shouldReconcileTerminalSubagents(latestTurn, session),
-        ),
+        ...mapSubagentSummaryRow(summaryRow.value),
         messages: messageRows.map((row) => ({
           id: row.messageId,
           role: row.role,

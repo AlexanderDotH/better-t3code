@@ -185,6 +185,7 @@ interface DiffPanelProps {
   mode?: DiffPanelMode;
   composerDraftTarget: ScopedThreadRef | DraftId;
   initialGitScope: "branch" | "unstaged";
+  onOpenFile?: (filePath: string) => void;
 }
 
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
@@ -193,6 +194,7 @@ export default function DiffPanel({
   mode = "inline",
   composerDraftTarget,
   initialGitScope: initialGitScopeProp,
+  onOpenFile,
 }: DiffPanelProps) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
@@ -465,6 +467,10 @@ export default function DiffPanel({
 
   const openDiffFile = useCallback(
     (filePath: string) => {
+      if (onOpenFile) {
+        onOpenFile(filePath);
+        return;
+      }
       openDiffFilePrimaryAction({
         threadRef: routeThreadRef,
         filePath,
@@ -488,7 +494,7 @@ export default function DiffPanel({
         },
       });
     },
-    [activeCwd, openInPreferredEditor, routeThreadRef],
+    [activeCwd, onOpenFile, openInPreferredEditor, routeThreadRef],
   );
   const toggleDiffFileCollapsed = useCallback(
     (fileKey: string) => {

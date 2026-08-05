@@ -1,7 +1,13 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { EnvironmentId, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  EnvironmentId,
+  PositiveInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 
 export const ExecutionEnvironmentPlatformOs = Schema.Literals([
   "darwin",
@@ -57,6 +63,14 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server can stream self-update progress before acknowledging the
       restart. Clients fall back to server.updateServer when absent. */
   serverSelfUpdateProgress: Schema.optionalKey(Schema.Boolean),
+  /** Versioned, Git-specific repository workbench RPC surface. Missing on
+      older servers, so clients retain compact VCS controls and do not issue
+      workbench requests when this field is absent. */
+  gitWorkbenchVersion: Schema.optionalKey(PositiveInt),
+  /** Versioned MCP workspace and provider-context subscription surface.
+      Missing on older servers, so clients retain configuration-only MCP UI
+      and do not issue workspace-specific runtime requests. */
+  mcpWorkspaceVersion: Schema.optionalKey(PositiveInt),
   midChatProviderSwitching: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;

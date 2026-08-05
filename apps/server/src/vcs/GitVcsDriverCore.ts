@@ -1736,8 +1736,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
 
   const prepareCommitContext: GitVcsDriver.GitVcsDriver["Service"]["prepareCommitContext"] =
-    Effect.fn("prepareCommitContext")(function* (cwd, filePaths) {
-      if (filePaths && filePaths.length > 0) {
+    Effect.fn("prepareCommitContext")(function* (cwd, filePaths, commitSelection) {
+      if (commitSelection?.mode === "all") {
+        yield* runGit("GitVcsDriver.prepareCommitContext.addAll", cwd, ["add", "-A"]);
+      } else if (commitSelection?.mode === "paths") {
+        yield* runGit("GitVcsDriver.prepareCommitContext.addSelected", cwd, [
+          "--literal-pathspecs",
+          "add",
+          "-A",
+          "--",
+          ...commitSelection.paths,
+        ]);
+      } else if (commitSelection?.mode === "staged") {
+        // The standard-index path commits exactly what is already staged.
+      } else if (filePaths && filePaths.length > 0) {
         yield* runGit("GitVcsDriver.prepareCommitContext.reset", cwd, ["reset"]).pipe(
           Effect.catchTags({
             GitCommandError: () => Effect.void,

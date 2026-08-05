@@ -582,8 +582,22 @@ const AccountRateLimitsUpdatedPayload = Schema.Struct({
 });
 export type AccountRateLimitsUpdatedPayload = typeof AccountRateLimitsUpdatedPayload.Type;
 
+export const McpServerStartupState = Schema.Literals(["starting", "ready", "failed", "cancelled"]);
+export type McpServerStartupState = typeof McpServerStartupState.Type;
+
+export const McpServerStartupFailureReason = Schema.Literal("reauthenticationRequired");
+export type McpServerStartupFailureReason = typeof McpServerStartupFailureReason.Type;
+
+export const McpServerStartupStatus = Schema.Struct({
+  name: TrimmedNonEmptyStringSchema,
+  status: McpServerStartupState,
+  error: Schema.optional(TrimmedNonEmptyStringSchema),
+  failureReason: Schema.optional(McpServerStartupFailureReason),
+});
+export type McpServerStartupStatus = typeof McpServerStartupStatus.Type;
+
 const McpStatusUpdatedPayload = Schema.Struct({
-  status: Schema.Unknown,
+  status: McpServerStartupStatus,
 });
 export type McpStatusUpdatedPayload = typeof McpStatusUpdatedPayload.Type;
 

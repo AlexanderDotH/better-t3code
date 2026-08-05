@@ -231,7 +231,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         resolveGatewayProfile,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         resolveMcpServers: ({ cwd }: { readonly cwd: string }) =>
-          mcpConfigEngine.resolveActiveServers({ cwd }).pipe(
+          mcpConfigEngine.resolveActiveServers({ cwd, providerInstanceId: instanceId }).pipe(
             Effect.map(toClaudeMcpServers),
             Effect.catch((cause) =>
               Effect.logWarning("Failed to resolve MCP servers for Claude session", {

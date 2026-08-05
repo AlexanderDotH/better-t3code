@@ -84,6 +84,32 @@ describe("GitRunStackedActionInput", () => {
     expect(parsed.actionId).toBe("action-1");
     expect(parsed.action).toBe("create_pr");
   });
+
+  it("preserves legacy filePaths while accepting standard-index commit selections", () => {
+    const legacy = decodeRunStackedActionInput({
+      actionId: "legacy-action",
+      cwd: "/repo",
+      action: "commit",
+      filePaths: ["src/legacy.ts"],
+    });
+    const staged = decodeRunStackedActionInput({
+      actionId: "staged-action",
+      cwd: "/repo",
+      action: "commit_push",
+      commitSelection: { mode: "staged" },
+    });
+    const selected = decodeRunStackedActionInput({
+      actionId: "selected-action",
+      cwd: "/repo",
+      action: "commit",
+      commitSelection: { mode: "paths", paths: ["src/deck.tsx"] },
+    });
+
+    expect(legacy.filePaths).toEqual(["src/legacy.ts"]);
+    expect(legacy.commitSelection).toBeUndefined();
+    expect(staged.commitSelection).toEqual({ mode: "staged" });
+    expect(selected.commitSelection).toEqual({ mode: "paths", paths: ["src/deck.tsx"] });
+  });
 });
 
 describe("GitRunStackedActionResult", () => {

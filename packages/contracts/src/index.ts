@@ -19,6 +19,7 @@ export * from "./server.ts";
 export * from "./speech.ts";
 export * from "./settings.ts";
 export * from "./git.ts";
+export * from "./gitWorkbench.ts";
 export * from "./vcs.ts";
 export * from "./sourceControl.ts";
 export * from "./orchestration.ts";

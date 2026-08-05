@@ -56,6 +56,7 @@ import {
   prependProviderTranscriptHandoff,
 } from "../providerTranscriptHandoff.ts";
 import { normalizeCodexModelSelectionServiceTier } from "../../codexModelOptions.ts";
+import { isActiveSubagentStatus, settleSubagentAfterRuntimeLoss } from "../subagentLifecycle.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -353,6 +354,34 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+
+  const settleActiveSubagents = Effect.fn("settleActiveSubagents")(function* (
+    thread: OrchestrationReadModel["threads"][number],
+    settledAt: string,
+    commandTag: string,
+  ) {
+    yield* Effect.forEach(
+      thread.subagents,
+      (subagent) => {
+        if (!isActiveSubagentStatus(subagent.status)) {
+          return Effect.void;
+        }
+        const settled = settleSubagentAfterRuntimeLoss(subagent, settledAt);
+        return serverCommandId(commandTag).pipe(
+          Effect.flatMap((commandId) =>
+            orchestrationEngine.dispatch({
+              type: "thread.subagent.upsert",
+              commandId,
+              threadId: thread.id,
+              subagent: settled,
+              createdAt: settledAt,
+            }),
+          ),
+        );
+      },
+      { concurrency: 1, discard: true },
+    );
+  });
 
   const setThreadSessionErrorOnTurnStartFailure = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
@@ -1019,14 +1048,30 @@ const make = Effect.gen(function* () {
       );
       const liveSessions = yield* providerService.listSessions();
       const liveThreadIds = new Set(liveSessions.map((session) => session.threadId));
-      const orphanedThreads = projectedInFlightThreads.filter(
-        (thread) => !liveThreadIds.has(thread.id),
+      const projectedInFlightThreadIds = new Set(
+        projectedInFlightThreads.map((thread) => thread.id),
+      );
+      const orphanedThreads = readModel.threads.filter(
+        (thread) =>
+          thread.deletedAt === null &&
+          !liveThreadIds.has(thread.id) &&
+          (projectedInFlightThreadIds.has(thread.id) ||
+            thread.subagents.some((subagent) => isActiveSubagentStatus(subagent.status))),
       );
       const reconciledAt = DateTime.formatIso(yield* DateTime.now);
       const outcomes = yield* Effect.forEach(
         orphanedThreads,
         (thread) =>
-          reconcileOrphanedSessionAtStartup(thread, reconciledAt).pipe(
+          Effect.gen(function* () {
+            if (projectedInFlightThreadIds.has(thread.id)) {
+              yield* reconcileOrphanedSessionAtStartup(thread, reconciledAt);
+            }
+            yield* settleActiveSubagents(
+              thread,
+              reconciledAt,
+              "startup-subagent-runtime-loss-upsert",
+            );
+          }).pipe(
             Effect.as(true),
             Effect.catchCause((cause) => {
               if (Cause.hasInterruptsOnly(cause)) {
@@ -1393,6 +1438,8 @@ const make = Effect.gen(function* () {
     if (thread.session && thread.session.status !== "stopped") {
       yield* providerService.stopSession({ threadId: thread.id });
     }
+
+    yield* settleActiveSubagents(thread, now, "session-stop-subagent-runtime-loss-upsert");
 
     yield* setThreadSession({
       threadId: thread.id,

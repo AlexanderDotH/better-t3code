@@ -11,6 +11,13 @@ import {
   type CanonicalItemType,
   type CanonicalRequestType,
   type CodexSettings,
+  type IsoDateTime,
+  type McpRuntimeAction,
+  type McpRuntimeResource,
+  type McpRuntimeResourceTemplate,
+  type McpRuntimeServer,
+  McpRuntimeServerKey,
+  type McpRuntimeTool,
   ProviderDriverKind,
   type McpServerDefinition,
   type ProviderEvent,
@@ -30,6 +37,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -43,7 +51,9 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
+import { managedMcpProviderKey } from "../../mcp/McpConfigEngine.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { sanitizeMcpRuntimeText } from "../../mcp/McpRuntimeSanitizer.ts";
 
 import {
   ProviderAdapterRequestError,
@@ -64,6 +74,7 @@ import {
   type CodexSessionRuntimeError,
   type CodexSessionRuntimeOptions,
   type CodexSessionRuntimeShape,
+  type CodexMcpServerStatus,
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
@@ -97,10 +108,23 @@ export interface CodexAdapterLiveOptions {
 interface CodexAdapterSessionContext {
   readonly threadId: ThreadId;
   readonly runtimeSessionId: RuntimeSessionId;
+  readonly cwd: string;
   readonly scope: Scope.Closeable;
   readonly runtime: CodexSessionRuntimeShape;
   readonly eventFiber: Fiber.Fiber<void, never>;
+  managedMcpServers: ReadonlyMap<string, McpServerDefinition>;
+  readonly mcpStartupStatuses: Map<string, CodexMcpStartupObservation>;
+  readonly builtInMcpExpected: boolean;
   stopped: boolean;
+}
+
+interface CodexMcpStartupObservation {
+  readonly state: EffectCodexSchema.V2McpServerStatusUpdatedNotification__McpServerStartupState;
+  readonly failureReason?:
+    | EffectCodexSchema.V2McpServerStatusUpdatedNotification__McpServerStartupFailureReason
+    | undefined;
+  readonly error?: string | undefined;
+  readonly observedAt: IsoDateTime;
 }
 
 function mapCodexRuntimeError(
@@ -155,6 +179,378 @@ function readPayload<A>(
 function trimText(value: string | undefined | null): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function boundedText(value: string | undefined | null, maximumLength: number): string | undefined {
+  return trimText(value)?.slice(0, maximumLength);
+}
+
+function codexMcpProviderKey(value: string): McpRuntimeServerKey {
+  return McpRuntimeServerKey.make(boundedText(value, 512) ?? "unknown");
+}
+
+function codexManagedMcpServers(
+  servers: ReadonlyArray<McpServerDefinition>,
+): ReadonlyMap<string, McpServerDefinition> {
+  return new Map(servers.map((server) => [managedMcpProviderKey(server.id), server]));
+}
+
+function readCodexToolAnnotation(annotations: unknown, key: string): boolean | undefined {
+  if (annotations === null || typeof annotations !== "object" || !Object.hasOwn(annotations, key)) {
+    return undefined;
+  }
+  const value = (annotations as Record<string, unknown>)[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function normalizeCodexMcpTool(
+  tool: CodexMcpServerStatus["tools"][string],
+): McpRuntimeTool | undefined {
+  const name = boundedText(tool.name, 512);
+  if (!name) {
+    return undefined;
+  }
+  const title = boundedText(tool.title, 512);
+  const description = boundedText(tool.description, 65_536);
+  const readOnly = readCodexToolAnnotation(tool.annotations, "readOnlyHint");
+  const destructive = readCodexToolAnnotation(tool.annotations, "destructiveHint");
+  const openWorld = readCodexToolAnnotation(tool.annotations, "openWorldHint");
+  return {
+    name,
+    ...(title ? { title } : {}),
+    ...(description ? { description } : {}),
+    ...(readOnly !== undefined ? { readOnly } : {}),
+    ...(destructive !== undefined ? { destructive } : {}),
+    ...(openWorld !== undefined ? { openWorld } : {}),
+  };
+}
+
+function normalizeCodexMcpResource(
+  resource: CodexMcpServerStatus["resources"][number],
+): McpRuntimeResource | undefined {
+  const uri = boundedText(resource.uri, 8_192);
+  const name = boundedText(resource.name, 512);
+  if (!uri || !name) return undefined;
+  const title = boundedText(resource.title, 512);
+  const description = boundedText(resource.description, 65_536);
+  const mimeType = boundedText(resource.mimeType, 512);
+  const size =
+    resource.size === null || resource.size === undefined
+      ? undefined
+      : Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.floor(resource.size)));
+  return {
+    uri,
+    name,
+    ...(title ? { title } : {}),
+    ...(description ? { description } : {}),
+    ...(mimeType ? { mimeType } : {}),
+    ...(size === undefined ? {} : { size }),
+  };
+}
+
+function normalizeCodexMcpResourceTemplate(
+  template: CodexMcpServerStatus["resourceTemplates"][number],
+): McpRuntimeResourceTemplate | undefined {
+  const uriTemplate = boundedText(template.uriTemplate, 8_192);
+  const name = boundedText(template.name, 512);
+  if (!uriTemplate || !name) return undefined;
+  const title = boundedText(template.title, 512);
+  const description = boundedText(template.description, 65_536);
+  const mimeType = boundedText(template.mimeType, 512);
+  return {
+    uriTemplate,
+    name,
+    ...(title ? { title } : {}),
+    ...(description ? { description } : {}),
+    ...(mimeType ? { mimeType } : {}),
+  };
+}
+
+function codexMcpAvailableActions(
+  status: CodexMcpServerStatus,
+  source: McpRuntimeServer["source"],
+): ReadonlyArray<McpRuntimeAction> {
+  const actions: Array<McpRuntimeAction> = ["refresh", "reconnect"];
+  if (status.authStatus === "notLoggedIn" && source !== "t3-built-in") {
+    actions.push("authorize");
+  }
+  return actions;
+}
+
+function normalizeCodexMcpServer(input: {
+  readonly status: CodexMcpServerStatus;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly threadId: ThreadId;
+  readonly runtimeSessionId: RuntimeSessionId;
+  readonly observedAt: IsoDateTime;
+  readonly managedMcpServers: ReadonlyMap<string, McpServerDefinition>;
+  readonly builtInMcpExpected: boolean;
+}): McpRuntimeServer {
+  const managedServer = input.managedMcpServers.get(input.status.name);
+  const source =
+    input.status.name === "t3-code" && input.builtInMcpExpected
+      ? ("t3-built-in" as const)
+      : managedServer
+        ? ("t3-managed" as const)
+        : ("provider-native" as const);
+  const authRequired = input.status.authStatus === "notLoggedIn";
+  const advertisedName = boundedText(input.status.serverInfo?.name, 512);
+  const advertisedVersion = boundedText(input.status.serverInfo?.version, 512);
+  const providerKey = codexMcpProviderKey(input.status.name);
+  return {
+    ...(managedServer ? { serverId: managedServer.id } : {}),
+    providerKey,
+    source,
+    providerInstanceId: input.providerInstanceId,
+    threadId: input.threadId,
+    runtimeSessionId: input.runtimeSessionId,
+    name:
+      managedServer?.name ??
+      boundedText(input.status.serverInfo?.title, 128) ??
+      boundedText(input.status.name, 128) ??
+      "Unknown MCP server",
+    ...(managedServer ? { transport: managedServer.transport } : {}),
+    state: authRequired ? "auth-required" : "connected",
+    statusSource: "provider-query",
+    observedAt: input.observedAt,
+    authState: authRequired
+      ? "required"
+      : input.status.authStatus === "unsupported"
+        ? "unsupported"
+        : "authenticated",
+    availableActions: codexMcpAvailableActions(input.status, source),
+    reportsTools: true,
+    ...(advertisedName
+      ? {
+          serverInfo: {
+            name: advertisedName,
+            ...(advertisedVersion ? { version: advertisedVersion } : {}),
+          },
+        }
+      : {}),
+    toolCount: Object.keys(input.status.tools).length,
+    resourceCount: input.status.resources.length,
+    templateCount: input.status.resourceTemplates.length,
+    configDrift: "none",
+  };
+}
+
+function findCodexMcpStatus(
+  statuses: ReadonlyArray<CodexMcpServerStatus>,
+  providerKey: McpRuntimeServerKey,
+): CodexMcpServerStatus | undefined {
+  return statuses.find((status) => codexMcpProviderKey(status.name) === providerKey);
+}
+
+function applyCodexMcpStartupObservation(
+  server: McpRuntimeServer,
+  observation: CodexMcpStartupObservation | undefined,
+): McpRuntimeServer {
+  if (!observation) {
+    return server;
+  }
+  if (observation.state === "ready") {
+    return {
+      ...server,
+      state: "connected",
+      statusSource: "provider-event",
+      observedAt: observation.observedAt,
+    };
+  }
+  if (observation.state === "starting") {
+    return {
+      ...server,
+      state: "starting",
+      statusSource: "provider-event",
+      observedAt: observation.observedAt,
+    };
+  }
+
+  const authorizationRequired = observation.failureReason === "reauthenticationRequired";
+  const issueMessage =
+    observation.error ??
+    (authorizationRequired
+      ? "Codex requires this MCP server to be authorized again."
+      : observation.state === "cancelled"
+        ? "Codex cancelled this MCP server during startup."
+        : "Codex could not start this MCP server.");
+  const availableActions = Array.from(
+    new Set<McpRuntimeAction>([
+      ...server.availableActions,
+      ...(authorizationRequired && server.source !== "t3-built-in" ? ["authorize" as const] : []),
+    ]),
+  );
+  return {
+    ...server,
+    state: authorizationRequired ? "auth-required" : "failed",
+    statusSource: "provider-event",
+    observedAt: observation.observedAt,
+    authState: authorizationRequired ? "required" : server.authState,
+    availableActions,
+    issue: {
+      code:
+        observation.failureReason ??
+        (observation.state === "cancelled" ? "startup-cancelled" : "startup-failed"),
+      message: issueMessage,
+    },
+  };
+}
+
+function normalizeExpectedCodexMcpServer(input: {
+  readonly providerKey: string;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly threadId: ThreadId;
+  readonly runtimeSessionId: RuntimeSessionId;
+  readonly observedAt: IsoDateTime;
+  readonly managedMcpServers: ReadonlyMap<string, McpServerDefinition>;
+  readonly builtIn: boolean;
+}): McpRuntimeServer {
+  const managedServer = input.managedMcpServers.get(input.providerKey);
+  return {
+    ...(managedServer ? { serverId: managedServer.id } : {}),
+    providerKey: codexMcpProviderKey(input.providerKey),
+    source: input.builtIn ? "t3-built-in" : managedServer ? "t3-managed" : "provider-native",
+    providerInstanceId: input.providerInstanceId,
+    threadId: input.threadId,
+    runtimeSessionId: input.runtimeSessionId,
+    name:
+      managedServer?.name ??
+      (input.builtIn
+        ? "T3 Code System Server"
+        : (boundedText(input.providerKey, 128) ?? "Unknown MCP server")),
+    ...(managedServer ? { transport: managedServer.transport } : {}),
+    state: "unknown",
+    statusSource: "configuration",
+    observedAt: input.observedAt,
+    authState: "unknown",
+    availableActions: ["refresh", "reconnect"],
+    reportsTools: true,
+    configDrift: "none",
+  };
+}
+
+function normalizeCodexMcpSnapshot(input: {
+  readonly statuses: ReadonlyArray<CodexMcpServerStatus>;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly threadId: ThreadId;
+  readonly runtimeSessionId: RuntimeSessionId;
+  readonly observedAt: IsoDateTime;
+  readonly managedMcpServers: ReadonlyMap<string, McpServerDefinition>;
+  readonly startupStatuses: ReadonlyMap<string, CodexMcpStartupObservation>;
+  readonly builtInMcpExpected: boolean;
+}): ReadonlyArray<McpRuntimeServer> {
+  const normalized = new Map<string, McpRuntimeServer>();
+  for (const status of input.statuses) {
+    const server = normalizeCodexMcpServer({
+      status,
+      providerInstanceId: input.providerInstanceId,
+      threadId: input.threadId,
+      runtimeSessionId: input.runtimeSessionId,
+      observedAt: input.observedAt,
+      managedMcpServers: input.managedMcpServers,
+      builtInMcpExpected: input.builtInMcpExpected,
+    });
+    normalized.set(
+      status.name,
+      applyCodexMcpStartupObservation(server, input.startupStatuses.get(status.name)),
+    );
+  }
+
+  const expectedKeys = new Set([
+    ...input.managedMcpServers.keys(),
+    ...input.startupStatuses.keys(),
+    ...(input.builtInMcpExpected ? ["t3-code"] : []),
+  ]);
+  for (const providerKey of expectedKeys) {
+    if (normalized.has(providerKey)) {
+      continue;
+    }
+    const server = normalizeExpectedCodexMcpServer({
+      providerKey,
+      providerInstanceId: input.providerInstanceId,
+      threadId: input.threadId,
+      runtimeSessionId: input.runtimeSessionId,
+      observedAt: input.observedAt,
+      managedMcpServers: input.managedMcpServers,
+      builtIn: providerKey === "t3-code",
+    });
+    normalized.set(
+      providerKey,
+      applyCodexMcpStartupObservation(server, input.startupStatuses.get(providerKey)),
+    );
+  }
+  return Array.from(normalized.values());
+}
+
+function observeCodexMcpEvent(
+  event: ProviderEvent,
+  startupStatuses: Map<string, CodexMcpStartupObservation>,
+): void {
+  if (event.method === "mcpServer/startupStatus/updated") {
+    const payload = readPayload(
+      EffectCodexSchema.V2McpServerStatusUpdatedNotification,
+      event.payload,
+    );
+    if (!payload) {
+      return;
+    }
+    startupStatuses.set(payload.name, {
+      state: payload.status,
+      observedAt: event.createdAt,
+      ...(payload.failureReason ? { failureReason: payload.failureReason } : {}),
+      ...(payload.error ? { error: sanitizeMcpRuntimeText(payload.error) } : {}),
+    });
+    return;
+  }
+  if (event.method !== "mcpServer/oauthLogin/completed") {
+    return;
+  }
+  const payload = readPayload(
+    EffectCodexSchema.V2McpServerOauthLoginCompletedNotification,
+    event.payload,
+  );
+  if (payload?.success === true) {
+    startupStatuses.delete(payload.name);
+  }
+}
+
+export function sanitizeCodexMcpNativeEvent(event: ProviderEvent): ProviderEvent {
+  if (event.method === "mcpServer/startupStatus/updated") {
+    const payload = readPayload(
+      EffectCodexSchema.V2McpServerStatusUpdatedNotification,
+      event.payload,
+    );
+    return {
+      ...event,
+      payload: payload
+        ? {
+            threadId: payload.threadId,
+            name: payload.name,
+            status: payload.status,
+            ...(payload.failureReason ? { failureReason: payload.failureReason } : {}),
+            ...(payload.error ? { error: sanitizeMcpRuntimeText(payload.error) } : {}),
+          }
+        : { redacted: true },
+    };
+  }
+  if (event.method === "mcpServer/oauthLogin/completed") {
+    const payload = readPayload(
+      EffectCodexSchema.V2McpServerOauthLoginCompletedNotification,
+      event.payload,
+    );
+    return {
+      ...event,
+      payload: payload
+        ? {
+            threadId: payload.threadId,
+            name: payload.name,
+            success: payload.success,
+            ...(payload.error ? { error: sanitizeMcpRuntimeText(payload.error) } : {}),
+          }
+        : { redacted: true },
+    };
+  }
+  return event;
 }
 
 const FATAL_CODEX_STDERR_SNIPPETS = ["failed to connect to websocket"];
@@ -1598,6 +1994,7 @@ function mapCanonicalRuntimeEvents(
     if (!payload) {
       return [];
     }
+    const error = payload.error ? sanitizeMcpRuntimeText(payload.error) : undefined;
     return [
       {
         type: "mcp.oauth.completed",
@@ -1605,7 +2002,7 @@ function mapCanonicalRuntimeEvents(
         payload: {
           success: payload.success,
           name: payload.name,
-          ...(trimText(payload.error) ? { error: trimText(payload.error) } : {}),
+          ...(error ? { error } : {}),
         },
       },
     ];
@@ -1619,6 +2016,7 @@ function mapCanonicalRuntimeEvents(
     if (!payload) {
       return [];
     }
+    const error = payload.error ? sanitizeMcpRuntimeText(payload.error) : undefined;
     return [
       {
         type: "mcp.status.updated",
@@ -1627,7 +2025,8 @@ function mapCanonicalRuntimeEvents(
           status: {
             name: payload.name,
             status: payload.status,
-            ...(trimText(payload.error) ? { error: trimText(payload.error) } : {}),
+            ...(error ? { error } : {}),
+            ...(payload.failureReason ? { failureReason: payload.failureReason } : {}),
           },
         },
       },
@@ -1883,11 +2282,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           input.modelSelection?.instanceId === boundInstanceId
             ? getCodexServiceTierOptionValue(input.modelSelection)
             : undefined;
+        const cwd = input.cwd ?? process.cwd();
+        const resolvedMcpServers = options?.resolveMcpServers
+          ? yield* options.resolveMcpServers({ cwd })
+          : [];
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
-          cwd: input.cwd ?? process.cwd(),
+          cwd,
           binaryPath: codexConfig.binaryPath,
           launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
           ...(options?.environment ? { environment: options.environment } : {}),
@@ -1914,9 +2317,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                 ],
               }
             : {}),
-          ...(options?.resolveMcpServers
-            ? { mcpServers: yield* options.resolveMcpServers({ cwd: input.cwd ?? process.cwd() }) }
-            : {}),
+          ...(options?.resolveMcpServers ? { mcpServers: resolvedMcpServers } : {}),
         };
         const sessionScope = yield* Scope.make("sequential");
         let sessionScopeTransferred = false;
@@ -1939,10 +2340,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ),
         );
         const mapRuntimeEvent = makeCodexRuntimeEventMapper(runtimeInput.resumeCursor?.threadId);
+        const mcpStartupStatuses = new Map<string, CodexMcpStartupObservation>();
 
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
-            yield* writeNativeEvent(event);
+            yield* writeNativeEvent(sanitizeCodexMcpNativeEvent(event));
+            observeCodexMcpEvent(event, mcpStartupStatuses);
             const runtimeEvents = mapRuntimeEvent(event, event.threadId);
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
@@ -1984,9 +2387,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         sessions.set(input.threadId, {
           threadId: input.threadId,
           runtimeSessionId,
+          cwd,
           scope: sessionScope,
           runtime,
           eventFiber,
+          managedMcpServers: codexManagedMcpServers(resolvedMcpServers),
+          mcpStartupStatuses,
+          builtInMcpExpected: mcpSession !== undefined,
           stopped: false,
         });
         sessionScopeTransferred = true;
@@ -2073,6 +2480,208 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       });
     }
     return session;
+  });
+
+  const requireMcpRuntimeSession = Effect.fn("requireMcpRuntimeSession")(function* (input: {
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly threadId: ThreadId;
+    readonly runtimeSessionId: RuntimeSessionId;
+  }) {
+    const session = sessions.get(input.threadId);
+    if (
+      input.providerInstanceId !== boundInstanceId ||
+      !session ||
+      session.stopped ||
+      session.runtimeSessionId !== input.runtimeSessionId
+    ) {
+      return yield* new ProviderAdapterSessionNotFoundError({
+        provider: PROVIDER,
+        threadId: input.threadId,
+      });
+    }
+    return session;
+  });
+
+  const readMcpStatuses = (
+    session: CodexAdapterSessionContext,
+    detail: EffectCodexSchema.V2ListMcpServerStatusParams__McpServerStatusDetail,
+  ) =>
+    session.runtime
+      .listMcpServerStatuses(detail)
+      .pipe(
+        Effect.mapError((cause) =>
+          mapCodexRuntimeError(session.threadId, "mcpServerStatus/list", cause),
+        ),
+      );
+
+  const reloadMcpStatuses = (session: CodexAdapterSessionContext) => {
+    const previousStatuses = new Map(session.mcpStartupStatuses);
+    return Effect.sync(() => session.mcpStartupStatuses.clear()).pipe(
+      Effect.andThen(session.runtime.reloadMcpServers),
+      Effect.tapError(() =>
+        Effect.sync(() => {
+          for (const [providerKey, status] of previousStatuses) {
+            if (!session.mcpStartupStatuses.has(providerKey)) {
+              session.mcpStartupStatuses.set(providerKey, status);
+            }
+          }
+        }),
+      ),
+      Effect.mapError((cause) =>
+        mapCodexRuntimeError(session.threadId, "config/mcpServer/reload", cause),
+      ),
+    );
+  };
+
+  const getMcpRuntimeSnapshot: NonNullable<CodexAdapterShape["mcpRuntime"]>["getSnapshot"] =
+    Effect.fn("CodexAdapter.getMcpRuntimeSnapshot")(function* (input) {
+      const session = yield* requireMcpRuntimeSession(input);
+      const statuses = yield* readMcpStatuses(session, "toolsAndAuthOnly");
+      const observedAt = DateTime.formatIso(yield* DateTime.now);
+      return normalizeCodexMcpSnapshot({
+        statuses,
+        providerInstanceId: boundInstanceId,
+        threadId: session.threadId,
+        runtimeSessionId: session.runtimeSessionId,
+        observedAt,
+        managedMcpServers: session.managedMcpServers,
+        startupStatuses: session.mcpStartupStatuses,
+        builtInMcpExpected: session.builtInMcpExpected,
+      });
+    });
+
+  const getMcpRuntimeServerDetails: NonNullable<
+    NonNullable<CodexAdapterShape["mcpRuntime"]>["getServerDetails"]
+  > = Effect.fn("CodexAdapter.getMcpRuntimeServerDetails")(function* (input) {
+    const session = yield* requireMcpRuntimeSession(input);
+    const statuses = yield* readMcpStatuses(session, "full");
+    const providerKey = codexMcpProviderKey(input.providerKey);
+    const status = findCodexMcpStatus(statuses, providerKey);
+    if (!status) {
+      return yield* new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "mcpServerStatus/list",
+        detail: `Codex MCP server '${input.providerKey}' is not part of the selected runtime.`,
+      });
+    }
+    const observedAt = DateTime.formatIso(yield* DateTime.now);
+    const server = applyCodexMcpStartupObservation(
+      normalizeCodexMcpServer({
+        status,
+        providerInstanceId: boundInstanceId,
+        threadId: session.threadId,
+        runtimeSessionId: session.runtimeSessionId,
+        observedAt,
+        managedMcpServers: session.managedMcpServers,
+        builtInMcpExpected: session.builtInMcpExpected,
+      }),
+      session.mcpStartupStatuses.get(status.name),
+    );
+    const tools = Object.values(status.tools).flatMap((tool) => {
+      const normalized = normalizeCodexMcpTool(tool);
+      return normalized ? [normalized] : [];
+    });
+    const resources = status.resources.flatMap((resource) => {
+      const normalized = normalizeCodexMcpResource(resource);
+      return normalized ? [normalized] : [];
+    });
+    const templates = status.resourceTemplates.flatMap((template) => {
+      const normalized = normalizeCodexMcpResourceTemplate(template);
+      return normalized ? [normalized] : [];
+    });
+    return { server, tools, resources, templates };
+  });
+
+  const runMcpRuntimeAction: NonNullable<
+    NonNullable<CodexAdapterShape["mcpRuntime"]>["runAction"]
+  > = Effect.fn("CodexAdapter.runMcpRuntimeAction")(function* (input) {
+    const session = yield* requireMcpRuntimeSession(input);
+    const statuses = yield* readMcpStatuses(session, "toolsAndAuthOnly");
+    const providerKey = codexMcpProviderKey(input.providerKey);
+    const status = findCodexMcpStatus(statuses, providerKey);
+    if (!status) {
+      return yield* new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "mcpServerStatus/list",
+        detail: `Codex MCP server '${input.providerKey}' is not part of the selected runtime.`,
+      });
+    }
+
+    if (input.action === "authorize") {
+      const source =
+        status.name === "t3-code" && session.builtInMcpExpected
+          ? ("t3-built-in" as const)
+          : session.managedMcpServers.has(status.name)
+            ? ("t3-managed" as const)
+            : ("provider-native" as const);
+      if (!codexMcpAvailableActions(status, source).includes("authorize")) {
+        return {
+          accepted: false,
+          action: input.action,
+          providerKey,
+          message: "Codex does not currently report an OAuth authorization requirement.",
+        };
+      }
+      const authorization = yield* session.runtime
+        .startMcpOauth({ serverName: status.name })
+        .pipe(
+          Effect.mapError((cause) =>
+            mapCodexRuntimeError(session.threadId, "mcpServer/oauth/login", cause),
+          ),
+        );
+      return {
+        accepted: true,
+        action: input.action,
+        providerKey,
+        authorizationUrl: authorization.authorizationUrl,
+      };
+    }
+
+    yield* reloadMcpStatuses(session);
+    const refreshedStatuses = yield* readMcpStatuses(session, "toolsAndAuthOnly");
+    if (!findCodexMcpStatus(refreshedStatuses, providerKey)) {
+      return yield* new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "config/mcpServer/reload",
+        detail: `Codex MCP server '${input.providerKey}' was not reported after reload.`,
+      });
+    }
+    return {
+      accepted: true,
+      action: input.action,
+      providerKey,
+      message:
+        input.action === "reconnect"
+          ? "Codex reloaded and rediscovered this MCP server."
+          : "Codex refreshed this MCP server.",
+    };
+  });
+
+  const applyMcpConfiguration: NonNullable<
+    NonNullable<CodexAdapterShape["mcpRuntime"]>["applyConfiguration"]
+  > = Effect.fn("CodexAdapter.applyMcpConfiguration")(function* (input) {
+    const session = yield* requireMcpRuntimeSession(input);
+    const desiredServers = options?.resolveMcpServers
+      ? yield* options.resolveMcpServers({ cwd: session.cwd })
+      : Array.from(session.managedMcpServers.values());
+    const desiredManagedServers = codexManagedMcpServers(desiredServers);
+    const previouslyManagedKeys = new Set(session.managedMcpServers.keys());
+
+    yield* reloadMcpStatuses(session);
+    const statuses = yield* readMcpStatuses(session, "toolsAndAuthOnly");
+    const observedKeys = new Set(statuses.map((status) => status.name));
+    const missingKeys = Array.from(desiredManagedServers.keys()).filter(
+      (providerKey) => !observedKeys.has(providerKey),
+    );
+    const lingeringKeys = Array.from(previouslyManagedKeys).filter(
+      (providerKey) => !desiredManagedServers.has(providerKey) && observedKeys.has(providerKey),
+    );
+
+    if (missingKeys.length > 0 || lingeringKeys.length > 0) {
+      return "pending-next-session";
+    }
+    session.managedMcpServers = desiredManagedServers;
+    return "applied";
   });
 
   const interruptTurn: CodexAdapterShape["interruptTurn"] = (
@@ -2256,6 +2865,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     capabilities: {
       sessionModelSwitch: "in-session",
       mcp: "nativeConfig",
+    },
+    mcpRuntime: {
+      getSnapshot: getMcpRuntimeSnapshot,
+      getServerDetails: getMcpRuntimeServerDetails,
+      runAction: runMcpRuntimeAction,
+      applyConfiguration: applyMcpConfiguration,
     },
     startSession,
     sendTurn,

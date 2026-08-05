@@ -6,6 +6,76 @@ import { ProviderRuntimeEvent } from "./providerRuntime.ts";
 const decodeRuntimeEvent = Schema.decodeUnknownSync(ProviderRuntimeEvent);
 
 describe("ProviderRuntimeEvent", () => {
+  it("decodes typed MCP startup failures that require reauthentication", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "mcp.status.updated",
+      eventId: "event-mcp-status-1",
+      provider: "codex",
+      createdAt: "2026-08-02T12:00:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        status: {
+          name: "notion",
+          status: "failed",
+          error: "Authorization required",
+          failureReason: "reauthenticationRequired",
+        },
+      },
+    });
+
+    expect(parsed.type).toBe("mcp.status.updated");
+    if (parsed.type !== "mcp.status.updated") {
+      throw new Error("expected mcp.status.updated");
+    }
+    expect(parsed.payload.status).toEqual({
+      name: "notion",
+      status: "failed",
+      error: "Authorization required",
+      failureReason: "reauthenticationRequired",
+    });
+  });
+
+  it("rejects unknown MCP startup states and failure reasons", () => {
+    const event = {
+      type: "mcp.status.updated",
+      eventId: "event-mcp-status-invalid",
+      provider: "codex",
+      createdAt: "2026-08-02T12:00:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        status: {
+          name: "notion",
+          status: "offline",
+          failureReason: "tokenExpired",
+        },
+      },
+    };
+
+    expect(() => decodeRuntimeEvent(event)).toThrow();
+  });
+
+  it("retains typed MCP OAuth completion events", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "mcp.oauth.completed",
+      eventId: "event-mcp-oauth-1",
+      provider: "codex",
+      createdAt: "2026-08-02T12:01:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        success: false,
+        name: "notion",
+        error: "Authorization was cancelled",
+      },
+    });
+
+    expect(parsed.type).toBe("mcp.oauth.completed");
+    if (parsed.type !== "mcp.oauth.completed") {
+      throw new Error("expected mcp.oauth.completed");
+    }
+    expect(parsed.payload.name).toBe("notion");
+    expect(parsed.payload.error).toBe("Authorization was cancelled");
+  });
+
   it("decodes a discovered nested subagent with provider routing metadata", () => {
     const parsed = decodeRuntimeEvent({
       type: "subagent.discovered",

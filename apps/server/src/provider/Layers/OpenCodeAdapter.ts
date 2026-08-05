@@ -1,5 +1,9 @@
 import {
   EventId,
+  McpRuntimeServerKey,
+  McpServerId,
+  McpServerName,
+  type McpRuntimeServer,
   type OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -24,13 +28,20 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import type { OpencodeClient, Part, PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2";
+import type {
+  McpStatus,
+  OpencodeClient,
+  Part,
+  PermissionRequest,
+  QuestionRequest,
+} from "@opencode-ai/sdk/v2";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { OpenCodeMcpServerConfig } from "../../mcp/McpConfigEngine.ts";
+import { sanitizeMcpRuntimeText } from "../../mcp/McpRuntimeSanitizer.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
   ProviderAdapterProcessError,
@@ -40,6 +51,7 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { type OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
+import type { ProviderMcpRuntimeTarget } from "../Services/ProviderAdapter.ts";
 import {
   buildOpenCodePermissionRules,
   OpenCodeRuntime,
@@ -214,6 +226,8 @@ interface OpenCodeSessionContext {
   readonly server: OpenCodeServerConnection;
   readonly directory: string;
   readonly openCodeSessionId: string;
+  managedMcpServers: Record<string, OpenCodeMcpServerConfig>;
+  readonly builtInMcpExpected: boolean;
   readonly pendingPermissions: Map<string, PermissionRequest>;
   readonly pendingQuestions: Map<string, QuestionRequest>;
   readonly messageRoleById: Map<string, "user" | "assistant">;
@@ -254,6 +268,169 @@ export interface OpenCodeAdapterLiveOptions {
 }
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+const MCP_PROVIDER_KEY_MAX_LENGTH = 512;
+const MCP_SERVER_NAME_MAX_LENGTH = 128;
+const MCP_MANAGED_KEY_PREFIX = "t3-managed:";
+
+function boundedMcpText(value: string, maximumLength: number, fallback: string): string {
+  const trimmed = value.trim();
+  return (trimmed.length > 0 ? trimmed : fallback).slice(0, maximumLength);
+}
+
+function managedMcpServerId(providerKey: string): McpServerId | undefined {
+  const candidate = providerKey.startsWith(MCP_MANAGED_KEY_PREFIX)
+    ? providerKey.slice(MCP_MANAGED_KEY_PREFIX.length)
+    : providerKey;
+  return /^[a-zA-Z][a-zA-Z0-9_-]{0,95}$/.test(candidate) ? McpServerId.make(candidate) : undefined;
+}
+
+function openCodeMcpTransport(
+  config: OpenCodeMcpServerConfig | undefined,
+): McpRuntimeServer["transport"] | undefined {
+  if (!config) return undefined;
+  return config.type === "local" ? "stdio" : "http";
+}
+
+function openCodeMcpState(status: McpStatus): McpRuntimeServer["state"] {
+  switch (status.status) {
+    case "connected":
+      return "connected";
+    case "disabled":
+      return "disabled";
+    case "failed":
+      return "failed";
+    case "needs_auth":
+      return "auth-required";
+    case "needs_client_registration":
+      return "setup-required";
+  }
+}
+
+function openCodeMcpIssue(status: McpStatus): McpRuntimeServer["issue"] | undefined {
+  switch (status.status) {
+    case "failed":
+      return {
+        code: "provider-error",
+        message: sanitizeMcpRuntimeText(status.error),
+      };
+    case "needs_auth":
+      return {
+        code: "needs-auth",
+        message: "Authorization required",
+      };
+    case "needs_client_registration":
+      return {
+        code: "needs-client-registration",
+        message: sanitizeMcpRuntimeText(status.error),
+      };
+    default:
+      return undefined;
+  }
+}
+
+function openCodeMcpActions(status: McpStatus): McpRuntimeServer["availableActions"] {
+  switch (status.status) {
+    case "needs_auth":
+    case "needs_client_registration":
+      return ["refresh", "reconnect", "authorize"];
+    default:
+      return ["refresh", "reconnect"];
+  }
+}
+
+function openCodeMcpAuthState(status: McpStatus): McpRuntimeServer["authState"] {
+  switch (status.status) {
+    case "connected":
+      return "authenticated";
+    case "needs_auth":
+      return "required";
+    case "disabled":
+      return "none";
+    default:
+      return "unknown";
+  }
+}
+
+interface OpenCodeMcpRuntimeMetadata {
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly threadId: ThreadId;
+  readonly runtimeSessionId: RuntimeSessionId;
+  readonly observedAt: string;
+  readonly managedMcpServers: Readonly<Record<string, OpenCodeMcpServerConfig>>;
+  readonly builtInMcpExpected: boolean;
+}
+
+function normalizeOpenCodeMcpServer(
+  providerKey: string,
+  status: McpStatus,
+  metadata: OpenCodeMcpRuntimeMetadata,
+): McpRuntimeServer {
+  const managedConfig = Object.hasOwn(metadata.managedMcpServers, providerKey)
+    ? metadata.managedMcpServers[providerKey]
+    : undefined;
+  const serverId = managedConfig ? managedMcpServerId(providerKey) : undefined;
+  const source =
+    providerKey === "t3-code" && metadata.builtInMcpExpected
+      ? "t3-built-in"
+      : managedConfig
+        ? "t3-managed"
+        : "provider-native";
+  const transport = openCodeMcpTransport(managedConfig);
+  const issue = openCodeMcpIssue(status);
+  return {
+    ...(serverId ? { serverId } : {}),
+    providerKey: McpRuntimeServerKey.make(
+      boundedMcpText(providerKey, MCP_PROVIDER_KEY_MAX_LENGTH, "unknown-server"),
+    ),
+    source,
+    providerInstanceId: metadata.providerInstanceId,
+    threadId: metadata.threadId,
+    runtimeSessionId: metadata.runtimeSessionId,
+    name: McpServerName.make(
+      boundedMcpText(providerKey, MCP_SERVER_NAME_MAX_LENGTH, "Unknown MCP server"),
+    ),
+    ...(transport ? { transport } : {}),
+    state: openCodeMcpState(status),
+    statusSource: "provider-query",
+    observedAt: metadata.observedAt,
+    authState: openCodeMcpAuthState(status),
+    availableActions: openCodeMcpActions(status),
+    reportsTools: false,
+    ...(issue ? { issue } : {}),
+    configDrift: "none",
+  };
+}
+
+function unreportedManagedOpenCodeMcpServer(
+  providerKey: string,
+  metadata: OpenCodeMcpRuntimeMetadata,
+): McpRuntimeServer {
+  const managedConfig = metadata.managedMcpServers[providerKey];
+  const serverId = managedMcpServerId(providerKey);
+  const transport = openCodeMcpTransport(managedConfig);
+  return {
+    ...(serverId ? { serverId } : {}),
+    providerKey: McpRuntimeServerKey.make(
+      boundedMcpText(providerKey, MCP_PROVIDER_KEY_MAX_LENGTH, "unknown-server"),
+    ),
+    source: "t3-managed",
+    providerInstanceId: metadata.providerInstanceId,
+    threadId: metadata.threadId,
+    runtimeSessionId: metadata.runtimeSessionId,
+    name: McpServerName.make(
+      boundedMcpText(providerKey, MCP_SERVER_NAME_MAX_LENGTH, "Unknown MCP server"),
+    ),
+    ...(transport ? { transport } : {}),
+    state: managedConfig?.enabled === false ? "disabled" : "unknown",
+    statusSource: "configuration",
+    observedAt: metadata.observedAt,
+    authState: "unknown",
+    availableActions: ["refresh", "reconnect"],
+    reportsTools: false,
+    configDrift: "none",
+  };
+}
 
 /**
  * Map a tagged OpenCodeRuntimeError produced by {@link runOpenCodeSdk} into
@@ -584,6 +761,12 @@ export function makeOpenCodeAdapter(
   return Effect.gen(function* () {
     const provider = options?.provider ?? OPENCODE_PROVIDER;
     const mapRequestError = (cause: OpenCodeRuntimeError) => toRequestError(provider, cause);
+    const mapMcpRequestError = (cause: OpenCodeRuntimeError) =>
+      new ProviderAdapterRequestError({
+        provider,
+        method: cause.operation,
+        detail: sanitizeMcpRuntimeText(cause.detail),
+      });
     const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("opencode");
     const serverConfig = yield* ServerConfig;
     const openCodeRuntime = yield* OpenCodeRuntime;
@@ -634,12 +817,184 @@ export function makeOpenCodeAdapter(
             Effect.catch((cause) =>
               Effect.logWarning("Failed to register MCP server with external OpenCode runtime", {
                 name,
-                detail: cause.detail,
+                detail: sanitizeMcpRuntimeText(cause.detail),
               }),
             ),
           ),
         { concurrency: "unbounded", discard: true },
       );
+
+    const ensureMcpRuntimeContext = Effect.fn("ensureOpenCodeMcpRuntimeContext")(function* (
+      input: ProviderMcpRuntimeTarget,
+    ) {
+      if (input.providerInstanceId !== boundInstanceId) {
+        return yield* new ProviderAdapterValidationError({
+          provider,
+          operation: "mcpRuntime",
+          issue: `MCP runtime target belongs to provider instance '${input.providerInstanceId}', not '${boundInstanceId}'.`,
+        });
+      }
+      const context = yield* ensureSessionContext(provider, sessions, input.threadId);
+      if (context.session.runtimeSessionId !== input.runtimeSessionId) {
+        return yield* new ProviderAdapterValidationError({
+          provider,
+          operation: "mcpRuntime",
+          issue: `MCP runtime session '${input.runtimeSessionId}' has been replaced.`,
+        });
+      }
+      return context;
+    });
+
+    const readMcpStatus = (context: OpenCodeSessionContext) =>
+      runOpenCodeSdk("mcp.status", () =>
+        context.client.mcp.status({ directory: context.directory }),
+      ).pipe(
+        Effect.map((response) => response.data ?? {}),
+        Effect.mapError(mapMcpRequestError),
+      );
+
+    const getMcpSnapshot: NonNullable<OpenCodeAdapterShape["mcpRuntime"]>["getSnapshot"] =
+      Effect.fn("getOpenCodeMcpSnapshot")(function* (input) {
+        const context = yield* ensureMcpRuntimeContext(input);
+        const statuses = yield* readMcpStatus(context);
+        const observedAt = yield* nowIso;
+        const metadata: OpenCodeMcpRuntimeMetadata = {
+          providerInstanceId: boundInstanceId,
+          threadId: context.session.threadId,
+          runtimeSessionId: input.runtimeSessionId,
+          observedAt,
+          managedMcpServers: context.managedMcpServers,
+          builtInMcpExpected: context.builtInMcpExpected,
+        };
+        const reported = Object.entries(statuses).map(([providerKey, status]) =>
+          normalizeOpenCodeMcpServer(providerKey, status, metadata),
+        );
+        const unreported = Object.keys(context.managedMcpServers).flatMap((providerKey) =>
+          Object.hasOwn(statuses, providerKey)
+            ? []
+            : [unreportedManagedOpenCodeMcpServer(providerKey, metadata)],
+        );
+        return [...reported, ...unreported];
+      });
+
+    const getMcpServerDetails: NonNullable<
+      NonNullable<OpenCodeAdapterShape["mcpRuntime"]>["getServerDetails"]
+    > = Effect.fn("getOpenCodeMcpServerDetails")(function* (input) {
+      const snapshot = yield* getMcpSnapshot(input);
+      const server = snapshot.find((candidate) => candidate.providerKey === input.providerKey);
+      if (!server) {
+        return yield* new ProviderAdapterValidationError({
+          provider,
+          operation: "mcpRuntime.getServerDetails",
+          issue: `OpenCode did not report MCP server '${input.providerKey}'.`,
+        });
+      }
+      return { server, tools: [], resources: [], templates: [] };
+    });
+
+    const runMcpAction: NonNullable<NonNullable<OpenCodeAdapterShape["mcpRuntime"]>["runAction"]> =
+      Effect.fn("runOpenCodeMcpAction")(function* (input) {
+        const context = yield* ensureMcpRuntimeContext(input);
+        let authorizationUrl: string | undefined;
+        switch (input.action) {
+          case "refresh":
+            break;
+          case "reconnect":
+            yield* runOpenCodeSdk("mcp.disconnect", () =>
+              context.client.mcp.disconnect({
+                directory: context.directory,
+                name: input.providerKey,
+              }),
+            ).pipe(Effect.mapError(mapMcpRequestError));
+            yield* runOpenCodeSdk("mcp.connect", () =>
+              context.client.mcp.connect({
+                directory: context.directory,
+                name: input.providerKey,
+              }),
+            ).pipe(Effect.mapError(mapMcpRequestError));
+            break;
+          case "authorize": {
+            const response = yield* runOpenCodeSdk("mcp.auth.start", () =>
+              context.client.mcp.auth.start({
+                directory: context.directory,
+                name: input.providerKey,
+              }),
+            ).pipe(Effect.mapError(mapMcpRequestError));
+            authorizationUrl = response.data?.authorizationUrl;
+            if (!authorizationUrl) {
+              return yield* new ProviderAdapterRequestError({
+                provider,
+                method: "mcp.auth.start",
+                detail: "OpenCode did not return an MCP authorization URL.",
+              });
+            }
+            break;
+          }
+        }
+        return {
+          accepted: true,
+          action: input.action,
+          providerKey: McpRuntimeServerKey.make(input.providerKey),
+          ...(authorizationUrl ? { authorizationUrl } : {}),
+        };
+      });
+
+    const applyMcpConfiguration: NonNullable<
+      NonNullable<OpenCodeAdapterShape["mcpRuntime"]>["applyConfiguration"]
+    > = Effect.fn("applyOpenCodeMcpConfiguration")(function* (input) {
+      const context = yield* ensureMcpRuntimeContext(input);
+      if (!options?.resolveMcpServers) return;
+
+      const nextServers = yield* options.resolveMcpServers({ cwd: context.directory });
+      const removedProviderKeys = Object.keys(context.managedMcpServers).filter(
+        (providerKey) => !Object.hasOwn(nextServers, providerKey),
+      );
+      yield* Effect.forEach(
+        removedProviderKeys,
+        (providerKey) =>
+          runOpenCodeSdk("mcp.disconnect", () =>
+            context.client.mcp.disconnect({
+              directory: context.directory,
+              name: providerKey,
+            }),
+          ).pipe(Effect.mapError(mapMcpRequestError)),
+        { discard: true },
+      );
+      yield* Effect.forEach(
+        Object.entries(nextServers),
+        ([providerKey, config]) =>
+          Effect.gen(function* () {
+            yield* runOpenCodeSdk("mcp.add", () =>
+              context.client.mcp.add({
+                directory: context.directory,
+                name: providerKey,
+                config,
+              }),
+            );
+            const operation = config.enabled === false ? "mcp.disconnect" : "mcp.connect";
+            yield* runOpenCodeSdk(operation, () =>
+              config.enabled === false
+                ? context.client.mcp.disconnect({
+                    directory: context.directory,
+                    name: providerKey,
+                  })
+                : context.client.mcp.connect({
+                    directory: context.directory,
+                    name: providerKey,
+                  }),
+            );
+          }).pipe(Effect.mapError(mapMcpRequestError)),
+        { discard: true },
+      );
+      context.managedMcpServers = nextServers;
+    });
+
+    const mcpRuntime: NonNullable<OpenCodeAdapterShape["mcpRuntime"]> = {
+      getSnapshot: getMcpSnapshot,
+      getServerDetails: getMcpServerDetails,
+      runAction: runMcpAction,
+      applyConfiguration: applyMcpConfiguration,
+    };
     const buildEventBase = (input: EventBaseInput) =>
       Effect.all({
         eventId: randomUUIDv4.pipe(Effect.map(EventId.make)),
@@ -1377,6 +1732,8 @@ export function makeOpenCodeAdapter(
                 sessionScope,
                 server,
                 client,
+                managedMcpServers: mcpServers,
+                builtInMcpExpected: Boolean(mcpSession && !server.external),
                 openCodeSession: resolved.openCodeSession,
                 created: resolved.created,
               };
@@ -1434,6 +1791,8 @@ export function makeOpenCodeAdapter(
           client: started.client,
           server: started.server,
           directory,
+          managedMcpServers: started.managedMcpServers,
+          builtInMcpExpected: started.builtInMcpExpected,
           openCodeSessionId: started.openCodeSession.id,
           pendingPermissions: new Map(),
           pendingQuestions: new Map(),
@@ -1808,6 +2167,7 @@ export function makeOpenCodeAdapter(
         sessionModelSwitch: "in-session",
         mcp: "sessionConfig",
       },
+      mcpRuntime,
       startSession,
       sendTurn,
       interruptTurn,

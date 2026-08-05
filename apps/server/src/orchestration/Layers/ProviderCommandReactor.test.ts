@@ -7,6 +7,7 @@ import {
   type ChatAttachment,
   ModelSelection,
   type OrchestrationSession,
+  type OrchestrationSubagentSummary,
   ProviderRuntimeEvent,
   ProviderSession,
   ProviderDriverKind,
@@ -21,6 +22,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  SubagentId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -170,6 +172,7 @@ describe("ProviderCommandReactor", () => {
         readonly turnId?: TurnId | null;
       };
     };
+    readonly projectedSubagentsBeforeStart?: ReadonlyArray<OrchestrationSubagentSummary>;
     readonly seedMatchingLiveProviderSession?: boolean;
     readonly startSessionEffect?: (
       session: ProviderSession,
@@ -602,6 +605,18 @@ describe("ProviderCommandReactor", () => {
       }
     }
 
+    for (const [index, subagent] of (input?.projectedSubagentsBeforeStart ?? []).entries()) {
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "thread.subagent.upsert",
+          commandId: CommandId.make(`cmd-subagent-before-reactor-start-${index}`),
+          threadId: ThreadId.make("thread-1"),
+          subagent,
+          createdAt: subagent.updatedAt,
+        }),
+      );
+    }
+
     scope = await Effect.runPromise(Scope.make("sequential"));
     const startReactor = () => Effect.runPromise(reactor.start().pipe(Scope.provide(scope!)));
     await startReactor();
@@ -656,6 +671,66 @@ describe("ProviderCommandReactor", () => {
       phase: "interrupting",
       requestedAt: "2025-12-31T23:59:30.000Z",
       forceAt: "2025-12-31T23:59:35.000Z",
+    };
+    const makeProjectedSubagent = (input: {
+      readonly id: string;
+      readonly status: OrchestrationSubagentSummary["status"];
+      readonly latestTurnState?: NonNullable<OrchestrationSubagentSummary["latestTurn"]>["state"];
+    }): OrchestrationSubagentSummary => {
+      const id = SubagentId.make(input.id);
+      const completedAt =
+        input.latestTurnState !== undefined && input.latestTurnState !== "running"
+          ? projectedAt
+          : null;
+      const statusSummary =
+        input.status === "starting"
+          ? "Starting"
+          : input.status === "waiting"
+            ? "Waiting"
+            : input.status === "running"
+              ? "Working"
+              : input.status === "completed"
+                ? "Completed"
+                : input.status === "interrupted"
+                  ? "Interrupted"
+                  : input.status === "error"
+                    ? "Error"
+                    : "Unavailable";
+      return {
+        id,
+        providerThreadId: input.id.replace("codex:", ""),
+        parentId: null,
+        path: `/root/${input.id}`,
+        name: input.id,
+        nickname: null,
+        role: null,
+        task: null,
+        model: null,
+        reasoningEffort: null,
+        depth: 1,
+        status: input.status,
+        statusMessage: null,
+        latestProgress: {
+          kind: `state.${input.status}`,
+          summary: statusSummary,
+          detail: null,
+          createdAt: projectedAt,
+        },
+        latestTurn:
+          input.latestTurnState === undefined
+            ? null
+            : {
+                turnId: asTurnId(`turn-${input.id}`),
+                state: input.latestTurnState,
+                requestedAt: projectedAt,
+                startedAt: projectedAt,
+                completedAt,
+                assistantMessageId: null,
+              },
+        startedAt: projectedAt,
+        updatedAt: projectedAt,
+        completedAt: input.status === "completed" ? projectedAt : null,
+      };
     };
 
     it("interrupts an orphaned running turn and finalizes its partial assistant output", async () => {
@@ -752,7 +827,95 @@ describe("ProviderCommandReactor", () => {
       expect(thread?.latestTurn).toBeNull();
     });
 
+    it("durably settles orphaned active subagents when no provider runtime survives startup", async () => {
+      const runningChild = makeProjectedSubagent({
+        id: "codex:running-child-before-restart",
+        status: "running",
+        latestTurnState: "running",
+      });
+      const terminalChildWithStaleStatus = makeProjectedSubagent({
+        id: "codex:completed-child-before-restart",
+        status: "running",
+        latestTurnState: "completed",
+      });
+      const completedSibling = makeProjectedSubagent({
+        id: "codex:already-completed-child",
+        status: "completed",
+        latestTurnState: "completed",
+      });
+      const harness = await createHarness({
+        projectedSessionBeforeStart: {
+          status: "ready",
+          runtimeSessionId,
+          updatedAt: projectedAt,
+        },
+        projectedSubagentsBeforeStart: [
+          runningChild,
+          terminalChildWithStaleStatus,
+          completedSibling,
+        ],
+      });
+
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      const repairedAt = thread?.subagents.find(
+        (subagent) => subagent.id === runningChild.id,
+      )?.completedAt;
+      expect(repairedAt).not.toBeNull();
+      expect(thread?.subagents.find((subagent) => subagent.id === runningChild.id)).toMatchObject({
+        status: "interrupted",
+        statusMessage: null,
+        latestProgress: {
+          kind: "state.interrupted",
+          summary: "Interrupted",
+          detail: null,
+          createdAt: repairedAt,
+        },
+        latestTurn: {
+          state: "interrupted",
+          completedAt: repairedAt,
+        },
+        completedAt: repairedAt,
+      });
+      expect(
+        thread?.subagents.find((subagent) => subagent.id === terminalChildWithStaleStatus.id),
+      ).toMatchObject({
+        status: "completed",
+        statusMessage: null,
+        latestProgress: {
+          kind: "state.completed",
+          summary: "Completed",
+          detail: null,
+          createdAt: projectedAt,
+        },
+        latestTurn: {
+          state: "completed",
+          completedAt: projectedAt,
+        },
+        completedAt: projectedAt,
+      });
+      expect(thread?.subagents.find((subagent) => subagent.id === completedSibling.id)).toEqual(
+        completedSibling,
+      );
+
+      const repairedIds = (await harness.readEvents())
+        .filter((event) => event.type === "thread.subagent-upserted")
+        .map((event) => event.payload.subagent.id);
+      expect(repairedIds.filter((id) => id === runningChild.id)).toHaveLength(2);
+      expect(repairedIds.filter((id) => id === terminalChildWithStaleStatus.id)).toHaveLength(2);
+      expect(repairedIds.filter((id) => id === completedSibling.id)).toHaveLength(1);
+
+      const eventCountAfterFirstReconciliation = (await harness.readEvents()).length;
+      await harness.startReactor();
+      expect((await harness.readEvents()).length).toBe(eventCountAfterFirstReconciliation);
+    });
+
     it("leaves a projected running session untouched when its provider runtime is live", async () => {
+      const runningChild = makeProjectedSubagent({
+        id: "codex:live-child-before-restart",
+        status: "running",
+        latestTurnState: "running",
+      });
       const harness = await createHarness({
         projectedSessionBeforeStart: {
           status: "running",
@@ -767,6 +930,7 @@ describe("ProviderCommandReactor", () => {
             attachments: partialAssistantAttachments,
           },
         },
+        projectedSubagentsBeforeStart: [runningChild],
         seedMatchingLiveProviderSession: true,
       });
 
@@ -793,6 +957,9 @@ describe("ProviderCommandReactor", () => {
         resumeCursor: { opaque: "resume-before-restart" },
       });
       expect(harness.stopSession).not.toHaveBeenCalled();
+      expect(thread?.subagents.find((subagent) => subagent.id === runningChild.id)).toEqual(
+        runningChild,
+      );
 
       const sessionSetEvents = (await harness.readEvents()).filter(
         (event) => event.type === "thread.session-set",
@@ -2973,7 +3140,7 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-user-input"),
@@ -3240,6 +3407,41 @@ describe("ProviderCommandReactor", () => {
           createdAt: now,
         });
 
+        const activeChildId = SubagentId.make("codex:child-before-explicit-stop");
+        yield* harness.engine.dispatch({
+          type: "thread.subagent.upsert",
+          commandId: CommandId.make("cmd-subagent-set-for-stop"),
+          threadId: ThreadId.make("thread-1"),
+          subagent: {
+            id: activeChildId,
+            providerThreadId: "child-before-explicit-stop",
+            parentId: null,
+            path: "/root/child-before-explicit-stop",
+            name: "child-before-explicit-stop",
+            nickname: null,
+            role: null,
+            task: null,
+            model: null,
+            reasoningEffort: null,
+            depth: 1,
+            status: "running",
+            statusMessage: null,
+            latestProgress: null,
+            latestTurn: {
+              turnId: asTurnId("child-turn-before-explicit-stop"),
+              state: "running",
+              requestedAt: now,
+              startedAt: now,
+              completedAt: null,
+              assistantMessageId: null,
+            },
+            startedAt: now,
+            updatedAt: now,
+            completedAt: null,
+          },
+          createdAt: now,
+        });
+
         yield* harness.engine.dispatch({
           type: "thread.session.stop",
           commandId: CommandId.make("cmd-session-stop"),
@@ -3247,7 +3449,22 @@ describe("ProviderCommandReactor", () => {
           createdAt: now,
         });
 
-        yield* Effect.promise(() => waitFor(() => harness.stopSession.mock.calls.length === 1));
+        yield* Effect.promise(() =>
+          waitFor(async () => {
+            if (harness.stopSession.mock.calls.length !== 1) {
+              return false;
+            }
+            const readModel = await harness.readModel();
+            const thread = readModel.threads.find(
+              (entry) => entry.id === ThreadId.make("thread-1"),
+            );
+            return (
+              thread?.session?.status === "stopped" &&
+              thread.subagents.find((subagent) => subagent.id === activeChildId)?.status ===
+                "interrupted"
+            );
+          }),
+        );
         const readModel = yield* Effect.promise(() => harness.readModel());
         const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
         expect(thread?.session).not.toBeNull();
@@ -3255,6 +3472,18 @@ describe("ProviderCommandReactor", () => {
         expect(thread?.session?.threadId).toBe("thread-1");
         expect(thread?.session?.providerInstanceId).toBe(ProviderInstanceId.make("codex_work"));
         expect(thread?.session?.activeTurnId).toBeNull();
+        expect(thread?.subagents.find((subagent) => subagent.id === activeChildId)).toMatchObject({
+          status: "interrupted",
+          latestProgress: {
+            kind: "state.interrupted",
+            summary: "Interrupted",
+          },
+          latestTurn: {
+            state: "interrupted",
+            completedAt: now,
+          },
+          completedAt: now,
+        });
       }),
   );
 });

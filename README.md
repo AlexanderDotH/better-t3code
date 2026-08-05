@@ -122,6 +122,8 @@ npx t3@latest
 - [Documentation map](./docs/README.md)
 - [Quick start](./docs/getting-started/quick-start.md)
 - [Chat controls and experimental workflows](./docs/user/chat-controls.md)
+- [Git workbench](./docs/user/git-workbench.md)
+- [MCP servers and provider-specific status](./docs/user/mcp-servers.md)
 - [Remote access](./docs/user/remote-access.md)
 - [Keybindings](./docs/user/keybindings.md)
 - [Architecture overview](./docs/architecture/overview.md)

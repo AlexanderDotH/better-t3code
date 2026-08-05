@@ -24,6 +24,7 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { ServerConfig } from "../../config.ts";
+import type { OpenCodeMcpServerConfig } from "../../mcp/McpConfigEngine.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import type { OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
@@ -63,6 +64,11 @@ const runtimeMock = {
     sessionCreateInputs: [] as Array<Record<string, unknown>>,
     connectMcpServers: [] as Array<unknown>,
     mcpAddCalls: [] as Array<unknown>,
+    mcpStatus: {} as Record<string, unknown>,
+    mcpStatusCalls: [] as Array<unknown>,
+    mcpConnectCalls: [] as Array<unknown>,
+    mcpDisconnectCalls: [] as Array<unknown>,
+    mcpAuthStartCalls: [] as Array<unknown>,
     authHeaders: [] as Array<string | null>,
     abortCalls: [] as string[],
     closeCalls: [] as string[],
@@ -85,6 +91,11 @@ const runtimeMock = {
     this.state.sessionCreateInputs.length = 0;
     this.state.connectMcpServers.length = 0;
     this.state.mcpAddCalls.length = 0;
+    this.state.mcpStatus = {};
+    this.state.mcpStatusCalls.length = 0;
+    this.state.mcpConnectCalls.length = 0;
+    this.state.mcpDisconnectCalls.length = 0;
+    this.state.mcpAuthStartCalls.length = 0;
     this.state.authHeaders.length = 0;
     this.state.abortCalls.length = 0;
     this.state.closeCalls.length = 0;
@@ -225,6 +236,29 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         add: async (input: unknown) => {
           runtimeMock.state.mcpAddCalls.push(input);
           return { data: {} };
+        },
+        status: async (input: unknown) => {
+          runtimeMock.state.mcpStatusCalls.push(input);
+          return { data: runtimeMock.state.mcpStatus };
+        },
+        connect: async (input: unknown) => {
+          runtimeMock.state.mcpConnectCalls.push(input);
+          return { data: true };
+        },
+        disconnect: async (input: unknown) => {
+          runtimeMock.state.mcpDisconnectCalls.push(input);
+          return { data: true };
+        },
+        auth: {
+          start: async (input: unknown) => {
+            runtimeMock.state.mcpAuthStartCalls.push(input);
+            return {
+              data: {
+                authorizationUrl: "https://auth.example/authorize",
+                oauthState: "must-not-leave-the-provider-adapter",
+              },
+            };
+          },
         },
       },
     }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
@@ -650,6 +684,263 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
             enabled: true,
           },
         },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "reports provider-native MCP health without treating auth and setup as generic failures",
+    () => {
+      const runtimeSessionId = RuntimeSessionId.make("opencode-mcp-runtime-status");
+      const layer = Layer.effect(
+        OpenCodeAdapter,
+        makeOpenCodeAdapter(openCodeAdapterTestSettings, {
+          resolveMcpServers: () =>
+            Effect.succeed({
+              docs: {
+                type: "remote",
+                url: "https://example.com/mcp",
+                enabled: true,
+              },
+            }),
+        }),
+      ).pipe(
+        Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+        Layer.provideMerge(ServerSettingsService.layerTest()),
+        Layer.provideMerge(providerSessionDirectoryTestLayer),
+        Layer.provideMerge(NodeServices.layer),
+      );
+
+      return Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-opencode-mcp-status");
+        runtimeMock.state.mcpStatus = {
+          docs: { status: "connected" },
+          disabled: { status: "disabled" },
+          notion: { status: "needs_auth" },
+          registry: {
+            status: "needs_client_registration",
+            error: "Dynamic client registration is unavailable",
+          },
+          broken: {
+            status: "failed",
+            error: "Authorization: Bearer top-secret-token",
+          },
+          "t3-code": { status: "connected" },
+        };
+
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeSessionId,
+          runtimeMode: "full-access",
+        });
+
+        const mcpRuntime = adapter.mcpRuntime;
+        NodeAssert.ok(mcpRuntime);
+        const snapshot = yield* mcpRuntime.getSnapshot({
+          providerInstanceId: ProviderInstanceId.make("opencode"),
+          threadId,
+          runtimeSessionId,
+        });
+        const byKey = new Map(snapshot.map((server) => [server.providerKey, server]));
+
+        NodeAssert.equal(byKey.get("docs")?.source, "t3-managed");
+        NodeAssert.equal(byKey.get("docs")?.state, "connected");
+        NodeAssert.equal(byKey.get("docs")?.authState, "authenticated");
+        NodeAssert.equal(byKey.get("docs")?.transport, "http");
+        NodeAssert.equal(byKey.get("notion")?.source, "provider-native");
+        NodeAssert.equal(byKey.get("notion")?.state, "auth-required");
+        NodeAssert.equal(byKey.get("notion")?.authState, "required");
+        NodeAssert.deepEqual(byKey.get("notion")?.availableActions, [
+          "refresh",
+          "reconnect",
+          "authorize",
+        ]);
+        NodeAssert.equal(byKey.get("registry")?.state, "setup-required");
+        NodeAssert.equal(byKey.get("disabled")?.state, "disabled");
+        NodeAssert.equal(byKey.get("disabled")?.authState, "none");
+        // A provider-native server may use the reserved display key. It is
+        // only the T3 system server when this exact session registered one.
+        NodeAssert.equal(byKey.get("t3-code")?.source, "provider-native");
+        NodeAssert.equal(byKey.get("broken")?.state, "failed");
+        NodeAssert.equal(byKey.get("broken")?.issue?.message.includes("top-secret-token"), false);
+        NodeAssert.equal(
+          snapshot.every((server) => server.reportsTools === false),
+          true,
+        );
+        NodeAssert.deepEqual(runtimeMock.state.mcpStatusCalls, [{ directory: process.cwd() }]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "runs fenced MCP reconnect, OAuth, and refresh actions without leaking OAuth state",
+    () => {
+      const runtimeSessionId = RuntimeSessionId.make("opencode-mcp-runtime-actions");
+      const layer = Layer.effect(
+        OpenCodeAdapter,
+        makeOpenCodeAdapter(openCodeAdapterTestSettings, {
+          resolveMcpServers: () =>
+            Effect.succeed({
+              docs: {
+                type: "remote",
+                url: "https://example.com/mcp",
+                enabled: true,
+              },
+            }),
+        }),
+      ).pipe(
+        Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+        Layer.provideMerge(ServerSettingsService.layerTest()),
+        Layer.provideMerge(providerSessionDirectoryTestLayer),
+        Layer.provideMerge(NodeServices.layer),
+      );
+
+      return Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-opencode-mcp-actions");
+        runtimeMock.state.mcpStatus = { docs: { status: "connected" } };
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeSessionId,
+          runtimeMode: "full-access",
+        });
+
+        const mcpRuntime = adapter.mcpRuntime;
+        NodeAssert.ok(mcpRuntime?.runAction);
+        const staleResult = yield* mcpRuntime
+          .runAction({
+            providerInstanceId: ProviderInstanceId.make("opencode"),
+            threadId,
+            runtimeSessionId: RuntimeSessionId.make("replaced-opencode-session"),
+            providerKey: "docs",
+            action: "reconnect",
+          })
+          .pipe(Effect.result);
+        NodeAssert.equal(staleResult._tag, "Failure");
+        NodeAssert.equal(staleResult.failure._tag, "ProviderAdapterValidationError");
+        NodeAssert.deepEqual(runtimeMock.state.mcpDisconnectCalls, []);
+        NodeAssert.deepEqual(runtimeMock.state.mcpConnectCalls, []);
+
+        const reconnect = yield* mcpRuntime.runAction({
+          providerInstanceId: ProviderInstanceId.make("opencode"),
+          threadId,
+          runtimeSessionId,
+          providerKey: "docs",
+          action: "reconnect",
+        });
+        const authorize = yield* mcpRuntime.runAction({
+          providerInstanceId: ProviderInstanceId.make("opencode"),
+          threadId,
+          runtimeSessionId,
+          providerKey: "notion",
+          action: "authorize",
+        });
+        const refresh = yield* mcpRuntime.runAction({
+          providerInstanceId: ProviderInstanceId.make("opencode"),
+          threadId,
+          runtimeSessionId,
+          providerKey: "docs",
+          action: "refresh",
+        });
+
+        NodeAssert.deepEqual(reconnect, {
+          accepted: true,
+          action: "reconnect",
+          providerKey: "docs",
+        });
+        NodeAssert.deepEqual(authorize, {
+          accepted: true,
+          action: "authorize",
+          providerKey: "notion",
+          authorizationUrl: "https://auth.example/authorize",
+        });
+        NodeAssert.deepEqual(refresh, {
+          accepted: true,
+          action: "refresh",
+          providerKey: "docs",
+        });
+        NodeAssert.deepEqual(runtimeMock.state.mcpDisconnectCalls, [
+          { directory: process.cwd(), name: "docs" },
+        ]);
+        NodeAssert.deepEqual(runtimeMock.state.mcpConnectCalls, [
+          { directory: process.cwd(), name: "docs" },
+        ]);
+        NodeAssert.deepEqual(runtimeMock.state.mcpAuthStartCalls, [
+          { directory: process.cwd(), name: "notion" },
+        ]);
+        // McpRuntimeRegistry owns the single generation-fenced post-action
+        // refresh; provider actions must not duplicate its status query.
+        NodeAssert.equal(runtimeMock.state.mcpStatusCalls.length, 0);
+        NodeAssert.equal("oauthState" in authorize, false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("applies changed MCP configuration to a live OpenCode session", () => {
+    const runtimeSessionId = RuntimeSessionId.make("opencode-mcp-live-config");
+    let resolvedServers: Record<string, OpenCodeMcpServerConfig> = {
+      docs: {
+        type: "remote",
+        url: "https://example.com/mcp",
+        enabled: true,
+      },
+    };
+    const layer = Layer.effect(
+      OpenCodeAdapter,
+      makeOpenCodeAdapter(openCodeAdapterTestSettings, {
+        resolveMcpServers: () => Effect.succeed(resolvedServers),
+      }),
+    ).pipe(
+      Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-mcp-live-config");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeSessionId,
+        runtimeMode: "full-access",
+      });
+      runtimeMock.state.mcpAddCalls.length = 0;
+
+      resolvedServers = {
+        notion: {
+          type: "remote",
+          url: "https://mcp.notion.com/mcp",
+          enabled: true,
+        },
+      };
+      const mcpRuntime = adapter.mcpRuntime;
+      NodeAssert.ok(mcpRuntime?.applyConfiguration);
+      yield* mcpRuntime.applyConfiguration({
+        providerInstanceId: ProviderInstanceId.make("opencode"),
+        threadId,
+        runtimeSessionId,
+      });
+
+      NodeAssert.deepEqual(runtimeMock.state.mcpAddCalls, [
+        {
+          directory: process.cwd(),
+          name: "notion",
+          config: resolvedServers.notion,
+        },
+      ]);
+      NodeAssert.deepEqual(runtimeMock.state.mcpDisconnectCalls, [
+        { directory: process.cwd(), name: "docs" },
+      ]);
+      NodeAssert.deepEqual(runtimeMock.state.mcpConnectCalls, [
+        { directory: process.cwd(), name: "notion" },
       ]);
     }).pipe(Effect.provide(layer));
   });

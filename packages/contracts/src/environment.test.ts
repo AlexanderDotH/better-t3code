@@ -21,4 +21,23 @@ describe("ExecutionEnvironmentCapabilities", () => {
       }).midChatProviderSwitching,
     ).toBe(true);
   });
+
+  it("treats an absent Git workbench capability as unsupported", () => {
+    const legacy = decodeCapabilities({ repositoryIdentity: true });
+    const current = decodeCapabilities({ repositoryIdentity: true, gitWorkbenchVersion: 1 });
+
+    expect(legacy.gitWorkbenchVersion).toBeUndefined();
+    expect(current.gitWorkbenchVersion).toBe(1);
+  });
+
+  it("keeps the MCP workspace capability optional for legacy servers", () => {
+    const legacy = decodeCapabilities({ repositoryIdentity: true });
+    const current = decodeCapabilities({ repositoryIdentity: true, mcpWorkspaceVersion: 1 });
+
+    expect(legacy.mcpWorkspaceVersion).toBeUndefined();
+    expect(current.mcpWorkspaceVersion).toBe(1);
+    expect(() =>
+      decodeCapabilities({ repositoryIdentity: true, mcpWorkspaceVersion: 0 }),
+    ).toThrow();
+  });
 });

@@ -8,7 +8,6 @@ import {
   type OrchestrationMessage,
   type OrchestrationProposedPlanId,
   type OrchestrationSubagentProgress,
-  type OrchestrationSubagentStatus,
   type OrchestrationSubagentSummary,
   CheckpointRef,
   isToolLifecycleItemType,
@@ -44,6 +43,11 @@ import {
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { TurnAbortCoordinator } from "../Services/TurnAbortCoordinator.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import {
+  isActiveSubagentStatus,
+  settleSubagentAfterRuntimeLoss,
+  subagentStateProgress,
+} from "../subagentLifecycle.ts";
 
 const providerTargetKey = (threadId: ThreadId, subagentId?: SubagentId) =>
   subagentId === undefined ? String(threadId) : `${threadId}:subagent:${subagentId}`;
@@ -305,28 +309,6 @@ function subagentDepth(agentPath: string | undefined): number {
   if (!agentPath) return 0;
   const segments = agentPath.split("/").filter((segment) => segment.length > 0);
   return Math.max(0, segments.length - (segments[0] === "root" ? 1 : 0));
-}
-
-function stateProgress(
-  status: OrchestrationSubagentStatus,
-  statusMessage: string | undefined,
-  createdAt: string,
-): OrchestrationSubagentProgress {
-  const fallbackSummary: Record<OrchestrationSubagentStatus, string> = {
-    starting: "Starting",
-    running: "Running",
-    waiting: "Waiting",
-    completed: "Completed",
-    interrupted: "Interrupted",
-    error: "Error",
-    unavailable: "Unavailable",
-  };
-  return {
-    kind: `state.${status}`,
-    summary: statusMessage ?? fallbackSummary[status],
-    detail: null,
-    createdAt,
-  };
 }
 
 function placeholderSubagentSummary(
@@ -2026,10 +2008,10 @@ const make = Effect.gen(function* () {
           commandId: yield* providerCommandId(event, "subagent-state-progress-set"),
           threadId: thread.id,
           subagentId: event.payload.subagentId,
-          progress: stateProgress(
+          progress: subagentStateProgress(
             event.payload.state,
-            event.payload.statusMessage,
             event.createdAt,
+            event.payload.statusMessage,
           ),
           updatedAt: now,
         });
@@ -2062,6 +2044,9 @@ const make = Effect.gen(function* () {
             threadId: thread.id,
             subagent: {
               ...subagent,
+              status: state,
+              statusMessage: null,
+              latestProgress: subagentStateProgress(state, now),
               latestTurn: {
                 turnId: eventTurnId,
                 state,
@@ -2074,6 +2059,7 @@ const make = Effect.gen(function* () {
                   : {}),
               },
               updatedAt: subagent.updatedAt.localeCompare(now) > 0 ? subagent.updatedAt : now,
+              completedAt: event.type === "turn.started" ? null : now,
             },
             createdAt: now,
           });
@@ -2140,6 +2126,29 @@ const make = Effect.gen(function* () {
         eventSubagentId === undefined && event.type === "turn.started" && shouldApplyThreadLifecycle
           ? yield* getSourceProposedPlanReferenceForAcceptedTurnStart(thread.id, eventTurnId)
           : null;
+
+      if (event.type === "session.exited" && eventSubagentId === undefined) {
+        const detailedThread = yield* getLoadedThreadDetail();
+        yield* Effect.forEach(
+          detailedThread?.subagents.filter((subagent) => isActiveSubagentStatus(subagent.status)) ??
+            [],
+          (subagent) => {
+            const settled = settleSubagentAfterRuntimeLoss(subagent, now);
+            return providerCommandId(event, "subagent-session-exit-upsert").pipe(
+              Effect.flatMap((commandId) =>
+                orchestrationEngine.dispatch({
+                  type: "thread.subagent.upsert",
+                  commandId,
+                  threadId: thread.id,
+                  subagent: settled,
+                  createdAt: now,
+                }),
+              ),
+            );
+          },
+          { concurrency: 1, discard: true },
+        );
+      }
 
       if (
         event.type === "session.started" ||

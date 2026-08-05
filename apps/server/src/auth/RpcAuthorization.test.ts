@@ -50,6 +50,19 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.mcpDiscoverImportSources,
       WS_METHODS.mcpExportCursorJson,
       WS_METHODS.mcpProviderStatus,
+      WS_METHODS.mcpRuntimeContexts,
+      WS_METHODS.mcpRuntimeContextChanges,
+      WS_METHODS.mcpRuntimeSnapshot,
+      WS_METHODS.mcpRuntimeChanges,
+      WS_METHODS.mcpRuntimeServerDetails,
+      WS_METHODS.gitSubscribeWorkbench,
+      WS_METHODS.gitGetRepositoryInsights,
+      WS_METHODS.gitListHistory,
+      WS_METHODS.gitGetCommitDetail,
+      WS_METHODS.gitGetCommitFileDiff,
+      WS_METHODS.gitGetChangesDiff,
+      WS_METHODS.gitGetInteractiveRebasePlan,
+      WS_METHODS.gitListUndoSnapshots,
     ];
 
     for (const method of readMethods) {
@@ -76,8 +89,16 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.mcpUpdate,
       WS_METHODS.mcpDelete,
       WS_METHODS.mcpSetEnabled,
+      WS_METHODS.mcpSetProviderEnabled,
+      WS_METHODS.mcpRuntimeAction,
       WS_METHODS.mcpImportCursorJson,
       WS_METHODS.mcpImportSources,
+      WS_METHODS.gitApplyChangeSelection,
+      WS_METHODS.gitRunWorkbenchOperation,
+      WS_METHODS.gitCreateUndoSnapshot,
+      WS_METHODS.gitRestoreUndoSnapshot,
+      WS_METHODS.gitUpsertQueuedWorkflow,
+      WS_METHODS.gitCancelQueuedWorkflow,
     ];
 
     for (const method of operateMethods) {

@@ -162,7 +162,7 @@ export const makeOpenCodeBackedDriver = ({
           environment: processEnv,
           ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
           resolveMcpServers: ({ cwd }: { readonly cwd: string }) =>
-            mcpConfigEngine.resolveActiveServers({ cwd }).pipe(
+            mcpConfigEngine.resolveActiveServers({ cwd, providerInstanceId: instanceId }).pipe(
               Effect.map(toOpenCodeMcpServers),
               Effect.catch((cause) =>
                 Effect.logWarning("Failed to resolve MCP servers for OpenCode session", {

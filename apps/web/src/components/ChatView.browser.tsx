@@ -180,6 +180,20 @@ const COMPACT_FOOTER_VIEWPORT: ViewportSpec = {
   textTolerancePx: 56,
   attachmentTolerancePx: 56,
 };
+const SMALL_DESKTOP_VIEWPORT: ViewportSpec = {
+  name: "small-desktop",
+  width: 840,
+  height: 620,
+  textTolerancePx: 56,
+  attachmentTolerancePx: 56,
+};
+const BELOW_WORKSPACE_DECK_BREAKPOINT: ViewportSpec = {
+  name: "below-workspace-deck-breakpoint",
+  width: 767,
+  height: 620,
+  textTolerancePx: 56,
+  attachmentTolerancePx: 56,
+};
 
 interface MountedChatView {
   [Symbol.asyncDispose]: () => Promise<void>;
@@ -444,6 +458,97 @@ function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
       bootstrapThreadId: THREAD_ID,
     },
     terminalMetadataEvents: [],
+  };
+}
+
+function enableGitWorkbench(nextFixture: TestFixture): void {
+  nextFixture.serverConfig = {
+    ...nextFixture.serverConfig,
+    environment: {
+      ...nextFixture.serverConfig.environment,
+      capabilities: {
+        ...nextFixture.serverConfig.environment.capabilities,
+        gitWorkbenchVersion: 1,
+      },
+    },
+  };
+  nextFixture.welcome = {
+    ...nextFixture.welcome,
+    environment: {
+      ...nextFixture.welcome.environment,
+      capabilities: {
+        ...nextFixture.welcome.environment.capabilities,
+        gitWorkbenchVersion: 1,
+      },
+    },
+  };
+}
+
+function createGitWorkbenchStreamSnapshot() {
+  return {
+    _tag: "snapshot" as const,
+    snapshot: {
+      isRepository: true,
+      registeredCwd: "/repo/project",
+      repositoryRoot: "/repo/project",
+      worktreeRoot: "/repo/project",
+      gitCommonDir: "/repo/project/.git",
+      refName: "main",
+      upstreamRef: "origin/main",
+      upstreamOid: "b".repeat(40),
+      headOid: "a".repeat(40),
+      unborn: false,
+      detached: false,
+      aheadCount: 0,
+      behindCount: 0,
+      lastCommit: {
+        oid: "a".repeat(40),
+        shortOid: "aaaaaaaa",
+        subject: "Keep the workspace card carousel smooth",
+        committedAt: NOW_ISO,
+      },
+      files: [],
+      totals: {
+        staged: 0,
+        unstaged: 0,
+        untracked: 0,
+        conflicted: 0,
+        insertions: 0,
+        deletions: 0,
+      },
+      operation: { kind: "none" as const },
+      truncated: false,
+      generatedAt: NOW_ISO,
+      stateToken: "browser-workspace-card-state",
+    },
+    queuedWorkflow: null,
+    undoSnapshots: [],
+  };
+}
+
+function createGitWorkbenchInsights() {
+  return {
+    snapshotOid: "a".repeat(40),
+    windowStart: new Date(BASE_TIME_MS - 365 * 24 * 60 * 60 * 1_000).toISOString(),
+    windowEnd: NOW_ISO,
+    scannedCommits: 1,
+    truncated: false,
+    contributors: [
+      {
+        identityKey: "browser-contributor",
+        displayName: "T3 Contributor",
+        commitCount: 1,
+      },
+    ],
+    activity: [{ date: NOW_ISO.slice(0, 10), commitCount: 1 }],
+    codeMix: {
+      entries: [{ language: "TypeScript", fileCount: 1, percentage: 100 }],
+      trackedFileCount: 1,
+      classifiedFileCount: 1,
+      excludedFileCount: 0,
+      scannedFileCount: 1,
+      truncated: false,
+    },
   };
 }
 
@@ -1113,6 +1218,9 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
       ],
     };
   }
+  if (tag === WS_METHODS.gitGetRepositoryInsights) {
+    return createGitWorkbenchInsights();
+  }
   if (tag === WS_METHODS.projectsSearchEntries) {
     return {
       entries: [],
@@ -1239,6 +1347,35 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
     () => document.querySelector<HTMLElement>('[contenteditable="true"]'),
     "Unable to find composer editor.",
   );
+}
+
+async function waitForWorkspaceCard(
+  cardId: "chat" | "git" | "mcp",
+  position: "previous" | "active" | "next" = "active",
+): Promise<HTMLElement> {
+  return waitForElement(
+    () =>
+      document.querySelector<HTMLElement>(
+        `[data-workspace-card-body="${cardId}"][data-card-position="${position}"]`,
+      ),
+    `Unable to find ${cardId} workspace card in the ${position} position.`,
+  );
+}
+
+async function waitForWorkspaceDeckIdle(): Promise<HTMLElement> {
+  return waitForElement(
+    () => document.querySelector<HTMLElement>(".workspace-card-deck:not([data-deck-transition])"),
+    "Workspace card deck did not finish its transition.",
+  );
+}
+
+async function activateWorkspaceCard(cardId: "chat" | "git" | "mcp"): Promise<void> {
+  const label = cardId === "git" ? "Git" : cardId === "chat" ? "Chat" : "Example";
+  const trigger = page.getByRole("button", { name: `Open ${label} workspace` });
+  await expect.element(trigger).toBeVisible();
+  await trigger.click();
+  await waitForWorkspaceCard(cardId);
+  await waitForWorkspaceDeckIdle();
 }
 
 async function pressComposerKey(key: string): Promise<void> {
@@ -1765,6 +1902,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         if (request._tag === WS_METHODS.subscribeTerminalMetadata) {
           return fixture.terminalMetadataEvents;
         }
+        if (request._tag === WS_METHODS.gitSubscribeWorkbench) {
+          return [createGitWorkbenchStreamSnapshot()];
+        }
         return [];
       },
     });
@@ -1808,6 +1948,192 @@ describe("ChatView timeline estimator parity (full app)", () => {
   afterEach(() => {
     customWsRpcResolver = null;
     document.body.innerHTML = "";
+  });
+
+  it("cycles only through exposed workspace-card peeks while preserving the composer", async () => {
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-workspace-card-cycle" as MessageId,
+        targetText: "workspace card cycle",
+      }),
+      configureFixture: enableGitWorkbench,
+    });
+
+    try {
+      const chatCard = await waitForWorkspaceCard("chat");
+      expect(document.querySelectorAll("[data-workspace-card-body]")).toHaveLength(3);
+      expect(
+        document.querySelector('[data-workspace-card-peek="mcp"][data-peek-position="previous"]'),
+      ).not.toBeNull();
+      const gitPeek = document.querySelector<HTMLElement>(
+        '[data-workspace-card-peek="git"][data-peek-position="next"]',
+      );
+      expect(gitPeek).not.toBeNull();
+
+      const cardRects = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-workspace-card-body]"),
+        (card) => card.getBoundingClientRect(),
+      );
+      for (const rect of cardRects.slice(1)) {
+        expect(Math.abs(rect.width - cardRects[0]!.width)).toBeLessThanOrEqual(1);
+        expect(Math.abs(rect.height - cardRects[0]!.height)).toBeLessThanOrEqual(1);
+      }
+
+      chatCard.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await waitForLayout();
+      expect(chatCard.getAttribute("data-card-position")).toBe("active");
+
+      const retainedGitControl = gitPeek!.querySelector<HTMLButtonElement>(
+        '[data-git-workspace-context-control="true"]:not([disabled])',
+      );
+      expect(retainedGitControl).not.toBeNull();
+      retainedGitControl!.click();
+      await waitForLayout();
+      expect(chatCard.getAttribute("data-card-position")).toBe("active");
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+
+      const composerEditor = await waitForComposerEditor();
+      await page.getByTestId("composer-editor").fill("Draft survives every workspace card");
+      composerEditor.focus();
+      expect(document.activeElement).toBe(composerEditor);
+
+      await activateWorkspaceCard("git");
+      expect(
+        document.querySelector('[data-workspace-card-peek="chat"][data-peek-position="previous"]'),
+      ).not.toBeNull();
+      expect(
+        document.querySelector('[data-workspace-card-peek="mcp"][data-peek-position="next"]'),
+      ).not.toBeNull();
+
+      await activateWorkspaceCard("chat");
+      await vi.waitFor(() => expect(document.activeElement).toBe(composerEditor), {
+        timeout: 2_000,
+        interval: 16,
+      });
+      expect(composerEditor.textContent).toContain("Draft survives every workspace card");
+      expect(composerDraftFor(THREAD_ID)?.prompt).toBe("Draft survives every workspace card");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("promotes Chat immediately when a non-Chat card receives an action-required event", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-workspace-card-action-required" as MessageId,
+        targetText: "workspace card action required",
+      }),
+      configureFixture: enableGitWorkbench,
+    });
+
+    try {
+      await activateWorkspaceCard("mcp");
+
+      const pendingSnapshot = createSnapshotWithPendingUserInput();
+      fixture.snapshot = {
+        ...pendingSnapshot,
+        snapshotSequence: fixture.snapshot.snapshotSequence + 1,
+      };
+      const pendingThread = fixture.snapshot.threads.find((thread) => thread.id === THREAD_ID);
+      expect(pendingThread).not.toBeUndefined();
+      rpcHarness.emitStreamValue(ORCHESTRATION_WS_METHODS.subscribeThread, {
+        kind: "snapshot",
+        snapshot: {
+          snapshotSequence: fixture.snapshot.snapshotSequence,
+          thread: pendingThread!,
+        },
+      });
+
+      await waitForWorkspaceCard("chat");
+      expect(document.querySelector(".workspace-card-deck[data-deck-transition]")).toBeNull();
+      await waitForButtonContainingText("Tight");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps expanded Git and its peeks inside the centered card at 840 by 620", async () => {
+    const mounted = await mountChatView({
+      viewport: SMALL_DESKTOP_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-workspace-card-small-desktop" as MessageId,
+        targetText: "small desktop workspace card",
+      }),
+      configureFixture: enableGitWorkbench,
+    });
+
+    try {
+      const timeline = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-timeline-root="true"]'),
+        "Unable to find the chat timeline.",
+      );
+      await activateWorkspaceCard("git");
+      await page.getByRole("button", { name: "Expand Git workbench" }).click();
+
+      const drawer = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-git-workbench-drawer="true"]'),
+        "Git workbench did not expand.",
+      );
+      const gitCard = await waitForWorkspaceCard("git");
+      expect(gitCard.contains(drawer)).toBe(true);
+      expect(document.querySelectorAll("[data-workspace-card-peek]")).toHaveLength(2);
+      expect(document.querySelector('[data-workspace-card-peek="chat"]')).not.toBeNull();
+      expect(document.querySelector('[data-workspace-card-peek="mcp"]')).not.toBeNull();
+
+      const cardRect = gitCard.getBoundingClientRect();
+      const drawerRect = drawer.getBoundingClientRect();
+      expect(drawerRect.left).toBeGreaterThanOrEqual(cardRect.left - 1);
+      expect(drawerRect.right).toBeLessThanOrEqual(cardRect.right + 1);
+      expect(drawerRect.bottom).toBeLessThanOrEqual(window.innerHeight + 1);
+      expect(document.querySelector('[data-timeline-root="true"]')).toBe(timeline);
+
+      await activateWorkspaceCard("chat");
+      expect(document.querySelector('[data-git-workbench-drawer="true"]')).toBeNull();
+      expect(document.querySelector('[data-timeline-root="true"]')).toBe(timeline);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the right panel independent and bypasses the deck below 48rem", async () => {
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-workspace-card-responsive" as MessageId,
+        targetText: "responsive workspace card",
+      }),
+      configureFixture: enableGitWorkbench,
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      const panelToggle = page.getByRole("button", { name: "Toggle right panel" });
+      await panelToggle.click();
+      const rightPanelTabbar = await waitForElement(
+        () => document.querySelector<HTMLElement>("[data-right-panel-tabbar]"),
+        "Right panel did not open.",
+      );
+
+      await activateWorkspaceCard("git");
+      expect(document.querySelector("[data-right-panel-tabbar]")).toBe(rightPanelTabbar);
+
+      await mounted.setViewport(BELOW_WORKSPACE_DECK_BREAKPOINT);
+      await vi.waitFor(() => {
+        expect(document.querySelector("[data-chat-workspace-deck]")).toBeNull();
+      });
+      expect(document.querySelector('[data-workspace-card-body="mcp"]')).toBeNull();
+      expect(document.body.contains(composerEditor)).toBe(true);
+
+      await mounted.setViewport({ ...SMALL_DESKTOP_VIEWPORT, width: 768 });
+      await waitForElement(
+        () => document.querySelector<HTMLElement>("[data-chat-workspace-deck]"),
+        "Workspace card deck did not return at the 48rem boundary.",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
   });
 
   it("renders locked single-environment mobile run context as a static workspace label", async () => {

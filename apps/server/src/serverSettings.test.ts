@@ -213,6 +213,44 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("serializes concurrent settings modifiers against the latest catalog", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const firstId = McpServerId.make("first_server");
+      const secondId = McpServerId.make("second_server");
+
+      const appendServer = (id: typeof firstId) =>
+        serverSettings.modifySettings((current) =>
+          Effect.succeed({
+            ...current,
+            mcp: {
+              ...current.mcp,
+              servers: [
+                ...current.mcp.servers,
+                {
+                  id,
+                  name: id,
+                  enabled: true,
+                  providerRouting: { mode: "all" as const },
+                  scope: "global" as const,
+                  transport: "http" as const,
+                  url: `https://${id}.example.com/mcp`,
+                  headers: {},
+                },
+              ],
+            },
+          }),
+        );
+
+      yield* Effect.all([appendServer(firstId), appendServer(secondId)], {
+        concurrency: "unbounded",
+      });
+
+      const settings = yield* serverSettings.getSettings;
+      assert.deepEqual(settings.mcp.servers.map((server) => server.id).sort(), [firstId, secondId]);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("buffers changes after a subscription is acquired but before it is consumed", () =>
     Effect.scoped(
       Effect.gen(function* () {

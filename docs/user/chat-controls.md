@@ -1,9 +1,56 @@
 # Chat controls
 
+## Workspace cards
+
+On web and desktop, the bottom workspace is an ordered carousel of equal-size cards. The Chat
+composer defines the shared compact height; Git, MCP, and future cards fit that same frame instead
+of making the deck taller. A repository thread starts with **Chat**, adds **Git** when the current
+environment exposes the Git workbench, and always includes **MCP**. The previous card peeks above
+the foreground card and the next card peeks below it. Select either exposed edge to bring that card
+forward with a vertical shuffle. The 32 px edges stay in place through compact switches, so
+repeatedly selecting the same free point cycles in one direction. Only an exposed edge changes
+cards; selecting empty space or content inside the foreground card does not.
+
+The initial order is:
+
+| Foreground | Upper edge | Lower edge |
+| ---------- | ---------- | ---------- |
+| Chat       | MCP        | Git        |
+| Git        | Chat       | MCP        |
+| MCP        | Git        | Chat       |
+
+In a non-repository project, or when the server does not advertise Git workbench support, the deck
+contains only Chat and MCP. It shows one destination edge at a time and alternates the edge after
+each switch. A server without MCP workspace support still exposes the MCP card using locally
+available configuration counts, but its expanded view explains that live runtime management
+requires a server upgrade and does not issue unsupported runtime requests.
+
+Chat remains mounted while another card is selected, preserving its draft, attachments, provider
+settings, and composer state. Returning to Chat restores the previous composer focus. The
+foreground content fades out briefly before the slower card shuffle and returns during the motion;
+the glass surface, blur, and border remain solid. Reduced-motion preferences switch cards
+immediately.
+
+The Git edge keeps Local checkout, environment, worktree, branch, pull-request, repository-state,
+and changed-file controls in their familiar positions. Selecting free space or static status on
+that edge opens Git, while enabled controls keep their original actions. The MCP edge is one
+accessible selection control and summarizes the selected provider account, connected or configured
+servers, attention states, and freshness. The internal T3 Code MCP server is not included in these
+user-server totals.
+
+Cards cannot leave Chat while voice recording is active. An approval, question, error requiring
+action, or another agent-blocking event closes nested non-Chat UI, collapses the expanded panel, and
+immediately returns Chat to the foreground. Git and MCP expose their own upward expansion actions;
+Git can also be opened by pulling its compact top grabber upward. If an exposed edge is selected
+while a panel is expanded, the panel first returns completely to the Chat-defined compact height;
+only then does the vertical card shuffle begin. Escape closes a nested dialog first and then
+collapses the foreground panel; it never rotates the deck. Mobile keeps its existing composer and
+Git controls and does not show the carousel or MCP workspace card.
+
 ## Voice input
 
 Web and desktop can stream microphone input to AssemblyAI from the chat composer. The waveform and
-stop control stay gray while the connection is opening, turn orange once the microphone stream is
+stop control stay gray while the connection is opening, turn red once the microphone stream is
 ready for speech, and return to gray while the final transcript is being finished. Press **Escape**
 to cancel and restore the draft from before recording.
 

@@ -9,6 +9,9 @@ This is a living glossary for T3 Code. It explains what common terms mean in thi
 - [Orchestration](#orchestration)
 - [Provider runtime](#provider-runtime)
 - [Internal MCP](#internal-mcp)
+- [User MCP](#user-mcp)
+- [Workspace card deck](#workspace-card-deck)
+- [Git workbench](#git-workbench)
 - [Checkpointing](#checkpointing)
 
 ## Concepts
@@ -128,6 +131,62 @@ The read-only `workspace_context` internal MCP tool. It batches deterministic re
 content searches with targeted line-range reads. Its workspace root comes from the authenticated
 thread and project rather than tool input. See [internal-mcp.md][25].
 
+### User MCP
+
+A user-configured Model Context Protocol server stored once in an environment and routed to selected
+provider instances. Its durable configuration is distinct from the ephemeral connection and
+authentication status reported by a particular provider session. See [mcp-runtime-status.md][26].
+
+#### MCP workspace card
+
+The web-and-desktop workspace card for provider-account-specific MCP configuration and exact-session
+runtime management. Its compact surface reports configured, connected, attention, tool-inventory,
+and freshness facts; its expanded Servers and Runtime sections share projections with MCP Settings.
+Mobile does not expose this card. See [mcp-servers.md][29] and [mcp-runtime-status.md][26].
+
+#### MCP runtime snapshot
+
+A non-persisted, runtime-session-fenced view of the MCP servers an exact provider session reports.
+Snapshots distinguish T3-managed, provider-native, and internal system servers and are followed by
+live changes. See [mcp-runtime-status.md][26].
+
+#### MCP runtime context
+
+The exact environment, provider instance, thread, and runtime-session identity attached to an MCP
+snapshot or action. Ended contexts may remain briefly for inspection, but actions never silently
+retarget to a replacement session. See [mcp-runtime-status.md][26].
+
+#### MCP live-apply result
+
+The provider-specific outcome of reconciling a durable MCP catalog change with an active runtime.
+The result is applied only after the provider confirms the complete managed set; otherwise it is
+pending for the next session, unsupported, or failed with sanitized details. See
+[mcp-runtime-status.md][26].
+
+### Git workbench
+
+The server-backed web and desktop workspace for observable repository state, standard-index changes, history, branches, typed Git operations, local undo snapshots, and durable post-turn workflows. It is capability-negotiated and keeps all Git execution on the selected environment. See [git-workbench.md][27].
+
+#### State token
+
+An opaque server-issued identity for the repository state observed by a workbench read. It covers HEAD/ref, index, worktree status, and operation markers. Mutations submit the expected token so stale selections and preconditions fail instead of applying to different repository content.
+
+#### Workbench undo snapshot
+
+A host-local recovery point that preserves branch/HEAD identity, the exact Git index, tracked worktree content, and untracked content before a destructive transition. It is separate from thread checkpoints and cannot reverse remote history.
+
+#### Queued workflow
+
+The single durable post-turn Git workflow retained per worktree. It runs only after authoritative turn quiescence and action-specific revalidation; otherwise it moves to `needs_review` with explicit stale reasons.
+
+### Workspace card deck
+
+The web-and-desktop bottom-workspace carousel containing persistent Chat, capability-gated Git, and
+MCP. Only the exposed previous or next card edge changes selection. Bodies remain mounted, but only
+the foreground body is interactive and visible to assistive technology. Chat defines the shared
+compact height. Expandable panels return to that height before the requested vertical shuffle
+begins. See [workspace-card-deck.md][28].
+
 ### Checkpointing
 
 Checkpointing captures workspace state over time so the app can diff turns and restore earlier points. The main pieces are [CheckpointStore.ts][19], [CheckpointDiffQuery.ts][20], and [CheckpointReactor.ts][6].
@@ -167,6 +226,10 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 - [runtime-modes.md][18]
 - [workspace-layout.md][2]
 - [internal-mcp.md][25]
+- [mcp-runtime-status.md][26]
+- [mcp-servers.md][29]
+- [git-workbench.md][27]
+- [workspace-card-deck.md][28]
 
 [1]: ../packages/contracts/src/orchestration.ts
 [2]: ./workspace-layout.md
@@ -193,3 +256,7 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [23]: ../apps/server/src/checkpointing/Diffs.ts
 [24]: ./architecture.md
 [25]: ../architecture/internal-mcp.md
+[26]: ../architecture/mcp-runtime-status.md
+[27]: ../architecture/git-workbench.md
+[28]: ../architecture/workspace-card-deck.md
+[29]: ../user/mcp-servers.md

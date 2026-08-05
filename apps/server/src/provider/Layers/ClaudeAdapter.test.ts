@@ -5,6 +5,9 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
+  McpServerConfig,
+  McpServerStatus,
+  McpSetServersResult,
   Options as ClaudeQueryOptions,
   PermissionMode,
   PermissionResult,
@@ -15,6 +18,7 @@ import {
   ApprovalRequestId,
   ClaudeSettings,
   EnvironmentId,
+  McpRuntimeServerKey,
   ProviderDriverKind,
   ProviderItemId,
   ProviderRuntimeEvent,
@@ -63,6 +67,15 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   public readonly setModelCalls: Array<string | undefined> = [];
   public readonly setPermissionModeCalls: Array<string> = [];
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
+  public readonly mcpServerStatusCalls: Array<void> = [];
+  public readonly reconnectMcpServerCalls: Array<string> = [];
+  public readonly setMcpServersCalls: Array<Record<string, McpServerConfig>> = [];
+  public mcpServerStatuses: Array<McpServerStatus> = [];
+  public mcpSetServersResult: McpSetServersResult = {
+    added: [],
+    removed: [],
+    errors: {},
+  };
   public closeCalls = 0;
 
   emit(message: SDKMessage): void {
@@ -113,6 +126,22 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 
   readonly setMaxThinkingTokens = async (maxThinkingTokens: number | null): Promise<void> => {
     this.setMaxThinkingTokensCalls.push(maxThinkingTokens);
+  };
+
+  readonly mcpServerStatus = async (): Promise<Array<McpServerStatus>> => {
+    this.mcpServerStatusCalls.push(undefined);
+    return this.mcpServerStatuses;
+  };
+
+  readonly reconnectMcpServer = async (serverName: string): Promise<void> => {
+    this.reconnectMcpServerCalls.push(serverName);
+  };
+
+  readonly setMcpServers = async (
+    servers: Record<string, McpServerConfig>,
+  ): Promise<McpSetServersResult> => {
+    this.setMcpServersCalls.push(servers);
+    return this.mcpSetServersResult;
   };
 
   readonly close = (): void => {
@@ -571,6 +600,364 @@ describe("ClaudeAdapterLive", () => {
       });
     }).pipe(
       Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(THREAD_ID))),
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("normalizes Claude MCP status and exposes lazy tool details", () => {
+    const instanceId = ProviderInstanceId.make("claude-work");
+    const runtimeSessionId = RuntimeSessionId.make("runtime-claude-mcp-status");
+    const harness = makeHarness({
+      instanceId,
+      resolveMcpServers: () =>
+        Effect.succeed({
+          notion: {
+            type: "http",
+            url: "https://mcp.notion.example",
+          },
+        }),
+    });
+    harness.query.mcpServerStatuses = [
+      {
+        name: "notion",
+        status: "needs-auth",
+        config: {
+          type: "http",
+          url: "https://mcp.notion.example",
+        },
+        tools: [
+          {
+            name: "search",
+            description: "Search the workspace",
+            annotations: {
+              readOnly: true,
+              destructive: false,
+              openWorld: false,
+            },
+          },
+        ],
+      },
+    ];
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeSessionId,
+        runtimeMode: "approval-required",
+      });
+      assert.isDefined(adapter.mcpRuntime);
+      if (!adapter.mcpRuntime) {
+        return;
+      }
+
+      const target = {
+        providerInstanceId: instanceId,
+        threadId: session.threadId,
+        runtimeSessionId,
+      };
+      const snapshot = yield* adapter.mcpRuntime.getSnapshot(target);
+      assert.lengthOf(snapshot, 1);
+      assert.deepInclude(snapshot[0], {
+        serverId: "notion",
+        providerKey: "notion",
+        source: "t3-managed",
+        state: "auth-required",
+        authState: "required",
+        availableActions: ["refresh", "reconnect"],
+        toolCount: 1,
+      });
+
+      const details = yield* adapter.mcpRuntime.getServerDetails?.({
+        ...target,
+        providerKey: McpRuntimeServerKey.make("notion"),
+      });
+      assert.deepEqual(details?.tools, [
+        {
+          name: "search",
+          description: "Search the workspace",
+          readOnly: true,
+          destructive: false,
+          openWorld: false,
+        },
+      ]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("distinguishes reserved managed and built-in T3 MCP servers", () => {
+    const runtimeSessionId = RuntimeSessionId.make("runtime-claude-mcp-reserved");
+    const harness = makeHarness({
+      resolveMcpServers: () =>
+        Effect.succeed({
+          "t3-managed:t3-code": {
+            type: "http",
+            url: "https://user-t3-code.example/mcp",
+          },
+        }),
+    });
+    harness.query.mcpServerStatuses = [
+      { name: "t3-managed:t3-code", status: "connected" },
+      { name: "t3-code", status: "connected" },
+    ];
+
+    return Effect.gen(function* () {
+      yield* Effect.sync(() =>
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make("environment-mcp-reserved"),
+          threadId: THREAD_ID,
+          providerSessionId: "provider-session-mcp-reserved",
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          endpoint: "http://127.0.0.1:3000/mcp",
+          authorizationHeader: "Bearer test-token",
+        }),
+      );
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeSessionId,
+        runtimeMode: "approval-required",
+      });
+      assert.isDefined(adapter.mcpRuntime);
+      if (!adapter.mcpRuntime) {
+        return;
+      }
+
+      const snapshot = yield* adapter.mcpRuntime.getSnapshot({
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        threadId: session.threadId,
+        runtimeSessionId,
+      });
+
+      assert.deepInclude(snapshot[0], {
+        serverId: "t3-code",
+        providerKey: "t3-managed:t3-code",
+        source: "t3-managed",
+      });
+      assert.deepInclude(snapshot[1], {
+        providerKey: "t3-code",
+        source: "t3-built-in",
+      });
+      assert.notProperty(snapshot[1] ?? {}, "serverId");
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(THREAD_ID))),
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("reconnects Claude MCP servers and refreshes their status", () => {
+    const runtimeSessionId = RuntimeSessionId.make("runtime-claude-mcp-reconnect");
+    const harness = makeHarness();
+    harness.query.mcpServerStatuses = [{ name: "notion", status: "connected" }];
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeSessionId,
+        runtimeMode: "approval-required",
+      });
+      assert.isDefined(adapter.mcpRuntime?.runAction);
+      if (!adapter.mcpRuntime?.runAction) {
+        return;
+      }
+
+      const result = yield* adapter.mcpRuntime.runAction({
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        threadId: session.threadId,
+        runtimeSessionId,
+        providerKey: McpRuntimeServerKey.make("notion"),
+        action: "reconnect",
+      });
+
+      assert.deepInclude(result, {
+        accepted: true,
+        action: "reconnect",
+        providerKey: "notion",
+      });
+      assert.deepEqual(harness.query.reconnectMcpServerCalls, ["notion"]);
+      assert.equal(harness.query.mcpServerStatusCalls.length, 2);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("reports Claude OAuth as unavailable without calling untyped SDK methods", () => {
+    const runtimeSessionId = RuntimeSessionId.make("runtime-claude-mcp-auth");
+    const harness = makeHarness();
+    harness.query.mcpServerStatuses = [{ name: "notion", status: "needs-auth" }];
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeSessionId,
+        runtimeMode: "approval-required",
+      });
+      assert.isDefined(adapter.mcpRuntime?.runAction);
+      if (!adapter.mcpRuntime?.runAction) {
+        return;
+      }
+
+      const result = yield* adapter.mcpRuntime.runAction({
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        threadId: session.threadId,
+        runtimeSessionId,
+        providerKey: McpRuntimeServerKey.make("notion"),
+        action: "authorize",
+      });
+
+      assert.deepInclude(result, {
+        accepted: false,
+        action: "authorize",
+        providerKey: "notion",
+      });
+      assert.isUndefined(result.authorizationUrl);
+      assert.deepEqual(harness.query.reconnectMcpServerCalls, []);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("applies refreshed MCP configuration to the live Claude query", () => {
+    const runtimeSessionId = RuntimeSessionId.make("runtime-claude-mcp-apply");
+    let resolvedServers: NonNullable<ClaudeQueryOptions["mcpServers"]> = {
+      old_server: {
+        type: "http",
+        url: "https://old.example/mcp",
+      },
+    };
+    const harness = makeHarness({
+      resolveMcpServers: () => Effect.succeed(resolvedServers),
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeSessionId,
+        runtimeMode: "approval-required",
+      });
+      resolvedServers = {
+        next_server: {
+          type: "http",
+          url: "https://next.example/mcp",
+        },
+      };
+      harness.query.mcpServerStatuses = [{ name: "next_server", status: "pending" }];
+
+      assert.isDefined(adapter.mcpRuntime?.applyConfiguration);
+      if (!adapter.mcpRuntime?.applyConfiguration) {
+        return;
+      }
+      yield* adapter.mcpRuntime.applyConfiguration({
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        threadId: session.threadId,
+        runtimeSessionId,
+      });
+
+      assert.deepEqual(harness.query.setMcpServersCalls, [resolvedServers]);
+      assert.equal(harness.query.mcpServerStatusCalls.length, 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("queries status after partial setMcpServers failures and redacts their details", () => {
+    const runtimeSessionId = RuntimeSessionId.make("runtime-claude-mcp-apply-error");
+    const harness = makeHarness({
+      resolveMcpServers: () =>
+        Effect.succeed({
+          notion: {
+            type: "http",
+            url: "https://mcp.notion.example",
+          },
+        }),
+    });
+    harness.query.mcpSetServersResult = {
+      added: [],
+      removed: [],
+      errors: {
+        notion: "Authorization: Bearer must-not-leak",
+      },
+    };
+    harness.query.mcpServerStatuses = [
+      {
+        name: "notion",
+        status: "failed",
+        error: "Authorization: Bearer must-not-leak",
+      },
+    ];
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeSessionId,
+        runtimeMode: "approval-required",
+      });
+      assert.isDefined(adapter.mcpRuntime?.applyConfiguration);
+      if (!adapter.mcpRuntime?.applyConfiguration) {
+        return;
+      }
+
+      const error = yield* adapter.mcpRuntime
+        .applyConfiguration({
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          threadId: session.threadId,
+          runtimeSessionId,
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "ProviderAdapterRequestError");
+      assert.notMatch(error.message, /must-not-leak/u);
+      assert.equal(harness.query.mcpServerStatusCalls.length, 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("rejects stale Claude MCP runtime generations before querying the SDK", () => {
+    const runtimeSessionId = RuntimeSessionId.make("runtime-claude-mcp-current");
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeSessionId,
+        runtimeMode: "approval-required",
+      });
+      assert.isDefined(adapter.mcpRuntime);
+      if (!adapter.mcpRuntime) {
+        return;
+      }
+
+      const error = yield* adapter.mcpRuntime
+        .getSnapshot({
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          threadId: session.threadId,
+          runtimeSessionId: RuntimeSessionId.make("runtime-claude-mcp-stale"),
+        })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(error, ProviderAdapterValidationError);
+      assert.equal(harness.query.mcpServerStatusCalls.length, 0);
+    }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );
@@ -1323,6 +1710,60 @@ describe("ClaudeAdapterLive", () => {
       if (turnCompleted?.type === "turn.completed") {
         assert.equal(String(turnCompleted.turnId), String(turn.turnId));
         assert.equal(turnCompleted.payload.state, "completed");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("preserves the MCP server name on canonical tool events", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const toolStartedFiber = yield* Stream.filter(
+        adapter.streamEvents,
+        (event) => event.type === "item.started",
+      ).pipe(Stream.runHead, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "Search Notion",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-mcp-tool",
+        uuid: "stream-mcp-tool",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "mcp_tool_use",
+            id: "mcp-tool-1",
+            name: "search",
+            server_name: "notion",
+            input: {
+              query: "roadmap",
+            },
+          },
+        },
+      } as unknown as SDKMessage);
+
+      const toolStarted = yield* Fiber.join(toolStartedFiber);
+      assert.equal(toolStarted._tag, "Some");
+      if (toolStarted._tag === "Some" && toolStarted.value.type === "item.started") {
+        assert.deepInclude(toolStarted.value.payload.data, {
+          toolName: "search",
+          serverName: "notion",
+        });
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),

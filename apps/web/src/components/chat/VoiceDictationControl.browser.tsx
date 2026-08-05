@@ -9,7 +9,7 @@ describe("VoiceDictationControl", () => {
   it("keeps the active control anchored while the waveform expands to the left", async () => {
     render(
       <div className="flex w-80 flex-col gap-4">
-        <div className="flex items-center justify-end gap-2">
+        <div className="flex items-center justify-end gap-3">
           <VoiceDictationControl
             state="idle"
             audioWaveform={[]}
@@ -19,7 +19,7 @@ describe("VoiceDictationControl", () => {
           />
           <span className="size-8" />
         </div>
-        <div className="flex items-center justify-end gap-2">
+        <div className="flex items-center justify-end gap-3">
           <span data-testid="config-bar-control" className="size-8" />
           <VoiceDictationControl
             state="recording"
@@ -58,7 +58,7 @@ describe("VoiceDictationControl", () => {
     expect(waveformRect.left).toBeGreaterThanOrEqual(configBarRect.right + 12);
   });
 
-  it("shows one orange stop indicator and a live waveform while recording", async () => {
+  it("shows one red stop indicator and a live waveform while recording", async () => {
     const onStop = vi.fn(async () => undefined);
     render(
       <VoiceDictationControl
@@ -79,7 +79,7 @@ describe("VoiceDictationControl", () => {
     expect(document.querySelector('[aria-label="Cancel voice input"]')).toBeNull();
     expect(document.querySelectorAll("[data-voice-wave-bar]")).toHaveLength(14);
     expect(document.querySelector('[data-voice-dictation-tone="ready"]')).not.toBeNull();
-    expect(document.querySelector(".bg-orange-500")).not.toBeNull();
+    expect(document.querySelector(".bg-rose-500")).not.toBeNull();
 
     await stopButton.click();
     expect(onStop).toHaveBeenCalledOnce();
@@ -101,6 +101,7 @@ describe("VoiceDictationControl", () => {
       .toBeVisible();
     expect(document.querySelector('[data-voice-dictation-tone="waiting"]')).not.toBeNull();
     expect(document.querySelector(".bg-muted")).not.toBeNull();
+    expect(document.querySelector(".bg-rose-500")).toBeNull();
     expect(document.querySelector(".bg-orange-500")).toBeNull();
   });
 });

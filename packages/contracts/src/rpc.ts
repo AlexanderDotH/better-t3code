@@ -6,6 +6,7 @@ import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
   AuthAccessStreamError,
   AuthAccessStreamEvent,
+  AuthEnvironmentScopes,
   EnvironmentAuthorizationError,
 } from "./auth.ts";
 import {
@@ -44,6 +45,38 @@ import {
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "./git.ts";
+import {
+  GitApplyChangeSelectionInput,
+  GitApplyChangeSelectionResult,
+  GitChangesDiffInput,
+  GitChangesDiffResult,
+  GitCommitDetailInput,
+  GitCommitDetailResult,
+  GitCommitFileDiffInput,
+  GitCommitFileDiffResult,
+  GitHistoryListInput,
+  GitHistoryListResult,
+  GitInteractiveRebasePlanInput,
+  GitInteractiveRebasePlanResult,
+  GitQueuedWorkflowCancelInput,
+  GitQueuedWorkflowCancelResult,
+  GitQueuedWorkflowUpsertInput,
+  GitQueuedWorkflowUpsertResult,
+  GitRepositoryInsightsInput,
+  GitRepositoryInsightsResult,
+  GitUndoSnapshotCreateInput,
+  GitUndoSnapshotCreateResult,
+  GitUndoSnapshotRestoreInput,
+  GitUndoSnapshotRestoreResult,
+  GitUndoSnapshotsListInput,
+  GitUndoSnapshotsListResult,
+  GitWorkbenchInput,
+  GitWorkbenchOperationEvent,
+  GitWorkbenchRunOperationInput,
+  GitWorkbenchServiceError,
+  GitWorkbenchSnapshot,
+  GitWorkbenchStreamEvent,
+} from "./gitWorkbench.ts";
 import {
   ReviewDiffPreviewError,
   ReviewDiffPreviewInput,
@@ -89,6 +122,7 @@ import {
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
   ProjectWriteFileError,
+  ProjectWriteConflictError,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project.ts";
@@ -107,7 +141,22 @@ import {
   McpMutationResult,
   McpProviderStatusInput,
   McpProviderStatusResult,
+  McpRuntimeActionInput,
+  McpRuntimeActionResult,
+  McpRuntimeChange,
+  McpRuntimeChangesInput,
+  McpRuntimeContextChange,
+  McpRuntimeContextChangesInput,
+  McpRuntimeContextsInput,
+  McpRuntimeContextsResult,
+  McpRuntimeError,
+  McpRuntimeServerDetailsInput,
+  McpRuntimeServerDetailsResult,
+  McpRuntimeSnapshot,
+  McpRuntimeSnapshotInput,
   McpSetEnabledInput,
+  McpSetProviderEnabledInput,
+  McpSetProviderEnabledResult,
   McpUpdateInput,
 } from "./mcp.ts";
 import {
@@ -251,6 +300,20 @@ export const WS_METHODS = {
   gitRunStackedAction: "git.runStackedAction",
   gitResolvePullRequest: "git.resolvePullRequest",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
+  gitRefreshWorkbench: "git.refreshWorkbench",
+  gitGetRepositoryInsights: "git.getRepositoryInsights",
+  gitListHistory: "git.listHistory",
+  gitGetCommitDetail: "git.getCommitDetail",
+  gitGetCommitFileDiff: "git.getCommitFileDiff",
+  gitGetChangesDiff: "git.getChangesDiff",
+  gitGetInteractiveRebasePlan: "git.getInteractiveRebasePlan",
+  gitApplyChangeSelection: "git.applyChangeSelection",
+  gitRunWorkbenchOperation: "git.runWorkbenchOperation",
+  gitListUndoSnapshots: "git.listUndoSnapshots",
+  gitCreateUndoSnapshot: "git.createUndoSnapshot",
+  gitRestoreUndoSnapshot: "git.restoreUndoSnapshot",
+  gitUpsertQueuedWorkflow: "git.upsertQueuedWorkflow",
+  gitCancelQueuedWorkflow: "git.cancelQueuedWorkflow",
 
   // Review methods
   reviewGetDiffPreview: "review.getDiffPreview",
@@ -331,10 +394,17 @@ export const WS_METHODS = {
   mcpUpdate: "mcp.update",
   mcpDelete: "mcp.delete",
   mcpSetEnabled: "mcp.setEnabled",
+  mcpSetProviderEnabled: "mcp.setProviderEnabled",
   mcpImportCursorJson: "mcp.importCursorJson",
   mcpImportSources: "mcp.importSources",
   mcpExportCursorJson: "mcp.exportCursorJson",
   mcpProviderStatus: "mcp.providerStatus",
+  mcpRuntimeContexts: "mcp.runtimeContexts",
+  mcpRuntimeContextChanges: "mcp.runtimeContextChanges",
+  mcpRuntimeSnapshot: "mcp.runtimeSnapshot",
+  mcpRuntimeChanges: "mcp.runtimeChanges",
+  mcpRuntimeServerDetails: "mcp.runtimeServerDetails",
+  mcpRuntimeAction: "mcp.runtimeAction",
 
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
@@ -343,6 +413,7 @@ export const WS_METHODS = {
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
+  gitSubscribeWorkbench: "git.subscribeWorkbench",
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeTerminalMetadata: "subscribeTerminalMetadata",
   subscribePreviewEvents: "subscribePreviewEvents",
@@ -368,7 +439,10 @@ export const WsServerRemoveKeybindingRpc = Rpc.make(WS_METHODS.serverRemoveKeybi
 
 export const WsServerProbeRpc = Rpc.make(WS_METHODS.serverProbe, {
   payload: Schema.Struct({}),
-  success: Schema.Struct({}),
+  success: Schema.Struct({
+    // Optional so new clients can still probe older servers.
+    scopes: Schema.optionalKey(AuthEnvironmentScopes),
+  }),
   error: EnvironmentAuthorizationError,
 });
 
@@ -657,6 +731,12 @@ export const WsMcpSetEnabledRpc = Rpc.make(WS_METHODS.mcpSetEnabled, {
   error: Schema.Union([McpConfigError, EnvironmentAuthorizationError]),
 });
 
+export const WsMcpSetProviderEnabledRpc = Rpc.make(WS_METHODS.mcpSetProviderEnabled, {
+  payload: McpSetProviderEnabledInput,
+  success: McpSetProviderEnabledResult,
+  error: Schema.Union([McpConfigError, EnvironmentAuthorizationError]),
+});
+
 export const WsMcpImportCursorJsonRpc = Rpc.make(WS_METHODS.mcpImportCursorJson, {
   payload: McpImportCursorJsonInput,
   success: McpMutationResult,
@@ -679,6 +759,44 @@ export const WsMcpProviderStatusRpc = Rpc.make(WS_METHODS.mcpProviderStatus, {
   payload: McpProviderStatusInput,
   success: McpProviderStatusResult,
   error: Schema.Union([McpConfigError, EnvironmentAuthorizationError]),
+});
+
+export const WsMcpRuntimeContextsRpc = Rpc.make(WS_METHODS.mcpRuntimeContexts, {
+  payload: McpRuntimeContextsInput,
+  success: McpRuntimeContextsResult,
+  error: Schema.Union([McpRuntimeError, EnvironmentAuthorizationError]),
+});
+
+export const WsMcpRuntimeContextChangesRpc = Rpc.make(WS_METHODS.mcpRuntimeContextChanges, {
+  payload: McpRuntimeContextChangesInput,
+  success: McpRuntimeContextChange,
+  error: Schema.Union([McpRuntimeError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+export const WsMcpRuntimeSnapshotRpc = Rpc.make(WS_METHODS.mcpRuntimeSnapshot, {
+  payload: McpRuntimeSnapshotInput,
+  success: McpRuntimeSnapshot,
+  error: Schema.Union([McpRuntimeError, EnvironmentAuthorizationError]),
+});
+
+export const WsMcpRuntimeChangesRpc = Rpc.make(WS_METHODS.mcpRuntimeChanges, {
+  payload: McpRuntimeChangesInput,
+  success: McpRuntimeChange,
+  error: Schema.Union([McpRuntimeError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+export const WsMcpRuntimeServerDetailsRpc = Rpc.make(WS_METHODS.mcpRuntimeServerDetails, {
+  payload: McpRuntimeServerDetailsInput,
+  success: McpRuntimeServerDetailsResult,
+  error: Schema.Union([McpRuntimeError, EnvironmentAuthorizationError]),
+});
+
+export const WsMcpRuntimeActionRpc = Rpc.make(WS_METHODS.mcpRuntimeAction, {
+  payload: McpRuntimeActionInput,
+  success: McpRuntimeActionResult,
+  error: Schema.Union([McpRuntimeError, EnvironmentAuthorizationError]),
 });
 
 export const WsSourceControlLookupRepositoryRpc = Rpc.make(
@@ -726,7 +844,11 @@ export const WsProjectsReadFileRpc = Rpc.make(WS_METHODS.projectsReadFile, {
 export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   payload: ProjectWriteFileInput,
   success: ProjectWriteFileResult,
-  error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    ProjectWriteFileError,
+    ProjectWriteConflictError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
@@ -782,6 +904,98 @@ export const WsGitPreparePullRequestThreadRpc = Rpc.make(WS_METHODS.gitPreparePu
   payload: GitPreparePullRequestThreadInput,
   success: GitPreparePullRequestThreadResult,
   error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
+});
+
+export const WsGitSubscribeWorkbenchRpc = Rpc.make(WS_METHODS.gitSubscribeWorkbench, {
+  payload: GitWorkbenchInput,
+  success: GitWorkbenchStreamEvent,
+  error: Schema.Union([GitWorkbenchServiceError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+export const WsGitRefreshWorkbenchRpc = Rpc.make(WS_METHODS.gitRefreshWorkbench, {
+  payload: GitWorkbenchInput,
+  success: GitWorkbenchSnapshot,
+  error: Schema.Union([GitWorkbenchServiceError, EnvironmentAuthorizationError]),
+});
+
+export const WsGitGetRepositoryInsightsRpc = Rpc.make(WS_METHODS.gitGetRepositoryInsights, {
+  payload: GitRepositoryInsightsInput,
+  success: GitRepositoryInsightsResult,
+  error: Schema.Union([GitWorkbenchServiceError, EnvironmentAuthorizationError]),
+});
+
+export const WsGitListHistoryRpc = Rpc.make(WS_METHODS.gitListHistory, {
+  payload: GitHistoryListInput,
+  success: GitHistoryListResult,
+  error: Schema.Union([GitWorkbenchServiceError, EnvironmentAuthorizationError]),
+});
+
+export const WsGitGetCommitDetailRpc = Rpc.make(WS_METHODS.gitGetCommitDetail, {
+  payload: GitCommitDetailInput,
+  success: GitCommitDetailResult,
+  error: Schema.Union([GitWorkbenchServiceError, EnvironmentAuthorizationError]),
+});
+
+export const WsGitGetCommitFileDiffRpc = Rpc.make(WS_METHODS.gitGetCommitFileDiff, {
+  payload: GitCommitFileDiffInput,
+  success: GitCommitFileDiffResult,
+  error: Schema.Union([GitWorkbenchServiceError, EnvironmentAuthorizationError]),
+});
+
+export const WsGitGetChangesDiffRpc = Rpc.make(WS_METHODS.gitGetChangesDiff, {
+  payload: GitChangesDiffInput,
+  success: GitChangesDiffResult,
+  error: Schema.Union([GitWorkbenchServiceError, EnvironmentAuthorizationError]),
+});
+
+export const WsGitGetInteractiveRebasePlanRpc = Rpc.make(WS_METHODS.gitGetInteractiveRebasePlan, {
+  payload: GitInteractiveRebasePlanInput,
+  success: GitInteractiveRebasePlanResult,
+  error: Schema.Union([GitWorkbenchServiceError, EnvironmentAuthorizationError]),
+});
+
+export const WsGitApplyChangeSelectionRpc = Rpc.make(WS_METHODS.gitApplyChangeSelection, {
+  payload: GitApplyChangeSelectionInput,
+  success: GitApplyChangeSelectionResult,
+  error: Schema.Union([GitWorkbenchServiceError, EnvironmentAuthorizationError]),
+});
+
+export const WsGitRunWorkbenchOperationRpc = Rpc.make(WS_METHODS.gitRunWorkbenchOperation, {
+  payload: GitWorkbenchRunOperationInput,
+  success: GitWorkbenchOperationEvent,
+  error: Schema.Union([GitWorkbenchServiceError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+export const WsGitListUndoSnapshotsRpc = Rpc.make(WS_METHODS.gitListUndoSnapshots, {
+  payload: GitUndoSnapshotsListInput,
+  success: GitUndoSnapshotsListResult,
+  error: Schema.Union([GitWorkbenchServiceError, EnvironmentAuthorizationError]),
+});
+
+export const WsGitCreateUndoSnapshotRpc = Rpc.make(WS_METHODS.gitCreateUndoSnapshot, {
+  payload: GitUndoSnapshotCreateInput,
+  success: GitUndoSnapshotCreateResult,
+  error: Schema.Union([GitWorkbenchServiceError, EnvironmentAuthorizationError]),
+});
+
+export const WsGitRestoreUndoSnapshotRpc = Rpc.make(WS_METHODS.gitRestoreUndoSnapshot, {
+  payload: GitUndoSnapshotRestoreInput,
+  success: GitUndoSnapshotRestoreResult,
+  error: Schema.Union([GitWorkbenchServiceError, EnvironmentAuthorizationError]),
+});
+
+export const WsGitUpsertQueuedWorkflowRpc = Rpc.make(WS_METHODS.gitUpsertQueuedWorkflow, {
+  payload: GitQueuedWorkflowUpsertInput,
+  success: GitQueuedWorkflowUpsertResult,
+  error: Schema.Union([GitWorkbenchServiceError, EnvironmentAuthorizationError]),
+});
+
+export const WsGitCancelQueuedWorkflowRpc = Rpc.make(WS_METHODS.gitCancelQueuedWorkflow, {
+  payload: GitQueuedWorkflowCancelInput,
+  success: GitQueuedWorkflowCancelResult,
+  error: Schema.Union([GitWorkbenchServiceError, EnvironmentAuthorizationError]),
 });
 
 export const WsVcsListRefsRpc = Rpc.make(WS_METHODS.vcsListRefs, {
@@ -1115,10 +1329,17 @@ export const WsRpcGroup = RpcGroup.make(
   WsMcpUpdateRpc,
   WsMcpDeleteRpc,
   WsMcpSetEnabledRpc,
+  WsMcpSetProviderEnabledRpc,
   WsMcpImportCursorJsonRpc,
   WsMcpImportSourcesRpc,
   WsMcpExportCursorJsonRpc,
   WsMcpProviderStatusRpc,
+  WsMcpRuntimeContextsRpc,
+  WsMcpRuntimeContextChangesRpc,
+  WsMcpRuntimeSnapshotRpc,
+  WsMcpRuntimeChangesRpc,
+  WsMcpRuntimeServerDetailsRpc,
+  WsMcpRuntimeActionRpc,
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
@@ -1135,6 +1356,21 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitRunStackedActionRpc,
   WsGitResolvePullRequestRpc,
   WsGitPreparePullRequestThreadRpc,
+  WsGitSubscribeWorkbenchRpc,
+  WsGitRefreshWorkbenchRpc,
+  WsGitGetRepositoryInsightsRpc,
+  WsGitListHistoryRpc,
+  WsGitGetCommitDetailRpc,
+  WsGitGetCommitFileDiffRpc,
+  WsGitGetChangesDiffRpc,
+  WsGitGetInteractiveRebasePlanRpc,
+  WsGitApplyChangeSelectionRpc,
+  WsGitRunWorkbenchOperationRpc,
+  WsGitListUndoSnapshotsRpc,
+  WsGitCreateUndoSnapshotRpc,
+  WsGitRestoreUndoSnapshotRpc,
+  WsGitUpsertQueuedWorkflowRpc,
+  WsGitCancelQueuedWorkflowRpc,
   WsVcsListRefsRpc,
   WsVcsCreateWorktreeRpc,
   WsVcsRemoveWorktreeRpc,

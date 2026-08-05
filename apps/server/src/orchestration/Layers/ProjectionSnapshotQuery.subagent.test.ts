@@ -286,7 +286,7 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
     }),
   );
 
-  it.effect("hides legacy root rows and repairs stale active summaries with terminal turns", () =>
+  it.effect("hides legacy root rows and trusts each child's terminal turn independently", () =>
     Effect.gen(function* () {
       const query = yield* ProjectionSnapshotQuery;
       const sql = yield* SqlClient.SqlClient;
@@ -547,17 +547,32 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
         assert.deepInclude(
           activeRootDetail.value.subagents.find((subagent) => subagent.id === staleChildId),
           {
-            status: "running",
-            statusMessage: "Running",
+            status: "completed",
+            statusMessage: null,
             latestProgress: {
-              kind: "state.running",
-              summary: "Running",
+              kind: "state.completed",
+              summary: "Completed",
               detail: null,
-              createdAt: "2026-07-30T12:04:00.000Z",
+              createdAt: completedAt,
             },
-            completedAt: null,
+            completedAt,
           },
         );
+        assert.equal(
+          activeRootDetail.value.subagents.find((subagent) => subagent.id === activeChildId)
+            ?.status,
+          "running",
+        );
+      }
+
+      const staleChildDetail = yield* query.getSubagentDetailById(legacyThreadId, staleChildId);
+      assert.equal(staleChildDetail._tag, "Some");
+      if (staleChildDetail._tag === "Some") {
+        assert.deepInclude(staleChildDetail.value, {
+          status: "completed",
+          statusMessage: null,
+          completedAt,
+        });
       }
     }),
   );

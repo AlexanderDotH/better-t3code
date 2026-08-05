@@ -35,6 +35,7 @@ import type { OrchestrationDispatchError } from "../Errors.ts";
 import { isGitRepository } from "../../git/Utils.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
+import { TurnQuiescenceNotifier } from "../../git-workbench/TurnQuiescenceNotifier.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -83,6 +84,7 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const receiptBus = yield* RuntimeReceiptBus;
+  const turnQuiescenceNotifier = yield* TurnQuiescenceNotifier;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
 
@@ -327,13 +329,15 @@ const make = Effect.gen(function* () {
       status: input.status,
       createdAt: input.createdAt,
     });
-    yield* receiptBus.publish({
+    const quiescenceReceipt = {
       type: "turn.processing.quiesced",
       threadId: input.threadId,
       turnId: input.turnId,
       checkpointTurnCount: input.turnCount,
       createdAt: input.createdAt,
-    });
+    } as const;
+    yield* receiptBus.publish(quiescenceReceipt);
+    yield* turnQuiescenceNotifier.publish(quiescenceReceipt);
 
     yield* orchestrationEngine.dispatch({
       type: "thread.activity.append",

@@ -118,6 +118,19 @@ export const GitRunStackedActionInput = Schema.Struct({
   filePaths: Schema.optional(
     Schema.Array(TrimmedNonEmptyStringSchema).check(Schema.isMinLength(1)),
   ),
+  /** Standard-index semantics used by Git workbench clients. `filePaths`
+      remains decodable for legacy clients whose server path resets and
+      rebuilds the index before committing. */
+  commitSelection: Schema.optional(
+    Schema.Union([
+      Schema.Struct({ mode: Schema.Literal("staged") }),
+      Schema.Struct({ mode: Schema.Literal("all") }),
+      Schema.Struct({
+        mode: Schema.Literal("paths"),
+        paths: Schema.Array(TrimmedNonEmptyStringSchema).check(Schema.isMinLength(1)),
+      }),
+    ]),
+  ),
 });
 export type GitRunStackedActionInput = typeof GitRunStackedActionInput.Type;
 

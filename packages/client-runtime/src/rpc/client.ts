@@ -51,14 +51,18 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribePreviewEvents
   | typeof WS_METHODS.subscribeDiscoveredLocalServers
   | typeof WS_METHODS.subscribeResourceTelemetry
+  | typeof WS_METHODS.mcpRuntimeContextChanges
+  | typeof WS_METHODS.mcpRuntimeChanges
   | typeof WS_METHODS.previewAutomationConnect
   | typeof WS_METHODS.subscribeVcsStatus
+  | typeof WS_METHODS.gitSubscribeWorkbench
   | typeof WS_METHODS.terminalAttach;
 
 export type EnvironmentStreamCommandRpcTag =
   | typeof WS_METHODS.cloudInstallRelayClient
   | typeof WS_METHODS.serverUpdateServerWithProgress
-  | typeof WS_METHODS.gitRunStackedAction;
+  | typeof WS_METHODS.gitRunStackedAction
+  | typeof WS_METHODS.gitRunWorkbenchOperation;
 
 export type EnvironmentStreamRpcTag =
   | EnvironmentSubscriptionRpcTag

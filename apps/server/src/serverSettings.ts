@@ -212,6 +212,17 @@ export class ServerSettingsService extends Context.Service<
       patch: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    /**
+     * Atomically read, transform, validate, and persist the latest settings.
+     *
+     * Use this for read-modify-write operations whose transform must observe
+     * all previously committed mutations. The callback runs while the
+     * settings write semaphore is held and must not call this service again.
+     */
+    readonly modifySettings: <E, R>(
+      modify: (current: ServerSettings) => Effect.Effect<ServerSettings, E, R>,
+    ) => Effect.Effect<ServerSettings, E | ServerSettingsError, R>;
+
     /** Stream of settings change events. */
     readonly streamChanges: Stream.Stream<ServerSettings>;
 
@@ -244,20 +255,37 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
         : {}),
     });
     const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
+    const writeSemaphore = yield* Semaphore.make(1);
+    const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
+
+    const modifySettings: ServerSettingsService["Service"]["modifySettings"] = (modify) =>
+      writeSemaphore.withPermits(1)(
+        Ref.get(currentSettingsRef).pipe(
+          Effect.flatMap(modify),
+          Effect.flatMap(normalizeServerSettings),
+          Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
+          Effect.tap((nextSettings) => PubSub.publish(changesPubSub, nextSettings)),
+          Effect.map(resolveTextGenerationProvider),
+        ),
+      );
 
     return {
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider)),
       updateSettings: (patch) =>
-        Ref.get(currentSettingsRef).pipe(
-          Effect.map((currentSettings) => applyServerSettingsPatch(currentSettings, patch)),
-          Effect.flatMap(normalizeServerSettings),
-          Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
-          Effect.map(resolveTextGenerationProvider),
+        modifySettings((currentSettings) =>
+          Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
         ),
-      streamChanges: Stream.empty,
-      subscribeChanges: Effect.succeed(Stream.empty),
+      modifySettings,
+      get streamChanges() {
+        return Stream.fromPubSub(changesPubSub);
+      },
+      get subscribeChanges() {
+        return PubSub.subscribe(changesPubSub).pipe(
+          Effect.map((subscription) => Stream.fromSubscription(subscription)),
+        );
+      },
     } satisfies ServerSettingsService["Service"];
   });
 
@@ -945,6 +973,29 @@ const make = Effect.gen(function* () {
     yield* Deferred.succeed(startedDeferred, undefined).pipe(Effect.orDie);
   });
 
+  const modifySettings: ServerSettingsService["Service"]["modifySettings"] = (modify) =>
+    writeSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* getSettingsFromCache;
+        const requested = yield* modify(current);
+        const nextWithProviderSecrets = yield* persistProviderEnvironmentSecrets(
+          current,
+          requested,
+        );
+        const nextWithMcpSecrets = yield* persistMcpSecretValues(current, nextWithProviderSecrets);
+        const nextPersisted = yield* persistSpeechTranscriptionSecrets(nextWithMcpSecrets);
+        const next = yield* normalizeServerSettings(nextPersisted);
+        yield* writeSettingsAtomically(next);
+        yield* Cache.set(settingsCache, cacheKey, next);
+        yield* emitChange(next);
+        const materialized = yield* materializeProviderEnvironmentSecrets(next).pipe(
+          Effect.flatMap(materializeMcpSecretValues),
+          Effect.flatMap(materializeSpeechTranscriptionSecrets),
+        );
+        return resolveTextGenerationProvider(materialized);
+      }),
+    );
+
   return {
     start,
     ready: Deferred.await(startedDeferred),
@@ -955,29 +1006,8 @@ const make = Effect.gen(function* () {
       Effect.map(resolveTextGenerationProvider),
     ),
     updateSettings: (patch) =>
-      writeSemaphore.withPermits(1)(
-        Effect.gen(function* () {
-          const current = yield* getSettingsFromCache;
-          const nextWithProviderSecrets = yield* persistProviderEnvironmentSecrets(
-            current,
-            applyServerSettingsPatch(current, patch),
-          );
-          const nextWithMcpSecrets = yield* persistMcpSecretValues(
-            current,
-            nextWithProviderSecrets,
-          );
-          const nextPersisted = yield* persistSpeechTranscriptionSecrets(nextWithMcpSecrets);
-          const next = yield* normalizeServerSettings(nextPersisted);
-          yield* writeSettingsAtomically(next);
-          yield* Cache.set(settingsCache, cacheKey, next);
-          yield* emitChange(next);
-          const materialized = yield* materializeProviderEnvironmentSecrets(next).pipe(
-            Effect.flatMap(materializeMcpSecretValues),
-            Effect.flatMap(materializeSpeechTranscriptionSecrets),
-          );
-          return resolveTextGenerationProvider(materialized);
-        }),
-      ),
+      modifySettings((current) => Effect.succeed(applyServerSettingsPatch(current, patch))),
+    modifySettings,
     get streamChanges() {
       return materializeChanges(Stream.fromPubSub(changesPubSub));
     },

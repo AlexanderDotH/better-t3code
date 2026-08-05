@@ -75,6 +75,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           contents: "export const answer = 42;\n",
           byteLength: 26,
           truncated: false,
+          revision: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
         });
       }),
     );
@@ -288,6 +289,59 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           .stat(escapedPath)
           .pipe(Effect.orElseSucceed(() => null));
         expect(escapedStat).toBeNull();
+      }),
+    );
+
+    it.effect("uses compare-and-swap revisions for atomic writes", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/file.ts", "base\n");
+        const read = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "src/file.ts",
+        });
+
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "src/file.ts",
+          contents: "mine\n",
+          expectedRevision: read.revision,
+        });
+        const conflict = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath: "src/file.ts",
+            contents: "stale\n",
+            expectedRevision: read.revision,
+          })
+          .pipe(Effect.flip);
+
+        expect(conflict).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileRevisionConflictError);
+        expect(conflict).toMatchObject({
+          expectedRevision: read.revision,
+          relativePath: "src/file.ts",
+        });
+      }),
+    );
+
+    it.effect("rejects writes through a symlink target", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const outside = yield* makeTempDir;
+        yield* writeTextFile(outside, "outside.txt", "outside\n");
+        yield* fileSystem.symlink(path.join(outside, "outside.txt"), path.join(cwd, "linked.txt"));
+
+        const error = yield* workspaceFileSystem
+          .writeFile({ cwd, relativePath: "linked.txt", contents: "replaced\n" })
+          .pipe(Effect.flip);
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspacePathNotFileError);
+        expect(yield* fileSystem.readFileString(path.join(outside, "outside.txt"))).toBe(
+          "outside\n",
+        );
       }),
     );
   });

@@ -6,6 +6,7 @@ import type {
   McpImportSourcesInput,
   McpListResult,
   McpMutationResult,
+  McpProviderRouting,
   McpProviderCapability,
   McpProviderStatus,
   McpProviderStatusResult,
@@ -13,17 +14,19 @@ import type {
   McpServerDefinition,
   McpServerId,
   McpServerScope,
+  McpServerUpdateDefinition,
+  McpSetProviderEnabledInput,
   ProjectId,
-  ProviderDriverKind,
   ServerProvider,
   ServerSettings,
 } from "@t3tools/contracts";
-import { McpConfigError } from "@t3tools/contracts";
+import { McpConfigError, ProviderInstanceId } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import {
@@ -31,6 +34,7 @@ import {
   importMcpServersFromAgentSources,
 } from "../agentImportSources.ts";
 import { redactServerSettingsForClient, ServerSettingsService } from "../serverSettings.ts";
+import { McpConfigurationReconciler } from "./McpConfigurationReconciler.ts";
 
 type CursorMcpServerInput = {
   readonly command?: unknown;
@@ -51,6 +55,7 @@ export interface ResolveActiveMcpServersInput {
   readonly cwd?: string | null | undefined;
   readonly projectId?: string | null | undefined;
   readonly projectCwd?: string | null | undefined;
+  readonly providerInstanceId?: ProviderInstanceId | null | undefined;
 }
 
 export interface McpConfigEngineShape {
@@ -59,12 +64,15 @@ export interface McpConfigEngineShape {
     server: McpServerDefinition,
   ) => Effect.Effect<McpMutationResult, McpConfigError>;
   readonly update: (
-    server: McpServerDefinition,
+    server: McpServerUpdateDefinition,
   ) => Effect.Effect<McpMutationResult, McpConfigError>;
   readonly delete: (id: McpServerId) => Effect.Effect<McpMutationResult, McpConfigError>;
   readonly setEnabled: (
     id: McpServerId,
     enabled: boolean,
+  ) => Effect.Effect<McpMutationResult, McpConfigError>;
+  readonly setProviderEnabled: (
+    input: McpSetProviderEnabledInput,
   ) => Effect.Effect<McpMutationResult, McpConfigError>;
   readonly importCursorJson: (
     input: McpImportCursorJsonInput,
@@ -78,6 +86,10 @@ export interface McpConfigEngineShape {
   ) => Effect.Effect<McpCursorJsonResult, McpConfigError>;
   readonly providerStatus: (
     providers: ReadonlyArray<ServerProvider>,
+    input?: ResolveActiveMcpServersInput,
+    providerCapability?: (
+      providerInstanceId: ProviderInstanceId,
+    ) => Effect.Effect<McpProviderCapability>,
   ) => Effect.Effect<McpProviderStatusResult, McpConfigError>;
   readonly resolveActiveServers: (
     input: ResolveActiveMcpServersInput,
@@ -197,11 +209,66 @@ function isProjectMatch(server: McpServerDefinition, input: ResolveActiveMcpServ
   return candidates.some((candidate) => candidate === serverCwd);
 }
 
+function isProviderMatch(
+  server: McpServerDefinition,
+  providerInstanceId: ProviderInstanceId | null | undefined,
+): boolean {
+  if (!providerInstanceId || server.providerRouting.mode === "all") {
+    return true;
+  }
+  return server.providerRouting.instanceIds.includes(providerInstanceId);
+}
+
 export function resolveActiveMcpServers(
   settings: ServerSettings,
   input: ResolveActiveMcpServersInput,
 ): ReadonlyArray<McpServerDefinition> {
-  return settings.mcp.servers.filter((server) => server.enabled && isProjectMatch(server, input));
+  return settings.mcp.servers.filter(
+    (server) =>
+      server.enabled &&
+      isProjectMatch(server, input) &&
+      isProviderMatch(server, input.providerInstanceId),
+  );
+}
+
+function configuredProviderInstanceIds(
+  settings: ServerSettings,
+): ReadonlyArray<ProviderInstanceId> {
+  const ids = new Set<ProviderInstanceId>();
+  for (const driver of Object.keys(settings.providers)) {
+    ids.add(ProviderInstanceId.make(driver));
+  }
+  for (const instanceId of Object.keys(settings.providerInstances)) {
+    ids.add(ProviderInstanceId.make(instanceId));
+  }
+  return [...ids];
+}
+
+function selectedProviderRouting(instanceIds: Iterable<ProviderInstanceId>): McpProviderRouting {
+  return { mode: "selected", instanceIds: [...new Set(instanceIds)] };
+}
+
+function updateProviderRouting(input: {
+  readonly routing: McpProviderRouting;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly enabled: boolean;
+  readonly configuredInstanceIds: ReadonlyArray<ProviderInstanceId>;
+}): McpProviderRouting {
+  if (input.routing.mode === "all") {
+    if (input.enabled) {
+      return input.routing;
+    }
+    return selectedProviderRouting(
+      input.configuredInstanceIds.filter((instanceId) => instanceId !== input.providerInstanceId),
+    );
+  }
+
+  if (!input.enabled) {
+    return selectedProviderRouting(
+      input.routing.instanceIds.filter((instanceId) => instanceId !== input.providerInstanceId),
+    );
+  }
+  return selectedProviderRouting([...input.routing.instanceIds, input.providerInstanceId]);
 }
 
 function safeJsonParse(json: string): CursorMcpJsonInput {
@@ -273,6 +340,7 @@ function cursorTransport(raw: CursorMcpServerInput): "sse" | "http" {
 
 export function importCursorMcpServers(input: {
   readonly json: string;
+  readonly providerRouting: McpProviderRouting;
   readonly scope: McpServerScope;
   readonly projectId?: ProjectId | undefined;
   readonly projectCwd?: string | undefined;
@@ -299,6 +367,7 @@ export function importCursorMcpServers(input: {
       id,
       name: name.trim() || id,
       enabled: true,
+      providerRouting: input.providerRouting,
       scope: input.scope,
       ...(input.projectId ? { projectId: input.projectId } : {}),
       ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
@@ -364,7 +433,14 @@ function isExportMatch(server: McpServerDefinition, input: McpExportCursorJsonIn
   if (input.projectCwd && normalizePath(server.projectCwd) !== normalizePath(input.projectCwd)) {
     return false;
   }
+  if (input.providerInstanceId && !isProviderMatch(server, input.providerInstanceId)) {
+    return false;
+  }
   return true;
+}
+
+export function managedMcpProviderKey(serverId: McpServerId): string {
+  return serverId === "t3-code" ? `t3-managed:${serverId}` : serverId;
 }
 
 export function exportCursorMcpServersJson(
@@ -404,25 +480,13 @@ export function exportCursorMcpServersJson(
   };
 }
 
-export function getProviderMcpCapability(provider: ProviderDriverKind): McpProviderCapability {
-  switch (provider) {
-    case "cursor":
-    case "claudeAgent":
-    case "opencode":
-      return "sessionConfig";
-    case "codex":
-      return "nativeConfig";
-    default:
-      return "unsupported";
-  }
-}
-
 export function getMcpProviderStatuses(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly activeServerCount: number;
+  readonly capabilities: ReadonlyMap<ProviderInstanceId, McpProviderCapability>;
 }): ReadonlyArray<McpProviderStatus> {
   return input.providers.map((provider) => {
-    const capability = getProviderMcpCapability(provider.driver);
+    const capability = input.capabilities.get(provider.instanceId) ?? "unsupported";
     const unsupported = capability === "unsupported";
     return {
       provider: provider.driver,
@@ -446,7 +510,7 @@ export function toAcpMcpServers(
     switch (server.transport) {
       case "stdio":
         return {
-          name: server.name,
+          name: managedMcpProviderKey(server.id),
           command: server.command,
           args: server.args,
           env: Object.entries(server.env).map(([name, value]) => ({
@@ -459,7 +523,7 @@ export function toAcpMcpServers(
       case "http":
         return {
           type: server.transport,
-          name: server.name,
+          name: managedMcpProviderKey(server.id),
           url: server.url,
           headers: Object.entries(server.headers).map(([name, value]) => ({
             name,
@@ -479,10 +543,11 @@ export function toClaudeMcpServers(
 ): Record<string, ClaudeMcpServerConfig> {
   return Object.fromEntries(
     servers.map((server) => {
+      const providerKey = managedMcpProviderKey(server.id);
       switch (server.transport) {
         case "stdio":
           return [
-            server.id,
+            providerKey,
             {
               type: "stdio",
               command: server.command,
@@ -493,7 +558,7 @@ export function toClaudeMcpServers(
         case "sse":
         case "http":
           return [
-            server.id,
+            providerKey,
             {
               type: server.transport,
               url: server.url,
@@ -510,10 +575,11 @@ export function toOpenCodeMcpServers(
 ): Record<string, OpenCodeMcpServerConfig> {
   return Object.fromEntries(
     servers.map((server) => {
+      const providerKey = managedMcpProviderKey(server.id);
       switch (server.transport) {
         case "stdio":
           return [
-            server.id,
+            providerKey,
             {
               type: "local",
               command: [server.command, ...server.args],
@@ -524,7 +590,7 @@ export function toOpenCodeMcpServers(
         case "sse":
         case "http":
           return [
-            server.id,
+            providerKey,
             {
               type: "remote",
               url: server.url,
@@ -537,12 +603,19 @@ export function toOpenCodeMcpServers(
   );
 }
 
-function toClientResult(settings: ServerSettings): McpMutationResult {
-  return { servers: redactServerSettingsForClient(settings).mcp.servers };
+function toClientResult(
+  settings: ServerSettings,
+  liveApplyResults: McpMutationResult["liveApplyResults"] = [],
+): McpMutationResult {
+  return {
+    servers: redactServerSettingsForClient(settings).mcp.servers,
+    liveApplyResults,
+  };
 }
 
 const makeMcpConfigEngine = Effect.gen(function* () {
   const serverSettings = yield* ServerSettingsService;
+  const reconciler = Option.getOrUndefined(yield* Effect.serviceOption(McpConfigurationReconciler));
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -552,23 +625,39 @@ const makeMcpConfigEngine = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
 
-  const updateServers = (servers: ReadonlyArray<McpServerDefinition>) =>
-    Effect.try({
-      try: () => validateServers(servers),
-      catch: (cause) => (isMcpConfigError(cause) ? cause : mcpError("Invalid MCP servers.", cause)),
-    }).pipe(
-      Effect.flatMap(() =>
-        serverSettings.updateSettings({
-          mcp: { servers: [...servers] },
-        }),
-      ),
-      Effect.mapError((cause) =>
-        isMcpConfigError(cause)
-          ? cause
-          : mcpError(cause.message || "Failed to update MCP settings.", cause),
-      ),
-      Effect.map(toClientResult),
-    );
+  const updateServers = <R>(
+    modify: (
+      settings: ServerSettings,
+    ) => Effect.Effect<ReadonlyArray<McpServerDefinition>, McpConfigError, R>,
+  ) =>
+    serverSettings
+      .modifySettings((settings) =>
+        modify(settings).pipe(
+          Effect.tap((servers) =>
+            Effect.try({
+              try: () => validateServers(servers),
+              catch: (cause) =>
+                isMcpConfigError(cause) ? cause : mcpError("Invalid MCP servers.", cause),
+            }),
+          ),
+          Effect.map((servers) => ({
+            ...settings,
+            mcp: { ...settings.mcp, servers: [...servers] },
+          })),
+        ),
+      )
+      .pipe(
+        Effect.flatMap((settings) =>
+          (reconciler?.reconcileCurrent ?? Effect.succeed([])).pipe(
+            Effect.map((liveApplyResults) => toClientResult(settings, liveApplyResults)),
+          ),
+        ),
+        Effect.mapError((cause) =>
+          isMcpConfigError(cause)
+            ? cause
+            : mcpError(cause.message || "Failed to update MCP settings.", cause),
+        ),
+      );
 
   const readSettings = serverSettings.getSettings.pipe(
     Effect.mapError((cause) => mcpError(cause.message, cause)),
@@ -577,64 +666,76 @@ const makeMcpConfigEngine = Effect.gen(function* () {
   return {
     list: readSettings.pipe(Effect.map((settings) => toClientResult(settings))),
     create: (server) =>
-      readSettings.pipe(
-        Effect.flatMap((settings) => {
-          if (settings.mcp.servers.some((candidate) => candidate.id === server.id)) {
-            return Effect.fail(mcpError(`MCP server '${server.id}' already exists.`));
-          }
-          return updateServers([...settings.mcp.servers, server]);
-        }),
-      ),
+      updateServers((settings) => {
+        if (settings.mcp.servers.some((candidate) => candidate.id === server.id)) {
+          return Effect.fail(mcpError(`MCP server '${server.id}' already exists.`));
+        }
+        return Effect.succeed([...settings.mcp.servers, server]);
+      }),
     update: (server) =>
-      readSettings.pipe(
-        Effect.flatMap((settings) => {
-          const index = settings.mcp.servers.findIndex((candidate) => candidate.id === server.id);
-          if (index < 0) {
-            return Effect.fail(mcpError(`MCP server '${server.id}' was not found.`));
-          }
-          const servers = [...settings.mcp.servers];
-          servers[index] = server;
-          return updateServers(servers);
-        }),
-      ),
+      updateServers((settings) => {
+        const index = settings.mcp.servers.findIndex((candidate) => candidate.id === server.id);
+        if (index < 0) {
+          return Effect.fail(mcpError(`MCP server '${server.id}' was not found.`));
+        }
+        const servers = [...settings.mcp.servers];
+        const current = servers[index]!;
+        servers[index] = {
+          ...server,
+          providerRouting: server.providerRouting ?? current.providerRouting,
+        } as McpServerDefinition;
+        return Effect.succeed(servers);
+      }),
     delete: (id) =>
-      readSettings.pipe(
-        Effect.flatMap((settings) =>
-          updateServers(settings.mcp.servers.filter((server) => server.id !== id)),
-        ),
+      updateServers((settings) =>
+        Effect.succeed(settings.mcp.servers.filter((server) => server.id !== id)),
       ),
     setEnabled: (id, enabled) =>
-      readSettings.pipe(
-        Effect.flatMap((settings) =>
-          updateServers(
-            settings.mcp.servers.map((server) =>
-              server.id === id ? { ...server, enabled } : server,
-            ),
+      updateServers((settings) =>
+        Effect.succeed(
+          settings.mcp.servers.map((server) =>
+            server.id === id ? { ...server, enabled } : server,
           ),
         ),
       ),
+    setProviderEnabled: (input) =>
+      updateServers((settings) => {
+        const index = settings.mcp.servers.findIndex((server) => server.id === input.serverId);
+        if (index < 0) {
+          return Effect.fail(mcpError(`MCP server '${input.serverId}' was not found.`));
+        }
+        const servers = [...settings.mcp.servers];
+        const server = servers[index]!;
+        servers[index] = {
+          ...server,
+          providerRouting: updateProviderRouting({
+            routing: server.providerRouting,
+            providerInstanceId: input.providerInstanceId,
+            enabled: input.enabled,
+            configuredInstanceIds: configuredProviderInstanceIds(settings),
+          }),
+        };
+        return Effect.succeed(servers);
+      }),
     importCursorJson: (input) =>
-      readSettings.pipe(
-        Effect.flatMap((settings) =>
-          Effect.try({
-            try: () =>
-              importCursorMcpServers({
-                json: input.json,
-                scope: input.scope,
-                ...(input.projectId ? { projectId: input.projectId } : {}),
-                ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
-                reservedIds: input.replace
-                  ? new Set()
-                  : new Set(settings.mcp.servers.map((server) => server.id)),
-              }),
-            catch: (cause) =>
-              isMcpConfigError(cause)
-                ? cause
-                : mcpError("Failed to import Cursor MCP JSON.", cause),
-          }).pipe(
-            Effect.flatMap((imported) =>
-              updateServers(input.replace ? imported : [...settings.mcp.servers, ...imported]),
-            ),
+      updateServers((settings) =>
+        Effect.try({
+          try: () =>
+            importCursorMcpServers({
+              json: input.json,
+              providerRouting: input.providerRouting,
+              scope: input.scope,
+              ...(input.projectId ? { projectId: input.projectId } : {}),
+              ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
+              reservedIds: input.replace
+                ? new Set()
+                : new Set(settings.mcp.servers.map((server) => server.id)),
+            }),
+          catch: (cause) =>
+            isMcpConfigError(cause) ? cause : mcpError("Failed to import Cursor MCP JSON.", cause),
+        }).pipe(
+          Effect.map((imported) =>
+            input.replace ? imported : [...settings.mcp.servers, ...imported],
           ),
         ),
       ),
@@ -646,23 +747,22 @@ const makeMcpConfigEngine = Effect.gen(function* () {
     ),
     importSources: (input) =>
       provideCaptured(
-        readSettings.pipe(
-          Effect.flatMap((settings) =>
-            importMcpServersFromAgentSources({
-              sourceIds: input.sourceIds,
-              scope: input.scope,
-              ...(input.projectId ? { projectId: input.projectId } : {}),
-              ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
-              reservedIds: input.replace
-                ? new Set()
-                : new Set(settings.mcp.servers.map((server) => server.id)),
-              existingServers: input.replace ? [] : settings.mcp.servers,
-              deduplicate: input.deduplicate,
-              settings,
-            }).pipe(
-              Effect.flatMap((imported) =>
-                updateServers(input.replace ? imported : [...settings.mcp.servers, ...imported]),
-              ),
+        updateServers((settings) =>
+          importMcpServersFromAgentSources({
+            sourceIds: input.sourceIds,
+            providerRouting: input.providerRouting,
+            scope: input.scope,
+            ...(input.projectId ? { projectId: input.projectId } : {}),
+            ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
+            reservedIds: input.replace
+              ? new Set()
+              : new Set(settings.mcp.servers.map((server) => server.id)),
+            existingServers: input.replace ? [] : settings.mcp.servers,
+            deduplicate: input.deduplicate,
+            settings,
+          }).pipe(
+            Effect.map((imported) =>
+              input.replace ? imported : [...settings.mcp.servers, ...imported],
             ),
           ),
         ),
@@ -671,14 +771,30 @@ const makeMcpConfigEngine = Effect.gen(function* () {
       readSettings.pipe(
         Effect.map((settings) => exportCursorMcpServersJson(settings.mcp.servers, input)),
       ),
-    providerStatus: (providers) =>
+    providerStatus: (providers, input = {}, providerCapability) =>
       readSettings.pipe(
-        Effect.map((settings) => ({
-          providers: getMcpProviderStatuses({
-            providers,
-            activeServerCount: resolveActiveMcpServers(settings, { cwd: undefined }).length,
-          }),
-        })),
+        Effect.flatMap((settings) =>
+          Effect.forEach(providers, (provider) =>
+            (
+              providerCapability?.(provider.instanceId) ??
+              reconciler?.providerCapability(provider.instanceId) ??
+              Effect.succeed("unsupported" as const)
+            ).pipe(
+              Effect.map(
+                (capability) =>
+                  getMcpProviderStatuses({
+                    providers: [provider],
+                    activeServerCount: resolveActiveMcpServers(settings, {
+                      ...input,
+                      providerInstanceId: provider.instanceId,
+                    }).length,
+                    capabilities: new Map([[provider.instanceId, capability]]),
+                  })[0]!,
+              ),
+            ),
+          ),
+        ),
+        Effect.map((providerStatuses) => ({ providers: providerStatuses })),
       ),
     resolveActiveServers: (input) =>
       readSettings.pipe(Effect.map((settings) => resolveActiveMcpServers(settings, input))),

@@ -39,12 +39,26 @@ import * as PlanParallelismReview from "./plan/PlanParallelismReview.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
+import { McpRuntimeRegistryLive } from "./mcp/McpRuntimeRegistry.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import * as GitManager from "./git/GitManager.ts";
+import * as GitRepositoryQueryService from "./git-workbench/GitRepositoryQueryService.ts";
+import * as GitRebaseControlledEditor from "./git-workbench/GitRebaseControlledEditor.ts";
+import * as GitWorkbenchDriver from "./git-workbench/GitWorkbenchDriver.ts";
+import * as GitWorkbenchOperations from "./git-workbench/GitWorkbenchOperations.ts";
+import * as GitWorkbenchQueueReactor from "./git-workbench/GitWorkbenchQueueReactor.ts";
+import * as GitWorkbenchQueueRepository from "./git-workbench/GitWorkbenchQueueRepository.ts";
+import * as GitWorkbenchQueueService from "./git-workbench/GitWorkbenchQueueService.ts";
+import * as GitWorkbenchRuntime from "./git-workbench/GitWorkbenchRuntime.ts";
+import * as GitWorkbenchService from "./git-workbench/GitWorkbenchService.ts";
+import * as GitWorkbenchUndoDriver from "./git-workbench/GitWorkbenchUndoDriver.ts";
+import * as GitWorkbenchUndoService from "./git-workbench/GitWorkbenchUndoService.ts";
+import * as TurnQuiescenceNotifier from "./git-workbench/TurnQuiescenceNotifier.ts";
+import * as GitWorkbenchUndoStorage from "./persistence/Layers/GitWorkbenchUndoStorage.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor.ts";
@@ -66,6 +80,7 @@ import * as WorkspaceContext from "./workspace/WorkspaceContext.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import { McpConfigEngineLive } from "./mcp/McpConfigEngine.ts";
+import { McpConfigurationReconcilerLive } from "./mcp/McpConfigurationReconcilerLive.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
@@ -215,6 +230,7 @@ const PlatformServicesLive = Layer.unwrap(
 );
 
 const ReactorLayerLive = Layer.empty.pipe(
+  Layer.provideMerge(TurnQuiescenceNotifier.TurnQuiescenceNotifierLive),
   Layer.provideMerge(OrchestrationReactorLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
   Layer.provideMerge(ProviderCommandReactorLive),
@@ -229,6 +245,22 @@ const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
   Layer.provide(ProviderSessionRuntime.layer),
 );
 
+const McpRuntimeRegistryLayerLive = McpRuntimeRegistryLive.pipe(
+  Layer.provide(ProviderAdapterRegistryLive),
+);
+
+const McpReconcilerProviderInstanceRegistryLive = ProviderInstanceRegistryHydrationLive.pipe(
+  Layer.provideMerge(McpConfigEngineLive),
+  Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+  Layer.provideMerge(ProviderEventLoggers.layer),
+);
+
+const McpConfigurationReconcilerLayerLive = McpConfigurationReconcilerLive.pipe(
+  Layer.provideMerge(
+    McpRuntimeRegistryLayerLive.pipe(Layer.provideMerge(McpReconcilerProviderInstanceRegistryLive)),
+  ),
+);
+
 // `ProviderAdapterRegistryLive` is now a facade that resolves kind → adapter
 // by looking up the default `ProviderInstance` per driver in the instance
 // registry. Adapter construction itself moved inside each driver's
@@ -238,6 +270,7 @@ const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
 const ProviderLayerLive = ProviderServiceLive.pipe(
   Layer.provide(ProviderAdapterRegistryLive),
   Layer.provideMerge(ProviderSessionDirectoryLayerLive),
+  Layer.provideMerge(McpRuntimeRegistryLayerLive),
 );
 
 const ProjectSpeechProfileStoreLayerLive = ProjectSpeechProfileStore.layer.pipe(
@@ -280,6 +313,62 @@ const GitLayerLive = Layer.empty.pipe(
 const GitWorkflowLayerLive = GitWorkflowService.layer.pipe(
   Layer.provideMerge(VcsDriverRegistryLayerLive),
   Layer.provideMerge(GitLayerLive),
+);
+
+const GitWorkbenchFoundationLayerLive = Layer.mergeAll(
+  GitWorkbenchRuntime.GitWorkbenchMutationSchedulerLive,
+  GitWorkbenchDriver.layer,
+  GitRepositoryQueryService.layer,
+  GitWorkbenchOperations.driverLayer,
+  GitRebaseControlledEditor.layer,
+  GitWorkbenchUndoStorage.GitWorkbenchUndoStorageLive,
+  GitWorkbenchQueueRepository.GitWorkbenchQueueRepositoryLive,
+);
+
+const GitWorkbenchStateReadersLayerLive = Layer.mergeAll(
+  GitWorkbenchRuntime.GitWorkbenchOperationStateReaderLive,
+  GitWorkbenchRuntime.GitWorkbenchUndoStateReaderLive,
+).pipe(Layer.provideMerge(GitWorkbenchFoundationLayerLive));
+
+const GitWorkbenchUndoLayerLive = GitWorkbenchUndoService.layer.pipe(
+  Layer.provideMerge(
+    GitWorkbenchUndoDriver.layer.pipe(Layer.provideMerge(GitWorkbenchFoundationLayerLive)),
+  ),
+  Layer.provideMerge(GitWorkbenchStateReadersLayerLive),
+  Layer.provideMerge(GitWorkbenchFoundationLayerLive),
+);
+
+const GitWorkbenchOperationsLayerLive = GitWorkbenchOperations.layer.pipe(
+  Layer.provideMerge(GitWorkbenchUndoLayerLive),
+  Layer.provideMerge(GitWorkbenchStateReadersLayerLive),
+  Layer.provideMerge(GitWorkbenchFoundationLayerLive),
+);
+
+const GitWorkbenchQueueRuntimeLayerLive = GitWorkbenchRuntime.GitWorkbenchQueueRuntimeLive.pipe(
+  Layer.provideMerge(GitWorkbenchOperationsLayerLive),
+  Layer.provideMerge(GitWorkbenchFoundationLayerLive),
+);
+
+const GitWorkbenchQueueLayerLive = GitWorkbenchQueueService.GitWorkbenchQueueLive.pipe(
+  Layer.provideMerge(GitWorkbenchQueueRuntimeLayerLive),
+  Layer.provideMerge(GitWorkbenchFoundationLayerLive),
+);
+
+const GitWorkbenchQueueReactorLayerLive =
+  GitWorkbenchQueueReactor.GitWorkbenchQueueReactorLive.pipe(
+    Layer.provideMerge(GitWorkbenchQueueLayerLive),
+  );
+
+const GitWorkbenchCoreLayerLive = GitWorkbenchService.layer.pipe(
+  Layer.provideMerge(
+    GitWorkbenchQueueReactor.GitWorkbenchQueueReactorWorkerLive.pipe(
+      Layer.provideMerge(GitWorkbenchQueueReactorLayerLive),
+    ),
+  ),
+  Layer.provideMerge(GitWorkbenchQueueLayerLive),
+  Layer.provideMerge(GitWorkbenchOperationsLayerLive),
+  Layer.provideMerge(GitWorkbenchUndoLayerLive),
+  Layer.provideMerge(GitWorkbenchFoundationLayerLive),
 );
 
 const SourceControlRepositoryServiceLayerLive = SourceControlRepositoryService.layer.pipe(
@@ -361,6 +450,15 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(OrchestrationLayerLive),
 );
 
+const GitWorkbenchLayerLive = GitWorkbenchCoreLayerLive.pipe(
+  Layer.provideMerge(VcsLayerLive),
+  Layer.provideMerge(ProviderRuntimeLayerLive),
+  Layer.provideMerge(PersistenceLayerLive),
+  Layer.provideMerge(WorkspaceLayerLive),
+  Layer.provideMerge(ServerEnvironment.layer),
+  Layer.provideMerge(TurnQuiescenceNotifier.TurnQuiescenceNotifierLive),
+);
+
 const RuntimeCoreServicesLive = ReactorLayerLive.pipe(
   // Core Services
   Layer.provideMerge(ServerSettingsLayerLive),
@@ -368,6 +466,7 @@ const RuntimeCoreServicesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(VcsLayerLive),
+  Layer.provideMerge(GitWorkbenchLayerLive),
   Layer.provideMerge(PlanParallelismReviewLayerLive),
   Layer.provideMerge(ProviderRuntimeLayerLive),
   Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive)),
@@ -397,6 +496,7 @@ const RuntimeCoreDependenciesLive = RuntimeCoreServicesLive.pipe(
   // keeps a single Live for all opencode consumers.
   Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
   Layer.provideMerge(McpConfigEngineLive),
+  Layer.provideMerge(McpConfigurationReconcilerLayerLive),
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLayerLive),
   Layer.provideMerge(RepositoryIdentityResolver.layer),

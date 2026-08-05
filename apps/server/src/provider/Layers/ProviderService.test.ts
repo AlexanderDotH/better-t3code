@@ -57,6 +57,7 @@ import {
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import { McpRuntimeRegistry, McpRuntimeRegistryLive } from "../../mcp/McpRuntimeRegistry.ts";
 import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMock.ts";
 
 const defaultServerSettingsLayer = ServerSettings.ServerSettingsService.layerTest();
@@ -623,6 +624,56 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
 );
 
 const routing = makeProviderServiceLayer();
+
+it.effect("ProviderServiceLive registers and generation-fences MCP runtime contexts", () =>
+  Effect.gen(function* () {
+    const codex = makeFakeCodexAdapter();
+    const registry = makeAdapterRegistryMock({ [CODEX_DRIVER]: codex.adapter });
+    const providerAdapterLayer = Layer.succeed(
+      ProviderAdapterRegistry.ProviderAdapterRegistry,
+      registry,
+    );
+    const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+      Layer.provide(SqlitePersistenceMemory),
+    );
+    const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+    const mcpRuntimeLayer = McpRuntimeRegistryLive.pipe(Layer.provide(providerAdapterLayer));
+    const providerLayer = makeProviderServiceLive().pipe(
+      Layer.provide(providerAdapterLayer),
+      Layer.provide(directoryLayer),
+      Layer.provide(defaultServerSettingsLayer),
+      Layer.provide(
+        Layer.succeed(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
+      ),
+      Layer.provideMerge(mcpRuntimeLayer),
+    );
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const mcpRuntime = yield* McpRuntimeRegistry;
+      const threadId = asThreadId("thread-mcp-runtime-lifecycle");
+      const session = yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      assert.ok(session.runtimeSessionId);
+
+      const active = yield* mcpRuntime.listContexts({ providerInstanceId: codexInstanceId });
+      assert.equal(active.contexts.length, 1);
+      assert.equal(active.contexts[0]?.state, "active");
+      assert.equal(active.contexts[0]?.runtimeSessionId, session.runtimeSessionId);
+
+      yield* provider.stopSession({ threadId });
+      const stopped = yield* mcpRuntime.listContexts({ providerInstanceId: codexInstanceId });
+      assert.equal(stopped.contexts[0]?.state, "inactive");
+    }).pipe(Effect.provide(providerLayer));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.effect("ProviderServiceLive writes canonical events to the emitting thread segment", () =>
   Effect.gen(function* () {

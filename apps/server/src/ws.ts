@@ -21,12 +21,16 @@ import {
   type OrchestrationCommand,
   type GitActionProgressEvent,
   type GitManagerServiceError,
+  type GitWorkbenchOperationEvent,
+  type GitWorkbenchServiceError,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
   type OrchestrationSubagentStreamItem,
   type OrchestrationThreadStreamItem,
+  McpConfigError,
+  type McpMutationResult,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
   OrchestrationSearchThreadsError,
@@ -39,6 +43,7 @@ import {
   ProjectListEntriesError,
   ProjectReadFileError,
   ProjectSearchEntriesError,
+  ProjectWriteConflictError,
   ProjectWriteFileError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
@@ -114,6 +119,8 @@ import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import { McpConfigEngine } from "./mcp/McpConfigEngine.ts";
+import { McpConfigurationReconciler } from "./mcp/McpConfigurationReconciler.ts";
+import { McpRuntimeRegistry } from "./mcp/McpRuntimeRegistry.ts";
 import { SkillEngine } from "./skills/Services/SkillEngine.ts";
 import { makeT3ChatImport } from "./t3ChatImport.ts";
 import { AssemblyAiStreamingToken } from "./speech/Layers/AssemblyAiStreamingToken.ts";
@@ -127,6 +134,7 @@ import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
+import * as GitWorkbenchService from "./git-workbench/GitWorkbenchService.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
@@ -354,6 +362,7 @@ const makeWsRpcLayer = (
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const gitWorkbench = yield* GitWorkbenchService.GitWorkbenchService;
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
@@ -391,6 +400,26 @@ const makeWsRpcLayer = (
       const projectTextTransforms = yield* ProjectTextTransforms.make;
       const planParallelismReview = yield* PlanParallelismReview.PlanParallelismReview;
       const mcpConfigEngine = yield* McpConfigEngine;
+      const mcpConfigurationReconciler = yield* McpConfigurationReconciler;
+      const mcpRuntimeRegistry = yield* McpRuntimeRegistry;
+      const reconcileMcpMutation = (mutation: Effect.Effect<McpMutationResult, McpConfigError>) =>
+        mutation.pipe(
+          Effect.flatMap((persisted) =>
+            mcpConfigurationReconciler.reconcileCurrent.pipe(
+              Effect.map((liveApplyResults) => ({
+                servers: persisted.servers,
+                liveApplyResults: [...liveApplyResults],
+              })),
+              Effect.mapError(
+                (cause) =>
+                  new McpConfigError({
+                    detail: cause.message || "Failed to reconcile MCP configuration.",
+                    cause,
+                  }),
+              ),
+            ),
+          ),
+        );
       const skillEngine = yield* SkillEngine;
       const t3ChatImport = yield* makeT3ChatImport();
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
@@ -1441,9 +1470,13 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "orchestration" },
           ),
         [WS_METHODS.serverProbe]: (_input) =>
-          observeRpcEffect(WS_METHODS.serverProbe, Effect.succeed({}), {
-            "rpc.aggregate": "server",
-          }),
+          observeRpcEffect(
+            WS_METHODS.serverProbe,
+            Effect.succeed({ scopes: currentSession.scopes }),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.serverGetConfig]: (_input) =>
           observeRpcEffect(WS_METHODS.serverGetConfig, loadServerConfig, {
             "rpc.aggregate": "server",
@@ -1745,37 +1778,59 @@ const makeWsRpcLayer = (
             },
           ),
         [WS_METHODS.mcpCreate]: (input) =>
-          observeRpcEffect(WS_METHODS.mcpCreate, mcpConfigEngine.create(input.server), {
-            "rpc.aggregate": "mcp",
-          }),
-        [WS_METHODS.mcpUpdate]: (input) =>
-          observeRpcEffect(WS_METHODS.mcpUpdate, mcpConfigEngine.update(input.server), {
-            "rpc.aggregate": "mcp",
-          }),
-        [WS_METHODS.mcpDelete]: (input) =>
-          observeRpcEffect(WS_METHODS.mcpDelete, mcpConfigEngine.delete(input.id), {
-            "rpc.aggregate": "mcp",
-          }),
-        [WS_METHODS.mcpSetEnabled]: (input) =>
           observeRpcEffect(
-            WS_METHODS.mcpSetEnabled,
-            mcpConfigEngine.setEnabled(input.id, input.enabled),
+            WS_METHODS.mcpCreate,
+            reconcileMcpMutation(mcpConfigEngine.create(input.server)),
             {
               "rpc.aggregate": "mcp",
             },
           ),
+        [WS_METHODS.mcpUpdate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpUpdate,
+            reconcileMcpMutation(mcpConfigEngine.update(input.server)),
+            {
+              "rpc.aggregate": "mcp",
+            },
+          ),
+        [WS_METHODS.mcpDelete]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpDelete,
+            reconcileMcpMutation(mcpConfigEngine.delete(input.id)),
+            {
+              "rpc.aggregate": "mcp",
+            },
+          ),
+        [WS_METHODS.mcpSetEnabled]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpSetEnabled,
+            reconcileMcpMutation(mcpConfigEngine.setEnabled(input.id, input.enabled)),
+            {
+              "rpc.aggregate": "mcp",
+            },
+          ),
+        [WS_METHODS.mcpSetProviderEnabled]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpSetProviderEnabled,
+            reconcileMcpMutation(mcpConfigEngine.setProviderEnabled(input)),
+            { "rpc.aggregate": "mcp" },
+          ),
         [WS_METHODS.mcpImportCursorJson]: (input) =>
           observeRpcEffect(
             WS_METHODS.mcpImportCursorJson,
-            mcpConfigEngine.importCursorJson(input),
+            reconcileMcpMutation(mcpConfigEngine.importCursorJson(input)),
             {
               "rpc.aggregate": "mcp",
             },
           ),
         [WS_METHODS.mcpImportSources]: (input) =>
-          observeRpcEffect(WS_METHODS.mcpImportSources, mcpConfigEngine.importSources(input), {
-            "rpc.aggregate": "mcp",
-          }),
+          observeRpcEffect(
+            WS_METHODS.mcpImportSources,
+            reconcileMcpMutation(mcpConfigEngine.importSources(input)),
+            {
+              "rpc.aggregate": "mcp",
+            },
+          ),
         [WS_METHODS.mcpExportCursorJson]: (input) =>
           observeRpcEffect(
             WS_METHODS.mcpExportCursorJson,
@@ -1787,11 +1842,63 @@ const makeWsRpcLayer = (
         [WS_METHODS.mcpProviderStatus]: (_input) =>
           observeRpcEffect(
             WS_METHODS.mcpProviderStatus,
-            providerRegistry.getProviders.pipe(Effect.flatMap(mcpConfigEngine.providerStatus)),
+            providerRegistry.getProviders.pipe(
+              Effect.flatMap((providers) =>
+                mcpConfigEngine.providerStatus(
+                  providers,
+                  {},
+                  mcpRuntimeRegistry.providerCapability,
+                ),
+              ),
+            ),
             {
               "rpc.aggregate": "mcp",
             },
           ),
+        [WS_METHODS.mcpRuntimeContexts]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpRuntimeContexts, mcpRuntimeRegistry.listContexts(input), {
+            "rpc.aggregate": "mcp",
+          }),
+        [WS_METHODS.mcpRuntimeContextChanges]: (input) =>
+          observeRpcStream(
+            WS_METHODS.mcpRuntimeContextChanges,
+            Stream.unwrap(
+              Effect.map(mcpRuntimeRegistry.subscribeContexts(input), ({ latest, changes }) =>
+                Stream.concat(
+                  Stream.make({ type: "snapshot" as const, snapshot: latest }),
+                  changes,
+                ),
+              ),
+            ),
+            { "rpc.aggregate": "mcp" },
+          ),
+        [WS_METHODS.mcpRuntimeSnapshot]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpRuntimeSnapshot, mcpRuntimeRegistry.refresh(input), {
+            "rpc.aggregate": "mcp",
+          }),
+        [WS_METHODS.mcpRuntimeChanges]: (input) =>
+          observeRpcStream(
+            WS_METHODS.mcpRuntimeChanges,
+            Stream.unwrap(
+              Effect.map(mcpRuntimeRegistry.subscribe(input), ({ latest, changes }) =>
+                Stream.concat(
+                  Stream.make({ type: "snapshot" as const, snapshot: latest }),
+                  changes,
+                ),
+              ),
+            ),
+            { "rpc.aggregate": "mcp" },
+          ),
+        [WS_METHODS.mcpRuntimeServerDetails]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpRuntimeServerDetails,
+            mcpRuntimeRegistry.getServerDetails(input),
+            { "rpc.aggregate": "mcp" },
+          ),
+        [WS_METHODS.mcpRuntimeAction]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpRuntimeAction, mcpRuntimeRegistry.runAction(input), {
+            "rpc.aggregate": "mcp",
+          }),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlLookupRepository,
@@ -1869,15 +1976,22 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.projectsWriteFile,
             workspaceFileSystem.writeFile(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProjectWriteFileError({
-                    cwd: input.cwd,
-                    relativePath: input.relativePath,
-                    ...projectFileFailureContext(cause),
-                    cause,
-                  }),
+              Effect.mapError((cause) =>
+                cause._tag === "WorkspaceFileRevisionConflictError"
+                  ? new ProjectWriteConflictError({
+                      cwd: input.cwd,
+                      relativePath: input.relativePath,
+                      expectedRevision: cause.expectedRevision,
+                      actualRevision: cause.actualRevision,
+                    })
+                  : new ProjectWriteFileError({
+                      cwd: input.cwd,
+                      relativePath: input.relativePath,
+                      ...projectFileFailureContext(cause),
+                      cause,
+                    }),
               ),
+              Effect.tap(() => refreshGitStatus(input.cwd)),
             ),
             { "rpc.aggregate": "workspace" },
           ),
@@ -1999,6 +2113,101 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "vcs" },
           ),
+        [WS_METHODS.gitSubscribeWorkbench]: (input) =>
+          observeRpcStream(WS_METHODS.gitSubscribeWorkbench, gitWorkbench.subscribe(input), {
+            "rpc.aggregate": "git-workbench",
+          }),
+        [WS_METHODS.gitRefreshWorkbench]: (input) =>
+          observeRpcEffect(WS_METHODS.gitRefreshWorkbench, gitWorkbench.snapshot(input), {
+            "rpc.aggregate": "git-workbench",
+          }),
+        [WS_METHODS.gitGetRepositoryInsights]: (input) =>
+          observeRpcEffect(WS_METHODS.gitGetRepositoryInsights, gitWorkbench.insights(input), {
+            "rpc.aggregate": "git-workbench",
+          }),
+        [WS_METHODS.gitListHistory]: (input) =>
+          observeRpcEffect(WS_METHODS.gitListHistory, gitWorkbench.history(input), {
+            "rpc.aggregate": "git-workbench",
+          }),
+        [WS_METHODS.gitGetCommitDetail]: (input) =>
+          observeRpcEffect(WS_METHODS.gitGetCommitDetail, gitWorkbench.commitDetail(input), {
+            "rpc.aggregate": "git-workbench",
+          }),
+        [WS_METHODS.gitGetCommitFileDiff]: (input) =>
+          observeRpcEffect(WS_METHODS.gitGetCommitFileDiff, gitWorkbench.commitFileDiff(input), {
+            "rpc.aggregate": "git-workbench",
+          }),
+        [WS_METHODS.gitGetChangesDiff]: (input) =>
+          observeRpcEffect(WS_METHODS.gitGetChangesDiff, gitWorkbench.changesDiff(input), {
+            "rpc.aggregate": "git-workbench",
+          }),
+        [WS_METHODS.gitGetInteractiveRebasePlan]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitGetInteractiveRebasePlan,
+            gitWorkbench.interactiveRebasePlan(input),
+            { "rpc.aggregate": "git-workbench" },
+          ),
+        [WS_METHODS.gitApplyChangeSelection]: (input) =>
+          observeRpcEffect(WS_METHODS.gitApplyChangeSelection, gitWorkbench.applySelection(input), {
+            "rpc.aggregate": "git-workbench",
+          }),
+        [WS_METHODS.gitRunWorkbenchOperation]: (input) =>
+          observeRpcStream(
+            WS_METHODS.gitRunWorkbenchOperation,
+            Stream.callback<GitWorkbenchOperationEvent, GitWorkbenchServiceError>((queue) =>
+              Effect.gen(function* () {
+                const operationId = yield* crypto.randomUUIDv4;
+                yield* Queue.offer(queue, {
+                  _tag: "started" as const,
+                  operationId,
+                  actionKind: input.action.kind,
+                });
+                yield* Queue.offer(queue, {
+                  _tag: "progress" as const,
+                  operationId,
+                  phase: "running",
+                  label: "Running Git operation…",
+                });
+                yield* gitWorkbench.runOperation(input).pipe(
+                  Effect.matchCauseEffect({
+                    onFailure: (cause) =>
+                      Queue.offer(queue, {
+                        _tag: "failed" as const,
+                        operationId,
+                        message: Cause.pretty(cause).slice(0, 4_096),
+                      }).pipe(Effect.andThen(Queue.failCause(queue, cause))),
+                    onSuccess: (result) =>
+                      Queue.offer(queue, {
+                        _tag: "completed" as const,
+                        operationId,
+                        result,
+                      }).pipe(Effect.andThen(Queue.end(queue).pipe(Effect.asVoid))),
+                  }),
+                );
+              }).pipe(Effect.orDie),
+            ),
+            { "rpc.aggregate": "git-workbench" },
+          ),
+        [WS_METHODS.gitListUndoSnapshots]: (input) =>
+          observeRpcEffect(WS_METHODS.gitListUndoSnapshots, gitWorkbench.listUndo(input), {
+            "rpc.aggregate": "git-workbench",
+          }),
+        [WS_METHODS.gitCreateUndoSnapshot]: (input) =>
+          observeRpcEffect(WS_METHODS.gitCreateUndoSnapshot, gitWorkbench.createUndo(input), {
+            "rpc.aggregate": "git-workbench",
+          }),
+        [WS_METHODS.gitRestoreUndoSnapshot]: (input) =>
+          observeRpcEffect(WS_METHODS.gitRestoreUndoSnapshot, gitWorkbench.restoreUndo(input), {
+            "rpc.aggregate": "git-workbench",
+          }),
+        [WS_METHODS.gitUpsertQueuedWorkflow]: (input) =>
+          observeRpcEffect(WS_METHODS.gitUpsertQueuedWorkflow, gitWorkbench.upsertQueue(input), {
+            "rpc.aggregate": "git-workbench",
+          }),
+        [WS_METHODS.gitCancelQueuedWorkflow]: (input) =>
+          observeRpcEffect(WS_METHODS.gitCancelQueuedWorkflow, gitWorkbench.cancelQueue(input), {
+            "rpc.aggregate": "git-workbench",
+          }),
         [WS_METHODS.gitResolvePullRequest]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitResolvePullRequest,

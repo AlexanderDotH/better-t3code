@@ -722,6 +722,7 @@ export function BranchToolbarBranchSelector({
                 <button
                   type="button"
                   aria-label={branchPrTooltip}
+                  data-git-workspace-context-control="true"
                   onClick={(event) => openPrLink(event, branchPrStatus.url)}
                   className={cn(
                     "inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[11px] font-medium tabular-nums transition-colors hover:bg-muted/60",
@@ -746,6 +747,7 @@ export function BranchToolbarBranchSelector({
           <ComboboxTrigger
             render={<Button variant="ghost" size="xs" />}
             className="min-w-0 max-w-full text-muted-foreground/70 hover:text-foreground/80"
+            data-git-workspace-context-control="true"
             disabled={isInitialBranchesLoadPending || isBranchActionPending}
           >
             <GitBranchIcon className="size-3 shrink-0 opacity-70" />

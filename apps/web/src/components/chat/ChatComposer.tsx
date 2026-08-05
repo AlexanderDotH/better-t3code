@@ -95,6 +95,7 @@ import { ComposerPendingElementContexts } from "./ComposerPendingElementContexts
 import { ComposerPendingReviewComments } from "./ComposerPendingReviewComments";
 import { ComposerPreviewAnnotationCards } from "./ComposerPreviewAnnotationCards";
 import {
+  resolveComposerFooterGapClassName,
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
 } from "../composerFooterLayout";
@@ -503,6 +504,8 @@ export interface ChatComposerHandle {
   openModelPicker: () => void;
   toggleModelPicker: () => void;
   isModelPickerOpen: () => boolean;
+  isVoiceRecordingActive: () => boolean;
+  dismissTransientUi: () => void;
   readSnapshot: () => {
     value: string;
     cursor: number;
@@ -651,6 +654,7 @@ export interface ChatComposerProps {
   scheduleComposerFocus: () => void;
   setThreadError: (threadId: ThreadId | null, error: string | null) => void;
   onExpandImage: (preview: ExpandedImagePreview) => void;
+  onVoiceRecordingActiveChange?: (active: boolean) => void;
 }
 
 // --------------------------------------------------------------------------
@@ -729,6 +733,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     scheduleComposerFocus,
     setThreadError,
     onExpandImage,
+    onVoiceRecordingActiveChange,
   } = props;
   const isSendDisabled = sendDisabledReason !== null;
 
@@ -1991,6 +1996,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const voiceRecordingActive = voiceDictation.active;
   const startVoiceRecording = voiceDictation.start;
   const stopVoiceRecording = voiceDictation.stop;
+  useEffect(() => {
+    onVoiceRecordingActiveChange?.(voiceRecordingActive);
+    return () => onVoiceRecordingActiveChange?.(false);
+  }, [onVoiceRecordingActiveChange, voiceRecordingActive]);
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }) => {
       if (noProviderAvailable || isSendDisabled || isAbortPending || voiceRecordingActive) {
@@ -2753,6 +2762,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         setIsComposerModelPickerOpen((open) => !open);
       },
       isModelPickerOpen: () => isComposerModelPickerOpen,
+      isVoiceRecordingActive: () => voiceRecordingActive,
+      dismissTransientUi: () => {
+        setIsComposerModelPickerOpen(false);
+        setIsStashMenuOpen(false);
+        setComposerHighlightedItemId(null);
+        setComposerTrigger(null);
+      },
       readSnapshot: () => {
         return readComposerSnapshot();
       },
@@ -2844,6 +2860,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       projectSelectionRequired,
       applyPromptReplacement,
       isComposerModelPickerOpen,
+      voiceRecordingActive,
       readComposerSnapshot,
       selectedModel,
       selectedModelOptionsForDispatch,
@@ -3326,8 +3343,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               className={cn(
                 "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-2.5 pb-2.5 sm:px-3 sm:pb-3",
                 pendingUserInputs.length > 0 && "pt-2",
-                isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
-                voiceRecordingActive && "gap-3",
+                resolveComposerFooterGapClassName({
+                  compact: isComposerFooterCompact,
+                  voiceRecordingActive,
+                }),
                 showMobilePendingAnswerActions && "hidden sm:flex",
               )}
             >

@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type {
   GitActionProgressEvent,
+  GitRunStackedActionInput,
   GitRunStackedActionResult,
   GitStackedAction,
   SourceControlCloneProtocol,
@@ -79,6 +80,7 @@ import {
 } from "~/lib/sourceControlActions";
 import { useThread } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
+import { gitWorkbenchEnvironment } from "~/state/gitWorkbench";
 import { serverEnvironment } from "~/state/server";
 import { sourceControlEnvironment } from "~/state/sourceControl";
 import { threadEnvironment } from "~/state/threads";
@@ -90,6 +92,7 @@ import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { readLocalApi } from "~/localApi";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
 import { openPullRequestLink } from "~/lib/openPullRequestLink";
+import { subscribeGitActionsControl } from "./gitActionsControlBus";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
@@ -104,6 +107,7 @@ interface PendingDefaultBranchAction {
   commitMessage?: string;
   onConfirmed?: () => void;
   filePaths?: string[];
+  commitSelection?: GitRunStackedActionInput["commitSelection"];
 }
 
 type PublishProviderKind = Extract<
@@ -134,6 +138,7 @@ interface RunGitActionWithToastInput {
   featureBranch?: boolean;
   progressToastId?: GitActionToastId;
   filePaths?: string[];
+  commitSelection?: GitRunStackedActionInput["commitSelection"];
 }
 
 const GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS = 250;
@@ -978,6 +983,8 @@ export default function GitActionsControl({
   );
   const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(activeEnvironmentId));
+  const supportsStandardIndexCommit =
+    serverConfig?.environment.capabilities.gitWorkbenchVersion !== undefined;
   const openInPreferredEditor = useOpenInPreferredEditor(
     activeEnvironmentId,
     serverConfig?.availableEditors ?? [],
@@ -1087,6 +1094,9 @@ export default function GitActionsControl({
       : null,
   );
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
+    reportFailure: false,
+  });
+  const refreshGitWorkbench = useAtomCommand(gitWorkbenchEnvironment.refresh, {
     reportFailure: false,
   });
   const { data: gitStatus, error: gitStatusError } = gitStatusQuery;
@@ -1254,6 +1264,7 @@ export default function GitActionsControl({
       featureBranch = false,
       progressToastId,
       filePaths,
+      commitSelection,
     }: RunGitActionWithToastInput) => {
       const actionStatus = statusOverride ?? gitStatusForActions;
       const actionBranch = actionStatus?.refName ?? null;
@@ -1283,6 +1294,7 @@ export default function GitActionsControl({
           ...(commitMessage ? { commitMessage } : {}),
           ...(onConfirmed ? { onConfirmed } : {}),
           ...(filePaths ? { filePaths } : {}),
+          ...(commitSelection ? { commitSelection } : {}),
         });
         return;
       }
@@ -1394,6 +1406,7 @@ export default function GitActionsControl({
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(filePaths ? { filePaths } : {}),
+        ...(commitSelection ? { commitSelection } : {}),
         onProgress: applyProgressEvent,
       });
 
@@ -1481,26 +1494,30 @@ export default function GitActionsControl({
 
   const continuePendingDefaultBranchAction = () => {
     if (!pendingDefaultBranchAction) return;
-    const { action, commitMessage, onConfirmed, filePaths } = pendingDefaultBranchAction;
+    const { action, commitMessage, onConfirmed, filePaths, commitSelection } =
+      pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     void runGitActionWithToast({
       action,
       ...(commitMessage ? { commitMessage } : {}),
       ...(onConfirmed ? { onConfirmed } : {}),
       ...(filePaths ? { filePaths } : {}),
+      ...(commitSelection ? { commitSelection } : {}),
       skipDefaultBranchPrompt: true,
     });
   };
 
   const checkoutFeatureBranchAndContinuePendingAction = () => {
     if (!pendingDefaultBranchAction) return;
-    const { action, commitMessage, onConfirmed, filePaths } = pendingDefaultBranchAction;
+    const { action, commitMessage, onConfirmed, filePaths, commitSelection } =
+      pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     void runGitActionWithToast({
       action,
       ...(commitMessage ? { commitMessage } : {}),
       ...(onConfirmed ? { onConfirmed } : {}),
       ...(filePaths ? { filePaths } : {}),
+      ...(commitSelection ? { commitSelection } : {}),
       featureBranch: true,
       skipDefaultBranchPrompt: true,
     });
@@ -1518,7 +1535,15 @@ export default function GitActionsControl({
     void runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
-      ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
+      ...(supportsStandardIndexCommit
+        ? {
+            commitSelection: allSelected
+              ? ({ mode: "all" } as const)
+              : ({ mode: "paths", paths: selectedFiles.map((file) => file.path) } as const),
+          }
+        : !allSelected
+          ? { filePaths: selectedFiles.map((file) => file.path) }
+          : {}),
       featureBranch: true,
       skipDefaultBranchPrompt: true,
     });
@@ -1583,7 +1608,29 @@ export default function GitActionsControl({
       return;
     }
     if (quickAction.action) {
-      void runGitActionWithToast({ action: quickAction.action });
+      const action = quickAction.action;
+      const includesCommit =
+        action === "commit" || action === "commit_push" || action === "commit_push_pr";
+      if (
+        includesCommit &&
+        supportsStandardIndexCommit &&
+        activeEnvironmentId !== null &&
+        gitCwd !== null
+      ) {
+        void (async () => {
+          const refreshed = await refreshGitWorkbench({
+            environmentId: activeEnvironmentId,
+            input: { cwd: gitCwd },
+          });
+          const commitSelection =
+            refreshed._tag === "Success" && refreshed.value.totals.staged > 0
+              ? ({ mode: "staged" } as const)
+              : ({ mode: "all" } as const);
+          await runGitActionWithToast({ action, commitSelection });
+        })();
+        return;
+      }
+      void runGitActionWithToast({ action });
     }
   };
 
@@ -1616,9 +1663,50 @@ export default function GitActionsControl({
     void runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
-      ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
+      ...(supportsStandardIndexCommit
+        ? {
+            commitSelection: allSelected
+              ? ({ mode: "all" } as const)
+              : ({ mode: "paths", paths: selectedFiles.map((file) => file.path) } as const),
+          }
+        : !allSelected
+          ? { filePaths: selectedFiles.map((file) => file.path) }
+          : {}),
     });
   };
+
+  const handleWorkbenchActionRequest = useEffectEvent(
+    (request: Parameters<Parameters<typeof subscribeGitActionsControl>[0]>[0]) => {
+      if (
+        activeEnvironmentId === null ||
+        gitCwd === null ||
+        request.environmentId !== activeEnvironmentId ||
+        request.cwd !== gitCwd
+      ) {
+        return;
+      }
+      if (request.intent === "quick" || request.intent === "pull") {
+        runQuickAction();
+        return;
+      }
+      if (request.intent === "commit-staged") {
+        void runGitActionWithToast({ action: "commit", commitSelection: { mode: "staged" } });
+        return;
+      }
+      if (request.intent === "stage-all-and-commit") {
+        void runGitActionWithToast({ action: "commit", commitSelection: { mode: "all" } });
+        return;
+      }
+      void runGitActionWithToast({
+        action: request.intent === "push" ? "push" : "create_pr",
+      });
+    },
+  );
+
+  useEffect(
+    () => subscribeGitActionsControl(handleWorkbenchActionRequest),
+    [handleWorkbenchActionRequest],
+  );
 
   const openChangedFileInEditor = useCallback(
     (filePath: string) => {

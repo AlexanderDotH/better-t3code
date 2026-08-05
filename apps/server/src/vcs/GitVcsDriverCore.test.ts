@@ -89,7 +89,12 @@ const git = (
       operation: "GitVcsDriver.test.git",
       cwd,
       args,
-      ...(env ? { env } : {}),
+      env: {
+        ...env,
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "commit.gpgsign",
+        GIT_CONFIG_VALUE_0: "false",
+      },
       timeoutMs: 10_000,
     });
     return result.stdout.trim();
@@ -107,6 +112,7 @@ const initRepoWithCommit = (
     yield* driver.initRepo({ cwd });
     yield* git(cwd, ["config", "user.email", "test@test.com"]);
     yield* git(cwd, ["config", "user.name", "Test"]);
+    yield* git(cwd, ["config", "commit.gpgsign", "false"]);
     yield* writeTextFile(cwd, "README.md", "# test\n");
     yield* git(cwd, ["add", "."]);
     yield* git(cwd, ["commit", "-m", "initial commit"]);
@@ -199,12 +205,18 @@ it.effect("coalesces concurrent ref pages into one repository snapshot", () =>
           operation: "GitVcsDriver.test.coalescedListRefs",
           cwd,
           args,
+          env: {
+            GIT_CONFIG_COUNT: "1",
+            GIT_CONFIG_KEY_0: "commit.gpgsign",
+            GIT_CONFIG_VALUE_0: "false",
+          },
           timeoutMs: 10_000,
         });
 
       yield* driver.initRepo({ cwd });
       yield* runGit(["config", "user.email", "test@test.com"]);
       yield* runGit(["config", "user.name", "Test"]);
+      yield* runGit(["config", "commit.gpgsign", "false"]);
       yield* writeTextFile(cwd, "README.md", "# test\n");
       yield* runGit(["add", "."]);
       yield* runGit(["commit", "-m", "initial commit"]);
@@ -522,12 +534,18 @@ it.effect("backs off failed upstream refreshes across linked worktrees", () =>
           operation: "GitVcsDriver.test.upstreamRefreshBackoff",
           cwd: workingDirectory,
           args,
+          env: {
+            GIT_CONFIG_COUNT: "1",
+            GIT_CONFIG_KEY_0: "commit.gpgsign",
+            GIT_CONFIG_VALUE_0: "false",
+          },
           timeoutMs: 10_000,
         });
 
       yield* driver.initRepo({ cwd });
       yield* runGit(cwd, ["config", "user.email", "test@test.com"]);
       yield* runGit(cwd, ["config", "user.name", "Test"]);
+      yield* runGit(cwd, ["config", "commit.gpgsign", "false"]);
       yield* writeTextFile(cwd, "README.md", "# test\n");
       yield* runGit(cwd, ["add", "."]);
       yield* runGit(cwd, ["commit", "-m", "initial commit"]);
@@ -854,6 +872,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         yield* git(updater, ["clone", remote, "."]);
         yield* git(updater, ["config", "user.email", "test@test.com"]);
         yield* git(updater, ["config", "user.name", "Test"]);
+        yield* git(updater, ["config", "commit.gpgsign", "false"]);
         yield* writeTextFile(updater, "remote.txt", "remote\n");
         yield* git(updater, ["add", "remote.txt"]);
         yield* git(updater, ["commit", "-m", "remote commit"]);
@@ -1029,6 +1048,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         yield* driver.initRepo({ cwd });
         yield* git(cwd, ["config", "user.email", "test@test.com"]);
         yield* git(cwd, ["config", "user.name", "Test"]);
+        yield* git(cwd, ["config", "commit.gpgsign", "false"]);
         yield* writeTextFile(cwd, "initial.ts", "// first file\n");
         yield* git(cwd, ["add", "initial.ts"]);
 
@@ -1301,6 +1321,47 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.include(status, "?? selected1.txt");
       }),
     );
+
+    it.effect("keeps existing staged work when adding a standard-index path selection", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* writeTextFile(cwd, "already-staged.txt", "staged\n");
+        yield* writeTextFile(cwd, "selected.txt", "selected\n");
+        yield* writeTextFile(cwd, "left-alone.txt", "unstaged\n");
+        yield* git(cwd, ["add", "--", "already-staged.txt"]);
+
+        yield* driver.prepareCommitContext(cwd, undefined, {
+          mode: "paths",
+          paths: ["selected.txt"],
+        });
+
+        assert.equal(
+          yield* git(cwd, ["diff", "--cached", "--name-only"]),
+          "already-staged.txt\nselected.txt",
+        );
+        assert.include(yield* git(cwd, ["status", "--porcelain"]), "?? left-alone.txt");
+      }),
+    );
+
+    it.effect("uses the existing index unchanged for staged commits", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* writeTextFile(cwd, "already-staged.txt", "staged\n");
+        yield* writeTextFile(cwd, "left-alone.txt", "unstaged\n");
+        yield* git(cwd, ["add", "--", "already-staged.txt"]);
+
+        const context = yield* driver.prepareCommitContext(cwd, undefined, { mode: "staged" });
+        assert.include(context?.stagedSummary ?? "", "already-staged.txt");
+        assert.notInclude(context?.stagedSummary ?? "", "left-alone.txt");
+        assert.include(yield* git(cwd, ["status", "--porcelain"]), "?? left-alone.txt");
+      }),
+    );
   });
 
   describe("remote operations", () => {
@@ -1319,6 +1380,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         yield* git(peer, ["clone", remote, "."]);
         yield* git(peer, ["config", "user.email", "test@test.com"]);
         yield* git(peer, ["config", "user.name", "Test"]);
+        yield* git(peer, ["config", "commit.gpgsign", "false"]);
         yield* writeTextFile(peer, "remote-change.txt", "remote\n");
         yield* git(peer, ["add", "remote-change.txt"]);
         yield* git(peer, ["commit", "-m", "remote change"]);

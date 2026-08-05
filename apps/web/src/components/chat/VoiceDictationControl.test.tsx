@@ -35,7 +35,7 @@ describe("VoiceDictationControl layout", () => {
     expect(recordingMarkup.match(/data-voice-wave-bar="true"/gu)).toHaveLength(14);
   });
 
-  it("stays gray while connecting and turns orange only when speech is accepted", () => {
+  it("stays gray while connecting and turns red only when speech is accepted", () => {
     const startingMarkup = renderControl("starting");
     const recordingMarkup = renderControl("recording");
     const stoppingMarkup = renderControl("stopping");
@@ -45,7 +45,7 @@ describe("VoiceDictationControl layout", () => {
     expect(startingMarkup).toContain('aria-label="Cancel voice input connection"');
 
     expect(recordingMarkup).toContain('data-voice-dictation-tone="ready"');
-    expect(recordingMarkup).toContain("bg-orange-500");
+    expect(recordingMarkup).toContain("bg-rose-500");
     expect(recordingMarkup).toContain('aria-label="Stop voice input"');
 
     expect(stoppingMarkup).toContain('data-voice-dictation-tone="waiting"');
@@ -53,8 +53,11 @@ describe("VoiceDictationControl layout", () => {
     expect(stoppingMarkup).toContain('aria-label="Stopping voice input"');
     expect(stoppingMarkup).toContain('aria-busy="true"');
 
-    for (const markup of [startingMarkup, recordingMarkup, stoppingMarkup]) {
+    for (const markup of [startingMarkup, stoppingMarkup]) {
       expect(markup).not.toContain("rose-");
+    }
+    for (const markup of [startingMarkup, recordingMarkup, stoppingMarkup]) {
+      expect(markup).not.toContain("orange-");
     }
   });
 });

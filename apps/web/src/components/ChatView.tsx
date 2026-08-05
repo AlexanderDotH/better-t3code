@@ -61,6 +61,7 @@ import {
   lazy,
   memo,
   Suspense,
+  type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -160,6 +161,8 @@ import {
 import { RightPanelTabs } from "./RightPanelTabs";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
+import { ChatWorkspaceDeckController } from "./workspace-deck/ChatWorkspaceDeckController";
+import { GitWorkspaceChangesIndicator } from "./git-workbench/GitWorkspaceChangesIndicator";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
@@ -184,7 +187,7 @@ import {
 } from "~/projectScripts";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
-import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
+import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import { useClientSettings, useEnvironmentSettings } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
@@ -1397,6 +1400,12 @@ function ChatViewContent(props: ChatViewProps) {
   const legendListRef = useRef<LegendListRef | null>(null);
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
   const [composerOverlayHeight, setComposerOverlayHeight] = useState(0);
+  const composerOverlayResizeFrameRef = useRef<number | null>(null);
+  const [chatColumnElement, setChatColumnElement] = useState<HTMLDivElement | null>(null);
+  const [chatColumnHeight, setChatColumnHeight] = useState<number | undefined>(undefined);
+  const [nonChatWorkspaceCardActive, setNonChatWorkspaceCardActive] = useState(false);
+  const [workspaceCardExpanded, setWorkspaceCardExpanded] = useState(false);
+  const [voiceRecordingActive, setVoiceRecordingActive] = useState(false);
   const isAtEndRef = useRef(true);
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
@@ -1408,21 +1417,49 @@ function ChatViewContent(props: ChatViewProps) {
   useLayoutEffect(() => {
     if (!composerOverlayElement) return;
 
-    const updateHeight = () => {
+    const measureComposerOverlay = () => {
       const nextHeight = Math.ceil(composerOverlayElement.getBoundingClientRect().height);
       if (nextHeight <= 0) return;
       setComposerOverlayHeight((currentHeight) =>
         currentHeight === nextHeight ? currentHeight : nextHeight,
       );
     };
+    const scheduleComposerOverlayMeasurement = () => {
+      if (composerOverlayResizeFrameRef.current !== null) return;
+      composerOverlayResizeFrameRef.current = window.requestAnimationFrame(() => {
+        composerOverlayResizeFrameRef.current = null;
+        measureComposerOverlay();
+      });
+    };
 
+    scheduleComposerOverlayMeasurement();
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(scheduleComposerOverlayMeasurement);
+    observer?.observe(composerOverlayElement);
+
+    return () => {
+      observer?.disconnect();
+      if (composerOverlayResizeFrameRef.current === null) return;
+      window.cancelAnimationFrame(composerOverlayResizeFrameRef.current);
+      composerOverlayResizeFrameRef.current = null;
+    };
+  }, [composerOverlayElement]);
+
+  useLayoutEffect(() => {
+    if (!chatColumnElement) return;
+    const updateHeight = () => {
+      const nextHeight = Math.floor(chatColumnElement.getBoundingClientRect().height);
+      if (nextHeight <= 0) return;
+      setChatColumnHeight((current) => (current === nextHeight ? current : nextHeight));
+    };
     updateHeight();
     if (typeof ResizeObserver === "undefined") return;
-
     const observer = new ResizeObserver(updateHeight);
-    observer.observe(composerOverlayElement);
+    observer.observe(chatColumnElement);
     return () => observer.disconnect();
-  }, [composerOverlayElement]);
+  }, [chatColumnElement]);
 
   const terminalUiState = useTerminalUiStateStore((state) =>
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef),
@@ -2218,6 +2255,10 @@ function ChatViewContent(props: ChatViewProps) {
     versionMismatchServerLabel,
   ]);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  const providerInstanceEntries = useMemo(
+    () => deriveProviderInstanceEntries(providerStatuses),
+    [providerStatuses],
+  );
   const unlockedSelectedProvider = resolveSelectableProvider(
     providerStatuses,
     selectedProviderByThreadId ?? threadProvider,
@@ -2782,6 +2823,21 @@ function ChatViewContent(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
+  const activeSessionProviderDisplayName = useMemo(() => {
+    const sessionProviderInstanceId = activeThread?.session?.providerInstanceId;
+    if (!sessionProviderInstanceId) return "Provider";
+    return (
+      providerInstanceEntries.find((entry) => entry.instanceId === sessionProviderInstanceId)
+        ?.displayName ?? sessionProviderInstanceId
+    );
+  }, [activeThread?.session?.providerInstanceId, providerInstanceEntries]);
+  const activeSessionProviderStatus = useMemo(
+    () =>
+      providerStatuses.find(
+        (provider) => provider.instanceId === activeThread?.session?.providerInstanceId,
+      ) ?? null,
+    [activeThread?.session?.providerInstanceId, providerStatuses],
+  );
   const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
   const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
     string | null
@@ -4684,6 +4740,8 @@ function ChatViewContent(props: ChatViewProps) {
       };
 
       if (
+        !nonChatWorkspaceCardActive &&
+        !workspaceCardExpanded &&
         !shortcutContext.terminalFocus &&
         !shortcutContext.modelPickerOpen &&
         shouldTypeToFocusComposer(event)
@@ -4811,6 +4869,8 @@ function ChatViewContent(props: ChatViewProps) {
     toggleRightPanel,
     toggleTerminalVisibility,
     composerRef,
+    workspaceCardExpanded,
+    nonChatWorkspaceCardActive,
   ]);
 
   const onRevertToTurnCount = useCallback(
@@ -6087,6 +6147,43 @@ function ChatViewContent(props: ChatViewProps) {
     return <NoActiveThreadState />;
   }
 
+  const renderComposerContextStrip = (
+    orientation: "previous" | "next",
+    gitControl?: ReactNode,
+    cardPeek = false,
+  ) => {
+    if (!showComposerContextStrip) return null;
+
+    return (
+      <div className={cardPeek ? "pointer-events-none" : "pointer-events-auto"}>
+        <BranchToolbar
+          environmentId={activeThread.environmentId}
+          threadId={activeThread.id}
+          {...(routeKind === "draft" && draftId ? { draftId } : {})}
+          onEnvModeChange={onEnvModeChange}
+          startFromOrigin={startFromOrigin}
+          onStartFromOriginChange={onStartFromOriginChange}
+          {...(canOverrideServerThreadEnvMode ? { effectiveEnvModeOverride: envMode } : {})}
+          {...(canOverrideServerThreadEnvMode
+            ? {
+                activeThreadBranchOverride: activeThreadBranch,
+                onActiveThreadBranchOverrideChange: setPendingServerThreadBranch,
+              }
+            : {})}
+          envLocked={envLocked}
+          {...(gitControl === undefined ? {} : { gitControl })}
+          onComposerFocusRequest={scheduleComposerFocus}
+          {...(canCheckoutPullRequestIntoThread
+            ? { onCheckoutPullRequestRequest: openPullRequestDialog }
+            : {})}
+          {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
+          availableEnvironments={logicalProjectEnvironments}
+          orientation={orientation}
+        />
+      </div>
+    );
+  };
+
   const panelToggleControls = (
     <PanelLayoutControls
       terminalAvailable={activeProject !== null}
@@ -6146,6 +6243,7 @@ function ChatViewContent(props: ChatViewProps) {
           mode="embedded"
           composerDraftTarget={composerDraftTarget}
           initialGitScope={initialDiffPanelGitScope}
+          onOpenFile={openFileSurface}
         />
       </Suspense>
     ) : activeRightPanelSurface?.kind === "plan" ? (
@@ -6246,7 +6344,10 @@ function ChatViewContent(props: ChatViewProps) {
         {/* Main content area with optional plan sidebar */}
         <div className="flex min-h-0 min-w-0 flex-1">
           {/* Chat column */}
-          <div className="@container/chat-column relative flex min-h-0 min-w-0 flex-1 flex-col">
+          <div
+            ref={setChatColumnElement}
+            className="@container/chat-column relative flex min-h-0 min-w-0 flex-1 flex-col"
+          >
             {/* Provider status overlays the timeline without changing its content height. */}
             <div className="pointer-events-none absolute inset-x-0 top-0 z-20">
               <ProviderStatusBanner
@@ -6327,40 +6428,48 @@ function ChatViewContent(props: ChatViewProps) {
             <div
               ref={setComposerOverlayElement}
               data-chat-composer-overlay="true"
-              className={
-                isDraftHeroState
-                  ? "pointer-events-none absolute inset-0 z-20 flex items-center"
-                  : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
-              }
+              className={cn(
+                isDraftHeroState && !workspaceCardExpanded
+                  ? "pointer-events-none absolute inset-0 flex items-center"
+                  : "pointer-events-none absolute inset-x-0 bottom-0 pt-1.5 sm:pt-2",
+                workspaceCardExpanded ? "z-40" : "z-20",
+              )}
             >
               <div
                 ref={attachDraftHeroTransitionGroupRef}
                 className="chat-composer-horizontal-inset w-full"
               >
-                <div className="pointer-events-auto relative z-10">
-                  {isDraftHeroState ? (
-                    <div className="absolute inset-x-0 bottom-full z-0">
-                      <div
-                        className="pb-8"
-                        style={
-                          forceExpandedMobileComposer
-                            ? {
-                                viewTransitionName: MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME,
-                              }
-                            : undefined
-                        }
-                      >
-                        <DraftHeroHeadline
-                          activeProjectRef={activeProjectRef}
-                          activeProjectTitle={activeProject?.title ?? null}
-                        />
-                      </div>
-                      <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
-                    </div>
-                  ) : (
-                    <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+                <div
+                  className={cn(
+                    "relative z-10",
+                    workspaceCardExpanded ? "pointer-events-none" : "pointer-events-auto",
                   )}
-                  {threadSyncPhase && !activeEnvironmentUnavailable ? (
+                >
+                  {!workspaceCardExpanded ? (
+                    isDraftHeroState ? (
+                      <div className="absolute inset-x-0 bottom-full z-0">
+                        <div
+                          className="pb-8"
+                          style={
+                            forceExpandedMobileComposer
+                              ? {
+                                  viewTransitionName: MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME,
+                                }
+                              : undefined
+                          }
+                        >
+                          <DraftHeroHeadline
+                            activeProjectRef={activeProjectRef}
+                            activeProjectTitle={activeProject?.title ?? null}
+                          />
+                        </div>
+                        <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+                      </div>
+                    ) : (
+                      <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+                    )
+                  ) : null}
+                  {!workspaceCardExpanded && threadSyncPhase && !activeEnvironmentUnavailable ? (
                     <ThreadSyncStatusPill phase={threadSyncPhase} />
                   ) : null}
                   <div
@@ -6373,130 +6482,191 @@ function ChatViewContent(props: ChatViewProps) {
                   >
                     <div
                       className={cn(
-                        "chat-composer-glass-shell relative mx-auto w-full max-w-3xl",
-                        showComposerContextStrip && "chat-composer-glass-shell-with-context",
+                        "relative mx-auto w-full max-w-3xl",
+                        workspaceCardExpanded && "pointer-events-auto",
                       )}
                     >
-                      <div className="chat-composer-glass-host relative z-10 w-full rounded-[22px]">
-                        <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10">
-                          <ChatComposer
-                            composerRef={composerRef}
-                            composerDraftTarget={composerDraftTarget}
-                            environmentId={environmentId}
-                            routeKind={routeKind}
-                            routeThreadRef={routeThreadRef}
-                            draftId={draftId}
-                            activeThreadId={activeThreadId}
-                            activeThreadEnvironmentId={activeThread?.environmentId}
-                            activeThread={activeThread}
-                            isServerThread={isServerThread}
-                            isLocalDraftThread={isLocalDraftThread}
-                            forceExpandedOnMobile={forceExpandedMobileComposer && isDraftHeroState}
-                            projectSelectionRequired={isLocalDraftThread && activeProject === null}
-                            phase={phase}
-                            isConnecting={isConnecting}
-                            isSendBusy={isSendBusy || isImprovingPrompt}
-                            sendDisabledReason={threadDetailLoading ? "Messages loading" : null}
-                            isPreparingWorktree={isPreparingWorktree}
-                            environmentUnavailable={activeEnvironmentUnavailableState}
-                            activePendingApproval={activePendingApproval}
-                            pendingApprovals={pendingApprovals}
-                            pendingUserInputs={pendingUserInputs}
-                            activePendingProgress={activePendingProgress}
-                            activePendingResolvedAnswers={activePendingResolvedAnswers}
-                            activePendingIsResponding={activePendingIsResponding}
-                            activePendingDraftAnswers={activePendingDraftAnswers}
-                            activePendingQuestionIndex={activePendingQuestionIndex}
-                            respondingRequestIds={respondingRequestIds}
-                            showPlanFollowUpPrompt={showPlanFollowUpPrompt}
-                            activeProposedPlan={activeProposedPlan}
-                            activePlan={activePlan as { turnId?: TurnId } | null}
-                            sidebarProposedPlan={sidebarProposedPlan as { turnId?: TurnId } | null}
-                            planSidebarLabel={planSidebarLabel}
-                            planSidebarOpen={planSidebarOpen}
-                            runtimeMode={runtimeMode}
-                            interactionMode={interactionMode}
-                            lockedProvider={lockedProvider}
-                            providerStatuses={providerStatuses as ServerProvider[]}
-                            activeProjectDefaultModelSelection={
-                              activeProject?.defaultModelSelection
-                            }
-                            activeThreadModelSelection={activeThread?.modelSelection}
-                            activeThreadActivities={activeThread?.activities}
-                            resolvedTheme={resolvedTheme}
-                            settings={settings}
-                            keybindings={keybindings}
-                            terminalOpen={Boolean(terminalUiState.terminalOpen)}
-                            gitCwd={gitCwd}
-                            voiceInputConfigured={voiceInputConfigured}
-                            promptRef={promptRef}
-                            composerImagesRef={composerImagesRef}
-                            composerTerminalContextsRef={composerTerminalContextsRef}
-                            composerElementContextsRef={composerElementContextsRef}
-                            onSend={onSend}
-                            onInterrupt={onInterrupt}
-                            onImplementPlan={onImplementPlan}
-                            onImplementPlanInNewThread={onImplementPlanInNewThread}
-                            onRespondToApproval={onRespondToApproval}
-                            onSelectActivePendingUserInputOption={
-                              onSelectActivePendingUserInputOption
-                            }
-                            onAdvanceActivePendingUserInput={onAdvanceActivePendingUserInput}
-                            onPreviousActivePendingUserInputQuestion={
-                              onPreviousActivePendingUserInputQuestion
-                            }
-                            onChangeActivePendingUserInputCustomAnswer={
-                              onChangeActivePendingUserInputCustomAnswer
-                            }
-                            onProviderModelSelect={onProviderModelSelect}
-                            getModelDisabledReason={getModelDisabledReason}
-                            toggleInteractionMode={toggleInteractionMode}
-                            handleRuntimeModeChange={handleRuntimeModeChange}
-                            handleInteractionModeChange={handleInteractionModeChange}
-                            togglePlanSidebar={togglePlanSidebar}
-                            focusComposer={focusComposer}
-                            scheduleComposerFocus={scheduleComposerFocus}
-                            setThreadError={setThreadError}
-                            onExpandImage={onExpandTimelineImage}
-                          />
-                        </div>
-                      </div>
-                      <div className="min-h-0">
-                        <div
-                          data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
-                          className="relative z-0"
-                        >
-                          {showComposerContextStrip && (
-                            <div className="pointer-events-auto">
-                              <BranchToolbar
-                                environmentId={activeThread.environmentId}
-                                threadId={activeThread.id}
-                                {...(routeKind === "draft" && draftId ? { draftId } : {})}
-                                onEnvModeChange={onEnvModeChange}
-                                startFromOrigin={startFromOrigin}
-                                onStartFromOriginChange={onStartFromOriginChange}
-                                {...(canOverrideServerThreadEnvMode
-                                  ? { effectiveEnvModeOverride: envMode }
-                                  : {})}
-                                {...(canOverrideServerThreadEnvMode
-                                  ? {
-                                      activeThreadBranchOverride: activeThreadBranch,
-                                      onActiveThreadBranchOverrideChange:
-                                        setPendingServerThreadBranch,
-                                    }
-                                  : {})}
-                                envLocked={envLocked}
-                                onComposerFocusRequest={scheduleComposerFocus}
-                                {...(canCheckoutPullRequestIntoThread
-                                  ? { onCheckoutPullRequestRequest: openPullRequestDialog }
-                                  : {})}
-                                {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
-                                availableEnvironments={logicalProjectEnvironments}
-                              />
+                      <ChatWorkspaceDeckController
+                        environmentId={activeThread.environmentId}
+                        cwd={gitStatusCwd}
+                        threadId={activeThread.id}
+                        turnId={activeThread.session?.activeTurnId ?? null}
+                        workbenchSupported={
+                          serverConfig?.environment.capabilities.gitWorkbenchVersion !== undefined
+                        }
+                        legacyStatus={gitStatusQuery.data}
+                        legacyStatusPending={gitStatusQuery.isPending}
+                        actionRequired={Boolean(
+                          activePendingApproval ||
+                          activePendingProgress ||
+                          pendingApprovals.length > 0 ||
+                          pendingUserInputs.length > 0 ||
+                          threadError,
+                        )}
+                        activeTurn={isWorking || !latestTurnSettled}
+                        isRecording={voiceRecordingActive}
+                        composerRef={composerRef}
+                        mcpAuthorizationAvailable={
+                          environmentById.get(activeThread.environmentId)?.entry.target._tag ===
+                          "PrimaryConnectionTarget"
+                        }
+                        mcpConfiguredServers={serverConfig?.settings.mcp.servers ?? []}
+                        mcpProviderDisplayName={activeSessionProviderDisplayName}
+                        mcpProviderDriver={activeSessionProviderStatus?.driver ?? null}
+                        mcpProviderInstanceId={activeThread.session?.providerInstanceId ?? null}
+                        mcpProviders={providerStatuses}
+                        mcpRuntimeSessionId={activeThread.session?.runtimeSessionId ?? null}
+                        mcpWorkspaceSupported={
+                          (serverConfig?.environment.capabilities.mcpWorkspaceVersion ?? 0) >= 1
+                        }
+                        {...(activeSessionProviderStatus?.accentColor === undefined
+                          ? {}
+                          : { mcpProviderAccentColor: activeSessionProviderStatus.accentColor })}
+                        {...(chatColumnHeight === undefined
+                          ? {}
+                          : { drawerAvailableHeight: chatColumnHeight })}
+                        onOpenFile={openFileSurface}
+                        onNonChatActiveChange={setNonChatWorkspaceCardActive}
+                        onExpandedChange={setWorkspaceCardExpanded}
+                        renderChat={({ deckEnabled, gitAvailable }) => (
+                          <div
+                            className={cn(
+                              "chat-composer-glass-shell relative",
+                              deckEnabled && "h-full",
+                              showComposerContextStrip &&
+                                (!deckEnabled || !gitAvailable) &&
+                                "chat-composer-glass-shell-with-context",
+                            )}
+                            data-chat-workspace-card-surface="true"
+                            data-workspace-card-compact-surface="true"
+                          >
+                            <div
+                              className={cn(
+                                "chat-composer-glass-host relative z-10 w-full rounded-[22px]",
+                                deckEnabled && "h-full",
+                              )}
+                            >
+                              <div
+                                ref={attachDraftHeroComposerAnchorRef}
+                                className="workspace-card-deck__card-content relative z-10"
+                                data-workspace-card-compact-content="true"
+                              >
+                                <ChatComposer
+                                  composerRef={composerRef}
+                                  composerDraftTarget={composerDraftTarget}
+                                  environmentId={environmentId}
+                                  routeKind={routeKind}
+                                  routeThreadRef={routeThreadRef}
+                                  draftId={draftId}
+                                  activeThreadId={activeThreadId}
+                                  activeThreadEnvironmentId={activeThread?.environmentId}
+                                  activeThread={activeThread}
+                                  isServerThread={isServerThread}
+                                  isLocalDraftThread={isLocalDraftThread}
+                                  forceExpandedOnMobile={
+                                    forceExpandedMobileComposer && isDraftHeroState
+                                  }
+                                  projectSelectionRequired={
+                                    isLocalDraftThread && activeProject === null
+                                  }
+                                  phase={phase}
+                                  isConnecting={isConnecting}
+                                  isSendBusy={isSendBusy || isImprovingPrompt}
+                                  sendDisabledReason={
+                                    threadDetailLoading ? "Messages loading" : null
+                                  }
+                                  isPreparingWorktree={isPreparingWorktree}
+                                  environmentUnavailable={activeEnvironmentUnavailableState}
+                                  activePendingApproval={activePendingApproval}
+                                  pendingApprovals={pendingApprovals}
+                                  pendingUserInputs={pendingUserInputs}
+                                  activePendingProgress={activePendingProgress}
+                                  activePendingResolvedAnswers={activePendingResolvedAnswers}
+                                  activePendingIsResponding={activePendingIsResponding}
+                                  activePendingDraftAnswers={activePendingDraftAnswers}
+                                  activePendingQuestionIndex={activePendingQuestionIndex}
+                                  respondingRequestIds={respondingRequestIds}
+                                  showPlanFollowUpPrompt={showPlanFollowUpPrompt}
+                                  activeProposedPlan={activeProposedPlan}
+                                  activePlan={activePlan as { turnId?: TurnId } | null}
+                                  sidebarProposedPlan={
+                                    sidebarProposedPlan as { turnId?: TurnId } | null
+                                  }
+                                  planSidebarLabel={planSidebarLabel}
+                                  planSidebarOpen={planSidebarOpen}
+                                  runtimeMode={runtimeMode}
+                                  interactionMode={interactionMode}
+                                  lockedProvider={lockedProvider}
+                                  providerStatuses={providerStatuses as ServerProvider[]}
+                                  activeProjectDefaultModelSelection={
+                                    activeProject?.defaultModelSelection
+                                  }
+                                  activeThreadModelSelection={activeThread?.modelSelection}
+                                  activeThreadActivities={activeThread?.activities}
+                                  resolvedTheme={resolvedTheme}
+                                  settings={settings}
+                                  keybindings={keybindings}
+                                  terminalOpen={Boolean(terminalUiState.terminalOpen)}
+                                  gitCwd={gitCwd}
+                                  voiceInputConfigured={voiceInputConfigured}
+                                  promptRef={promptRef}
+                                  composerImagesRef={composerImagesRef}
+                                  composerTerminalContextsRef={composerTerminalContextsRef}
+                                  composerElementContextsRef={composerElementContextsRef}
+                                  onSend={onSend}
+                                  onInterrupt={onInterrupt}
+                                  onImplementPlan={onImplementPlan}
+                                  onImplementPlanInNewThread={onImplementPlanInNewThread}
+                                  onRespondToApproval={onRespondToApproval}
+                                  onSelectActivePendingUserInputOption={
+                                    onSelectActivePendingUserInputOption
+                                  }
+                                  onAdvanceActivePendingUserInput={onAdvanceActivePendingUserInput}
+                                  onPreviousActivePendingUserInputQuestion={
+                                    onPreviousActivePendingUserInputQuestion
+                                  }
+                                  onChangeActivePendingUserInputCustomAnswer={
+                                    onChangeActivePendingUserInputCustomAnswer
+                                  }
+                                  onProviderModelSelect={onProviderModelSelect}
+                                  getModelDisabledReason={getModelDisabledReason}
+                                  toggleInteractionMode={toggleInteractionMode}
+                                  handleRuntimeModeChange={handleRuntimeModeChange}
+                                  handleInteractionModeChange={handleInteractionModeChange}
+                                  togglePlanSidebar={togglePlanSidebar}
+                                  focusComposer={focusComposer}
+                                  scheduleComposerFocus={scheduleComposerFocus}
+                                  setThreadError={setThreadError}
+                                  onExpandImage={onExpandTimelineImage}
+                                  onVoiceRecordingActiveChange={setVoiceRecordingActive}
+                                />
+                              </div>
                             </div>
-                          )}
-                        </div>
-                      </div>
+                            {!deckEnabled || !gitAvailable ? (
+                              <div
+                                className="min-h-0"
+                                data-terminal-open={
+                                  terminalUiState.terminalOpen ? "true" : undefined
+                                }
+                              >
+                                <div className="relative z-0">
+                                  {renderComposerContextStrip("next")}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        )}
+                        renderGitPeek={({ blocked, position, status: gitDeckStatus }) =>
+                          renderComposerContextStrip(
+                            position,
+                            <GitWorkspaceChangesIndicator
+                              blocked={blocked}
+                              status={gitDeckStatus}
+                            />,
+                            true,
+                          )
+                        }
+                      />
                     </div>
                     <div
                       aria-hidden
@@ -6512,7 +6682,7 @@ function ChatViewContent(props: ChatViewProps) {
                 key={`${activeThreadKey}:${activePreviewMiniPlayer.tabId}`}
                 threadRef={activeThreadRef}
                 tabId={activePreviewMiniPlayer.tabId}
-                bottomInset={isDraftHeroState ? 0 : composerOverlayHeight}
+                bottomInset={isDraftHeroState && !workspaceCardExpanded ? 0 : composerOverlayHeight}
               />
             ) : null}
 
@@ -6572,7 +6742,11 @@ function ChatViewContent(props: ChatViewProps) {
             key={mountedThreadKey}
             threadRef={mountedThreadRef}
             threadId={mountedThreadRef.threadId}
-            visible={mountedThreadKey === activeThreadKey && terminalUiState.terminalOpen}
+            visible={
+              mountedThreadKey === activeThreadKey &&
+              terminalUiState.terminalOpen &&
+              !workspaceCardExpanded
+            }
             launchContext={
               mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
             }

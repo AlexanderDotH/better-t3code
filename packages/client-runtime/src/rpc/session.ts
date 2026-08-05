@@ -121,13 +121,18 @@ export const make = Effect.gen(function* () {
       ),
     );
     const probe = initialConfig.pipe(
-      Effect.flatMap((config) =>
-        (config.environment.capabilities.connectionProbe === true
-          ? client[WS_METHODS.serverProbe]({})
-          : client[WS_METHODS.serverGetConfig]({})
-        ).pipe(Effect.mapError(mapSessionRpcError)),
-      ),
-      Effect.asVoid,
+      Effect.flatMap((config) => {
+        if (config.environment.capabilities.connectionProbe === true) {
+          return client[WS_METHODS.serverProbe]({}).pipe(
+            Effect.asVoid,
+            Effect.mapError(mapSessionRpcError),
+          );
+        }
+        return client[WS_METHODS.serverGetConfig]({}).pipe(
+          Effect.asVoid,
+          Effect.mapError(mapSessionRpcError),
+        );
+      }),
       Effect.withSpan("clientRuntime.connection.rpcSession.probe"),
     );
 

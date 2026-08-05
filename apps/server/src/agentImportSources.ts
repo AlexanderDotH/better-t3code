@@ -5,6 +5,7 @@ import type {
   AgentImportSourceId,
   AgentImportSourcesResult,
   AgentImportTool,
+  McpProviderRouting,
   McpSecretValue,
   McpServerDefinition,
   McpServerId,
@@ -543,6 +544,7 @@ function rawMcpServersFromJson(parsed: Record<string, unknown>): Record<string, 
 function normalizeMcpServers(input: {
   readonly rawServers: Record<string, RawMcpServerInput>;
   readonly reservedIds: Set<string>;
+  readonly providerRouting: McpProviderRouting;
   readonly scope: "global" | "project";
   readonly projectId?: ProjectId | undefined;
   readonly projectCwd?: string | undefined;
@@ -557,6 +559,7 @@ function normalizeMcpServers(input: {
       id,
       name,
       enabled: true,
+      providerRouting: input.providerRouting,
       scope: input.scope,
       ...(input.projectId ? { projectId: input.projectId } : {}),
       ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
@@ -654,6 +657,7 @@ function deduplicateImportedSkills(input: {
 function readMcpServersFromConfig(input: {
   readonly filePath: string;
   readonly reservedIds: Set<string>;
+  readonly providerRouting: McpProviderRouting;
   readonly scope: "global" | "project";
   readonly projectId?: ProjectId | undefined;
   readonly projectCwd?: string | undefined;
@@ -671,6 +675,7 @@ function readMcpServersFromConfig(input: {
     return normalizeMcpServers({
       rawServers,
       reservedIds: input.reservedIds,
+      providerRouting: input.providerRouting,
       scope: input.scope,
       ...(input.projectId ? { projectId: input.projectId } : {}),
       ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
@@ -777,6 +782,7 @@ function resolveSources(
               readMcpServersFromConfig({
                 filePath,
                 reservedIds,
+                providerRouting: { mode: "all" },
                 scope: "global",
               }),
             { concurrency: "unbounded" },
@@ -822,6 +828,7 @@ export function discoverAgentImportSources(
 
 export function importMcpServersFromAgentSources(input: {
   readonly sourceIds: ReadonlyArray<AgentImportSourceId>;
+  readonly providerRouting?: McpProviderRouting | undefined;
   readonly scope: "global" | "project";
   readonly projectId?: ProjectId | undefined;
   readonly projectCwd?: string | undefined;
@@ -854,6 +861,7 @@ export function importMcpServersFromAgentSources(input: {
             readMcpServersFromConfig({
               filePath,
               reservedIds,
+              providerRouting: input.providerRouting ?? { mode: "all" },
               scope: input.scope,
               ...(input.projectId ? { projectId: input.projectId } : {}),
               ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),

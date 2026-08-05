@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -102,6 +102,10 @@ it.layer(NodeServices.layer)("agent import sources", (it) => {
         homeDir,
         settings: DEFAULT_SERVER_SETTINGS,
         sourceIds: discovered.sources.map((source) => source.id),
+        providerRouting: {
+          mode: "selected",
+          instanceIds: [ProviderInstanceId.make("codex_work")],
+        },
         scope: "global",
       });
       assert.deepEqual(
@@ -119,6 +123,10 @@ it.layer(NodeServices.layer)("agent import sources", (it) => {
       assert.deepEqual(importedGithub.env.GITHUB_TOKEN, {
         value: "secret",
         sensitive: true,
+      });
+      assert.deepEqual(importedGithub.providerRouting, {
+        mode: "selected",
+        instanceIds: ["codex_work"],
       });
 
       const importedWithoutDedupe = yield* importMcpServersFromAgentSources({

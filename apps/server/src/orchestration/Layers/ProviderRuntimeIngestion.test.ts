@@ -4053,6 +4053,120 @@ describe("ProviderRuntimeIngestion", () => {
     expect(stateIndex).toBeGreaterThan(upsertIndex);
   });
 
+  it("uses a child turn completion as authoritative lifecycle state", async () => {
+    const harness = await createHarness();
+    const subagentId = asSubagentId("codex:provider-terminal-turn");
+    const childTurnId = asTurnId("child-terminal-turn");
+    const runningAt = "2026-07-30T10:01:10.000Z";
+    const completedAt = "2026-07-30T10:01:20.000Z";
+
+    harness.emit({
+      type: "subagent.state.changed",
+      eventId: asEventId("evt-child-running-before-terminal-turn"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: runningAt,
+      threadId: asThreadId("thread-1"),
+      subagentId,
+      payload: {
+        subagentId,
+        state: "running",
+      },
+    });
+    await waitForThread(harness.readModel, (entry) =>
+      entry.subagents.some((agent) => agent.id === subagentId && agent.status === "running"),
+    );
+
+    // Providers normally emit a companion subagent.state.changed event. The
+    // child turn itself is still authoritative when that notification is lost.
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-child-terminal-turn"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: completedAt,
+      threadId: asThreadId("thread-1"),
+      subagentId,
+      turnId: childTurnId,
+      payload: { state: "completed" },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.subagents.some(
+        (agent) => agent.id === subagentId && agent.latestTurn?.state === "completed",
+      ),
+    );
+    expect(thread.subagents.find((agent) => agent.id === subagentId)).toMatchObject({
+      status: "completed",
+      statusMessage: null,
+      latestProgress: {
+        kind: "state.completed",
+        summary: "Completed",
+        detail: null,
+        createdAt: completedAt,
+      },
+      latestTurn: {
+        turnId: childTurnId,
+        state: "completed",
+        completedAt,
+      },
+      completedAt,
+    });
+    expect(thread.session).toMatchObject({ status: "ready", activeTurnId: null });
+  });
+
+  it("interrupts active child turns when their root provider session exits", async () => {
+    const harness = await createHarness();
+    const subagentId = asSubagentId("codex:provider-session-exit-child");
+    const childTurnId = asTurnId("child-turn-before-session-exit");
+    const runningAt = "2026-07-30T10:01:30.000Z";
+    const exitedAt = "2026-07-30T10:01:40.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-child-turn-before-session-exit"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: runningAt,
+      threadId: asThreadId("thread-1"),
+      subagentId,
+      turnId: childTurnId,
+      payload: {},
+    });
+    await waitForThread(harness.readModel, (entry) =>
+      entry.subagents.some(
+        (agent) => agent.id === subagentId && agent.latestTurn?.state === "running",
+      ),
+    );
+
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-root-session-exited-with-active-child"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: exitedAt,
+      threadId: asThreadId("thread-1"),
+      payload: { reason: "Provider process exited" },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "stopped",
+    );
+    expect(thread.subagents.find((agent) => agent.id === subagentId)).toMatchObject({
+      status: "interrupted",
+      statusMessage: null,
+      latestProgress: {
+        kind: "state.interrupted",
+        summary: "Interrupted",
+        detail: null,
+        createdAt: exitedAt,
+      },
+      latestTurn: {
+        turnId: childTurnId,
+        state: "interrupted",
+        completedAt: exitedAt,
+      },
+      completedAt: exitedAt,
+    });
+  });
+
   it("routes child assistant, plan, and activity events to namespaced subagent commands", async () => {
     const harness = await createHarness();
     const subagentA = asSubagentId("codex:provider-agent-a");

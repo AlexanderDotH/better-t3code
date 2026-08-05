@@ -163,7 +163,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         resolveMcpServers: ({ cwd }) =>
-          mcpConfigEngine.resolveActiveServers({ cwd }).pipe(
+          mcpConfigEngine.resolveActiveServers({ cwd, providerInstanceId: instanceId }).pipe(
             Effect.catch((cause) =>
               Effect.logWarning("Failed to resolve MCP servers for Codex session", {
                 detail: cause.detail,

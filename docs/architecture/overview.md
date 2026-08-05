@@ -41,7 +41,9 @@ T3 Code runs as a **Node.js WebSocket server** that wraps `codex app-server` (JS
 
 Related design:
 
+- [Git workbench](./git-workbench.md)
 - [Internal provider MCP](./internal-mcp.md)
+- [MCP configuration and runtime status](./mcp-runtime-status.md)
 - [Provider architecture](./providers.md)
 - [Resource telemetry architecture](./resource-telemetry.md)
 

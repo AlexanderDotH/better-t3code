@@ -4,7 +4,7 @@ import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
-import { DEFAULT_MODEL, SubagentId, ThreadId } from "@t3tools/contracts";
+import { DEFAULT_MODEL, McpServerDefinition, SubagentId, ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 
@@ -17,12 +17,14 @@ import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildTurnStartParams,
   codexNotificationProviderRoute,
-  hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
+  listCodexMcpServerStatuses,
   makeCodexSubagentId,
   openCodexThread,
+  requestCodexMcpOauth,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+const decodeMcpServerDefinition = Schema.decodeSync(McpServerDefinition);
 
 describe("CodexSessionRuntimeIdentifierGenerationError", () => {
   it("retains identifier purpose and the random source failure", () => {
@@ -321,15 +323,96 @@ describe("T3 browser developer instructions", () => {
   });
 });
 
-describe("hasConfiguredMcpServer", () => {
-  it("detects inline Codex MCP configuration arguments", () => {
-    NodeAssert.equal(hasConfiguredMcpServer(undefined), false);
-    NodeAssert.equal(hasConfiguredMcpServer(["--model", "gpt-5.4"]), false);
-    NodeAssert.equal(
-      hasConfiguredMcpServer(["-c", 'mcp_servers.t3-code.url="http://127.0.0.1/mcp"']),
-      true,
-    );
-  });
+describe("listCodexMcpServerStatuses", () => {
+  it.effect("follows every pagination cursor while preserving thread and detail filters", () =>
+    Effect.gen(function* () {
+      const requests: Array<CodexRpc.ClientRequestParamsByMethod["mcpServerStatus/list"]> = [];
+      const responses: Array<CodexRpc.ClientRequestResponsesByMethod["mcpServerStatus/list"]> = [
+        {
+          data: [
+            {
+              authStatus: "oAuth",
+              name: "notion",
+              resourceTemplates: [],
+              resources: [],
+              serverInfo: null,
+              tools: {},
+            },
+          ],
+          nextCursor: "page-2",
+        },
+        {
+          data: [
+            {
+              authStatus: "bearerToken",
+              name: "github",
+              resourceTemplates: [],
+              resources: [],
+              serverInfo: null,
+              tools: {},
+            },
+          ],
+          nextCursor: null,
+        },
+      ];
+
+      const statuses = yield* listCodexMcpServerStatuses(
+        (params) =>
+          Effect.sync(() => {
+            requests.push(params);
+            const response = responses.shift();
+            NodeAssert.ok(response);
+            return response;
+          }),
+        {
+          threadId: "provider-thread-1",
+          detail: "full",
+        },
+      );
+
+      NodeAssert.deepStrictEqual(
+        statuses.map((status) => status.name),
+        ["notion", "github"],
+      );
+      NodeAssert.deepStrictEqual(requests, [
+        {
+          threadId: "provider-thread-1",
+          detail: "full",
+        },
+        {
+          threadId: "provider-thread-1",
+          detail: "full",
+          cursor: "page-2",
+        },
+      ]);
+    }),
+  );
+});
+
+describe("requestCodexMcpOauth", () => {
+  it.effect("scopes authorization to the exact provider thread and server", () =>
+    Effect.gen(function* () {
+      let requested: CodexRpc.ClientRequestParamsByMethod["mcpServer/oauth/login"] | undefined;
+      const response = yield* requestCodexMcpOauth(
+        (params) => {
+          requested = params;
+          return Effect.succeed({ authorizationUrl: "https://auth.example.test/authorize" });
+        },
+        {
+          providerThreadId: "provider-thread-1",
+          serverName: "notion",
+          scopes: ["search", "read"],
+        },
+      );
+
+      NodeAssert.deepStrictEqual(requested, {
+        name: "notion",
+        threadId: "provider-thread-1",
+        scopes: ["search", "read"],
+      });
+      NodeAssert.equal(response.authorizationUrl, "https://auth.example.test/authorize");
+    }),
+  );
 });
 
 describe("codexSessionAppServerArgs", () => {
@@ -461,6 +544,55 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
+  it.effect("keeps a user-managed t3-code server separate from the built-in server key", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
+      const client = {
+        request: <M extends "thread/start" | "thread/resume">(
+          method: M,
+          payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          calls.push({ method, payload });
+          return Effect.succeed(
+            makeThreadOpenResponse("fresh-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
+          );
+        },
+      };
+      const userManagedT3Server = decodeMcpServerDefinition({
+        id: "t3-code",
+        name: "User T3 server",
+        transport: "http",
+        url: "https://user-mcp.example/mcp",
+        headers: {},
+      });
+
+      yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+        mcpServers: [userManagedT3Server],
+      });
+
+      const firstCall = calls[0];
+      NodeAssert.ok(firstCall);
+      const config = (
+        firstCall.payload as {
+          readonly config?: {
+            readonly mcp_servers?: Readonly<Record<string, unknown>>;
+          };
+        }
+      ).config;
+      const mcpServers = config?.mcp_servers;
+      NodeAssert.ok(mcpServers);
+      NodeAssert.equal(Object.hasOwn(mcpServers, "t3-managed:t3-code"), true);
+      NodeAssert.equal(Object.hasOwn(mcpServers, "t3-code"), false);
+    }),
+  );
+
   it.effect("falls back to thread/start when resume fails recoverably", () =>
     Effect.gen(function* () {
       const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];

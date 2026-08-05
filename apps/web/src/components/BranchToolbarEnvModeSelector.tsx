@@ -83,6 +83,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         variant="ghost"
         size="xs"
         className="shrink-0 font-medium"
+        data-git-workspace-context-control="true"
         aria-label="Workspace"
       >
         {effectiveEnvMode === "worktree" ? (

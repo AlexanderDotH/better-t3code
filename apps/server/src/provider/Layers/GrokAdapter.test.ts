@@ -159,6 +159,19 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         schemaVersion: 1,
         sessionId: "mock-session-1",
       });
+      assert.equal(adapter.capabilities.mcp, "unsupported");
+      const mcpRuntime = adapter.mcpRuntime;
+      assert.isDefined(mcpRuntime);
+      assert.deepStrictEqual(
+        yield* mcpRuntime.getSnapshot({
+          providerInstanceId: ProviderInstanceId.make("grok"),
+          threadId,
+          runtimeSessionId: session.runtimeSessionId,
+        }),
+        [],
+      );
+      assert.isUndefined(mcpRuntime.runAction);
+      assert.isUndefined(mcpRuntime.applyConfiguration);
 
       yield* adapter.sendTurn({
         threadId,

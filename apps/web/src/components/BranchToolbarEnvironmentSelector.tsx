@@ -65,6 +65,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         variant="ghost"
         size="xs"
         className="min-w-0 max-w-full font-medium"
+        data-git-workspace-context-control="true"
         aria-label="Run on"
       >
         {activeEnvironment?.isPrimary ? (

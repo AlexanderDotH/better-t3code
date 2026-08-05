@@ -4,6 +4,7 @@
 - Architecture
   - [Overview](./architecture/overview.md)
   - [Connection runtime](./architecture/connection-runtime.md)
+  - [Git workbench](./architecture/git-workbench.md)
   - [Internal provider MCP](./architecture/internal-mcp.md)
   - [Provider architecture](./architecture/providers.md)
   - [Remote environments](./architecture/remote.md)
@@ -11,6 +12,8 @@
 - User guides
   - [Background service](./user/background-service.md)
   - [Chat controls](./user/chat-controls.md)
+  - [Git workbench](./user/git-workbench.md)
+  - [MCP servers](./user/mcp-servers.md)
   - [Remote access](./user/remote-access.md)
   - [Keeping T3 Code in sync](./user/server-updates.md)
   - [Keybindings](./user/keybindings.md)

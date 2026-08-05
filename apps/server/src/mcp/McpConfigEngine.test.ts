@@ -6,25 +6,33 @@ import {
   McpServerId,
   ProviderDriverKind,
   ProviderInstanceId,
+  RuntimeSessionId,
+  ThreadId,
   type ServerProvider,
   type ServerSettings,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { McpConfigurationReconciler } from "./McpConfigurationReconciler.ts";
 import {
   exportCursorMcpServersJson,
   getMcpProviderStatuses,
   importCursorMcpServers,
+  managedMcpProviderKey,
   McpConfigEngine,
   McpConfigEngineLive,
   resolveActiveMcpServers,
+  toAcpMcpServers,
   toClaudeMcpServers,
   toOpenCodeMcpServers,
 } from "./McpConfigEngine.ts";
 
 describe("MCP config helpers", () => {
-  it("resolves global servers for every session and project servers only for matching cwd", () => {
+  it("combines master enablement, project scope, and provider-instance routing", () => {
+    const codexWork = ProviderInstanceId.make("codex_work");
+    const claudeWork = ProviderInstanceId.make("claude_work");
     const settings: ServerSettings = {
       ...DEFAULT_SERVER_SETTINGS,
       mcp: {
@@ -33,6 +41,7 @@ describe("MCP config helpers", () => {
             id: McpServerId.make("global_docs"),
             name: "Global Docs",
             enabled: true,
+            providerRouting: { mode: "all" },
             scope: "global",
             transport: "http",
             url: "https://example.com/mcp",
@@ -42,6 +51,7 @@ describe("MCP config helpers", () => {
             id: McpServerId.make("project_docs"),
             name: "Project Docs",
             enabled: true,
+            providerRouting: { mode: "selected", instanceIds: [claudeWork] },
             scope: "project",
             projectCwd: "/tmp/project",
             transport: "stdio",
@@ -53,6 +63,7 @@ describe("MCP config helpers", () => {
             id: McpServerId.make("disabled_docs"),
             name: "Disabled Docs",
             enabled: false,
+            providerRouting: { mode: "all" },
             scope: "global",
             transport: "http",
             url: "https://example.com/disabled",
@@ -63,10 +74,22 @@ describe("MCP config helpers", () => {
     };
 
     expect(
-      resolveActiveMcpServers(settings, { cwd: "/tmp/project" }).map((server) => server.id),
+      resolveActiveMcpServers(settings, {
+        cwd: "/tmp/project",
+        providerInstanceId: claudeWork,
+      }).map((server) => server.id),
     ).toEqual(["global_docs", "project_docs"]);
     expect(
-      resolveActiveMcpServers(settings, { cwd: "/tmp/other" }).map((server) => server.id),
+      resolveActiveMcpServers(settings, {
+        cwd: "/tmp/project",
+        providerInstanceId: codexWork,
+      }).map((server) => server.id),
+    ).toEqual(["global_docs"]);
+    expect(
+      resolveActiveMcpServers(settings, {
+        cwd: "/tmp/other",
+        providerInstanceId: claudeWork,
+      }).map((server) => server.id),
     ).toEqual(["global_docs"]);
   });
 
@@ -87,6 +110,10 @@ describe("MCP config helpers", () => {
         },
       }),
       scope: "global",
+      providerRouting: {
+        mode: "selected",
+        instanceIds: [ProviderInstanceId.make("claude_work")],
+      },
     });
 
     expect(imported.map((server) => server.transport)).toEqual(["stdio", "sse"]);
@@ -105,8 +132,12 @@ describe("MCP config helpers", () => {
       value: "Bearer token",
       sensitive: true,
     });
+    expect(imported.every((server) => server.providerRouting.mode === "selected")).toBe(true);
 
-    const exported = exportCursorMcpServersJson(imported, { includeDisabled: false });
+    const exported = exportCursorMcpServersJson(imported, {
+      includeDisabled: false,
+      providerInstanceId: ProviderInstanceId.make("claude_work"),
+    });
     expect(JSON.parse(exported.json)).toEqual({
       mcpServers: {
         github: {
@@ -121,6 +152,12 @@ describe("MCP config helpers", () => {
         },
       },
     });
+    expect(
+      exportCursorMcpServersJson(imported, {
+        includeDisabled: false,
+        providerInstanceId: ProviderInstanceId.make("codex_work"),
+      }).servers,
+    ).toEqual([]);
   });
 
   it("maps active servers for Claude and OpenCode session config", () => {
@@ -129,6 +166,7 @@ describe("MCP config helpers", () => {
         id: McpServerId.make("github"),
         name: "GitHub",
         enabled: true,
+        providerRouting: { mode: "all" },
         scope: "global",
         transport: "stdio",
         command: "npx",
@@ -139,6 +177,7 @@ describe("MCP config helpers", () => {
         id: McpServerId.make("docs"),
         name: "Docs",
         enabled: true,
+        providerRouting: { mode: "all" },
         scope: "global",
         transport: "http",
         url: "https://example.com/mcp",
@@ -175,6 +214,58 @@ describe("MCP config helpers", () => {
     });
   });
 
+  it("uses stable provider keys when display names collide and protects the built-in key", () => {
+    const servers: ServerSettings["mcp"]["servers"] = [
+      {
+        id: McpServerId.make("docs_one"),
+        name: "Docs",
+        enabled: true,
+        providerRouting: { mode: "all" },
+        scope: "global",
+        transport: "http",
+        url: "https://one.example.com/mcp",
+        headers: {},
+      },
+      {
+        id: McpServerId.make("docs_two"),
+        name: "Docs",
+        enabled: true,
+        providerRouting: { mode: "all" },
+        scope: "global",
+        transport: "http",
+        url: "https://two.example.com/mcp",
+        headers: {},
+      },
+      {
+        id: McpServerId.make("t3-code"),
+        name: "User T3 Code",
+        enabled: true,
+        providerRouting: { mode: "all" },
+        scope: "global",
+        transport: "http",
+        url: "https://user.example.com/mcp",
+        headers: {},
+      },
+    ];
+
+    expect(toAcpMcpServers(servers).map((server) => server.name)).toEqual([
+      "docs_one",
+      "docs_two",
+      "t3-managed:t3-code",
+    ]);
+    expect(managedMcpProviderKey(McpServerId.make("t3-code"))).toBe("t3-managed:t3-code");
+    expect(Object.keys(toClaudeMcpServers(servers))).toEqual([
+      "docs_one",
+      "docs_two",
+      "t3-managed:t3-code",
+    ]);
+    expect(Object.keys(toOpenCodeMcpServers(servers))).toEqual([
+      "docs_one",
+      "docs_two",
+      "t3-managed:t3-code",
+    ]);
+  });
+
   it("reports native provider MCP capabilities without failing unknown providers", () => {
     const providers = [
       provider("codex"),
@@ -184,9 +275,21 @@ describe("MCP config helpers", () => {
       provider("grok"),
       provider("futureAgent"),
     ];
+    const capabilities = new Map(
+      providers.map((candidate) => [
+        candidate.instanceId,
+        candidate.driver === "codex"
+          ? ("nativeConfig" as const)
+          : candidate.driver === "cursor" ||
+              candidate.driver === "claudeAgent" ||
+              candidate.driver === "opencode"
+            ? ("sessionConfig" as const)
+            : ("unsupported" as const),
+      ]),
+    );
 
     expect(
-      getMcpProviderStatuses({ providers, activeServerCount: 2 }).map((status) => ({
+      getMcpProviderStatuses({ providers, activeServerCount: 2, capabilities }).map((status) => ({
         provider: status.provider,
         capability: status.capability,
         state: status.state,
@@ -224,6 +327,155 @@ describe("MCP config helpers", () => {
 });
 
 effectIt.layer(NodeServices.layer)("McpConfigEngineLive", (it) => {
+  it.effect("routes every catalog mutation through one reconciler and returns live outcomes", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make(0);
+      const liveResult = {
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        threadId: ThreadId.make("thread-live-apply"),
+        runtimeSessionId: RuntimeSessionId.make("runtime-live-apply"),
+        outcome: "applied" as const,
+      };
+      const reconcilerLayer = Layer.succeed(
+        McpConfigurationReconciler,
+        McpConfigurationReconciler.of({
+          reconcileCurrent: Ref.update(calls, (count) => count + 1).pipe(Effect.as([liveResult])),
+          providerCapability: () => Effect.succeed("nativeConfig"),
+        }),
+      );
+      const engine = yield* McpConfigEngine.pipe(
+        Effect.provide(
+          McpConfigEngineLive.pipe(
+            Layer.provideMerge(ServerSettingsService.layerTest()),
+            Layer.provideMerge(reconcilerLayer),
+          ),
+        ),
+      );
+      const id = McpServerId.make("managed");
+      const definition = {
+        id,
+        name: "Managed",
+        enabled: true,
+        providerRouting: { mode: "all" as const },
+        scope: "global" as const,
+        transport: "http" as const,
+        url: "https://managed.example.com/mcp",
+        headers: {},
+      };
+
+      const created = yield* engine.create(definition);
+      yield* engine.update({ ...definition, name: "Managed Updated" });
+      yield* engine.setEnabled(id, false);
+      yield* engine.setProviderEnabled({
+        serverId: id,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        enabled: false,
+      });
+      yield* engine.importCursorJson({
+        json: JSON.stringify({
+          mcpServers: {
+            imported: { url: "https://imported.example.com/mcp" },
+          },
+        }),
+        providerRouting: { mode: "all" },
+        scope: "global",
+        replace: false,
+      });
+      yield* engine.delete(id);
+
+      expect(created.liveApplyResults).toEqual([liveResult]);
+      expect(yield* Ref.get(calls)).toBe(6);
+    }),
+  );
+
+  it.effect("preserves concurrent catalog mutations and legacy provider routing", () =>
+    Effect.gen(function* () {
+      const engine = yield* McpConfigEngine;
+      const alphaId = McpServerId.make("alpha");
+      const betaId = McpServerId.make("beta");
+      const workProvider = ProviderInstanceId.make("codex_work");
+
+      yield* Effect.all(
+        [
+          engine.create({
+            id: alphaId,
+            name: "Alpha",
+            enabled: true,
+            providerRouting: { mode: "all" },
+            scope: "global",
+            transport: "http",
+            url: "https://alpha.example.com/mcp",
+            headers: {},
+          }),
+          engine.create({
+            id: betaId,
+            name: "Beta",
+            enabled: true,
+            providerRouting: { mode: "selected", instanceIds: [workProvider] },
+            scope: "global",
+            transport: "http",
+            url: "https://beta.example.com/mcp",
+            headers: {},
+          }),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      yield* Effect.all(
+        [
+          engine.setEnabled(alphaId, false),
+          engine.update({
+            id: betaId,
+            name: "Beta Updated",
+            enabled: true,
+            scope: "global",
+            transport: "http",
+            url: "https://beta.example.com/v2/mcp",
+            headers: {},
+          }),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      const updated = yield* engine.list;
+      expect(updated.servers).toEqual([
+        expect.objectContaining({ id: alphaId, enabled: false }),
+        expect.objectContaining({
+          id: betaId,
+          name: "Beta Updated",
+          providerRouting: { mode: "selected", instanceIds: [workProvider] },
+        }),
+      ]);
+
+      const resetRouting = yield* engine.update({
+        id: betaId,
+        name: "Beta Updated",
+        enabled: true,
+        providerRouting: { mode: "all" },
+        scope: "global",
+        transport: "http",
+        url: "https://beta.example.com/v2/mcp",
+        headers: {},
+      });
+      expect(resetRouting.servers[1]?.providerRouting).toEqual({ mode: "all" });
+    }).pipe(
+      Effect.provide(
+        McpConfigEngineLive.pipe(
+          Layer.provideMerge(ServerSettingsService.layerTest()),
+          Layer.provideMerge(
+            Layer.succeed(
+              McpConfigurationReconciler,
+              McpConfigurationReconciler.of({
+                reconcileCurrent: Effect.succeed([]),
+                providerCapability: () => Effect.succeed("nativeConfig"),
+              }),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("redacts client results while materializing active server secrets across CRUD", () =>
     Effect.gen(function* () {
       const engine = yield* McpConfigEngine;
@@ -231,6 +483,7 @@ effectIt.layer(NodeServices.layer)("McpConfigEngineLive", (it) => {
         id: McpServerId.make("github"),
         name: "GitHub",
         enabled: true,
+        providerRouting: { mode: "all" },
         scope: "global",
         transport: "stdio",
         command: "npx",
@@ -257,13 +510,61 @@ effectIt.layer(NodeServices.layer)("McpConfigEngineLive", (it) => {
       }
       expect(active[0].env.GITHUB_TOKEN?.value).toBe("secret");
 
+      const disabledForClaude = yield* engine.setProviderEnabled({
+        serverId: McpServerId.make("github"),
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        enabled: false,
+      });
+      expect(disabledForClaude.servers[0]?.providerRouting).toEqual({
+        mode: "selected",
+        instanceIds: ["codex", "cursor", "grok", "opencode"],
+      });
+      expect(
+        yield* engine.resolveActiveServers({
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        }),
+      ).toEqual([]);
+      expect(
+        (yield* engine.resolveActiveServers({
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        })).map((server) => server.id),
+      ).toEqual(["github"]);
+      expect(
+        (yield* engine.providerStatus([provider("codex"), provider("claudeAgent")])).providers.map(
+          (status) => [status.instanceId, status.activeServerCount],
+        ),
+      ).toEqual([
+        ["codex", 1],
+        ["claudeAgent", 0],
+      ]);
+
+      const reenabledForClaude = yield* engine.setProviderEnabled({
+        serverId: McpServerId.make("github"),
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        enabled: true,
+      });
+      expect(reenabledForClaude.servers[0]?.providerRouting).toEqual({
+        mode: "selected",
+        instanceIds: ["codex", "cursor", "grok", "opencode", "claudeAgent"],
+      });
+
       yield* engine.setEnabled(McpServerId.make("github"), false);
       expect(yield* engine.resolveActiveServers({})).toEqual([]);
+      const providerToggleWithMasterDisabled = yield* engine.setProviderEnabled({
+        serverId: McpServerId.make("github"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        enabled: true,
+      });
+      expect(providerToggleWithMasterDisabled.servers[0]?.enabled).toBe(false);
 
       const updated = yield* engine.update({
         id: McpServerId.make("github"),
         name: "GitHub Remote",
         enabled: true,
+        providerRouting: {
+          mode: "selected",
+          instanceIds: [ProviderInstanceId.make("retired_provider")],
+        },
         scope: "global",
         transport: "http",
         url: "https://example.com/mcp",
@@ -273,11 +574,32 @@ effectIt.layer(NodeServices.layer)("McpConfigEngineLive", (it) => {
       });
       expect(updated.servers[0]?.name).toBe("GitHub Remote");
 
+      const preservedRetiredProvider = yield* engine.setProviderEnabled({
+        serverId: McpServerId.make("github"),
+        providerInstanceId: ProviderInstanceId.make("cursor"),
+        enabled: true,
+      });
+      expect(preservedRetiredProvider.servers[0]?.providerRouting).toEqual({
+        mode: "selected",
+        instanceIds: ["retired_provider", "cursor"],
+      });
+
       const removed = yield* engine.delete(McpServerId.make("github"));
       expect(removed.servers).toEqual([]);
     }).pipe(
       Effect.provide(
-        McpConfigEngineLive.pipe(Layer.provideMerge(ServerSettingsService.layerTest())),
+        McpConfigEngineLive.pipe(
+          Layer.provideMerge(ServerSettingsService.layerTest()),
+          Layer.provideMerge(
+            Layer.succeed(
+              McpConfigurationReconciler,
+              McpConfigurationReconciler.of({
+                reconcileCurrent: Effect.succeed([]),
+                providerCapability: () => Effect.succeed("nativeConfig"),
+              }),
+            ),
+          ),
+        ),
       ),
     ),
   );

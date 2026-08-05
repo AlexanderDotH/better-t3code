@@ -134,6 +134,26 @@ export interface WsRpcClient {
     readonly preparePullRequestThread: RpcUnaryMethod<
       typeof WS_METHODS.gitPreparePullRequestThread
     >;
+    readonly onWorkbench: RpcInputStreamMethod<typeof WS_METHODS.gitSubscribeWorkbench>;
+    readonly refreshWorkbench: RpcUnaryMethod<typeof WS_METHODS.gitRefreshWorkbench>;
+    readonly getRepositoryInsights: RpcUnaryMethod<typeof WS_METHODS.gitGetRepositoryInsights>;
+    readonly listHistory: RpcUnaryMethod<typeof WS_METHODS.gitListHistory>;
+    readonly getCommitDetail: RpcUnaryMethod<typeof WS_METHODS.gitGetCommitDetail>;
+    readonly getCommitFileDiff: RpcUnaryMethod<typeof WS_METHODS.gitGetCommitFileDiff>;
+    readonly getChangesDiff: RpcUnaryMethod<typeof WS_METHODS.gitGetChangesDiff>;
+    readonly getInteractiveRebasePlan: RpcUnaryMethod<
+      typeof WS_METHODS.gitGetInteractiveRebasePlan
+    >;
+    readonly applyChangeSelection: RpcUnaryMethod<typeof WS_METHODS.gitApplyChangeSelection>;
+    readonly runWorkbenchOperation: (
+      input: RpcInput<typeof WS_METHODS.gitRunWorkbenchOperation>,
+      listener: Parameters<RpcInputStreamMethod<typeof WS_METHODS.gitRunWorkbenchOperation>>[1],
+    ) => Promise<void>;
+    readonly listUndoSnapshots: RpcUnaryMethod<typeof WS_METHODS.gitListUndoSnapshots>;
+    readonly createUndoSnapshot: RpcUnaryMethod<typeof WS_METHODS.gitCreateUndoSnapshot>;
+    readonly restoreUndoSnapshot: RpcUnaryMethod<typeof WS_METHODS.gitRestoreUndoSnapshot>;
+    readonly upsertQueuedWorkflow: RpcUnaryMethod<typeof WS_METHODS.gitUpsertQueuedWorkflow>;
+    readonly cancelQueuedWorkflow: RpcUnaryMethod<typeof WS_METHODS.gitCancelQueuedWorkflow>;
   };
   readonly review: {
     readonly getDiffPreview: RpcUnaryMethod<typeof WS_METHODS.reviewGetDiffPreview>;
@@ -218,6 +238,7 @@ export interface WsRpcClient {
     readonly update: RpcUnaryMethod<typeof WS_METHODS.mcpUpdate>;
     readonly delete: RpcUnaryMethod<typeof WS_METHODS.mcpDelete>;
     readonly setEnabled: RpcUnaryMethod<typeof WS_METHODS.mcpSetEnabled>;
+    readonly setProviderEnabled: RpcUnaryMethod<typeof WS_METHODS.mcpSetProviderEnabled>;
     readonly importCursorJson: RpcUnaryMethod<typeof WS_METHODS.mcpImportCursorJson>;
     readonly importSources: RpcUnaryMethod<typeof WS_METHODS.mcpImportSources>;
     readonly exportCursorJson: (
@@ -226,6 +247,14 @@ export interface WsRpcClient {
     readonly providerStatus: (
       input?: RpcInput<typeof WS_METHODS.mcpProviderStatus>,
     ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.mcpProviderStatus>>;
+    readonly runtimeContexts: RpcUnaryMethod<typeof WS_METHODS.mcpRuntimeContexts>;
+    readonly runtimeContextChanges: RpcInputStreamMethod<
+      typeof WS_METHODS.mcpRuntimeContextChanges
+    >;
+    readonly runtimeSnapshot: RpcUnaryMethod<typeof WS_METHODS.mcpRuntimeSnapshot>;
+    readonly runtimeChanges: RpcInputStreamMethod<typeof WS_METHODS.mcpRuntimeChanges>;
+    readonly runtimeServerDetails: RpcUnaryMethod<typeof WS_METHODS.mcpRuntimeServerDetails>;
+    readonly runtimeAction: RpcUnaryMethod<typeof WS_METHODS.mcpRuntimeAction>;
   };
   readonly orchestration: {
     readonly dispatchCommand: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.dispatchCommand>;
@@ -356,6 +385,43 @@ export function createWsRpcClient(
         transport.request((client) => client[WS_METHODS.gitResolvePullRequest](input)),
       preparePullRequestThread: (input) =>
         transport.request((client) => client[WS_METHODS.gitPreparePullRequestThread](input)),
+      onWorkbench: (input, listener, options) =>
+        transport.subscribe(
+          (client) => client[WS_METHODS.gitSubscribeWorkbench](input),
+          listener,
+          subscriptionOptions(options, WS_METHODS.gitSubscribeWorkbench),
+        ),
+      refreshWorkbench: (input) =>
+        transport.request((client) => client[WS_METHODS.gitRefreshWorkbench](input)),
+      getRepositoryInsights: (input) =>
+        transport.request((client) => client[WS_METHODS.gitGetRepositoryInsights](input)),
+      listHistory: (input) =>
+        transport.request((client) => client[WS_METHODS.gitListHistory](input)),
+      getCommitDetail: (input) =>
+        transport.request((client) => client[WS_METHODS.gitGetCommitDetail](input)),
+      getCommitFileDiff: (input) =>
+        transport.request((client) => client[WS_METHODS.gitGetCommitFileDiff](input)),
+      getChangesDiff: (input) =>
+        transport.request((client) => client[WS_METHODS.gitGetChangesDiff](input)),
+      getInteractiveRebasePlan: (input) =>
+        transport.request((client) => client[WS_METHODS.gitGetInteractiveRebasePlan](input)),
+      applyChangeSelection: (input) =>
+        transport.request((client) => client[WS_METHODS.gitApplyChangeSelection](input)),
+      runWorkbenchOperation: (input, listener) =>
+        transport.requestStream(
+          (client) => client[WS_METHODS.gitRunWorkbenchOperation](input),
+          listener,
+        ),
+      listUndoSnapshots: (input) =>
+        transport.request((client) => client[WS_METHODS.gitListUndoSnapshots](input)),
+      createUndoSnapshot: (input) =>
+        transport.request((client) => client[WS_METHODS.gitCreateUndoSnapshot](input)),
+      restoreUndoSnapshot: (input) =>
+        transport.request((client) => client[WS_METHODS.gitRestoreUndoSnapshot](input)),
+      upsertQueuedWorkflow: (input) =>
+        transport.request((client) => client[WS_METHODS.gitUpsertQueuedWorkflow](input)),
+      cancelQueuedWorkflow: (input) =>
+        transport.request((client) => client[WS_METHODS.gitCancelQueuedWorkflow](input)),
     },
     review: {
       getDiffPreview: (input) =>
@@ -472,6 +538,8 @@ export function createWsRpcClient(
       update: (input) => transport.request((client) => client[WS_METHODS.mcpUpdate](input)),
       delete: (input) => transport.request((client) => client[WS_METHODS.mcpDelete](input)),
       setEnabled: (input) => transport.request((client) => client[WS_METHODS.mcpSetEnabled](input)),
+      setProviderEnabled: (input) =>
+        transport.request((client) => client[WS_METHODS.mcpSetProviderEnabled](input)),
       importCursorJson: (input) =>
         transport.request((client) => client[WS_METHODS.mcpImportCursorJson](input)),
       importSources: (input) =>
@@ -482,6 +550,26 @@ export function createWsRpcClient(
         ),
       providerStatus: (input) =>
         transport.request((client) => client[WS_METHODS.mcpProviderStatus](input ?? {})),
+      runtimeContexts: (input) =>
+        transport.request((client) => client[WS_METHODS.mcpRuntimeContexts](input)),
+      runtimeContextChanges: (input, listener, options) =>
+        transport.subscribe(
+          (client) => client[WS_METHODS.mcpRuntimeContextChanges](input),
+          listener,
+          subscriptionOptions(options, WS_METHODS.mcpRuntimeContextChanges),
+        ),
+      runtimeSnapshot: (input) =>
+        transport.request((client) => client[WS_METHODS.mcpRuntimeSnapshot](input)),
+      runtimeChanges: (input, listener, options) =>
+        transport.subscribe(
+          (client) => client[WS_METHODS.mcpRuntimeChanges](input),
+          listener,
+          subscriptionOptions(options, WS_METHODS.mcpRuntimeChanges),
+        ),
+      runtimeServerDetails: (input) =>
+        transport.request((client) => client[WS_METHODS.mcpRuntimeServerDetails](input)),
+      runtimeAction: (input) =>
+        transport.request((client) => client[WS_METHODS.mcpRuntimeAction](input)),
     },
     orchestration: {
       dispatchCommand: (input) =>

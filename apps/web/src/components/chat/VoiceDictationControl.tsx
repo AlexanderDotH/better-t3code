@@ -76,7 +76,7 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
         aria-valuenow={Math.round(Math.max(0, Math.min(1, peakLevel)) * 100)}
         className={cn(
           "flex h-8 w-20 items-center justify-center gap-0.5 overflow-hidden rounded-full px-2",
-          canSpeak ? "bg-orange-500/10" : "bg-muted",
+          canSpeak ? "bg-rose-500/8" : "bg-muted",
         )}
       >
         {WAVEFORM_BAR_KEYS.slice(0, audioWaveform.length).map((key, index) => (
@@ -85,7 +85,7 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
             data-voice-wave-bar="true"
             className={cn(
               "w-0.5 shrink-0 rounded-full transition-[height] duration-75 ease-out",
-              canSpeak ? "bg-orange-500" : "bg-muted-foreground/35",
+              canSpeak ? "bg-rose-500" : "bg-muted-foreground/35",
             )}
             style={{ height: waveformBarHeight(audioWaveform[index] ?? 0) }}
           />
@@ -96,7 +96,7 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
         className={cn(
           "flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all disabled:opacity-60 sm:h-8 sm:w-8",
           canSpeak
-            ? "bg-orange-500 text-white shadow-[0_0_0_2px_rgb(249_115_22/0.18)] hover:bg-orange-600"
+            ? "bg-rose-500 text-white shadow-[0_0_0_3px_rgb(244_63_94/0.15)] hover:bg-rose-600"
             : "border border-border/70 bg-muted text-muted-foreground hover:bg-muted/80",
         )}
         disabled={state === "stopping"}

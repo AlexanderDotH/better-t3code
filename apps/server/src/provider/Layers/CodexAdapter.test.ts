@@ -6,7 +6,10 @@ import * as NodePath from "node:path";
 import {
   ApprovalRequestId,
   CodexSettings,
+  EnvironmentId,
   EventId,
+  McpRuntimeServerKey,
+  McpServerDefinition,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderItemId,
@@ -36,9 +39,11 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as CodexErrors from "effect-codex-app-server/errors";
+import * as EffectCodexSchema from "effect-codex-app-server/schema";
 import { describe } from "vite-plus/test";
 
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
@@ -47,14 +52,17 @@ import {
   type CodexSessionRuntimeOptions,
   type CodexSessionRuntimeSendTurnInput,
   type CodexSessionRuntimeShape,
+  type CodexMcpServerStatus,
   type CodexThreadSnapshot,
 } from "./CodexSessionRuntime.ts";
 import {
   makeCodexAdapter,
   makeCodexRuntimeEventMapper,
   normalizeCodexCollabAgentStatus,
+  sanitizeCodexMcpNativeEvent,
 } from "./CodexAdapter.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
+const decodeMcpServerDefinition = Schema.decodeSync(McpServerDefinition);
 
 // Test-local service tag so the rest of the file can keep using `yield* CodexAdapter`.
 class CodexAdapter extends Context.Service<CodexAdapter, CodexAdapterShape>()(
@@ -497,6 +505,104 @@ describe("Codex subagent event mapping", () => {
   });
 });
 
+describe("Codex MCP event mapping", () => {
+  it("retains authentication failure reasons from startup status notifications", () => {
+    const events = makeCodexRuntimeEventMapper("provider-root")(
+      makeProviderNotification({
+        id: asEventId("evt-mcp-auth-required"),
+        method: "mcpServer/startupStatus/updated",
+        providerThreadId: "provider-root",
+        payload: {
+          threadId: "provider-root",
+          name: "notion",
+          status: "failed",
+          error: "OAuth token expired",
+          failureReason: "reauthenticationRequired",
+        },
+      }),
+      asThreadId("thread-1"),
+    );
+
+    NodeAssert.equal(events.length, 1);
+    NodeAssert.deepStrictEqual(events[0]?.payload, {
+      status: {
+        name: "notion",
+        status: "failed",
+        error: "OAuth token expired",
+        failureReason: "reauthenticationRequired",
+      },
+    });
+  });
+
+  it("retains OAuth completion success and failure details", () => {
+    const events = makeCodexRuntimeEventMapper("provider-root")(
+      makeProviderNotification({
+        id: asEventId("evt-mcp-oauth-failed"),
+        method: "mcpServer/oauthLogin/completed",
+        providerThreadId: "provider-root",
+        payload: {
+          threadId: "provider-root",
+          name: "notion",
+          success: false,
+          error: "Authorization was cancelled",
+        },
+      }),
+      asThreadId("thread-1"),
+    );
+
+    NodeAssert.equal(events.length, 1);
+    NodeAssert.deepStrictEqual(events[0]?.payload, {
+      success: false,
+      name: "notion",
+      error: "Authorization was cancelled",
+    });
+  });
+
+  it("redacts credentials from MCP startup diagnostics", () => {
+    const secret = "codex-mcp-secret-token";
+    const events = makeCodexRuntimeEventMapper("provider-root")(
+      makeProviderNotification({
+        id: asEventId("evt-mcp-secret-error"),
+        method: "mcpServer/startupStatus/updated",
+        providerThreadId: "provider-root",
+        payload: {
+          threadId: "provider-root",
+          name: "notion",
+          status: "failed",
+          error: `Authorization: Bearer ${secret}`,
+        },
+      }),
+      asThreadId("thread-1"),
+    );
+
+    NodeAssert.equal(events.length, 1);
+    NodeAssert.doesNotMatch(JSON.stringify(events[0]?.payload), new RegExp(secret));
+    NodeAssert.match(JSON.stringify(events[0]?.payload), /REDACTED/);
+  });
+
+  it("redacts MCP diagnostics before writing native event logs", () => {
+    const secret = "native-log-secret";
+    const event = sanitizeCodexMcpNativeEvent(
+      makeProviderNotification({
+        id: asEventId("evt-mcp-native-log-secret"),
+        method: "mcpServer/oauthLogin/completed",
+        payload: {
+          threadId: "provider-root",
+          name: "notion",
+          success: false,
+          error: `Authorization: Bearer ${secret}`,
+          oauthState: "must-not-be-retained",
+        },
+      }),
+    );
+
+    const serialized = JSON.stringify(event.payload);
+    NodeAssert.doesNotMatch(serialized, new RegExp(secret));
+    NodeAssert.doesNotMatch(serialized, /must-not-be-retained/);
+    NodeAssert.match(serialized, /REDACTED/);
+  });
+});
+
 class FakeCodexRuntime implements CodexSessionRuntimeShape {
   private readonly eventQueue = Effect.runSync(Queue.unbounded<ProviderEvent>());
   private readonly now = "2026-01-01T00:00:00.000Z";
@@ -553,6 +659,16 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
       Promise.resolve(undefined),
   );
 
+  public readonly listMcpServerStatusesImpl = vi.fn(
+    (
+      _detail?: EffectCodexSchema.V2ListMcpServerStatusParams__McpServerStatusDetail,
+    ): Promise<ReadonlyArray<CodexMcpServerStatus>> => Promise.resolve([]),
+  );
+  public readonly reloadMcpServersImpl = vi.fn(() => Promise.resolve(undefined));
+  public readonly startMcpOauthImpl = vi.fn((_input: { readonly serverName: string }) =>
+    Promise.resolve({ authorizationUrl: "https://auth.example.test/authorize" }),
+  );
+
   public readonly closeImpl = vi.fn(() => Promise.resolve(undefined));
   public readonly forceCloseImpl = vi.fn(() => Promise.resolve(undefined));
 
@@ -593,6 +709,18 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
 
   respondToUserInput(requestId: ApprovalRequestId, answers: ProviderUserInputAnswers) {
     return Effect.promise(() => this.respondToUserInputImpl(requestId, answers));
+  }
+
+  listMcpServerStatuses(
+    detail?: EffectCodexSchema.V2ListMcpServerStatusParams__McpServerStatusDetail,
+  ) {
+    return Effect.promise(() => this.listMcpServerStatusesImpl(detail));
+  }
+
+  reloadMcpServers = Effect.promise(() => this.reloadMcpServersImpl());
+
+  startMcpOauth(input: { readonly serverName: string }) {
+    return Effect.promise(() => this.startMcpOauthImpl(input));
   }
 
   get events() {
@@ -937,6 +1065,362 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       });
     }).pipe(Effect.provide(customLayer));
   });
+});
+
+describe("CodexAdapter MCP runtime", () => {
+  it.effect("normalizes provider status and exposes only safe lazy tool metadata", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const managedServer = decodeMcpServerDefinition({
+      id: "notion",
+      name: "Notion",
+      enabled: true,
+      scope: "global",
+      transport: "http",
+      url: "https://mcp.notion.example/mcp",
+      headers: {},
+    });
+    const missingServer = decodeMcpServerDefinition({
+      id: "github",
+      name: "GitHub",
+      enabled: true,
+      scope: "global",
+      transport: "http",
+      url: "https://mcp.github.example/mcp",
+      headers: {},
+    });
+    const providerInstanceId = ProviderInstanceId.make("codex-work");
+    const runtimeSessionId = RuntimeSessionId.make("codex-mcp-runtime");
+    const threadId = asThreadId("thread-mcp-runtime");
+    const layer = Layer.effect(
+      CodexAdapter,
+      Effect.gen(function* () {
+        const codexConfig = decodeCodexSettings({});
+        return yield* makeCodexAdapter(codexConfig, {
+          instanceId: providerInstanceId,
+          makeRuntime: runtimeFactory.factory,
+          resolveMcpServers: () => Effect.succeed([managedServer, missingServer]),
+        });
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      yield* Effect.sync(() =>
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make("environment-codex-mcp-runtime"),
+          threadId,
+          providerSessionId: "provider-session-codex-mcp-runtime",
+          providerInstanceId,
+          endpoint: "http://127.0.0.1:3000/mcp",
+          authorizationHeader: "Bearer test-token",
+        }),
+      );
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeSessionId,
+        runtimeMode: "full-access",
+      });
+
+      const runtime = runtimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      runtime.listMcpServerStatusesImpl.mockResolvedValue([
+        {
+          authStatus: "notLoggedIn",
+          name: "notion",
+          resourceTemplates: [],
+          resources: [],
+          serverInfo: {
+            name: "notion-mcp",
+            version: "1.2.3",
+          },
+          tools: {
+            search: {
+              name: "search",
+              title: "Search",
+              description: "Search the workspace",
+              annotations: {
+                readOnlyHint: true,
+                destructiveHint: false,
+                openWorldHint: true,
+              },
+              inputSchema: { secretSchemaValue: "must-not-cross-the-boundary" },
+            },
+          },
+        },
+        {
+          authStatus: "bearerToken",
+          name: "t3-code",
+          resourceTemplates: [],
+          resources: [],
+          serverInfo: null,
+          tools: {},
+        },
+      ]);
+
+      const observedEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+      yield* runtime.emit(
+        makeProviderNotification({
+          id: asEventId("evt-notion-reauthorize"),
+          method: "mcpServer/startupStatus/updated",
+          payload: {
+            name: "notion",
+            status: "failed",
+            error: "The OAuth session expired",
+            failureReason: "reauthenticationRequired",
+          },
+        }),
+      );
+      yield* Fiber.join(observedEventFiber);
+
+      const mcpRuntime = adapter.mcpRuntime;
+      NodeAssert.ok(mcpRuntime);
+      const target = {
+        providerInstanceId,
+        threadId,
+        runtimeSessionId,
+      };
+      const snapshot = yield* mcpRuntime.getSnapshot(target);
+
+      NodeAssert.equal(snapshot.length, 3);
+      NodeAssert.deepStrictEqual(snapshot[0]?.issue, {
+        code: "reauthenticationRequired",
+        message: "The OAuth session expired",
+      });
+      NodeAssert.equal(snapshot[0]?.statusSource, "provider-event");
+      NodeAssert.deepStrictEqual(
+        snapshot.map((server) => ({
+          providerKey: server.providerKey,
+          source: server.source,
+          state: server.state,
+          authState: server.authState,
+          actions: server.availableActions,
+          toolCount: server.toolCount,
+        })),
+        [
+          {
+            providerKey: McpRuntimeServerKey.make("notion"),
+            source: "t3-managed",
+            state: "auth-required",
+            authState: "required",
+            actions: ["refresh", "reconnect", "authorize"],
+            toolCount: 1,
+          },
+          {
+            providerKey: McpRuntimeServerKey.make("t3-code"),
+            source: "t3-built-in",
+            state: "connected",
+            authState: "authenticated",
+            actions: ["refresh", "reconnect"],
+            toolCount: 0,
+          },
+          {
+            providerKey: McpRuntimeServerKey.make("github"),
+            source: "t3-managed",
+            state: "unknown",
+            authState: "unknown",
+            actions: ["refresh", "reconnect"],
+            toolCount: undefined,
+          },
+        ],
+      );
+
+      const details = yield* mcpRuntime.getServerDetails?.({
+        ...target,
+        providerKey: McpRuntimeServerKey.make("notion"),
+      });
+      NodeAssert.ok(details);
+      NodeAssert.deepStrictEqual(details.tools, [
+        {
+          name: "search",
+          title: "Search",
+          description: "Search the workspace",
+          readOnly: true,
+          destructive: false,
+          openWorld: true,
+        },
+      ]);
+      NodeAssert.doesNotMatch(JSON.stringify(details), /secretSchemaValue/);
+      NodeAssert.deepStrictEqual(runtime.listMcpServerStatusesImpl.mock.calls, [
+        ["toolsAndAuthOnly"],
+        ["full"],
+      ]);
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+      Effect.provide(layer),
+    );
+  });
+
+  it.effect("fences stale runtime actions and returns the native OAuth URL", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const providerInstanceId = ProviderInstanceId.make("codex-work");
+    const runtimeSessionId = RuntimeSessionId.make("codex-current-runtime");
+    const layer = Layer.effect(
+      CodexAdapter,
+      Effect.gen(function* () {
+        const codexConfig = decodeCodexSettings({});
+        return yield* makeCodexAdapter(codexConfig, {
+          instanceId: providerInstanceId,
+          makeRuntime: runtimeFactory.factory,
+        });
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-mcp-actions"),
+        runtimeSessionId,
+        runtimeMode: "full-access",
+      });
+      const runtime = runtimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      runtime.listMcpServerStatusesImpl.mockResolvedValue([
+        {
+          authStatus: "notLoggedIn",
+          name: "notion",
+          resourceTemplates: [],
+          resources: [],
+          serverInfo: null,
+          tools: {},
+        },
+      ]);
+
+      const mcpRuntime = adapter.mcpRuntime;
+      NodeAssert.ok(mcpRuntime?.runAction);
+      const stale = yield* mcpRuntime
+        .runAction({
+          providerInstanceId,
+          threadId: asThreadId("thread-mcp-actions"),
+          runtimeSessionId: RuntimeSessionId.make("codex-replaced-runtime"),
+          providerKey: McpRuntimeServerKey.make("notion"),
+          action: "authorize",
+        })
+        .pipe(Effect.result);
+      NodeAssert.equal(stale._tag, "Failure");
+      NodeAssert.equal(stale.failure._tag, "ProviderAdapterSessionNotFoundError");
+      NodeAssert.equal(runtime.startMcpOauthImpl.mock.calls.length, 0);
+
+      const authorized = yield* mcpRuntime.runAction({
+        providerInstanceId,
+        threadId: asThreadId("thread-mcp-actions"),
+        runtimeSessionId,
+        providerKey: McpRuntimeServerKey.make("notion"),
+        action: "authorize",
+      });
+      NodeAssert.deepStrictEqual(authorized, {
+        accepted: true,
+        action: "authorize",
+        providerKey: McpRuntimeServerKey.make("notion"),
+        authorizationUrl: "https://auth.example.test/authorize",
+      });
+      NodeAssert.deepStrictEqual(runtime.startMcpOauthImpl.mock.calls, [
+        [{ serverName: "notion" }],
+      ]);
+
+      const refreshed = yield* mcpRuntime.runAction({
+        providerInstanceId,
+        threadId: asThreadId("thread-mcp-actions"),
+        runtimeSessionId,
+        providerKey: McpRuntimeServerKey.make("notion"),
+        action: "refresh",
+      });
+      NodeAssert.equal(refreshed.accepted, true);
+      NodeAssert.equal(runtime.reloadMcpServersImpl.mock.calls.length, 1);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "only reports live configuration as applied after Codex reflects the desired keys",
+    () => {
+      const runtimeFactory = makeRuntimeFactory();
+      const notionServer = decodeMcpServerDefinition({
+        id: "notion",
+        name: "Notion",
+        transport: "http",
+        url: "https://mcp.notion.example/mcp",
+        headers: {},
+      });
+      const githubServer = decodeMcpServerDefinition({
+        id: "github",
+        name: "GitHub",
+        transport: "http",
+        url: "https://mcp.github.example/mcp",
+        headers: {},
+      });
+      let desiredServers: ReadonlyArray<typeof notionServer> = [notionServer];
+      const providerInstanceId = ProviderInstanceId.make("codex-work");
+      const runtimeSessionId = RuntimeSessionId.make("codex-configuration-runtime");
+      const layer = Layer.effect(
+        CodexAdapter,
+        Effect.gen(function* () {
+          const codexConfig = decodeCodexSettings({});
+          return yield* makeCodexAdapter(codexConfig, {
+            instanceId: providerInstanceId,
+            makeRuntime: runtimeFactory.factory,
+            resolveMcpServers: () => Effect.succeed(desiredServers),
+          });
+        }),
+      ).pipe(
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+        Layer.provideMerge(ServerSettingsService.layerTest()),
+        Layer.provideMerge(providerSessionDirectoryTestLayer),
+        Layer.provideMerge(NodeServices.layer),
+      );
+
+      return Effect.gen(function* () {
+        const adapter = yield* CodexAdapter;
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-mcp-configuration"),
+          runtimeSessionId,
+          runtimeMode: "full-access",
+        });
+        const runtime = runtimeFactory.lastRuntime;
+        NodeAssert.ok(runtime);
+        runtime.listMcpServerStatusesImpl.mockResolvedValue([
+          {
+            authStatus: "oAuth",
+            name: "notion",
+            resourceTemplates: [],
+            resources: [],
+            serverInfo: null,
+            tools: {},
+          },
+        ]);
+        const target = {
+          providerInstanceId,
+          threadId: asThreadId("thread-mcp-configuration"),
+          runtimeSessionId,
+        };
+        const applyConfiguration = adapter.mcpRuntime?.applyConfiguration;
+        NodeAssert.ok(applyConfiguration);
+
+        const applied = yield* applyConfiguration(target);
+        NodeAssert.equal(applied, "applied");
+        desiredServers = [githubServer];
+        const unapplied = yield* applyConfiguration(target);
+
+        NodeAssert.equal(unapplied, "pending-next-session");
+        NodeAssert.equal(runtime.reloadMcpServersImpl.mock.calls.length, 2);
+        NodeAssert.deepStrictEqual(runtime.listMcpServerStatusesImpl.mock.calls, [
+          ["toolsAndAuthOnly"],
+          ["toolsAndAuthOnly"],
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });
 
 const lifecycleRuntimeFactory = makeRuntimeFactory();

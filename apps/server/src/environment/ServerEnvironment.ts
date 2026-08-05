@@ -147,6 +147,8 @@ export const make = Effect.gen(function* () {
       ...(serverSelfUpdate === "boot-service" || serverSelfUpdate === "respawn"
         ? { serverSelfUpdateProgress: true }
         : {}),
+      gitWorkbenchVersion: 1,
+      mcpWorkspaceVersion: 1,
       midChatProviderSwitching: true,
     },
   };

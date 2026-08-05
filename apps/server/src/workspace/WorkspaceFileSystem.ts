@@ -7,6 +7,7 @@
  *
  * @module WorkspaceFileSystem
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 
 import type {
@@ -92,6 +93,22 @@ export class WorkspaceBinaryFileError extends Schema.TaggedErrorClass<WorkspaceB
   }
 }
 
+export class WorkspaceFileRevisionConflictError extends Schema.TaggedErrorClass<WorkspaceFileRevisionConflictError>()(
+  "WorkspaceFileRevisionConflictError",
+  {
+    workspaceRoot: Schema.String,
+    relativePath: Schema.String,
+    expectedRevision: Schema.String,
+    actualRevision: Schema.NullOr(Schema.String),
+  },
+) {
+  override get message(): string {
+    return `Workspace file '${this.relativePath}' changed before it could be saved.`;
+  }
+}
+
+const isWorkspaceFileRevisionConflictError = Schema.is(WorkspaceFileRevisionConflictError);
+
 export const WorkspaceFileSystemError = Schema.Union([
   WorkspaceFileSystemOperationError,
   WorkspaceFilePathEscapeError,
@@ -99,6 +116,27 @@ export const WorkspaceFileSystemError = Schema.Union([
   WorkspaceBinaryFileError,
 ]);
 export type WorkspaceFileSystemError = typeof WorkspaceFileSystemError.Type;
+
+function contentRevision(bytes: Uint8Array, byteLength: number): string {
+  return `sha256:${NodeCrypto.createHash("sha256")
+    .update(String(byteLength))
+    .update("\0")
+    .update(bytes)
+    .digest("hex")}`;
+}
+
+async function readBoundedRevision(filePath: string): Promise<string> {
+  const handle = await NodeFSP.open(filePath, "r");
+  try {
+    const stat = await handle.stat();
+    const bytesToRead = Math.min(stat.size, PROJECT_READ_FILE_MAX_BYTES);
+    const buffer = Buffer.alloc(bytesToRead);
+    const { bytesRead } = await handle.read(buffer, 0, bytesToRead, 0);
+    return contentRevision(buffer.subarray(0, bytesRead), stat.size);
+  } finally {
+    await handle.close();
+  }
+}
 
 /** Service tag for workspace file operations. */
 export class WorkspaceFileSystem extends Context.Service<
@@ -121,7 +159,9 @@ export class WorkspaceFileSystem extends Context.Service<
       input: ProjectWriteFileInput,
     ) => Effect.Effect<
       ProjectWriteFileResult,
-      WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+      | WorkspaceFileSystemError
+      | WorkspaceFileRevisionConflictError
+      | WorkspacePaths.WorkspacePathOutsideRootError
     >;
   }
 >()("t3/workspace/WorkspaceFileSystem") {}
@@ -241,6 +281,7 @@ export const make = Effect.gen(function* () {
             contents: new TextDecoder("utf-8").decode(fileBytes),
             byteLength: stat.size,
             truncated: stat.size > PROJECT_READ_FILE_MAX_BYTES,
+            revision: contentRevision(fileBytes, stat.size),
           };
         }),
       (handle) =>
@@ -267,30 +308,161 @@ export const make = Effect.gen(function* () {
       relativePath: input.relativePath,
     });
 
-    yield* fileSystem.makeDirectory(path.dirname(target.absolutePath), { recursive: true }).pipe(
+    const realWorkspaceRoot = yield* Effect.tryPromise({
+      try: () => NodeFSP.realpath(input.cwd),
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: target.absolutePath,
+          operationPath: input.cwd,
+          operation: "realpath-workspace-root",
+          cause,
+        }),
+    });
+    const requestedParent = path.dirname(target.absolutePath);
+    yield* fileSystem.makeDirectory(requestedParent, { recursive: true }).pipe(
       Effect.mapError(
         (cause) =>
           new WorkspaceFileSystemOperationError({
             workspaceRoot: input.cwd,
             relativePath: input.relativePath,
             resolvedPath: target.absolutePath,
-            operationPath: path.dirname(target.absolutePath),
+            operationPath: requestedParent,
             operation: "make-directory",
             cause,
           }),
       ),
     );
-    yield* fileSystem.writeFileString(target.absolutePath, input.contents).pipe(
-      Effect.mapError(
-        (cause) =>
-          new WorkspaceFileSystemOperationError({
-            workspaceRoot: input.cwd,
-            relativePath: input.relativePath,
-            resolvedPath: target.absolutePath,
-            operationPath: target.absolutePath,
-            operation: "write-file",
-            cause,
-          }),
+    const realParent = yield* Effect.tryPromise({
+      try: () => NodeFSP.realpath(requestedParent),
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: target.absolutePath,
+          operationPath: requestedParent,
+          operation: "realpath-target",
+          cause,
+        }),
+    });
+    const relativeRealParent = path.relative(realWorkspaceRoot, realParent);
+    if (
+      relativeRealParent.startsWith(`..${path.sep}`) ||
+      relativeRealParent === ".." ||
+      path.isAbsolute(relativeRealParent)
+    ) {
+      return yield* new WorkspaceFilePathEscapeError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedWorkspaceRoot: realWorkspaceRoot,
+        resolvedPath: realParent,
+      });
+    }
+
+    const writeTarget = path.join(realParent, path.basename(target.absolutePath));
+    const existingStat = yield* Effect.tryPromise({
+      try: async () => {
+        try {
+          return await NodeFSP.lstat(writeTarget);
+        } catch (cause) {
+          if (
+            typeof cause === "object" &&
+            cause !== null &&
+            "code" in cause &&
+            cause.code === "ENOENT"
+          ) {
+            return null;
+          }
+          throw cause;
+        }
+      },
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: writeTarget,
+          operationPath: writeTarget,
+          operation: "stat",
+          cause,
+        }),
+    });
+    if (existingStat && (!existingStat.isFile() || existingStat.isSymbolicLink())) {
+      return yield* new WorkspacePathNotFileError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedPath: writeTarget,
+      });
+    }
+
+    if (input.expectedRevision !== undefined) {
+      const actualRevision = existingStat
+        ? yield* Effect.tryPromise({
+            try: () => readBoundedRevision(writeTarget),
+            catch: (cause) =>
+              new WorkspaceFileSystemOperationError({
+                workspaceRoot: input.cwd,
+                relativePath: input.relativePath,
+                resolvedPath: writeTarget,
+                operationPath: writeTarget,
+                operation: "read",
+                cause,
+              }),
+          })
+        : null;
+      if (actualRevision !== input.expectedRevision) {
+        return yield* new WorkspaceFileRevisionConflictError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          expectedRevision: input.expectedRevision,
+          actualRevision,
+        });
+      }
+    }
+
+    const temporaryPath = path.join(
+      realParent,
+      `.t3-write-${NodeCrypto.randomUUID()}-${path.basename(writeTarget)}`,
+    );
+    yield* Effect.tryPromise({
+      try: async () => {
+        await NodeFSP.writeFile(temporaryPath, input.contents, {
+          flag: "wx",
+          mode: existingStat ? existingStat.mode & 0o777 : 0o666,
+        });
+        const temporaryHandle = await NodeFSP.open(temporaryPath, "r");
+        try {
+          await temporaryHandle.sync();
+        } finally {
+          await temporaryHandle.close();
+        }
+        if (input.expectedRevision !== undefined) {
+          const currentRevision = existingStat ? await readBoundedRevision(writeTarget) : null;
+          if (currentRevision !== input.expectedRevision) {
+            throw new WorkspaceFileRevisionConflictError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              expectedRevision: input.expectedRevision,
+              actualRevision: currentRevision,
+            });
+          }
+        }
+        await NodeFSP.rename(temporaryPath, writeTarget);
+      },
+      catch: (cause) =>
+        isWorkspaceFileRevisionConflictError(cause)
+          ? cause
+          : new WorkspaceFileSystemOperationError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedPath: writeTarget,
+              operationPath: writeTarget,
+              operation: "write-file",
+              cause,
+            }),
+    }).pipe(
+      Effect.ensuring(
+        Effect.promise(() => NodeFSP.rm(temporaryPath, { force: true })).pipe(Effect.ignore),
       ),
     );
     yield* workspaceEntries.invalidate(input.cwd).pipe(

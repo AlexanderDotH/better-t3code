@@ -2,6 +2,8 @@ import {
   ApprovalRequestId,
   type GrokSettings,
   EventId,
+  McpRuntimeServerKey,
+  McpServerName,
   type ProviderApprovalDecision,
   type ProviderRuntimeEvent,
   type ProviderSession,
@@ -107,6 +109,7 @@ interface GrokSessionContext {
   readonly emitRuntimeEvent: (event: ProviderRuntimeEvent) => Effect.Effect<void>;
   readonly scope: Scope.Closeable;
   readonly acp: AcpSessionRuntime.AcpSessionRuntime["Service"];
+  readonly hasInternalMcpServer: boolean;
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
@@ -510,6 +513,53 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       return Effect.succeed(ctx);
     };
 
+    const getMcpSnapshot: NonNullable<GrokAdapterShape["mcpRuntime"]>["getSnapshot"] = Effect.fn(
+      "getGrokMcpSnapshot",
+    )(function* (input) {
+      if (input.providerInstanceId !== boundInstanceId) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "mcpRuntime",
+          issue: `MCP runtime target belongs to provider instance '${input.providerInstanceId}', not '${boundInstanceId}'.`,
+        });
+      }
+      const context = yield* requireSession(input.threadId);
+      if (context.session.runtimeSessionId !== input.runtimeSessionId) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "mcpRuntime",
+          issue: `MCP runtime session '${input.runtimeSessionId}' has been replaced.`,
+        });
+      }
+      // Grok ACP accepts T3's internal collaboration server but provides no
+      // user-MCP configuration or telemetry surface. The system server is
+      // shown as unknown and locked; user MCP support remains explicitly
+      // unsupported and must never be promoted to a red connection failure.
+      if (!context.hasInternalMcpServer) return [];
+      return [
+        {
+          providerKey: McpRuntimeServerKey.make("t3-code"),
+          source: "t3-built-in",
+          providerInstanceId: boundInstanceId,
+          threadId: context.threadId,
+          runtimeSessionId: input.runtimeSessionId,
+          name: McpServerName.make("T3 Code System Server"),
+          transport: "http",
+          state: "unknown",
+          statusSource: "configuration",
+          observedAt: yield* nowIso,
+          authState: "unknown",
+          availableActions: [],
+          reportsTools: false,
+          configDrift: "none",
+        },
+      ];
+    });
+
+    const mcpRuntime: NonNullable<GrokAdapterShape["mcpRuntime"]> = {
+      getSnapshot: getMcpSnapshot,
+    };
+
     const stopSessionInternal = (ctx: GrokSessionContext) =>
       Effect.gen(function* () {
         if (ctx.stopped) return;
@@ -780,6 +830,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             emitRuntimeEvent,
             scope: sessionScope,
             acp,
+            hasInternalMcpServer: mcpSession !== undefined,
             notificationFiber: undefined,
             pendingApprovals,
             pendingUserInputs,
@@ -1515,6 +1566,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
     return {
       provider: PROVIDER,
       capabilities: { sessionModelSwitch: "in-session", mcp: "unsupported" },
+      mcpRuntime,
       startSession,
       sendTurn,
       interruptTurn,

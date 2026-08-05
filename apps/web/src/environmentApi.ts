@@ -1,6 +1,7 @@
 import type { EnvironmentApi, EnvironmentId, PlanParallelismReviewInput } from "@t3tools/contracts";
 
 import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { runAtomCommand, type AtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type { WsRpcClient } from "@t3tools/client-runtime/wsRpcClient";
 import { appAtomRegistry } from "./rpc/atomRegistry";
@@ -54,6 +55,21 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
     git: {
       resolvePullRequest: client.git.resolvePullRequest,
       preparePullRequestThread: client.git.preparePullRequestThread,
+      subscribeWorkbench: client.git.onWorkbench,
+      refreshWorkbench: client.git.refreshWorkbench,
+      getRepositoryInsights: client.git.getRepositoryInsights,
+      listHistory: client.git.listHistory,
+      getCommitDetail: client.git.getCommitDetail,
+      getCommitFileDiff: client.git.getCommitFileDiff,
+      getChangesDiff: client.git.getChangesDiff,
+      getInteractiveRebasePlan: client.git.getInteractiveRebasePlan,
+      applyChangeSelection: client.git.applyChangeSelection,
+      runWorkbenchOperation: client.git.runWorkbenchOperation,
+      listUndoSnapshots: client.git.listUndoSnapshots,
+      createUndoSnapshot: client.git.createUndoSnapshot,
+      restoreUndoSnapshot: client.git.restoreUndoSnapshot,
+      upsertQueuedWorkflow: client.git.upsertQueuedWorkflow,
+      cancelQueuedWorkflow: client.git.cancelQueuedWorkflow,
     },
     review: {
       getDiffPreview: client.review.getDiffPreview,
@@ -79,10 +95,16 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       update: client.mcp.update,
       delete: client.mcp.delete,
       setEnabled: client.mcp.setEnabled,
+      setProviderEnabled: client.mcp.setProviderEnabled,
       importCursorJson: client.mcp.importCursorJson,
       importSources: client.mcp.importSources,
       exportCursorJson: client.mcp.exportCursorJson,
       providerStatus: client.mcp.providerStatus,
+      runtimeContexts: client.mcp.runtimeContexts,
+      runtimeSnapshot: client.mcp.runtimeSnapshot,
+      runtimeChanges: client.mcp.runtimeChanges,
+      runtimeServerDetails: client.mcp.runtimeServerDetails,
+      runtimeAction: client.mcp.runtimeAction,
     },
     orchestration: {
       dispatchCommand: client.orchestration.dispatchCommand,
@@ -199,6 +221,11 @@ function createRuntimeEnvironmentApi(environmentId: EnvironmentId): EnvironmentA
           environmentId,
           input,
         }),
+      setProviderEnabled: (input: Parameters<EnvironmentApi["mcp"]["setProviderEnabled"]>[0]) =>
+        runEnvironmentCommand(agentSettingsEnvironment.mcp.setProviderEnabled, {
+          environmentId,
+          input,
+        }),
       importCursorJson: (input: Parameters<EnvironmentApi["mcp"]["importCursorJson"]>[0]) =>
         runEnvironmentCommand(agentSettingsEnvironment.mcp.importCursorJson, {
           environmentId,
@@ -218,6 +245,49 @@ function createRuntimeEnvironmentApi(environmentId: EnvironmentId): EnvironmentA
         runEnvironmentCommand(agentSettingsEnvironment.mcp.providerStatus, {
           environmentId,
           input: input ?? {},
+        }),
+      runtimeContexts: (input: Parameters<EnvironmentApi["mcp"]["runtimeContexts"]>[0]) =>
+        runEnvironmentCommand(agentSettingsEnvironment.mcp.runtimeContexts, {
+          environmentId,
+          input,
+        }),
+      runtimeSnapshot: (input: Parameters<EnvironmentApi["mcp"]["runtimeSnapshot"]>[0]) =>
+        runEnvironmentCommand(agentSettingsEnvironment.mcp.runtimeSnapshot, {
+          environmentId,
+          input,
+        }),
+      runtimeChanges: (
+        input: Parameters<EnvironmentApi["mcp"]["runtimeChanges"]>[0],
+        callback: Parameters<EnvironmentApi["mcp"]["runtimeChanges"]>[1],
+        options?: Parameters<EnvironmentApi["mcp"]["runtimeChanges"]>[2],
+      ) => {
+        const atom = agentSettingsEnvironment.mcp.runtimeChanges({ environmentId, input });
+        const initial = appAtomRegistry.get(atom);
+        let receivedSnapshot = false;
+        const notify = (result: typeof initial) => {
+          if (!AsyncResult.isSuccess(result)) {
+            return;
+          }
+          if (result.value.type === "snapshot") {
+            if (receivedSnapshot) {
+              options?.onResubscribe?.();
+            }
+            receivedSnapshot = true;
+          }
+          callback(result.value);
+        };
+        notify(initial);
+        return appAtomRegistry.subscribe(atom, notify);
+      },
+      runtimeServerDetails: (input: Parameters<EnvironmentApi["mcp"]["runtimeServerDetails"]>[0]) =>
+        runEnvironmentCommand(agentSettingsEnvironment.mcp.runtimeServerDetails, {
+          environmentId,
+          input,
+        }),
+      runtimeAction: (input: Parameters<EnvironmentApi["mcp"]["runtimeAction"]>[0]) =>
+        runEnvironmentCommand(agentSettingsEnvironment.mcp.runtimeAction, {
+          environmentId,
+          input,
         }),
     },
     orchestration: {

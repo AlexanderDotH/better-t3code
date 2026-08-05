@@ -60,6 +60,7 @@ import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.
 import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { McpRuntimeRegistry } from "../../mcp/McpRuntimeRegistry.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 const isModelSelection = Schema.is(ModelSelection);
 
@@ -235,6 +236,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+  const mcpRuntimeRegistry = Option.getOrUndefined(yield* Effect.serviceOption(McpRuntimeRegistry));
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const serviceScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
     Scope.close(scope, Exit.void),
@@ -242,6 +244,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const runtimeLeases = yield* Ref.make(new Map<ThreadId, ProviderRuntimeLease>());
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const nextRuntimeSessionId = Effect.sync(() => RuntimeSessionId.make(NodeCrypto.randomUUID()));
+  const registerMcpRuntimeSession = (session: ProviderSession) =>
+    mcpRuntimeRegistry?.registerSession(session) ?? Effect.void;
+  const endMcpRuntimeSession = (input: {
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly threadId: ThreadId;
+    readonly runtimeSessionId: RuntimeSessionId;
+  }) => mcpRuntimeRegistry?.endSession(input) ?? Effect.void;
 
   const installRuntimeLease = (input: {
     readonly threadId: ThreadId;
@@ -392,6 +401,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       if (claimed === undefined) {
         return false;
       }
+      yield* endMcpRuntimeSession({
+        providerInstanceId: claimed.providerInstanceId,
+        threadId: input.threadId,
+        runtimeSessionId: input.expectedRuntimeSessionId,
+      });
       yield* clearMcpSession(input.threadId).pipe(
         Effect.ensuring(
           completeRuntimeLeaseCleanup({
@@ -562,6 +576,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       provider: canonicalEvent.provider,
       eventType: canonicalEvent.type,
     }).pipe(Effect.andThen(publishRuntimeEvent(canonicalEvent)));
+    if (mcpRuntimeRegistry !== undefined) {
+      yield* mcpRuntimeRegistry
+        .observeProviderEvent(canonicalEvent)
+        .pipe(Effect.forkIn(serviceScope));
+    }
   });
 
   // `subscribedAdapters` is our source-of-truth for "which instance adapters
@@ -652,6 +671,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             runtimeSessionId,
           };
           yield* upsertSessionBinding(existingWithLease, input.binding.threadId);
+          yield* registerMcpRuntimeSession(existingWithLease);
           return { adapter, session: existingWithLease } as const;
         }
       }
@@ -694,6 +714,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         { ...resumed, providerInstanceId: bindingInstanceId },
         input.binding.threadId,
       );
+      yield* registerMcpRuntimeSession({ ...resumed, providerInstanceId: bindingInstanceId });
       return { adapter, session: resumed } as const;
     }).pipe(
       withMetrics({
@@ -886,6 +907,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         yield* upsertSessionBinding(sessionWithInstance, threadId, {
           modelSelection: input.modelSelection,
         });
+        yield* registerMcpRuntimeSession(sessionWithInstance);
 
         return sessionWithInstance;
       }).pipe(
@@ -1044,6 +1066,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         lease.adapter.forceStopSession(target.threadId, target.runtimeSessionId),
       );
       yield* clearMcpSession(target.threadId);
+      yield* endMcpRuntimeSession({
+        providerInstanceId: target.providerInstanceId,
+        threadId: target.threadId,
+        runtimeSessionId: target.runtimeSessionId,
+      });
       yield* directory.upsert({
         threadId: target.threadId,
         provider: lease.adapter.provider,
@@ -1178,6 +1205,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
       let metricProvider = "unknown";
       return yield* Effect.gen(function* () {
+        const lease = (yield* Ref.get(runtimeLeases)).get(input.threadId);
         const routed = yield* resolveRoutableSession({
           threadId: input.threadId,
           operation: "ProviderService.stopSession",
@@ -1191,6 +1219,17 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         });
         if (routed.isActive) {
           yield* routed.adapter.stopSession(routed.threadId);
+        }
+        if (
+          lease !== undefined &&
+          lease.providerInstanceId === routed.instanceId &&
+          lease.forceStopping !== true
+        ) {
+          yield* endMcpRuntimeSession({
+            providerInstanceId: lease.providerInstanceId,
+            threadId: input.threadId,
+            runtimeSessionId: lease.runtimeSessionId,
+          });
         }
         yield* clearRuntimeLease(input.threadId);
         yield* clearMcpSession(input.threadId);
@@ -1366,6 +1405,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       ),
     ).pipe(Effect.asVoid);
     yield* Effect.forEach(currentAdapters, ([, adapter]) => adapter.stopAll()).pipe(Effect.asVoid);
+    yield* Effect.forEach(activeSessions, (session) =>
+      session.providerInstanceId !== undefined && session.runtimeSessionId !== undefined
+        ? endMcpRuntimeSession({
+            providerInstanceId: session.providerInstanceId,
+            threadId: session.threadId,
+            runtimeSessionId: session.runtimeSessionId,
+          })
+        : Effect.void,
+    ).pipe(Effect.asVoid);
     yield* Ref.set(runtimeLeases, new Map());
     yield* McpSessionRegistry.revokeAllActiveMcpCredentials();
     McpProviderSession.clearAllMcpProviderSessions();

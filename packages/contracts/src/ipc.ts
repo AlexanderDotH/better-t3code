@@ -18,6 +18,37 @@ import type {
   VcsStatusInput,
   VcsStatusResult,
 } from "./git.ts";
+import type {
+  GitApplyChangeSelectionInput,
+  GitApplyChangeSelectionResult,
+  GitChangesDiffInput,
+  GitChangesDiffResult,
+  GitCommitDetailInput,
+  GitCommitDetailResult,
+  GitCommitFileDiffInput,
+  GitCommitFileDiffResult,
+  GitHistoryListInput,
+  GitHistoryListResult,
+  GitInteractiveRebasePlanInput,
+  GitInteractiveRebasePlanResult,
+  GitQueuedWorkflowCancelInput,
+  GitQueuedWorkflowCancelResult,
+  GitQueuedWorkflowUpsertInput,
+  GitQueuedWorkflowUpsertResult,
+  GitRepositoryInsightsInput,
+  GitRepositoryInsightsResult,
+  GitUndoSnapshotCreateInput,
+  GitUndoSnapshotCreateResult,
+  GitUndoSnapshotRestoreInput,
+  GitUndoSnapshotRestoreResult,
+  GitUndoSnapshotsListInput,
+  GitUndoSnapshotsListResult,
+  GitWorkbenchInput,
+  GitWorkbenchOperationEvent,
+  GitWorkbenchRunOperationInput,
+  GitWorkbenchSnapshot,
+  GitWorkbenchStreamEvent,
+} from "./gitWorkbench.ts";
 import type { ReviewDiffPreviewInput, ReviewDiffPreviewResult } from "./review.ts";
 import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
 import type { AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
@@ -157,7 +188,21 @@ import type {
   McpMutationResult,
   McpProviderStatusInput,
   McpProviderStatusResult,
+  McpRuntimeActionInput,
+  McpRuntimeActionResult,
+  McpRuntimeChange,
+  McpRuntimeChangesInput,
+  McpRuntimeContextChange,
+  McpRuntimeContextChangesInput,
+  McpRuntimeContextsInput,
+  McpRuntimeContextsResult,
+  McpRuntimeServerDetailsInput,
+  McpRuntimeServerDetailsResult,
+  McpRuntimeSnapshot,
+  McpRuntimeSnapshotInput,
   McpSetEnabledInput,
+  McpSetProviderEnabledInput,
+  McpSetProviderEnabledResult,
   McpUpdateInput,
 } from "./mcp.ts";
 import type {
@@ -1302,10 +1347,27 @@ export interface EnvironmentApi {
     update: (input: McpUpdateInput) => Promise<McpMutationResult>;
     delete: (input: McpDeleteInput) => Promise<McpMutationResult>;
     setEnabled: (input: McpSetEnabledInput) => Promise<McpMutationResult>;
+    setProviderEnabled: (input: McpSetProviderEnabledInput) => Promise<McpSetProviderEnabledResult>;
     importCursorJson: (input: McpImportCursorJsonInput) => Promise<McpMutationResult>;
     importSources: (input: McpImportSourcesInput) => Promise<McpMutationResult>;
     exportCursorJson: (input?: McpExportCursorJsonInput) => Promise<McpCursorJsonResult>;
     providerStatus: (input?: McpProviderStatusInput) => Promise<McpProviderStatusResult>;
+    runtimeContexts: (input: McpRuntimeContextsInput) => Promise<McpRuntimeContextsResult>;
+    runtimeContextChanges: (
+      input: McpRuntimeContextChangesInput,
+      callback: (change: McpRuntimeContextChange) => void,
+      options?: { onResubscribe?: () => void },
+    ) => () => void;
+    runtimeSnapshot: (input: McpRuntimeSnapshotInput) => Promise<McpRuntimeSnapshot>;
+    runtimeChanges: (
+      input: McpRuntimeChangesInput,
+      callback: (change: McpRuntimeChange) => void,
+      options?: { onResubscribe?: () => void },
+    ) => () => void;
+    runtimeServerDetails: (
+      input: McpRuntimeServerDetailsInput,
+    ) => Promise<McpRuntimeServerDetailsResult>;
+    runtimeAction: (input: McpRuntimeActionInput) => Promise<McpRuntimeActionResult>;
   };
   sourceControl: {
     lookupRepository: (
@@ -1340,6 +1402,40 @@ export interface EnvironmentApi {
     preparePullRequestThread: (
       input: GitPreparePullRequestThreadInput,
     ) => Promise<GitPreparePullRequestThreadResult>;
+    subscribeWorkbench: (
+      input: GitWorkbenchInput,
+      callback: (event: GitWorkbenchStreamEvent) => void,
+      options?: { onResubscribe?: () => void },
+    ) => () => void;
+    refreshWorkbench: (input: GitWorkbenchInput) => Promise<GitWorkbenchSnapshot>;
+    getRepositoryInsights: (
+      input: GitRepositoryInsightsInput,
+    ) => Promise<GitRepositoryInsightsResult>;
+    listHistory: (input: GitHistoryListInput) => Promise<GitHistoryListResult>;
+    getCommitDetail: (input: GitCommitDetailInput) => Promise<GitCommitDetailResult>;
+    getCommitFileDiff: (input: GitCommitFileDiffInput) => Promise<GitCommitFileDiffResult>;
+    getChangesDiff: (input: GitChangesDiffInput) => Promise<GitChangesDiffResult>;
+    getInteractiveRebasePlan: (
+      input: GitInteractiveRebasePlanInput,
+    ) => Promise<GitInteractiveRebasePlanResult>;
+    applyChangeSelection: (
+      input: GitApplyChangeSelectionInput,
+    ) => Promise<GitApplyChangeSelectionResult>;
+    runWorkbenchOperation: (
+      input: GitWorkbenchRunOperationInput,
+      callback: (event: GitWorkbenchOperationEvent) => void,
+    ) => Promise<void>;
+    listUndoSnapshots: (input: GitUndoSnapshotsListInput) => Promise<GitUndoSnapshotsListResult>;
+    createUndoSnapshot: (input: GitUndoSnapshotCreateInput) => Promise<GitUndoSnapshotCreateResult>;
+    restoreUndoSnapshot: (
+      input: GitUndoSnapshotRestoreInput,
+    ) => Promise<GitUndoSnapshotRestoreResult>;
+    upsertQueuedWorkflow: (
+      input: GitQueuedWorkflowUpsertInput,
+    ) => Promise<GitQueuedWorkflowUpsertResult>;
+    cancelQueuedWorkflow: (
+      input: GitQueuedWorkflowCancelInput,
+    ) => Promise<GitQueuedWorkflowCancelResult>;
   };
   review: {
     getDiffPreview: (input: ReviewDiffPreviewInput) => Promise<ReviewDiffPreviewResult>;

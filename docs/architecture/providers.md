@@ -33,7 +33,9 @@ configuration is one such capability:
 
 Supported adapters receive the authenticated `/mcp/workspace` endpoint, which exposes collaborative
 preview tools and the read-only `workspace_context` tool. The provider cannot select another project
-or root. See [Internal provider MCP](./internal-mcp.md).
+or root. User-configured MCP routing and ephemeral per-session health are separate from that internal
+server. See [Internal provider MCP](./internal-mcp.md) and
+[MCP configuration and runtime status](./mcp-runtime-status.md).
 
 ## Server-side orchestration
 

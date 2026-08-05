@@ -1497,6 +1497,12 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
                 url: "https://example.com/mcp",
                 headers: [],
               },
+              {
+                type: "http" as const,
+                name: "t3-managed:t3-code",
+                url: "https://user.example.com/mcp",
+                headers: [],
+              },
             ]),
         });
       }),
@@ -1537,7 +1543,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         }),
       );
 
-      yield* adapter.startSession({
+      const session = yield* adapter.startSession({
         threadId,
         provider: ProviderDriverKind.make("cursor"),
         cwd: process.cwd(),
@@ -1553,8 +1559,49 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       )?.mcpServers;
       assert.deepStrictEqual(
         mcpServers?.map((server) => server.name),
-        ["docs", "t3-code"],
+        ["docs", "t3-managed:t3-code", "t3-code"],
       );
+
+      const mcpRuntime = adapter.mcpRuntime;
+      assert.isDefined(mcpRuntime);
+      const snapshot = yield* mcpRuntime.getSnapshot({
+        providerInstanceId: ProviderInstanceId.make("cursor"),
+        threadId,
+        runtimeSessionId: session.runtimeSessionId,
+      });
+      assert.deepStrictEqual(
+        snapshot.map((server) => ({
+          providerKey: server.providerKey,
+          source: server.source,
+          state: server.state,
+          statusSource: server.statusSource,
+          actions: server.availableActions,
+        })),
+        [
+          {
+            providerKey: "docs",
+            source: "t3-managed",
+            state: "unknown",
+            statusSource: "configuration",
+            actions: [],
+          },
+          {
+            providerKey: "t3-managed:t3-code",
+            source: "t3-managed",
+            state: "unknown",
+            statusSource: "configuration",
+            actions: [],
+          },
+          {
+            providerKey: "t3-code",
+            source: "t3-built-in",
+            state: "unknown",
+            statusSource: "configuration",
+            actions: [],
+          },
+        ],
+      );
+      assert.isUndefined(mcpRuntime.runAction);
 
       yield* adapter.stopSession(threadId);
     }).pipe(

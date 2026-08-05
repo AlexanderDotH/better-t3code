@@ -7,6 +7,10 @@
 import {
   ApprovalRequestId,
   type CursorSettings,
+  McpRuntimeServerKey,
+  McpServerId,
+  McpServerName,
+  type McpRuntimeServer,
   type ProviderOptionSelection,
   EventId,
   type ProviderApprovalDecision,
@@ -133,6 +137,7 @@ interface CursorSessionContext {
   readonly emitRuntimeEvent: (event: ProviderRuntimeEvent) => Effect.Effect<void>;
   readonly scope: Scope.Closeable;
   readonly acp: AcpSessionRuntime.AcpSessionRuntime["Service"];
+  readonly configuredMcpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
@@ -174,6 +179,58 @@ function settlePendingUserInputsAsEmptyAnswers(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const CURSOR_MCP_PROVIDER_KEY_MAX_LENGTH = 512;
+const CURSOR_MCP_SERVER_NAME_MAX_LENGTH = 128;
+const CURSOR_MANAGED_MCP_KEY_PREFIX = "t3-managed:";
+
+function boundedCursorMcpText(value: string, maximumLength: number, fallback: string): string {
+  const trimmed = value.trim();
+  return (trimmed.length > 0 ? trimmed : fallback).slice(0, maximumLength);
+}
+
+function cursorManagedMcpServerId(
+  providerKey: string,
+): ReturnType<typeof McpServerId.make> | undefined {
+  const candidate = providerKey.startsWith(CURSOR_MANAGED_MCP_KEY_PREFIX)
+    ? providerKey.slice(CURSOR_MANAGED_MCP_KEY_PREFIX.length)
+    : providerKey;
+  return /^[a-zA-Z][a-zA-Z0-9_-]{0,95}$/.test(candidate) ? McpServerId.make(candidate) : undefined;
+}
+
+function cursorMcpRuntimeServer(input: {
+  readonly server: EffectAcpSchema.McpServer;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly threadId: ThreadId;
+  readonly runtimeSessionId: RuntimeSessionId;
+  readonly observedAt: string;
+}): McpRuntimeServer {
+  const providerKey = input.server.name;
+  const builtIn = providerKey === "t3-code";
+  const serverId = builtIn ? undefined : cursorManagedMcpServerId(providerKey);
+  const transport = "command" in input.server ? "stdio" : input.server.type;
+  return {
+    ...(serverId ? { serverId } : {}),
+    providerKey: McpRuntimeServerKey.make(
+      boundedCursorMcpText(providerKey, CURSOR_MCP_PROVIDER_KEY_MAX_LENGTH, "unknown-server"),
+    ),
+    source: builtIn ? "t3-built-in" : "t3-managed",
+    providerInstanceId: input.providerInstanceId,
+    threadId: input.threadId,
+    runtimeSessionId: input.runtimeSessionId,
+    name: McpServerName.make(
+      boundedCursorMcpText(providerKey, CURSOR_MCP_SERVER_NAME_MAX_LENGTH, "Unknown MCP server"),
+    ),
+    transport,
+    state: "unknown",
+    statusSource: "configuration",
+    observedAt: input.observedAt,
+    authState: "unknown",
+    availableActions: [],
+    reportsTools: false,
+    configDrift: "none",
+  };
 }
 
 function parseCursorResume(raw: unknown): { sessionId: string } | undefined {
@@ -462,6 +519,40 @@ export function makeCursorAdapter(
       return Effect.succeed(ctx);
     };
 
+    const getMcpSnapshot: NonNullable<CursorAdapterShape["mcpRuntime"]>["getSnapshot"] = Effect.fn(
+      "getCursorMcpSnapshot",
+    )(function* (input) {
+      if (input.providerInstanceId !== boundInstanceId) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "mcpRuntime",
+          issue: `MCP runtime target belongs to provider instance '${input.providerInstanceId}', not '${boundInstanceId}'.`,
+        });
+      }
+      const context = yield* requireSession(input.threadId);
+      if (context.session.runtimeSessionId !== input.runtimeSessionId) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "mcpRuntime",
+          issue: `MCP runtime session '${input.runtimeSessionId}' has been replaced.`,
+        });
+      }
+      const observedAt = yield* nowIso;
+      return context.configuredMcpServers.map((server) =>
+        cursorMcpRuntimeServer({
+          server,
+          providerInstanceId: boundInstanceId,
+          threadId: context.threadId,
+          runtimeSessionId: input.runtimeSessionId,
+          observedAt,
+        }),
+      );
+    });
+
+    const mcpRuntime: NonNullable<CursorAdapterShape["mcpRuntime"]> = {
+      getSnapshot: getMcpSnapshot,
+    };
+
     const stopSessionInternal = (ctx: CursorSessionContext) =>
       Effect.gen(function* () {
         if (ctx.stopped) return;
@@ -547,29 +638,30 @@ export function makeCursorAdapter(
             : [];
 
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+          const configuredMcpServers: ReadonlyArray<EffectAcpSchema.McpServer> = [
+            ...mcpServers,
+            ...(mcpSession
+              ? [
+                  {
+                    type: "http" as const,
+                    name: "t3-code",
+                    url: mcpSession.endpoint,
+                    headers: [
+                      {
+                        name: "Authorization",
+                        value: mcpSession.authorizationHeader,
+                      },
+                    ],
+                  },
+                ]
+              : []),
+          ];
           const acp = yield* makeCursorAcpRuntime({
             cursorSettings: effectiveCursorSettings,
             ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
             cwd,
-            mcpServers: [
-              ...mcpServers,
-              ...(mcpSession
-                ? [
-                    {
-                      type: "http" as const,
-                      name: "t3-code",
-                      url: mcpSession.endpoint,
-                      headers: [
-                        {
-                          name: "Authorization",
-                          value: mcpSession.authorizationHeader,
-                        },
-                      ],
-                    },
-                  ]
-                : []),
-            ],
+            mcpServers: configuredMcpServers,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
             ...acpNativeLoggers,
@@ -790,6 +882,7 @@ export function makeCursorAdapter(
             emitRuntimeEvent,
             scope: sessionScope,
             acp,
+            configuredMcpServers,
             notificationFiber: undefined,
             pendingApprovals,
             pendingUserInputs,
@@ -1237,6 +1330,7 @@ export function makeCursorAdapter(
     return {
       provider: PROVIDER,
       capabilities: { sessionModelSwitch: "in-session", mcp: "sessionConfig" },
+      mcpRuntime,
       startSession,
       sendTurn,
       interruptTurn,

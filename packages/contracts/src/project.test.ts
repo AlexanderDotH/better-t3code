@@ -2,10 +2,17 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  ProjectReadFileResult,
   ProjectReadFileError,
   ProjectSearchEntriesError,
+  ProjectWriteConflictError,
+  ProjectWriteFileInput,
   ProjectWriteFileError,
 } from "./project.ts";
+
+const decodeProjectReadFileResult = Schema.decodeUnknownSync(ProjectReadFileResult);
+const decodeProjectWriteFileInput = Schema.decodeUnknownSync(ProjectWriteFileInput);
+const decodeProjectWriteConflict = Schema.decodeUnknownSync(ProjectWriteConflictError);
 
 describe("project RPC errors", () => {
   it("derives stable messages from structured request context while retaining causes", () => {
@@ -63,5 +70,38 @@ describe("project RPC errors", () => {
     expect(writeError.message).toBe("Legacy project write failure.");
     expect(writeError.relativePath).toBeUndefined();
     expect(writeError.failure).toBeUndefined();
+  });
+
+  it("keeps legacy file reads and writes decodable while carrying revisions when available", () => {
+    expect(
+      decodeProjectReadFileResult({
+        relativePath: "src/index.ts",
+        contents: "export {};",
+        byteLength: 10,
+        truncated: false,
+      }).revision,
+    ).toBeUndefined();
+    expect(
+      decodeProjectWriteFileInput({
+        cwd: "/workspace",
+        relativePath: "src/index.ts",
+        contents: "export {};",
+        expectedRevision: "sha256:012345",
+      }).expectedRevision,
+    ).toBe("sha256:012345");
+  });
+
+  it("decodes a structured compare-and-swap conflict", () => {
+    const conflict = decodeProjectWriteConflict({
+      _tag: "ProjectWriteConflictError",
+      cwd: "/workspace",
+      relativePath: "src/index.ts",
+      expectedRevision: "sha256:old",
+      actualRevision: "sha256:new",
+      message: "The file changed before it could be saved.",
+    });
+
+    expect(conflict.expectedRevision).toBe("sha256:old");
+    expect(conflict.actualRevision).toBe("sha256:new");
   });
 });

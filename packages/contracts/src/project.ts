@@ -127,6 +127,9 @@ export const ProjectReadFileResult = Schema.Struct({
   contents: Schema.String,
   byteLength: NonNegativeInt,
   truncated: Schema.Boolean,
+  /** Content revision for compare-and-swap saves. Optional so a new client
+      can still decode file reads from a pre-workbench server. */
+  revision: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;
 
@@ -191,6 +194,8 @@ export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
+  /** When present, the write must fail if the current file revision differs. */
+  expectedRevision: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 
@@ -221,5 +226,19 @@ export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteF
         decodedProjectErrorMessage(props) ??
         `Failed to write workspace file '${props.relativePath}' in '${props.cwd}'.`,
     } as any);
+  }
+}
+
+export class ProjectWriteConflictError extends Schema.TaggedErrorClass<ProjectWriteConflictError>()(
+  "ProjectWriteConflictError",
+  {
+    cwd: TrimmedNonEmptyString,
+    relativePath: TrimmedNonEmptyString,
+    expectedRevision: TrimmedNonEmptyString,
+    actualRevision: Schema.NullOr(TrimmedNonEmptyString),
+  },
+) {
+  override get message(): string {
+    return `Workspace file '${this.relativePath}' changed before it could be saved in '${this.cwd}'.`;
   }
 }

@@ -9,9 +9,10 @@ import {
   HistoryIcon,
   MonitorIcon,
 } from "lucide-react";
-import { memo, useCallback, useMemo } from "react";
+import { memo, type ReactNode, useCallback, useMemo } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
+import { cn } from "../lib/utils";
 import { useProject, useThread, useThreadShellsForProjectRefs } from "../state/entities";
 import { useIsMobile } from "../hooks/useMediaQuery";
 import {
@@ -56,6 +57,8 @@ interface BranchToolbarProps {
   onComposerFocusRequest?: () => void;
   availableEnvironments?: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  gitControl?: ReactNode;
+  orientation?: "previous" | "next";
 }
 
 interface MobileRunContextSelectorProps {
@@ -229,6 +232,8 @@ export const BranchToolbar = memo(function BranchToolbar({
   onComposerFocusRequest,
   availableEnvironments,
   onEnvironmentChange,
+  gitControl,
+  orientation = "next",
 }: BranchToolbarProps) {
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -304,60 +309,77 @@ export const BranchToolbar = memo(function BranchToolbar({
   if (!hasActiveThread || !activeProject) return null;
 
   return (
-    <div className="chat-composer-context-strip -mt-4 mx-auto flex w-[calc(100%-2.75rem)] max-w-[calc(48rem-2.75rem)] items-center gap-2 px-1 pt-5 pb-1">
-      {isMobile ? (
-        <MobileRunContextSelector
-          envLocked={envLocked}
-          envModeLocked={envModeLocked}
-          environmentId={environmentId}
-          availableEnvironments={availableEnvironments}
-          showEnvironmentPicker={showEnvironmentPicker}
-          showEnvironmentIndicator={showEnvironmentIndicator}
-          onEnvironmentChange={onEnvironmentChange}
-          effectiveEnvMode={effectiveEnvMode}
-          activeWorktreePath={activeWorktreePath}
-          onEnvModeChange={onEnvModeChange}
-          previousWorktreeLabel={previousWorktreeLabel}
-          onUsePreviousWorktree={onUsePreviousWorktree}
-        />
-      ) : (
-        <div className="flex min-w-0 flex-1 items-center gap-1">
-          {showEnvironmentIndicator && availableEnvironments && (
-            <>
-              <BranchToolbarEnvironmentSelector
-                envLocked={envLocked}
-                environmentId={environmentId}
-                availableEnvironments={availableEnvironments}
-                {...(showEnvironmentPicker && onEnvironmentChange ? { onEnvironmentChange } : {})}
-              />
-              <Separator orientation="vertical" className="mx-0.5 h-3.5!" />
-            </>
-          )}
-          <BranchToolbarEnvModeSelector
-            envLocked={envModeLocked}
+    <div
+      className={cn(
+        "chat-composer-context-strip mx-auto w-[calc(100%-2.75rem)] max-w-[calc(48rem-2.75rem)]",
+        orientation === "previous"
+          ? "chat-composer-context-strip--previous -mb-4"
+          : "chat-composer-context-strip--next -mt-4",
+      )}
+      data-workspace-card-peek-position={orientation}
+    >
+      <div
+        className={cn(
+          "flex w-full items-center gap-2 px-1",
+          orientation === "previous" ? "pt-1 pb-5" : "pt-5 pb-1",
+        )}
+      >
+        {isMobile ? (
+          <MobileRunContextSelector
+            envLocked={envLocked}
+            envModeLocked={envModeLocked}
+            environmentId={environmentId}
+            availableEnvironments={availableEnvironments}
+            showEnvironmentPicker={showEnvironmentPicker}
+            showEnvironmentIndicator={showEnvironmentIndicator}
+            onEnvironmentChange={onEnvironmentChange}
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
             onEnvModeChange={onEnvModeChange}
             previousWorktreeLabel={previousWorktreeLabel}
             onUsePreviousWorktree={onUsePreviousWorktree}
           />
-        </div>
-      )}
+        ) : (
+          <div className="flex min-w-0 flex-1 items-center gap-1">
+            {showEnvironmentIndicator && availableEnvironments && (
+              <>
+                <BranchToolbarEnvironmentSelector
+                  envLocked={envLocked}
+                  environmentId={environmentId}
+                  availableEnvironments={availableEnvironments}
+                  {...(showEnvironmentPicker && onEnvironmentChange ? { onEnvironmentChange } : {})}
+                />
+                <Separator orientation="vertical" className="mx-0.5 h-3.5!" />
+              </>
+            )}
+            <BranchToolbarEnvModeSelector
+              envLocked={envModeLocked}
+              effectiveEnvMode={effectiveEnvMode}
+              activeWorktreePath={activeWorktreePath}
+              onEnvModeChange={onEnvModeChange}
+              previousWorktreeLabel={previousWorktreeLabel}
+              onUsePreviousWorktree={onUsePreviousWorktree}
+            />
+          </div>
+        )}
 
-      <BranchToolbarBranchSelector
-        className="min-w-0 flex-1 justify-end md:ml-auto md:flex-none"
-        environmentId={environmentId}
-        threadId={threadId}
-        {...(draftId ? { draftId } : {})}
-        envLocked={envLocked}
-        {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
-        {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
-        {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
-        startFromOrigin={startFromOrigin}
-        onStartFromOriginChange={onStartFromOriginChange}
-        {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
-        {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
-      />
+        {!isMobile ? gitControl : null}
+
+        <BranchToolbarBranchSelector
+          className="min-w-0 flex-1 justify-end md:ml-auto md:flex-none"
+          environmentId={environmentId}
+          threadId={threadId}
+          {...(draftId ? { draftId } : {})}
+          envLocked={envLocked}
+          {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
+          {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
+          {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
+          startFromOrigin={startFromOrigin}
+          onStartFromOriginChange={onStartFromOriginChange}
+          {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
+          {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
+        />
+      </div>
     </div>
   );
 });

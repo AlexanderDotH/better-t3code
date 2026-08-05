@@ -8,6 +8,9 @@
  */
 import {
   type CanUseTool,
+  type McpServerConfig,
+  type McpServerStatus,
+  type McpSetServersResult,
   query,
   type Options as ClaudeQueryOptions,
   type PermissionMode,
@@ -27,6 +30,8 @@ import {
   type CanonicalRequestType,
   type ClaudeSettings,
   EventId,
+  McpRuntimeServerKey,
+  McpServerId,
   type ProviderApprovalDecision,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -91,10 +96,16 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
+import type {
+  ProviderMcpRuntimeAdapter,
+  ProviderMcpRuntimeTarget,
+} from "../Services/ProviderAdapter.ts";
 import { bindProviderRuntimeEventOrigin } from "../runtimeEventOrigin.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { claudeMcpRuntimeTools, normalizeClaudeMcpRuntimeServer } from "./ClaudeMcpRuntime.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.UnknownFromJsonString);
+const decodeMcpServerIdExit = Schema.decodeUnknownExit(McpServerId);
 
 const PROVIDER = ProviderDriverKind.make("claudeAgent");
 type ClaudeTextStreamKind = Extract<RuntimeContentStreamKind, "assistant_text" | "reasoning_text">;
@@ -103,6 +114,22 @@ type ClaudeToolResultStreamKind = Extract<
   "command_output" | "file_change_output"
 >;
 type ClaudeSdkEffort = NonNullable<ClaudeQueryOptions["effort"]>;
+
+function managedMcpServerIds(
+  servers: NonNullable<ClaudeQueryOptions["mcpServers"]>,
+): ReadonlyMap<string, McpServerId> {
+  const ids = new Map<string, McpServerId>();
+  for (const providerKey of Object.keys(servers)) {
+    const candidate = providerKey.startsWith("t3-managed:")
+      ? providerKey.slice("t3-managed:".length)
+      : providerKey;
+    const decoded = decodeMcpServerIdExit(candidate);
+    if (Exit.isSuccess(decoded)) {
+      ids.set(providerKey, decoded.value);
+    }
+  }
+  return ids;
+}
 
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   const result = encodeUnknownJsonStringExit(input);
@@ -167,6 +194,7 @@ interface ToolInFlight {
   readonly itemId: string;
   readonly itemType: CanonicalItemType;
   readonly toolName: string;
+  readonly serverName?: string;
   readonly title: string;
   readonly detail?: string;
   readonly input: Record<string, unknown>;
@@ -183,9 +211,12 @@ interface ClaudeTaskState {
 
 interface ClaudeSessionContext {
   session: ProviderSession;
+  readonly runtimeSessionId: RuntimeSessionId;
   readonly emitRuntimeEvent: (event: ProviderRuntimeEvent) => Effect.Effect<void>;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
   readonly query: ClaudeQueryRuntime;
+  managedMcpServerIds: ReadonlyMap<string, McpServerId>;
+  readonly builtInMcpServers: NonNullable<ClaudeQueryOptions["mcpServers"]>;
   streamFiber: Fiber.Fiber<void, Error> | undefined;
   readonly startedAt: string;
   readonly basePermissionMode: PermissionMode | undefined;
@@ -214,6 +245,11 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
   readonly getContextUsage?: () => Promise<SDKControlGetContextUsageResponse>;
+  readonly mcpServerStatus: () => Promise<McpServerStatus[]>;
+  readonly reconnectMcpServer: (serverName: string) => Promise<void>;
+  readonly setMcpServers: (
+    servers: Record<string, McpServerConfig>,
+  ) => Promise<McpSetServersResult>;
   readonly close: () => void;
 }
 
@@ -2229,6 +2265,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ...(nextTool.detail ? { detail: nextTool.detail } : {}),
             data: {
               toolName: nextTool.toolName,
+              ...(nextTool.serverName ? { serverName: nextTool.serverName } : {}),
               input: nextTool.input,
             },
           },
@@ -2286,6 +2323,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
 
       const toolName = block.name;
+      const serverName =
+        block.type === "mcp_tool_use" && block.server_name.trim().length > 0
+          ? block.server_name
+          : undefined;
       const itemType = classifyToolItemType(toolName);
       const toolInput =
         typeof block.input === "object" && block.input !== null
@@ -2300,6 +2341,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         itemId,
         itemType,
         toolName,
+        ...(serverName ? { serverName } : {}),
         title: titleForTool(itemType),
         detail,
         input: toolInput,
@@ -2324,6 +2366,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ...(tool.detail ? { detail: tool.detail } : {}),
           data: {
             toolName: tool.toolName,
+            ...(tool.serverName ? { serverName: tool.serverName } : {}),
             input: toolInput,
           },
         },
@@ -2382,6 +2425,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const toolUseResult = readClaudeToolUseResult(message);
       const toolData = {
         toolName: tool.toolName,
+        ...(tool.serverName ? { serverName: tool.serverName } : {}),
         input: tool.input,
         result: toolResult.block,
       };
@@ -3158,6 +3202,188 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     return Effect.succeed(context);
   };
 
+  const requireMcpRuntimeContext = Effect.fn("ClaudeAdapter.requireMcpRuntimeContext")(function* (
+    input: ProviderMcpRuntimeTarget,
+  ) {
+    if (input.providerInstanceId !== boundInstanceId) {
+      return yield* new ProviderAdapterValidationError({
+        provider: PROVIDER,
+        operation: "mcp/runtime",
+        issue: `Expected provider instance '${boundInstanceId}' but received '${input.providerInstanceId}'.`,
+      });
+    }
+    const context = yield* requireSession(input.threadId);
+    if (context.runtimeSessionId !== input.runtimeSessionId) {
+      return yield* new ProviderAdapterValidationError({
+        provider: PROVIDER,
+        operation: "mcp/runtime",
+        issue: "The requested Claude runtime session has been replaced.",
+      });
+    }
+    return context;
+  });
+
+  const readMcpServerStatuses = Effect.fn("ClaudeAdapter.readMcpServerStatuses")(function* (
+    context: ClaudeSessionContext,
+  ) {
+    return yield* Effect.tryPromise({
+      try: () => context.query.mcpServerStatus(),
+      catch: (cause) =>
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "mcpServerStatus",
+          detail: "Failed to read Claude MCP server status.",
+          cause,
+        }),
+    });
+  });
+
+  const normalizeMcpServerStatuses = Effect.fn("ClaudeAdapter.normalizeMcpServerStatuses")(
+    function* (context: ClaudeSessionContext, statuses: ReadonlyArray<McpServerStatus>) {
+      const observedAt = yield* nowIso;
+      const metadata = {
+        providerInstanceId: boundInstanceId,
+        threadId: context.session.threadId,
+        runtimeSessionId: context.runtimeSessionId,
+        observedAt,
+        managedServerIds: context.managedMcpServerIds,
+        builtInProviderKeys: new Set(Object.keys(context.builtInMcpServers)),
+      } as const;
+      return statuses.map((status) => normalizeClaudeMcpRuntimeServer(status, metadata));
+    },
+  );
+
+  const getMcpSnapshot: NonNullable<
+    ProviderMcpRuntimeAdapter<ProviderAdapterError>["getSnapshot"]
+  > = Effect.fn("ClaudeAdapter.mcpRuntime.getSnapshot")(function* (input) {
+    const context = yield* requireMcpRuntimeContext(input);
+    const statuses = yield* readMcpServerStatuses(context);
+    return yield* normalizeMcpServerStatuses(context, statuses);
+  });
+
+  const getMcpServerDetails: NonNullable<
+    ProviderMcpRuntimeAdapter<ProviderAdapterError>["getServerDetails"]
+  > = Effect.fn("ClaudeAdapter.mcpRuntime.getServerDetails")(function* (input) {
+    const context = yield* requireMcpRuntimeContext(input);
+    const statuses = yield* readMcpServerStatuses(context);
+    const status = statuses.find((candidate) => candidate.name === input.providerKey);
+    if (!status) {
+      return yield* new ProviderAdapterValidationError({
+        provider: PROVIDER,
+        operation: "mcp/runtime/details",
+        issue: "The requested MCP server is not present in the Claude runtime.",
+      });
+    }
+    const [server] = yield* normalizeMcpServerStatuses(context, [status]);
+    if (!server) {
+      return yield* new ProviderAdapterValidationError({
+        provider: PROVIDER,
+        operation: "mcp/runtime/details",
+        issue: "Claude returned an invalid MCP server status.",
+      });
+    }
+    return {
+      server,
+      tools: claudeMcpRuntimeTools(status),
+      resources: [],
+      templates: [],
+    };
+  });
+
+  const runMcpAction: NonNullable<ProviderMcpRuntimeAdapter<ProviderAdapterError>["runAction"]> =
+    Effect.fn("ClaudeAdapter.mcpRuntime.runAction")(function* (input) {
+      const context = yield* requireMcpRuntimeContext(input);
+      const statuses = yield* readMcpServerStatuses(context);
+      if (!statuses.some((status) => status.name === input.providerKey)) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "mcp/runtime/action",
+          issue: "The requested MCP server is not present in the Claude runtime.",
+        });
+      }
+      const providerKey = McpRuntimeServerKey.make(input.providerKey);
+
+      if (input.action === "authorize") {
+        return {
+          accepted: false,
+          action: input.action,
+          providerKey,
+          message: "Claude reports authentication requirements but does not expose OAuth here.",
+        };
+      }
+      if (input.action === "refresh") {
+        return {
+          accepted: true,
+          action: input.action,
+          providerKey,
+          message: "Claude MCP status refreshed.",
+        };
+      }
+
+      yield* Effect.tryPromise({
+        try: () => context.query.reconnectMcpServer(input.providerKey),
+        catch: (cause) =>
+          new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "reconnectMcpServer",
+            detail: "Failed to reconnect the Claude MCP server.",
+            cause,
+          }),
+      });
+      yield* readMcpServerStatuses(context);
+      return {
+        accepted: true,
+        action: input.action,
+        providerKey,
+        message: "Claude MCP server reconnected.",
+      };
+    });
+
+  const applyMcpConfiguration: NonNullable<
+    ProviderMcpRuntimeAdapter<ProviderAdapterError>["applyConfiguration"]
+  > = Effect.fn("ClaudeAdapter.mcpRuntime.applyConfiguration")(function* (input) {
+    const context = yield* requireMcpRuntimeContext(input);
+    const managedServers = options?.resolveMcpServers
+      ? yield* options.resolveMcpServers({ cwd: context.session.cwd ?? serverConfig.cwd })
+      : {};
+    const effectiveServers = {
+      ...managedServers,
+      ...context.builtInMcpServers,
+    };
+    const result = yield* Effect.tryPromise({
+      try: () => context.query.setMcpServers(effectiveServers),
+      catch: (cause) =>
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "setMcpServers",
+          detail: "Failed to apply Claude MCP server configuration.",
+          cause,
+        }),
+    });
+
+    context.managedMcpServerIds = managedMcpServerIds(managedServers);
+    const statuses = yield* readMcpServerStatuses(context);
+    const reportedKeys = new Set(statuses.map((status) => status.name));
+    const missingCount = Object.keys(effectiveServers).filter(
+      (providerKey) => !reportedKeys.has(providerKey),
+    ).length;
+    const errorCount = Object.keys(result.errors).length;
+    if (errorCount > 0 || missingCount > 0) {
+      return yield* new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "setMcpServers",
+        detail: `Claude could not verify ${errorCount + missingCount} MCP server configuration(s).`,
+      });
+    }
+  });
+
+  const mcpRuntime = {
+    getSnapshot: getMcpSnapshot,
+    getServerDetails: getMcpServerDetails,
+    runAction: runMcpAction,
+    applyConfiguration: applyMcpConfiguration,
+  } satisfies ProviderMcpRuntimeAdapter<ProviderAdapterError>;
+
   const startSession: ClaudeAdapterShape["startSession"] = Effect.fn("startSession")(
     function* (input) {
       if (input.provider !== undefined && input.provider !== PROVIDER) {
@@ -3566,19 +3792,20 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const mcpServers = options?.resolveMcpServers
         ? yield* options.resolveMcpServers({ cwd: input.cwd ?? serverConfig.cwd })
         : {};
+      const builtInMcpServers: NonNullable<ClaudeQueryOptions["mcpServers"]> = mcpSession
+        ? {
+            "t3-code": {
+              type: "http",
+              url: mcpSession.endpoint,
+              headers: {
+                Authorization: mcpSession.authorizationHeader,
+              },
+            },
+          }
+        : {};
       const effectiveMcpServers: NonNullable<ClaudeQueryOptions["mcpServers"]> = {
         ...mcpServers,
-        ...(mcpSession
-          ? {
-              "t3-code": {
-                type: "http",
-                url: mcpSession.endpoint,
-                headers: {
-                  Authorization: mcpSession.authorizationHeader,
-                },
-              },
-            }
-          : {}),
+        ...builtInMcpServers,
       };
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
@@ -3671,9 +3898,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
       const context: ClaudeSessionContext = {
         session,
+        runtimeSessionId,
         emitRuntimeEvent: bindProviderRuntimeEventOrigin(runtimeSessionId, publishRuntimeEvent),
         promptQueue,
         query: queryRuntime,
+        managedMcpServerIds: managedMcpServerIds(mcpServers),
+        builtInMcpServers,
         streamFiber: undefined,
         startedAt,
         basePermissionMode: permissionMode,
@@ -4069,6 +4299,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       sessionModelSwitch: "in-session",
       mcp: "sessionConfig",
     },
+    mcpRuntime,
     startSession,
     sendTurn,
     interruptTurn,

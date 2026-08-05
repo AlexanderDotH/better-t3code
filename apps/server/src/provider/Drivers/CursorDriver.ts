@@ -133,7 +133,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
         resolveMcpServers: ({ cwd }) =>
-          mcpConfigEngine.resolveActiveServers({ cwd }).pipe(
+          mcpConfigEngine.resolveActiveServers({ cwd, providerInstanceId: instanceId }).pipe(
             Effect.map(toAcpMcpServers),
             Effect.catch((cause) =>
               Effect.logWarning("Failed to resolve MCP servers for Cursor session", {
