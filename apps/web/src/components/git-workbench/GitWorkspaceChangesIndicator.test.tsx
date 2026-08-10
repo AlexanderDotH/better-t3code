@@ -38,22 +38,29 @@ describe("GitWorkspaceChangesIndicator", () => {
     expect(html).not.toContain("<button");
   });
 
-  it("keeps clean, conflict, and refreshing states truthful", () => {
+  it("keeps clean and conflict states truthful", () => {
     const clean = renderToStaticMarkup(
       <GitWorkspaceChangesIndicator blocked={false} status={status(0)} />,
     );
     const conflicted = renderToStaticMarkup(
       <GitWorkspaceChangesIndicator blocked={false} status={status(3, "conflicted")} />,
     );
-    const refreshing = renderToStaticMarkup(
-      <GitWorkspaceChangesIndicator blocked={false} status={status(0, "stale")} />,
-    );
 
     expect(clean).toContain("0 changes");
     expect(conflicted).toContain("3 changes");
     expect(conflicted).toContain("conflicts present");
-    expect(refreshing).toContain("Refreshing");
-    expect(refreshing).not.toContain("0 changes");
+  });
+
+  it("keeps refreshing accessible without rendering a label or dot", () => {
+    const refreshing = renderToStaticMarkup(
+      <GitWorkspaceChangesIndicator blocked={false} status={status(0, "stale")} />,
+    );
+
+    expect(refreshing).toContain("Repository status refreshing");
+    expect(refreshing).toContain('data-repository-state="stale"');
+    expect(refreshing).toContain('class="sr-only"');
+    expect(refreshing).not.toContain("git-workspace-changes-indicator__dot");
+    expect(refreshing).not.toContain("whitespace-nowrap");
   });
 
   it("dims status when the enclosing Git peek is blocked", () => {

@@ -11,12 +11,6 @@ function indicatorCopy(status: GitCompactStatus): {
   readonly accessibleLabel: string;
   readonly visibleLabel: string;
 } {
-  if (status.kind === "stale") {
-    return {
-      accessibleLabel: "Repository status refreshing",
-      visibleLabel: "Refreshing",
-    };
-  }
   if (status.kind === "disconnected" || status.kind === "unavailable") {
     return {
       accessibleLabel: "Repository unavailable",
@@ -32,12 +26,24 @@ function indicatorCopy(status: GitCompactStatus): {
 }
 
 export function GitWorkspaceChangesIndicator(props: GitWorkspaceChangesIndicatorProps) {
+  if (props.status.kind === "stale") {
+    return (
+      <span
+        className="sr-only"
+        data-git-workspace-changes-indicator="true"
+        data-repository-state={props.status.kind}
+      >
+        Repository status refreshing
+      </span>
+    );
+  }
+
   const copy = indicatorCopy(props.status);
 
   return (
     <span
       className={cn(
-        "git-workspace-changes-indicator pointer-events-none relative z-10 hidden min-w-0 shrink-0 items-center gap-1 px-1.5 text-muted-foreground/70 md:inline-flex",
+        "git-workspace-changes-indicator pointer-events-none relative z-10 hidden min-w-0 shrink-0 items-center gap-0.5 px-1 text-[0.625rem] leading-none text-muted-foreground/70 md:inline-flex",
         props.blocked && "opacity-60",
       )}
       data-git-workspace-changes-indicator="true"

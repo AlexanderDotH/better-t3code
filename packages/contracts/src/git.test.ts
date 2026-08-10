@@ -7,6 +7,7 @@ import {
   GitRunStackedActionResult,
   GitRunStackedActionInput,
   GitResolvePullRequestResult,
+  TextGenerationError,
 } from "./git.ts";
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
@@ -16,6 +17,35 @@ const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
 const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
 const decodeRunStackedActionResult = Schema.decodeUnknownSync(GitRunStackedActionResult);
 const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
+const decodeTextGenerationError = Schema.decodeUnknownSync(TextGenerationError);
+
+describe("TextGenerationError", () => {
+  it("keeps legacy errors compatible and decodes typed model failures", () => {
+    expect(
+      decodeTextGenerationError({
+        _tag: "TextGenerationError",
+        operation: "generateThreadTitle",
+        detail: "failed",
+      }).reason,
+    ).toBeUndefined();
+    expect(
+      decodeTextGenerationError({
+        _tag: "TextGenerationError",
+        operation: "planFetchExploration",
+        detail: "model is unavailable",
+        reason: "model-unavailable",
+      }).reason,
+    ).toBe("model-unavailable");
+    expect(() =>
+      decodeTextGenerationError({
+        _tag: "TextGenerationError",
+        operation: "planFetchExploration",
+        detail: "failed",
+        reason: "timeout",
+      }),
+    ).toThrow();
+  });
+});
 
 describe("VcsCreateWorktreeInput", () => {
   it("accepts omitted newRefName for existing-refName worktrees", () => {
