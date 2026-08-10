@@ -317,6 +317,9 @@ function placeholderSubagentSummary(
 ): OrchestrationSubagentSummary {
   return {
     id: subagentId,
+    origin: "provider-native",
+    providerInstanceId: event.providerInstanceId ?? null,
+    providerDriver: event.provider,
     providerThreadId: event.providerRefs?.providerThreadId ?? subagentId,
     parentId: null,
     path: null,
@@ -353,6 +356,9 @@ function discoveredSubagentSummary(
     shortSubagentName(payload.subagentId);
   return {
     id: payload.subagentId,
+    origin: "provider-native",
+    providerInstanceId: event.providerInstanceId ?? existing?.providerInstanceId ?? null,
+    providerDriver: event.provider,
     providerThreadId: payload.providerThreadId,
     parentId: payload.parentSubagentId ?? existing?.parentId ?? null,
     path,

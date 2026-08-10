@@ -876,6 +876,61 @@ validationLayer("CodexAdapterLive validation", (it) => {
       });
     }),
   );
+
+  it.effect("hard-fences Fetch workers to read-only Codex without MCP or delegation", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const resolveMcpServers = vi.fn(() =>
+      Effect.succeed([
+        decodeMcpServerDefinition({
+          id: "configured",
+          name: "Configured",
+          enabled: true,
+          scope: "global",
+          transport: "http",
+          url: "https://example.com/mcp",
+          headers: {},
+        }),
+      ]),
+    );
+    const layer = Layer.effect(
+      CodexAdapter,
+      Effect.gen(function* () {
+        const codexConfig = decodeCodexSettings({});
+        return yield* makeCodexAdapter(codexConfig, {
+          makeRuntime: runtimeFactory.factory,
+          resolveMcpServers,
+        });
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("fetch:thread:run:0"),
+        purpose: "fetch-worker",
+        resumeCursor: { threadId: "must-not-resume" },
+        runtimeMode: "full-access",
+      });
+
+      NodeAssert.equal(resolveMcpServers.mock.calls.length, 0);
+      const runtimeInput = runtimeFactory.factory.mock.calls[0]?.[0];
+      NodeAssert.equal(runtimeInput?.runtimeMode, "approval-required");
+      NodeAssert.deepStrictEqual(runtimeInput?.appServerArgs, [
+        "--disable",
+        "multi_agent",
+        "-c",
+        "mcp_servers={}",
+      ]);
+      NodeAssert.equal(runtimeInput?.resumeCursor, undefined);
+      NodeAssert.deepStrictEqual(runtimeInput?.mcpServers, []);
+    }).pipe(Effect.provide(layer));
+  });
 });
 
 const sessionRuntimeFactory = makeRuntimeFactory();
@@ -1129,6 +1184,10 @@ describe("CodexAdapter MCP runtime", () => {
 
       const runtime = runtimeFactory.lastRuntime;
       NodeAssert.ok(runtime);
+      NodeAssert.deepStrictEqual(runtimeFactory.factory.mock.calls[0]?.[0]?.internalMcpServer, {
+        url: "http://127.0.0.1:3000/mcp",
+        bearerTokenEnvVar: "T3_MCP_BEARER_TOKEN",
+      });
       runtime.listMcpServerStatusesImpl.mockResolvedValue([
         {
           authStatus: "notLoggedIn",

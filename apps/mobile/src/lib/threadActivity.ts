@@ -512,7 +512,9 @@ function workEntryStatus(entry: WorkLogEntry): ThreadFeedActivity["status"] {
 function workEntryIcon(entry: DerivedWorkLogEntry): ThreadFeedActivity["icon"] {
   if (
     entry.activityKind === "user-input.requested" ||
-    entry.activityKind === "user-input.resolved"
+    entry.activityKind === "user-input.resolved" ||
+    entry.activityKind === "coordination.message.sent" ||
+    entry.activityKind === "coordination.message.received"
   ) {
     return "message";
   }

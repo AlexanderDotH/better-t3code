@@ -6,6 +6,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   RuntimeSessionId,
   SubagentId,
@@ -926,6 +927,9 @@ describe("applyThreadDetailEvent", () => {
     const subagentId = SubagentId.make("agent-client-runtime");
     const subagent = {
       id: subagentId,
+      origin: "t3-fetch" as const,
+      providerInstanceId: ProviderInstanceId.make("claude-work"),
+      providerDriver: ProviderDriverKind.make("claudeAgent"),
       providerThreadId: "provider-agent-client-runtime",
       parentId: null,
       path: "/root/client_runtime",

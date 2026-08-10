@@ -52,6 +52,7 @@ function projectionLayer(
       getProjectShellById: (requestedProjectId) =>
         Effect.succeed(resolveProject(requestedProjectId)),
       getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
+      hasActiveProjectAgentPeer: () => Effect.die("unused"),
       getThreadCheckpointContext: () => Effect.die("unused"),
       getFullThreadDiffContext: () => Effect.die("unused"),
       getThreadShellById: () => Effect.die("unused"),

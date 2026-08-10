@@ -48,6 +48,10 @@ const CODEX_PRESENTATION = {
     toolName: "spawn_agent",
     maxRecommendedSubagents: 8,
   },
+  fetchWorkers: {
+    maxRecommendedWorkers: 8,
+    commandExecutionPolicy: "read-only-sandbox",
+  },
 } as const;
 
 export interface CodexAppServerProviderSnapshot {

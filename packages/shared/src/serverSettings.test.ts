@@ -264,6 +264,34 @@ describe("serverSettings helpers", () => {
     ).toBeNull();
   });
 
+  it("replaces and clears the Fetch model without retaining stale options", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      fetchModelSelection: createModelSelection(
+        ProviderInstanceId.make("codex"),
+        "gpt-5.3-codex-spark",
+        [
+          { id: "reasoningEffort", value: "high" },
+          { id: "serviceTier", value: "priority" },
+        ],
+      ),
+    };
+    const replacement = applyServerSettingsPatch(current, {
+      fetchModelSelection: {
+        instanceId: ProviderInstanceId.make("claude_work"),
+        model: "claude-opus-4-6",
+      },
+    });
+
+    expect(replacement.fetchModelSelection).toEqual({
+      instanceId: "claude_work",
+      model: "claude-opus-4-6",
+    });
+    expect(
+      applyServerSettingsPatch(replacement, { fetchModelSelection: null }).fetchModelSelection,
+    ).toBeNull();
+  });
+
   it("falls back from a disabled voice translation provider without clearing the override", () => {
     const instanceId = ProviderInstanceId.make("codex_voice");
     const voiceTranslationModelSelection = createModelSelection(instanceId, "gpt-5.6-luna");
@@ -623,6 +651,7 @@ describe("serverSettings helpers", () => {
             scope: "global" as const,
             name: "old",
             enabled: true,
+            providerRouting: { mode: "all" as const },
             transport: "stdio" as const,
             command: "old",
             args: [],
@@ -638,6 +667,7 @@ describe("serverSettings helpers", () => {
         scope: "global" as const,
         name: "new",
         enabled: true,
+        providerRouting: { mode: "all" as const },
         transport: "stdio" as const,
         command: "new",
         args: [],

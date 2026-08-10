@@ -3,6 +3,8 @@ import {
   EventId,
   MessageId,
   ORCHESTRATION_WS_METHODS,
+  ProviderDriverKind,
+  ProviderInstanceId,
   SubagentId,
   ThreadId,
   type OrchestrationSubagentDetail,
@@ -51,6 +53,9 @@ const PREPARED: PreparedConnection = {
 };
 const BASE_SUBAGENT: OrchestrationSubagentDetail = {
   id: SUBAGENT_ID,
+  origin: "t3-fetch",
+  providerInstanceId: ProviderInstanceId.make("claude-work"),
+  providerDriver: ProviderDriverKind.make("claudeAgent"),
   providerThreadId: "provider-agent-client-runtime",
   parentId: null,
   path: "/root/client_runtime",
@@ -238,6 +243,11 @@ describe("EnvironmentSubagents", () => {
         afterSequence: SNAPSHOT_SEQUENCE,
       });
       expect(Option.getOrThrow(state.data).messages).toHaveLength(1);
+      expect(Option.getOrThrow(state.data)).toMatchObject({
+        origin: "t3-fetch",
+        providerInstanceId: "claude-work",
+        providerDriver: "claudeAgent",
+      });
     }),
   );
 

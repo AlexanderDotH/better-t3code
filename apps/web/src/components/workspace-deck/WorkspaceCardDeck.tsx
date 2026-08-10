@@ -28,7 +28,7 @@ import {
 } from "./workspaceCardDeck.logic";
 import "./WorkspaceCardDeck.css";
 
-const TRANSITION_FALLBACK_MS = 750;
+const TRANSITION_FALLBACK_MS = 600;
 const COLLAPSE_FALLBACK_MS = 260;
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 const COMPACT_CONTENT_SELECTOR = '[data-workspace-card-compact-content="true"]';
@@ -513,7 +513,6 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
   const onMotionEnd = (event: AnimationEvent<HTMLDivElement>) => {
     if (!(event.target instanceof HTMLElement)) return;
     if (event.target.dataset.transitionRole !== "incoming") return;
-    if (event.animationName !== "workspace-card-to-front") return;
     finishTransition();
   };
 

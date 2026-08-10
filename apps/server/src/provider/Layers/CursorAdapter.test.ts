@@ -5,7 +5,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -222,6 +222,10 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       ] as const) {
         assert.include(types, t);
       }
+      // drainEvents must flush assistant output before turn.completed, otherwise
+      // Cursor's prompt Exit can race ahead of queued session/update deltas.
+      assert.isBelow(types.indexOf("content.delta"), types.indexOf("turn.completed"));
+      assert.isBelow(types.indexOf("item.completed"), types.indexOf("turn.completed"));
       assert.isTrue(
         runtimeEvents.every((event) => event.runtimeSessionId === session.runtimeSessionId),
       );
@@ -1607,6 +1611,89 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }).pipe(
       Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
       Effect.provide(mcpAdapterLayer),
+    );
+  });
+
+  it.effect("starts Fetch workers fresh in approval mode without MCP servers", () => {
+    const resolveMcpServers = vi.fn(() =>
+      Effect.succeed([
+        {
+          type: "http" as const,
+          name: "docs",
+          url: "https://example.com/mcp",
+          headers: [],
+        },
+      ]),
+    );
+    const fetchAdapterLayer = Layer.effect(
+      CursorAdapter,
+      Effect.gen(function* () {
+        const cursorConfig = decodeCursorSettings({});
+        const resolveSettings = yield* makeResolveCursorSettings;
+        return yield* makeCursorAdapter(cursorConfig, { resolveSettings, resolveMcpServers });
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "t3code-cursor-adapter-fetch-",
+        }),
+      ),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    const threadId = ThreadId.make("fetch:cursor-parent:run:0");
+    return Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath),
+      );
+      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* Effect.sync(() =>
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make("environment-cursor-fetch"),
+          threadId,
+          providerSessionId: "provider-session-cursor-fetch",
+          providerInstanceId: ProviderInstanceId.make("cursor"),
+          endpoint: "http://127.0.0.1:3000/mcp",
+          authorizationHeader: "Bearer fetch-token",
+        }),
+      );
+
+      const session = yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        purpose: "fetch-worker",
+        cwd: process.cwd(),
+        resumeCursor: { schemaVersion: 1, sessionId: "must-not-resume" },
+        runtimeMode: "full-access",
+      });
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const sessionNew = requests.find((entry) => entry.method === "session/new");
+      assert.equal(session.runtimeMode, "approval-required");
+      assert.deepEqual(
+        (sessionNew?.params as { readonly mcpServers?: ReadonlyArray<unknown> } | undefined)
+          ?.mcpServers,
+        [],
+      );
+      assert.equal(resolveMcpServers.mock.calls.length, 0);
+      assert.equal(
+        requests.some((entry) => entry.method === "session/load"),
+        false,
+      );
+
+      yield* adapter.stopSession(threadId);
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+      Effect.provide(fetchAdapterLayer),
     );
   });
 });

@@ -1,6 +1,8 @@
 import {
   EventId,
   MessageId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   SubagentId,
   type OrchestrationSubagentDetail,
   type OrchestrationSubagentStatus,
@@ -14,6 +16,7 @@ import {
   groupSubagents,
   resolveSubagentDisplayName,
   resolveSubagentStatusPresentation,
+  resolveSubagentTranscriptMetadata,
 } from "./subagentPresentation";
 
 const STARTED_AT = "2026-07-30T09:00:00.000Z";
@@ -25,6 +28,9 @@ function makeSubagent(
 ): OrchestrationSubagentSummary {
   return {
     id: SubagentId.make(id),
+    origin: "provider-native",
+    providerInstanceId: null,
+    providerDriver: null,
     providerThreadId: `provider-${id}`,
     parentId: null,
     path: null,
@@ -146,6 +152,31 @@ describe("subagent presentation", () => {
       tone: "danger",
       isActive: false,
     });
+  });
+
+  it("labels Fetch transcripts with the exact provider instance and selected traits", () => {
+    expect(
+      resolveSubagentTranscriptMetadata(
+        makeSubagent("fetch-review", "running", {
+          origin: "t3-fetch",
+          providerInstanceId: ProviderInstanceId.make("claude-work"),
+          providerDriver: ProviderDriverKind.make("claudeAgent"),
+          role: "explorer",
+          model: "claude-opus-4-1",
+          reasoningEffort: "high",
+        }),
+      ),
+    ).toEqual(["Fetch", "claude-work", "claude-opus-4-1", "high"]);
+
+    expect(
+      resolveSubagentTranscriptMetadata(
+        makeSubagent("native-review", "running", {
+          role: "reviewer",
+          model: "gpt-5.6",
+          reasoningEffort: "ultra",
+        }),
+      ),
+    ).toEqual(["reviewer", "gpt-5.6", "ultra"]);
   });
 });
 

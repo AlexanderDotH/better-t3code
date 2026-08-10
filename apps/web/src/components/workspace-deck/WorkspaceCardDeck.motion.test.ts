@@ -47,23 +47,29 @@ describe("workspace card deck motion", () => {
     }),
   );
 
-  it.effect("moves cards only vertically after the outgoing content fade", () =>
+  it.effect("moves adjacent cards together as a clipped vertical carousel", () =>
     Effect.gen(function* () {
       const css = yield* readDeckCss;
       const cardKeyframes = css.slice(
-        css.indexOf("@keyframes workspace-card-to-front"),
-        css.indexOf("@keyframes workspace-content-to-back"),
+        css.indexOf("@keyframes workspace-card-carousel-in"),
+        css.indexOf("@keyframes workspace-peek-carousel-settle"),
       );
 
-      expect(css).toMatch(/workspace-card-to-front 600ms[^;]*90ms both/);
-      expect(css).toMatch(/workspace-card-to-back 600ms[^;]*90ms both/);
-      expect(css).toMatch(/workspace-content-to-back 90ms[^;]*both/);
-      expect(css).toMatch(/workspace-content-to-front 300ms[^;]*350ms both/);
-      expect(css).toContain("cubic-bezier(0.22, 1, 0.36, 1)");
+      expect(css).toMatch(
+        /\[data-deck-transition\][\s\S]*?\.workspace-card-deck__viewport\s*\{[^}]*overflow:\s*clip;/,
+      );
+      expect(css).toMatch(/workspace-card-carousel-in 420ms[^;]*both/);
+      expect(css).toMatch(/workspace-card-carousel-out 420ms[^;]*both/);
+      expect(css).toContain("cubic-bezier(0.32, 0.72, 0, 1)");
       expect(cardKeyframes).toContain("translate3d(0,");
+      expect(cardKeyframes).not.toContain("scale(");
       expect(cardKeyframes).not.toContain("opacity:");
+      expect(cardKeyframes).not.toContain("z-index:");
       expect(css).not.toContain("rotate(");
       expect(css).not.toContain("translateX(");
+      expect(css).not.toMatch(
+        /\.workspace-card-deck__card\[data-transition-role="(?:incoming|outgoing)"\][\s\S]*?\.workspace-card-deck__card-content\s*\{[^}]*animation:/,
+      );
     }),
   );
 
@@ -83,18 +89,18 @@ describe("workspace card deck motion", () => {
     }),
   );
 
-  it.effect("moves the outgoing card toward its new exposed edge", () =>
+  it.effect("keeps incoming and outgoing cards on one directional track", () =>
     Effect.gen(function* () {
       const css = yield* readDeckCss;
 
       expect(css).toMatch(
-        /\[data-deck-transition="forward"\]\s*\{[^}]*--workspace-card-shuffle-out-y:\s*-1rem;[^}]*--workspace-card-shuffle-end-y:\s*-0\.625rem;/,
+        /\[data-deck-transition="forward"\]\s*\{[^}]*--workspace-card-carousel-in-y:\s*100%;[^}]*--workspace-card-carousel-out-y:\s*-100%;/,
       );
       expect(css).toMatch(
-        /\[data-deck-transition="backward"\]\s*\{[^}]*--workspace-card-shuffle-out-y:\s*1rem;[^}]*--workspace-card-shuffle-end-y:\s*0\.625rem;/,
+        /\[data-deck-transition="backward"\]\s*\{[^}]*--workspace-card-carousel-in-y:\s*-100%;[^}]*--workspace-card-carousel-out-y:\s*100%;/,
       );
       expect(css).toMatch(
-        /\.workspace-card-deck\[data-deck-transition\][\s\S]*?\.workspace-card-deck__peek-content\s*\{[^}]*animation:\s*workspace-content-to-front 300ms[^;]*350ms both;/,
+        /\.workspace-card-deck\[data-deck-transition\][\s\S]*?\.workspace-card-deck__peek-content\s*\{[^}]*animation:\s*workspace-peek-carousel-settle 180ms[^;]*240ms both;/,
       );
       expect(css).toMatch(
         /\.workspace-card-deck\[data-deck-transition\][\s\S]*?\.workspace-card-deck__card\[data-transition-role="incoming"\][\s\S]*?overflow:\s*clip;/,
@@ -120,7 +126,7 @@ describe("workspace card deck motion", () => {
     }),
   );
 
-  it.effect("limits opacity and will-change to transition content and participating cards", () =>
+  it.effect("limits compositor hints to the moving cards and settling peek labels", () =>
     Effect.gen(function* () {
       const css = yield* readDeckCss;
 
@@ -128,10 +134,11 @@ describe("workspace card deck motion", () => {
         /\.workspace-card-deck\[data-deck-transition\][\s\S]*?\.workspace-card-deck__card\[data-transition-role="incoming"\][^{]*\{[^}]*will-change:\s*transform;/,
       );
       expect(css).toMatch(
-        /\.workspace-card-deck\[data-deck-transition\][\s\S]*?\.workspace-card-deck__card-content\s*\{[^}]*will-change:\s*opacity;/,
+        /\.workspace-card-deck\[data-deck-transition\][\s\S]*?\.workspace-card-deck__peek-content\s*\{[^}]*will-change:\s*transform, opacity;/,
       );
       expect(css).not.toMatch(/\.workspace-card-deck__card\s*\{[^}]*will-change:/);
       expect(css).not.toMatch(/\.workspace-card-deck__card\s*\{[^}]*opacity:/);
+      expect(css).not.toMatch(/\.workspace-card-deck__card-content\s*\{[^}]*will-change:/);
       expect(css).not.toMatch(/\.workspace-card-deck__surface\s*\{[^}]*opacity:/);
       expect(css).not.toMatch(/\.workspace-card-deck__peek\s*\{[^}]*opacity:/);
     }),

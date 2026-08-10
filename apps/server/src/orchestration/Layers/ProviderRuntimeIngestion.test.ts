@@ -418,6 +418,272 @@ describe("ProviderRuntimeIngestion", () => {
     ).toBe(false);
   });
 
+  it("hard-drops replacement runtime events while starting if a previous runtimeSessionId remains projected", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const threadId = asThreadId("thread-1");
+    const oldRuntimeSessionId = RuntimeSessionId.make("runtime-old-pinned");
+    const newRuntimeSessionId = RuntimeSessionId.make("runtime-new-dropped");
+    const startingAt = "2026-07-31T00:01:30.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-seed-starting-pinned-old-runtime"),
+        threadId,
+        session: {
+          threadId,
+          status: "starting",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeSessionId: oldRuntimeSessionId,
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          abortState: null,
+          lastError: null,
+          updatedAt: startingAt,
+        },
+        createdAt: startingAt,
+      }),
+    );
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-pinned-drop-turn-started"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      runtimeSessionId: newRuntimeSessionId,
+      threadId,
+      turnId: asTurnId("turn-should-drop"),
+      createdAt: "2026-07-31T00:01:31.000Z",
+      payload: {},
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-pinned-drop-assistant-delta"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      runtimeSessionId: newRuntimeSessionId,
+      threadId,
+      turnId: asTurnId("turn-should-drop"),
+      itemId: asItemId("item-should-drop"),
+      createdAt: "2026-07-31T00:01:32.000Z",
+      payload: {
+        streamKind: "assistant_text",
+        delta: "must not project while old runtime is pinned",
+      },
+    });
+    harness.emit({
+      type: "thread.metadata.updated",
+      eventId: asEventId("evt-pinned-drop-barrier"),
+      provider: ProviderDriverKind.make("codex"),
+      runtimeSessionId: oldRuntimeSessionId,
+      threadId,
+      createdAt: "2026-07-31T00:01:33.000Z",
+      payload: { name: "Pinned old runtime still owns starting session" },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.title === "Pinned old runtime still owns starting session",
+    );
+    expect(thread.session).toMatchObject({
+      status: "starting",
+      runtimeSessionId: oldRuntimeSessionId,
+      activeTurnId: null,
+    });
+    expect(
+      thread.messages.some((message) =>
+        message.text.includes("must not project while old runtime is pinned"),
+      ),
+    ).toBe(false);
+  });
+
+  it("adopts a replacement runtime generation while starting when projected runtimeSessionId is null", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-replacement-runtime");
+    const newRuntimeSessionId = RuntimeSessionId.make("runtime-new");
+    const startingAt = "2026-07-31T00:02:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-seed-starting-null-runtime"),
+        threadId,
+        session: {
+          threadId,
+          status: "starting",
+          providerName: "claudeAgent",
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          runtimeSessionId: null,
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          abortState: null,
+          lastError: null,
+          updatedAt: startingAt,
+        },
+        createdAt: startingAt,
+      }),
+    );
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-replacement-turn-started"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      runtimeSessionId: newRuntimeSessionId,
+      threadId,
+      turnId,
+      createdAt: "2026-07-31T00:02:01.000Z",
+      payload: {},
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "running" &&
+        entry.session.runtimeSessionId === newRuntimeSessionId &&
+        entry.session.activeTurnId === turnId,
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-replacement-assistant-delta"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      runtimeSessionId: newRuntimeSessionId,
+      threadId,
+      turnId,
+      itemId: asItemId("item-replacement-assistant"),
+      createdAt: "2026-07-31T00:02:02.000Z",
+      payload: {
+        streamKind: "assistant_text",
+        delta: "hello after provider switch",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.role === "assistant" && message.text.includes("hello after provider switch"),
+      ),
+    );
+    expect(thread.session).toMatchObject({
+      status: "running",
+      runtimeSessionId: newRuntimeSessionId,
+      activeTurnId: turnId,
+      providerName: "claudeAgent",
+    });
+  });
+
+  it("drops stale runtime events while starting once a replacement generation is bound", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-bound-runtime");
+    const boundRuntimeSessionId = RuntimeSessionId.make("runtime-bound");
+    const staleRuntimeSessionId = RuntimeSessionId.make("runtime-stale");
+    const startingAt = "2026-07-31T00:03:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-seed-starting-bound-runtime"),
+        threadId,
+        session: {
+          threadId,
+          status: "starting",
+          providerName: "claudeAgent",
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          runtimeSessionId: boundRuntimeSessionId,
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          abortState: null,
+          lastError: null,
+          updatedAt: startingAt,
+        },
+        createdAt: startingAt,
+      }),
+    );
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-stale-turn-started-while-starting"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeSessionId: staleRuntimeSessionId,
+      threadId,
+      turnId: asTurnId("turn-stale"),
+      createdAt: "2026-07-31T00:03:01.000Z",
+      payload: {},
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-stale-assistant-delta-while-starting"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeSessionId: staleRuntimeSessionId,
+      threadId,
+      turnId: asTurnId("turn-stale"),
+      itemId: asItemId("item-stale-assistant"),
+      createdAt: "2026-07-31T00:03:02.000Z",
+      payload: {
+        streamKind: "assistant_text",
+        delta: "stale generation must not project",
+      },
+    });
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-bound-turn-started-while-starting"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      runtimeSessionId: boundRuntimeSessionId,
+      threadId,
+      turnId,
+      createdAt: "2026-07-31T00:03:03.000Z",
+      payload: {},
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-bound-assistant-delta-while-starting"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      runtimeSessionId: boundRuntimeSessionId,
+      threadId,
+      turnId,
+      itemId: asItemId("item-bound-assistant"),
+      createdAt: "2026-07-31T00:03:04.000Z",
+      payload: {
+        streamKind: "assistant_text",
+        delta: "bound generation projects",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.role === "assistant" && message.text.includes("bound generation projects"),
+      ),
+    );
+    expect(thread.session).toMatchObject({
+      status: "running",
+      runtimeSessionId: boundRuntimeSessionId,
+      activeTurnId: turnId,
+      providerName: "claudeAgent",
+    });
+    expect(
+      thread.messages.some((message) => message.text.includes("stale generation must not project")),
+    ).toBe(false);
+
+    const events = await harness.readEvents();
+    expect(
+      events.some(
+        (event) =>
+          event.type === "thread-session-set" &&
+          String(event.commandId).includes("evt-stale-turn-started-while-starting"),
+      ),
+    ).toBe(false);
+  });
+
   it("finalizes buffered output and settles an exact abort terminal cooperatively", async () => {
     const harness = await createHarness({
       serverSettings: { enableAssistantStreaming: false },
@@ -2049,7 +2315,7 @@ describe("ProviderRuntimeIngestion", () => {
     const replayedTurnId = asTurnId("turn-replayed");
     const createdAt = "2026-01-01T00:00:00.000Z";
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.create",
         commandId: CommandId.make("cmd-thread-create-plan-source-unrelated"),
@@ -2067,7 +2333,7 @@ describe("ProviderRuntimeIngestion", () => {
         createdAt,
       }),
     );
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-plan-source-unrelated"),
@@ -2152,7 +2418,7 @@ describe("ProviderRuntimeIngestion", () => {
       throw new Error("Expected source plan to exist.");
     }
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-plan-target-unrelated"),
@@ -3933,6 +4199,7 @@ describe("ProviderRuntimeIngestion", () => {
         type: "subagent.discovered",
         eventId: asEventId(`evt-subagent-discovered-${index}`),
         provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex-work"),
         createdAt: discoveredAt,
         threadId: asThreadId("thread-1"),
         subagentId: entry.id,
@@ -3950,10 +4217,25 @@ describe("ProviderRuntimeIngestion", () => {
       harness.readModel,
       (entry) => entry.subagents.length === cases.length,
     );
+    const upserted = (await harness.readEvents()).filter(
+      (event) => event.type === "thread.subagent-upserted",
+    );
+    expect(upserted).toHaveLength(cases.length);
+    for (const event of upserted) {
+      if (event.type !== "thread.subagent-upserted") continue;
+      expect(event.payload.subagent).toMatchObject({
+        origin: "provider-native",
+        providerInstanceId: "codex-work",
+        providerDriver: "codex",
+      });
+    }
 
     for (const entry of cases) {
       expect(thread.subagents.find((agent) => agent.id === entry.id)).toMatchObject({
         id: entry.id,
+        origin: "provider-native",
+        providerInstanceId: "codex-work",
+        providerDriver: "codex",
         providerThreadId: entry.providerThreadId,
         parentId: null,
         path: entry.agentPath ?? null,
@@ -3995,7 +4277,9 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     let thread = await waitForThread(harness.readModel, (entry) =>
-      entry.subagents.some((agent) => agent.id === subagentId),
+      entry.subagents.some(
+        (agent) => agent.id === subagentId && agent.latestProgress?.kind === "state.waiting",
+      ),
     );
     expect(thread.subagents.find((agent) => agent.id === subagentId)).toMatchObject({
       id: subagentId,

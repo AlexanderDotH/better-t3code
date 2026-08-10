@@ -161,6 +161,19 @@ export const ServerProviderNativeSubagents = Schema.Struct({
 });
 export type ServerProviderNativeSubagents = typeof ServerProviderNativeSubagents.Type;
 
+export const ServerProviderFetchWorkerCommandExecutionPolicy = Schema.Literals([
+  "read-only-sandbox",
+  "deny",
+]);
+export type ServerProviderFetchWorkerCommandExecutionPolicy =
+  typeof ServerProviderFetchWorkerCommandExecutionPolicy.Type;
+
+export const ServerProviderFetchWorkers = Schema.Struct({
+  maxRecommendedWorkers: PositiveInt,
+  commandExecutionPolicy: ServerProviderFetchWorkerCommandExecutionPolicy,
+});
+export type ServerProviderFetchWorkers = typeof ServerProviderFetchWorkers.Type;
+
 export const ServerProvider = Schema.Struct({
   // Routing key for the configured instance this snapshot represents. This
   // is the only stable identity consumers may use for provider routing.
@@ -175,6 +188,7 @@ export const ServerProvider = Schema.Struct({
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
   nativeSubagents: Schema.optional(ServerProviderNativeSubagents),
+  fetchWorkers: Schema.optional(ServerProviderFetchWorkers),
   enabled: Schema.Boolean,
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),

@@ -230,6 +230,35 @@ describe("buildThreadFeed", () => {
     expect(group.activities[0]?.getFullDetail()).toContain("repository.search");
   });
 
+  it("renders project-agent coordination activities as messages", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-coordination"),
+      projectId: ProjectId.make("project-1"),
+      title: "Coordinating agent",
+      activities: [
+        makeActivity({
+          id: EventId.make("coordination-received"),
+          kind: "coordination.message.received",
+          summary: "Received request from API agent",
+          createdAt: "2026-04-01T00:00:02.000Z",
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread)[0];
+    expect(group).toMatchObject({ type: "activity-group" });
+    if (!group || group.type !== "activity-group") {
+      return;
+    }
+
+    expect(group.activities[0]).toMatchObject({
+      summary: "Received request from API agent",
+      icon: "message",
+      toolLike: false,
+      status: null,
+    });
+  });
+
   it("defers large tool output expansion until a work row is opened or copied", () => {
     let serializedToolOutputs = 0;
     const activities = Array.from({ length: 5_000 }, (_, index) =>

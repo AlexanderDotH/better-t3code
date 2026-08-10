@@ -5,7 +5,7 @@ import * as NodeModule from "node:module";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
@@ -1178,6 +1178,43 @@ const runCommand = Effect.fn("runCommand")(function* (
   }
 });
 
+const resolveBuildVpCommand = Effect.fn("resolveBuildVpCommand")(function* (
+  args: ReadonlyArray<string>,
+  options: { env?: NodeJS.ProcessEnv } = {},
+) {
+  if (yield* isCommandAvailable("bunx")) {
+    return { command: "bunx", args: ["--bun", "vp", ...args], shell: false };
+  }
+
+  if (yield* isCommandAvailable("bun")) {
+    return { command: "bun", args: ["run", "vp", ...args], shell: false };
+  }
+
+  return yield* resolveSpawnCommand("vp", args, { env: options.env });
+});
+
+const resolveBuildPnpmCommand = Effect.fn("resolveBuildPnpmCommand")(function* () {
+  if (process.env.T3CODE_PNPM_BIN) {
+    return { command: process.env.T3CODE_PNPM_BIN, args: [] as string[], shell: false };
+  }
+
+  return yield* resolveSpawnCommand("pnpm", []);
+});
+
+const STAGE_PACKAGE_MANAGER = (() => {
+  const explicitManager = process.env.T3CODE_PNPM_MANAGER?.trim();
+  if (explicitManager) {
+    return explicitManager;
+  }
+
+  const explicitPnpmPath = process.env.T3CODE_PNPM_BIN;
+  const versionMatch = explicitPnpmPath?.match(/pnpm\/(\d+\.\d+\.\d+)\//);
+  if (versionMatch?.[1]) {
+    return `pnpm@${versionMatch[1]}`;
+  }
+  return rootPackageJson.packageManager;
+})();
+
 const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* (input: {
   readonly repoRoot: string;
   readonly stageResourcesDir: string;
@@ -1790,7 +1827,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   if (!options.skipBuild) {
     yield* Effect.log("[desktop-artifact] Building desktop/server/web artifacts...");
-    const spawnCommand = yield* resolveSpawnCommand("vp", ["run", "build:desktop"]);
+    const spawnCommand = yield* resolveBuildVpCommand(["run", "build:desktop"]);
     yield* runCommand(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         cwd: repoRoot,
@@ -1914,7 +1951,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
     private: true,
-    packageManager: rootPackageJson.packageManager,
+    packageManager: STAGE_PACKAGE_MANAGER,
     description: "T3 Code desktop build",
     author: "T3 Tools",
     main: "apps/desktop/dist-electron/main.cjs",
@@ -1958,10 +1995,16 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   yield* Effect.log("[desktop-artifact] Installing staged production dependencies...");
-  const installCommand = yield* resolveSpawnCommand("vp", [...STAGE_INSTALL_ARGS]);
+  const installCommand = yield* resolveBuildPnpmCommand();
   yield* runCommand(
-    ChildProcess.make(installCommand.command, installCommand.args, {
+    ChildProcess.make(installCommand.command, ["install", "--prod"], {
       cwd: stageAppDir,
+      env: {
+        ...process.env,
+        ...(process.env.T3CODE_PNPM_COREPACK_ROOT
+          ? { COREPACK_ROOT: process.env.T3CODE_PNPM_COREPACK_ROOT }
+          : {}),
+      },
       shell: installCommand.shell,
     }),
     { label: "vp install --prod", verbose: options.verbose },
@@ -1984,7 +2027,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const buildEnv: NodeJS.ProcessEnv = {
     ...process.env,
   };
-  buildEnv.npm_config_user_agent = resolvePackageManagerUserAgent(rootPackageJson.packageManager);
+  buildEnv.npm_config_user_agent = resolvePackageManagerUserAgent(STAGE_PACKAGE_MANAGER);
   for (const [key, value] of Object.entries(buildEnv)) {
     if (value === "") {
       delete buildEnv[key];

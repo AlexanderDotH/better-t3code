@@ -51,6 +51,7 @@ function projectionLayer(projectResult: Option.Option<OrchestrationProjectShell>
       getActiveProjectByWorkspaceRoot: () => Effect.die("unused"),
       getProjectShellById: () => Effect.succeed(projectResult),
       getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
+      hasActiveProjectAgentPeer: () => Effect.die("unused"),
       getThreadCheckpointContext: () => Effect.die("unused"),
       getFullThreadDiffContext: () => Effect.die("unused"),
       getThreadShellById: () => Effect.die("unused"),

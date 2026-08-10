@@ -18,6 +18,9 @@ function makeSubagent(
   const terminal = new Date(now - 10_000).toISOString();
   return {
     id: SubagentId.make(id),
+    origin: "provider-native",
+    providerInstanceId: null,
+    providerDriver: null,
     providerThreadId: `provider-${id}`,
     parentId: null,
     path: null,

@@ -1,6 +1,8 @@
 import {
   EventId,
   MessageId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   SubagentId,
   type OrchestrationSubagentDetail,
 } from "@t3tools/contracts";
@@ -15,6 +17,9 @@ import {
 function makeDetail(): OrchestrationSubagentDetail {
   return {
     id: SubagentId.make("agent-review"),
+    origin: "t3-fetch",
+    providerInstanceId: ProviderInstanceId.make("claude-work"),
+    providerDriver: ProviderDriverKind.make("claudeAgent"),
     providerThreadId: "provider-agent-review",
     parentId: null,
     path: "/root/review",
@@ -147,6 +152,7 @@ describe("SubagentTranscriptPanel", () => {
     );
 
     expect(html).toContain('aria-label="Bernoulli transcript"');
+    expect(html).toContain("Fetch · claude-work · gpt-5.6 · ultra");
     expect(html).toContain("Checking reconnect behavior");
     expect(html).toContain("Comparing cursor frames");
     expect(html).toContain("The reconnect path keeps the cursor monotonic.");

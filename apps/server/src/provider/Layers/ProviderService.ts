@@ -22,6 +22,7 @@ import {
   ProviderSessionStartInput,
   ProviderStopSessionInput,
   RuntimeSessionId,
+  resolveProviderSessionPurpose,
   type ProviderInstanceId,
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
@@ -82,6 +83,13 @@ interface ProviderRuntimeLease {
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly startFiber?: Fiber.Fiber<ProviderSession, ProviderAdapterError>;
   readonly forceStopping?: boolean;
+  readonly persistence: "durable" | "transient";
+}
+
+interface ProviderTransientBinding {
+  readonly runtimeSessionId: RuntimeSessionId;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
 }
 
 type RuntimeLeaseInstallResult =
@@ -242,6 +250,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     Scope.close(scope, Exit.void),
   );
   const runtimeLeases = yield* Ref.make(new Map<ThreadId, ProviderRuntimeLease>());
+  const transientBindings = yield* Ref.make(new Map<ThreadId, ProviderTransientBinding>());
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const nextRuntimeSessionId = Effect.sync(() => RuntimeSessionId.make(NodeCrypto.randomUUID()));
   const registerMcpRuntimeSession = (session: ProviderSession) =>
@@ -258,6 +267,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
     readonly runtimeSessionId: RuntimeSessionId;
     readonly startFiber?: Fiber.Fiber<ProviderSession, ProviderAdapterError>;
+    readonly persistence?: ProviderRuntimeLease["persistence"];
   }) =>
     Ref.modify(runtimeLeases, (current) => {
       const previous = current.get(input.threadId);
@@ -269,6 +279,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         runtimeSessionId: input.runtimeSessionId,
         providerInstanceId: input.providerInstanceId,
         adapter: input.adapter,
+        persistence: input.persistence ?? "durable",
         ...(input.startFiber !== undefined ? { startFiber: input.startFiber } : {}),
       });
       return [
@@ -341,6 +352,40 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       return [true, next] as const;
     });
 
+  const installTransientBinding = (input: {
+    readonly threadId: ThreadId;
+    readonly runtimeSessionId: RuntimeSessionId;
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
+  }) =>
+    Ref.modify(transientBindings, (current) => {
+      if (current.has(input.threadId)) {
+        return [false, current] as const;
+      }
+      const next = new Map(current);
+      next.set(input.threadId, input);
+      return [true, next] as const;
+    });
+
+  const clearTransientBinding = (input: {
+    readonly threadId: ThreadId;
+    readonly runtimeSessionId: RuntimeSessionId;
+    readonly providerInstanceId?: ProviderInstanceId;
+  }) =>
+    Ref.modify(transientBindings, (current) => {
+      const binding = current.get(input.threadId);
+      if (
+        binding?.runtimeSessionId !== input.runtimeSessionId ||
+        (input.providerInstanceId !== undefined &&
+          binding.providerInstanceId !== input.providerInstanceId)
+      ) {
+        return [false, current] as const;
+      }
+      const next = new Map(current);
+      next.delete(input.threadId);
+      return [true, next] as const;
+    });
+
   const ensureRuntimeLease = Effect.fn("ensureRuntimeLease")(function* (input: {
     readonly threadId: ThreadId;
     readonly providerInstanceId: ProviderInstanceId;
@@ -350,6 +395,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     if (
       current?.providerInstanceId === input.providerInstanceId &&
       current.adapter === input.adapter &&
+      current.persistence === "durable" &&
       current.forceStopping !== true
     ) {
       return current.runtimeSessionId;
@@ -422,11 +468,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const startAdapterSessionWithLease = Effect.fn("startAdapterSessionWithLease")(function* (input: {
     readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
     readonly providerInstanceId: ProviderInstanceId;
+    readonly runtimeSessionId?: RuntimeSessionId;
+    readonly persistence?: ProviderRuntimeLease["persistence"];
+    readonly mountMcp?: boolean;
     readonly sessionInput: Parameters<
       ProviderAdapterShape<ProviderAdapterError>["startSession"]
     >[0];
   }) {
-    const runtimeSessionId = yield* nextRuntimeSessionId;
+    const runtimeSessionId = input.runtimeSessionId ?? (yield* nextRuntimeSessionId);
     const sessionInput = {
       ...input.sessionInput,
       runtimeSessionId,
@@ -442,6 +491,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       adapter: input.adapter,
       runtimeSessionId,
       startFiber,
+      ...(input.persistence !== undefined ? { persistence: input.persistence } : {}),
     });
     if (installed._tag === "BlockedByCleanup") {
       yield* Fiber.interrupt(startFiber).pipe(Effect.ignore);
@@ -450,12 +500,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         `Cannot start thread '${input.sessionInput.threadId}' while its previous runtime is being cleaned up.`,
       );
     }
+    const prepareSession =
+      input.mountMcp === false
+        ? Effect.void
+        : prepareMcpSession(
+            input.sessionInput.threadId,
+            input.providerInstanceId,
+            input.adapter.provider,
+          );
     const startExit = yield* Effect.exit(
-      prepareMcpSession(
-        input.sessionInput.threadId,
-        input.providerInstanceId,
-        input.adapter.provider,
-      ).pipe(
+      prepareSession.pipe(
         Effect.andThen(Deferred.succeed(startGate, undefined)),
         Effect.andThen(Fiber.join(startFiber)),
       ),
@@ -480,6 +534,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         runtimeSessionId: lease.runtimeSessionId,
         providerInstanceId: lease.providerInstanceId,
         adapter: lease.adapter,
+        persistence: lease.persistence,
       });
       return [true, next] as const;
     });
@@ -731,6 +786,30 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly operation: string;
     readonly allowRecovery: boolean;
   }) {
+    const transient = (yield* Ref.get(transientBindings)).get(input.threadId);
+    if (transient !== undefined) {
+      const lease = (yield* Ref.get(runtimeLeases)).get(input.threadId);
+      if (
+        lease?.runtimeSessionId !== transient.runtimeSessionId ||
+        lease.providerInstanceId !== transient.providerInstanceId ||
+        lease.persistence !== "transient" ||
+        lease.forceStopping === true ||
+        !(yield* transient.adapter.hasSession(input.threadId))
+      ) {
+        return yield* toValidationError(
+          input.operation,
+          `Transient provider runtime for thread '${input.threadId}' is no longer active.`,
+        );
+      }
+      return {
+        adapter: transient.adapter,
+        instanceId: transient.providerInstanceId,
+        threadId: input.threadId,
+        isActive: true,
+        isTransient: true,
+      } as const;
+    }
+
     const bindingOption = yield* directory.getBinding(input.threadId);
     const binding = Option.getOrUndefined(bindingOption);
     if (!binding) {
@@ -749,6 +828,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         instanceId,
         threadId: input.threadId,
         isActive: true,
+        isTransient: false,
       } as const;
     }
 
@@ -758,6 +838,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         instanceId,
         threadId: input.threadId,
         isActive: false,
+        isTransient: false,
       } as const;
     }
 
@@ -770,6 +851,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       instanceId,
       threadId: input.threadId,
       isActive: true,
+      isTransient: false,
     } as const;
   });
 
@@ -810,6 +892,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         schema: ProviderSessionStartInput,
         payload: rawInput,
       });
+      if (resolveProviderSessionPurpose(parsed.purpose) !== "interactive") {
+        return yield* toValidationError(
+          "ProviderService.startSession",
+          "Fetch worker sessions must use startTransientSession.",
+        );
+      }
 
       const resolvedInstanceId = yield* requireBindingInstanceId(
         "ProviderService.startSession",
@@ -922,6 +1010,138 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const startTransientSession: ProviderServiceMethod<"startTransientSession"> = Effect.fn(
+    "startTransientSession",
+  )(function* (threadId, rawInput) {
+    const parsed = yield* decodeInputOrValidationError({
+      operation: "ProviderService.startTransientSession",
+      schema: ProviderSessionStartInput,
+      payload: rawInput,
+    });
+    if (resolveProviderSessionPurpose(parsed.purpose) !== "fetch-worker") {
+      return yield* toValidationError(
+        "ProviderService.startTransientSession",
+        "Transient sessions are reserved for the fetch-worker purpose.",
+      );
+    }
+    if (parsed.runtimeSessionId === undefined) {
+      return yield* toValidationError(
+        "ProviderService.startTransientSession",
+        "A pre-registered runtimeSessionId is required for transient sessions.",
+      );
+    }
+    if (parsed.runtimeMode !== "approval-required") {
+      return yield* toValidationError(
+        "ProviderService.startTransientSession",
+        "Fetch worker sessions require approval-required runtime mode.",
+      );
+    }
+    if (parsed.modelSelection === undefined) {
+      return yield* toValidationError(
+        "ProviderService.startTransientSession",
+        "Fetch worker sessions require an exact model selection.",
+      );
+    }
+
+    const resolvedInstanceId = yield* requireBindingInstanceId(
+      "ProviderService.startTransientSession",
+      parsed,
+    );
+    if (parsed.modelSelection.instanceId !== resolvedInstanceId) {
+      return yield* toValidationError(
+        "ProviderService.startTransientSession",
+        "Fetch worker model selection must belong to the selected provider instance.",
+      );
+    }
+    if ((yield* Ref.get(transientBindings)).has(threadId)) {
+      return yield* toValidationError(
+        "ProviderService.startTransientSession",
+        `Transient thread '${threadId}' already has an active provider runtime.`,
+      );
+    }
+    if ((yield* Ref.get(runtimeLeases)).has(threadId)) {
+      return yield* toValidationError(
+        "ProviderService.startTransientSession",
+        `Thread '${threadId}' already has an active provider runtime.`,
+      );
+    }
+
+    const instanceInfo = yield* registry.getInstanceInfo(resolvedInstanceId);
+    if (!instanceInfo.enabled) {
+      return yield* toValidationError(
+        "ProviderService.startTransientSession",
+        `Provider instance '${resolvedInstanceId}' is disabled in T3 Code settings.`,
+      );
+    }
+    if (parsed.provider !== undefined && parsed.provider !== instanceInfo.driverKind) {
+      return yield* toValidationError(
+        "ProviderService.startTransientSession",
+        `Provider instance '${resolvedInstanceId}' belongs to driver '${instanceInfo.driverKind}', not '${parsed.provider}'.`,
+      );
+    }
+
+    const adapter = yield* registry.getByInstance(resolvedInstanceId);
+    const { resumeCursor: _resumeCursor, ...safeInput } = parsed;
+    const session = yield* startAdapterSessionWithLease({
+      adapter,
+      providerInstanceId: resolvedInstanceId,
+      runtimeSessionId: parsed.runtimeSessionId,
+      persistence: "transient",
+      mountMcp: false,
+      sessionInput: {
+        ...safeInput,
+        threadId,
+        runtimeSessionId: parsed.runtimeSessionId,
+        provider: instanceInfo.driverKind,
+        providerInstanceId: resolvedInstanceId,
+        purpose: "fetch-worker",
+        freshSession: true,
+        runtimeMode: "approval-required",
+      },
+    });
+    if (session.provider !== adapter.provider) {
+      yield* cleanupExactRuntimeLeaseMcpSession({
+        threadId,
+        expectedRuntimeSessionId: parsed.runtimeSessionId,
+      });
+      return yield* toValidationError(
+        "ProviderService.startTransientSession",
+        `Adapter/provider mismatch: requested '${adapter.provider}', received '${session.provider}'.`,
+      );
+    }
+
+    const installed = yield* installTransientBinding({
+      threadId,
+      runtimeSessionId: parsed.runtimeSessionId,
+      providerInstanceId: resolvedInstanceId,
+      adapter,
+    });
+    const lease = (yield* Ref.get(runtimeLeases)).get(threadId);
+    const exactLeaseIsCurrent =
+      lease?.runtimeSessionId === parsed.runtimeSessionId &&
+      lease.providerInstanceId === resolvedInstanceId &&
+      lease.persistence === "transient" &&
+      lease.forceStopping !== true;
+    if (!installed || !exactLeaseIsCurrent) {
+      yield* clearTransientBinding({
+        threadId,
+        runtimeSessionId: parsed.runtimeSessionId,
+        providerInstanceId: resolvedInstanceId,
+      });
+      yield* adapter.forceStopSession(threadId, parsed.runtimeSessionId).pipe(Effect.ignore);
+      yield* cleanupExactRuntimeLeaseMcpSession({
+        threadId,
+        expectedRuntimeSessionId: parsed.runtimeSessionId,
+      });
+      return yield* toValidationError(
+        "ProviderService.startTransientSession",
+        `Transient runtime '${parsed.runtimeSessionId}' was replaced during startup.`,
+      );
+    }
+
+    return session;
+  });
+
   const sendTurn: ProviderServiceMethod<"sendTurn"> = Effect.fn("sendTurn")(function* (rawInput) {
     const parsed = yield* decodeInputOrValidationError({
       operation: "ProviderService.sendTurn",
@@ -964,8 +1184,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       // an already-spawned agent process, so we keep the existing token valid
       // rather than issuing a new one: sessions that go a long time between
       // browser tool calls used to lose the toolkit outright.
-      yield* McpSessionRegistry.touchActiveMcpThread(input.threadId);
+      if (!routed.isTransient) {
+        yield* McpSessionRegistry.touchActiveMcpThread(input.threadId);
+      }
       const turn = yield* routed.adapter.sendTurn(input);
+      if (routed.isTransient) {
+        return turn;
+      }
       yield* directory.upsert({
         threadId: input.threadId,
         provider: routed.adapter.provider,
@@ -1065,33 +1290,44 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const forceExit = yield* Effect.exit(
         lease.adapter.forceStopSession(target.threadId, target.runtimeSessionId),
       );
-      yield* clearMcpSession(target.threadId);
-      yield* endMcpRuntimeSession({
-        providerInstanceId: target.providerInstanceId,
-        threadId: target.threadId,
-        runtimeSessionId: target.runtimeSessionId,
-      });
-      yield* directory.upsert({
-        threadId: target.threadId,
-        provider: lease.adapter.provider,
-        providerInstanceId: lease.providerInstanceId,
-        status: "stopped",
-        runtimePayload: {
-          runtimeSessionId: null,
-          activeTurnId: null,
-          lastRuntimeEvent: "provider.forceStop",
-          lastRuntimeEventAt: yield* nowIso,
-        },
-      });
+      if (lease.persistence !== "transient") {
+        yield* clearMcpSession(target.threadId);
+        yield* endMcpRuntimeSession({
+          providerInstanceId: target.providerInstanceId,
+          threadId: target.threadId,
+          runtimeSessionId: target.runtimeSessionId,
+        });
+        yield* directory.upsert({
+          threadId: target.threadId,
+          provider: lease.adapter.provider,
+          providerInstanceId: lease.providerInstanceId,
+          status: "stopped",
+          runtimePayload: {
+            runtimeSessionId: null,
+            activeTurnId: null,
+            lastRuntimeEvent: "provider.forceStop",
+            lastRuntimeEventAt: yield* nowIso,
+          },
+        });
+      }
       if (Exit.isFailure(forceExit)) {
         return yield* Effect.failCause(forceExit.cause);
       }
       return forceExit.value;
     }).pipe(
       Effect.ensuring(
-        completeRuntimeLeaseCleanup({
-          threadId: target.threadId,
-          expectedRuntimeSessionId: target.runtimeSessionId,
+        Effect.gen(function* () {
+          if (lease.persistence === "transient") {
+            yield* clearTransientBinding({
+              threadId: target.threadId,
+              runtimeSessionId: target.runtimeSessionId,
+              providerInstanceId: target.providerInstanceId,
+            });
+          }
+          yield* completeRuntimeLeaseCleanup({
+            threadId: target.threadId,
+            expectedRuntimeSessionId: target.runtimeSessionId,
+          });
         }),
       ),
     );
@@ -1203,6 +1439,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         schema: ProviderStopSessionInput,
         payload: rawInput,
       });
+      if ((yield* Ref.get(transientBindings)).has(input.threadId)) {
+        return yield* toValidationError(
+          "ProviderService.stopSession",
+          "Transient sessions require exact-runtime stopTransientSession cleanup.",
+        );
+      }
       let metricProvider = "unknown";
       return yield* Effect.gen(function* () {
         const lease = (yield* Ref.get(runtimeLeases)).get(input.threadId);
@@ -1254,6 +1496,64 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const stopTransientSession: ProviderServiceMethod<"stopTransientSession"> = Effect.fn(
+    "stopTransientSession",
+  )(function* (target) {
+    const binding = (yield* Ref.get(transientBindings)).get(target.threadId);
+    if (
+      binding?.runtimeSessionId !== target.runtimeSessionId ||
+      binding.providerInstanceId !== target.providerInstanceId
+    ) {
+      return;
+    }
+
+    const lease = yield* claimRuntimeLeaseForCleanup({
+      threadId: target.threadId,
+      expectedRuntimeSessionId: target.runtimeSessionId,
+      expectedProviderInstanceId: target.providerInstanceId,
+    });
+    if (lease === undefined || lease.persistence !== "transient") {
+      return;
+    }
+
+    return yield* lease.adapter.stopSession(target.threadId).pipe(
+      Effect.onError(() =>
+        lease.adapter.forceStopSession(target.threadId, target.runtimeSessionId).pipe(
+          Effect.timeoutOption("5 seconds"),
+          Effect.tap((result) =>
+            Option.isNone(result)
+              ? Effect.logWarning("Transient provider force-stop fallback timed out", {
+                  threadId: target.threadId,
+                  runtimeSessionId: target.runtimeSessionId,
+                  providerInstanceId: target.providerInstanceId,
+                })
+              : Effect.void,
+          ),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Transient provider force-stop fallback failed", {
+              threadId: target.threadId,
+              runtimeSessionId: target.runtimeSessionId,
+              providerInstanceId: target.providerInstanceId,
+              cause: causeErrorTag(cause),
+            }),
+          ),
+          Effect.asVoid,
+          Effect.forkIn(serviceScope),
+          Effect.asVoid,
+        ),
+      ),
+      Effect.ensuring(
+        Effect.gen(function* () {
+          yield* clearTransientBinding(target);
+          yield* completeRuntimeLeaseCleanup({
+            threadId: target.threadId,
+            expectedRuntimeSessionId: target.runtimeSessionId,
+          });
+        }),
+      ),
+    );
+  });
+
   const listSessions: ProviderServiceMethod<"listSessions"> = Effect.fn("listSessions")(
     function* () {
       const currentAdapters = yield* getAdapterEntries;
@@ -1267,7 +1567,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ),
         ),
       );
-      const activeSessions = sessionsByProvider.flatMap((sessions) => sessions);
+      const transient = yield* Ref.get(transientBindings);
+      const activeSessions = sessionsByProvider
+        .flatMap((sessions) => sessions)
+        .filter((session) => {
+          const binding = transient.get(session.threadId);
+          return binding === undefined || binding.runtimeSessionId !== session.runtimeSessionId;
+        });
       const persistedBindings = yield* directory.listThreadIds().pipe(
         Effect.flatMap((threadIds) =>
           Effect.forEach(
@@ -1396,7 +1702,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         ),
       ),
     ).pipe(Effect.map((sessionsByAdapter) => sessionsByAdapter.flatMap((sessions) => sessions)));
-    yield* Effect.forEach(activeSessions, (session) =>
+    const leases = yield* Ref.get(runtimeLeases);
+    const durableSessions = activeSessions.filter(
+      (session) => leases.get(session.threadId)?.persistence !== "transient",
+    );
+    yield* Effect.forEach(durableSessions, (session) =>
       Effect.flatMap(nowIso, (lastRuntimeEventAt) =>
         upsertSessionBinding(session, session.threadId, {
           lastRuntimeEvent: "provider.stopAll",
@@ -1405,7 +1715,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       ),
     ).pipe(Effect.asVoid);
     yield* Effect.forEach(currentAdapters, ([, adapter]) => adapter.stopAll()).pipe(Effect.asVoid);
-    yield* Effect.forEach(activeSessions, (session) =>
+    yield* Effect.forEach(durableSessions, (session) =>
       session.providerInstanceId !== undefined && session.runtimeSessionId !== undefined
         ? endMcpRuntimeSession({
             providerInstanceId: session.providerInstanceId,
@@ -1415,6 +1725,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         : Effect.void,
     ).pipe(Effect.asVoid);
     yield* Ref.set(runtimeLeases, new Map());
+    yield* Ref.set(transientBindings, new Map());
     yield* McpSessionRegistry.revokeAllActiveMcpCredentials();
     McpProviderSession.clearAllMcpProviderSessions();
     const bindings = yield* directory.listBindings().pipe(Effect.orElseSucceed(() => []));
@@ -1451,6 +1762,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   return {
     startSession,
+    startTransientSession,
     sendTurn,
     interruptTurn,
     resolveAbortTarget,
@@ -1460,6 +1772,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     respondToRequest,
     respondToUserInput,
     stopSession,
+    stopTransientSession,
     listSessions,
     getCapabilities,
     getInstanceInfo,

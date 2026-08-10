@@ -31,6 +31,10 @@ const OPENCODE_PRESENTATION = {
     toolName: "Task",
     maxRecommendedSubagents: 8,
   },
+  fetchWorkers: {
+    maxRecommendedWorkers: 8,
+    commandExecutionPolicy: "deny",
+  },
 } as const;
 const MINIMUM_OPENCODE_VERSION = "1.14.19";
 
@@ -231,7 +235,7 @@ function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerPr
     }
 
     for (const model of Object.values(provider.models)) {
-      const name = nonEmptyTrimmed(model.name);
+      const name = nonEmptyTrimmed(model.name) ?? nonEmptyTrimmed(model.id);
       if (!name) {
         continue;
       }

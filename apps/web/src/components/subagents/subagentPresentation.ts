@@ -164,6 +164,26 @@ export function resolveSubagentStatusPresentation(
   };
 }
 
+export function resolveSubagentTranscriptMetadata(
+  agent: Pick<
+    OrchestrationSubagentSummary,
+    "origin" | "providerInstanceId" | "providerDriver" | "role" | "model" | "reasoningEffort"
+  >,
+): string[] {
+  if (agent.origin === "t3-fetch") {
+    return [
+      "Fetch",
+      firstNonEmpty(agent.providerInstanceId, agent.providerDriver),
+      firstNonEmpty(agent.model),
+      firstNonEmpty(agent.reasoningEffort),
+    ].filter((value): value is string => value !== null);
+  }
+
+  return [agent.role, agent.model, agent.reasoningEffort].filter(
+    (value): value is string => firstNonEmpty(value) !== null,
+  );
+}
+
 export function deriveSubagentTranscriptEntries(
   detail: Pick<OrchestrationSubagentDetail, "messages" | "proposedPlans" | "activities">,
 ): SubagentTranscriptEntry[] {

@@ -1,46 +1,203 @@
-import type { ServerProvider } from "@t3tools/contracts";
+import {
+  type ModelSelection,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 
 export const FETCH_MODE = "repository-exploration" as const;
-export const FETCH_SUBAGENT_COUNT = 3;
 
-function supportsFetch(provider: ServerProvider | null | undefined): provider is ServerProvider {
-  if (!provider?.enabled || !provider.installed || provider.availability === "unavailable") {
-    return false;
-  }
+const CODEX_DRIVER = ProviderDriverKind.make("codex");
+const DEFAULT_CODEX_INSTANCE = ProviderInstanceId.make("codex");
+const SPARK_MODEL = "gpt-5.3-codex-spark";
+const LUNA_MODEL = "gpt-5.6-luna";
 
-  const capability = provider.nativeSubagents;
-  return Boolean(
-    capability &&
-    capability.toolName.trim().length > 0 &&
-    Math.floor(capability.maxRecommendedSubagents) >= FETCH_SUBAGENT_COUNT,
+export type FetchModelSelectionSource =
+  | "manual"
+  | "auto-spark"
+  | "auto-luna"
+  | "auto-text-generation"
+  | "auto-provider-default";
+
+export type FetchModelSelectionUnavailableReason =
+  | "provider-unavailable"
+  | "model-unavailable"
+  | "no-fetch-provider";
+
+export type FetchModelSelectionResolution =
+  | {
+      readonly status: "resolved";
+      readonly source: FetchModelSelectionSource;
+      readonly selection: ModelSelection;
+      readonly provider: ServerProvider;
+    }
+  | {
+      readonly status: "unavailable";
+      readonly source: "manual" | "auto";
+      readonly requestedSelection: ModelSelection | null;
+      readonly reason: FetchModelSelectionUnavailableReason;
+    };
+
+export function resolveFetchMode(input: {
+  readonly featureEnabled: boolean;
+}): typeof FETCH_MODE | undefined {
+  return input.featureEnabled ? FETCH_MODE : undefined;
+}
+
+export function isFetchCapableProvider(provider: ServerProvider): boolean {
+  const budget = provider.fetchWorkers?.maxRecommendedWorkers;
+  return (
+    provider.enabled &&
+    provider.installed &&
+    provider.availability !== "unavailable" &&
+    Number.isInteger(budget) &&
+    (budget ?? 0) > 0
   );
 }
 
-export function resolveFetchModeForProvider(input: {
-  readonly featureEnabled: boolean;
-  readonly provider: ServerProvider | null | undefined;
-}): typeof FETCH_MODE | undefined {
-  return input.featureEnabled && supportsFetch(input.provider) ? FETCH_MODE : undefined;
+function exactModelIsAvailable(provider: ServerProvider, model: string): boolean {
+  return provider.models.some((candidate) => candidate.slug === model);
 }
 
-export function buildFetchProviderInstructions(
-  provider: ServerProvider | null | undefined,
-): string | undefined {
-  if (!supportsFetch(provider)) {
-    return undefined;
+function resolveManualSelection(
+  providers: ReadonlyArray<ServerProvider>,
+  selection: ModelSelection,
+): FetchModelSelectionResolution {
+  const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
+  if (!provider || !isFetchCapableProvider(provider)) {
+    return {
+      status: "unavailable",
+      source: "manual",
+      requestedSelection: selection,
+      reason: "provider-unavailable",
+    };
+  }
+  if (!exactModelIsAvailable(provider, selection.model)) {
+    return {
+      status: "unavailable",
+      source: "manual",
+      requestedSelection: selection,
+      reason: "model-unavailable",
+    };
+  }
+  return { status: "resolved", source: "manual", selection, provider };
+}
+
+function orderedCodexProviders(
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<ServerProvider> {
+  return providers
+    .filter((provider) => provider.driver === CODEX_DRIVER && isFetchCapableProvider(provider))
+    .toSorted((left, right) => {
+      if (left.instanceId === DEFAULT_CODEX_INSTANCE) return -1;
+      if (right.instanceId === DEFAULT_CODEX_INSTANCE) return 1;
+      return left.instanceId.localeCompare(right.instanceId);
+    });
+}
+
+function findBuiltInModel(
+  providers: ReadonlyArray<ServerProvider>,
+  slug: string,
+): ServerProvider | undefined {
+  return providers.find((provider) =>
+    provider.models.some((model) => model.slug === slug && !model.isCustom),
+  );
+}
+
+function lunaResolution(
+  providers: ReadonlyArray<ServerProvider>,
+): FetchModelSelectionResolution | undefined {
+  const provider = findBuiltInModel(orderedCodexProviders(providers), LUNA_MODEL);
+  if (!provider) return undefined;
+  return {
+    status: "resolved",
+    source: "auto-luna",
+    selection: {
+      instanceId: provider.instanceId,
+      model: LUNA_MODEL,
+      options: [{ id: "reasoningEffort", value: "low" }],
+    },
+    provider,
+  };
+}
+
+export function resolveFetchLunaFallback(
+  providers: ReadonlyArray<ServerProvider>,
+): FetchModelSelectionResolution {
+  const luna = lunaResolution(providers);
+  if (luna) return luna;
+  const hasCodex = orderedCodexProviders(providers).length > 0;
+  return {
+    status: "unavailable",
+    source: "auto",
+    requestedSelection: null,
+    reason: hasCodex ? "model-unavailable" : "no-fetch-provider",
+  };
+}
+
+function resolveAutoSelection(input: {
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly textGenerationModelSelection: ModelSelection;
+}): FetchModelSelectionResolution {
+  const codexProviders = orderedCodexProviders(input.providers);
+  const sparkProvider = findBuiltInModel(codexProviders, SPARK_MODEL);
+  if (sparkProvider) {
+    return {
+      status: "resolved",
+      source: "auto-spark",
+      selection: { instanceId: sparkProvider.instanceId, model: SPARK_MODEL },
+      provider: sparkProvider,
+    };
   }
 
-  const toolName = provider.nativeSubagents?.toolName;
-  if (!toolName) {
-    return undefined;
+  const luna = lunaResolution(input.providers);
+  if (luna) return luna;
+
+  const textGenerationProvider = input.providers.find(
+    (provider) => provider.instanceId === input.textGenerationModelSelection.instanceId,
+  );
+  if (
+    textGenerationProvider &&
+    isFetchCapableProvider(textGenerationProvider) &&
+    exactModelIsAvailable(textGenerationProvider, input.textGenerationModelSelection.model)
+  ) {
+    return {
+      status: "resolved",
+      source: "auto-text-generation",
+      selection: input.textGenerationModelSelection,
+      provider: textGenerationProvider,
+    };
   }
 
-  return `FETCH MODE (experimental repository exploration):
-If this turn requires understanding or changing a repository, before modifying files:
-- Use the native \`${toolName}\` tool to start exactly ${FETCH_SUBAGENT_COUNT} direct child subagents in one parallel batch.
-- Give them concrete, non-overlapping read-only exploration scopes derived from the request, covering relevant code paths, existing tests and conventions, and cross-surface risks.
-- Subagents must not modify files, run mutating commands, or make external changes. They must not spawn additional agents.
-- Continue useful read-only exploration while they run, then wait for all three results before the first file modification.
-- Integrate their findings yourself; you remain responsible for implementation, conflicts, and verification.
-If this is not a repository task or exploration would not materially help, do not spawn subagents. If the exact batch cannot be started, continue normally and mention that Fetch was unavailable.`;
+  const provider = input.providers.find(
+    (candidate) => isFetchCapableProvider(candidate) && candidate.models.length > 0,
+  );
+  const selectedModel =
+    provider?.models.find((candidate) => candidate.isDefault)?.slug ?? provider?.models[0]?.slug;
+  if (provider && selectedModel) {
+    return {
+      status: "resolved",
+      source: "auto-provider-default",
+      selection: { instanceId: provider.instanceId, model: selectedModel },
+      provider,
+    };
+  }
+
+  return {
+    status: "unavailable",
+    source: "auto",
+    requestedSelection: null,
+    reason: "no-fetch-provider",
+  };
+}
+
+export function resolveFetchModelSelection(input: {
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly fetchModelSelection: ModelSelection | null | undefined;
+  readonly textGenerationModelSelection: ModelSelection;
+}): FetchModelSelectionResolution {
+  if (input.fetchModelSelection) {
+    return resolveManualSelection(input.providers, input.fetchModelSelection);
+  }
+  return resolveAutoSelection(input);
 }

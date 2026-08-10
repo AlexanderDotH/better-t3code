@@ -159,23 +159,23 @@
 }
 
 .workspace-card-deck[data-deck-transition="forward"] {
-  --workspace-card-shuffle-start-y: 0.625rem;
-  --workspace-card-shuffle-in-y: -1rem;
-  --workspace-card-shuffle-overshoot-y: 0.125rem;
-  --workspace-card-shuffle-out-y: -1rem;
-  --workspace-card-shuffle-end-y: -0.625rem;
+  --workspace-card-carousel-in-y: 100%;
+  --workspace-card-carousel-out-y: -100%;
+  --workspace-card-carousel-peek-y: 0.25rem;
 }
 
 .workspace-card-deck[data-deck-transition="backward"] {
-  --workspace-card-shuffle-start-y: -0.625rem;
-  --workspace-card-shuffle-in-y: 1rem;
-  --workspace-card-shuffle-overshoot-y: -0.125rem;
-  --workspace-card-shuffle-out-y: 1rem;
-  --workspace-card-shuffle-end-y: 0.625rem;
+  --workspace-card-carousel-in-y: -100%;
+  --workspace-card-carousel-out-y: 100%;
+  --workspace-card-carousel-peek-y: -0.25rem;
 }
 
 .workspace-card-deck[data-deck-transition] {
   pointer-events: none;
+}
+
+.workspace-card-deck[data-deck-transition] .workspace-card-deck__viewport {
+  overflow: clip;
 }
 
 .workspace-card-deck[data-deck-collapsing] {
@@ -192,93 +192,47 @@
 }
 
 .workspace-card-deck[data-deck-transition] .workspace-card-deck__peek-content {
-  animation: workspace-content-to-front 300ms cubic-bezier(0.22, 1, 0.36, 1) 350ms both;
-  will-change: opacity;
+  animation: workspace-peek-carousel-settle 180ms ease-out 240ms both;
+  will-change: transform, opacity;
 }
 
 .workspace-card-deck[data-deck-transition]
   .workspace-card-deck__card[data-transition-role="incoming"] {
-  z-index: 3;
-  animation: workspace-card-to-front 600ms cubic-bezier(0.22, 1, 0.36, 1) 90ms both;
+  z-index: 4;
+  animation: workspace-card-carousel-in 420ms cubic-bezier(0.32, 0.72, 0, 1) both;
 }
 
 .workspace-card-deck[data-deck-transition]
   .workspace-card-deck__card[data-transition-role="outgoing"] {
-  z-index: 4;
-  animation: workspace-card-to-back 600ms cubic-bezier(0.22, 1, 0.36, 1) 90ms both;
+  z-index: 3;
+  animation: workspace-card-carousel-out 420ms cubic-bezier(0.32, 0.72, 0, 1) both;
 }
 
-.workspace-card-deck[data-deck-transition]
-  .workspace-card-deck__card[data-transition-role="incoming"]
-  .workspace-card-deck__card-content {
-  animation: workspace-content-to-front 300ms cubic-bezier(0.22, 1, 0.36, 1) 350ms both;
-  will-change: opacity;
-}
-
-.workspace-card-deck[data-deck-transition]
-  .workspace-card-deck__card[data-transition-role="outgoing"]
-  .workspace-card-deck__card-content {
-  animation: workspace-content-to-back 90ms cubic-bezier(0.4, 0, 1, 1) both;
-  will-change: opacity;
-}
-
-@keyframes workspace-card-to-front {
+@keyframes workspace-card-carousel-in {
   0% {
-    z-index: 1;
-    transform: translate3d(0, var(--workspace-card-shuffle-start-y), 0) scale(0.985);
-  }
-  42% {
-    z-index: 1;
-    transform: translate3d(0, var(--workspace-card-shuffle-in-y), 0) scale(0.995);
-  }
-  43% {
-    z-index: 4;
-    transform: translate3d(0, var(--workspace-card-shuffle-in-y), 0) scale(0.995);
-  }
-  72% {
-    z-index: 4;
-    transform: translate3d(0, var(--workspace-card-shuffle-overshoot-y), 0) scale(1.006);
+    transform: translate3d(0, var(--workspace-card-carousel-in-y), 0);
   }
   100% {
-    z-index: 3;
-    transform: translate3d(0, 0, 0) scale(1);
+    transform: translate3d(0, 0, 0);
   }
 }
 
-@keyframes workspace-card-to-back {
+@keyframes workspace-card-carousel-out {
   0% {
-    z-index: 4;
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-  42% {
-    z-index: 4;
-    transform: translate3d(0, var(--workspace-card-shuffle-out-y), 0) scale(0.995);
-  }
-  43% {
-    z-index: 1;
-    transform: translate3d(0, var(--workspace-card-shuffle-out-y), 0) scale(0.995);
-  }
-  76%,
-  100% {
-    z-index: 1;
-    transform: translate3d(0, var(--workspace-card-shuffle-end-y), 0) scale(0.985);
-  }
-}
-
-@keyframes workspace-content-to-back {
-  0% {
-    opacity: 1;
+    transform: translate3d(0, 0, 0);
   }
   100% {
-    opacity: 0;
+    transform: translate3d(0, var(--workspace-card-carousel-out-y), 0);
   }
 }
 
-@keyframes workspace-content-to-front {
+@keyframes workspace-peek-carousel-settle {
   0% {
+    transform: translate3d(0, var(--workspace-card-carousel-peek-y), 0);
     opacity: 0;
   }
   100% {
+    transform: translate3d(0, 0, 0);
     opacity: 1;
   }
 }
@@ -289,7 +243,6 @@
   }
 
   .workspace-card-deck[data-deck-transition] .workspace-card-deck__card,
-  .workspace-card-deck[data-deck-transition] .workspace-card-deck__card-content,
   .workspace-card-deck[data-deck-transition] .workspace-card-deck__peek-content {
     animation: none;
     will-change: auto;

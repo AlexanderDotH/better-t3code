@@ -9,6 +9,7 @@ This is a living glossary for T3 Code. It explains what common terms mean in thi
 - [Orchestration](#orchestration)
 - [Provider runtime](#provider-runtime)
 - [Internal MCP](#internal-mcp)
+- [Project-agent coordination](#project-agent-coordination)
 - [User MCP](#user-mcp)
 - [Workspace card deck](#workspace-card-deck)
 - [Git workbench](#git-workbench)
@@ -130,6 +131,16 @@ servers. See [internal-mcp.md][25].
 The read-only `workspace_context` internal MCP tool. It batches deterministic repository path and
 content searches with targeted line-range reads. Its workspace root comes from the authenticated
 thread and project rather than tool input. See [internal-mcp.md][25].
+
+### Project-agent coordination
+
+The internal MCP protocol that lets independent active root threads in one project announce work,
+hold turn-scoped cooperative path or topic claims, and exchange durable direct or broadcast messages.
+Claims prevent two serialized requests from both winning the same overlapping scope but do not lock
+the filesystem. Provider-native subagents share their root thread identity, while Fetch workers are
+excluded. Messages surface as normal thread activities and remain in an inbox until explicitly
+acknowledged at a safe checkpoint. A direct message can wake an inactive retained peer in its
+existing thread; broadcasts remain active-peer-only. See [internal-mcp.md][25].
 
 ### User MCP
 

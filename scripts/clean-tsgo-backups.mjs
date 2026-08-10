@@ -10,10 +10,56 @@
 //
 // Runs as part of `prepare`, so it must only use node builtins.
 import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
-const backups = NodeFS.globSync(
-  "node_modules/.pnpm/@typescript+native-preview-*/node_modules/@typescript/native-preview-*/lib/tsgo{,.exe}.original*",
-);
+function isTsgoBackupFile(fileName) {
+  return /^tsgo(\.exe)?\.original/.test(fileName);
+}
+
+function collectBackups() {
+  const pnpmDir = NodePath.join("node_modules", ".pnpm");
+  if (!NodeFS.existsSync(pnpmDir)) {
+    return [];
+  }
+
+  const nativePreviewEntries = NodeFS.readdirSync(pnpmDir, { withFileTypes: true }).filter(
+    (entry) => entry.isDirectory() && entry.name.startsWith("@typescript+native-preview-"),
+  );
+
+  const backups = [];
+  for (const nativePreviewEntry of nativePreviewEntries) {
+    const nativePreviewModulesDir = NodePath.join(
+      pnpmDir,
+      nativePreviewEntry.name,
+      "node_modules",
+      "@typescript",
+    );
+    if (!NodeFS.existsSync(nativePreviewModulesDir)) {
+      continue;
+    }
+
+    const previewDirs = NodeFS.readdirSync(nativePreviewModulesDir, { withFileTypes: true }).filter(
+      (entry) => entry.isDirectory() && entry.name.startsWith("native-preview-"),
+    );
+
+    for (const previewDir of previewDirs) {
+      const libDir = NodePath.join(nativePreviewModulesDir, previewDir.name, "lib");
+      if (!NodeFS.existsSync(libDir)) {
+        continue;
+      }
+
+      for (const file of NodeFS.readdirSync(libDir, { withFileTypes: true })) {
+        if (file.isFile() && isTsgoBackupFile(file.name)) {
+          backups.push(NodePath.join(libDir, file.name));
+        }
+      }
+    }
+  }
+
+  return backups;
+}
+
+const backups = collectBackups();
 
 for (const backup of backups) {
   NodeFS.rmSync(backup, { force: true });

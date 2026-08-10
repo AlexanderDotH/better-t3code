@@ -222,10 +222,11 @@ export function parseModelsCliOutput(stdout: string): {
   };
 
   for (const line of lines) {
-    const slugMatch = SLUG_LINE_RE.exec(line);
-    if (slugMatch) {
+    const trimmedLine = line.trim();
+    const parsedSlug = parseOpenCodeModelSlug(trimmedLine);
+    if (parsedSlug) {
       flushModel();
-      currentSlug = slugMatch[1]!;
+      currentSlug = `${parsedSlug.providerID}/${parsedSlug.modelID}`;
     } else if (currentSlug !== null) {
       jsonLines.push(line);
     }
@@ -286,8 +287,12 @@ export function parseOpenCodeModelSlug(
   }
 
   const trimmed = slug.trim();
+  if (!SLUG_LINE_RE.test(trimmed)) {
+    return null;
+  }
+
   const separator = trimmed.indexOf("/");
-  if (separator <= 0 || separator === trimmed.length - 1) {
+  if (trimmed.indexOf("/", separator + 1) !== -1) {
     return null;
   }
 

@@ -1,4 +1,9 @@
-import { SubagentId, ThreadId, type OrchestrationSubagentSummary } from "@t3tools/contracts";
+import {
+  ProviderInstanceId,
+  SubagentId,
+  ThreadId,
+  type OrchestrationSubagentSummary,
+} from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -17,6 +22,9 @@ const updatedAt = "2026-07-30T11:00:01.000Z";
 
 const expectedSummary: OrchestrationSubagentSummary = {
   id: subagentId,
+  origin: "t3-fetch",
+  providerInstanceId: ProviderInstanceId.make("claude-work"),
+  providerDriver: "claudeAgent",
   providerThreadId: "provider-agent-subagent-query",
   parentId: null,
   path: "/root/query",
@@ -97,6 +105,9 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
         INSERT INTO projection_thread_subagents (
           thread_id,
           subagent_id,
+          origin,
+          provider_instance_id,
+          provider_driver,
           provider_thread_id,
           parent_subagent_id,
           path,
@@ -118,6 +129,9 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
         VALUES (
           ${threadId},
           ${subagentId},
+          ${expectedSummary.origin},
+          ${expectedSummary.providerInstanceId},
+          ${expectedSummary.providerDriver},
           ${expectedSummary.providerThreadId},
           NULL,
           ${expectedSummary.path},
@@ -484,6 +498,9 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
           detail.value.subagents.find((subagent) => subagent.id === staleChildId),
           {
             id: staleChildId,
+            origin: "provider-native",
+            providerInstanceId: null,
+            providerDriver: null,
             providerThreadId: "provider-child",
             parentId: null,
             path: "/root/research",

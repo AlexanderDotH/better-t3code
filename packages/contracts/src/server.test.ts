@@ -26,6 +26,76 @@ describe("ServerProvider", () => {
     expect(parsed.versionAdvisory).toBeUndefined();
     expect(parsed.updateState).toBeUndefined();
     expect(parsed.nativeSubagents).toBeUndefined();
+    expect(parsed.fetchWorkers).toBeUndefined();
+  });
+
+  it("decodes Fetch worker capabilities", () => {
+    const parsed = decodeServerProvider({
+      instanceId: "claude_work",
+      driver: "claudeAgent",
+      fetchWorkers: {
+        maxRecommendedWorkers: 12,
+        commandExecutionPolicy: "deny",
+      },
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+    });
+
+    expect(parsed.fetchWorkers).toEqual({
+      maxRecommendedWorkers: 12,
+      commandExecutionPolicy: "deny",
+    });
+  });
+
+  it("rejects invalid Fetch worker budgets and policies", () => {
+    const provider = {
+      instanceId: "codex",
+      driver: "codex",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+    };
+
+    expect(() =>
+      decodeServerProvider({
+        ...provider,
+        fetchWorkers: {
+          maxRecommendedWorkers: 0,
+          commandExecutionPolicy: "read-only-sandbox",
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeServerProvider({
+        ...provider,
+        fetchWorkers: {
+          maxRecommendedWorkers: 1.5,
+          commandExecutionPolicy: "read-only-sandbox",
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeServerProvider({
+        ...provider,
+        fetchWorkers: {
+          maxRecommendedWorkers: 8,
+          commandExecutionPolicy: "allow",
+        },
+      }),
+    ).toThrow();
   });
 
   it("decodes native subagent capabilities", () => {

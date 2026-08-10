@@ -26,6 +26,8 @@ const makeStubTextGeneration = (
     improvePrompt: () => Effect.die("improvePrompt stub not configured for this test"),
     reviewPlanParallelism: () =>
       Effect.die("reviewPlanParallelism stub not configured for this test"),
+    planFetchExploration: () =>
+      Effect.die("planFetchExploration stub not configured for this test"),
     ...overrides,
   });
 
@@ -176,6 +178,53 @@ describe("makeTextGenerationFromRegistry", () => {
 
       expect(generated).toEqual({ recommendedSubagents: 7 });
       expect(calls).toEqual([{ planMarkdown: "## Server\nImplement the RPC.", maxSubagents: 8 }]);
+    }),
+  );
+
+  it.effect("routes Fetch planning with the exact model selection and provider budget", () =>
+    Effect.gen(function* () {
+      const plannerId = ProviderInstanceId.make("claude_fetch");
+      const calls: TextGeneration.FetchExplorationGenerationInput[] = [];
+      const planner = makeStubInstance(
+        plannerId,
+        makeStubTextGeneration({
+          planFetchExploration: (input) => {
+            calls.push(input);
+            return Effect.succeed({
+              decision: "run",
+              workers: [{ scope: "Server routing", questions: ["Where is routing decided?"] }],
+            });
+          },
+        }),
+      );
+      const textGeneration = TextGeneration.makeTextGenerationFromRegistry(
+        makeStubRegistry([planner]),
+      );
+      const modelSelection = createModelSelection(plannerId, "claude-opus-4-6", [
+        { id: "effort", value: "high" },
+      ]);
+
+      const generated = yield* textGeneration.planFetchExploration({
+        cwd: "/repo/worktree",
+        userRequest: "Trace the routing path.",
+        repositoryOrientation: "Top-level areas: apps/server",
+        maxRecommendedWorkers: 10,
+        modelSelection,
+      });
+
+      expect(generated).toEqual({
+        decision: "run",
+        workers: [{ scope: "Server routing", questions: ["Where is routing decided?"] }],
+      });
+      expect(calls).toEqual([
+        {
+          cwd: "/repo/worktree",
+          userRequest: "Trace the routing path.",
+          repositoryOrientation: "Top-level areas: apps/server",
+          maxRecommendedWorkers: 10,
+          modelSelection,
+        },
+      ]);
     }),
   );
 

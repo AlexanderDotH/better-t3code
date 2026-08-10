@@ -59,6 +59,10 @@ const CLAUDE_PRESENTATION = {
     toolName: "Agent",
     maxRecommendedSubagents: 8,
   },
+  fetchWorkers: {
+    maxRecommendedWorkers: 8,
+    commandExecutionPolicy: "deny",
+  },
 } as const;
 const MINIMUM_CLAUDE_OPUS_5_VERSION = "2.1.219";
 const MINIMUM_CLAUDE_FABLE_5_VERSION = "2.1.169";

@@ -581,6 +581,31 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Work Log");
   });
 
+  it("renders project-agent coordination activities as messages", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "coordination-activity",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "coordination-activity",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Received request from API agent",
+              tone: "info",
+              sourceActivityKind: "coordination.message.received",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Received request from API agent");
+    expect(markup).toContain("lucide-message-circle");
+  });
+
   it("formats changed file paths from the workspace root", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline

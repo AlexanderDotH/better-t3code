@@ -532,6 +532,41 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     ),
   );
 
+  it.effect("plans Fetch exploration with the exact Claude traits and provider budget", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            decision: "run",
+            workers: [{ scope: "Contracts", questions: ["Which contracts cross the wire?"] }],
+          },
+        }),
+        stdinMustContain: "between 1 and 9 workers",
+        argsMustContain: "--disallowedTools *",
+        argsMustNotContain: "--dangerously-skip-permissions",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.planFetchExploration({
+            cwd: process.cwd(),
+            userRequest: "Trace Fetch contracts.",
+            repositoryOrientation: "Top-level areas: packages/contracts",
+            maxRecommendedWorkers: 9,
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              "claude-opus-4-6",
+              [{ id: "effort", value: "high" }],
+            ),
+          });
+
+          expect(generated).toEqual({
+            decision: "run",
+            workers: [{ scope: "Contracts", questions: ["Which contracts cross the wire?"] }],
+          });
+        }),
+    ),
+  );
+
   it.effect("runs Claude text generation with the configured CLAUDE_CONFIG_DIR", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

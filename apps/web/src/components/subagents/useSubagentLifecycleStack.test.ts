@@ -15,6 +15,9 @@ import {
 function makeEntry(id: string, startedAt: string): SubagentLifecycleEntry {
   const agent: OrchestrationSubagentSummary = {
     id: SubagentId.make(id),
+    origin: "provider-native",
+    providerInstanceId: null,
+    providerDriver: null,
     providerThreadId: `provider-${id}`,
     parentId: null,
     path: null,

@@ -372,6 +372,57 @@ describe("ServerSettings parallel plan review model", () => {
   });
 });
 
+describe("ServerSettings Fetch model", () => {
+  it("hydrates legacy settings as Auto", () => {
+    const settings = decodeServerSettings({});
+
+    expect(settings.fetchModelSelection).toBeNull();
+    expect(DEFAULT_SERVER_SETTINGS.fetchModelSelection).toBeNull();
+  });
+
+  it("round-trips an exact cross-provider Fetch selection", () => {
+    const selection = {
+      instanceId: ProviderInstanceId.make("claude_work"),
+      model: "claude-opus-4-6",
+      options: [
+        { id: "effort", value: "max" },
+        { id: "fastMode", value: true },
+      ],
+    } as const;
+    const settings = decodeServerSettings(
+      encodeServerSettings({
+        ...decodeServerSettings({}),
+        fetchModelSelection: selection,
+      }),
+    );
+
+    expect(settings.fetchModelSelection).toEqual(selection);
+  });
+
+  it("patches Fetch selection atomically and accepts resetting to Auto", () => {
+    const explicit = decodeServerSettingsPatch({
+      fetchModelSelection: {
+        instanceId: "opencode_work",
+        model: " openai/gpt-5 ",
+        options: [{ id: "variant", value: "fast" }],
+      },
+    });
+    const automatic = decodeServerSettingsPatch({ fetchModelSelection: null });
+
+    expect(explicit.fetchModelSelection).toEqual({
+      instanceId: "opencode_work",
+      model: "openai/gpt-5",
+      options: [{ id: "variant", value: "fast" }],
+    });
+    expect(automatic.fetchModelSelection).toBeNull();
+    expect(() =>
+      decodeServerSettingsPatch({
+        fetchModelSelection: { instanceId: "codex" },
+      }),
+    ).toThrow();
+  });
+});
+
 describe("ServerSettings voice translation model", () => {
   it("inherits the global text generation model for legacy settings", () => {
     const settings = decodeServerSettings({});

@@ -40,6 +40,7 @@ import {
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
+import { ProjectionProjectAgentCoordinationRepositoryLive } from "../../persistence/Layers/ProjectionProjectAgentCoordination.ts";
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
 import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
 import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
@@ -55,6 +56,7 @@ import { ProjectionThreadSubagentActivityRepository } from "../../persistence/Se
 import { ProjectionThreadSubagentMessageRepository } from "../../persistence/Services/ProjectionThreadSubagentMessages.ts";
 import { ProjectionThreadSubagentProposedPlanRepository } from "../../persistence/Services/ProjectionThreadSubagentProposedPlans.ts";
 import { ProjectionThreadSubagentRepository } from "../../persistence/Services/ProjectionThreadSubagents.ts";
+import { ProjectionProjectAgentCoordinationRepository } from "../../persistence/Services/ProjectionProjectAgentCoordination.ts";
 import { ServerConfig } from "../../config.ts";
 import {
   OrchestrationProjectionPipeline,
@@ -70,6 +72,7 @@ import { makeAbortInteractionResolutionActivities } from "../abortInteractionSet
 
 export const ORCHESTRATION_PROJECTOR_NAMES = {
   projects: "projection.projects",
+  projectAgentCoordination: "projection.project-agent-coordination",
   threads: "projection.threads",
   threadMessages: "projection.thread-messages",
   threadProposedPlans: "projection.thread-proposed-plans",
@@ -102,6 +105,9 @@ function placeholderSubagent(input: {
 }): OrchestrationSubagentSummary {
   return {
     id: input.subagentId,
+    origin: "provider-native",
+    providerInstanceId: null,
+    providerDriver: null,
     providerThreadId: input.subagentId,
     parentId: null,
     path: null,
@@ -567,6 +573,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionThreadSessionRepository = yield* ProjectionThreadSessionRepository;
     const projectionTurnRepository = yield* ProjectionTurnRepository;
     const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
+    const projectionProjectAgentCoordinationRepository =
+      yield* ProjectionProjectAgentCoordinationRepository;
 
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -625,6 +633,61 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           });
           return;
         }
+
+        default:
+          return;
+      }
+    });
+
+    const applyProjectAgentCoordinationProjection: ProjectorDefinition["apply"] = Effect.fn(
+      "applyProjectAgentCoordinationProjection",
+    )(function* (event, _attachmentSideEffects) {
+      switch (event.type) {
+        case "project.agent-claim-set":
+          yield* projectionProjectAgentCoordinationRepository.upsertClaim(event.payload);
+          return;
+
+        case "project.agent-claim-released":
+          yield* projectionProjectAgentCoordinationRepository.releaseClaim({
+            projectId: event.payload.projectId,
+            threadId: event.payload.threadId,
+            expectedTurnId: event.payload.expectedTurnId,
+          });
+          return;
+
+        case "project.agent-message-sent":
+          yield* projectionProjectAgentCoordinationRepository.recordMessage({
+            sequence: event.sequence,
+            projectId: event.payload.projectId,
+            messageId: event.payload.messageId,
+            senderThreadId: event.payload.senderThreadId,
+            recipientThreadIds: event.payload.recipientThreadIds,
+            kind: event.payload.kind,
+            body: event.payload.body,
+            createdAt: event.payload.sentAt,
+          });
+          return;
+
+        case "project.agent-inbox-acknowledged":
+          yield* projectionProjectAgentCoordinationRepository.acknowledgeInbox({
+            projectId: event.payload.projectId,
+            threadId: event.payload.threadId,
+            acknowledgeThrough: event.payload.acknowledgeThrough,
+            acknowledgedAt: event.payload.acknowledgedAt,
+          });
+          return;
+
+        case "thread.deleted":
+          yield* projectionProjectAgentCoordinationRepository.releaseClaimsByThreadId(
+            event.payload.threadId,
+          );
+          return;
+
+        case "project.deleted":
+          yield* projectionProjectAgentCoordinationRepository.releaseClaimsByProjectId(
+            event.payload.projectId,
+          );
+          return;
 
         default:
           return;
@@ -1997,6 +2060,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         apply: applyProjectsProjection,
       },
       {
+        name: ORCHESTRATION_PROJECTOR_NAMES.projectAgentCoordination,
+        apply: applyProjectAgentCoordinationProjection,
+      },
+      {
         name: ORCHESTRATION_PROJECTOR_NAMES.threadMessages,
         apply: applyThreadMessagesProjection,
       },
@@ -2127,6 +2194,7 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   makeOrchestrationProjectionPipeline(),
 ).pipe(
   Layer.provideMerge(ProjectionProjectRepositoryLive),
+  Layer.provideMerge(ProjectionProjectAgentCoordinationRepositoryLive),
   Layer.provideMerge(ProjectionThreadRepositoryLive),
   Layer.provideMerge(ProjectionThreadMessageRepositoryLive),
   Layer.provideMerge(ProjectionThreadProposedPlanRepositoryLive),

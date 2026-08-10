@@ -21,6 +21,7 @@ import { resolveAttachmentPath } from "../attachmentStore.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildFetchExplorationPrompt,
   buildPlanParallelismReviewPrompt,
   buildPromptImprovementPrompt,
   buildPrContentPrompt,
@@ -36,6 +37,8 @@ import {
 import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
 
 const OPENCODE_TEXT_GENERATION_IDLE_TTL = "30 seconds";
+const OPENCODE_MODEL_SELECTION_FORMAT_ERROR =
+  "OpenCode model selection must use the 'provider/model' format (for example: google/gemini-2.5-flash).";
 
 const OpenCodeTextGenerationOperation = Schema.Literals([
   "generateCommitMessage",
@@ -45,6 +48,7 @@ const OpenCodeTextGenerationOperation = Schema.Literals([
   "translateTranscriptToEnglish",
   "improvePrompt",
   "reviewPlanParallelism",
+  "planFetchExploration",
 ]);
 
 type OpenCodeTextGenerationOperation = typeof OpenCodeTextGenerationOperation.Type;
@@ -262,7 +266,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       | "generateThreadTitle"
       | "translateTranscriptToEnglish"
       | "improvePrompt"
-      | "reviewPlanParallelism";
+      | "reviewPlanParallelism"
+      | "planFetchExploration";
   }) =>
     sharedServerMutex.withPermit(
       Effect.gen(function* () {
@@ -379,7 +384,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     if (!parsedModel) {
       return yield* new TextGenerationError({
         operation: input.operation,
-        detail: "OpenCode model selection must use the 'provider/model' format.",
+        detail: OPENCODE_MODEL_SELECTION_FORMAT_ERROR,
       });
     }
 
@@ -670,6 +675,18 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       return { recommendedSubagents: generated.recommendedSubagents };
     });
 
+  const planFetchExploration: TextGeneration.TextGeneration["Service"]["planFetchExploration"] =
+    Effect.fn("OpenCodeTextGeneration.planFetchExploration")(function* (input) {
+      const { prompt, outputSchema } = buildFetchExplorationPrompt(input);
+      return yield* runOpenCodeJson({
+        operation: "planFetchExploration",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
@@ -678,5 +695,6 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     translateTranscriptToEnglish,
     improvePrompt,
     reviewPlanParallelism,
+    planFetchExploration,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

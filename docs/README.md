@@ -22,4 +22,5 @@
 - [Mobile](./mobile/app.md)
 - [Operations](./operations/ci.md)
 - [Providers](./providers/codex.md)
+- [OpenCode](./providers/opencode.md)
 - [Reference](./reference/encyclopedia.md)

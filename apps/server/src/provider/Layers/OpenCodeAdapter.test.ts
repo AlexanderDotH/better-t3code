@@ -16,6 +16,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { beforeEach } from "vite-plus/test";
 
 import {
+  EnvironmentId,
   OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -25,6 +26,7 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { ServerConfig } from "../../config.ts";
 import type { OpenCodeMcpServerConfig } from "../../mcp/McpConfigEngine.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import type { OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
@@ -300,6 +302,9 @@ const openCodeAdapterTestSettings = Schema.decodeSync(OpenCodeSettings)({
   serverUrl: "http://127.0.0.1:9999",
   serverPassword: "secret-password",
 });
+const openCodeFetchWorkerTestSettings = Schema.decodeSync(OpenCodeSettings)({
+  binaryPath: "fake-opencode",
+});
 
 const OpenCodeAdapterTestLayer = Layer.effect(
   OpenCodeAdapter,
@@ -372,6 +377,71 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       yield* adapter.stopSession(threadId);
     }),
   );
+
+  it.effect("starts Fetch workers fresh with read-only permissions and no MCP servers", () => {
+    let resolveMcpCalls = 0;
+    const layer = Layer.effect(
+      OpenCodeAdapter,
+      makeOpenCodeAdapter(openCodeFetchWorkerTestSettings, {
+        resolveMcpServers: () => {
+          resolveMcpCalls += 1;
+          return Effect.succeed({
+            docs: {
+              type: "remote",
+              url: "https://example.com/mcp",
+              enabled: true,
+            },
+          });
+        },
+      }),
+    ).pipe(
+      Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+    const threadId = asThreadId("fetch:opencode-parent:run:0");
+
+    return Effect.gen(function* () {
+      yield* Effect.sync(() =>
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make("environment-opencode-fetch"),
+          threadId,
+          providerSessionId: "provider-session-opencode-fetch",
+          providerInstanceId: ProviderInstanceId.make("opencode"),
+          endpoint: "http://127.0.0.1:3000/mcp",
+          authorizationHeader: "Bearer fetch-token",
+        }),
+      );
+      const adapter = yield* OpenCodeAdapter;
+      const session = yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        purpose: "fetch-worker",
+        runtimeMode: "full-access",
+        resumeCursor: { schemaVersion: 1, sessionId: "must-not-resume" },
+      });
+
+      NodeAssert.equal(session.runtimeMode, "approval-required");
+      NodeAssert.deepEqual(runtimeMock.state.sessionGetIds, []);
+      NodeAssert.deepEqual(runtimeMock.state.connectMcpServers, [{}]);
+      NodeAssert.deepEqual(runtimeMock.state.mcpAddCalls, []);
+      NodeAssert.equal(resolveMcpCalls, 0);
+      NodeAssert.deepEqual(runtimeMock.state.sessionCreateInputs[0]?.permission, [
+        { permission: "*", pattern: "*", action: "deny" },
+        { permission: "read", pattern: "*", action: "allow" },
+        { permission: "glob", pattern: "*", action: "allow" },
+        { permission: "grep", pattern: "*", action: "allow" },
+        { permission: "list", pattern: "*", action: "allow" },
+      ]);
+
+      yield* adapter.stopSession(threadId);
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+      Effect.provide(layer),
+    );
+  });
 
   it.effect("resumes the persisted OpenCode session instead of creating a new one", () =>
     Effect.gen(function* () {
@@ -1337,6 +1407,69 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       });
     }).pipe(Effect.provide(adapterLayer));
   });
+
+  it.effect("parses OpenCode Gemini model selections in sendTurn", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-google-model-selection");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Try Gemini",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "google/gemini-2.5-flash",
+        },
+      });
+
+      NodeAssert.deepEqual(runtimeMock.state.promptCalls.at(-1), {
+        sessionID: "http://127.0.0.1:9999/session",
+        model: {
+          providerID: "google",
+          modelID: "gemini-2.5-flash",
+        },
+        parts: [{ type: "text", text: "Try Gemini" }],
+      });
+    }),
+  );
+
+  it.effect("rejects malformed OpenCode model selections in sendTurn", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-open-code-bad-model");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const error = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "Fix it",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("opencode"),
+            model: "google-gemini-2.5-flash",
+          },
+        })
+        .pipe(Effect.flip);
+
+      NodeAssert.equal(error._tag, "ProviderAdapterValidationError");
+      if (error._tag !== "ProviderAdapterValidationError") {
+        throw new Error("Unexpected error type");
+      }
+      NodeAssert.equal(
+        error.issue,
+        "OpenCode model selection must use the 'provider/model' format (for example: google/gemini-2.5-flash).",
+      );
+      NodeAssert.deepEqual(runtimeMock.state.promptCalls, []);
+    }),
+  );
 
   it.effect("rejects sendTurn model selections for another instance id", () => {
     const instanceId = ProviderInstanceId.make("opencode_zen");

@@ -105,6 +105,26 @@ export interface PlanParallelismReviewGenerationResult {
   recommendedSubagents: number;
 }
 
+export interface FetchExplorationWorkerPlan {
+  readonly scope: string;
+  readonly questions: ReadonlyArray<string>;
+}
+
+export interface FetchExplorationPlan {
+  readonly decision: "skip" | "run";
+  readonly workers: ReadonlyArray<FetchExplorationWorkerPlan>;
+}
+
+export interface FetchExplorationGenerationInput {
+  readonly cwd: string;
+  readonly userRequest: string;
+  readonly repositoryOrientation: string;
+  readonly maxRecommendedWorkers: number;
+  readonly modelSelection: ModelSelection;
+}
+
+export type FetchExplorationGenerationResult = FetchExplorationPlan;
+
 export interface TextGenerationService {
   generateCommitMessage(
     input: CommitMessageGenerationInput,
@@ -119,6 +139,9 @@ export interface TextGenerationService {
   reviewPlanParallelism(
     input: PlanParallelismReviewGenerationInput,
   ): Promise<PlanParallelismReviewGenerationResult>;
+  planFetchExploration(
+    input: FetchExplorationGenerationInput,
+  ): Promise<FetchExplorationGenerationResult>;
 }
 
 /**
@@ -164,6 +187,10 @@ export class TextGeneration extends Context.Service<
     readonly reviewPlanParallelism: (
       input: PlanParallelismReviewGenerationInput,
     ) => Effect.Effect<PlanParallelismReviewGenerationResult, TextGenerationError>;
+
+    readonly planFetchExploration: (
+      input: FetchExplorationGenerationInput,
+    ) => Effect.Effect<FetchExplorationGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -177,7 +204,8 @@ type TextGenerationOp =
   | "generateThreadTitle"
   | "translateTranscriptToEnglish"
   | "improvePrompt"
-  | "reviewPlanParallelism";
+  | "reviewPlanParallelism"
+  | "planFetchExploration";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -232,6 +260,10 @@ export const makeTextGenerationFromRegistry = (
     reviewPlanParallelism: (input) =>
       resolveInstance(registry, "reviewPlanParallelism", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.reviewPlanParallelism(input)),
+      ),
+    planFetchExploration: (input) =>
+      resolveInstance(registry, "planFetchExploration", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.planFetchExploration(input)),
       ),
   });
 

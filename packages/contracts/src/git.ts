@@ -351,11 +351,18 @@ export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()(
   }
 }
 
+export const TextGenerationModelFailureReason = Schema.Literals([
+  "model-unavailable",
+  "entitlement",
+]);
+export type TextGenerationModelFailureReason = typeof TextGenerationModelFailureReason.Type;
+
 export class TextGenerationError extends Schema.TaggedErrorClass<TextGenerationError>()(
   "TextGenerationError",
   {
     operation: Schema.String,
     detail: Schema.String,
+    reason: Schema.optional(TextGenerationModelFailureReason),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {

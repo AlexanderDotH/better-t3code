@@ -544,7 +544,7 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
-  it.effect("keeps a user-managed t3-code server separate from the built-in server key", () =>
+  it.effect("keeps the built-in T3 server when configured MCP servers override thread config", () =>
     Effect.gen(function* () {
       const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
       const client = {
@@ -575,6 +575,10 @@ describe("openCodexThread", () => {
         serviceTier: undefined,
         resumeThreadId: undefined,
         mcpServers: [userManagedT3Server],
+        internalMcpServer: {
+          url: "http://127.0.0.1:3000/mcp/workspace",
+          bearerTokenEnvVar: "T3_MCP_BEARER_TOKEN",
+        },
       });
 
       const firstCall = calls[0];
@@ -589,7 +593,10 @@ describe("openCodexThread", () => {
       const mcpServers = config?.mcp_servers;
       NodeAssert.ok(mcpServers);
       NodeAssert.equal(Object.hasOwn(mcpServers, "t3-managed:t3-code"), true);
-      NodeAssert.equal(Object.hasOwn(mcpServers, "t3-code"), false);
+      NodeAssert.deepStrictEqual(mcpServers["t3-code"], {
+        url: "http://127.0.0.1:3000/mcp/workspace",
+        bearer_token_env_var: "T3_MCP_BEARER_TOKEN",
+      });
     }),
   );
 

@@ -259,6 +259,34 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
     ),
   );
 
+  it.effect("plans Fetch exploration through Cursor ACP", () =>
+    withFakeAcpAgent(
+      {
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+          decision: "run",
+          workers: [{ scope: "Web state", questions: ["Where is Fetch enabled?"] }],
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.planFetchExploration({
+            cwd: process.cwd(),
+            userRequest: "Trace Fetch web state.",
+            repositoryOrientation: "Top-level areas: apps/web",
+            maxRecommendedWorkers: 10,
+            modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "composer-2", [
+              { id: "reasoning", value: "high" },
+            ]),
+          });
+
+          expect(generated).toEqual({
+            decision: "run",
+            workers: [{ scope: "Web state", questions: ["Where is Fetch enabled?"] }],
+          });
+        }),
+    ),
+  );
+
   it.effect("closes the ACP child process after text generation completes", () => {
     const exitLogDir = NodeFS.mkdtempSync(
       NodePath.join(NodeOS.tmpdir(), "t3code-cursor-text-exit-log-"),

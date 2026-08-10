@@ -49,6 +49,9 @@ function event<T extends OrchestrationEvent["type"]>(
 function summary(): OrchestrationSubagentSummary {
   return {
     id: subagentId,
+    origin: "t3-fetch",
+    providerInstanceId: ProviderInstanceId.make("claude-work"),
+    providerDriver: "claudeAgent",
     providerThreadId: "provider-agent-subagent-projection",
     parentId: null,
     path: "/root/projection",
@@ -226,12 +229,18 @@ it.layer(TestLayer)("OrchestrationProjectionPipeline subagent projections", (it)
         assert.deepEqual(childCounts, [{ summaries: 1, messages: 1, plans: 1, activities: 1 }]);
 
         const summaryRows = yield* sql<{
+          readonly origin: string;
+          readonly providerInstanceId: string | null;
+          readonly providerDriver: string | null;
           readonly status: string;
           readonly statusMessage: string | null;
           readonly progressJson: string | null;
           readonly completedAt: string | null;
         }>`
           SELECT
+            origin,
+            provider_instance_id AS "providerInstanceId",
+            provider_driver AS "providerDriver",
             status,
             status_message AS "statusMessage",
             latest_progress_json AS "progressJson",
@@ -240,6 +249,9 @@ it.layer(TestLayer)("OrchestrationProjectionPipeline subagent projections", (it)
           WHERE thread_id = ${threadId}
             AND subagent_id = ${subagentId}
         `;
+        assert.equal(summaryRows[0]?.origin, "t3-fetch");
+        assert.equal(summaryRows[0]?.providerInstanceId, "claude-work");
+        assert.equal(summaryRows[0]?.providerDriver, "claudeAgent");
         assert.equal(summaryRows[0]?.status, "completed");
         assert.equal(summaryRows[0]?.statusMessage, "Done");
         assert.deepEqual(JSON.parse(summaryRows[0]?.progressJson ?? "null"), {

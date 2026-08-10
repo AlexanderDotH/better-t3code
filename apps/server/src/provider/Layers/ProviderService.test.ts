@@ -24,6 +24,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { it, assert, vi } from "@effect/vitest";
 
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -936,6 +937,381 @@ it.effect(
 );
 
 routing.layer("ProviderServiceLive routing", (it) => {
+  it.effect("routes transient Fetch sessions without persisting or resuming them", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = asThreadId("fetch:parent-thread:run-1:0");
+      const runtimeSessionId = RuntimeSessionId.make("fetch-runtime-run-1-0");
+
+      routing.codex.startSession.mockClear();
+      routing.codex.sendTurn.mockClear();
+      routing.codex.interruptTurn.mockClear();
+      routing.codex.respondToRequest.mockClear();
+      routing.codex.respondToUserInput.mockClear();
+      routing.codex.stopSession.mockClear();
+
+      const session = yield* provider.startTransientSession(threadId, {
+        threadId,
+        runtimeSessionId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        purpose: "fetch-worker",
+        cwd: "/tmp/fetch-project",
+        modelSelection: createModelSelection(codexInstanceId, "gpt-5.3-codex-spark", [
+          { id: "reasoningEffort", value: "low" },
+        ]),
+        runtimeMode: "approval-required",
+      });
+
+      assert.equal(session.runtimeSessionId, runtimeSessionId);
+      assert.deepInclude(routing.codex.startSession.mock.calls[0]?.[0], {
+        threadId,
+        runtimeSessionId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        purpose: "fetch-worker",
+        freshSession: true,
+        runtimeMode: "approval-required",
+      });
+      assert.equal(routing.codex.startSession.mock.calls[0]?.[0]?.resumeCursor, undefined);
+
+      const persistedAfterStart = yield* runtimeRepository.getByThreadId({ threadId });
+      assert.equal(Option.isNone(persistedAfterStart), true);
+
+      yield* provider.sendTurn({
+        threadId,
+        input: "Inspect the repository",
+        interactionMode: "plan",
+        attachments: [],
+      });
+      yield* provider.interruptTurn({ threadId });
+      yield* provider.respondToRequest({
+        threadId,
+        requestId: asRequestId("fetch-read-approval"),
+        decision: "accept",
+      });
+      yield* provider.respondToUserInput({
+        threadId,
+        requestId: asRequestId("fetch-hidden-question"),
+        answers: {},
+      });
+
+      assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
+      assert.deepEqual(routing.codex.interruptTurn.mock.calls, [
+        [threadId, undefined, runtimeSessionId],
+      ]);
+      assert.deepEqual(routing.codex.respondToRequest.mock.calls.at(-1), [
+        threadId,
+        asRequestId("fetch-read-approval"),
+        "accept",
+      ]);
+      assert.deepEqual(routing.codex.respondToUserInput.mock.calls.at(-1), [
+        threadId,
+        asRequestId("fetch-hidden-question"),
+        {},
+      ]);
+      assert.equal(
+        (yield* provider.listSessions()).some((listed) => listed.threadId === threadId),
+        false,
+      );
+
+      const target = {
+        threadId,
+        runtimeSessionId,
+        providerInstanceId: codexInstanceId,
+      };
+      assert.equal(
+        (yield* provider.resolveAbortTarget({ threadId })).runtimeSessionId,
+        runtimeSessionId,
+      );
+      yield* provider.stopTransientSession(target);
+
+      assert.deepEqual(routing.codex.stopSession.mock.calls.at(-1), [threadId]);
+      assert.equal(yield* routing.codex.hasSession(threadId), false);
+      assert.equal(yield* provider.isAbortTargetCurrent({ ...target, turnId: null }), false);
+      assert.equal(Option.isNone(yield* runtimeRepository.getByThreadId({ threadId })), true);
+      routing.codex.startSession.mockClear();
+      routing.codex.sendTurn.mockClear();
+      routing.codex.interruptTurn.mockClear();
+      routing.codex.respondToRequest.mockClear();
+      routing.codex.respondToUserInput.mockClear();
+      routing.codex.stopSession.mockClear();
+    }),
+  );
+
+  it.effect("generation-fences transient Fetch cleanup", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("fetch:parent-thread:run-2:0");
+      const runtimeSessionId = RuntimeSessionId.make("fetch-runtime-run-2-0");
+
+      const session = yield* provider.startTransientSession(threadId, {
+        threadId,
+        runtimeSessionId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        purpose: "fetch-worker",
+        cwd: "/tmp/fetch-project",
+        modelSelection: createModelSelection(codexInstanceId, "gpt-5.3-codex-spark"),
+        runtimeMode: "approval-required",
+      });
+      assert.equal(session.runtimeSessionId, runtimeSessionId);
+
+      routing.codex.stopSession.mockClear();
+      yield* provider.stopTransientSession({
+        threadId,
+        runtimeSessionId: RuntimeSessionId.make("stale-fetch-runtime"),
+        providerInstanceId: codexInstanceId,
+      });
+
+      assert.equal(routing.codex.stopSession.mock.calls.length, 0);
+      assert.equal(
+        yield* provider.isAbortTargetCurrent({
+          threadId,
+          runtimeSessionId,
+          providerInstanceId: codexInstanceId,
+          turnId: null,
+        }),
+        true,
+      );
+
+      yield* provider.stopTransientSession({
+        threadId,
+        runtimeSessionId,
+        providerInstanceId: codexInstanceId,
+      });
+      routing.codex.startSession.mockClear();
+      routing.codex.stopSession.mockClear();
+    }),
+  );
+
+  it.effect(
+    "force-stops and clears an exact transient runtime when graceful cleanup is interrupted",
+    () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const threadId = asThreadId("fetch:parent-thread:run-cleanup-interrupt:0");
+        const runtimeSessionId = RuntimeSessionId.make("fetch-runtime-cleanup-interrupt-0");
+        const stopEntered = yield* Deferred.make<void>();
+
+        yield* provider.startTransientSession(threadId, {
+          threadId,
+          runtimeSessionId,
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          purpose: "fetch-worker",
+          cwd: "/tmp/fetch-project",
+          modelSelection: createModelSelection(codexInstanceId, "gpt-5.3-codex-spark"),
+          runtimeMode: "approval-required",
+        });
+        routing.codex.stopSession.mockClear();
+        routing.codex.forceStopSession.mockClear();
+        routing.codex.stopSession.mockImplementationOnce(() =>
+          Deferred.succeed(stopEntered, undefined).pipe(Effect.andThen(Effect.never)),
+        );
+
+        const target = {
+          threadId,
+          runtimeSessionId,
+          providerInstanceId: codexInstanceId,
+        };
+        const cleanupFiber = yield* provider.stopTransientSession(target).pipe(Effect.forkChild);
+        yield* Deferred.await(stopEntered);
+        yield* Fiber.interrupt(cleanupFiber);
+
+        assert.deepEqual(routing.codex.forceStopSession.mock.calls, [[threadId, runtimeSessionId]]);
+        assert.equal(yield* provider.isAbortTargetCurrent({ ...target, turnId: null }), false);
+        const replacementRuntimeSessionId = RuntimeSessionId.make(
+          "fetch-runtime-cleanup-interrupt-replacement-0",
+        );
+        const replacement = yield* provider.startTransientSession(threadId, {
+          threadId,
+          runtimeSessionId: replacementRuntimeSessionId,
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          purpose: "fetch-worker",
+          cwd: "/tmp/fetch-project",
+          modelSelection: createModelSelection(codexInstanceId, "gpt-5.3-codex-spark"),
+          runtimeMode: "approval-required",
+        });
+        assert.equal(replacement.runtimeSessionId, replacementRuntimeSessionId);
+        yield* provider.stopTransientSession({
+          threadId,
+          runtimeSessionId: replacementRuntimeSessionId,
+          providerInstanceId: codexInstanceId,
+        });
+        routing.codex.stopSession.mockClear();
+        routing.codex.forceStopSession.mockClear();
+      }),
+  );
+
+  it.effect("bounds cleanup and clears the binding when graceful and forced stops both hang", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("fetch:parent-thread:run-cleanup-both-hang:0");
+      const runtimeSessionId = RuntimeSessionId.make("fetch-runtime-cleanup-both-hang-0");
+      const stopEntered = yield* Deferred.make<void>();
+      const forceEntered = yield* Deferred.make<void>();
+
+      yield* provider.startTransientSession(threadId, {
+        threadId,
+        runtimeSessionId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        purpose: "fetch-worker",
+        cwd: "/tmp/fetch-project",
+        modelSelection: createModelSelection(codexInstanceId, "gpt-5.3-codex-spark"),
+        runtimeMode: "approval-required",
+      });
+      routing.codex.stopSession.mockClear();
+      routing.codex.forceStopSession.mockClear();
+      routing.codex.stopSession.mockImplementationOnce(() =>
+        Deferred.succeed(stopEntered, undefined).pipe(Effect.andThen(Effect.never)),
+      );
+      routing.codex.forceStopSession.mockImplementationOnce(() =>
+        Deferred.succeed(forceEntered, undefined).pipe(Effect.andThen(Effect.never)),
+      );
+
+      const cleanupFiber = yield* provider
+        .stopTransientSession({
+          threadId,
+          runtimeSessionId,
+          providerInstanceId: codexInstanceId,
+        })
+        .pipe(Effect.timeoutOption("100 millis"), Effect.forkChild);
+      yield* Deferred.await(stopEntered);
+      yield* TestClock.adjust("100 millis");
+      assert.equal(Option.isNone(yield* Fiber.join(cleanupFiber)), true);
+      yield* Deferred.await(forceEntered);
+      assert.deepEqual(routing.codex.forceStopSession.mock.calls, [[threadId, runtimeSessionId]]);
+
+      const replacementRuntimeSessionId = RuntimeSessionId.make(
+        "fetch-runtime-cleanup-both-hang-replacement-0",
+      );
+      const replacement = yield* provider.startTransientSession(threadId, {
+        threadId,
+        runtimeSessionId: replacementRuntimeSessionId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        purpose: "fetch-worker",
+        cwd: "/tmp/fetch-project",
+        modelSelection: createModelSelection(codexInstanceId, "gpt-5.3-codex-spark"),
+        runtimeMode: "approval-required",
+      });
+      assert.equal(replacement.runtimeSessionId, replacementRuntimeSessionId);
+      yield* provider.stopTransientSession({
+        threadId,
+        runtimeSessionId: replacementRuntimeSessionId,
+        providerInstanceId: codexInstanceId,
+      });
+      routing.codex.stopSession.mockClear();
+      routing.codex.forceStopSession.mockClear();
+    }),
+  );
+
+  it.effect("force-stops an exact transient runtime without writing durable state", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = asThreadId("fetch:parent-thread:run-force:0");
+      const runtimeSessionId = RuntimeSessionId.make("fetch-runtime-run-force-0");
+
+      yield* provider.startTransientSession(threadId, {
+        threadId,
+        runtimeSessionId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        purpose: "fetch-worker",
+        cwd: "/tmp/fetch-project",
+        modelSelection: createModelSelection(codexInstanceId, "gpt-5.3-codex-spark"),
+        runtimeMode: "approval-required",
+      });
+      routing.codex.forceStopSession.mockClear();
+
+      const result = yield* provider.forceStopAbortTarget({
+        threadId,
+        runtimeSessionId,
+        providerInstanceId: codexInstanceId,
+        turnId: null,
+      });
+
+      assert.deepEqual(result, { outcome: "terminated", mechanism: "runtime-close" });
+      assert.deepEqual(routing.codex.forceStopSession.mock.calls, [[threadId, runtimeSessionId]]);
+      assert.equal(yield* routing.codex.hasSession(threadId), false);
+      assert.equal(Option.isNone(yield* runtimeRepository.getByThreadId({ threadId })), true);
+      assert.equal(
+        yield* provider.isAbortTargetCurrent({
+          threadId,
+          runtimeSessionId,
+          providerInstanceId: codexInstanceId,
+          turnId: null,
+        }),
+        false,
+      );
+      routing.codex.startSession.mockClear();
+      routing.codex.forceStopSession.mockClear();
+    }),
+  );
+
+  it.effect("clears the exact transient binding when force-stop is interrupted", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("fetch:parent-thread:run-force-interrupt:0");
+      const runtimeSessionId = RuntimeSessionId.make("fetch-runtime-force-interrupt-0");
+      const forceEntered = yield* Deferred.make<void>();
+
+      yield* provider.startTransientSession(threadId, {
+        threadId,
+        runtimeSessionId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        purpose: "fetch-worker",
+        cwd: "/tmp/fetch-project",
+        modelSelection: createModelSelection(codexInstanceId, "gpt-5.3-codex-spark"),
+        runtimeMode: "approval-required",
+      });
+      routing.codex.forceStopSession.mockClear();
+      routing.codex.forceStopSession.mockImplementationOnce(() =>
+        Deferred.succeed(forceEntered, undefined).pipe(Effect.andThen(Effect.never)),
+      );
+
+      const target = {
+        threadId,
+        runtimeSessionId,
+        providerInstanceId: codexInstanceId,
+        turnId: null,
+      };
+      const forceFiber = yield* provider.forceStopAbortTarget(target).pipe(Effect.forkChild);
+      yield* Deferred.await(forceEntered);
+      yield* Fiber.interrupt(forceFiber);
+
+      assert.deepEqual(routing.codex.forceStopSession.mock.calls, [[threadId, runtimeSessionId]]);
+      assert.equal(yield* provider.isAbortTargetCurrent(target), false);
+
+      const replacementRuntimeSessionId = RuntimeSessionId.make(
+        "fetch-runtime-force-interrupt-replacement-0",
+      );
+      const replacement = yield* provider.startTransientSession(threadId, {
+        threadId,
+        runtimeSessionId: replacementRuntimeSessionId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        purpose: "fetch-worker",
+        cwd: "/tmp/fetch-project",
+        modelSelection: createModelSelection(codexInstanceId, "gpt-5.3-codex-spark"),
+        runtimeMode: "approval-required",
+      });
+      assert.equal(replacement.runtimeSessionId, replacementRuntimeSessionId);
+      yield* provider.stopTransientSession({
+        threadId,
+        runtimeSessionId: replacementRuntimeSessionId,
+        providerInstanceId: codexInstanceId,
+      });
+      routing.codex.forceStopSession.mockClear();
+    }),
+  );
+
   it.effect("fences force-stop operations to the captured runtime session", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;

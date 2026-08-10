@@ -65,6 +65,7 @@ import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationRe
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
+import { FetchWorkerCoordinatorLive } from "./fetch/FetchWorkerCoordinator.ts";
 import { TurnAbortCoordinatorLive } from "./orchestration/Layers/TurnAbortCoordinator.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
@@ -120,6 +121,8 @@ import { AssemblyAiStreamingTokenLive } from "./speech/Layers/AssemblyAiStreamin
 import * as ProjectSpeechProfileStore from "./speech/ProjectSpeechProfileStore.ts";
 import * as ProjectSpeechWorkspaceScanner from "./speech/ProjectSpeechWorkspaceScanner.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
+import { ProjectAgentCoordinatorLive } from "./projectAgent/ProjectAgentCoordinator.ts";
+import { ProjectionProjectAgentCoordinationRepositoryLive } from "./persistence/Layers/ProjectionProjectAgentCoordination.ts";
 import {
   clearPersistedServerRuntimeState,
   makePersistedServerRuntimeState,
@@ -234,6 +237,7 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
   Layer.provideMerge(ProviderCommandReactorLive),
+  Layer.provideMerge(FetchWorkerCoordinatorLive),
   Layer.provideMerge(TurnAbortCoordinatorLive),
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
@@ -445,9 +449,14 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
   ),
 );
 
+const ProjectAgentCoordinationLayerLive = ProjectAgentCoordinatorLive.pipe(
+  Layer.provideMerge(OrchestrationLayerLive),
+  Layer.provideMerge(ProjectionProjectAgentCoordinationRepositoryLive),
+);
+
 const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(ProviderLayerLive),
-  Layer.provideMerge(OrchestrationLayerLive),
+  Layer.provideMerge(ProjectAgentCoordinationLayerLive),
 );
 
 const GitWorkbenchLayerLive = GitWorkbenchCoreLayerLive.pipe(

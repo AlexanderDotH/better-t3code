@@ -15,11 +15,12 @@ import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import { codexExecLaunchArgs, resolveCodexLaunchArgs } from "../provider/Layers/codexLaunchArgs.ts";
-import { TextGenerationError } from "@t3tools/contracts";
+import { TextGenerationError, type TextGenerationModelFailureReason } from "@t3tools/contracts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildFetchExplorationPrompt,
   buildPlanParallelismReviewPrompt,
   buildPromptImprovementPrompt,
   buildPrContentPrompt,
@@ -40,6 +41,26 @@ import { codexExecArgs } from "../provider/CodexProcessArgs.ts";
 const CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT = "low";
 const CODEX_TIMEOUT_MS = 180_000;
 const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
+
+export function classifyCodexTextGenerationModelFailure(
+  detail: string,
+): TextGenerationModelFailureReason | undefined {
+  if (
+    /(?:do not have access|not entitled|not enabled|not supported).*\b(?:account|subscription)\b|\b(?:account|subscription)\b.*(?:does not include|lacks access)/iu.test(
+      detail,
+    )
+  ) {
+    return "entitlement";
+  }
+  if (
+    /(?:\bmodel\b.*\b(?:not found|does not exist|unknown|unsupported|not supported|unavailable|not available)\b|\binvalid model\b)/iu.test(
+      detail,
+    )
+  ) {
+    return "model-unavailable";
+  }
+  return undefined;
+}
 /**
  * Build a Codex text-generation closure bound to a specific `CodexSettings`
  * payload. See `makeCodexAdapter` for the overall per-instance rationale.
@@ -105,7 +126,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateThreadTitle"
       | "translateTranscriptToEnglish"
       | "improvePrompt"
-      | "reviewPlanParallelism",
+      | "reviewPlanParallelism"
+      | "planFetchExploration",
     value: unknown,
   ): Effect.Effect<string, TextGenerationError> =>
     encodeJsonString(value).pipe(
@@ -127,7 +149,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateThreadTitle"
       | "translateTranscriptToEnglish"
       | "improvePrompt"
-      | "reviewPlanParallelism",
+      | "reviewPlanParallelism"
+      | "planFetchExploration",
     attachments: TextGeneration.BranchNameGenerationInput["attachments"],
   ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> {
     if (!attachments || attachments.length === 0) {
@@ -172,7 +195,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateThreadTitle"
       | "translateTranscriptToEnglish"
       | "improvePrompt"
-      | "reviewPlanParallelism";
+      | "reviewPlanParallelism"
+      | "planFetchExploration";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -197,6 +221,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         codexConfig.binaryPath || "codex",
         codexExecArgs([
           ...codexExecLaunchArgs(launchArgs),
+          ...(operation === "planFetchExploration"
+            ? ["--disable", "multi_agent", "-c", "mcp_servers={}"]
+            : []),
           "--ephemeral",
           "--skip-git-repo-check",
           "-s",
@@ -252,12 +279,14 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         const stderrDetail = stderr.trim();
         const stdoutDetail = stdout.trim();
         const detail = stderrDetail.length > 0 ? stderrDetail : stdoutDetail;
+        const reason = classifyCodexTextGenerationModelFailure(detail);
         return yield* new TextGenerationError({
           operation,
           detail:
             detail.length > 0
               ? `Codex CLI command failed: ${detail}`
               : `Codex CLI command failed with code ${exitCode}.`,
+          ...(reason ? { reason } : {}),
         });
       }
     });
@@ -457,6 +486,18 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       return { recommendedSubagents: generated.recommendedSubagents };
     });
 
+  const planFetchExploration: TextGeneration.TextGeneration["Service"]["planFetchExploration"] =
+    Effect.fn("CodexTextGeneration.planFetchExploration")(function* (input) {
+      const { prompt, outputSchema } = buildFetchExplorationPrompt(input);
+      return yield* runCodexJson({
+        operation: "planFetchExploration",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
@@ -465,5 +506,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     translateTranscriptToEnglish,
     improvePrompt,
     reviewPlanParallelism,
+    planFetchExploration,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

@@ -1053,6 +1053,24 @@ it.effect("decodes subagent summaries with explicit progress and lifecycle state
     assert.strictEqual(parsed.id, "agent-contracts");
     assert.strictEqual(parsed.status, "running");
     assert.strictEqual(parsed.latestProgress?.summary, "Running contract tests");
+    assert.strictEqual(parsed.origin, "provider-native");
+    assert.strictEqual(parsed.providerInstanceId, null);
+    assert.strictEqual(parsed.providerDriver, null);
+  }),
+);
+
+it.effect("decodes T3 Fetch subagent provider metadata", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationSubagentSummary({
+      ...orchestrationSubagentSummaryFixture,
+      origin: "t3-fetch",
+      providerInstanceId: "claude_work",
+      providerDriver: "claudeAgent",
+    });
+
+    assert.strictEqual(parsed.origin, "t3-fetch");
+    assert.strictEqual(parsed.providerInstanceId, "claude_work");
+    assert.strictEqual(parsed.providerDriver, "claudeAgent");
   }),
 );
 

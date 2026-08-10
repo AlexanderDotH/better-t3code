@@ -6,6 +6,7 @@ import {
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
+  resolveProviderSessionPurpose,
 } from "./provider.ts";
 
 const decodeProviderSessionStartInput = Schema.decodeUnknownSync(ProviderSessionStartInput);
@@ -21,6 +22,38 @@ function getOptionValue(
 }
 
 describe("ProviderSessionStartInput", () => {
+  it("keeps legacy sessions interactive when purpose is absent", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-interactive",
+      providerInstanceId: "codex",
+      runtimeMode: "full-access",
+    });
+
+    expect(resolveProviderSessionPurpose(parsed.purpose)).toBe("interactive");
+  });
+
+  it("accepts the Fetch worker purpose", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "fetch:parent:run:0",
+      providerInstanceId: "claude_work",
+      runtimeMode: "approval-required",
+      purpose: "fetch-worker",
+    });
+
+    expect(parsed.purpose).toBe("fetch-worker");
+  });
+
+  it("rejects unknown session purposes", () => {
+    expect(() =>
+      decodeProviderSessionStartInput({
+        threadId: "thread-invalid-purpose",
+        providerInstanceId: "codex",
+        runtimeMode: "full-access",
+        purpose: "background",
+      }),
+    ).toThrow();
+  });
+
   it("accepts an optional freshSession flag", () => {
     const parsed = decodeProviderSessionStartInput({
       threadId: "thread-fresh",

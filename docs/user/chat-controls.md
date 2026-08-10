@@ -94,15 +94,77 @@ between web, desktop, and mobile, and T3 Code never silently lowers the saved th
 
 ## Exploring repositories with Fetch
 
-Enable **Fetch** in **Settings > Experimental** to let supported providers explore repository tasks
-with three native subagents in parallel. Fetch gives each subagent a distinct, read-only discovery
-scope, allows the primary agent to keep exploring while they run, and requires their findings to be
-collected before the first file change. The user message shown in the transcript stays unchanged;
-the narrow Fetch mode is attached separately to that provider turn.
+Enable **Fetch** in **Settings > Experimental** to explore a repository before the main provider
+starts its turn. The enable switch is device-local, defaults off, and is currently available in web
+and desktop. The **Fetch model** selection below it is stored on the connected T3 environment, so
+every client using that environment sees the same provider, model, and traits. Turning Fetch off
+disables the selector visually but retains its value.
 
-Fetch does not run for conversational or other non-repository requests. It also stays inactive when
-the selected provider does not advertise support for at least three native subagents. The setting is
-device-local, defaults off, and is currently available in web and desktop.
+**Auto** is the default. It shows the selection it currently resolves to and uses this order:
+
+1. A live, non-custom `gpt-5.3-codex-spark` model on the default Codex instance, then another Codex
+   instance in stable instance-ID order.
+2. A live, non-custom `gpt-5.6-luna` model on a Codex instance, with low reasoning.
+3. The environment's configured text-generation model when its current provider instance and model
+   are Fetch-capable.
+4. The default or first model from the first available Fetch-capable provider instance.
+
+If an automatically selected Spark model reports a typed entitlement or model-unavailable error
+before workers start, T3 Code tries Luna with low reasoning once. It does not use that fallback for
+timeouts or unrelated provider failures. An explicit selection is always exact: disabling its
+provider or losing access to its model produces a visible Fetch warning, skips exploration, and
+continues the unchanged main turn without silently substituting another model. **Reset** returns the
+selection to Auto.
+
+Fetch is independent of the thread's main model. A Cursor turn can use Claude, Codex, Grok, Cursor,
+or OpenCode workers, and every worker in one run uses the same exact selection and model traits. A
+hidden structured planner uses that selection too. It chooses zero workers for requests that do not
+benefit from repository exploration, or between one and the provider's advertised worker budget.
+The five built-in providers initially advertise eight; T3 Code has no separate global ceiling, so a
+provider or fork may advertise more. A planner failure falls back to one broad repository worker.
+
+Workers are fresh, transient provider sessions rooted at the project or worktree owned by the
+connected environment. They are restricted to read-only exploration, do not receive configured MCP
+servers, cannot delegate to nested agents, and are removed after the run rather than resumed later.
+The planner itself stays hidden. Actual workers use the existing agent pills and transcript dialog,
+including their Fetch origin, provider instance, model, and reasoning or effort. Findings are
+collected before the main provider receives the turn, and the main provider remains responsible for
+verifying them before editing.
+
+Partial failures and timeouts do not discard successful findings or retry failed workers. If all
+workers fail, or no input space remains for their bounded context, the main turn still continues and
+Fetch shows a warning. Select **Stop generation** while Fetch is running to interrupt the planner
+and exact worker runtimes; the existing second-click force stop and five-second escalation apply.
+Each planner or worker session can consume additional quota from the selected provider account.
+
+For remote projects, resolution and execution happen on the T3 environment that owns the project,
+using that environment's provider instances, credentials, filesystem, and persisted Fetch model.
+The remote client only opts the turn into Fetch, observes its busy state and transcripts, and can
+stop it through the normal session controls. Mobile does not expose the Fetch enable switch, but it
+can still observe and stop a Fetch-enabled turn started elsewhere.
+
+## Coordinating parallel project chats
+
+When multiple root chats are actively working in the same project, T3 Code automatically gives their
+agents project-scoped coordination tools. There is no setting or separate coordination panel. Agents
+announce a short work summary, claim project-relative paths or named topics before editing, inspect
+active peers, and exchange direct or broadcast messages when work overlaps or one result unblocks
+another. A root chat working alone receives no coordination instruction and continues normally.
+
+Claims are cooperative warnings, not file locks. Conflicting path claims include exact paths and
+parent/child paths, while topic claims match the same normalized topic. A claim lasts only for its
+agent's current turn and is released when the turn stops, completes, or the thread is archived or
+deleted. Native subagents share their root chat's identity and claim; temporary Fetch workers are not
+participants.
+
+Sent and received coordination messages appear chronologically in the normal thread timeline on web,
+desktop, and mobile. They are delivered to the other agent's durable inbox and never interrupt or
+rewrite its live prompt. The receiving agent checks that inbox at safe checkpoints, so coordination
+can influence subsequent work without corrupting an in-progress tool call or edit.
+
+A direct message can also target a peer chat whose agent is no longer running. T3 Code keeps the
+message in that chat's inbox and starts a new turn in the same chat so the agent can handle it and
+reply. Broadcast messages remain limited to active peers and never wake every inactive project chat.
 
 ## Implementing a plan with subagents
 

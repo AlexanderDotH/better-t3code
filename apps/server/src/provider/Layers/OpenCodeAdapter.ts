@@ -32,6 +32,7 @@ import type {
   McpStatus,
   OpencodeClient,
   Part,
+  PermissionRuleset,
   PermissionRequest,
   QuestionRequest,
 } from "@opencode-ai/sdk/v2";
@@ -69,6 +70,13 @@ import { bindProviderRuntimeEventOrigin } from "../runtimeEventOrigin.ts";
 import * as Option from "effect/Option";
 
 const OPENCODE_PROVIDER = ProviderDriverKind.make("opencode");
+const FETCH_WORKER_PERMISSION_RULES = [
+  { permission: "*", pattern: "*", action: "deny" },
+  { permission: "read", pattern: "*", action: "allow" },
+  { permission: "glob", pattern: "*", action: "allow" },
+  { permission: "grep", pattern: "*", action: "allow" },
+  { permission: "list", pattern: "*", action: "allow" },
+] satisfies PermissionRuleset;
 
 /**
  * Version tag stamped into the OpenCode resume cursor. Bump if the cursor
@@ -272,6 +280,8 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const MCP_PROVIDER_KEY_MAX_LENGTH = 512;
 const MCP_SERVER_NAME_MAX_LENGTH = 128;
 const MCP_MANAGED_KEY_PREFIX = "t3-managed:";
+const OPENCODE_MODEL_SELECTION_FORMAT_ERROR =
+  "OpenCode model selection must use the 'provider/model' format (for example: google/gemini-2.5-flash).";
 
 function boundedMcpText(value: string, maximumLength: number, fallback: string): string {
   const trimmed = value.trim();
@@ -1588,14 +1598,22 @@ export function makeOpenCodeAdapter(
 
     const startSession: OpenCodeAdapterShape["startSession"] = Effect.fn("startSession")(
       function* (input) {
+        const fetchWorker = input.purpose === "fetch-worker";
+        const runtimeMode = fetchWorker ? "approval-required" : input.runtimeMode;
+        const permissionRules = fetchWorker
+          ? FETCH_WORKER_PERMISSION_RULES
+          : buildOpenCodePermissionRules(runtimeMode);
         const binaryPath = openCodeSettings.binaryPath;
         const serverUrl = openCodeSettings.serverUrl;
         const serverPassword = openCodeSettings.serverPassword;
         const directory = input.cwd ?? serverConfig.cwd;
-        const resumeSessionId = parseOpenCodeResume(input.resumeCursor)?.sessionId;
-        const mcpServers = options?.resolveMcpServers
-          ? yield* options.resolveMcpServers({ cwd: directory })
-          : {};
+        const resumeSessionId = fetchWorker
+          ? undefined
+          : parseOpenCodeResume(input.resumeCursor)?.sessionId;
+        const mcpServers =
+          !fetchWorker && options?.resolveMcpServers
+            ? yield* options.resolveMcpServers({ cwd: directory })
+            : {};
         const existing = sessions.get(input.threadId);
         if (existing) {
           yield* stopOpenCodeContext(existing);
@@ -1622,7 +1640,9 @@ export function makeOpenCodeAdapter(
                 directory,
                 ...(server.external && serverPassword ? { serverPassword } : {}),
               });
-              const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+              const mcpSession = fetchWorker
+                ? undefined
+                : McpProviderSession.readMcpProviderSession(input.threadId);
               if (mcpSession && !server.external) {
                 yield* runOpenCodeSdk("mcp.add", () =>
                   client.mcp.add({
@@ -1677,7 +1697,7 @@ export function makeOpenCodeAdapter(
                   yield* runOpenCodeSdk("session.update", () =>
                     client.session.update({
                       sessionID: reusable.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                      permission: permissionRules,
                     }),
                   );
                   return { openCodeSession: reusable, created: false };
@@ -1704,7 +1724,7 @@ export function makeOpenCodeAdapter(
                   yield* runOpenCodeSdk("session.update", () =>
                     client.session.update({
                       sessionID: forked.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                      permission: permissionRules,
                     }),
                   );
                   return { openCodeSession: forked, created: true };
@@ -1717,7 +1737,7 @@ export function makeOpenCodeAdapter(
                 }
                 const createdSession = yield* runOpenCodeSdk("session.create", () =>
                   client.session.create({
-                    permission: buildOpenCodePermissionRules(input.runtimeMode),
+                    permission: permissionRules,
                   }),
                 );
                 if (!createdSession.data) {
@@ -1770,7 +1790,7 @@ export function makeOpenCodeAdapter(
           providerInstanceId: boundInstanceId,
           runtimeSessionId,
           status: "ready",
-          runtimeMode: input.runtimeMode,
+          runtimeMode,
           cwd: directory,
           ...(input.modelSelection ? { model: input.modelSelection.model } : {}),
           threadId: input.threadId,
@@ -1853,7 +1873,7 @@ export function makeOpenCodeAdapter(
         return yield* new ProviderAdapterValidationError({
           provider,
           operation: "sendTurn",
-          issue: "OpenCode model selection must use the 'provider/model' format.",
+          issue: OPENCODE_MODEL_SELECTION_FORMAT_ERROR,
         });
       }
 
