@@ -10,6 +10,7 @@ fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 RELEASE_DIR="$ROOT/apps/desktop/release"
 INSTALL_DEPS=true
+PNPM_SHIM_DIR=""
 
 usage() {
   cat <<'EOF'
@@ -65,9 +66,80 @@ if [[ ! -f "$ROOT/package.json" ]]; then
 fi
 
 cd "$ROOT"
-if $INSTALL_DEPS && [[ ! -d "$ROOT/node_modules" ]]; then
+
+resolve_pnpm_runner() {
+  local pnpm_error=""
+  if command -v pnpm >/dev/null 2>&1; then
+    if pnpm -v >/dev/null 2>&1; then
+      PNPM_BIN="$(command -v pnpm)"
+      PNPM_COREPACK_ROOT=""
+      return
+    fi
+    pnpm_error="$(pnpm -v 2>&1 || true)"
+    if [[ "$pnpm_error" == *"ERR_UNKNOWN_BUILTIN_MODULE"* ]] || [[ "$pnpm_error" == *"This version of pnpm requires at least Node.js"* ]]; then
+      echo "warning: installed pnpm is not compatible with Node.js $(node -v)" >&2
+    else
+      echo "warning: unable to use pnpm: $pnpm_error" >&2
+    fi
+  fi
+
+  local bundled_pnpm_bin="$HOME/.vite-plus/package_manager/pnpm/10.24.0/pnpm/bin/pnpm.cjs"
+  if [[ -f "$bundled_pnpm_bin" ]]; then
+    PNPM_BIN="$bundled_pnpm_bin"
+    PNPM_COREPACK_ROOT="/tmp/t3code-pnpm-corepack-compat"
+    return
+  fi
+
+  echo "error: no compatible pnpm executable found." >&2
+  echo "error: install a newer Node.js + pnpm toolchain or ensure Node.js >=22.13 for pnpm@11+" >&2
+  exit 1
+}
+
+run_pnpm() {
+  if [[ -n "${PNPM_COREPACK_ROOT:-}" ]]; then
+    COREPACK_ROOT="$PNPM_COREPACK_ROOT" node "$PNPM_BIN" "$@"
+  else
+    "$PNPM_BIN" "$@"
+  fi
+}
+
+resolve_pnpm_runner
+if [[ -n "${PNPM_COREPACK_ROOT:-}" ]]; then
+  export COREPACK_ROOT="$PNPM_COREPACK_ROOT"
+  export T3CODE_PNPM_COREPACK_ROOT="$PNPM_COREPACK_ROOT"
+fi
+if [[ "$PNPM_BIN" == *"/pnpm/"* && "$PNPM_BIN" == *"/pnpm/"* ]]; then
+  T3CODE_PNPM_MANAGER="${PNPM_BIN#*/pnpm/}"
+  T3CODE_PNPM_MANAGER="${T3CODE_PNPM_MANAGER%%/*}"
+  export T3CODE_PNPM_MANAGER="pnpm@${T3CODE_PNPM_MANAGER}"
+elif [[ -x "${PNPM_BIN:-}" ]]; then
+  T3CODE_PNPM_MANAGER="$("$PNPM_BIN" -v 2>/dev/null | sed -n '1,1p' | tr -d '[:space:]')"
+  if [[ -n "${T3CODE_PNPM_MANAGER:-}" ]]; then
+    export T3CODE_PNPM_MANAGER="pnpm@${T3CODE_PNPM_MANAGER}"
+  fi
+fi
+if [[ -z "${T3CODE_PNPM_MANAGER:-}" ]]; then
+  export T3CODE_PNPM_MANAGER="pnpm@11.10.0"
+fi
+if [[ -n "${PNPM_BIN:-}" ]]; then
+  PNPM_SHIM_DIR="$(mktemp -d /tmp/t3code-pnpm-bin-XXXXXX)"
+  T3CODE_PNPM_BIN="$PNPM_SHIM_DIR/pnpm"
+  cat >"$T3CODE_PNPM_BIN" <<EOF
+#!/usr/bin/env sh
+exec node "$PNPM_BIN" "\$@"
+EOF
+  chmod +x "$T3CODE_PNPM_BIN"
+  export T3CODE_PNPM_BIN
+  export PATH="$PNPM_SHIM_DIR:$PATH"
+fi
+
+if $INSTALL_DEPS && {
+  [[ ! -d "$ROOT/node_modules" ]] || \
+  [[ ! -d "$ROOT/node_modules/.pnpm" ]] || \
+  [[ ! -d "$ROOT/node_modules/@t3tools/shared" ]];
+}; then
   echo "==> pnpm install --frozen-lockfile"
-  pnpm install --frozen-lockfile
+  run_pnpm install --frozen-lockfile
 fi
 if [[ ! -d "$ROOT/node_modules" ]]; then
   echo "error: node_modules is missing; rerun without --no-install-deps" >&2
@@ -79,11 +151,14 @@ RELEASE_TEMP="$RELEASE_DIR/.T3Code.AppImage.new.$$"
 cleanup() {
   rm -rf "$BUILD_OUT"
   rm -f "$RELEASE_TEMP"
+  if [[ -n "${PNPM_SHIM_DIR:-}" ]]; then
+    rm -rf "$PNPM_SHIM_DIR"
+  fi
 }
 trap cleanup EXIT
 
 echo "==> building Linux AppImage in $BUILD_OUT"
-T3CODE_DESKTOP_OUTPUT_DIR="$BUILD_OUT" pnpm run dist:desktop:linux
+T3CODE_DESKTOP_OUTPUT_DIR="$BUILD_OUT" run_pnpm run dist:desktop:linux
 
 shopt -s nullglob
 artifacts=("$BUILD_OUT"/*.AppImage)
