@@ -294,7 +294,9 @@ The following structural decisions are explicit:
 - Remove upstream outbound `AnalyticsService` product analytics again while preserving local
   resource telemetry.
 - Run fork CI on GitHub-hosted `ubuntu-24.04` and `macos-26` workers because the fork does not have
-  access to upstream's organization-scoped Blacksmith runners.
+  access to upstream's organization-scoped Blacksmith runners. Reserve 20 minutes for the full Test
+  job because the complete server matrix exceeds the former 10-minute limit on the hosted Linux
+  worker even while tests continue to pass.
 - Regenerate `routeTree.gen.ts`, dependency metadata, and `pnpm-lock.yaml`; never hand-merge
   generated output.
 - Preserve the machine-safety rules in [`AGENTS.md`](../../AGENTS.md): never manage a running T3 Code
