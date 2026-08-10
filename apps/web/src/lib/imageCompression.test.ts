@@ -123,9 +123,13 @@ describe("compressImageForStash", () => {
   });
 
   it("reports too-large when even the smallest encoding overflows the budget", async () => {
-    const { close } = stubCanvasPipeline(() => 8_000_000);
+    // Keep this branch test intentionally small: the encoder is invoked for
+    // every quality and fallback-scale step, so multi-megabyte fake payloads
+    // turn a deterministic unit test into a memory/CPU stress test in CI.
+    const budgetChars = 1_000;
+    const { close } = stubCanvasPipeline(() => 1_000);
 
-    const result = await compressImageForStash(makeFile(9_000_000));
+    const result = await compressImageForStash(makeFile(1_000), budgetChars);
 
     expect(result).toEqual({ ok: false, reason: "too-large" });
     // The bitmap must still be released on the give-up path.
