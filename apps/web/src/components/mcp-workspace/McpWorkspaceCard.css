@@ -114,7 +114,9 @@
   text-overflow: ellipsis;
 }
 
-.mcp-workspace-peek__content {
+.mcp-workspace-peek .workspace-card-deck__peek-content > .mcp-workspace-peek__content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   gap: 0.5rem;
 }
 
@@ -133,12 +135,13 @@
 
 .mcp-workspace-peek__provider {
   min-width: 0;
+  justify-self: center;
 }
 
 .mcp-workspace-peek__status {
-  margin-inline-start: auto;
   flex: none;
-  max-width: 50%;
+  max-width: 100%;
+  justify-self: end;
 }
 
 .mcp-workspace-peek__status[data-mcp-workspace-state="upgrade-required"],
