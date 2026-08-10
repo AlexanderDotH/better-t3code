@@ -647,7 +647,7 @@ describe("ProviderCommandReactor", () => {
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
     const runEffect = <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect);
 
-    await Effect.runPromise(
+    await runEffect(
       engine.dispatch({
         type: "project.create",
         commandId: CommandId.make("cmd-project-create"),
@@ -658,7 +658,7 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
-    await Effect.runPromise(
+    await runEffect(
       engine.dispatch({
         type: "thread.create",
         commandId: CommandId.make("cmd-thread-create"),
@@ -4066,7 +4066,7 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-approval"),
@@ -4084,7 +4084,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.approval.respond",
         commandId: CommandId.make("cmd-approval-respond"),

@@ -19,16 +19,24 @@ it("normalizes logical paths and topic keys", () => {
   ]);
 });
 
-it.each(["/etc/passwd", "../outside", "src/../outside", "C:/repo", "src\\server", "src/*"])(
-  "rejects unsafe project claim path %s",
-  (path) => {
-    expect(() =>
-      normalizeProjectAgentClaims([{ kind: "path", path }], {
-        caseInsensitivePaths: false,
-      }),
-    ).toThrow();
-  },
-);
+it.each([
+  "/etc/passwd",
+  "../outside",
+  "src/../outside",
+  "C:/repo",
+  "src\\server",
+  "src/*",
+  "src/[generated]",
+  "src/{generated}",
+  "src/name?",
+  "src/\u0000secret",
+])("rejects unsafe project claim path %s", (path) => {
+  expect(() =>
+    normalizeProjectAgentClaims([{ kind: "path", path }], {
+      caseInsensitivePaths: false,
+    }),
+  ).toThrow();
+});
 
 it("detects exact, ancestor, whole-project, and normalized topic conflicts", () => {
   const existing: ReadonlyArray<ProjectAgentClaim> = [

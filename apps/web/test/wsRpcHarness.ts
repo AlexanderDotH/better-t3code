@@ -50,6 +50,12 @@ const STREAM_METHODS = new Set(
 );
 
 const ALL_RPC_METHODS = Array.from(WsRpcGroup.requests.keys());
+const SERVER_DISCOVER_SOURCE_CONTROL_RPC = WsRpcGroup.requests.get(
+  WS_METHODS.serverDiscoverSourceControl,
+)!;
+const encodeServerDiscoverSourceControlExit = Schema.encodeUnknownSync(
+  Schema.toCodecJson(Rpc.exitSchema(SERVER_DISCOVER_SOURCE_CONTROL_RPC)),
+);
 
 function normalizeRequest(tag: string, payload: unknown): NormalizedWsRpcRequestBody {
   if (payload && typeof payload === "object" && !Array.isArray(payload)) {
@@ -216,12 +222,11 @@ export class BrowserWsRpcHarness {
       return response;
     }
     const tag = requestTags.get(response.requestId);
-    const rpc = tag ? WsRpcGroup.requests.get(tag) : undefined;
-    if (!rpc || tag !== WS_METHODS.serverDiscoverSourceControl) {
+    if (tag !== WS_METHODS.serverDiscoverSourceControl) {
       requestTags.delete(response.requestId);
       return response;
     }
-    const exit = Schema.encodeUnknownSync(Schema.toCodecJson(Rpc.exitSchema(rpc)))(response.exit);
+    const exit = encodeServerDiscoverSourceControlExit(response.exit);
     requestTags.delete(response.requestId);
     return { ...response, exit };
   }

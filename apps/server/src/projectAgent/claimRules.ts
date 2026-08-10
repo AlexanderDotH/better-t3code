@@ -5,7 +5,7 @@ export interface ProjectAgentClaimConflictPair {
   readonly existing: ProjectAgentClaim;
 }
 
-const INVALID_PATH_PATTERN = /[\\*?\[\]{}\0]/;
+const INVALID_PATH_PATTERN = /[\\*?[\]{}]/;
 const DRIVE_PATH_PATTERN = /^[a-z]:/i;
 
 function normalizePathClaim(
@@ -17,7 +17,8 @@ function normalizePathClaim(
     trimmed.length === 0 ||
     trimmed.startsWith("/") ||
     DRIVE_PATH_PATTERN.test(trimmed) ||
-    INVALID_PATH_PATTERN.test(trimmed)
+    INVALID_PATH_PATTERN.test(trimmed) ||
+    trimmed.includes("\u0000")
   ) {
     throw new Error("Path claims must be safe project-relative logical paths.");
   }

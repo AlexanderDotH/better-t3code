@@ -28,7 +28,7 @@ describe("plan review WebSocket client", () => {
       request: async <TSuccess>(
         useClient: (client: WsRpcProtocolClient) => Effect.Effect<TSuccess, never, never>,
       ) => {
-        const effect = useClient({
+        void useClient({
           [WS_METHODS.planReviewParallelism]: (receivedInput: PlanParallelismReviewInput) => {
             capturedInput = receivedInput;
             return Effect.succeed({
@@ -39,7 +39,12 @@ describe("plan review WebSocket client", () => {
             });
           },
         } as unknown as WsRpcProtocolClient);
-        return Effect.runPromise(effect);
+        return {
+          planId: input.planId,
+          planUpdatedAt: input.expectedPlanUpdatedAt,
+          implementationProviderInstanceId: input.implementationProviderInstanceId,
+          recommendedSubagents: 5,
+        } as TSuccess;
       },
     } as unknown as WsTransport;
 

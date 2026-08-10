@@ -490,8 +490,6 @@ type EnvironmentUnavailableState = {
   readonly connection: EnvironmentConnectionPresentation;
 };
 
-type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
-
 interface ProjectSpeechPreindexDialogModel {
   readonly draftKey: string;
   readonly environmentId: EnvironmentId;
