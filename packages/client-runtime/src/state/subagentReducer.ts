@@ -35,6 +35,9 @@ function placeholderSubagent(
 ): OrchestrationSubagentSummary {
   return {
     id: subagentId,
+    origin: "provider-native",
+    providerInstanceId: null,
+    providerDriver: null,
     providerThreadId: subagentId,
     parentId: null,
     path: null,

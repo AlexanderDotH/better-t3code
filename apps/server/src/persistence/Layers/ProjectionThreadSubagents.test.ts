@@ -2,6 +2,7 @@ import {
   EventId,
   MessageId,
   OrchestrationProposedPlanId,
+  ProviderInstanceId,
   SubagentId,
   ThreadId,
   TurnId,
@@ -42,6 +43,9 @@ layer("ProjectionThreadSubagent repositories", (it) => {
       yield* repository.upsert({
         threadId,
         id: subagentId,
+        origin: "t3-fetch",
+        providerInstanceId: ProviderInstanceId.make("claude-work"),
+        providerDriver: "claudeAgent",
         providerThreadId: "provider-agent-research",
         parentId: null,
         path: "/root/research",
@@ -76,6 +80,9 @@ layer("ProjectionThreadSubagent repositories", (it) => {
       yield* repository.upsert({
         threadId,
         id: subagentId,
+        origin: "t3-fetch",
+        providerInstanceId: ProviderInstanceId.make("claude-work"),
+        providerDriver: "claudeAgent",
         providerThreadId: "provider-agent-research",
         parentId: null,
         path: "/root/research",
@@ -110,6 +117,9 @@ layer("ProjectionThreadSubagent repositories", (it) => {
       const persisted = yield* repository.getById({ threadId, subagentId });
       assert.equal(persisted._tag, "Some");
       assert.equal(Option.getOrThrow(persisted).status, "completed");
+      assert.equal(Option.getOrThrow(persisted).origin, "t3-fetch");
+      assert.equal(Option.getOrThrow(persisted).providerInstanceId, "claude-work");
+      assert.equal(Option.getOrThrow(persisted).providerDriver, "claudeAgent");
       assert.equal(
         Option.getOrThrow(persisted).latestProgress?.summary,
         "Persistence review complete",

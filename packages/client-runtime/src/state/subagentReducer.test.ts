@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   EventId,
   MessageId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   SubagentId,
   ThreadId,
   type OrchestrationEvent,
@@ -18,6 +20,9 @@ const createdAt = "2026-07-30T10:00:00.000Z";
 
 const detail: OrchestrationSubagentDetail = {
   id: subagentId,
+  origin: "t3-fetch",
+  providerInstanceId: ProviderInstanceId.make("claude-work"),
+  providerDriver: ProviderDriverKind.make("claudeAgent"),
   providerThreadId: "provider-agent-client-runtime",
   parentId: null,
   path: "/root/client_runtime",
@@ -80,6 +85,9 @@ describe("applySubagentDetailEvent", () => {
         threadId,
         subagent: {
           id: subagentId,
+          origin: detail.origin,
+          providerInstanceId: detail.providerInstanceId,
+          providerDriver: detail.providerDriver,
           providerThreadId: detail.providerThreadId,
           parentId: detail.parentId,
           path: detail.path,
@@ -105,6 +113,9 @@ describe("applySubagentDetailEvent", () => {
       kind: "updated",
       subagent: {
         nickname: "Bernoulli",
+        origin: "t3-fetch",
+        providerInstanceId: "claude-work",
+        providerDriver: "claudeAgent",
         statusMessage: "Verifying",
         messages: [{ text: "Existing" }],
       },

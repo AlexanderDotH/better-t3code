@@ -68,6 +68,9 @@ function makeSubagent(
 ): OrchestrationSubagentSummary {
   return {
     id: subagentId,
+    origin: "t3-fetch",
+    providerInstanceId: ProviderInstanceId.make("claude-work"),
+    providerDriver: "claudeAgent",
     providerThreadId: "provider-thread-contracts",
     parentId: null,
     path: "/root/contracts",
@@ -145,6 +148,9 @@ describe("subagent orchestration projection", () => {
 
       expect(placeholder).toMatchObject({
         id: subagentId,
+        origin: "provider-native",
+        providerInstanceId: null,
+        providerDriver: null,
         providerThreadId: subagentId,
         parentId: null,
         path: null,
@@ -182,6 +188,9 @@ describe("subagent orchestration projection", () => {
       );
 
       expect(discovered.threads[0]?.subagents[0]).toMatchObject({
+        origin: "t3-fetch",
+        providerInstanceId: "claude-work",
+        providerDriver: "claudeAgent",
         providerThreadId: "provider-thread-contracts",
         path: "/root/contracts",
         name: "contracts",

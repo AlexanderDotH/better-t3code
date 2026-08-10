@@ -53,7 +53,7 @@ import {
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
-import { resolveFetchModeForProvider } from "@t3tools/shared/fetchMode";
+import { resolveFetchMode } from "@t3tools/shared/fetchMode";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
 import { useAtomValue } from "@effect/atom-react";
@@ -5140,13 +5140,7 @@ function ChatViewContent(props: ChatViewProps) {
       effort: turnPromptEffort,
       text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
     });
-    const fetchProvider = providerStatuses.find(
-      (provider) => provider.instanceId === ctxSelectedModelSelection.instanceId,
-    );
-    const fetchMode = resolveFetchModeForProvider({
-      featureEnabled: settings.experimentalFetch,
-      provider: fetchProvider,
-    });
+    const fetchMode = resolveFetchMode({ featureEnabled: settings.experimentalFetch });
     const turnAttachmentsPromise = Promise.all(
       composerImagesSnapshot.map(async (image) => ({
         type: "image" as const,

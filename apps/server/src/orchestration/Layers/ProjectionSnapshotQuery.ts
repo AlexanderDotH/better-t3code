@@ -342,6 +342,9 @@ function mapPersistedSubagentSummaryRow(
 ): OrchestrationSubagentSummary {
   return {
     id: row.id,
+    origin: row.origin,
+    providerInstanceId: row.providerInstanceId,
+    providerDriver: row.providerDriver,
     providerThreadId: row.providerThreadId,
     parentId: row.parentId,
     path: row.path,
@@ -647,6 +650,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           subagent_id AS "id",
+          origin,
+          provider_instance_id AS "providerInstanceId",
+          provider_driver AS "providerDriver",
           provider_thread_id AS "providerThreadId",
           parent_subagent_id AS "parentId",
           path,
@@ -677,6 +683,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           subagent_id AS "id",
+          origin,
+          provider_instance_id AS "providerInstanceId",
+          provider_driver AS "providerDriver",
           provider_thread_id AS "providerThreadId",
           parent_subagent_id AS "parentId",
           path,

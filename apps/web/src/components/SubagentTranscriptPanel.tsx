@@ -22,6 +22,7 @@ import {
   deriveSubagentTranscriptEntries,
   resolveSubagentDisplayName,
   resolveSubagentStatusPresentation,
+  resolveSubagentTranscriptMetadata,
   type SubagentStatusPresentation,
   type SubagentTranscriptEntry,
 } from "./subagents/subagentPresentation";
@@ -191,9 +192,7 @@ function SubagentTranscriptHeader({
   readonly status: SubagentStatusPresentation;
   readonly errorMessage: string | null;
 }) {
-  const metadata = [subagent.role, subagent.model, subagent.reasoningEffort].filter(
-    (value): value is string => Boolean(value),
-  );
+  const metadata = resolveSubagentTranscriptMetadata(subagent);
 
   return (
     <header className="shrink-0 border-b border-border/60 bg-card/35 py-3 pr-12 pl-4">

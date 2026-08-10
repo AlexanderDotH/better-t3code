@@ -39,6 +39,9 @@ const makeProjectionThreadSubagentRepository = Effect.gen(function* () {
       INSERT INTO projection_thread_subagents (
         thread_id,
         subagent_id,
+        origin,
+        provider_instance_id,
+        provider_driver,
         provider_thread_id,
         parent_subagent_id,
         path,
@@ -60,6 +63,9 @@ const makeProjectionThreadSubagentRepository = Effect.gen(function* () {
       VALUES (
         ${row.threadId},
         ${row.id},
+        ${row.origin},
+        ${row.providerInstanceId},
+        ${row.providerDriver},
         ${row.providerThreadId},
         ${row.parentId},
         ${row.path},
@@ -80,6 +86,9 @@ const makeProjectionThreadSubagentRepository = Effect.gen(function* () {
       )
       ON CONFLICT (thread_id, subagent_id)
       DO UPDATE SET
+        origin = excluded.origin,
+        provider_instance_id = excluded.provider_instance_id,
+        provider_driver = excluded.provider_driver,
         provider_thread_id = excluded.provider_thread_id,
         parent_subagent_id = excluded.parent_subagent_id,
         path = excluded.path,
@@ -107,6 +116,9 @@ const makeProjectionThreadSubagentRepository = Effect.gen(function* () {
       SELECT
         thread_id AS "threadId",
         subagent_id AS "id",
+        origin,
+        provider_instance_id AS "providerInstanceId",
+        provider_driver AS "providerDriver",
         provider_thread_id AS "providerThreadId",
         parent_subagent_id AS "parentId",
         path,
@@ -138,6 +150,9 @@ const makeProjectionThreadSubagentRepository = Effect.gen(function* () {
       SELECT
         thread_id AS "threadId",
         subagent_id AS "id",
+        origin,
+        provider_instance_id AS "providerInstanceId",
+        provider_driver AS "providerDriver",
         provider_thread_id AS "providerThreadId",
         parent_subagent_id AS "parentId",
         path,

@@ -58,6 +58,9 @@ function messageEvent(sequence: number, subagentId?: typeof selectedSubagentId) 
 function subagentSummary(id = selectedSubagentId): OrchestrationSubagentSummary {
   return {
     id,
+    origin: "provider-native",
+    providerInstanceId: null,
+    providerDriver: null,
     providerThreadId: id,
     parentId: null,
     path: null,

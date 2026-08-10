@@ -23,7 +23,7 @@ import {
   TrimmedString,
   TurnId,
 } from "./baseSchemas.ts";
-import { ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
   PROJECT_AGENT_MAX_CLAIMS,
   PROJECT_AGENT_MAX_PEERS,
@@ -403,8 +403,20 @@ export const OrchestrationSubagentProgress = Schema.Struct({
 });
 export type OrchestrationSubagentProgress = typeof OrchestrationSubagentProgress.Type;
 
+export const OrchestrationSubagentOrigin = Schema.Literals(["provider-native", "t3-fetch"]);
+export type OrchestrationSubagentOrigin = typeof OrchestrationSubagentOrigin.Type;
+
 export const OrchestrationSubagentSummary = Schema.Struct({
   id: SubagentId,
+  origin: OrchestrationSubagentOrigin.pipe(
+    Schema.withDecodingDefault(Effect.succeed("provider-native" as const)),
+  ),
+  providerInstanceId: Schema.NullOr(ProviderInstanceId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  providerDriver: Schema.NullOr(ProviderDriverKind).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   providerThreadId: TrimmedNonEmptyString,
   parentId: Schema.NullOr(SubagentId),
   path: Schema.NullOr(TrimmedNonEmptyString),

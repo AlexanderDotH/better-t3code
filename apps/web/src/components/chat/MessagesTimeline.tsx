@@ -1938,7 +1938,9 @@ function buildToolCallExpandedBody(
 function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   if (
     workEntry.sourceActivityKind === "user-input.requested" ||
-    workEntry.sourceActivityKind === "user-input.resolved"
+    workEntry.sourceActivityKind === "user-input.resolved" ||
+    workEntry.sourceActivityKind === "coordination.message.sent" ||
+    workEntry.sourceActivityKind === "coordination.message.received"
   ) {
     return "message-circle";
   }
