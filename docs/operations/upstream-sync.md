@@ -14,16 +14,19 @@ security fixes, rollback behavior, and performance work are the implementation f
 | Original custom tip     | `289a0b27c7dbab54f5c094349dc634078f9f379f` (`feature/mcp-workspace-git-workbench`)      |
 | Consolidated custom tip | `154ac49a49c04b432affa50022ed0cbc60b03466` (`integration/consolidated-custom-20260810`) |
 | Pending-work snapshot   | `f687f37ab76485f1f16bb359bf6445a2458757b2` (`backup/pre-upstream-worktree-20260810`)    |
-| Recorded upstream tip   | `78f462c4e18c8ea5e5037dc916389a3b72246025` (`upstream/main`, v0.0.33 preparation)       |
+| Recorded upstream tip   | `a7b0366cbe1e9eabc9e37eb079a38f6b6691f999` (`upstream/main`, final pre-gate freeze)     |
+| Upstream merge commit   | `e9b96c9be411b06e7454e9020101b26899365a82`                                              |
 | Original `origin/main`  | `4dae4c6903cbf5733ceaa36ecfc731b9e369ee26`                                              |
 | Merge base              | `50871eb5de641ffd41b1f9d0151668982d276393`                                              |
-| Divergence at freeze    | 23 custom-only commits and 216 upstream-only commits                                    |
+| Divergence at freeze    | 23 custom-only commits and 223 upstream-only commits                                    |
 | Publication target      | Fast-forward `origin/main`; never force-push                                            |
 | Rescue directory        | `/home/alex/.local/state/t3code-repo-rescue/20260810-upstream-sync`                     |
 
 The previously planned upstream SHA `d440442db` moved before execution. The repository was fetched
-again and all analysis was repeated against `78f462c4e`; the two additional upstream commits bring
-the recorded upstream-only count from 214 to 216.
+again and the initial integration was repeated against `78f462c4e`, which brought the
+upstream-only count from 214 to 216. The mandatory pre-packaging freeze then found seven additional
+upstream commits. They were merged normally from `a7b0366cb`, all affected focused and Chromium
+tests were repeated, and the final recorded upstream-only count is 223.
 
 ## Recovery evidence
 
