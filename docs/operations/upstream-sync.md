@@ -1,0 +1,304 @@
+# Better T3 Code upstream synchronization record
+
+This document is the durable audit for the August 10, 2026 consolidation and upstream merge. It
+records which histories were inspected, where their behavior survives, and which fork behaviors
+must remain intact when conflicts are resolved. It is not permission to reuse the `ours` strategy
+for upstream code: custom behavior is authoritative, while current upstream structure, APIs,
+security fixes, rollback behavior, and performance work are the implementation foundation.
+
+## Recorded baseline
+
+| Item                    | Recorded value                                                                          |
+| ----------------------- | --------------------------------------------------------------------------------------- |
+| Canonical checkout      | `/home/alex/Workspace/Projects/Apps/better-t3code`                                      |
+| Original custom tip     | `289a0b27c7dbab54f5c094349dc634078f9f379f` (`feature/mcp-workspace-git-workbench`)      |
+| Consolidated custom tip | `154ac49a49c04b432affa50022ed0cbc60b03466` (`integration/consolidated-custom-20260810`) |
+| Pending-work snapshot   | `f687f37ab76485f1f16bb359bf6445a2458757b2` (`backup/pre-upstream-worktree-20260810`)    |
+| Recorded upstream tip   | `78f462c4e18c8ea5e5037dc916389a3b72246025` (`upstream/main`, v0.0.33 preparation)       |
+| Original `origin/main`  | `4dae4c6903cbf5733ceaa36ecfc731b9e369ee26`                                              |
+| Merge base              | `50871eb5de641ffd41b1f9d0151668982d276393`                                              |
+| Divergence at freeze    | 23 custom-only commits and 216 upstream-only commits                                    |
+| Publication target      | Fast-forward `origin/main`; never force-push                                            |
+| Rescue directory        | `/home/alex/.local/state/t3code-repo-rescue/20260810-upstream-sync`                     |
+
+The previously planned upstream SHA `d440442db` moved before execution. The repository was fetched
+again and all analysis was repeated against `78f462c4e`; the two additional upstream commits bring
+the recorded upstream-only count from 214 to 216.
+
+## Recovery evidence
+
+The rescue directory is outside the repository and is retained independently of all branches. Its
+payload includes:
+
+- `all-refs.bundle`, verified by `git bundle verify`;
+- exact ref, branch, remote, status, history, configuration, and worktree manifests;
+- a full-index binary patch for all tracked working-tree changes and a separate staged patch;
+- a gzip tar archive and NUL-safe manifest for every untracked file; and
+- `SHA256SUMS` covering every payload artifact.
+
+Independent verification established all of the following at the freeze point:
+
+- all 18 payload checksums passed;
+- the bundle advertised exactly the 955 captured refs, including 168
+  `refs/t3/checkpoints/*` refs;
+- the branch manifest captured 786 local and remote-tracking refs;
+- the tracked patch contained 120 files, 6,106 insertions, and 532 deletions;
+- the staged patch was empty, matching the recorded index state;
+- the archive contained all 29 untracked files, including
+  `.cursor/hooks/state/continual-learning.json`; and
+- the untracked archive member list and extracted content matched the frozen source files.
+
+The generated Cursor state file is rescue-only. It is absent from product commits, and
+`.cursor/hooks/state/` is ignored by [`.gitignore`](../../.gitignore).
+
+The immutable worktree snapshot has parent `289a0b27c`, changes exactly 149 product paths, and has
+tree `6b62f80e8b5f1a89d829928630354523d04d6a87`. The seven consolidated commits produce that exact
+same tree:
+
+| Commit                                     | Consolidated behavior                                                                                                            | Representative regression coverage                                                                                                                                                                                                                                                 |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `6843d5db20fbe7a4863edfdd9de8badaaac7e425` | Provider/model switching, OpenCode/Gemini selection, runtime rebinding, transcript handoff, and provider-specific runtime state  | [provider transcript handoff](../../apps/server/src/orchestration/providerTranscriptHandoff.test.ts), [OpenCode adapter](../../apps/server/src/provider/Layers/OpenCodeAdapter.test.ts), and [provider service](../../apps/server/src/provider/Layers/ProviderService.test.ts)     |
+| `083db0bed8c51e532fe3da1fd78cfa025f92e33e` | Provider-selectable repository Fetch, fenced workers, cancellation, partial failures, settings, and migration 043                | [Fetch planner](../../apps/server/src/fetch/FetchExplorationPlanner.test.ts), [Fetch coordinator](../../apps/server/src/fetch/FetchWorkerCoordinator.test.ts), and [migration 043](../../apps/server/src/persistence/Migrations/043_ProjectionThreadSubagentFetchMetadata.test.ts) |
+| `c032acf03bb3e65c03444eb7a9813008cb15a8d3` | Cross-thread project-agent claims, inboxes, MCP tools, projections, wake-up behavior, and migration 044                          | [coordination contracts](../../packages/contracts/src/projectAgentCoordination.test.ts), [claim rules](../../apps/server/src/projectAgent/claimRules.test.ts), and [migration 044](../../apps/server/src/persistence/Migrations/044_ProjectAgentCoordination.test.ts)              |
+| `21cfc1fcd83d2be5facfc344cd625cb08b9226e9` | Durable subagent lifecycle, chronological transcripts, mobile activity, lifecycle pills, History, and centered transcript dialog | [client reducer](../../packages/client-runtime/src/state/subagentReducer.test.ts), [lifecycle stack](../../apps/web/src/components/subagents/useSubagentLifecycleStack.test.ts), and [mobile activity](../../apps/mobile/src/lib/threadActivity.test.ts)                           |
+| `ae31a5bec1e0895ab9743ce2f36e03c9be38c72f` | Workspace deck layout/motion and Git workbench activity indicators                                                               | [workspace motion](../../apps/web/src/components/workspace-deck/WorkspaceCardDeck.motion.test.ts) and [Git changes indicator](../../apps/web/src/components/git-workbench/GitWorkspaceChangesIndicator.test.tsx)                                                                   |
+| `a106ce2ec7b93d5c56668fd419f6de9dde35e87d` | Node/pnpm-compatible local desktop packaging and TypeScript script execution                                                     | [desktop build artifact tests](../../scripts/build-desktop-artifact.test.ts) and [local installer tests](../../apps/server/src/installT3CodeLocalLinux.test.ts)                                                                                                                    |
+| `154ac49a49c04b432affa50022ed0cbc60b03466` | Current Better T3 Code provider, Fetch, coordination, MCP, and chat-control documentation                                        | [documentation index](../README.md)                                                                                                                                                                                                                                                |
+
+The equality check is exact, not a path-count approximation:
+
+```text
+154ac49a49c04b432affa50022ed0cbc60b03466^{tree}
+f687f37ab76485f1f16bb359bf6445a2458757b2^{tree}
+= 6b62f80e8b5f1a89d829928630354523d04d6a87
+```
+
+## Legacy branch inventory
+
+The following tips were already ancestors of the original custom tip and require no synthetic
+parent:
+
+| Ref                                                                     | Tip                                        |
+| ----------------------------------------------------------------------- | ------------------------------------------ |
+| `main`, `origin/main`                                                   | `4dae4c6903cbf5733ceaa36ecfc731b9e369ee26` |
+| `integration/consolidate-all-custom-work-20260731`, matching origin ref | `ead091df8ee7a4d7161e4135378f7d0492654f92` |
+| `origin/integration/upstream-20260730`                                  | `932adadaafce02a73eebe9c45e5017de7af9925b` |
+| `feature/mcp-workspace-git-workbench`, matching origin ref              | `289a0b27c7dbab54f5c094349dc634078f9f379f` |
+
+The remaining legacy histories reduce to three archival tips plus the new immutable worktree
+snapshot:
+
+| Top-level tip                                                                                                        | Histories covered                                                                                                                        |
+| -------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `backup/mixed-better-20260731` / `origin/backup/mixed-better-20260731` at `0c92234a1469ec0144d60b1bb5c6e119f992d47e` | The mixed Better T3 Code rescue snapshot                                                                                                 |
+| `origin/backup/mixed-t3code-20260731` at `467ec4d2e9adee8033f094af6bce30ea43f511d0`                                  | `origin/provider-conversation-workflows` at `d1876245`, merge `d208ca33`, and `origin/backup/pre-upstream-replay-20260730` at `58911c0f` |
+| `origin/backup/mixed-upstream-integration-20260731` at `1f546cdf4098227b57bd86b2c39b4df7f485b413`                    | Its already-contained parent `932adadaa` and the dirty integration snapshot                                                              |
+| `backup/pre-upstream-worktree-20260810`, matching origin ref, at `f687f37ab76485f1f16bb359bf6445a2458757b2`          | Every initially uncommitted product change                                                                                               |
+
+### Unique legacy commit audit
+
+#### Provider and conversation lineage
+
+`d187624542d01a46faa520949996906d2e41715a` has the same subject and author timestamp as its
+newer-base replay `e69a557394e08b40f349bf97ad3a00ffb9b94957`. Of the old commit's 232 changed
+paths, 229 overlap the replay. It is not patch-equivalent because the base, contracts, and provider
+architecture evolved.
+
+Its surviving behavior is represented by `e69a55739`, the provider restoration commits
+`c3431e49d` and `d4272cca1`, the native-driver convergence commit `7479ada80`, and the consolidated
+provider commit `6843d5db2`. Coverage includes provider transcript handoff, provider discovery and
+selection, every native adapter, MCP configuration, AssemblyAI, chat import/export, and Older
+Projects.
+
+The old standalone Cursor SDK, Gemini, Hyperagent, and OpenAI-compatible driver experiments are not
+part of the surviving feature contract. Commit `7479ada80bf9324d43621e7460d86aeffde2bf84`
+deliberately converged on T3 Code's native Codex, Claude, Cursor, Grok, and OpenCode drivers. Gemini
+selection survives through OpenCode rather than by restoring the obsolete standalone driver.
+
+`d208ca33a85aa1efaad828cead1c2ccce6b84aed` is the merge record for that old provider
+lineage. `git diff-tree --cc` reports zero combined-diff paths, so it has no independent conflict
+resolution or behavior to port.
+
+#### Project speech scanning
+
+`58911c0f5ea35f326a2b464962eb3fedf2a589dc` is semantically replayed as
+`932adadaafce02a73eebe9c45e5017de7af9925b`. The commits have the same subject and timestamp,
+the same eight changed paths, and the same 341-insertion/45-deletion shape. Context evolved in
+`server.ts`, `server.test.ts`, and `ProjectSpeechProfiles.test.ts`; the bounded scanner itself and
+its regression suite survive in
+[ProjectSpeechWorkspaceScanner.test.ts](../../apps/server/src/speech/ProjectSpeechWorkspaceScanner.test.ts).
+
+#### Mixed T3 Code snapshot
+
+`467ec4d2e9adee8033f094af6bce30ea43f511d0` changed 124 paths, of which 118 remain in the
+consolidated tree. Its six absent paths are accounted for:
+
+- the legacy migration 034 implementation and test were replayed as migrations 037 and 041, with
+  compatibility handling in migrations 038 and 040; and
+- `ManagedProcessTree` plus the three `ProviderTurnAbortCoordinator` files were superseded by the
+  orchestration-level [TurnAbortCoordinator](../../apps/server/src/orchestration/Layers/TurnAbortCoordinator.ts),
+  provider abort-target fencing, and adapter-owned exact-runtime force stop.
+
+Regression protection lives in
+[TurnAbortCoordinator.test.ts](../../apps/server/src/orchestration/Layers/TurnAbortCoordinator.test.ts),
+[threadAbort.test.ts](../../packages/client-runtime/src/state/threadAbort.test.ts), provider service
+and adapter tests, and the migration compatibility suites.
+
+#### Mixed Better T3 Code snapshot
+
+`0c92234a1469ec0144d60b1bb5c6e119f992d47e` changed 219 paths, of which 175 remain. All 44
+absent paths are classified:
+
+- mobile abort presentation moved to shared client-runtime state and the web composer tests;
+- its full-stack force-abort fixture is replaced by deterministic TurnAbortCoordinator,
+  ProviderService, and per-adapter exact-runtime fencing tests; and
+- the remaining 42 paths are the obsolete standalone provider implementations removed by
+  `7479ada80` in favor of the five native drivers.
+
+The required behavior remains cooperative interruption, an exact five-second escalation, immediate
+second-click force stop, runtime-generation fencing, and retained chat history. Those semantics are
+not waived by the removal of the old fixture or driver paths.
+
+#### Dirty upstream-integration snapshot
+
+`1f546cdf4098227b57bd86b2c39b4df7f485b413` has the same parent and the exact same tree
+`a9007bb4baaefc37f54bb9ceef6df8d3c52ae09b` as already-contained
+`ebffa9e6ac6467c0a9115247fe3668ccbed190a8`; `git cherry` also marks it patch-equivalent.
+It therefore contains no unmatched product behavior.
+
+Its four later-absent popover/right-panel paths were intentionally replaced by
+`5b1781e907ca59e0a86cb24e28ad534954bfc138` and the subsequent History fix
+`91d189944d71218de139144fd2e07526a6ee613e`. Their behavior survives in the stacked lifecycle UI,
+centered transcript dialog, and History coverage such as
+[ChatAgentStack.test.tsx](../../apps/web/src/components/ChatAgentStack.test.tsx) and
+[SubagentTranscriptDialog.test.tsx](../../apps/web/src/components/SubagentTranscriptDialog.test.tsx).
+
+## Ancestry-only closure
+
+Directly merging archival snapshot trees would reintroduce obsolete implementations and was
+simulated to cause between 27 and 147 conflicts. After the semantic audit and regression gates, a
+single documented `ours`-strategy merge records that every archival history was considered while
+leaving the audited product tree unchanged:
+
+```bash
+git merge --no-ff --no-commit -s ours \
+  backup/mixed-better-20260731 \
+  origin/backup/mixed-t3code-20260731 \
+  origin/backup/mixed-upstream-integration-20260731 \
+  backup/pre-upstream-worktree-20260810
+```
+
+Before committing, `git diff --cached --exit-code` must report no tree change. After committing, the
+merge tree must equal its first-parent tree, and `git merge-base --is-ancestor <tip> HEAD` must pass
+for every local and `origin/*` branch tip recorded above.
+
+This is the only approved use of the `ours` strategy in this synchronization. The upstream merge is
+an ordinary `git merge --no-ff --no-commit upstream/main`; it must not use `-X ours`, `-X theirs`,
+wholesale checkout resolutions, a rebase, or a force-push.
+
+Hidden operational refs—including `refs/t3/checkpoints/*` and any Git-workbench undo or recovery
+refs—are preserved in the verified bundle but are not product branches. They must not be merged to
+make an ancestry assertion pass.
+
+## Non-negotiable fork feature contract
+
+Every upstream conflict and later refactor must preserve these behaviors:
+
+- Provider/model switching hands off the complete transcript and rebinds the runtime, including
+  OpenCode with Gemini models.
+- Codex, Claude, Cursor, Grok, and OpenCode remain supported. An unknown persisted provider driver
+  remains inspectable instead of making historical threads undecodable.
+- Repository Fetch remains configurable across providers and uses dynamically created, read-only,
+  fenced workers with bounded concurrency, cancellation, and partial-failure reporting.
+- Parallel plan implementation continues to use provider-native subagents.
+- Subagent lifecycle is durable across replay and reconnect. Individual pills remain stacked and
+  layout-aware, completed pills stay green for 30 seconds before becoming historical, History stays
+  reachable, and transcripts remain chronological in a centered dialog.
+- Cancellation first cooperates, escalates against the exact runtime after five seconds, force-stops
+  immediately on a second click, fences replacement runtimes, and retains chat history.
+- MCP management, provider-specific runtime status, skills, `workspace_context`, and project-agent
+  coordination remain supported.
+- AssemblyAI dictation retains a live waveform, terminology profiles, and optional English output.
+- Full transcript export and local sibling-install chat import remain available.
+- Git workbench typed operations, queued operations, recovery refs, workspace deck behavior, Git
+  change indicators, and selected-folder clone destinations remain intact.
+- Older Projects uses an exact seven-day boundary and attention-aware activity, adapted to
+  upstream's current project-grouping model.
+- Fast mode, automatic runtime mode, prompt improvement, and reasoning recommendations remain
+  available.
+- Outbound PostHog product analytics remain removed. Local resource diagnostics and telemetry stay
+  available.
+- Web, desktop, and mobile clients continue to work across local, remote, relay, and tunnel
+  connections, including mixed-version connections where supported.
+
+### Additive public interfaces
+
+The merge must preserve the following fork interfaces while adopting additive upstream fields:
+
+- `ServerProvider.nativeSubagents` and `ServerProvider.fetchWorkers`;
+- persisted `ServerSettings.fetchModelSelection`, where `null` means Auto;
+- client transport `fetchMode: "repository-exploration"`, with provider, model, and worker count
+  resolved by the server;
+- existing subagent origin/status metadata and `t3-fetch` provenance;
+- Git workbench contracts and typed operations;
+- authenticated MCP tools `project_agent_list`, `project_agent_claim`, `project_agent_send`, and
+  `project_agent_inbox`; and
+- claim, lease, message, peer, inbox, and typed-error contracts in
+  [projectAgentCoordination.ts](../../packages/contracts/src/projectAgentCoordination.ts).
+
+New contract fields require decoding defaults so older web/mobile clients and mixed-version remote
+connections keep working. This synchronization introduces no intentional breaking wire change.
+
+### Migration identity
+
+Migration IDs 1 through 44 are immutable because released fork databases may already contain those
+ledger entries. Upstream schema work that originally occupied colliding IDs is replayed after the
+fork ledger:
+
+| ID  | Migration                                             |
+| --- | ----------------------------------------------------- |
+| 045 | `ForkSchemaConvergence`                               |
+| 046 | `ProjectionThreadsPinnedCompatibility`                |
+| 047 | `ProjectionTurnsKeysetIndexCompatibility`             |
+| 048 | `ProjectionThreadsPinOrderKeyCompatibility`           |
+| 049 | `ProjectionProjectsDefaultThreadEnvModeCompatibility` |
+| 050 | `ProjectionProjectFaviconPathCompatibility`           |
+
+If upstream adds migrations before the final merge, 1-44 remain unchanged, fork schema convergence
+stays first, and every colliding upstream migration is replayed under consecutive new IDs in its
+original order. Migration gates cover fresh databases, the fork ledger through 44, upstream through
+40, historical fork 33/34 collisions, repeated execution, schema equivalence, and
+`PRAGMA integrity_check`. Real data is tested only through a disposable `VACUUM INTO` copy; the live
+database is never opened read-write.
+
+## Upstream conflict-resolution rules
+
+Resolve in dependency order: contracts/settings/RPCs, persistence and migrations, providers and
+orchestration, MCP/Fetch/coordination/Git workbench, client-runtime, web, mobile/desktop, then docs,
+scripts, manifests, and generated files.
+
+The following structural decisions are explicit:
+
+- Port Older Projects into upstream `Sidebar`, `LegacySidebar`, and `sidebarProjectGrouping`; do not
+  restore deleted `SidebarV2.tsx`.
+- Move architecture material into upstream's `docs/internals/` organization; do not revive deleted
+  `docs/architecture/*` paths merely to avoid adapting content.
+- Build Git workbench on upstream's current VCS and source-control services rather than duplicating
+  them.
+- Use upstream's newest provider and Codex collaboration plumbing while retaining the fork's
+  provider-neutral lifecycle, Fetch, MCP, handoff, and force-stop semantics.
+- Retain upstream update rollback, security, correctness, and performance fixes.
+- Remove upstream outbound `AnalyticsService` product analytics again while preserving local
+  resource telemetry.
+- Regenerate `routeTree.gen.ts`, dependency metadata, and `pnpm-lock.yaml`; never hand-merge
+  generated output.
+- Preserve the machine-safety rules in [`AGENTS.md`](../../AGENTS.md): never manage a running T3 Code
+  process, never mutate live T3 home state, never modify either `/opt` installation, and refresh only
+  the permitted user-local installation after verification.
+
+Immediately before packaging, compare the fetched `upstream/main` to the live remote again. Any new
+delta is merged normally and causes affected focused tests, the full Chromium project, and all
+CI-equivalent gates to run again. Promotion is complete only when `origin/main` equals the validated
+commit, the recorded upstream commit is a merge parent, every known custom branch tip is an
+ancestor, the worktree is clean, CI is green, and the installed user-local AppImage hash matches the
+built artifact without restarting the running application.
