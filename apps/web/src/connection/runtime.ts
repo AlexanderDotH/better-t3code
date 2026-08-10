@@ -1,4 +1,5 @@
 import { Connection } from "@t3tools/client-runtime/connection";
+import { pullRequestDiffLoaderLayer } from "@t3tools/client-runtime/state/pull-requests";
 import { shellSnapshotLoaderLayer } from "@t3tools/client-runtime/state/shell";
 import {
   subagentSnapshotLoaderLayer,
@@ -22,6 +23,7 @@ const snapshotLoaderLayer = Layer.mergeAll(
   threadSnapshotLoaderLayer,
   shellSnapshotLoaderLayer,
   subagentSnapshotLoaderLayer,
+  pullRequestDiffLoaderLayer,
 );
 
 type ConnectionLayerSource =

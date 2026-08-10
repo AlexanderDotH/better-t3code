@@ -3200,6 +3200,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             },
             branch: "archive-settings-overhaul",
             worktreePath: "/repo/worktrees/pr-1359",
+            isOnPullRequestHead: true,
           };
         }
         return undefined;

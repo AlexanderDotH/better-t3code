@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
+import { describe, expect, it } from "vite-plus/test";
 
-import { ExecutionEnvironmentCapabilities } from "./environment.ts";
+import { ExecutionEnvironmentCapabilities, ExecutionEnvironmentDescriptor } from "./environment.ts";
 
 const decodeCapabilities = Schema.decodeUnknownSync(ExecutionEnvironmentCapabilities);
+const decodeDescriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor);
 
 describe("ExecutionEnvironmentCapabilities", () => {
   it("defaults mid-chat provider switching to false for legacy descriptors", () => {
@@ -39,5 +40,28 @@ describe("ExecutionEnvironmentCapabilities", () => {
     expect(() =>
       decodeCapabilities({ repositoryIdentity: true, mcpWorkspaceVersion: 0 }),
     ).toThrow();
+  });
+});
+
+const descriptor = {
+  environmentId: "environment-1",
+  label: "Local",
+  platform: { os: "darwin", arch: "arm64" },
+  serverVersion: "0.0.32",
+  capabilities: { repositoryIdentity: true },
+} as const;
+
+describe("ExecutionEnvironmentDescriptor", () => {
+  it("treats a missing pull-request capability as unsupported under version skew", () => {
+    expect(decodeDescriptor(descriptor).capabilities.pullRequests).toBeUndefined();
+  });
+
+  it("preserves an advertised pull-request capability", () => {
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, pullRequests: true },
+      }).capabilities.pullRequests,
+    ).toBe(true);
   });
 });

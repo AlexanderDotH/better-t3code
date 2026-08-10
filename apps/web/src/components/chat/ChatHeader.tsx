@@ -63,6 +63,7 @@ interface ChatHeaderProps {
   availableEditors: ReadonlyArray<EditorId>;
   rightPanelOpen: boolean;
   gitCwd: string | null;
+  readonly onOpenPullRequest?: ((number: number) => void) | undefined;
   onNewThreadInProject: () => void;
   transcriptAvailable: boolean;
   activeTurnInProgress: boolean;
@@ -119,6 +120,7 @@ export const ChatHeader = memo(function ChatHeader({
   availableEditors,
   rightPanelOpen,
   gitCwd,
+  onOpenPullRequest,
   onNewThreadInProject,
   transcriptAvailable,
   activeTurnInProgress,
@@ -336,6 +338,7 @@ export const ChatHeader = memo(function ChatHeader({
           <GitActionsControl
             gitCwd={gitCwd}
             activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
+            onOpenPullRequest={onOpenPullRequest}
             {...(draftId ? { draftId } : {})}
           />
         )}

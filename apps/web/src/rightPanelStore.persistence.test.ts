@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 describe("rightPanelStore persisted-state hydration", () => {
-  it("rehydrates v8 tabs, removes retired plan and subagent surfaces, and rewrites version 9", async () => {
+  it("rehydrates v8 tabs, removes retired plan and subagent surfaces, and rewrites the current version", async () => {
     const localStorage = createLocalStorageStub();
     localStorage.setItem(
       STORAGE_KEY,
@@ -61,7 +61,7 @@ describe("rightPanelStore persisted-state hydration", () => {
       },
     });
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}")).toMatchObject({
-      version: 9,
+      version: 11,
     });
   });
 });
