@@ -3378,6 +3378,7 @@ export default function Sidebar() {
                         onClick={handleNewThreadClick}
                         disabled={projects.length === 0}
                         aria-label="New thread"
+                        data-testid="new-thread-button"
                       />
                     }
                   >

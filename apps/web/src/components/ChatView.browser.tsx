@@ -5,7 +5,6 @@ import {
   EventId,
   ORCHESTRATION_WS_METHODS,
   EnvironmentId,
-  type EnvironmentApi,
   type MessageId,
   type OrchestrationReadModel,
   type ProjectId,
@@ -23,9 +22,18 @@ import {
   ServerConfig as ServerConfigSchema,
 } from "@t3tools/contracts";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  BearerConnectionCredential,
+  BearerConnectionProfile,
+  BearerConnectionRegistration,
+  BearerConnectionTarget,
+  EnvironmentRegistry,
+} from "@t3tools/client-runtime/connection";
+import { createRuntimeCommand, runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import * as Option from "effect/Option";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
@@ -42,18 +50,9 @@ import {
 } from "vite-plus/test";
 import { render } from "vitest-browser-react";
 
-import { useCommandPaletteStore } from "../commandPaletteStore";
 import { useComposerDraftStore, DraftId } from "../composerDraftStore";
-import {
-  __resetEnvironmentApiOverridesForTests,
-  __setEnvironmentApiOverrideForTests,
-} from "../environmentApi";
-import {
-  resetSavedEnvironmentRegistryStoreForTests,
-  resetSavedEnvironmentRuntimeStoreForTests,
-  useSavedEnvironmentRegistryStore,
-  useSavedEnvironmentRuntimeStore,
-} from "../environments/runtime";
+import { environmentCatalog } from "../connection/catalog";
+import { connectionAtomRuntime } from "../connection/runtime";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   removeInlineTerminalContextPlaceholder,
@@ -61,17 +60,32 @@ import {
 } from "../lib/terminalContext";
 import { isMacPlatform } from "../lib/utils";
 import { __resetLocalApiForTests } from "../localApi";
-import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
-import { getServerConfig } from "../rpc/serverState";
+import { __resetPrimaryEnvironmentBootstrapForTests } from "../environments/primary";
+import { __setClientSettingsForTests } from "../hooks/useSettings";
+import {
+  appAtomRegistry,
+  AppAtomRegistryProvider,
+  resetAppAtomRegistryForTests,
+} from "../rpc/atomRegistry";
 import { getRouter } from "../router";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
+import { useRightPanelStore } from "../rightPanelStore";
+import {
+  derivePendingApprovals,
+  derivePendingUserInputs,
+  hasActionableProposedPlan,
+} from "../session-logic";
 import { SIDEBAR_PROJECT_INACTIVITY_MS } from "../sidebarProjectActivity";
-import { selectBootstrapCompleteForActiveEnvironment, useStore } from "../store";
-import { terminalSessionManager } from "../terminalSessionState";
+import { primaryServerConfigAtom } from "../state/server";
+import { allEnvironmentShellsBootstrappedAtom } from "../state/shell";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useUiStateStore } from "../uiStateStore";
 import { createAuthenticatedSessionHandlers } from "../../test/authHttpHandlers";
-import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test/wsRpcHarness";
+import {
+  BrowserWsRpcHarness,
+  type BrowserWsRpcConnection,
+  type NormalizedWsRpcRequestBody,
+} from "../../test/wsRpcHarness";
 
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
@@ -124,7 +138,7 @@ const PROJECT_LOGICAL_KEY = deriveLogicalProjectKeyFromSettings(
   {
     environmentId: LOCAL_ENVIRONMENT_ID,
     id: PROJECT_ID,
-    cwd: "/repo/project",
+    workspaceRoot: "/repo/project",
     repositoryIdentity: null,
   },
   {
@@ -146,8 +160,15 @@ interface TestFixture {
 
 let fixture: TestFixture;
 const rpcHarness = new BrowserWsRpcHarness();
+const clearPlatformEnvironments = createRuntimeCommand(connectionAtomRuntime, {
+  label: "browser-test:clear-platform-environments",
+  execute: () =>
+    EnvironmentRegistry.pipe(Effect.flatMap((registry) => registry.reconcilePlatform([]))),
+});
 const wsRequests = rpcHarness.requests;
-let customWsRpcResolver: ((body: NormalizedWsRpcRequestBody) => unknown | undefined) | null = null;
+let customWsRpcResolver:
+  | ((body: NormalizedWsRpcRequestBody, connection: BrowserWsRpcConnection) => unknown | undefined)
+  | null = null;
 const wsLink = ws.link(/ws(s)?:\/\/.*/);
 const encodeServerConfig = Schema.encodeSync(ServerConfigSchema);
 
@@ -251,41 +272,6 @@ function createBaseServerConfig(): ServerConfig {
     settings: {
       ...DEFAULT_SERVER_SETTINGS,
       ...DEFAULT_CLIENT_SETTINGS,
-    },
-  };
-}
-
-function createMockEnvironmentApi(input: {
-  browse: EnvironmentApi["filesystem"]["browse"];
-  dispatchCommand: EnvironmentApi["orchestration"]["dispatchCommand"];
-}): EnvironmentApi {
-  return {
-    terminal: {} as EnvironmentApi["terminal"],
-    projects: {} as EnvironmentApi["projects"],
-    filesystem: {
-      browse: input.browse,
-    },
-    sourceControl: {} as EnvironmentApi["sourceControl"],
-    vcs: {} as EnvironmentApi["vcs"],
-    git: {} as EnvironmentApi["git"],
-    review: {} as EnvironmentApi["review"],
-    orchestration: {
-      dispatchCommand: input.dispatchCommand,
-      getTurnDiff: (() => {
-        throw new Error("Not implemented in browser test.");
-      }) as EnvironmentApi["orchestration"]["getTurnDiff"],
-      getFullThreadDiff: (() => {
-        throw new Error("Not implemented in browser test.");
-      }) as EnvironmentApi["orchestration"]["getFullThreadDiff"],
-      exportThreadTranscript: (() => {
-        throw new Error("Not implemented in browser test.");
-      }) as EnvironmentApi["orchestration"]["exportThreadTranscript"],
-      getArchivedShellSnapshot: (() => {
-        throw new Error("Not implemented in browser test.");
-      }) as EnvironmentApi["orchestration"]["getArchivedShellSnapshot"],
-      subscribeShell: (() => () => undefined) as EnvironmentApi["orchestration"]["subscribeShell"],
-      subscribeThread: (() => () =>
-        undefined) as EnvironmentApi["orchestration"]["subscribeThread"],
     },
   };
 }
@@ -484,6 +470,60 @@ function enableGitWorkbench(nextFixture: TestFixture): void {
   };
 }
 
+function startOnDraftLanding(nextFixture: TestFixture): void {
+  nextFixture.welcome = {
+    ...nextFixture.welcome,
+    bootstrapThreadId: null,
+  };
+}
+
+function enableLegacySidebarForTest(): void {
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    legacySidebarEnabled: true,
+  });
+}
+
+function enablePlanModeForTest(): void {
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    planModeEnabled: true,
+  });
+}
+
+function enableStickyCodexModels(nextFixture: TestFixture): void {
+  const codex = nextFixture.serverConfig.providers[0];
+  if (!codex) {
+    throw new Error("Expected default Codex provider in test fixture.");
+  }
+  const fastModeCapabilities = createModelCapabilities({
+    optionDescriptors: [{ id: "fastMode", label: "Fast Mode", type: "boolean" }],
+  });
+  nextFixture.serverConfig = {
+    ...nextFixture.serverConfig,
+    providers: [
+      {
+        ...codex,
+        models: [
+          {
+            slug: "gpt-5.3-codex",
+            name: "GPT-5.3 Codex",
+            isCustom: false,
+            capabilities: fastModeCapabilities,
+          },
+          {
+            slug: "gpt-5.4",
+            name: "GPT-5.4",
+            isCustom: false,
+            capabilities: fastModeCapabilities,
+          },
+        ],
+      },
+      ...nextFixture.serverConfig.providers.slice(1),
+    ],
+  };
+}
+
 function createGitWorkbenchStreamSnapshot() {
   return {
     _tag: "snapshot" as const,
@@ -613,9 +653,9 @@ function toShellThread(thread: OrchestrationReadModel["threads"][number]) {
     session: thread.session,
     latestUserMessageAt:
       thread.messages.findLast((message) => message.role === "user")?.createdAt ?? null,
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-    hasActionableProposedPlan: false,
+    hasPendingApprovals: derivePendingApprovals(thread.activities).length > 0,
+    hasPendingUserInput: derivePendingUserInputs(thread.activities).length > 0,
+    hasActionableProposedPlan: thread.proposedPlans.some(hasActionableProposedPlan),
   };
 }
 
@@ -733,8 +773,8 @@ function serverThreadPath(threadId: ThreadId): string {
 async function waitForAppBootstrap(): Promise<void> {
   await vi.waitFor(
     () => {
-      expect(getServerConfig()).not.toBeNull();
-      expect(selectBootstrapCompleteForActiveEnvironment(useStore.getState())).toBe(true);
+      expect(appAtomRegistry.get(primaryServerConfigAtom)).not.toBeNull();
+      expect(appAtomRegistry.get(allEnvironmentShellsBootstrappedAtom)).toBe(true);
     },
     { timeout: 8_000, interval: 16 },
   );
@@ -804,6 +844,18 @@ function withProjectScripts(
     ...snapshot,
     projects: snapshot.projects.map((project) =>
       project.id === PROJECT_ID ? { ...project, scripts: Array.from(scripts) } : project,
+    ),
+  };
+}
+
+function withProjectWorkspaceRoot(
+  snapshot: OrchestrationReadModel,
+  workspaceRoot: string,
+): OrchestrationReadModel {
+  return {
+    ...snapshot,
+    projects: snapshot.projects.map((project) =>
+      project.id === PROJECT_ID ? { ...project, workspaceRoot } : project,
     ),
   };
 }
@@ -1126,14 +1178,17 @@ function createSnapshotWithPlanFollowUpPrompt(options?: {
   };
 }
 
-function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
-  const customResult = customWsRpcResolver?.(body);
+function resolveWsRpc(
+  body: NormalizedWsRpcRequestBody,
+  connection: BrowserWsRpcConnection,
+): unknown {
+  const customResult = customWsRpcResolver?.(body, connection);
   if (customResult !== undefined) {
     return customResult;
   }
   const tag = body._tag;
   if (tag === WS_METHODS.serverGetConfig) {
-    return encodeServerConfig(fixture.serverConfig);
+    return encodeServerConfig(serverConfigForConnection(connection));
   }
   if (tag === WS_METHODS.serverDiscoverSourceControl) {
     return {
@@ -1218,6 +1273,25 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
       ],
     };
   }
+  if (tag === WS_METHODS.vcsRefreshStatus) {
+    return {
+      isRepo: true,
+      sourceControlProvider: {
+        kind: "github",
+        name: "GitHub",
+        baseUrl: "https://github.com",
+      },
+      hasPrimaryRemote: true,
+      isDefaultRef: true,
+      refName: "main",
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+      hasUpstream: true,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: null,
+    };
+  }
   if (tag === WS_METHODS.gitGetRepositoryInsights) {
     return createGitWorkbenchInsights();
   }
@@ -1250,7 +1324,46 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
       updatedAt: NOW_ISO,
     };
   }
+  if (
+    tag === WS_METHODS.terminalWrite ||
+    tag === WS_METHODS.terminalResize ||
+    tag === WS_METHODS.terminalClear ||
+    tag === WS_METHODS.terminalClose
+  ) {
+    return null;
+  }
+  if (tag === WS_METHODS.vcsSwitchRef) {
+    return {
+      refName: typeof body.refName === "string" ? body.refName : null,
+    };
+  }
+  if (tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+    return { sequence: fixture.snapshot.snapshotSequence + 1 };
+  }
   return {};
+}
+
+function isRemoteConnection(connection: BrowserWsRpcConnection): boolean {
+  return connection.url.hostname === "staging.example.test";
+}
+
+function serverConfigForConnection(connection: BrowserWsRpcConnection): ServerConfig {
+  if (!isRemoteConnection(connection)) {
+    return fixture.serverConfig;
+  }
+
+  return {
+    ...fixture.serverConfig,
+    environment: {
+      ...fixture.serverConfig.environment,
+      environmentId: REMOTE_ENVIRONMENT_ID,
+      label: "Staging",
+    },
+    settings: {
+      ...fixture.serverConfig.settings,
+      addProjectBaseDirectory: "~/workspaces",
+    },
+  };
 }
 
 const worker = setupWorker(
@@ -1259,10 +1372,37 @@ const worker = setupWorker(
     client.addEventListener("message", (event) => {
       const rawData = event.data;
       if (typeof rawData !== "string") return;
-      void rpcHarness.onMessage(rawData);
+      void rpcHarness.onMessage(client, rawData);
     });
   }),
-  ...createAuthenticatedSessionHandlers(() => fixture.serverConfig.auth),
+  http.get("https://staging.example.test/.well-known/t3/environment", () =>
+    HttpResponse.json({
+      ...fixture.welcome.environment,
+      environmentId: REMOTE_ENVIRONMENT_ID,
+      label: "Staging",
+      capabilities: {
+        ...fixture.welcome.environment.capabilities,
+        midChatProviderSwitching: true,
+      },
+    }),
+  ),
+  ...createAuthenticatedSessionHandlers(
+    () => fixture.serverConfig.auth,
+    (requestUrl) => {
+      const request = new URL(requestUrl, window.location.href);
+      const environment = fixture.welcome.environment;
+      return {
+        ...environment,
+        ...(request.hostname === "staging.example.test"
+          ? { environmentId: REMOTE_ENVIRONMENT_ID, label: "Staging" }
+          : {}),
+        capabilities: {
+          ...environment.capabilities,
+          midChatProviderSwitching: true,
+        },
+      };
+    },
+  ),
   http.get("*/attachments/:attachmentId", () =>
     HttpResponse.text(ATTACHMENT_SVG, {
       headers: {
@@ -1271,6 +1411,13 @@ const worker = setupWorker(
     }),
   ),
   http.get("*/api/project-favicon", () => new HttpResponse(null, { status: 204 })),
+  http.get("*/api/orchestration/shell", () => HttpResponse.json(toShellSnapshot(fixture.snapshot))),
+  http.get("*/api/orchestration/threads/:threadId", ({ params }) => {
+    const thread = fixture.snapshot.threads.find((entry) => entry.id === params.threadId);
+    return thread
+      ? HttpResponse.json({ snapshotSequence: fixture.snapshot.snapshotSequence, thread })
+      : new HttpResponse(null, { status: 404 });
+  }),
 );
 
 async function nextFrame(): Promise<void> {
@@ -1370,7 +1517,7 @@ async function waitForWorkspaceDeckIdle(): Promise<HTMLElement> {
 }
 
 async function activateWorkspaceCard(cardId: "chat" | "git" | "mcp"): Promise<void> {
-  const label = cardId === "git" ? "Git" : cardId === "chat" ? "Chat" : "Example";
+  const label = cardId === "git" ? "Git" : cardId === "chat" ? "Chat" : "MCP";
   const trigger = page.getByRole("button", { name: `Open ${label} workspace` });
   await expect.element(trigger).toBeVisible();
   await trigger.click();
@@ -1579,7 +1726,27 @@ function findButtonByText(text: string): HTMLButtonElement | null {
 }
 
 async function waitForButtonByText(text: string): Promise<HTMLButtonElement> {
-  return waitForElement(() => findButtonByText(text), `Unable to find "${text}" button.`);
+  let button: HTMLButtonElement | null = null;
+  await vi.waitFor(
+    () => {
+      button = findButtonByText(text);
+      expect(
+        button,
+        `Unable to find "${text}" button. Available buttons: ${Array.from(
+          document.querySelectorAll("button"),
+          (candidate) =>
+            candidate.textContent?.trim() || candidate.getAttribute("aria-label") || "",
+        )
+          .filter(Boolean)
+          .join(" | ")}. RPC requests: ${wsRequests.map((request) => request._tag).join(", ")}`,
+      ).toBeTruthy();
+    },
+    { timeout: 8_000, interval: 16 },
+  );
+  if (!button) {
+    throw new Error(`Unable to find "${text}" button.`);
+  }
+  return button;
 }
 
 function findButtonContainingText(text: string): HTMLButtonElement | null {
@@ -1644,6 +1811,41 @@ async function waitForInteractionModeButton(
       ) as HTMLButtonElement | null,
     `Unable to find ${expectedLabel} interaction mode button.`,
   );
+}
+
+async function waitForBranchSelectorButton(): Promise<HTMLButtonElement> {
+  let button: HTMLButtonElement | null = null;
+  await vi.waitFor(
+    () => {
+      const selector =
+        'button[data-git-workspace-context-control="true"]:not([aria-label="Workspace"]):has([data-composer-label])';
+      const candidates = Array.from(document.querySelectorAll<HTMLButtonElement>(selector));
+      button =
+        candidates.find((candidate) =>
+          candidate.closest('[data-workspace-card-body="chat"][data-card-position="active"]'),
+        ) ??
+        candidates.find((candidate) => candidate.getClientRects().length > 0) ??
+        null;
+      expect(button, "Unable to find branch selector button.").toBeTruthy();
+      expect(button?.disabled, "Branch selector remained disabled.").toBe(false);
+    },
+    { timeout: 8_000, interval: 16 },
+  );
+  if (!button) {
+    throw new Error("Unable to find branch selector button.");
+  }
+  return button;
+}
+
+async function closeOpenFloatingMenu(): Promise<void> {
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  await waitForLayout();
 }
 
 async function waitForServerConfigToApply(): Promise<void> {
@@ -1736,6 +1938,38 @@ async function waitForCommandPaletteInput(placeholder: string): Promise<HTMLInpu
   );
 }
 
+async function clickReadyCommandPaletteAction(title: string): Promise<void> {
+  let item: HTMLElement | null = null;
+  await vi.waitFor(
+    () => {
+      const candidates = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          '[data-testid="command-palette"] [data-slot="command-item"]',
+        ),
+      );
+      item =
+        candidates.find((candidate) =>
+          Array.from(candidate.querySelectorAll("span")).some(
+            (span) => span.textContent?.trim() === title,
+          ),
+        ) ?? null;
+      expect(
+        item,
+        `Command palette action "${title}" did not become ready. Visible palette text: ${document
+          .querySelector('[data-testid="command-palette"]')
+          ?.textContent?.replace(/\s+/g, " ")
+          .trim()}. RPC requests: ${wsRequests.map((request) => request._tag).join(", ")}`,
+      ).toBeTruthy();
+    },
+    { timeout: 8_000, interval: 16 },
+  );
+  if (!item) {
+    throw new Error(`Command palette action "${title}" did not become ready.`);
+  }
+  item.click();
+  await waitForLayout();
+}
+
 function getCommandPaletteLegendEntries(): string[] {
   const footer = document.querySelector('[data-slot="command-footer"]');
   if (!footer) {
@@ -1771,7 +2005,10 @@ async function mountChatView(options: {
   viewport: ViewportSpec;
   snapshot: OrchestrationReadModel;
   configureFixture?: (fixture: TestFixture) => void;
-  resolveRpc?: (body: NormalizedWsRpcRequestBody) => unknown | undefined;
+  resolveRpc?: (
+    body: NormalizedWsRpcRequestBody,
+    connection: BrowserWsRpcConnection,
+  ) => unknown | undefined;
   initialPath?: string;
 }): Promise<MountedChatView> {
   fixture = buildFixture(options.snapshot);
@@ -1811,7 +2048,12 @@ async function mountChatView(options: {
 
   const cleanup = async () => {
     customWsRpcResolver = null;
+    await runAtomCommand(appAtomRegistry, clearPlatformEnvironments, undefined, {
+      reportFailure: false,
+    });
     await screen.unmount();
+    resetAppAtomRegistryForTests();
+    await rpcHarness.disconnect();
     host.remove();
     await waitForLayout();
   };
@@ -1855,16 +2097,28 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   beforeEach(async () => {
+    __resetPrimaryEnvironmentBootstrapForTests();
+    resetAppAtomRegistryForTests();
     await rpcHarness.reset({
       resolveUnary: resolveWsRpc,
-      getInitialStreamValues: (request) => {
+      getInitialStreamValues: (request, connection) => {
         if (request._tag === WS_METHODS.subscribeServerLifecycle) {
+          const isRemote = isRemoteConnection(connection);
           return [
             {
               version: 1,
               sequence: 1,
               type: "welcome",
-              payload: fixture.welcome,
+              payload: isRemote
+                ? {
+                    ...fixture.welcome,
+                    environment: {
+                      ...fixture.welcome.environment,
+                      environmentId: REMOTE_ENVIRONMENT_ID,
+                      label: "Staging",
+                    },
+                  }
+                : fixture.welcome,
             },
           ];
         }
@@ -1873,19 +2127,25 @@ describe("ChatView timeline estimator parity (full app)", () => {
             {
               version: 1,
               type: "snapshot",
-              config: encodeServerConfig(fixture.serverConfig),
+              config: encodeServerConfig(serverConfigForConnection(connection)),
             },
           ];
         }
         if (request._tag === ORCHESTRATION_WS_METHODS.subscribeShell) {
+          const shellSnapshot = toShellSnapshot(fixture.snapshot);
           return [
             {
               kind: "snapshot",
-              snapshot: toShellSnapshot(fixture.snapshot),
+              snapshot: isRemoteConnection(connection)
+                ? { ...shellSnapshot, projects: [], threads: [] }
+                : shellSnapshot,
             },
           ];
         }
         if (request._tag === ORCHESTRATION_WS_METHODS.subscribeThread) {
+          if (isRemoteConnection(connection)) {
+            return [];
+          }
           const thread = fixture.snapshot.threads.find((entry) => entry.id === request.threadId);
           return thread
             ? [
@@ -1898,6 +2158,32 @@ describe("ChatView timeline estimator parity (full app)", () => {
                 },
               ]
             : [];
+        }
+        if (request._tag === WS_METHODS.subscribeVcsStatus) {
+          return [
+            {
+              _tag: "snapshot",
+              local: {
+                isRepo: true,
+                sourceControlProvider: {
+                  kind: "github",
+                  name: "GitHub",
+                  baseUrl: "https://github.com",
+                },
+                hasPrimaryRemote: true,
+                isDefaultRef: true,
+                refName: "main",
+                hasWorkingTreeChanges: false,
+                workingTree: { files: [], insertions: 0, deletions: 0 },
+              },
+              remote: {
+                hasUpstream: true,
+                aheadCount: 0,
+                behindCount: 0,
+                pr: null,
+              },
+            },
+          ];
         }
         if (request._tag === WS_METHODS.subscribeTerminalMetadata) {
           return fixture.terminalMetadataEvents;
@@ -1914,9 +2200,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     document.body.innerHTML = "";
     wsRequests.length = 0;
     customWsRpcResolver = null;
-    __resetEnvironmentApiOverridesForTests();
-    resetSavedEnvironmentRegistryStoreForTests();
-    resetSavedEnvironmentRuntimeStoreForTests();
+    __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
     Reflect.deleteProperty(window, "desktopBridge");
     useComposerDraftStore.setState({
       draftsByThreadKey: {},
@@ -1924,14 +2208,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
       logicalProjectDraftThreadKeyByLogicalProjectKey: {},
       stickyModelSelectionByProvider: {},
       stickyActiveProvider: null,
-    });
-    useCommandPaletteStore.setState({
-      open: false,
-      openIntent: null,
-    });
-    useStore.setState({
-      activeEnvironmentId: null,
-      environmentStateById: {},
     });
     useUiStateStore.setState({
       projectExpandedById: {},
@@ -1943,6 +2219,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
     useTerminalUiStateStore.setState({
       terminalUiStateByThreadKey: {},
     });
+    useRightPanelStore.persist.clearStorage();
+    useRightPanelStore.setState({ byThreadKey: {} });
   });
 
   afterEach(() => {
@@ -2065,7 +2343,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const timeline = await waitForElement(
+      await waitForElement(
         () => document.querySelector<HTMLElement>('[data-timeline-root="true"]'),
         "Unable to find the chat timeline.",
       );
@@ -2087,11 +2365,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
       expect(drawerRect.left).toBeGreaterThanOrEqual(cardRect.left - 1);
       expect(drawerRect.right).toBeLessThanOrEqual(cardRect.right + 1);
       expect(drawerRect.bottom).toBeLessThanOrEqual(window.innerHeight + 1);
-      expect(document.querySelector('[data-timeline-root="true"]')).toBe(timeline);
+      expect(document.querySelector('[data-timeline-root="true"]')).not.toBeNull();
 
       await activateWorkspaceCard("chat");
       expect(document.querySelector('[data-git-workbench-drawer="true"]')).toBeNull();
-      expect(document.querySelector('[data-timeline-root="true"]')).toBe(timeline);
+      expect(document.querySelector('[data-timeline-root="true"]')).not.toBeNull();
     } finally {
       await mounted.cleanup();
     }
@@ -2108,7 +2386,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const composerEditor = await waitForComposerEditor();
+      await waitForComposerEditor();
+      await page.getByTestId("composer-editor").fill("Draft survives the responsive deck");
       const panelToggle = page.getByRole("button", { name: "Toggle right panel" });
       await panelToggle.click();
       const rightPanelTabbar = await waitForElement(
@@ -2124,7 +2403,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         expect(document.querySelector("[data-chat-workspace-deck]")).toBeNull();
       });
       expect(document.querySelector('[data-workspace-card-body="mcp"]')).toBeNull();
-      expect(document.body.contains(composerEditor)).toBe(true);
+      const responsiveComposerEditor = await waitForComposerEditor();
+      expect(responsiveComposerEditor.textContent).toContain("Draft survives the responsive deck");
+      expect(composerDraftFor(THREAD_ID)?.prompt).toBe("Draft survives the responsive deck");
 
       await mounted.setViewport({ ...SMALL_DESKTOP_VIEWPORT, width: 768 });
       await waitForElement(
@@ -2173,6 +2454,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
           environment: {
             ...nextFixture.serverConfig.environment,
             serverVersion: "9.9.9",
+            capabilities: {
+              ...nextFixture.serverConfig.environment.capabilities,
+              serverSelfUpdate: "desktop-managed",
+            },
           },
         };
       },
@@ -2182,14 +2467,14 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const banner = await waitForElement(
         () =>
           Array.from(document.querySelectorAll<HTMLElement>('[data-slot="alert"]')).find(
-            (element) => element.textContent?.includes("Client and server versions differ"),
+            (element) => element.textContent?.includes("Server update available"),
           ) ?? null,
         "Unable to find version mismatch banner.",
       );
       const title = banner.querySelector<HTMLElement>('[data-slot="alert-title"]');
       const description = banner.querySelector<HTMLElement>('[data-slot="alert-description"]');
       const dismissButton = banner.querySelector<HTMLButtonElement>(
-        'button[aria-label="Dismiss version mismatch warning"]',
+        'button[aria-label="Dismiss update notice"]',
       );
 
       expect(title).toBeTruthy();
@@ -2240,20 +2525,29 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       const trigger = page.getByTestId("sidebar-older-projects-trigger");
+      const olderProjectsPanel = page.getByTestId("sidebar-older-projects-panel");
       await expect.element(trigger).toHaveAttribute("aria-expanded", "false");
       await expect.element(trigger).toHaveTextContent("1");
-      await expect.element(page.getByText("Project", { exact: true })).toBeInTheDocument();
-      await expect.element(page.getByText("Docs Portal", { exact: true })).not.toBeInTheDocument();
+      await expect
+        .element(page.getByTestId("sidebar-row-card").getByText("Project", { exact: true }))
+        .toBeInTheDocument();
+      await expect
+        .element(olderProjectsPanel.getByText("Docs Portal", { exact: true }))
+        .not.toBeInTheDocument();
 
       await trigger.click();
 
       await expect.element(trigger).toHaveAttribute("aria-expanded", "true");
-      await expect.element(page.getByText("Docs Portal", { exact: true })).toBeInTheDocument();
+      await expect
+        .element(olderProjectsPanel.getByText("Docs Portal", { exact: true }))
+        .toBeInTheDocument();
       expect(useUiStateStore.getState().sidebarOlderProjectsExpanded).toBe(true);
 
       await trigger.click();
 
-      await expect.element(page.getByText("Docs Portal", { exact: true })).not.toBeInTheDocument();
+      await expect
+        .element(olderProjectsPanel.getByText("Docs Portal", { exact: true }))
+        .not.toBeInTheDocument();
       expect(useUiStateStore.getState().sidebarOlderProjectsExpanded).toBe(false);
     } finally {
       await mounted.cleanup();
@@ -2270,7 +2564,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       const trigger = page.getByTestId("sidebar-older-projects-trigger");
       await expect.element(trigger).toHaveAttribute("aria-expanded", "true");
-      await expect.element(page.getByText("Docs Portal", { exact: true })).toBeInTheDocument();
+      await expect
+        .element(
+          page
+            .getByTestId("sidebar-older-projects-panel")
+            .getByText("Docs Portal", { exact: true }),
+        )
+        .toBeInTheDocument();
       expect(useUiStateStore.getState().sidebarOlderProjectsExpanded).toBe(false);
     } finally {
       await mounted.cleanup();
@@ -2740,10 +3040,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       const runButton = await waitForElement(
-        () =>
-          Array.from(document.querySelectorAll("button")).find(
-            (button) => button.title === "Run Lint",
-          ) as HTMLButtonElement | null,
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Run Lint"]'),
         "Unable to find Run Lint button.",
       );
       runButton.click();
@@ -2819,10 +3116,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       const runButton = await waitForElement(
-        () =>
-          Array.from(document.querySelectorAll("button")).find(
-            (button) => button.title === "Run Test",
-          ) as HTMLButtonElement | null,
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Run Test"]'),
         "Unable to find Run Test button.",
       );
       runButton.click();
@@ -3291,7 +3585,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("updates the selected worktree base branch on empty server threads", async () => {
-    const snapshot = addThreadToSnapshot(createDraftOnlySnapshot(), THREAD_ID);
+    const snapshot = addThreadToSnapshot(
+      withProjectWorkspaceRoot(createDraftOnlySnapshot(), "/repo/project-branch-update"),
+      THREAD_ID,
+    );
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: {
@@ -3335,12 +3632,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       (await waitForButtonByText("Current checkout")).click();
       await page.getByText("New worktree", { exact: true }).click();
-      await page.getByText("From main", { exact: true }).click();
+      await closeOpenFloatingMenu();
+      (await waitForBranchSelectorButton()).click();
       await page.getByText("release/next", { exact: true }).click();
 
       await vi.waitFor(
         () => {
-          expect(findButtonByText("From release/next")).toBeTruthy();
+          expect(findButtonByText("From origin/release/next")).toBeTruthy();
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -3363,12 +3661,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
                 _tag: string;
                 type?: string;
                 bootstrap?: {
-                  prepareWorktree?: { baseBranch?: string };
+                  prepareWorktree?: { baseBranch?: string; startFromOrigin?: boolean };
                 };
               }
             | undefined;
 
           expect(turnStartRequest?.bootstrap?.prepareWorktree?.baseBranch).toBe("release/next");
+          expect(turnStartRequest?.bootstrap?.prepareWorktree?.startFromOrigin).toBe(true);
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -3379,7 +3678,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
   it("clears pending worktree overrides when switching empty server threads", async () => {
     const secondThreadId = "thread-browser-test-second" as ThreadId;
-    const snapshot = addThreadToSnapshot(createDraftOnlySnapshot(), THREAD_ID);
+    const snapshot = addThreadToSnapshot(
+      withProjectWorkspaceRoot(createDraftOnlySnapshot(), "/repo/project-branch-clear"),
+      THREAD_ID,
+    );
     const snapshotWithSecondThread = addThreadToSnapshot(snapshot, secondThreadId);
     const snapshotWithTwoThreads = {
       ...snapshotWithSecondThread,
@@ -3431,12 +3733,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       (await waitForButtonByText("Current checkout")).click();
       await page.getByText("New worktree", { exact: true }).click();
-      await page.getByText("From main", { exact: true }).click();
+      await closeOpenFloatingMenu();
+      (await waitForBranchSelectorButton()).click();
       await page.getByText("release/next", { exact: true }).click();
 
       await vi.waitFor(
         () => {
-          expect(findButtonByText("From release/next")).toBeTruthy();
+          expect(findButtonByText("From origin/release/next")).toBeTruthy();
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -3458,18 +3761,19 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await vi.waitFor(
         () => {
           expect(findButtonByText("Current checkout")).toBeTruthy();
-          expect(findButtonByText("From release/next")).toBeNull();
+          expect(findButtonByText("From origin/release/next")).toBeNull();
         },
         { timeout: 8_000, interval: 16 },
       );
 
       (await waitForButtonByText("Current checkout")).click();
       await page.getByText("New worktree", { exact: true }).click();
+      await closeOpenFloatingMenu();
 
       await vi.waitFor(
         () => {
-          expect(findButtonByText("From main")).toBeTruthy();
-          expect(findButtonByText("From release/next")).toBeNull();
+          expect(findButtonByText("From origin/main")).toBeTruthy();
+          expect(findButtonByText("From origin/release/next")).toBeNull();
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -3551,6 +3855,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("toggles plan mode with Shift+Tab only while the composer is focused", async () => {
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      planModeEnabled: true,
+    });
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -3560,8 +3868,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
+      await waitForServerConfigToApply();
       const initialModeButton = await waitForInteractionModeButton("Build");
-      expect(initialModeButton.title).toContain("enter plan mode");
+      expect(initialModeButton.getAttribute("aria-label")).toContain("enter plan mode");
 
       window.dispatchEvent(
         new KeyboardEvent("keydown", {
@@ -3573,7 +3882,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       await waitForLayout();
 
-      expect((await waitForInteractionModeButton("Build")).title).toContain("enter plan mode");
+      expect((await waitForInteractionModeButton("Build")).getAttribute("aria-label")).toContain(
+        "enter plan mode",
+      );
 
       const composerEditor = await waitForComposerEditor();
       composerEditor.focus();
@@ -3588,7 +3899,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         async () => {
-          expect((await waitForInteractionModeButton("Plan")).title).toContain(
+          expect((await waitForInteractionModeButton("Plan")).getAttribute("aria-label")).toContain(
             "return to normal build mode",
           );
         },
@@ -3606,7 +3917,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         async () => {
-          expect((await waitForInteractionModeButton("Build")).title).toContain("enter plan mode");
+          expect(
+            (await waitForInteractionModeButton("Build")).getAttribute("aria-label"),
+          ).toContain("enter plan mode");
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -3618,11 +3931,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
   it("uses the active draft route session when changing the base branch", async () => {
     const staleDraftId = draftIdFromPath("/draft/draft-stale-branch-session");
     const activeDraftId = draftIdFromPath("/draft/draft-active-branch-session");
+    const staleThreadId = "thread-stale-branch-session" as ThreadId;
+    const activeThreadId = "thread-active-branch-session" as ThreadId;
 
     useComposerDraftStore.setState({
       draftThreadsByThreadKey: {
         [staleDraftId]: {
-          threadId: THREAD_ID,
+          threadId: staleThreadId,
           environmentId: LOCAL_ENVIRONMENT_ID,
           projectId: PROJECT_ID,
           logicalProjectKey: `${PROJECT_DRAFT_KEY}:stale`,
@@ -3634,7 +3949,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           envMode: "worktree",
         },
         [activeDraftId]: {
-          threadId: THREAD_ID,
+          threadId: activeThreadId,
           environmentId: LOCAL_ENVIRONMENT_ID,
           projectId: PROJECT_ID,
           logicalProjectKey: PROJECT_DRAFT_KEY,
@@ -3654,7 +3969,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
-      snapshot: createDraftOnlySnapshot(),
+      snapshot: withProjectWorkspaceRoot(
+        createDraftOnlySnapshot(),
+        "/repo/project-active-draft-branch",
+      ),
       initialPath: `/draft/${activeDraftId}`,
       resolveRpc: (body) => {
         if (body._tag === WS_METHODS.vcsListRefs) {
@@ -3684,13 +4002,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const branchButton = await waitForElement(
-        () =>
-          Array.from(document.querySelectorAll("button")).find(
-            (button) => button.textContent?.trim() === "From main",
-          ) as HTMLButtonElement | null,
-        'Unable to find branch selector button with "From main".',
-      );
+      const branchButton = await waitForBranchSelectorButton();
       branchButton.click();
 
       const branchOption = await waitForElement(
@@ -3715,11 +4027,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       await vi.waitFor(
-        () => {
-          const updatedButton = Array.from(document.querySelectorAll("button")).find((button) =>
-            button.textContent?.trim().includes("From release/next"),
+        async () => {
+          expect((await waitForBranchSelectorButton()).textContent?.trim()).toContain(
+            "From release/next",
           );
-          expect(updatedButton).toBeTruthy();
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -3796,13 +4107,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const branchButton = await waitForElement(
-        () =>
-          Array.from(document.querySelectorAll("button")).find(
-            (button) => button.textContent?.trim() === "From feature/selected",
-          ) as HTMLButtonElement | null,
-        'Unable to find branch selector button with "From feature/selected".',
-      );
+      const branchButton = await waitForBranchSelectorButton();
+      expect(branchButton.textContent?.trim()).toContain("From feature/selected");
       branchButton.click();
 
       await waitForElement(
@@ -3988,13 +4294,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
-      await waitForComposerText("hi @package.json there");
+      await waitForComposerText("hi [package.json](package.json) there");
       await setComposerSelectionByTextOffsets({
         start: "hi package.json ".length,
         end: "hi package.json there".length,
       });
       await pressComposerKey("(");
-      await waitForComposerText("hi @package.json (there)");
+      await waitForComposerText("hi [package.json](package.json) (there)");
     } finally {
       await mounted.cleanup();
     }
@@ -4231,6 +4537,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("hides the archive action when the pointer leaves a thread row", async () => {
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      legacySidebarEnabled: true,
+    });
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -4276,6 +4586,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("exposes the full thread title on the sidebar row tooltip", async () => {
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      legacySidebarEnabled: true,
+    });
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -4335,26 +4649,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       await vi.waitFor(
         () => {
-          expect(
-            terminalSessionManager.listSessions({
-              environmentId: LOCAL_ENVIRONMENT_ID,
-              threadId: THREAD_ID,
-            }),
-          ).toMatchObject([
-            {
-              state: {
-                hasRunningSubprocess: true,
-              },
-            },
-          ]);
-        },
-        { timeout: 8_000, interval: 16 },
-      );
-
-      await vi.waitFor(
-        () => {
           const terminalIndicator = document.querySelector<HTMLElement>(
-            '[aria-label="Terminal process running"]',
+            `[data-testid="sidebar-terminal-status-${THREAD_ID}"]`,
           );
           expect(terminalIndicator).not.toBeNull();
         },
@@ -4366,13 +4662,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("shows the confirm archive action after clicking the archive button", async () => {
-    localStorage.setItem(
-      "t3code:client-settings:v1",
-      JSON.stringify({
-        ...DEFAULT_CLIENT_SETTINGS,
-        confirmThreadArchive: true,
-      }),
-    );
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      confirmThreadArchive: true,
+      legacySidebarEnabled: true,
+    });
 
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -4396,7 +4690,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await expect.element(confirmButton).toBeInTheDocument();
       await expect.element(confirmButton).toBeVisible();
     } finally {
-      localStorage.removeItem("t3code:client-settings:v1");
       await mounted.cleanup();
     }
   });
@@ -4596,7 +4889,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("snapshots sticky codex settings into a new draft thread", async () => {
+  it("keeps sticky Codex model and reasoning while leaving speed chat-scoped", async () => {
     useComposerDraftStore.setState({
       stickyModelSelectionByProvider: {
         [ProviderInstanceId.make("codex")]: createModelSelection(
@@ -4617,6 +4910,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
         targetMessageId: "msg-user-sticky-codex-traits-test" as MessageId,
         targetText: "sticky codex traits test",
       }),
+      initialPath: "/",
+      configureFixture: (nextFixture) => {
+        startOnDraftLanding(nextFixture);
+        enableStickyCodexModels(nextFixture);
+      },
     });
 
     try {
@@ -4632,19 +4930,20 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       const newDraftId = draftIdFromPath(newThreadPath);
 
-      // `toMatchObject` matches objects loosely (extras ignored) but compares
-      // arrays strictly, so wrap `options` in `arrayContaining` to keep the
-      // assertion focused on sticky `fastMode` carrying over without asserting
-      // on exactly which other options are preserved.
-      expect(composerDraftFor(newDraftId)).toMatchObject({
+      const composerDraft = composerDraftFor(newDraftId);
+      expect(composerDraft).toMatchObject({
         modelSelectionByProvider: {
           codex: {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5.3-codex",
-            options: expect.arrayContaining([{ id: "fastMode", value: true }]),
+            options: expect.arrayContaining([{ id: "reasoningEffort", value: "medium" }]),
           },
         },
         activeProvider: "codex",
+      });
+      expect(composerDraft?.modelSelectionByProvider.codex?.options).not.toContainEqual({
+        id: "fastMode",
+        value: true,
       });
     } finally {
       await mounted.cleanup();
@@ -4672,6 +4971,29 @@ describe("ChatView timeline estimator parity (full app)", () => {
         targetMessageId: "msg-user-sticky-claude-model-test" as MessageId,
         targetText: "sticky claude model test",
       }),
+      initialPath: "/",
+      configureFixture: (nextFixture) => {
+        startOnDraftLanding(nextFixture);
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [
+            ...nextFixture.serverConfig.providers,
+            {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              enabled: true,
+              installed: true,
+              version: "2.1.117",
+              status: "ready",
+              auth: { status: "authenticated" },
+              checkedAt: NOW_ISO,
+              models: [],
+              slashCommands: [],
+              skills: [],
+            },
+          ],
+        };
+      },
     });
 
     try {
@@ -4712,6 +5034,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
         targetMessageId: "msg-user-default-codex-traits-test" as MessageId,
         targetText: "default codex traits test",
       }),
+      initialPath: "/",
+      configureFixture: startOnDraftLanding,
     });
 
     try {
@@ -4754,6 +5078,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
         targetMessageId: "msg-user-draft-codex-traits-precedence-test" as MessageId,
         targetText: "draft codex traits precedence test",
       }),
+      initialPath: "/",
+      configureFixture: (nextFixture) => {
+        startOnDraftLanding(nextFixture);
+        enableStickyCodexModels(nextFixture);
+      },
     });
 
     try {
@@ -4769,18 +5098,20 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       const draftId = draftIdFromPath(threadPath);
 
-      // See the note on the sibling sticky-codex test: arrays match strictly
-      // under `toMatchObject`, so use `arrayContaining` to keep the assertion
-      // scoped to the sticky trait (`fastMode`) that must carry over.
-      expect(composerDraftFor(draftId)).toMatchObject({
+      const initialComposerDraft = composerDraftFor(draftId);
+      expect(initialComposerDraft).toMatchObject({
         modelSelectionByProvider: {
           codex: {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5.3-codex",
-            options: expect.arrayContaining([{ id: "fastMode", value: true }]),
+            options: expect.arrayContaining([{ id: "reasoningEffort", value: "medium" }]),
           },
         },
         activeProvider: "codex",
+      });
+      expect(initialComposerDraft?.modelSelectionByProvider.codex?.options).not.toContainEqual({
+        id: "fastMode",
+        value: true,
       });
 
       useComposerDraftStore.getState().setModelSelection(
@@ -4886,7 +5217,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createProjectlessSnapshot(),
+      initialPath: "/",
       configureFixture: (nextFixture) => {
+        nextFixture.welcome = {
+          ...nextFixture.welcome,
+          bootstrapProjectId: null,
+          bootstrapThreadId: null,
+        };
         nextFixture.serverConfig = {
           ...nextFixture.serverConfig,
           keybindings: [
@@ -4912,10 +5249,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       await waitForServerConfigToApply();
+      const initialPath = mounted.router.state.location.pathname;
       dispatchChatNewShortcut();
       await waitForLayout();
 
-      expect(mounted.router.state.location.pathname).toBe(serverThreadPath(THREAD_ID));
+      expect(mounted.router.state.location.pathname).toBe(initialPath);
       expect(Object.keys(useComposerDraftStore.getState().draftThreadsByThreadKey)).toHaveLength(0);
     } finally {
       await mounted.cleanup();
@@ -4923,6 +5261,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("renders the configurable shortcut and runs a command from the sidebar trigger", async () => {
+    enableLegacySidebarForTest();
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -4975,6 +5314,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("filters command palette results as the user types", async () => {
+    enableLegacySidebarForTest();
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -5022,6 +5362,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("adds a project from browse mode with Enter when no directory is highlighted", async () => {
+    enableLegacySidebarForTest();
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -5133,6 +5474,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("shows clone destination controls after resolving an add project repository", async () => {
+    enableLegacySidebarForTest();
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -5209,7 +5551,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await expect.element(palette).toBeInTheDocument();
       await palette.getByText("Add project", { exact: true }).click();
-      await palette.getByText("GitHub repository", { exact: true }).click();
+      await clickReadyCommandPaletteAction("GitHub repository");
 
       const repositoryInput = await waitForCommandPaletteInput(
         "Enter GitHub repository (owner/repo)",
@@ -5258,6 +5600,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("opens add project browse mode from the sidebar add button", async () => {
+    enableLegacySidebarForTest();
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -5305,6 +5648,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("starts add project browse mode from the configured base directory", async () => {
+    enableLegacySidebarForTest();
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -5369,6 +5713,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("shows create-folder affordances for missing project paths", async () => {
+    enableLegacySidebarForTest();
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -5449,6 +5794,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("does not show create affordances for an existing directory with a trailing slash", async () => {
+    enableLegacySidebarForTest();
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -5542,6 +5888,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("selects an environment before browsing when multiple environments are available", async () => {
+    enableLegacySidebarForTest();
     const remoteBrowseMock = vi.fn(async ({ partialPath }: { partialPath: string }) => {
       if (partialPath === "~/workspaces/") {
         return {
@@ -5555,17 +5902,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         entries: [{ name: "workspaces", fullPath: "~/workspaces" }],
       };
     });
-    const remoteDispatchMock = vi.fn(async () => ({
+    const remoteDispatchMock = vi.fn(async (_command: NormalizedWsRpcRequestBody) => ({
       sequence: fixture.snapshot.snapshotSequence + 1,
     }));
-
-    __setEnvironmentApiOverrideForTests(
-      REMOTE_ENVIRONMENT_ID,
-      createMockEnvironmentApi({
-        browse: remoteBrowseMock,
-        dispatchCommand: remoteDispatchMock,
-      }),
-    );
 
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -5573,40 +5912,44 @@ describe("ChatView timeline estimator parity (full app)", () => {
         targetMessageId: "msg-user-command-palette-add-project-multi-env" as MessageId,
         targetText: "command palette add project multi env",
       }),
+      resolveRpc: (body, connection) => {
+        if (connection.url.hostname !== "staging.example.test") {
+          return undefined;
+        }
+        if (body._tag === WS_METHODS.filesystemBrowse) {
+          return remoteBrowseMock({ partialPath: String(body.partialPath) });
+        }
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return remoteDispatchMock(body);
+        }
+        return undefined;
+      },
     });
 
     try {
       await waitForServerConfigToApply();
-      useSavedEnvironmentRegistryStore.getState().upsert({
-        environmentId: REMOTE_ENVIRONMENT_ID,
-        label: "Staging",
-        httpBaseUrl: "https://staging.example.test",
-        wsBaseUrl: "wss://staging.example.test/ws",
-        createdAt: NOW_ISO,
-        lastConnectedAt: NOW_ISO,
-      });
-      useSavedEnvironmentRuntimeStore.getState().patch(REMOTE_ENVIRONMENT_ID, {
-        connectionState: "connected",
-        authState: "authenticated",
-        descriptor: {
-          ...fixture.serverConfig.environment,
+      const connectionId = "browser-staging";
+      const registration = new BearerConnectionRegistration({
+        target: new BearerConnectionTarget({
           environmentId: REMOTE_ENVIRONMENT_ID,
           label: "Staging",
-        },
-        serverConfig: {
-          ...fixture.serverConfig,
-          environment: {
-            ...fixture.serverConfig.environment,
-            environmentId: REMOTE_ENVIRONMENT_ID,
-            label: "Staging",
-          },
-          settings: {
-            ...fixture.serverConfig.settings,
-            addProjectBaseDirectory: "~/workspaces",
-          },
-        },
-        connectedAt: NOW_ISO,
+          connectionId,
+        }),
+        profile: new BearerConnectionProfile({
+          connectionId,
+          environmentId: REMOTE_ENVIRONMENT_ID,
+          label: "Staging",
+          httpBaseUrl: "https://staging.example.test",
+          wsBaseUrl: "wss://staging.example.test/ws",
+        }),
+        credential: new BearerConnectionCredential({ token: "browser-staging-token" }),
       });
+      const registerResult = await runAtomCommand(
+        appAtomRegistry,
+        environmentCatalog.register,
+        registration,
+      );
+      expect(registerResult._tag).toBe("Success");
 
       const palette = page.getByTestId("command-palette");
       await openCommandPaletteFromTrigger();
@@ -5617,8 +5960,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await expect
         .element(palette.getByText("This device", { exact: true }).first())
         .toBeInTheDocument();
-      await palette.getByText("Staging", { exact: true }).click();
-      await palette.getByText("Local folder", { exact: true }).click();
+      await clickReadyCommandPaletteAction("Staging");
+      await clickReadyCommandPaletteAction("Local folder");
 
       const browseInput = await waitForCommandPaletteInput(ADD_PROJECT_SUBMENU_PLACEHOLDER);
       await expect.element(browseInput).toHaveValue("~/workspaces/");
@@ -5663,11 +6006,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
         "Route should have changed to a new draft thread after adding a remote project.",
       );
     } finally {
+      await runAtomCommand(appAtomRegistry, environmentCatalog.remove, REMOTE_ENVIRONMENT_ID);
       await mounted.cleanup();
     }
   });
 
   it("picks a local project from the native file manager", async () => {
+    enableLegacySidebarForTest();
     const pickFolder = vi.fn().mockResolvedValue("/Users/julius/Projects/finder-picked");
 
     const mounted = await mountChatView({
@@ -5704,6 +6049,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       await waitForServerConfigToApply();
       window.desktopBridge = {
+        getLocalEnvironmentBootstraps: () => [],
         pickFolder,
         setTheme: vi.fn().mockResolvedValue(undefined),
       } as unknown as NonNullable<typeof window.desktopBridge>;
@@ -5766,6 +6112,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("adds a project from browse mode with Mod+Enter when a directory is highlighted", async () => {
+    enableLegacySidebarForTest();
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -5894,6 +6241,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("keeps project-context thread matches available when searching by project name", async () => {
+    enableLegacySidebarForTest();
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotWithSecondaryProject(),
@@ -5939,6 +6287,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("searches projects by path and opens the latest thread for that project", async () => {
+    enableLegacySidebarForTest();
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotWithSecondaryProject(),
@@ -6001,6 +6350,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("creates a new thread from project search when no active project thread exists", async () => {
+    enableLegacySidebarForTest();
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotWithSecondaryProject({ includeSecondaryThread: false }),
@@ -6061,6 +6411,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("filters archived threads out of command palette search results", async () => {
+    enableLegacySidebarForTest();
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotWithSecondaryProject(),
@@ -6336,6 +6687,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("keeps plan follow-up footer actions fused and aligned after a real resize", async () => {
+    enablePlanModeForTest();
     const mounted = await mountChatView({
       viewport: WIDE_FOOTER_VIEWPORT,
       snapshot: createSnapshotWithPlanFollowUpPrompt(),
@@ -6399,6 +6751,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("keeps the wide desktop follow-up layout expanded when the footer still fits", async () => {
+    enablePlanModeForTest();
     const mounted = await mountChatView({
       viewport: WIDE_FOOTER_VIEWPORT,
       snapshot: createSnapshotWithPlanFollowUpPrompt({
@@ -6421,7 +6774,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
             '[data-chat-composer-actions="right"]',
           );
 
-          expect(footer?.dataset.chatComposerFooterCompact).toBe("false");
+          expect(
+            footer?.dataset.chatComposerFooterCompact,
+            `Composer form width: ${footer?.closest("form")?.clientWidth ?? "missing"}; footer width: ${footer?.clientWidth ?? "missing"}`,
+          ).toBe("false");
           expect(actions?.dataset.chatComposerPrimaryActionsCompact).toBe("false");
         },
         { timeout: 8_000, interval: 16 },
@@ -6432,6 +6788,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("compacts the footer when a wide desktop follow-up layout starts overflowing", async () => {
+    enablePlanModeForTest();
     const mounted = await mountChatView({
       viewport: WIDE_FOOTER_VIEWPORT,
       snapshot: createSnapshotWithPlanFollowUpPrompt({

@@ -193,6 +193,7 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
   const transitionTokenRef = useRef(0);
   const deckRef = useRef<HTMLDivElement | null>(null);
   const keyboardRequestedCardRef = useRef<CardId | null>(null);
+  const focusedElementByCardRef = useRef(new Map<CardId, HTMLElement>());
   const cardSectionRefs = useRef(new Map<CardId, HTMLElement>());
   const intrinsicElementRefs = useRef(new Map<CardId, HTMLDivElement>());
   const observerRef = useRef<ResizeObserver | null>(null);
@@ -218,22 +219,28 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
   cardIdsRef.current = cardIds;
   collapseCompleteCallbackRef.current = props.onExpandedCardCollapseComplete;
 
-  const focusKeyboardDestination = useCallback((cardId: CardId) => {
-    if (keyboardRequestedCardRef.current !== cardId) return;
-    keyboardRequestedCardRef.current = null;
-    const section = cardSectionRefs.current.get(cardId);
-    if (!section) return;
-    requestAnimationFrame(() => section.focus({ preventScroll: true }));
+  const focusDestination = useCallback((cardId: CardId) => {
+    if (keyboardRequestedCardRef.current === cardId) {
+      keyboardRequestedCardRef.current = null;
+      const section = cardSectionRefs.current.get(cardId);
+      if (!section) return;
+      requestAnimationFrame(() => section.focus({ preventScroll: true }));
+      return;
+    }
+
+    const previousFocus = focusedElementByCardRef.current.get(cardId);
+    if (!previousFocus?.isConnected) return;
+    requestAnimationFrame(() => previousFocus.focus({ preventScroll: true }));
   }, []);
 
   const finishTransition = useCallback(() => {
     setTransition((currentTransition) => {
       if (currentTransition === null) return null;
-      focusKeyboardDestination(currentTransition.toId);
+      focusDestination(currentTransition.toId);
       return null;
     });
     setFrozenCompactHeight(null);
-  }, [focusKeyboardDestination]);
+  }, [focusDestination]);
 
   const cancelCollapse = useCallback(() => {
     collapsingCardRef.current = null;
@@ -305,7 +312,7 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
     ) {
       setTransition(null);
       setFrozenCompactHeight(null);
-      focusKeyboardDestination(activeCard);
+      focusDestination(activeCard);
       return;
     }
 
@@ -327,7 +334,7 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
     activeCard,
     cardIds,
     compactHeightReferenceCard,
-    focusKeyboardDestination,
+    focusDestination,
     measurements,
     prefersReducedMotion,
     props.activeCard,
@@ -337,10 +344,10 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
 
   useIsomorphicLayoutEffect(() => {
     if (props.selectionMode !== "immediate" || transition === null) return;
-    focusKeyboardDestination(activeCard);
+    focusDestination(activeCard);
     setTransition(null);
     setFrozenCompactHeight(null);
-  }, [activeCard, focusKeyboardDestination, props.selectionMode, transition]);
+  }, [activeCard, focusDestination, props.selectionMode, transition]);
 
   useEffect(() => {
     if (transition === null) return;
@@ -570,6 +577,11 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
               inert={active ? undefined : true}
               tabIndex={active ? -1 : undefined}
               data-transition-role={transitionRole}
+              onFocusCapture={(event) => {
+                if (event.target instanceof HTMLElement) {
+                  focusedElementByCardRef.current.set(card.id, event.target);
+                }
+              }}
             >
               <div
                 ref={(element) => registerIntrinsicElement(card.id, element)}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
   startAssemblyAiStreamingTranscription,
@@ -113,7 +113,7 @@ export function useAssemblyAiDictation(input: {
     };
   }, [terminatePreservingDraft]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     transition("idle");
     return () => terminatePreservingDraft();
   }, [input.lifecycleKey, terminatePreservingDraft, transition]);

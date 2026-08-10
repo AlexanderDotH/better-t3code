@@ -190,6 +190,7 @@ function ComposerBannerStackAlert({
   return (
     <Alert
       variant={item.variant}
+      controlAlignment={dismissOnly ? "first-line" : "center"}
       className={cn("alert-glass rounded-[22px]", item.className)}
       data-variant={item.variant}
     >
