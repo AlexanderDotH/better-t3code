@@ -59,6 +59,7 @@ export interface ServerProviderPresentation {
   readonly showInteractionModeToggle?: boolean;
   readonly requiresNewThreadForModelChange?: boolean;
   readonly nativeSubagents?: ServerProviderNativeSubagents;
+  readonly fetchWorkers?: ServerProvider["fetchWorkers"];
 }
 
 export type ServerProviderDraft = Omit<ServerProvider, "instanceId" | "driver">;
@@ -260,6 +261,9 @@ export function buildServerProvider(input: {
       : {}),
     ...(input.presentation.nativeSubagents
       ? { nativeSubagents: { ...input.presentation.nativeSubagents } }
+      : {}),
+    ...(input.presentation.fetchWorkers
+      ? { fetchWorkers: { ...input.presentation.fetchWorkers } }
       : {}),
     enabled: input.enabled,
     installed: input.probe.installed,

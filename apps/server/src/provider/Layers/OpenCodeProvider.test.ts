@@ -211,6 +211,37 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
+  it.effect("uses model IDs as names when the OpenCode provider omits model.name", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["google"],
+          all: [
+            {
+              id: "google",
+              name: "Google",
+              models: {
+                "gemini-2.5-flash": {
+                  id: "gemini-2.5-flash",
+                  providerID: "google",
+                },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+      };
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      const model = snapshot.models.find((entry) => entry.slug === "google/gemini-2.5-flash");
+
+      NodeAssert.ok(model);
+      NodeAssert.equal(model?.name, "gemini-2.5-flash");
+      NodeAssert.equal(model?.subProvider, "Google");
+    }),
+  );
+
   it.effect("does not spawn a local server for health check (uses CLI instead)", () =>
     Effect.gen(function* () {
       yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());

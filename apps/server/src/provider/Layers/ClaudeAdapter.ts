@@ -3415,9 +3415,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         );
       }
 
+      const fetchWorker = input.purpose === "fetch-worker";
+      const runtimeMode = fetchWorker ? "approval-required" : input.runtimeMode;
       const startedAt = yield* nowIso;
       const runtimeSessionId = input.runtimeSessionId ?? RuntimeSessionId.make(yield* randomUUIDv4);
-      const resumeState = readClaudeResumeState(input.resumeCursor);
+      const resumeState = fetchWorker ? undefined : readClaudeResumeState(input.resumeCursor);
       const threadId = input.threadId;
       const existingResumeSessionId = resumeState?.resume;
       const newSessionId = existingResumeSessionId === undefined ? yield* randomUUIDv4 : undefined;
@@ -3618,7 +3620,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           } satisfies PermissionResult;
         }
 
-        const runtimeMode = input.runtimeMode ?? "full-access";
         if (runtimeMode === "full-access") {
           return {
             behavior: "allow",
@@ -3782,16 +3783,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         auto: "auto",
         "full-access": "bypassPermissions",
       };
-      const permissionMode = runtimeModeToPermission[input.runtimeMode];
+      const permissionMode = runtimeModeToPermission[runtimeMode];
       const settings = {
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(typeof nativeFastMode === "boolean" ? { fastMode: nativeFastMode } : {}),
         ...(ultracode ? { ultracode: true } : {}),
       };
-      const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-      const mcpServers = options?.resolveMcpServers
-        ? yield* options.resolveMcpServers({ cwd: input.cwd ?? serverConfig.cwd })
-        : {};
+      const mcpSession = fetchWorker
+        ? undefined
+        : McpProviderSession.readMcpProviderSession(input.threadId);
+      const mcpServers =
+        !fetchWorker && options?.resolveMcpServers
+          ? yield* options.resolveMcpServers({ cwd: input.cwd ?? serverConfig.cwd })
+          : {};
       const builtInMcpServers: NonNullable<ClaudeQueryOptions["mcpServers"]> = mcpSession
         ? {
             "t3-code": {
@@ -3812,7 +3816,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(apiModelId ? { model: apiModelId } : {}),
         pathToClaudeCodeExecutable: claudeBinaryPath,
         systemPrompt: { type: "preset", preset: "claude_code" },
-        settingSources: [...CLAUDE_SETTING_SOURCES],
+        settingSources: fetchWorker ? [] : [...CLAUDE_SETTING_SOURCES],
+        ...(fetchWorker ? { tools: ["Read", "Grep", "Glob"] } : {}),
         // `ultracode` is a Claude Code setting, not an API effort level. It is
         // normalized to `xhigh` above and paired with `settings.ultracode`.
         ...(effectiveEffort
@@ -3838,7 +3843,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       yield* Effect.annotateCurrentSpan({
         "provider.kind": PROVIDER,
         "provider.thread_id": threadId,
-        "provider.runtime_mode": input.runtimeMode,
+        "provider.runtime_mode": runtimeMode,
         "claude.resume.source":
           existingResumeSessionId !== undefined ? "resume-session" : "generated-session",
         "claude.resume.thread_id": resumeState?.threadId ?? "",
@@ -3882,7 +3887,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         providerInstanceId: boundInstanceId,
         runtimeSessionId,
         status: "ready",
-        runtimeMode: input.runtimeMode,
+        runtimeMode,
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(modelSelection?.model ? { model: modelSelection.model } : {}),
         ...(threadId ? { threadId } : {}),
@@ -3932,7 +3937,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         provider: PROVIDER,
         createdAt: sessionStartedStamp.createdAt,
         threadId,
-        payload: input.resumeCursor !== undefined ? { resume: input.resumeCursor } : {},
+        payload:
+          !fetchWorker && input.resumeCursor !== undefined ? { resume: input.resumeCursor } : {},
         providerRefs: {},
       });
 

@@ -141,6 +141,7 @@ interface CursorSessionContext {
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
+  readonly stopRequested: Deferred.Deferred<void>;
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
   activeTurnId: TurnId | undefined;
@@ -557,6 +558,7 @@ export function makeCursorAdapter(
       Effect.gen(function* () {
         if (ctx.stopped) return;
         ctx.stopped = true;
+        yield* Deferred.succeed(ctx.stopRequested, undefined).pipe(Effect.ignore);
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
         if (ctx.notificationFiber) {
@@ -593,6 +595,8 @@ export function makeCursorAdapter(
           }
 
           const cwd = path.resolve(input.cwd.trim());
+          const fetchWorker = input.purpose === "fetch-worker";
+          const runtimeMode = fetchWorker ? "approval-required" : input.runtimeMode;
           const cursorModelSelection =
             input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
           const existing = sessions.get(input.threadId);
@@ -608,6 +612,7 @@ export function makeCursorAdapter(
 
           const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
           const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
+          const stopRequested = yield* Deferred.make<void>();
           const sessionScope = yield* Scope.make("sequential");
           let sessionScopeTransferred = false;
           yield* Effect.addFinalizer(() =>
@@ -615,7 +620,9 @@ export function makeCursorAdapter(
           );
           let ctx!: CursorSessionContext;
 
-          const resumeSessionId = parseCursorResume(input.resumeCursor)?.sessionId;
+          const resumeSessionId = fetchWorker
+            ? undefined
+            : parseCursorResume(input.resumeCursor)?.sessionId;
           const acpNativeLoggers = makeAcpNativeLoggers({
             nativeEventLogger,
             provider: PROVIDER,
@@ -633,11 +640,14 @@ export function makeCursorAdapter(
           const effectiveCursorSettings = options?.resolveSettings
             ? yield* options.resolveSettings
             : cursorSettings;
-          const mcpServers = options?.resolveMcpServers
-            ? yield* options.resolveMcpServers({ cwd })
-            : [];
+          const mcpServers =
+            !fetchWorker && options?.resolveMcpServers
+              ? yield* options.resolveMcpServers({ cwd })
+              : [];
 
-          const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+          const mcpSession = fetchWorker
+            ? undefined
+            : McpProviderSession.readMcpProviderSession(input.threadId);
           const configuredMcpServers: ReadonlyArray<EffectAcpSchema.McpServer> = [
             ...mcpServers,
             ...(mcpSession
@@ -780,7 +790,7 @@ export function makeCursorAdapter(
                     params,
                     "acp.jsonrpc",
                   );
-                  if (input.runtimeMode === "full-access") {
+                  if (runtimeMode === "full-access") {
                     const autoApprovedOptionId = selectAutoApprovedPermissionOption(params);
                     if (autoApprovedOptionId !== undefined) {
                       return {
@@ -851,7 +861,7 @@ export function makeCursorAdapter(
 
           yield* applyRequestedSessionConfiguration({
             runtime: acp,
-            runtimeMode: input.runtimeMode,
+            runtimeMode,
             interactionMode: undefined,
             modelSelection: cursorModelSelection,
             mapError: ({ cause, method }) =>
@@ -864,7 +874,7 @@ export function makeCursorAdapter(
             providerInstanceId: boundInstanceId,
             runtimeSessionId,
             status: "ready",
-            runtimeMode: input.runtimeMode,
+            runtimeMode,
             cwd,
             model: cursorModelSelection?.model,
             threadId: input.threadId,
@@ -886,6 +896,7 @@ export function makeCursorAdapter(
             notificationFiber: undefined,
             pendingApprovals,
             pendingUserInputs,
+            stopRequested,
             turns: [],
             lastPlanFingerprint: undefined,
             activeTurnId: undefined,
@@ -979,13 +990,17 @@ export function makeCursorAdapter(
                     );
                     return;
                 }
-              }),
+              }).pipe(
+                Effect.catch((cause) =>
+                  Effect.logError("Failed to process Cursor runtime notification.", { cause }),
+                ),
+              ),
             ),
           ).pipe(
-            Effect.catch((cause) =>
-              Effect.logError("Failed to process Cursor runtime notification.", { cause }),
-            ),
-            Effect.forkChild,
+            // Keep the drain alive for the session, not the short-lived startSession
+            // caller fiber. Without this, a reactor fiber that finishes sendTurn can
+            // interrupt the drain before queued ACP content deltas are published.
+            Effect.forkIn(sessionScope),
           );
 
           ctx.notificationFiber = nf;
@@ -1115,15 +1130,25 @@ export function makeCursorAdapter(
             });
           }
 
+          const drainEventsUntilStopped = Effect.raceFirst(
+            ctx.acp.drainEvents,
+            Deferred.await(ctx.stopRequested),
+          );
           const result = yield* ctx.acp
             .prompt({
               prompt: promptParts,
             })
             .pipe(
+              Effect.tapError(() => drainEventsUntilStopped),
               Effect.mapError((error) =>
                 mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
               ),
             );
+          // Flush ACP session/update events before settling the turn. Cursor can
+          // deliver the prompt Exit in the same scheduler turn as the trailing
+          // content deltas; without a barrier, turn.completed races ahead and the
+          // drain may never publish assistant text.
+          yield* drainEventsUntilStopped;
 
           const turnRecord = ctx.turns.find((turn) => turn.id === turnId);
           if (turnRecord) {
@@ -1208,6 +1233,7 @@ export function makeCursorAdapter(
       }
 
       ctx.stopped = true;
+      yield* Deferred.succeed(ctx.stopRequested, undefined).pipe(Effect.ignore);
       sessions.delete(threadId);
       yield* ctx.acp.forceClose.pipe(
         Effect.mapError(

@@ -33,6 +33,14 @@ const ProviderSessionStatus = Schema.Literals([
   "closed",
 ]);
 
+export const ProviderSessionPurpose = Schema.Literals(["interactive", "fetch-worker"]);
+export type ProviderSessionPurpose = typeof ProviderSessionPurpose.Type;
+export const DEFAULT_PROVIDER_SESSION_PURPOSE: ProviderSessionPurpose = "interactive";
+
+export const resolveProviderSessionPurpose = (
+  purpose: ProviderSessionPurpose | undefined,
+): ProviderSessionPurpose => purpose ?? DEFAULT_PROVIDER_SESSION_PURPOSE;
+
 export const ProviderSession = Schema.Struct({
   provider: ProviderDriverKind,
   // Optional during the driver/instance migration. Once every producer
@@ -56,6 +64,7 @@ export type ProviderSession = typeof ProviderSession.Type;
 
 export const ProviderSessionStartInput = Schema.Struct({
   threadId: ThreadId,
+  purpose: Schema.optional(ProviderSessionPurpose),
   // Assigned by ProviderService before entering an adapter. Optional only for
   // persisted and legacy producers while runtime lease fencing rolls out.
   runtimeSessionId: Schema.optional(RuntimeSessionId),

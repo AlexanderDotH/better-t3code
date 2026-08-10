@@ -506,15 +506,25 @@ const make = Effect.gen(function* () {
     }
     const preferredProvider: ProviderDriverKind = desiredDriverKind;
     if (options?.pendingTurnStart === true && thread.session?.status !== "running") {
+      // Clear the previous runtime generation so pre-bind events from a
+      // replacement lease can be adopted while status is "starting". Pinning
+      // the old runtimeSessionId hard-drops those events until bind lands.
+      const pendingProviderName =
+        requestedModelSelection !== undefined
+          ? preferredProvider
+          : (activeSession?.provider ?? preferredProvider);
+      const pendingProviderInstanceId =
+        requestedModelSelection !== undefined
+          ? desiredInstanceId
+          : (activeSession?.providerInstanceId ?? desiredInstanceId);
       yield* setThreadSession({
         threadId,
         session: {
           threadId,
           status: "starting",
-          providerName: activeSession?.provider ?? preferredProvider,
-          providerInstanceId: activeSession?.providerInstanceId ?? desiredInstanceId,
-          runtimeSessionId:
-            activeSession?.runtimeSessionId ?? thread.session?.runtimeSessionId ?? null,
+          providerName: pendingProviderName,
+          providerInstanceId: pendingProviderInstanceId,
+          runtimeSessionId: null,
           runtimeMode: desiredRuntimeMode,
           activeTurnId: null,
           abortState: null,

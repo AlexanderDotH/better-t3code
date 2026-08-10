@@ -442,6 +442,92 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
+  it.effect("plans Fetch exploration with the exact Codex traits and provider budget", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          decision: "run",
+          workers: [{ scope: "Server routing", questions: ["Where is Fetch routed?"] }],
+        }),
+        stdinMustContain: "between 1 and 10 workers",
+        requireReasoningEffort: "high",
+        requireArg: "--disable multi_agent -c mcp_servers={}",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.planFetchExploration({
+            cwd: process.cwd(),
+            userRequest: "Trace Fetch routing.",
+            repositoryOrientation: "Top-level areas: apps/server",
+            maxRecommendedWorkers: 10,
+            modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-luna", [
+              { id: "reasoningEffort", value: "high" },
+            ]),
+          });
+
+          expect(generated).toEqual({
+            decision: "run",
+            workers: [{ scope: "Server routing", questions: ["Where is Fetch routed?"] }],
+          });
+        }),
+    ),
+  );
+
+  it.effect("types Codex account-access failures as entitlement errors", () =>
+    withFakeCodexEnv(
+      {
+        output: "",
+        exitCode: 1,
+        stderr:
+          "The 'gpt-5.3-codex-spark' model is not supported when using Codex with this ChatGPT account.",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* textGeneration
+            .planFetchExploration({
+              cwd: process.cwd(),
+              userRequest: "Inspect the repository.",
+              repositoryOrientation: "Repository orientation",
+              maxRecommendedWorkers: 8,
+              modelSelection: createModelSelection(
+                ProviderInstanceId.make("codex"),
+                "gpt-5.3-codex-spark",
+              ),
+            })
+            .pipe(Effect.flip);
+
+          expect(error.reason).toBe("entitlement");
+        }),
+    ),
+  );
+
+  it.effect("types Codex missing-model failures as model unavailable", () =>
+    withFakeCodexEnv(
+      {
+        output: "",
+        exitCode: 1,
+        stderr: "Model gpt-5.3-codex-spark was not found.",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* textGeneration
+            .planFetchExploration({
+              cwd: process.cwd(),
+              userRequest: "Inspect the repository.",
+              repositoryOrientation: "Repository orientation",
+              maxRecommendedWorkers: 8,
+              modelSelection: createModelSelection(
+                ProviderInstanceId.make("codex"),
+                "gpt-5.3-codex-spark",
+              ),
+            })
+            .pipe(Effect.flip);
+
+          expect(error.reason).toBe("model-unavailable");
+        }),
+    ),
+  );
+
   it.effect("falls back when thread title normalization becomes whitespace-only", () =>
     withFakeCodexEnv(
       {

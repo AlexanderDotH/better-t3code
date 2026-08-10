@@ -109,6 +109,28 @@ describe("buildServerProvider", () => {
     expect(snapshot.nativeSubagents).toBeUndefined();
     expect(snapshot).not.toHaveProperty("nativeSubagents");
   });
+
+  it("forwards a provider-owned Fetch worker budget without an application clamp", () => {
+    const snapshot = buildSnapshot({
+      displayName: "Fork provider",
+      fetchWorkers: {
+        maxRecommendedWorkers: 12,
+        commandExecutionPolicy: "deny",
+      },
+    });
+
+    expect(snapshot.fetchWorkers).toEqual({
+      maxRecommendedWorkers: 12,
+      commandExecutionPolicy: "deny",
+    });
+  });
+
+  it("omits Fetch capability when the presentation does not advertise it", () => {
+    const snapshot = buildSnapshot({ displayName: "Unavailable provider" });
+
+    expect(snapshot.fetchWorkers).toBeUndefined();
+    expect(snapshot).not.toHaveProperty("fetchWorkers");
+  });
 });
 
 describe("ProviderCommandNotFoundError", () => {

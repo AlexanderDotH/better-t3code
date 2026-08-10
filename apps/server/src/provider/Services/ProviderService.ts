@@ -41,6 +41,13 @@ export interface ProviderAbortTarget {
   readonly providerInstanceId: ProviderInstanceId;
 }
 
+/** Exact in-memory provider runtime owned by a transient T3 workflow. */
+export interface ProviderTransientSessionTarget {
+  readonly threadId: ThreadId;
+  readonly runtimeSessionId: RuntimeSessionId;
+  readonly providerInstanceId: ProviderInstanceId;
+}
+
 /**
  * ProviderServiceShape - Service API for provider session and turn orchestration.
  */
@@ -49,6 +56,16 @@ export interface ProviderServiceShape {
    * Start a provider session.
    */
   readonly startSession: (
+    threadId: ThreadId,
+    input: ProviderSessionStartInput,
+  ) => Effect.Effect<ProviderSession, ProviderServiceError>;
+
+  /**
+   * Start a fresh provider runtime without creating a durable session binding.
+   * Callers reserve the runtime id before startup so early events can be
+   * generation-fenced by the transient workflow that owns them.
+   */
+  readonly startTransientSession: (
     threadId: ThreadId,
     input: ProviderSessionStartInput,
   ) => Effect.Effect<ProviderSession, ProviderServiceError>;
@@ -100,6 +117,11 @@ export interface ProviderServiceShape {
    */
   readonly stopSession: (
     input: ProviderStopSessionInput,
+  ) => Effect.Effect<void, ProviderServiceError>;
+
+  /** Gracefully stop one exact transient runtime and remove its in-memory binding. */
+  readonly stopTransientSession: (
+    target: ProviderTransientSessionTarget,
   ) => Effect.Effect<void, ProviderServiceError>;
 
   /**

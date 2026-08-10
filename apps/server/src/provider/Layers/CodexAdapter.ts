@@ -2282,11 +2282,27 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           input.modelSelection?.instanceId === boundInstanceId
             ? getCodexServiceTierOptionValue(input.modelSelection)
             : undefined;
+        const fetchWorker = input.purpose === "fetch-worker";
+        const runtimeMode = fetchWorker ? "approval-required" : input.runtimeMode;
         const cwd = input.cwd ?? process.cwd();
-        const resolvedMcpServers = options?.resolveMcpServers
-          ? yield* options.resolveMcpServers({ cwd })
-          : [];
-        const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+        const resolvedMcpServers =
+          !fetchWorker && options?.resolveMcpServers
+            ? yield* options.resolveMcpServers({ cwd })
+            : [];
+        const mcpSession = fetchWorker
+          ? undefined
+          : McpProviderSession.readMcpProviderSession(input.threadId);
+        const appServerArgs = [
+          ...(fetchWorker ? ["--disable", "multi_agent", "-c", "mcp_servers={}"] : []),
+          ...(mcpSession
+            ? [
+                "-c",
+                `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
+                "-c",
+                'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+              ]
+            : []),
+        ];
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
@@ -2295,10 +2311,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
           ...(options?.environment ? { environment: options.environment } : {}),
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
-          ...(isCodexResumeCursorSchema(input.resumeCursor)
+          ...(!fetchWorker && isCodexResumeCursorSchema(input.resumeCursor)
             ? { resumeCursor: input.resumeCursor }
             : {}),
-          runtimeMode: input.runtimeMode,
+          runtimeMode,
           ...(input.modelSelection?.instanceId === boundInstanceId
             ? { model: input.modelSelection.model }
             : {}),
@@ -2309,14 +2325,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                   ...(options?.environment ?? process.env),
                   T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
                 },
-                appServerArgs: [
-                  "-c",
-                  `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
-                  "-c",
-                  'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
-                ],
+                internalMcpServer: {
+                  url: mcpSession.endpoint,
+                  bearerTokenEnvVar: "T3_MCP_BEARER_TOKEN",
+                },
               }
             : {}),
+          ...(appServerArgs.length > 0 ? { appServerArgs } : {}),
           ...(options?.resolveMcpServers ? { mcpServers: resolvedMcpServers } : {}),
         };
         const sessionScope = yield* Scope.make("sequential");

@@ -241,6 +241,10 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       expect(personalSnapshot.instanceId).toBe(personalId);
       expect(personalSnapshot.driver).toBe(codexDriverKind);
       expect(personalSnapshot.enabled).toBe(false);
+      expect(personalSnapshot.fetchWorkers).toEqual({
+        maxRecommendedWorkers: 8,
+        commandExecutionPolicy: "read-only-sandbox",
+      });
       expect(personalSnapshot.continuation?.groupKey).toBe(
         "codex:home:/home/julius/.codex_personal",
       );
@@ -249,6 +253,10 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       expect(workSnapshot.instanceId).toBe(workId);
       expect(workSnapshot.driver).toBe(codexDriverKind);
       expect(workSnapshot.enabled).toBe(false);
+      expect(workSnapshot.fetchWorkers).toEqual({
+        maxRecommendedWorkers: 8,
+        commandExecutionPolicy: "read-only-sandbox",
+      });
       expect(workSnapshot.continuation?.groupKey).toBe("codex:home:/home/julius/.codex");
 
       // Nothing goes to the unavailable bucket — both drivers are registered.
@@ -461,18 +469,30 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(codexSnapshot.instanceId).toBe(codexId);
       expect(codexSnapshot.driver).toBe(codexDriverKind);
       expect(codexSnapshot.enabled).toBe(false);
+      expect(codexSnapshot.fetchWorkers).toEqual({
+        maxRecommendedWorkers: 8,
+        commandExecutionPolicy: "read-only-sandbox",
+      });
       expect(codexSnapshot.continuation?.groupKey).toBe("codex:home:/home/julius/.codex");
 
       const claudeSnapshot = yield* claude!.snapshot.getSnapshot;
       expect(claudeSnapshot.instanceId).toBe(claudeId);
       expect(claudeSnapshot.driver).toBe(claudeDriverKind);
       expect(claudeSnapshot.enabled).toBe(false);
+      expect(claudeSnapshot.fetchWorkers).toEqual({
+        maxRecommendedWorkers: 8,
+        commandExecutionPolicy: "deny",
+      });
       expect(claudeSnapshot.continuation?.groupKey).toBe("claude:home:/home/julius/.claude-work");
 
       const cursorSnapshot = yield* cursor!.snapshot.getSnapshot;
       expect(cursorSnapshot.instanceId).toBe(cursorId);
       expect(cursorSnapshot.driver).toBe(cursorDriverKind);
       expect(cursorSnapshot.enabled).toBe(false);
+      expect(cursorSnapshot.fetchWorkers).toEqual({
+        maxRecommendedWorkers: 8,
+        commandExecutionPolicy: "deny",
+      });
       expect(cursorSnapshot.continuation?.groupKey).toBe(
         `${cursorDriverKind}:instance:${cursorId}`,
       );
@@ -481,12 +501,20 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(grokSnapshot.instanceId).toBe(grokId);
       expect(grokSnapshot.driver).toBe(grokDriverKind);
       expect(grokSnapshot.enabled).toBe(false);
+      expect(grokSnapshot.fetchWorkers).toEqual({
+        maxRecommendedWorkers: 8,
+        commandExecutionPolicy: "deny",
+      });
       expect(grokSnapshot.continuation?.groupKey).toBe(`${grokDriverKind}:instance:${grokId}`);
 
       const openCodeSnapshot = yield* openCode!.snapshot.getSnapshot;
       expect(openCodeSnapshot.instanceId).toBe(openCodeId);
       expect(openCodeSnapshot.driver).toBe(openCodeDriverKind);
       expect(openCodeSnapshot.enabled).toBe(false);
+      expect(openCodeSnapshot.fetchWorkers).toEqual({
+        maxRecommendedWorkers: 8,
+        commandExecutionPolicy: "deny",
+      });
       expect(openCodeSnapshot.continuation?.groupKey).toBe(
         `${openCodeDriverKind}:instance:${openCodeId}`,
       );

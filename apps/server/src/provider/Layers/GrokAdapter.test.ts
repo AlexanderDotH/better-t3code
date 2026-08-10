@@ -17,6 +17,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import {
   ApprovalRequestId,
+  EnvironmentId,
   GrokSettings,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -27,6 +28,7 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { grokPromptSettlementBelongsToContext, makeGrokAdapter } from "./GrokAdapter.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 const FORCE_STOP_RUNTIME_SESSION_ID = RuntimeSessionId.make("grok-force-stop-runtime");
@@ -1053,6 +1055,60 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       yield* Fiber.interrupt(runtimeEventsFiber);
       yield* adapter.stopSession(threadId);
     }),
+  );
+
+  it.effect("starts Fetch workers fresh in approval mode without the T3 MCP server", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("fetch:grok-parent:run:0");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      yield* Effect.sync(() =>
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make("environment-grok-fetch"),
+          threadId,
+          providerSessionId: "provider-session-grok-fetch",
+          providerInstanceId: ProviderInstanceId.make("grok"),
+          endpoint: "http://127.0.0.1:3000/mcp",
+          authorizationHeader: "Bearer fetch-token",
+        }),
+      );
+
+      const session = yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        purpose: "fetch-worker",
+        cwd: process.cwd(),
+        resumeCursor: { schemaVersion: 1, sessionId: "must-not-resume" },
+        runtimeMode: "full-access",
+      });
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const sessionNew = requests.find((entry) => entry.method === "session/new");
+      assert.equal(session.runtimeMode, "approval-required");
+      assert.deepEqual(
+        (sessionNew?.params as { readonly mcpServers?: ReadonlyArray<unknown> } | undefined)
+          ?.mcpServers,
+        [],
+      );
+      assert.equal(
+        requests.some((entry) => entry.method === "session/load"),
+        false,
+      );
+
+      yield* adapter.stopSession(threadId);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() =>
+          McpProviderSession.clearMcpProviderSession(ThreadId.make("fetch:grok-parent:run:0")),
+        ),
+      ),
+    ),
   );
 
   it.effect("rejects startSession when provider mismatches", () =>

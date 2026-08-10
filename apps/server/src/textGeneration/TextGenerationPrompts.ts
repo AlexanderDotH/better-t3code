@@ -324,6 +324,70 @@ export function buildPromptImprovementPrompt(input: PromptImprovementPromptInput
 }
 
 // ---------------------------------------------------------------------------
+// Fetch exploration planning
+// ---------------------------------------------------------------------------
+
+export const FETCH_EXPLORATION_REQUEST_MAX_CHARS = 16_000;
+export const FETCH_EXPLORATION_ORIENTATION_MAX_CHARS = 24_000;
+const FETCH_EXPLORATION_TRUNCATION_MARKER = "\n\n[truncated]";
+
+export function truncateFetchExplorationContext(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  const retainedChars = Math.max(0, maxChars - FETCH_EXPLORATION_TRUNCATION_MARKER.length);
+  return `${value.slice(0, retainedChars)}${FETCH_EXPLORATION_TRUNCATION_MARKER}`;
+}
+
+export const FetchExplorationOutputSchema = Schema.Struct({
+  decision: Schema.Literals(["skip", "run"]),
+  workers: Schema.Array(
+    Schema.Struct({
+      scope: Schema.String,
+      questions: Schema.Array(Schema.String),
+    }),
+  ),
+});
+
+export interface FetchExplorationPromptInput {
+  readonly userRequest: string;
+  readonly repositoryOrientation: string;
+  readonly maxRecommendedWorkers: number;
+}
+
+export function buildFetchExplorationPrompt(input: FetchExplorationPromptInput) {
+  const userRequest = truncateFetchExplorationContext(
+    input.userRequest,
+    FETCH_EXPLORATION_REQUEST_MAX_CHARS,
+  );
+  const repositoryOrientation = truncateFetchExplorationContext(
+    input.repositoryOrientation,
+    FETCH_EXPLORATION_ORIENTATION_MAX_CHARS,
+  );
+  const prompt = [
+    "You decide whether transient repository exploration would help answer the user's request.",
+    "Return a JSON object with exactly the keys: decision, workers.",
+    "Each worker has exactly the keys: scope, questions.",
+    "Rules:",
+    "- Use decision=skip with zero workers when the request does not require repository discovery.",
+    `- Use decision=run with between 1 and ${input.maxRecommendedWorkers} workers when discovery is useful.`,
+    "- Every scope must be concrete, non-overlapping, and limited to repository-read-only discovery.",
+    "- Every worker must have at least one concrete question.",
+    "- Do not assign edits, implementation, mutating commands, external actions, or nested agents.",
+    "- Use one worker for narrow work, 2-3 workers for bounded multi-area work, and 4-6 workers for broad cross-layer work.",
+    "- Use a larger count only for genuinely repository-wide work with independent scopes.",
+    "- Do not create duplicate, vague, observation-only, or coordination scopes.",
+    "- Return only the JSON object. Do not use tools or inspect the repository yourself.",
+    "",
+    "Original user request:",
+    userRequest,
+    "",
+    "Repository orientation:",
+    repositoryOrientation,
+  ].join("\n");
+
+  return { prompt, outputSchema: FetchExplorationOutputSchema };
+}
+
+// ---------------------------------------------------------------------------
 // Proposed-plan parallelism review
 // ---------------------------------------------------------------------------
 

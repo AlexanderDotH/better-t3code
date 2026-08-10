@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildFetchExplorationPrompt,
   buildPlanParallelismReviewPrompt,
   buildPromptImprovementPrompt,
   buildPrContentPrompt,
@@ -11,6 +12,8 @@ import {
   buildTranscriptTranslationPrompt,
   PLAN_PARALLELISM_REVIEW_PLAN_MAX_CHARS,
   PLAN_PARALLELISM_REVIEW_REQUEST_MAX_CHARS,
+  FETCH_EXPLORATION_REQUEST_MAX_CHARS,
+  FetchExplorationOutputSchema,
   PlanParallelismReviewOutputSchema,
   PromptImprovementOutputSchema,
   truncatePlanParallelismReviewContext,
@@ -26,6 +29,7 @@ const decodeTranscriptTranslationOutput = Schema.decodeUnknownSync(
 const decodePlanParallelismReviewOutput = Schema.decodeUnknownSync(
   PlanParallelismReviewOutputSchema,
 );
+const decodeFetchExplorationOutput = Schema.decodeUnknownSync(FetchExplorationOutputSchema);
 
 describe("buildCommitMessagePrompt", () => {
   it("includes staged patch and summary in the prompt", () => {
@@ -312,6 +316,51 @@ describe("buildPlanParallelismReviewPrompt", () => {
     expect(truncatedPlan).toContain("[truncated]");
     expect(truncatedRequest).toContain("[truncated]");
     expect(result.prompt).not.toContain("PLAN_TAIL");
+    expect(result.prompt).not.toContain("REQUEST_TAIL");
+  });
+});
+
+describe("buildFetchExplorationPrompt", () => {
+  it("asks for bounded repository-read-only scopes and allows a skip plan", () => {
+    const result = buildFetchExplorationPrompt({
+      userRequest: "Explain how authentication works.",
+      repositoryOrientation: "Top-level areas: apps, packages\nTests: apps/server/auth.test.ts",
+      maxRecommendedWorkers: 12,
+    });
+
+    expect(result.prompt).toContain("between 1 and 12 workers");
+    expect(result.prompt).toContain("concrete, non-overlapping");
+    expect(result.prompt).toContain("repository-read-only discovery");
+    expect(result.prompt).toContain("4-6 workers for broad cross-layer work");
+    expect(result.prompt).toContain("zero workers");
+    expect(result.prompt).toContain("Top-level areas: apps, packages");
+    expect(decodeFetchExplorationOutput({ decision: "skip", workers: [] })).toEqual({
+      decision: "skip",
+      workers: [],
+    });
+    expect(
+      decodeFetchExplorationOutput({
+        decision: "run",
+        workers: [{ scope: "Authentication contracts", questions: ["Where is auth decoded?"] }],
+      }),
+    ).toEqual({
+      decision: "run",
+      workers: [{ scope: "Authentication contracts", questions: ["Where is auth decoded?"] }],
+    });
+  });
+
+  it("truncates the original request to exactly 16,000 characters with a marker", () => {
+    const result = buildFetchExplorationPrompt({
+      userRequest: `${"r".repeat(FETCH_EXPLORATION_REQUEST_MAX_CHARS)}REQUEST_TAIL`,
+      repositoryOrientation: "Repository orientation",
+      maxRecommendedWorkers: 8,
+    });
+
+    const requestSection = result.prompt
+      .split("Original user request:\n", 2)[1]
+      ?.split("\n\nRepository orientation:", 1)[0];
+    expect(requestSection).toHaveLength(FETCH_EXPLORATION_REQUEST_MAX_CHARS);
+    expect(requestSection).toContain("[truncated]");
     expect(result.prompt).not.toContain("REQUEST_TAIL");
   });
 });

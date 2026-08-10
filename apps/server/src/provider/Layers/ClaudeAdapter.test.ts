@@ -28,7 +28,7 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, it, vi } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -550,6 +550,53 @@ describe("ClaudeAdapterLive", () => {
         },
       });
     }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("restricts Fetch workers to read-only tools without settings or MCP servers", () => {
+    const resolveMcpServers = vi.fn(() =>
+      Effect.succeed({
+        docs: {
+          type: "http" as const,
+          url: "https://example.com/mcp",
+        },
+      }),
+    );
+    const harness = makeHarness({ resolveMcpServers });
+    return Effect.gen(function* () {
+      yield* Effect.sync(() =>
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make("environment-fetch-worker"),
+          threadId: THREAD_ID,
+          providerSessionId: "provider-session-fetch-worker",
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          endpoint: "http://127.0.0.1:3000/mcp",
+          authorizationHeader: "Bearer fetch-token",
+        }),
+      );
+
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        purpose: "fetch-worker",
+        resumeCursor: { resume: "must-not-resume" },
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(session.runtimeMode, "approval-required");
+      assert.deepEqual(createInput?.options.settingSources, []);
+      assert.deepEqual(createInput?.options.tools, ["Read", "Grep", "Glob"]);
+      assert.equal(createInput?.options.mcpServers, undefined);
+      assert.equal(createInput?.options.resume, undefined);
+      assert.equal(createInput?.options.permissionMode, undefined);
+      assert.equal(createInput?.options.allowDangerouslySkipPermissions, undefined);
+      assert.equal(resolveMcpServers.mock.calls.length, 0);
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(THREAD_ID))),
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );
