@@ -1,8 +1,14 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import type { ReactNode } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ExperimentalSettingsPanelView } from "./ExperimentalSettingsPanel";
 import { SETTINGS_NAV_ITEMS } from "./SettingsSidebarNav";
+
+vi.mock("./settingsLayout", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./settingsLayout")>()),
+  SettingsPageContainer: ({ children }: { children?: ReactNode }) => <main>{children}</main>,
+}));
 
 describe("Experimental settings navigation", () => {
   it("places Experimental immediately after Connections", () => {
