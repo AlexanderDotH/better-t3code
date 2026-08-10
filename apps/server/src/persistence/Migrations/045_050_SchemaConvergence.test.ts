@@ -1,0 +1,185 @@
+import { assert, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+
+import { migrationEntries, migrationManifest, runMigrations } from "../Migrations.ts";
+import * as NodeSqliteClient from "../NodeSqliteClient.ts";
+import ForkMigration036 from "./036_ProjectSpeechProfilesCompatibility.ts";
+import ForkMigration037 from "./037_ProjectionThreadSubagents.ts";
+import Migration045 from "./045_ForkSchemaConvergence.ts";
+import Migration046 from "./046_ProjectionThreadsPinnedCompatibility.ts";
+import Migration047 from "./047_ProjectionTurnsKeysetIndexCompatibility.ts";
+import Migration048 from "./048_ProjectionThreadsPinOrderKeyCompatibility.ts";
+import Migration049 from "./049_ProjectionProjectsDefaultThreadEnvModeCompatibility.ts";
+import Migration050 from "./050_ProjectionProjectFaviconPathCompatibility.ts";
+
+const expectedTail = [
+  [33, "ProjectionThreadsSettled"],
+  [34, "ProjectionThreadsSnoozed"],
+  [35, "ProjectionThreadTitleRegeneration"],
+  [36, "ProjectSpeechProfilesCompatibility"],
+  [37, "ProjectionThreadSubagents"],
+  [38, "ProjectionThreadsSnoozedCompatibility"],
+  [39, "ProjectionThreadSessionAbortState"],
+  [40, "ProjectionCompatibility"],
+  [41, "ProjectionThreadSubagents"],
+  [42, "GitWorkbenchState"],
+  [43, "ProjectionThreadSubagentFetchMetadata"],
+  [44, "ProjectAgentCoordination"],
+  [45, "ForkSchemaConvergence"],
+  [46, "ProjectionThreadsPinnedCompatibility"],
+  [47, "ProjectionTurnsKeysetIndexCompatibility"],
+  [48, "ProjectionThreadsPinOrderKeyCompatibility"],
+  [49, "ProjectionProjectsDefaultThreadEnvModeCompatibility"],
+  [50, "ProjectionProjectFaviconPathCompatibility"],
+] as const;
+
+const applyUpstreamSchema = Effect.gen(function* () {
+  yield* Migration046;
+  yield* Migration047;
+  yield* Migration048;
+  yield* Migration049;
+  yield* Migration050;
+});
+
+const applyCompatibilityTail = Effect.gen(function* () {
+  yield* Migration045;
+  yield* applyUpstreamSchema;
+});
+
+interface SchemaEntry {
+  readonly type: string;
+  readonly name: string;
+  readonly tableName: string;
+  readonly sql: string | null;
+}
+
+interface ColumnEntry {
+  readonly tableName: string;
+  readonly name: string;
+  readonly type: string;
+  readonly notNull: number;
+  readonly defaultValue: string | null;
+  readonly primaryKey: number;
+}
+
+interface ScenarioSnapshot {
+  readonly schema: ReadonlyArray<SchemaEntry>;
+  readonly columns: ReadonlyArray<ColumnEntry>;
+  readonly integrity: ReadonlyArray<string>;
+}
+
+const captureScenario = (setup: Effect.Effect<void, unknown, SqlClient.SqlClient>) =>
+  Effect.gen(function* () {
+    yield* setup;
+    const sql = yield* SqlClient.SqlClient;
+    const schema = yield* sql<SchemaEntry>`
+      SELECT
+        type,
+        name,
+        tbl_name AS "tableName",
+        CASE WHEN type = 'index' THEN sql ELSE NULL END AS sql
+      FROM sqlite_master
+      WHERE type IN ('table', 'index')
+        AND name NOT LIKE 'sqlite_%'
+        AND name != 'effect_sql_migrations'
+      ORDER BY type, name
+    `;
+    const columns = yield* sql<ColumnEntry>`
+      SELECT
+        tables.name AS "tableName",
+        columns.name,
+        columns.type,
+        columns."notnull" AS "notNull",
+        columns.dflt_value AS "defaultValue",
+        columns.pk AS "primaryKey"
+      FROM sqlite_master AS tables
+      JOIN pragma_table_xinfo(tables.name) AS columns
+      WHERE tables.type = 'table'
+        AND tables.name NOT LIKE 'sqlite_%'
+        AND tables.name != 'effect_sql_migrations'
+      ORDER BY tables.name, columns.name
+    `;
+    const integrityRows = yield* sql<{ readonly integrityCheck: string }>`
+      PRAGMA integrity_check
+    `.pipe(
+      Effect.map((rows) =>
+        rows.map((row) => Object.values(row)[0]).filter((value): value is string => value != null),
+      ),
+    );
+    return { schema, columns, integrity: integrityRows } satisfies ScenarioSnapshot;
+  }).pipe(Effect.provide(NodeSqliteClient.layerMemory()));
+
+const freshScenario = Effect.asVoid(runMigrations());
+
+const fork44Scenario = Effect.gen(function* () {
+  yield* runMigrations({ toMigrationInclusive: 44 });
+  yield* runMigrations();
+});
+
+const upstream40Scenario = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* runMigrations({ toMigrationInclusive: 35 });
+  yield* applyUpstreamSchema;
+  yield* sql`
+    INSERT INTO effect_sql_migrations (migration_id, name)
+    VALUES
+      (36, 'ProjectionThreadsPinned'),
+      (37, 'ProjectionTurnsKeysetIndex'),
+      (38, 'ProjectionThreadsPinOrderKey'),
+      (39, 'ProjectionProjectsDefaultThreadEnvMode'),
+      (40, 'ProjectionProjectFaviconPath')
+  `;
+  yield* runMigrations();
+});
+
+const historicalForkCollisionScenario = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* runMigrations({ toMigrationInclusive: 32 });
+  yield* ForkMigration036;
+  yield* ForkMigration037;
+  yield* sql`
+    INSERT INTO effect_sql_migrations (migration_id, name)
+    VALUES
+      (33, 'ProjectSpeechProfiles'),
+      (34, 'ProjectionThreadSubagents')
+  `;
+  yield* runMigrations();
+});
+
+const repeatedScenario = Effect.gen(function* () {
+  yield* runMigrations();
+  yield* applyCompatibilityTail;
+  yield* applyCompatibilityTail;
+  assert.deepStrictEqual(yield* runMigrations(), []);
+});
+
+it("preserves immutable migration IDs 1-44 and appends convergence migrations 45-50", () => {
+  assert.deepStrictEqual(
+    migrationEntries.slice(-expectedTail.length).map(([id, name]) => [id, name] as const),
+    Array.from(expectedTail),
+  );
+  assert.deepStrictEqual(
+    migrationManifest,
+    migrationEntries.map(([id, name]) => [id, name] as const),
+  );
+});
+
+it.effect("converges fresh, fork, upstream, and historical-collision ledgers", () =>
+  Effect.gen(function* () {
+    const fresh = yield* captureScenario(freshScenario);
+    const scenarios = yield* Effect.all([
+      captureScenario(fork44Scenario),
+      captureScenario(upstream40Scenario),
+      captureScenario(historicalForkCollisionScenario),
+      captureScenario(repeatedScenario),
+    ]);
+
+    assert.deepStrictEqual(fresh.integrity, ["ok"]);
+    for (const scenario of scenarios) {
+      assert.deepStrictEqual(scenario.integrity, ["ok"]);
+      assert.deepStrictEqual(scenario.schema, fresh.schema);
+      assert.deepStrictEqual(scenario.columns, fresh.columns);
+    }
+  }),
+);

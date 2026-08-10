@@ -124,6 +124,37 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }),
   );
 
+  it.effect("maps the former persisted streaming key unless the current key is present", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsService;
+
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"enableAssistantStreaming":true}',
+      );
+      const settings = yield* serverSettings.getSettings;
+      assert.isTrue(settings.enableLegacyTokenStreaming);
+      assert.isUndefined(settings.enableAssistantStreaming);
+      assert.isTrue(redactServerSettingsForClient(settings).enableAssistantStreaming);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("prefers the current persisted streaming key over the former key", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsService;
+
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"enableAssistantStreaming":true,"enableLegacyTokenStreaming":false}',
+      );
+      assert.isFalse((yield* serverSettings.getSettings).enableLegacyTokenStreaming);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect(
     "decodes legacy object-shaped textGenerationModelSelection.options from settings.json",
     () =>

@@ -13,6 +13,8 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 
 const threadId = ThreadId.make("thread-subagent-query");
@@ -50,6 +52,8 @@ const expectedSummary: OrchestrationSubagentSummary = {
 };
 
 const TestLayer = OrchestrationProjectionSnapshotQueryLive.pipe(
+  Layer.provide(ThreadBackgroundLiveness.layer),
+  Layer.provide(ThreadPlanProgress.layer),
   Layer.provideMerge(RepositoryIdentityResolver.layer),
   Layer.provideMerge(SqlitePersistenceMemory),
   Layer.provideMerge(NodeServices.layer),

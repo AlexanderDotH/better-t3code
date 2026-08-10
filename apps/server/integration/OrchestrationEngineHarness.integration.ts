@@ -49,11 +49,15 @@ import * as RepositoryIdentityResolver from "../src/project/RepositoryIdentityRe
 import { OrchestrationEngineLive } from "../src/orchestration/Layers/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "../src/orchestration/Layers/ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "../src/orchestration/Layers/ProjectionSnapshotQuery.ts";
+import * as ThreadBackgroundLiveness from "../src/orchestration/ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../src/orchestration/ThreadPlanProgress.ts";
 import { RuntimeReceiptBusTest } from "../src/orchestration/Layers/RuntimeReceiptBus.ts";
 import { OrchestrationReactorLive } from "../src/orchestration/Layers/OrchestrationReactor.ts";
 import { ProviderCommandReactorLive } from "../src/orchestration/Layers/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionLive } from "../src/orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { TurnAbortCoordinatorLive } from "../src/orchestration/Layers/TurnAbortCoordinator.ts";
+import { CheckpointReactor } from "../src/orchestration/Services/CheckpointReactor.ts";
+import { ProviderRuntimeIngestionService } from "../src/orchestration/Services/ProviderRuntimeIngestion.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -76,6 +80,8 @@ import * as WorkspacePaths from "../src/workspace/WorkspacePaths.ts";
 import * as VcsDriverRegistry from "../src/vcs/VcsDriverRegistry.ts";
 import { VcsStatusBroadcaster } from "../src/vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../src/git/GitWorkflowService.ts";
+import { TurnQuiescenceNotifierLive } from "../src/git-workbench/TurnQuiescenceNotifier.ts";
+import { FetchWorkerCoordinator } from "../src/fetch/FetchWorkerCoordinator.ts";
 import * as VcsProcess from "../src/vcs/VcsProcess.ts";
 import * as AgentAwarenessRelay from "../src/relay/AgentAwarenessRelay.ts";
 import { NoOpSkillEngineLayer } from "../src/skills/testUtils/NoOpSkillEngine.ts";
@@ -218,6 +224,8 @@ export interface OrchestrationIntegrationHarness {
       timeoutMs?: number,
     ): Effect.Effect<Receipt, never>;
   };
+  readonly drainProviderRuntime: Effect.Effect<void>;
+  readonly drainCheckpointReactor: Effect.Effect<void>;
   readonly dispose: Effect.Effect<void, never>;
 }
 
@@ -304,6 +312,9 @@ export const makeOrchestrationIntegrationHarness = (
       checkpointStoreLayer,
       providerLayer,
       RuntimeReceiptBusTest,
+    ).pipe(
+      Layer.provideMerge(ThreadBackgroundLiveness.layer),
+      Layer.provideMerge(ThreadPlanProgress.layer),
     );
     const turnAbortCoordinatorLayer = TurnAbortCoordinatorLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
@@ -325,15 +336,34 @@ export const makeOrchestrationIntegrationHarness = (
       generateBranchName: () => Effect.succeed({ branch: "update" }),
       generateThreadTitle: () => Effect.succeed({ title: "New thread" }),
     } as unknown as TextGenerationShape);
+    const fetchWorkerCoordinatorLayer = Layer.succeed(FetchWorkerCoordinator, {
+      run: (input) =>
+        Effect.succeed({
+          runId: "integration-fetch-disabled",
+          status: "skipped" as const,
+          warnings: [],
+          plannedWorkers: 0,
+          completedWorkers: 0,
+          successfulWorkers: 0,
+          providerInstanceId: input.modelSelection.instanceId,
+          providerDriver: input.providerDriver,
+          modelSelection: input.modelSelection,
+        }),
+      handoffToMain: (_input, sendMainEffect) => sendMainEffect.pipe(Effect.as(true)),
+      requestInterrupt: () => Effect.succeed(false),
+      hasActiveRun: () => Effect.succeed(false),
+    } satisfies FetchWorkerCoordinator["Service"]);
     const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(turnAbortCoordinatorLayer),
+      Layer.provideMerge(fetchWorkerCoordinatorLayer),
       Layer.provideMerge(gitWorkflowLayer),
       Layer.provideMerge(textGenerationLayer),
       Layer.provideMerge(serverSettingsLayer),
     );
     const checkpointReactorLayer = CheckpointReactorLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
+      Layer.provideMerge(TurnQuiescenceNotifierLive),
       Layer.provideMerge(
         Layer.succeed(VcsStatusBroadcaster, {
           getStatus: () => Effect.die("getStatus should not be called in this test"),
@@ -395,6 +425,13 @@ export const makeOrchestrationIntegrationHarness = (
     ).pipe(Effect.orDie);
     const reactor = yield* tryRuntimePromise("load OrchestrationReactor service", () =>
       runtime.runPromise(Effect.service(OrchestrationReactor)),
+    ).pipe(Effect.orDie);
+    const providerRuntimeIngestion = yield* tryRuntimePromise(
+      "load ProviderRuntimeIngestion service",
+      () => runtime.runPromise(Effect.service(ProviderRuntimeIngestionService)),
+    ).pipe(Effect.orDie);
+    const checkpointReactor = yield* tryRuntimePromise("load CheckpointReactor service", () =>
+      runtime.runPromise(Effect.service(CheckpointReactor)),
     ).pipe(Effect.orDie);
     const snapshotQuery = yield* tryRuntimePromise("load ProjectionSnapshotQuery service", () =>
       runtime.runPromise(Effect.service(ProjectionSnapshotQuery)),
@@ -560,6 +597,8 @@ export const makeOrchestrationIntegrationHarness = (
       waitForDomainEvent,
       waitForPendingApproval,
       waitForReceipt,
+      drainProviderRuntime: providerRuntimeIngestion.drain,
+      drainCheckpointReactor: checkpointReactor.drain,
       dispose,
     } satisfies OrchestrationIntegrationHarness;
   });

@@ -93,7 +93,15 @@ describe("subagent transport contracts", () => {
 
     expect(decode({ kind: "snapshot", snapshot })).toEqual({
       kind: "snapshot",
-      snapshot,
+      snapshot: {
+        ...snapshot,
+        subagent: {
+          ...subagent,
+          origin: "provider-native",
+          providerInstanceId: null,
+          providerDriver: null,
+        },
+      },
     });
   });
 });

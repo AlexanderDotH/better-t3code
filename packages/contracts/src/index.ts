@@ -34,6 +34,7 @@ export * from "./previewAutomation.ts";
 export * from "./resourceTelemetry.ts";
 export * from "./skills.ts";
 export * from "./mcp.ts";
+export * from "./usage.ts";
 export * from "./rpc.ts";
 export * from "./workspaceContext.ts";
 export * from "./planParallelismReview.ts";

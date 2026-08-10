@@ -24,6 +24,8 @@ import {
 } from "../../projectAgent/ProjectAgentCoordinator.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
@@ -50,6 +52,8 @@ const orchestrationLayer = Layer.mergeAll(
   ),
   OrchestrationProjectionSnapshotQueryLive,
 ).pipe(
+  Layer.provide(ThreadBackgroundLiveness.layer),
+  Layer.provide(ThreadPlanProgress.layer),
   Layer.provide(OrchestrationEventStoreLive),
   Layer.provide(OrchestrationCommandReceiptRepositoryLive),
   Layer.provide(RepositoryIdentityResolver.layer),

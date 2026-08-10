@@ -22,6 +22,7 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../src/provider/Services/ProviderService.ts";
+import * as ServerConfig from "../src/config.ts";
 import { ServerSettingsService } from "../src/serverSettings.ts";
 import { SqlitePersistenceMemory } from "../src/persistence/Layers/Sqlite.ts";
 import * as ProviderSessionRuntime from "../src/persistence/ProviderSessionRuntime.ts";
@@ -53,33 +54,35 @@ interface IntegrationFixture {
   readonly layer: Layer.Layer<ProviderService, unknown, never>;
 }
 
-const makeIntegrationFixture = Effect.gen(function* () {
-  const cwd = yield* makeWorkspaceDirectory;
-  const harness = yield* makeTestProviderAdapterHarness();
+const makeIntegrationFixture = () =>
+  Effect.gen(function* () {
+    const cwd = yield* makeWorkspaceDirectory;
+    const harness = yield* makeTestProviderAdapterHarness();
 
-  const registry = makeAdapterRegistryMock({
-    [ProviderDriverKind.make("codex")]: harness.adapter,
+    const registry = makeAdapterRegistryMock({
+      [ProviderDriverKind.make("codex")]: harness.adapter,
+    });
+
+    const directoryLayer = ProviderSessionDirectoryLive.pipe(
+      Layer.provide(ProviderSessionRuntime.layer),
+    );
+
+    const shared = Layer.mergeAll(
+      directoryLayer,
+      Layer.succeed(ProviderAdapterRegistry, registry),
+      ServerConfig.layerTest(cwd, cwd).pipe(Layer.provide(NodeServices.layer)),
+      ServerSettingsService.layerTest(DEFAULT_SERVER_SETTINGS),
+      Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
+    ).pipe(Layer.provide(SqlitePersistenceMemory));
+
+    const layer = makeProviderServiceLive().pipe(Layer.provide(shared));
+
+    return {
+      cwd,
+      harness,
+      layer,
+    } satisfies IntegrationFixture;
   });
-
-  const directoryLayer = ProviderSessionDirectoryLive.pipe(
-    Layer.provide(ProviderSessionRuntime.layer),
-  );
-
-  const shared = Layer.mergeAll(
-    directoryLayer,
-    Layer.succeed(ProviderAdapterRegistry, registry),
-    ServerSettingsService.layerTest(DEFAULT_SERVER_SETTINGS),
-    Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
-  ).pipe(Layer.provide(SqlitePersistenceMemory));
-
-  const layer = makeProviderServiceLive().pipe(Layer.provide(shared));
-
-  return {
-    cwd,
-    harness,
-    layer,
-  } satisfies IntegrationFixture;
-});
 
 const collectEventsDuring = <A, E, R>(
   stream: Stream.Stream<ProviderRuntimeEvent>,
@@ -124,7 +127,7 @@ const runTurn = (input: {
 
 it.live("replays typed runtime fixture events", () =>
   Effect.gen(function* () {
-    const fixture = yield* makeIntegrationFixture;
+    const fixture = yield* makeIntegrationFixture();
 
     yield* Effect.gen(function* () {
       const provider = yield* ProviderService;
@@ -159,7 +162,7 @@ it.live("replays typed runtime fixture events", () =>
 
 it.live("replays file-changing fixture turn events", () =>
   Effect.gen(function* () {
-    const fixture = yield* makeIntegrationFixture;
+    const fixture = yield* makeIntegrationFixture();
     const { join } = yield* Path.Path;
     const { writeFileString } = yield* FileSystem.FileSystem;
 
@@ -196,7 +199,7 @@ it.live("replays file-changing fixture turn events", () =>
 
 it.live("runs multi-turn tool/approval flow", () =>
   Effect.gen(function* () {
-    const fixture = yield* makeIntegrationFixture;
+    const fixture = yield* makeIntegrationFixture();
     const { join } = yield* Path.Path;
     const { writeFileString } = yield* FileSystem.FileSystem;
 
@@ -248,7 +251,7 @@ it.live("runs multi-turn tool/approval flow", () =>
 
 it.live("rolls back provider conversation state only", () =>
   Effect.gen(function* () {
-    const fixture = yield* makeIntegrationFixture;
+    const fixture = yield* makeIntegrationFixture();
     const { join } = yield* Path.Path;
     const { writeFileString, readFileString } = yield* FileSystem.FileSystem;
 

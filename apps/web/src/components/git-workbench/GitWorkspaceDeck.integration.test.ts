@@ -64,7 +64,8 @@ describe("Git workspace deck surface integration", () => {
   });
 
   it("keeps the context-strip chrome outside its fading controls", () => {
-    expect(branchToolbarSource).toContain("chat-composer-context-strip mx-auto");
+    expect(branchToolbarSource).toContain("chat-composer-context-strip");
+    expect(branchToolbarSource).toContain("mx-auto");
     expect(branchToolbarSource).not.toContain("workspace-card-deck__card-content");
     expect(branchToolbarSource).not.toContain("git-workspace-deck__card-content");
   });

@@ -186,6 +186,7 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
   );
   return {
     ...settings,
+    enableAssistantStreaming: settings.enableLegacyTokenStreaming,
     providerInstances,
     mcp: {
       ...settings.mcp,
@@ -292,8 +293,36 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
 export const layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
   Layer.effect(ServerSettingsService, makeTest(overrides));
 
-const ServerSettingsJson = fromLenientJson(ServerSettings);
-const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
+const LenientJsonUnknown = fromLenientJson(Schema.Unknown);
+const decodeLenientJsonUnknownExit = Schema.decodeUnknownExit(LenientJsonUnknown);
+const decodeServerSettingsExit = Schema.decodeUnknownExit(ServerSettings);
+
+function normalizePersistedSettingsCompatibility(input: unknown): unknown {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    return input;
+  }
+
+  const settings = input as Record<string, unknown>;
+  const { enableAssistantStreaming, ...canonicalSettings } = settings;
+  if (
+    !("enableLegacyTokenStreaming" in settings) &&
+    typeof enableAssistantStreaming === "boolean"
+  ) {
+    return {
+      ...canonicalSettings,
+      enableLegacyTokenStreaming: enableAssistantStreaming,
+    };
+  }
+  return canonicalSettings;
+}
+
+const decodeServerSettingsJsonExit = (raw: string) => {
+  const parsed = decodeLenientJsonUnknownExit(raw);
+  if (parsed._tag === "Failure") {
+    return parsed;
+  }
+  return decodeServerSettingsExit(normalizePersistedSettingsCompatibility(parsed.value));
+};
 
 function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings {
   return isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection)

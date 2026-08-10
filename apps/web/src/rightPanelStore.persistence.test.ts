@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 describe("rightPanelStore persisted-state hydration", () => {
-  it("rehydrates v8 tabs, removes the retired subagent surface, and rewrites version 9", async () => {
+  it("rehydrates v8 tabs, removes retired plan and subagent surfaces, and rewrites version 9", async () => {
     const localStorage = createLocalStorageStub();
     localStorage.setItem(
       STORAGE_KEY,
@@ -57,10 +57,7 @@ describe("rightPanelStore persisted-state hydration", () => {
       "env-1:thread-A": {
         isOpen: true,
         activeSurfaceId: "browser:tab-a",
-        surfaces: [
-          { id: "plan", kind: "plan" },
-          { id: "browser:tab-a", kind: "preview", resourceId: "tab-a" },
-        ],
+        surfaces: [{ id: "browser:tab-a", kind: "preview", resourceId: "tab-a" }],
       },
     });
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}")).toMatchObject({

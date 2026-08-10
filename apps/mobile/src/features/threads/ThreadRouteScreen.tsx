@@ -16,6 +16,10 @@ import {
   pendingReasoningOverrideMatchesSelection,
   undoReasoningRecommendationOverride,
 } from "@t3tools/client-runtime/reasoning-recommendation";
+import {
+  requestOlderThreadTurns,
+  threadHasOlderTurns,
+} from "@t3tools/client-runtime/state/threads";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -198,6 +202,20 @@ function ThreadRouteContent(
     useThreadSelection();
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
+  // "Load earlier turns" header state for windowed (paginated) thread loads.
+  const loadEarlierTurns = useMemo(() => {
+    if (selectedThread === null || !threadHasOlderTurns(selectedThreadDetailState)) {
+      return null;
+    }
+    return {
+      loading:
+        selectedThreadDetailState.page._tag === "Some" &&
+        selectedThreadDetailState.page.value.loadingOlder,
+      onLoadEarlier: () => {
+        requestOlderThreadTurns(selectedThread.environmentId, selectedThread.id);
+      },
+    };
+  }, [selectedThread, selectedThreadDetailState]);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const composer = useThreadComposerState();
   const reasoningRecommendationState = composer.reasoningRecommendationState;
@@ -844,6 +862,7 @@ function ThreadRouteContent(
           draftAttachments={composer.draftAttachments}
           connectionStateLabel={routeConnectionState}
           threadSyncStatus={selectedThreadDetailState.status}
+          loadEarlier={loadEarlierTurns}
           activeThreadBusy={composer.activeThreadBusy}
           environmentId={selectedThread.environmentId}
           projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}

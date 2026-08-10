@@ -20,6 +20,20 @@ import {
 } from "./serverSettings.ts";
 
 describe("serverSettings helpers", () => {
+  it("maps the former streaming patch key without overriding the current key", () => {
+    expect(
+      applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { enableAssistantStreaming: true })
+        .enableLegacyTokenStreaming,
+    ).toBe(true);
+
+    expect(
+      applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+        enableAssistantStreaming: true,
+        enableLegacyTokenStreaming: false,
+      }).enableLegacyTokenStreaming,
+    ).toBe(false);
+  });
+
   it("normalizes optional persisted strings", () => {
     expect(normalizePersistedServerSettingString(undefined)).toBeUndefined();
     expect(normalizePersistedServerSettingString("   ")).toBeUndefined();

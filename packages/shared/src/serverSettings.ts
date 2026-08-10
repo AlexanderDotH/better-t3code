@@ -164,6 +164,7 @@ export function applyServerSettingsPatch(
   const voiceTranslationSelectionPatch = patch.voiceTranslationModelSelection;
   const parallelPlanReviewSelectionPatch = patch.parallelPlanReviewModelSelection;
   const {
+    enableAssistantStreaming,
     automaticGitFetchInterval,
     providerHealthRefreshInterval,
     backgroundActivityProfile,
@@ -209,7 +210,12 @@ export function applyServerSettingsPatch(
             },
           }
         : undefined;
-  const next = deepMerge(current, patchForMerge);
+  const next = deepMerge(current, {
+    ...patchForMerge,
+    ...(enableAssistantStreaming !== undefined && patch.enableLegacyTokenStreaming === undefined
+      ? { enableLegacyTokenStreaming: enableAssistantStreaming }
+      : {}),
+  });
   const nextWithReplacementsBase = {
     ...next,
     ...(backgroundActivity !== undefined

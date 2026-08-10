@@ -186,7 +186,7 @@ describe("mobile composer drafts", () => {
     });
   });
 
-  it("clears transient fast mode after a new task while retaining other model settings", () => {
+  it("clears transient fast mode and workspace selection after a submitted new task", () => {
     const draftKey = "new-task:environment-1:project-1";
     const draft: ComposerDraft = {
       text: "send this fast",
@@ -201,9 +201,10 @@ describe("mobile composer drafts", () => {
         ],
       },
       workspaceSelection: {
-        mode: "local",
+        mode: "worktree",
         branch: "main",
         worktreePath: null,
+        startFromOrigin: false,
       },
     };
 
@@ -212,6 +213,7 @@ describe("mobile composer drafts", () => {
         { [draftKey]: draft },
         draftKey,
         ProviderDriverKind.make("codex"),
+        { clearWorkspaceSelection: true },
       ),
     ).toEqual({
       [draftKey]: {
@@ -222,7 +224,6 @@ describe("mobile composer drafts", () => {
           model: "gpt-5.4",
           options: [{ id: "reasoningEffort", value: "xhigh" }],
         },
-        workspaceSelection: draft.workspaceSelection,
       },
     });
   });

@@ -3,9 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 import type { ModelCapabilities } from "@t3tools/contracts";
 
 import {
-  applyProviderOptionMenuEvent,
-  buildProviderOptionMenuActions,
-  providerOptionsConfigurationLabel,
+  applyProviderOptionSelection,
+  providerOptionValueLabels,
   resolveProviderOptionDescriptors,
 } from "./providerOptions";
 
@@ -75,34 +74,9 @@ describe("mobile provider options", () => {
       capabilities: GPT_56_SOL_CAPABILITIES,
       selections: undefined,
     });
-    const actions = buildProviderOptionMenuActions(descriptors);
 
-    expect(actions).toMatchObject([
-      {
-        title: "Reasoning",
-        subtitle: "Low",
-        subactions: [
-          { title: "Low (default)", state: "on" },
-          { title: "Medium", state: undefined },
-          { title: "High", state: undefined },
-          { title: "Extra High", state: undefined },
-          { title: "Max", state: undefined },
-        ],
-      },
-      {
-        title: "Fast Mode",
-        subtitle: "Off",
-        subactions: [
-          { title: "Off", state: "on" },
-          { title: "On", state: undefined },
-        ],
-      },
-    ]);
-    expect(providerOptionsConfigurationLabel(descriptors)).toBe("Low");
-
-    const fastEvent = actions[1]?.subactions?.[1]?.id;
-    expect(fastEvent).toBeDefined();
-    expect(applyProviderOptionMenuEvent(descriptors, fastEvent!)).toEqual([
+    expect(providerOptionValueLabels(descriptors)).toEqual(["Low"]);
+    expect(applyProviderOptionSelection(descriptors, { id: "fastMode", value: true })).toEqual([
       { id: "effort", value: "low" },
       { id: "fastMode", value: true },
     ]);
@@ -135,41 +109,18 @@ describe("mobile provider options", () => {
       ],
     });
 
-    expect(buildProviderOptionMenuActions(gpt54Descriptors)).toMatchObject([
-      { title: "Reasoning", subtitle: "Medium" },
-      { title: "Fast Mode", subtitle: "On" },
-    ]);
-    expect(buildProviderOptionMenuActions(miniDescriptors)).toMatchObject([
-      { title: "Reasoning", subtitle: "Medium" },
-    ]);
+    expect(providerOptionValueLabels(gpt54Descriptors)).toEqual(["Medium", "Fast Mode"]);
+    expect(providerOptionValueLabels(miniDescriptors)).toEqual(["Medium"]);
     expect(nonReasoningDescriptors).toEqual([]);
   });
 
-  it("renders the option descriptors advertised by the selected model", () => {
+  it("summarizes the option values currently in effect", () => {
     const descriptors = resolveProviderOptionDescriptors({
       capabilities: CODEX_CAPABILITIES,
       selections: undefined,
     });
 
-    expect(buildProviderOptionMenuActions(descriptors)).toMatchObject([
-      {
-        title: "Reasoning",
-        subtitle: "Medium",
-        subactions: [
-          { title: "Medium (default)", state: "on" },
-          { title: "High", state: undefined },
-        ],
-      },
-      {
-        title: "Service Tier",
-        subtitle: "Standard",
-        subactions: [
-          { title: "Standard (default)", state: "on" },
-          { title: "Fast", state: undefined },
-        ],
-      },
-    ]);
-    expect(providerOptionsConfigurationLabel(descriptors)).toBe("Medium · Standard");
+    expect(providerOptionValueLabels(descriptors)).toEqual(["Medium", "Standard"]);
   });
 
   it("updates generic select options without knowing provider-specific ids", () => {
@@ -177,14 +128,18 @@ describe("mobile provider options", () => {
       capabilities: CODEX_CAPABILITIES,
       selections: undefined,
     });
-    const actions = buildProviderOptionMenuActions(descriptors);
-    const fastEvent = actions[1]?.subactions?.[1]?.id;
 
-    expect(fastEvent).toBeDefined();
-    expect(applyProviderOptionMenuEvent(descriptors, fastEvent!)).toEqual([
+    expect(
+      applyProviderOptionSelection(descriptors, { id: "serviceTier", value: "priority" }),
+    ).toEqual([
       { id: "reasoningEffort", value: "medium" },
       { id: "serviceTier", value: "priority" },
     ]);
+    // Choices the model doesn't advertise are rejected, not stored.
+    expect(
+      applyProviderOptionSelection(descriptors, { id: "serviceTier", value: "turbo" }),
+    ).toBeNull();
+    expect(applyProviderOptionSelection(descriptors, { id: "unknown", value: "high" })).toBeNull();
   });
 
   it("treats an unspecified boolean capability as off", () => {
@@ -195,16 +150,9 @@ describe("mobile provider options", () => {
       selections: undefined,
     });
 
-    expect(buildProviderOptionMenuActions(descriptors)).toMatchObject([
-      {
-        title: "Fast Mode",
-        subtitle: "Off",
-        subactions: [
-          { title: "Off", state: "on" },
-          { title: "On", state: undefined },
-        ],
-      },
+    expect(providerOptionValueLabels(descriptors)).toEqual([]);
+    expect(applyProviderOptionSelection(descriptors, { id: "fastMode", value: true })).toEqual([
+      { id: "fastMode", value: true },
     ]);
-    expect(providerOptionsConfigurationLabel(descriptors)).toBe("Configuration");
   });
 });

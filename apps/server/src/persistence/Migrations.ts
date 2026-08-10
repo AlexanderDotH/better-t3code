@@ -9,8 +9,8 @@
  */
 
 import * as Migrator from "effect/unstable/sql/Migrator";
-import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -57,6 +57,12 @@ import Migration0041 from "./Migrations/041_ProjectionThreadSubagents.ts";
 import Migration0042 from "./Migrations/042_GitWorkbenchState.ts";
 import Migration0043 from "./Migrations/043_ProjectionThreadSubagentFetchMetadata.ts";
 import Migration0044 from "./Migrations/044_ProjectAgentCoordination.ts";
+import Migration0045 from "./Migrations/045_ForkSchemaConvergence.ts";
+import Migration0046 from "./Migrations/046_ProjectionThreadsPinnedCompatibility.ts";
+import Migration0047 from "./Migrations/047_ProjectionTurnsKeysetIndexCompatibility.ts";
+import Migration0048 from "./Migrations/048_ProjectionThreadsPinOrderKeyCompatibility.ts";
+import Migration0049 from "./Migrations/049_ProjectionProjectsDefaultThreadEnvModeCompatibility.ts";
+import Migration0050 from "./Migrations/050_ProjectionProjectFaviconPathCompatibility.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -113,7 +119,15 @@ export const migrationEntries = [
   [42, "GitWorkbenchState", Migration0042],
   [43, "ProjectionThreadSubagentFetchMetadata", Migration0043],
   [44, "ProjectAgentCoordination", Migration0044],
+  [45, "ForkSchemaConvergence", Migration0045],
+  [46, "ProjectionThreadsPinnedCompatibility", Migration0046],
+  [47, "ProjectionTurnsKeysetIndexCompatibility", Migration0047],
+  [48, "ProjectionThreadsPinOrderKeyCompatibility", Migration0048],
+  [49, "ProjectionProjectsDefaultThreadEnvModeCompatibility", Migration0049],
+  [50, "ProjectionProjectFaviconPathCompatibility", Migration0050],
 ] as const;
+
+export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
 
 export const makeMigrationLoader = (throughId?: number) =>
   Migrator.fromRecord(

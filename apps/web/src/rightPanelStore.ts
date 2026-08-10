@@ -5,7 +5,7 @@
  * surface descriptors and the active surface, while each feature continues to
  * own its durable resource state. Browser surfaces point at preview tab ids,
  * terminal surfaces point at terminal session ids, file surfaces point at
- * workspace paths, and diff/plan/files remain singleton surfaces.
+ * workspace paths, and diff/files remain singleton surfaces.
  */
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
@@ -14,7 +14,14 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 
-export const RIGHT_PANEL_KINDS = ["plan", "diff", "files", "file", "preview", "terminal"] as const;
+export const RIGHT_PANEL_KINDS = [
+  "diff",
+  "files",
+  "file",
+  "preview",
+  "terminal",
+  "agents",
+] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
 export type RightPanelSurface =
@@ -37,9 +44,10 @@ export type RightPanelSurface =
       revealLine: number | null;
       revealRequestId: number;
     }
-  | { id: "plan"; kind: "plan" };
+  | { id: "agents"; kind: "agents" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
+// v9 removed the "plan" surface kind (plans render inline in the transcript).
 const RIGHT_PANEL_STORAGE_VERSION = 9;
 
 export interface ThreadRightPanelState {
@@ -90,8 +98,8 @@ const singletonSurface = (
       return { id: "diff", kind };
     case "files":
       return { id: "files", kind };
-    case "plan":
-      return { id: "plan", kind };
+    case "agents":
+      return { id: "agents", kind };
   }
 };
 
@@ -162,13 +170,16 @@ function normalizePersistedRightPanelSurface(surface: unknown): RightPanelSurfac
   const id = record.id;
 
   if (kind === "plan") {
-    return id === kind ? { id: "plan", kind: "plan" } : null;
+    return null;
   }
   if (kind === "diff") {
     return id === kind ? { id: "diff", kind: "diff" } : null;
   }
   if (kind === "files") {
     return id === kind ? { id: "files", kind: "files" } : null;
+  }
+  if (kind === "agents") {
+    return id === kind ? { id: "agents", kind: "agents" } : null;
   }
   if (kind === "preview") {
     if (id === "browser:new" && record.resourceId === null) {
@@ -273,12 +284,15 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                   (surface as Record<string, unknown>).id === requestedActiveSurfaceId,
               );
               const fallbackActiveSurface =
-                validThreadState?.isOpen === true && requestedActiveSurfaceId !== null
-                  ? (normalizedSurfaces.find(({ index }) => index > removedActiveIndex)?.surface ??
-                    normalizedSurfaces.findLast(({ index }) => index < removedActiveIndex)
-                      ?.surface ??
-                    surfaces[0] ??
-                    null)
+                validThreadState?.isOpen === true && preservedActiveSurface === undefined
+                  ? requestedActiveSurfaceId === null
+                    ? (surfaces[0] ?? null)
+                    : (normalizedSurfaces.find(({ index }) => index > removedActiveIndex)
+                        ?.surface ??
+                      normalizedSurfaces.findLast(({ index }) => index < removedActiveIndex)
+                        ?.surface ??
+                      surfaces[0] ??
+                      null)
                   : null;
               const activeSurfaceId =
                 preservedActiveSurface?.id ?? fallbackActiveSurface?.id ?? null;

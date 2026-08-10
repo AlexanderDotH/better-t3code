@@ -6,6 +6,8 @@ import { OrchestrationEngineLive } from "./Layers/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./Layers/ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./Layers/ProjectionSnapshotQuery.ts";
 import { ThreadTranscriptExportLive } from "./Layers/ThreadTranscriptExport.ts";
+import * as ThreadBackgroundLiveness from "./ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "./ThreadPlanProgress.ts";
 
 export const OrchestrationEventInfrastructureLayerLive = Layer.mergeAll(
   OrchestrationEventStoreLive,
@@ -21,6 +23,13 @@ export const OrchestrationInfrastructureLayerLive = Layer.mergeAll(
   ThreadTranscriptExportLive.pipe(Layer.provide(OrchestrationProjectionSnapshotQueryLive)),
   OrchestrationEventInfrastructureLayerLive,
   OrchestrationProjectionPipelineLayerLive,
+  // Shared background-liveness and plan-progress registries: written by
+  // runtime ingestion, read by the snapshot query. provideMerge feeds the
+  // same instance to the snapshot query here and re-exports it for runtime
+  // ingestion.
+).pipe(
+  Layer.provideMerge(ThreadBackgroundLiveness.layer),
+  Layer.provideMerge(ThreadPlanProgress.layer),
 );
 
 export const OrchestrationLayerLive = Layer.mergeAll(

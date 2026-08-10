@@ -108,7 +108,7 @@ if [[ -n "${PNPM_COREPACK_ROOT:-}" ]]; then
   export COREPACK_ROOT="$PNPM_COREPACK_ROOT"
   export T3CODE_PNPM_COREPACK_ROOT="$PNPM_COREPACK_ROOT"
 fi
-if [[ "$PNPM_BIN" == *"/pnpm/"* && "$PNPM_BIN" == *"/pnpm/"* ]]; then
+if [[ "$PNPM_BIN" == *"/pnpm/"* ]]; then
   T3CODE_PNPM_MANAGER="${PNPM_BIN#*/pnpm/}"
   T3CODE_PNPM_MANAGER="${T3CODE_PNPM_MANAGER%%/*}"
   export T3CODE_PNPM_MANAGER="pnpm@${T3CODE_PNPM_MANAGER}"

@@ -22,7 +22,7 @@ const expectedTail = [
 
 it("preserves the public migration registry from 33 through 41", () => {
   assert.deepStrictEqual(
-    migrationEntries.slice(-expectedTail.length).map(([id, name]) => [id, name]),
+    migrationEntries.filter(([id]) => id >= 33 && id <= 41).map(([id, name]) => [id, name]),
     expectedTail,
   );
 });

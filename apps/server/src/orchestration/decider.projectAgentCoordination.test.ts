@@ -1,5 +1,6 @@
 import {
   CommandId,
+  MessageId,
   ProjectAgentMessageId,
   ProjectId,
   ProviderInstanceId,
@@ -303,6 +304,66 @@ it.layer(NodeServices.layer)("project agent coordination decider", (it) => {
         interactionMode: "default",
         createdAt: now,
       });
+    }),
+  );
+
+  it.effect("does not enqueue a second wake turn while recipient adoption is queued", () =>
+    Effect.gen(function* () {
+      const model = readModel(false);
+      const recipient = activeThread(secondThreadId, secondTurnId, "Second agent");
+      const queuedAt = "2026-08-09T18:00:01.000Z";
+      const result = yield* decideOrchestrationCommand({
+        readModel: {
+          ...model,
+          threads: model.threads.map((thread) =>
+            thread.id === secondThreadId
+              ? {
+                  ...recipient,
+                  latestTurn: {
+                    ...recipient.latestTurn,
+                    state: "completed" as const,
+                    completedAt: now,
+                  },
+                  session: {
+                    ...recipient.session,
+                    status: "ready" as const,
+                    activeTurnId: null,
+                  },
+                  messages: [
+                    {
+                      id: MessageId.make("message-awaiting-adoption"),
+                      role: "user" as const,
+                      text: "Start the already queued work.",
+                      attachments: [],
+                      turnId: null,
+                      streaming: false,
+                      createdAt: queuedAt,
+                      updatedAt: queuedAt,
+                    },
+                  ],
+                }
+              : thread,
+          ),
+        },
+        command: {
+          type: "project.agent.message.send",
+          commandId: CommandId.make("cmd-message-queued-recipient"),
+          projectId,
+          messageId: ProjectAgentMessageId.make("message-queued-recipient"),
+          senderThreadId: firstThreadId,
+          recipientThreadIds: [secondThreadId],
+          kind: "info",
+          body: "This should wait for your already queued turn.",
+          sentAt: now,
+        },
+      });
+
+      const events = Array.isArray(result) ? result : [result];
+      expect(events.map(({ type }) => type)).toEqual([
+        "thread.activity-appended",
+        "thread.activity-appended",
+        "project.agent-message-sent",
+      ]);
     }),
   );
 

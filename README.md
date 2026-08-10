@@ -9,6 +9,7 @@ for people who looked at one coding agent and thought, “Great. Can it have cow
 
 [What is better?](#yeah-but-what-does-this-thing-actually-do-better-than-t3-code) ·
 [Run the fork](#run-the-fork) · [Documentation](#documentation) ·
+[Sync audit](./docs/operations/upstream-sync.md) ·
 [Upstream](https://github.com/pingdotgg/t3code)
 
 </div>
@@ -23,6 +24,15 @@ This fork adds the opinionated workflows around that core—the things that usua
 > [upstream releases](https://github.com/pingdotgg/t3code/releases) are stock T3 Code. Run or build
 > this repository to use the fork-only features below.
 
+> [!WARNING]
+> Install and authenticate at least one supported provider before use:
+>
+> - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
+> - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
+> - Cursor: install [Cursor CLI](https://cursor.com/cli) and run `agent login`
+> - Grok Build: install [Grok Build CLI](https://x.ai/cli) and run `grok login`
+> - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
+
 ## “Yeah, but what does this thing actually do better than T3 Code?”
 
 Excellent question, suspiciously direct stranger. The short version: Better T3 Code gives agents
@@ -33,6 +43,7 @@ power-user plumbing around the chat.
 | -------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Repository exploration** | A normal provider turn explores the project                 | **Fetch** can use an independently selected provider and model for a dynamically sized batch of transient, read-only exploration workers         |
 | **Plan implementation**    | Implement a proposed plan normally                          | Review a plan with a fast model, choose a useful agent count, and implement it with provider-native subagents in parallel                        |
+| **Project coordination**   | Agents work within their current thread                     | Authenticated project agents can claim work, exchange durable messages, inspect peers, and wake work in another thread                           |
 | **Subagent visibility**    | Provider activity stays in the main conversation            | Live lifecycle pills, persistent agent history, and readable per-agent transcript dialogs                                                        |
 | **Stopping runaway work**  | Standard cooperative stop                                   | Cooperative stop, second-click force stop, and automatic exact-runtime termination after roughly five seconds—without throwing away chat history |
 | **Switching providers**    | A started thread remains bound to compatible provider state | Switch provider or model mid-thread with a complete transcript handoff when native resume is not compatible                                      |
@@ -41,7 +52,8 @@ power-user plumbing around the chat.
 | **Agent tooling**          | Provider-managed configuration                              | Visual MCP server management plus global/project skill discovery, import, enablement, and prompt integration                                     |
 | **Prompt ergonomics**      | Standard prompt and reasoning controls                      | Optional prompt improvement and evidence-based, one-turn reasoning-effort recommendations                                                        |
 | **Repository context**     | Providers use their regular filesystem tools                | A bounded `workspace_context` MCP tool batches common project discovery and file-reading work                                                    |
-| **Project organization**   | One active-project list                                     | Quiet projects move into a collapsible **Older projects** section after seven days                                                               |
+| **Version control**        | Core source-control actions                                 | A queued Git workbench adds typed operations, recovery refs, undo flows, and workspace-aware change views                                        |
+| **Project organization**   | Standard project grouping                                   | Quiet projects move into **Older projects** at the exact seven-day inactivity boundary while attention states stay visible                       |
 | **Product analytics**      | Anonymous PostHog product analytics                         | Outbound anonymous product analytics removed; local resource diagnostics stay local and useful                                                   |
 
 > [!NOTE]
@@ -59,7 +71,8 @@ controlling client is remote. Successful findings survive partial worker failure
 fails, the unchanged main-provider turn still continues with a visible warning.
 
 For the precise behavior of Fetch, parallel implementation, force stop, and temporary reasoning
-overrides, see [Chat controls](./docs/user/chat-controls.md).
+overrides, see [Chat controls](./docs/user/chat-controls.md). The complete non-negotiable fork
+contract and legacy-branch audit live in the [upstream synchronization record](./docs/operations/upstream-sync.md).
 
 ## The upstream good stuff is still here
 
@@ -128,16 +141,19 @@ npx t3@latest
 ## Documentation
 
 - [Documentation map](./docs/README.md)
-- [Quick start](./docs/getting-started/quick-start.md)
+- [Install and first run](./docs/user/install.md)
+- [Permission modes](./docs/user/permission-modes.md)
 - [Chat controls and experimental workflows](./docs/user/chat-controls.md)
-- [Git workbench](./docs/user/git-workbench.md)
+- [Source control and Git workbench](./docs/user/source-control.md)
 - [MCP servers and provider-specific status](./docs/user/mcp-servers.md)
 - [Remote access](./docs/user/remote-access.md)
+- [Keeping clients and servers in sync](./docs/user/updating.md)
 - [Keybindings](./docs/user/keybindings.md)
-- [Architecture overview](./docs/architecture/overview.md)
-- [Internal MCP architecture](./docs/architecture/internal-mcp.md)
-- [Provider guides](./docs/providers/codex.md)
-- [Reference encyclopedia](./docs/reference/encyclopedia.md)
+- [Multiple Codex accounts](./docs/user/providers-codex.md)
+- [Multiple Claude accounts](./docs/user/providers-claude.md)
+- [Internal architecture](./docs/internals/overview.md)
+- [Internal glossary](./docs/internals/glossary.md)
+- [Upstream synchronization and fork contract](./docs/operations/upstream-sync.md)
 
 ## Contributing
 

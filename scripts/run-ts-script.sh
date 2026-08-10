@@ -17,30 +17,28 @@ run_with_bun() {
   bun run "$SCRIPT_PATH" "$@"
 }
 
-if ! node_output="$(run_with_node "$@" 2>&1)"; then
-  node_status=$?
-
-  if grep -q "ERR_UNKNOWN_FILE_EXTENSION" <<< "$node_output"; then
-    if command -v bun >/dev/null 2>&1; then
-      echo "info: Node could not execute '$SCRIPT_PATH' (ERR_UNKNOWN_FILE_EXTENSION), falling back to bun run" >&2
-      run_with_bun "$@"
-    fi
-
-  echo "error: Node cannot execute TypeScript scripts for '$SCRIPT_PATH' on this runtime." >&2
-  echo "error: install Bun (https://bun.sh) or use Node.js with native TypeScript support (current: $(node -v))." >&2
-  if grep -Eq "Cannot find (module|package)" <<< "$node_output"; then
-    echo "hint: if this happens with missing workspace packages (e.g. @t3tools/*), your installation appears incomplete." >&2
-    echo "hint: rerun the build script without --no-install-deps (or reinstall node_modules cleanly)." >&2
+if node_output="$(run_with_node "$@" 2>&1)"; then
+  if [[ -n "$node_output" ]]; then
+    echo "$node_output"
   fi
-  echo "$node_output" >&2
-  exit $node_status
+  exit 0
+else
+  node_status=$?
 fi
 
-  echo "$node_output" >&2
-  exit $node_status
+if grep -q "ERR_UNKNOWN_FILE_EXTENSION" <<< "$node_output" && command -v bun >/dev/null 2>&1; then
+  echo "info: Node could not execute '$SCRIPT_PATH' (ERR_UNKNOWN_FILE_EXTENSION), falling back to bun run" >&2
+  run_with_bun "$@"
+  exit $?
 fi
 
+echo "error: Node cannot execute TypeScript scripts for '$SCRIPT_PATH' on this runtime." >&2
+echo "error: install Bun (https://bun.sh) or use Node.js with native TypeScript support (current: $(node -v))." >&2
+if grep -Eq "Cannot find (module|package)" <<< "$node_output"; then
+  echo "hint: if this happens with missing workspace packages (e.g. @t3tools/*), your installation appears incomplete." >&2
+  echo "hint: rerun the build script without --no-install-deps (or reinstall node_modules cleanly)." >&2
+fi
 if [[ -n "$node_output" ]]; then
-  echo "$node_output"
+  echo "$node_output" >&2
 fi
-exit 0
+exit "$node_status"

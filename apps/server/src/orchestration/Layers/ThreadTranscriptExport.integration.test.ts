@@ -8,10 +8,14 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { ThreadTranscriptExport } from "../Services/ThreadTranscriptExport.ts";
+import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { ThreadTranscriptExportLive } from "./ThreadTranscriptExport.ts";
 
 const queryLayer = OrchestrationProjectionSnapshotQueryLive.pipe(
+  Layer.provide(ThreadBackgroundLiveness.layer),
+  Layer.provide(ThreadPlanProgress.layer),
   Layer.provideMerge(RepositoryIdentityResolver.layer),
   Layer.provideMerge(SqlitePersistenceMemory),
 );

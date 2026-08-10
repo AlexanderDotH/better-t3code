@@ -67,7 +67,7 @@ type StageWorkspaceConfig = typeof StageWorkspaceConfig.Type;
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
 );
-const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
+const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeWorkspaceConfig = Schema.decodeEffect(fromYaml(WorkspaceConfig));
 const decodeNodePtyManifest = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ version: Schema.String })),
@@ -1190,7 +1190,7 @@ const resolveBuildVpCommand = Effect.fn("resolveBuildVpCommand")(function* (
     return { command: "bun", args: ["run", "vp", ...args], shell: false };
   }
 
-  return yield* resolveSpawnCommand("vp", args, { env: options.env });
+  return yield* resolveSpawnCommand("vp", args, options);
 });
 
 const resolveBuildPnpmCommand = Effect.fn("resolveBuildPnpmCommand")(function* () {
@@ -1632,6 +1632,15 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       executableName: "t3code",
       icon: "icons",
       category: "Development",
+      // electron-builder turns these into MimeType=x-scheme-handler/<scheme>;
+      // in the .desktop entry (Exec already gets %U), so browsers can hand
+      // t3code:// OAuth callbacks to the app.
+      protocols: [
+        {
+          name: "T3 Code",
+          schemes: ["t3code", "t3code-dev"],
+        },
+      ],
       desktop: {
         entry: {
           StartupWMClass: "t3code",

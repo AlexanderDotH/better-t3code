@@ -398,14 +398,18 @@ export function updateComposerDraftSettings(
 export function clearComposerDraftContentState(
   current: Record<string, ComposerDraft>,
   draftKey: string,
+  options?: { readonly clearWorkspaceSelection?: boolean },
 ): Record<string, ComposerDraft> {
   const existing = current[draftKey];
   if (!existing) {
     return current;
   }
-  const { importedShareIds: _importedShareIds, ...retained } = existing;
+  const { importedShareIds: _importedShareIds, workspaceSelection, ...retained } = existing;
   const draft = {
     ...retained,
+    ...(options?.clearWorkspaceSelection || workspaceSelection === undefined
+      ? {}
+      : { workspaceSelection }),
     text: "",
     attachments: [],
   };
@@ -424,9 +428,10 @@ export function clearNewTaskComposerDraftContentState(
   current: Record<string, ComposerDraft>,
   draftKey: string,
   provider: ProviderDriverKind,
+  options?: { readonly clearWorkspaceSelection?: boolean },
 ): Record<string, ComposerDraft> {
   const existing = current[draftKey];
-  const cleared = clearComposerDraftContentState(current, draftKey);
+  const cleared = clearComposerDraftContentState(current, draftKey, options);
   if (!existing?.modelSelection || !cleared[draftKey]) {
     return cleared;
   }
@@ -574,16 +579,20 @@ export async function restoreComposerDraftSnapshot(
   await persistenceQueue.run(() => writePersistedComposerDrafts(next));
 }
 
-export function clearComposerDraftContent(draftKey: string): void {
-  updateComposerDrafts((current) => clearComposerDraftContentState(current, draftKey));
+export function clearComposerDraftContent(
+  draftKey: string,
+  options?: { readonly clearWorkspaceSelection?: boolean },
+): void {
+  updateComposerDrafts((current) => clearComposerDraftContentState(current, draftKey, options));
 }
 
 export function clearNewTaskComposerDraftContent(
   draftKey: string,
   provider: ProviderDriverKind,
+  options?: { readonly clearWorkspaceSelection?: boolean },
 ): void {
   updateComposerDrafts((current) =>
-    clearNewTaskComposerDraftContentState(current, draftKey, provider),
+    clearNewTaskComposerDraftContentState(current, draftKey, provider, options),
   );
 }
 

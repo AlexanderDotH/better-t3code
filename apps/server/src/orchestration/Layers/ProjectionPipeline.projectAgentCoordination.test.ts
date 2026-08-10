@@ -19,6 +19,8 @@ import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 
@@ -53,6 +55,8 @@ const PipelineLayer = OrchestrationProjectionPipelineLive.pipe(
   Layer.provideMerge(OrchestrationEventStoreLive),
 );
 const TestLayer = Layer.mergeAll(PipelineLayer, OrchestrationProjectionSnapshotQueryLive).pipe(
+  Layer.provide(ThreadBackgroundLiveness.layer),
+  Layer.provide(ThreadPlanProgress.layer),
   Layer.provide(OrchestrationEventStoreLive),
   Layer.provide(RepositoryIdentityResolver.layer),
   Layer.provideMerge(SqlitePersistenceMemory),
