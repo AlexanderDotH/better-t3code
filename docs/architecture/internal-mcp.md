@@ -11,10 +11,10 @@ T3 server, scoped to one provider session, and passed directly to the provider a
 
 The HTTP server exposes two endpoints:
 
-| Endpoint         | Tools                                                |
-| ---------------- | ---------------------------------------------------- |
-| `/mcp`           | Collaborative preview tools only                     |
-| `/mcp/workspace` | Collaborative preview tools plus `workspace_context` |
+| Endpoint         | Tools                                                                      |
+| ---------------- | -------------------------------------------------------------------------- |
+| `/mcp`           | Collaborative preview and project-agent coordination tools                 |
+| `/mcp/workspace` | Preview and coordination tools plus the read-only `workspace_context` tool |
 
 The endpoint in a provider's generated MCP configuration determines its maximum toolset. A
 credential issued for the preview endpoint cannot be used to obtain workspace tools from
@@ -31,10 +31,10 @@ Provider support follows the adapter's MCP transport capability:
 | Grok                | Preview-only MCP configuration | `/mcp`           |
 | Unregistered driver | No adapter transport           | None             |
 
-This distinction keeps `workspace_context` out of the advertised tool list for unsupported
-drivers instead of allowing a tool call that can only fail. An explicit instance for an
-unregistered driver remains visible as unavailable, but no adapter exists to receive an internal
-MCP credential.
+Every built-in driver receives project-agent coordination tools. This distinction only keeps
+`workspace_context` out of the advertised tool list for Grok and unsupported drivers instead of
+allowing a tool call that can only fail. An explicit instance for an unregistered driver remains
+visible as unavailable, but no adapter exists to receive an internal MCP credential.
 
 ## Credentials and authorization
 
@@ -53,6 +53,41 @@ the endpoint capability. The invocation context made available to handlers conta
 - the credential's capabilities and issue time
 
 Neither MCP input nor the provider can choose a workspace root.
+
+## Project-agent coordination
+
+Independent root threads working in the same project share four coordination tools:
+
+- `project_agent_list` reports the calling thread plus active and recent offline peer threads, their
+  current work summary, cooperative claims, worktree or branch context, phase, and unread count.
+- `project_agent_claim` atomically replaces or releases the calling thread's turn-scoped lease.
+- `project_agent_send` sends a durable direct or broadcast message. Broadcasts reach active peers;
+  a direct send can target an offline peer and wake its existing thread.
+- `project_agent_inbox` reads durable messages and optionally advances the calling thread's cursor.
+
+The tools remain part of each supported provider's internal MCP surface, but the server injects the
+coordination instructions into a turn only when the projection contains another active root thread
+in that project. A lone root thread is never told to call coordination tools.
+
+The authenticated root thread is always the caller identity. Tool inputs cannot impersonate another
+thread or select another project. Provider-native subagents coordinate under their root thread's
+lease; transient Fetch workers do not receive internal MCP credentials and never appear as peers.
+
+Claims are advisory conflict detection rather than filesystem locks. A claim may identify a
+project-relative path or a normalized topic. Paths conflict on exact or ancestor/descendant segment
+boundaries, with host filesystem case rules; topics conflict on normalized exact equality. Claim
+replacement and conflict detection run through the serialized project command lane, so two agents
+cannot both win an overlapping claim. Leases are fenced to the active turn and release automatically
+when that turn or thread becomes inactive.
+
+Messages are persisted once per project with explicit recipients. Sending adds compact chronological
+activities to the sender and recipient timelines, but it does not inject text into a provider's live
+prompt. A direct send to an inactive, retained thread atomically appends a visible coordination
+message and a turn-start request, so the existing peer chat resumes without creating a replacement
+thread. Broadcast never wakes every inactive chat. Agents check the inbox at safe work boundaries.
+Inbox acknowledgement is separate from reading: the response supplies `nextAcknowledgeThrough`,
+which the agent can submit only after it has processed that page. Retention is bounded and responses
+flag truncated history.
 
 ## Trusted workspace resolution
 

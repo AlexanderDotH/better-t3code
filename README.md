@@ -31,7 +31,7 @@ power-user plumbing around the chat.
 
 | Workflow                   | T3 Code                                                     | Better T3 Code                                                                                                                                   |
 | -------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Repository exploration** | A normal provider turn explores the project                 | **Fetch** can start exactly three read-only native subagents with separate discovery scopes before the first edit                                |
+| **Repository exploration** | A normal provider turn explores the project                 | **Fetch** can use an independently selected provider and model for a dynamically sized batch of transient, read-only exploration workers         |
 | **Plan implementation**    | Implement a proposed plan normally                          | Review a plan with a fast model, choose a useful agent count, and implement it with provider-native subagents in parallel                        |
 | **Subagent visibility**    | Provider activity stays in the main conversation            | Live lifecycle pills, persistent agent history, and readable per-agent transcript dialogs                                                        |
 | **Stopping runaway work**  | Standard cooperative stop                                   | Cooperative stop, second-click force stop, and automatic exact-runtime termination after roughly five seconds—without throwing away chat history |
@@ -46,9 +46,17 @@ power-user plumbing around the chat.
 
 > [!NOTE]
 > **Fetch** and **Parallel plan implementation** are experimental, off by default, and currently
-> available in the web and desktop clients. They only activate when the selected provider advertises
-> the required native-subagent support. Experimental means “useful enough to keep” and “spicy enough
-> to deserve a switch.”
+> available in the web and desktop clients. Fetch is independent of the main chat provider: its
+> server-side planner may skip irrelevant requests or launch workers up to the Fetch provider's
+> advertised budget. The built-in providers begin at eight workers, with no application-wide fixed
+> ceiling. Each transient worker can consume additional provider quota. Experimental means “useful
+> enough to keep” and “spicy enough to deserve a switch.”
+
+Fetch model selection defaults to **Auto**: eligible Codex Spark, then Codex Luna with low
+reasoning, then the environment's text-generation model or first Fetch-capable model. The environment
+that owns the project resolves that selection and runs the transient read-only workers even when the
+controlling client is remote. Successful findings survive partial worker failures; if every worker
+fails, the unchanged main-provider turn still continues with a visible warning.
 
 For the precise behavior of Fetch, parallel implementation, force stop, and temporary reasoning
 overrides, see [Chat controls](./docs/user/chat-controls.md).
