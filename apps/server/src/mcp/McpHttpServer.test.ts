@@ -271,7 +271,20 @@ it.effect(
           preview.headers["mcp-session-id"]!,
         );
         expect(previewTools.map(({ name }) => name)).toContain("preview_status");
+        expect(previewTools.map(({ name }) => name)).toContain("project_agent_list");
+        expect(previewTools.map(({ name }) => name)).toContain("project_agent_claim");
+        expect(previewTools.map(({ name }) => name)).toContain("project_agent_send");
+        expect(previewTools.map(({ name }) => name)).toContain("project_agent_inbox");
         expect(previewTools.map(({ name }) => name)).not.toContain("workspace_context");
+        expect(previewTools.find(({ name }) => name === "project_agent_send")?.annotations).toEqual(
+          {
+            title: "Message project agents",
+            readOnlyHint: false,
+            destructiveHint: false,
+            idempotentHint: false,
+            openWorldHint: false,
+          },
+        );
 
         const workspace = yield* initialize("/mcp/workspace", "workspace-token");
         expect(workspace.status).toBe(200);
@@ -281,6 +294,7 @@ it.effect(
           workspace.headers["mcp-session-id"]!,
         );
         expect(workspaceTools.map(({ name }) => name)).toContain("preview_status");
+        expect(workspaceTools.map(({ name }) => name)).toContain("project_agent_list");
         expect(
           workspaceTools.find(({ name }) => name === "workspace_context")?.annotations,
         ).toEqual({

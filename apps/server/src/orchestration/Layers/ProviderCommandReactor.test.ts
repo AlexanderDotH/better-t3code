@@ -72,6 +72,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
 import { NoOpSkillEngineLayer } from "../../skills/testUtils/NoOpSkillEngine.ts";
+import { PROJECT_AGENT_COORDINATION_INSTRUCTIONS } from "../../projectAgent/ProjectAgentInstructions.ts";
 import {
   FetchWorkerCoordinator,
   type FetchRunInput,
@@ -82,6 +83,9 @@ const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
+const coordinatedProviderInput = (input: string) =>
+  `${PROJECT_AGENT_COORDINATION_INSTRUCTIONS}\n\n${input}`;
+
 function fetchProviderFixture(input: {
   readonly instanceId: string;
   readonly driver: string;
@@ -244,6 +248,7 @@ describe("ProviderCommandReactor", () => {
     readonly requiresNewThreadForModelChange?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
+    readonly activeProjectPeerBeforeStart?: boolean;
     readonly projectedSessionBeforeStart?: {
       readonly status: OrchestrationSession["status"];
       readonly providerName?: string | null;
@@ -662,7 +667,10 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
-    if (input?.titleRegenerationBeforeStart === "two") {
+    if (
+      input?.titleRegenerationBeforeStart === "two" ||
+      input?.activeProjectPeerBeforeStart === true
+    ) {
       await Effect.runPromise(
         engine.dispatch({
           type: "thread.create",
@@ -696,6 +704,45 @@ describe("ProviderCommandReactor", () => {
           regenerateTitle: true,
         }),
       );
+    }
+
+    if (input?.activeProjectPeerBeforeStart === true) {
+      const peerThreadId = ThreadId.make("thread-2");
+      const peerTurnId = asTurnId("turn-project-peer");
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-project-peer-session-set-before-reactor-start"),
+          threadId: peerThreadId,
+          session: {
+            threadId: peerThreadId,
+            status: "running",
+            providerName: "codex",
+            providerInstanceId: modelSelection.instanceId,
+            runtimeSessionId: null,
+            runtimeMode: "approval-required",
+            activeTurnId: peerTurnId,
+            abortState: null,
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        }),
+      );
+      runtimeSessions.push({
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: modelSelection.instanceId,
+        status: "running",
+        runtimeMode: "approval-required",
+        cwd: "/tmp/provider-project",
+        ...(modelSelection.model ? { model: modelSelection.model } : {}),
+        threadId: peerThreadId,
+        runtimeSessionId: RuntimeSessionId.make("runtime-project-peer"),
+        activeTurnId: peerTurnId,
+        resumeCursor: { opaque: "resume-project-peer" },
+        createdAt: now,
+        updatedAt: now,
+      });
     }
 
     const projectedSessionBeforeStart = input?.projectedSessionBeforeStart;
@@ -1319,6 +1366,33 @@ describe("ProviderCommandReactor", () => {
     });
     expect(harness.startSession.mock.invocationCallOrder[0]).toBeLessThan(
       harness.runFetch.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("injects project-agent coordination instructions when another project thread is active", async () => {
+    const harness = await createHarness({ activeProjectPeerBeforeStart: true });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-with-active-project-peer"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-with-active-project-peer"),
+          role: "user",
+          text: "coordinate this change",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toBe(
+      coordinatedProviderInput("coordinate this change"),
     );
   });
 

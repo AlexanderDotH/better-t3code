@@ -65,6 +65,7 @@ function queryLayer(input: {
       getActiveProjectByWorkspaceRoot: () => Effect.die("unused"),
       getProjectShellById: () => Effect.succeed(input.project),
       getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
+      hasActiveProjectAgentPeer: () => Effect.die("unused"),
       getThreadCheckpointContext: () => Effect.die("unused"),
       getFullThreadDiffContext: () => Effect.die("unused"),
       getThreadShellById: () => Effect.die("unused"),

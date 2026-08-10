@@ -143,6 +143,14 @@ export interface ProjectionSnapshotQueryShape {
   ) => Effect.Effect<Option.Option<ThreadId>, ProjectionRepositoryError>;
 
   /**
+   * Check whether another retained root thread in the same project is actively
+   * starting or running work.
+   */
+  readonly hasActiveProjectAgentPeer: (
+    threadId: ThreadId,
+  ) => Effect.Effect<boolean, ProjectionRepositoryError>;
+
+  /**
    * Read the checkpoint context needed to resolve a single thread diff.
    */
   readonly getThreadCheckpointContext: (

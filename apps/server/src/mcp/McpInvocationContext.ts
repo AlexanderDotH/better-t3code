@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  ProjectAgentCoordinationUnavailableError,
   PreviewAutomationUnavailableError,
   type ProviderInstanceId,
   type ThreadId,
@@ -8,7 +9,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-export type McpCapability = "preview" | "workspace";
+export type McpCapability = "preview" | "workspace" | "coordination";
 
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
@@ -45,6 +46,18 @@ export const requireWorkspaceMcpCapability = Effect.fn("mcp.requireWorkspaceCapa
     const invocation = yield* McpInvocationContext;
     if (!invocation.capabilities.has("workspace")) {
       return yield* new WorkspaceContextUnavailableError({
+        reason: "credential_not_authorized",
+      });
+    }
+    return invocation;
+  },
+);
+
+export const requireCoordinationMcpCapability = Effect.fn("mcp.requireCoordinationCapability")(
+  function* () {
+    const invocation = yield* McpInvocationContext;
+    if (!invocation.capabilities.has("coordination")) {
+      return yield* new ProjectAgentCoordinationUnavailableError({
         reason: "credential_not_authorized",
       });
     }

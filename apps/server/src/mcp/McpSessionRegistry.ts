@@ -150,8 +150,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
         capabilities: workspaceContextEnabled
-          ? new Set(["preview", "workspace"])
-          : new Set(["preview"]),
+          ? new Set(["preview", "workspace", "coordination"])
+          : new Set(["preview", "coordination"]),
         issuedAt,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {

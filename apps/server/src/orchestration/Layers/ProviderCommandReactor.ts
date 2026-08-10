@@ -61,6 +61,7 @@ import {
   FETCH_CONTEXT_MAX_CHARS,
   FetchWorkerCoordinator,
 } from "../../fetch/FetchWorkerCoordinator.ts";
+import { applyProjectAgentInstructionsToProviderInput } from "../../projectAgent/ProjectAgentInstructions.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -401,6 +402,36 @@ const make = Effect.gen(function* () {
             kind: "fetch.warning",
             summary: input.summary,
             payload: { detail: input.detail },
+            turnId: null,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        }),
+      ),
+    );
+
+  const appendCoordinationWarningActivity = (input: {
+    readonly threadId: ThreadId;
+    readonly createdAt: string;
+  }) =>
+    Effect.all({
+      commandId: serverCommandId("coordination-warning-activity"),
+      eventId: serverEventId(),
+    }).pipe(
+      Effect.flatMap(({ commandId, eventId }) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId: input.threadId,
+          activity: {
+            id: eventId,
+            tone: "info",
+            kind: "coordination.warning",
+            summary: "Project-agent coordination instructions omitted",
+            payload: {
+              detail:
+                "The user request and required transcript handoff consumed the provider input limit, so T3 could not include the project-agent coordination contract for this turn.",
+            },
             turnId: null,
             createdAt: input.createdAt,
           },
@@ -846,7 +877,26 @@ const make = Effect.gen(function* () {
         detail: `Full transcript handoff for thread '${input.threadId}' is ${providerInputWithHandoff.length} characters, exceeding the provider input limit of ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS}. The transcript was not truncated.`,
       });
     }
-    const providerInput = providerInputWithHandoff;
+    let providerInput = providerInputWithHandoff;
+    if (yield* projectionSnapshotQuery.hasActiveProjectAgentPeer(input.threadId)) {
+      const coordinationApplication = applyProjectAgentInstructionsToProviderInput({
+        providerInput,
+      });
+      providerInput = coordinationApplication.providerInput ?? "";
+      if (coordinationApplication.outcome === "omitted") {
+        yield* appendCoordinationWarningActivity({
+          threadId: input.threadId,
+          createdAt: input.createdAt,
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("provider command reactor failed to append coordination warning", {
+              threadId: input.threadId,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
+      }
+    }
     const normalizedInput = toNonEmptyProviderInput(providerInput);
     const sessionModelSwitch =
       activeSession === undefined

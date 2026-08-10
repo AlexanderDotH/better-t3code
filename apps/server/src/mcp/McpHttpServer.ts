@@ -24,6 +24,8 @@ import {
 } from "./toolkits/preview/tools.ts";
 import { WorkspaceToolkitHandlersLive } from "./toolkits/workspace/handlers.ts";
 import { WorkspaceToolkit } from "./toolkits/workspace/tools.ts";
+import { CoordinationToolkitHandlersLive } from "./toolkits/coordination/handlers.ts";
+import { CoordinationToolkit } from "./toolkits/coordination/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -237,8 +239,17 @@ export const WorkspaceToolkitRegistrationLive = McpServer.toolkit(WorkspaceToolk
   Layer.provide(WorkspaceToolkitHandlersLive),
 );
 
-export const WorkspaceEnabledToolkitRegistrationLive = Layer.mergeAll(
+export const CoordinationToolkitRegistrationLive = McpServer.toolkit(CoordinationToolkit).pipe(
+  Layer.provide(CoordinationToolkitHandlersLive),
+);
+
+export const CoordinationEnabledToolkitRegistrationLive = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
+  CoordinationToolkitRegistrationLive,
+);
+
+export const WorkspaceEnabledToolkitRegistrationLive = Layer.mergeAll(
+  CoordinationEnabledToolkitRegistrationLive,
   WorkspaceToolkitRegistrationLive,
 );
 
@@ -253,7 +264,7 @@ const makeMcpTransportLive = (
   }).pipe(Layer.provide(makeMcpAuthMiddlewareLive(requiredCapability)));
 
 const PreviewMcpEndpointLive = Layer.fresh(
-  PreviewToolkitRegistrationLive.pipe(Layer.provideMerge(makeMcpTransportLive("/mcp"))),
+  CoordinationEnabledToolkitRegistrationLive.pipe(Layer.provideMerge(makeMcpTransportLive("/mcp"))),
 );
 
 const WorkspaceMcpEndpointLive = Layer.fresh(

@@ -21,6 +21,8 @@ import {
   ProjectCreatedPayload,
   ProjectDeletedPayload,
   ProjectMetaUpdatedPayload,
+  ProjectAgentClaimSetPayload,
+  ProjectAgentClaimReleasedPayload,
   ThreadActivityAppendedPayload,
   ThreadArchivedPayload,
   ThreadCreatedPayload,
@@ -359,6 +361,7 @@ export function projectEvent(
             workspaceRoot: payload.workspaceRoot,
             defaultModelSelection: payload.defaultModelSelection,
             scripts: payload.scripts,
+            coordinationClaims: [],
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             deletedAt: null,
@@ -408,11 +411,64 @@ export function projectEvent(
                   ...project,
                   deletedAt: payload.deletedAt,
                   updatedAt: payload.deletedAt,
+                  coordinationClaims: [],
                 }
               : project,
           ),
         })),
       );
+
+    case "project.agent-claim-set":
+      return decodeForEvent(ProjectAgentClaimSetPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          projects: nextBase.projects.map((project) =>
+            project.id === payload.projectId
+              ? {
+                  ...project,
+                  coordinationClaims: [
+                    ...project.coordinationClaims.filter(
+                      (lease) => lease.threadId !== payload.threadId,
+                    ),
+                    payload,
+                  ],
+                  updatedAt: maxIsoDate(project.updatedAt, payload.updatedAt),
+                }
+              : project,
+          ),
+        })),
+      );
+
+    case "project.agent-claim-released":
+      return decodeForEvent(
+        ProjectAgentClaimReleasedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          projects: nextBase.projects.map((project) =>
+            project.id === payload.projectId
+              ? {
+                  ...project,
+                  coordinationClaims: project.coordinationClaims.filter(
+                    (lease) =>
+                      lease.threadId !== payload.threadId ||
+                      (payload.expectedTurnId !== null && lease.turnId !== payload.expectedTurnId),
+                  ),
+                  updatedAt: maxIsoDate(project.updatedAt, payload.releasedAt),
+                }
+              : project,
+          ),
+        })),
+      );
+
+    case "project.agent-message-sent":
+    case "project.agent-inbox-acknowledged":
+      // Message bodies and per-recipient cursors stay in their compact SQL
+      // projections; they do not inflate the orchestration command model.
+      return Effect.succeed(nextBase);
 
     case "thread.created":
       return Effect.gen(function* () {

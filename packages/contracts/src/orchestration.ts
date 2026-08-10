@@ -24,6 +24,16 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import {
+  PROJECT_AGENT_MAX_CLAIMS,
+  PROJECT_AGENT_MAX_PEERS,
+  ProjectAgentClaim,
+  ProjectAgentLease,
+  ProjectAgentMessageBody,
+  ProjectAgentMessageId,
+  ProjectAgentMessageKind,
+  ProjectAgentSummary,
+} from "./projectAgentCoordination.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -221,6 +231,9 @@ export const OrchestrationProject = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
+  coordinationClaims: Schema.Array(ProjectAgentLease).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -1055,6 +1068,57 @@ export const ThreadSubagentProgressSetCommand = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 
+export const ProjectAgentClaimSetCommand = Schema.Struct({
+  type: Schema.Literal("project.agent.claim.set"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  threadId: ThreadId,
+  turnId: TurnId,
+  summary: ProjectAgentSummary,
+  claims: Schema.Array(ProjectAgentClaim).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(PROJECT_AGENT_MAX_CLAIMS),
+  ),
+  claimedAt: IsoDateTime,
+});
+export type ProjectAgentClaimSetCommand = typeof ProjectAgentClaimSetCommand.Type;
+
+export const ProjectAgentClaimReleaseCommand = Schema.Struct({
+  type: Schema.Literal("project.agent.claim.release"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  threadId: ThreadId,
+  expectedTurnId: Schema.optional(TurnId),
+  releasedAt: IsoDateTime,
+});
+export type ProjectAgentClaimReleaseCommand = typeof ProjectAgentClaimReleaseCommand.Type;
+
+export const ProjectAgentMessageSendCommand = Schema.Struct({
+  type: Schema.Literal("project.agent.message.send"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  messageId: ProjectAgentMessageId,
+  senderThreadId: ThreadId,
+  recipientThreadIds: Schema.Array(ThreadId).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(PROJECT_AGENT_MAX_PEERS),
+  ),
+  kind: ProjectAgentMessageKind,
+  body: ProjectAgentMessageBody,
+  sentAt: IsoDateTime,
+});
+export type ProjectAgentMessageSendCommand = typeof ProjectAgentMessageSendCommand.Type;
+
+export const ProjectAgentInboxAcknowledgeCommand = Schema.Struct({
+  type: Schema.Literal("project.agent.inbox.acknowledge"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  threadId: ThreadId,
+  acknowledgeThrough: NonNegativeInt,
+  acknowledgedAt: IsoDateTime,
+});
+export type ProjectAgentInboxAcknowledgeCommand = typeof ProjectAgentInboxAcknowledgeCommand.Type;
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -1069,6 +1133,10 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadSubagentUpsertCommand,
   ThreadSubagentStateSetCommand,
   ThreadSubagentProgressSetCommand,
+  ProjectAgentClaimSetCommand,
+  ProjectAgentClaimReleaseCommand,
+  ProjectAgentMessageSendCommand,
+  ProjectAgentInboxAcknowledgeCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -1109,6 +1177,10 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.subagent-upserted",
   "thread.subagent-state-set",
   "thread.subagent-progress-set",
+  "project.agent-claim-set",
+  "project.agent-claim-released",
+  "project.agent-message-sent",
+  "project.agent-inbox-acknowledged",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1141,6 +1213,39 @@ export const ProjectDeletedPayload = Schema.Struct({
   projectId: ProjectId,
   deletedAt: IsoDateTime,
 });
+
+export const ProjectAgentClaimSetPayload = ProjectAgentLease;
+export type ProjectAgentClaimSetPayload = typeof ProjectAgentClaimSetPayload.Type;
+
+export const ProjectAgentClaimReleasedPayload = Schema.Struct({
+  projectId: ProjectId,
+  threadId: ThreadId,
+  expectedTurnId: Schema.NullOr(TurnId),
+  releasedAt: IsoDateTime,
+});
+export type ProjectAgentClaimReleasedPayload = typeof ProjectAgentClaimReleasedPayload.Type;
+
+export const ProjectAgentMessageSentPayload = Schema.Struct({
+  projectId: ProjectId,
+  messageId: ProjectAgentMessageId,
+  senderThreadId: ThreadId,
+  recipientThreadIds: Schema.Array(ThreadId).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(PROJECT_AGENT_MAX_PEERS),
+  ),
+  kind: ProjectAgentMessageKind,
+  body: ProjectAgentMessageBody,
+  sentAt: IsoDateTime,
+});
+export type ProjectAgentMessageSentPayload = typeof ProjectAgentMessageSentPayload.Type;
+
+export const ProjectAgentInboxAcknowledgedPayload = Schema.Struct({
+  projectId: ProjectId,
+  threadId: ThreadId,
+  acknowledgeThrough: NonNegativeInt,
+  acknowledgedAt: IsoDateTime,
+});
+export type ProjectAgentInboxAcknowledgedPayload = typeof ProjectAgentInboxAcknowledgedPayload.Type;
 
 export const ThreadCreatedPayload = Schema.Struct({
   threadId: ThreadId,
@@ -1389,6 +1494,26 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("project.deleted"),
     payload: ProjectDeletedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("project.agent-claim-set"),
+    payload: ProjectAgentClaimSetPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("project.agent-claim-released"),
+    payload: ProjectAgentClaimReleasedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("project.agent-message-sent"),
+    payload: ProjectAgentMessageSentPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("project.agent-inbox-acknowledged"),
+    payload: ProjectAgentInboxAcknowledgedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

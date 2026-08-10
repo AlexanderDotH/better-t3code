@@ -121,6 +121,8 @@ import { AssemblyAiStreamingTokenLive } from "./speech/Layers/AssemblyAiStreamin
 import * as ProjectSpeechProfileStore from "./speech/ProjectSpeechProfileStore.ts";
 import * as ProjectSpeechWorkspaceScanner from "./speech/ProjectSpeechWorkspaceScanner.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
+import { ProjectAgentCoordinatorLive } from "./projectAgent/ProjectAgentCoordinator.ts";
+import { ProjectionProjectAgentCoordinationRepositoryLive } from "./persistence/Layers/ProjectionProjectAgentCoordination.ts";
 import {
   clearPersistedServerRuntimeState,
   makePersistedServerRuntimeState,
@@ -447,9 +449,14 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
   ),
 );
 
+const ProjectAgentCoordinationLayerLive = ProjectAgentCoordinatorLive.pipe(
+  Layer.provideMerge(OrchestrationLayerLive),
+  Layer.provideMerge(ProjectionProjectAgentCoordinationRepositoryLive),
+);
+
 const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(ProviderLayerLive),
-  Layer.provideMerge(OrchestrationLayerLive),
+  Layer.provideMerge(ProjectAgentCoordinationLayerLive),
 );
 
 const GitWorkbenchLayerLive = GitWorkbenchCoreLayerLive.pipe(

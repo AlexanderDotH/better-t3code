@@ -64,6 +64,10 @@ function commandToAggregateRef(command: OrchestrationCommand): {
     case "project.create":
     case "project.meta.update":
     case "project.delete":
+    case "project.agent.claim.set":
+    case "project.agent.claim.release":
+    case "project.agent.message.send":
+    case "project.agent.inbox.acknowledge":
       return {
         aggregateKind: "project",
         aggregateId: command.projectId,
