@@ -293,6 +293,8 @@ The following structural decisions are explicit:
 - Retain upstream update rollback, security, correctness, and performance fixes.
 - Remove upstream outbound `AnalyticsService` product analytics again while preserving local
   resource telemetry.
+- Run fork CI on GitHub-hosted `ubuntu-24.04` and `macos-26` workers because the fork does not have
+  access to upstream's organization-scoped Blacksmith runners.
 - Regenerate `routeTree.gen.ts`, dependency metadata, and `pnpm-lock.yaml`; never hand-merge
   generated output.
 - Preserve the machine-safety rules in [`AGENTS.md`](../../AGENTS.md): never manage a running T3 Code
