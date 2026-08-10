@@ -924,6 +924,32 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("persists and clears the atomic Fetch model selection", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const selection = createModelSelection(
+        ProviderInstanceId.make("claude_work"),
+        "claude-opus-4-6",
+        [
+          { id: "effort", value: "high" },
+          { id: "serviceTier", value: "priority" },
+        ],
+      );
+
+      const saved = yield* serverSettings.updateSettings({ fetchModelSelection: selection });
+      assert.deepEqual(saved.fetchModelSelection, selection);
+      const savedRaw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.deepEqual(JSON.parse(savedRaw).fetchModelSelection, selection);
+
+      const reset = yield* serverSettings.updateSettings({ fetchModelSelection: null });
+      assert.equal(reset.fetchModelSelection, null);
+      const resetRaw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.equal(JSON.parse(resetRaw).fetchModelSelection, undefined);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("stores and clears the dedicated voice translation model", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsService;

@@ -16,7 +16,7 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
-import { buildFetchProviderInstructions } from "@t3tools/shared/fetchMode";
+import { resolveFetchLunaFallback, resolveFetchModelSelection } from "@t3tools/shared/fetchMode";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -57,6 +57,10 @@ import {
 } from "../providerTranscriptHandoff.ts";
 import { normalizeCodexModelSelectionServiceTier } from "../../codexModelOptions.ts";
 import { isActiveSubagentStatus, settleSubagentAfterRuntimeLoss } from "../subagentLifecycle.ts";
+import {
+  FETCH_CONTEXT_MAX_CHARS,
+  FetchWorkerCoordinator,
+} from "../../fetch/FetchWorkerCoordinator.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -107,6 +111,54 @@ const DEFAULT_THREAD_TITLE = "New thread";
 const MAX_REGENERATION_ATTACHMENTS = 4;
 const MAX_THREAD_TITLE_CONTEXT_CHARS = 8_000;
 const THREAD_TITLE_CONTEXT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
+const FETCH_CONTEXT_TRUNCATION_MARKER = "\n[T3 Fetch context truncated]";
+
+export function applyFetchContextToProviderInput(input: {
+  readonly providerInput?: string;
+  readonly fetchContext?: string;
+}): {
+  readonly providerInput?: string;
+  readonly outcome: "not-requested" | "included" | "truncated" | "omitted";
+} {
+  const fetchContext = input.fetchContext?.trim();
+  if (!fetchContext) {
+    return {
+      ...(input.providerInput !== undefined ? { providerInput: input.providerInput } : {}),
+      outcome: "not-requested",
+    };
+  }
+
+  const providerInput = input.providerInput ?? "";
+  const separator = providerInput.length > 0 ? "\n\n" : "";
+  const available = PROVIDER_SEND_TURN_MAX_INPUT_CHARS - providerInput.length - separator.length;
+  if (available <= FETCH_CONTEXT_TRUNCATION_MARKER.length) {
+    return {
+      ...(input.providerInput !== undefined ? { providerInput: input.providerInput } : {}),
+      outcome: "omitted",
+    };
+  }
+  if (fetchContext.length <= available) {
+    return {
+      providerInput: `${providerInput}${separator}${fetchContext}`,
+      outcome: "included",
+    };
+  }
+
+  const retainedContext = fetchContext.slice(0, available - FETCH_CONTEXT_TRUNCATION_MARKER.length);
+  return {
+    providerInput: `${providerInput}${separator}${retainedContext}${FETCH_CONTEXT_TRUNCATION_MARKER}`,
+    outcome: "truncated",
+  };
+}
+
+export function remainingFetchContextChars(providerInput: string | undefined): number {
+  const inputLength = providerInput?.length ?? 0;
+  const separatorLength = inputLength > 0 ? 2 : 0;
+  return Math.min(
+    FETCH_CONTEXT_MAX_CHARS,
+    Math.max(0, PROVIDER_SEND_TURN_MAX_INPUT_CHARS - inputLength - separatorLength),
+  );
+}
 
 function formatThreadTitleContext(
   messages: ReadonlyArray<{
@@ -262,6 +314,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
+  const fetchWorkerCoordinator = yield* FetchWorkerCoordinator;
   const turnAbortCoordinator = yield* TurnAbortCoordinator;
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
@@ -320,6 +373,35 @@ const make = Effect.gen(function* () {
               ...(input.requestId ? { requestId: input.requestId } : {}),
             },
             turnId: input.turnId,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        }),
+      ),
+    );
+
+  const appendFetchWarningActivity = (input: {
+    readonly threadId: ThreadId;
+    readonly summary: string;
+    readonly detail: string;
+    readonly createdAt: string;
+  }) =>
+    Effect.all({
+      commandId: serverCommandId("fetch-warning-activity"),
+      eventId: serverEventId(),
+    }).pipe(
+      Effect.flatMap(({ commandId, eventId }) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId: input.threadId,
+          activity: {
+            id: eventId,
+            tone: "error",
+            kind: "fetch.warning",
+            summary: input.summary,
+            payload: { detail: input.detail },
+            turnId: null,
             createdAt: input.createdAt,
           },
           createdAt: input.createdAt,
@@ -714,7 +796,6 @@ const make = Effect.gen(function* () {
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly messageText: string;
-    readonly fetchMode?: "repository-exploration";
     readonly boundaryMessageId: OrchestrationMessage["id"];
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
@@ -749,33 +830,15 @@ const make = Effect.gen(function* () {
             ...(project ? { projectCwd: project.workspaceRoot } : {}),
             prompt: input.messageText,
           });
-    const fetchProvider =
-      input.fetchMode === undefined
-        ? undefined
-        : (yield* providerRegistry.getProviders).find(
-            (provider) =>
-              provider.instanceId ===
-              (activeSession?.providerInstanceId ?? sessionPreparation.modelSelection.instanceId),
-          );
-    const providerInstructions = buildFetchProviderInstructions(fetchProvider);
-    const providerInputWithInstructions = providerInstructions
-      ? [
-          "T3 TURN INSTRUCTIONS:",
-          providerInstructions,
-          "",
-          "USER REQUEST:",
-          providerMessageText,
-        ].join("\n")
-      : providerMessageText;
     const providerInputWithHandoff = sessionPreparation.transcriptHandoffRequired
       ? prependProviderTranscriptHandoff({
           handoff: buildProviderTranscriptHandoff({
             messages: thread.messages,
             boundaryMessageId: input.boundaryMessageId,
           }),
-          providerInput: providerInputWithInstructions,
+          providerInput: providerMessageText,
         })
-      : providerInputWithInstructions;
+      : providerMessageText;
     if (providerInputWithHandoff.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
       return yield* new ProviderAdapterRequestError({
         provider: providerErrorLabel(activeSession?.provider),
@@ -783,7 +846,8 @@ const make = Effect.gen(function* () {
         detail: `Full transcript handoff for thread '${input.threadId}' is ${providerInputWithHandoff.length} characters, exceeding the provider input limit of ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS}. The transcript was not truncated.`,
       });
     }
-    const normalizedInput = toNonEmptyProviderInput(providerInputWithHandoff);
+    const providerInput = providerInputWithHandoff;
+    const normalizedInput = toNonEmptyProviderInput(providerInput);
     const sessionModelSwitch =
       activeSession === undefined
         ? "in-session"
@@ -1296,29 +1360,166 @@ const make = Effect.gen(function* () {
         ),
       );
 
-    const sendTurnRequest = yield* buildSendTurnRequestForThread({
-      threadId: event.payload.threadId,
-      messageText: message.text,
-      ...(event.payload.fetchMode !== undefined ? { fetchMode: event.payload.fetchMode } : {}),
-      boundaryMessageId: message.id,
-      ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
-      ...(event.payload.modelSelection !== undefined
-        ? { modelSelection: event.payload.modelSelection }
-        : {}),
-      interactionMode: event.payload.interactionMode,
-      createdAt: event.payload.createdAt,
-    }).pipe(
-      Effect.map(Option.some),
-      Effect.catchCause((cause) => handleTurnStartFailure(cause).pipe(Effect.as(Option.none()))),
-    );
+    const startProviderTurn = Effect.gen(function* () {
+      const sendTurnRequest = yield* buildSendTurnRequestForThread({
+        threadId: event.payload.threadId,
+        messageText: message.text,
+        boundaryMessageId: message.id,
+        ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+        ...(event.payload.modelSelection !== undefined
+          ? { modelSelection: event.payload.modelSelection }
+          : {}),
+        interactionMode: event.payload.interactionMode,
+        createdAt: event.payload.createdAt,
+      }).pipe(
+        Effect.map(Option.some),
+        Effect.catchCause((cause) => handleTurnStartFailure(cause).pipe(Effect.as(Option.none()))),
+      );
 
-    if (Option.isNone(sendTurnRequest)) {
-      return;
-    }
+      if (Option.isNone(sendTurnRequest)) {
+        return;
+      }
 
-    yield* providerService
-      .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
+      const sendMainTurn = (request: typeof sendTurnRequest.value) =>
+        providerService.sendTurn(request).pipe(Effect.catchCause(recoverTurnStartFailure));
+
+      if (event.payload.fetchMode === undefined) {
+        yield* sendMainTurn(sendTurnRequest.value);
+        return;
+      }
+
+      const settings = yield* serverSettingsService.getSettings;
+      const providers = yield* providerRegistry.getProviders;
+      const resolution = resolveFetchModelSelection({
+        providers,
+        fetchModelSelection: settings.fetchModelSelection,
+        textGenerationModelSelection: settings.textGenerationModelSelection,
+      });
+      if (resolution.status === "unavailable") {
+        const requested = resolution.requestedSelection;
+        const detail =
+          resolution.source === "manual" && requested !== null
+            ? `The configured Fetch model '${requested.instanceId}/${requested.model}' is unavailable. T3 did not substitute another model.`
+            : "No enabled and available provider model can run Fetch workers in this environment.";
+        yield* appendFetchWarningActivity({
+          threadId: event.payload.threadId,
+          summary: "Fetch unavailable",
+          detail,
+          createdAt: event.payload.createdAt,
+        });
+        yield* sendMainTurn(sendTurnRequest.value);
+        return;
+      }
+
+      const fetchWorkers = resolution.provider.fetchWorkers;
+      if (fetchWorkers === undefined) {
+        yield* appendFetchWarningActivity({
+          threadId: event.payload.threadId,
+          summary: "Fetch unavailable",
+          detail: `Provider '${resolution.provider.instanceId}' does not advertise Fetch worker support.`,
+          createdAt: event.payload.createdAt,
+        });
+        yield* sendMainTurn(sendTurnRequest.value);
+        return;
+      }
+
+      const project = yield* resolveProject(thread.projectId);
+      const cwd =
+        resolveThreadWorkspaceCwd({
+          thread,
+          projects: project ? [project] : [],
+        }) ??
+        project?.workspaceRoot ??
+        process.cwd();
+      const lunaFallback =
+        resolution.source === "auto-spark" ? resolveFetchLunaFallback(providers) : undefined;
+      const contextMaxChars = remainingFetchContextChars(sendTurnRequest.value.input);
+      const fetchResult = yield* fetchWorkerCoordinator.run({
+        threadId: event.payload.threadId,
+        cwd,
+        userRequest: message.text,
+        modelSelection: resolution.selection,
+        providerDriver: resolution.provider.driver,
+        maxRecommendedWorkers: fetchWorkers.maxRecommendedWorkers,
+        commandExecutionPolicy: fetchWorkers.commandExecutionPolicy,
+        contextMaxChars,
+        ...(lunaFallback?.status === "resolved" && lunaFallback.provider.fetchWorkers !== undefined
+          ? {
+              lunaFallback: {
+                modelSelection: lunaFallback.selection,
+                providerDriver: lunaFallback.provider.driver,
+                maxRecommendedWorkers: lunaFallback.provider.fetchWorkers.maxRecommendedWorkers,
+                commandExecutionPolicy: lunaFallback.provider.fetchWorkers.commandExecutionPolicy,
+              },
+            }
+          : {}),
+      });
+
+      yield* Effect.forEach(
+        fetchResult.warnings,
+        (warning) =>
+          appendFetchWarningActivity({
+            threadId: event.payload.threadId,
+            summary: "Fetch warning",
+            detail: warning,
+            createdAt: event.payload.createdAt,
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("provider command reactor failed to append Fetch warning", {
+                threadId: event.payload.threadId,
+                warning,
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          ),
+        { concurrency: 1, discard: true },
+      );
+
+      const contextApplication = applyFetchContextToProviderInput({
+        ...(sendTurnRequest.value.input !== undefined
+          ? { providerInput: sendTurnRequest.value.input }
+          : {}),
+        ...(fetchResult.context !== undefined ? { fetchContext: fetchResult.context } : {}),
+      });
+      if (
+        contextApplication.outcome === "omitted" ||
+        (fetchResult.successfulWorkers > 0 && fetchResult.context === undefined)
+      ) {
+        yield* appendFetchWarningActivity({
+          threadId: event.payload.threadId,
+          summary: "Fetch context omitted",
+          detail:
+            "The main request and required transcript handoff consumed the provider input limit, so collected Fetch evidence was not sent to the main provider.",
+          createdAt: event.payload.createdAt,
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("provider command reactor failed to append Fetch context warning", {
+              threadId: event.payload.threadId,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
+      }
+      const requestWithFetchContext =
+        contextApplication.providerInput === sendTurnRequest.value.input
+          ? sendTurnRequest.value
+          : {
+              ...sendTurnRequest.value,
+              ...(contextApplication.providerInput !== undefined
+                ? { input: contextApplication.providerInput }
+                : {}),
+            };
+
+      yield* fetchWorkerCoordinator.handoffToMain(
+        {
+          threadId: event.payload.threadId,
+          runId: fetchResult.runId,
+        },
+        sendMainTurn(requestWithFetchContext),
+      );
+    });
+
+    yield* startProviderTurn.pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
@@ -1328,24 +1529,34 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
-    yield* turnAbortCoordinator
-      .requestAbort({
-        threadId: event.payload.threadId,
-        ...(event.payload.turnId !== undefined ? { turnId: event.payload.turnId } : {}),
-        requestedAt: event.payload.createdAt,
-      })
-      .pipe(
-        Effect.catchCause((cause) =>
-          appendProviderFailureActivity({
-            threadId: event.payload.threadId,
-            kind: "provider.turn.interrupt.failed",
-            summary: "Provider turn interrupt failed",
-            detail: formatFailureDetail(cause),
-            turnId: event.payload.turnId ?? null,
-            createdAt: event.payload.createdAt,
-          }),
-        ),
-      );
+    const abortRequest = {
+      threadId: event.payload.threadId,
+      ...(event.payload.turnId !== undefined ? { turnId: event.payload.turnId } : {}),
+      requestedAt: event.payload.createdAt,
+    };
+    const handledByFetch = yield* fetchWorkerCoordinator.requestInterrupt(abortRequest).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider command reactor failed to interrupt Fetch preflight", {
+          threadId: event.payload.threadId,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as(false)),
+      ),
+    );
+    if (handledByFetch) {
+      return;
+    }
+    yield* turnAbortCoordinator.requestAbort(abortRequest).pipe(
+      Effect.catchCause((cause) =>
+        appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.turn.interrupt.failed",
+          summary: "Provider turn interrupt failed",
+          detail: formatFailureDetail(cause),
+          turnId: event.payload.turnId ?? null,
+          createdAt: event.payload.createdAt,
+        }),
+      ),
+    );
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (

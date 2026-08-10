@@ -12,7 +12,9 @@ import {
   ProviderSession,
   ProviderDriverKind,
   ProviderInstanceId,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   RuntimeSessionId,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import {
@@ -56,6 +58,8 @@ import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQu
 import {
   providerErrorLabel,
   providerErrorLabelFromInstanceHint,
+  applyFetchContextToProviderInput,
+  remainingFetchContextChars,
   ProviderCommandReactorLive,
 } from "./ProviderCommandReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -68,11 +72,48 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
 import { NoOpSkillEngineLayer } from "../../skills/testUtils/NoOpSkillEngine.ts";
+import {
+  FetchWorkerCoordinator,
+  type FetchRunInput,
+  type FetchRunResult,
+} from "../../fetch/FetchWorkerCoordinator.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
+function fetchProviderFixture(input: {
+  readonly instanceId: string;
+  readonly driver: string;
+  readonly models: ReadonlyArray<string>;
+  readonly maxRecommendedWorkers?: number;
+  readonly enabled?: boolean;
+}): ServerProvider {
+  const driver = ProviderDriverKind.make(input.driver);
+  return {
+    instanceId: ProviderInstanceId.make(input.instanceId),
+    driver,
+    enabled: input.enabled ?? true,
+    installed: true,
+    version: "1.0.0",
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-01-01T00:00:00.000Z",
+    fetchWorkers: {
+      maxRecommendedWorkers: input.maxRecommendedWorkers ?? 8,
+      commandExecutionPolicy:
+        driver === ProviderDriverKind.make("codex") ? "read-only-sandbox" : "deny",
+    },
+    models: input.models.map((slug) => ({
+      slug,
+      name: slug,
+      isCustom: false,
+      capabilities: null,
+    })),
+    slashCommands: [],
+    skills: [],
+  };
+}
 
 const deriveServerPathsSync = (baseDir: string, devUrl: URL | undefined) =>
   Effect.runSync(deriveServerPaths(baseDir, devUrl).pipe(Effect.provide(NodeServices.layer)));
@@ -148,6 +189,54 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  describe("Fetch context input budgeting", () => {
+    it("appends collected Fetch evidence without changing the main request", () => {
+      expect(
+        applyFetchContextToProviderInput({
+          providerInput: "implement the change",
+          fetchContext: "T3 FETCH CONTEXT\nworker evidence",
+        }),
+      ).toEqual({
+        providerInput: "implement the change\n\nT3 FETCH CONTEXT\nworker evidence",
+        outcome: "included",
+      });
+    });
+
+    it("truncates only Fetch context when the provider input budget is tight", () => {
+      const providerInput = "u".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - 80);
+      const result = applyFetchContextToProviderInput({
+        providerInput,
+        fetchContext: `T3 FETCH CONTEXT\n${"e".repeat(500)}`,
+      });
+
+      expect(result.providerInput?.startsWith(providerInput)).toBe(true);
+      expect(result.providerInput).toHaveLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+      expect(result.providerInput).toContain("[T3 Fetch context truncated]");
+      expect(result.outcome).toBe("truncated");
+    });
+
+    it("omits Fetch context when the main request already consumes the full budget", () => {
+      const providerInput = "u".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+      expect(
+        applyFetchContextToProviderInput({
+          providerInput,
+          fetchContext: "T3 FETCH CONTEXT\nworker evidence",
+        }),
+      ).toEqual({
+        providerInput,
+        outcome: "omitted",
+      });
+    });
+
+    it("passes the coordinator the actual remaining budget capped at 64,000 characters", () => {
+      expect(remainingFetchContextChars("short request")).toBe(64_000);
+      expect(remainingFetchContextChars("u".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - 100))).toBe(
+        98,
+      );
+      expect(remainingFetchContextChars("u".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS))).toBe(0);
+    });
+  });
+
   async function createHarness(input?: {
     readonly baseDir?: string;
     readonly threadModelSelection?: ModelSelection;
@@ -177,6 +266,11 @@ describe("ProviderCommandReactor", () => {
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
+    readonly providerSnapshots?: ReadonlyArray<ServerProvider>;
+    readonly fetchModelSelection?: ModelSelection | null;
+    readonly runFetchEffect?: (input: FetchRunInput) => Effect.Effect<FetchRunResult>;
+    readonly fetchHandoffAllowed?: boolean;
+    readonly fetchInterruptHandled?: boolean;
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -253,10 +347,14 @@ describe("ProviderCommandReactor", () => {
         ),
       );
     });
+    let sendTurnExecutions = 0;
     const sendTurn = vi.fn((_: unknown) =>
-      Effect.succeed({
-        threadId: ThreadId.make("thread-1"),
-        turnId: asTurnId("turn-1"),
+      Effect.sync(() => {
+        sendTurnExecutions += 1;
+        return {
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-1"),
+        };
       }),
     );
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
@@ -323,24 +421,85 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
     );
-    const providerSnapshots = [
+    const defaultDriver = ProviderDriverKind.make(
+      String(modelSelection.instanceId).startsWith("claude")
+        ? "claudeAgent"
+        : String(modelSelection.instanceId).startsWith("codex")
+          ? "codex"
+          : String(modelSelection.instanceId),
+    );
+    const defaultModelSlugs = [
+      modelSelection.model,
+      ...(defaultDriver === ProviderDriverKind.make("codex")
+        ? ["gpt-5.3-codex-spark", "gpt-5.6-luna"]
+        : []),
+    ].filter((slug, index, all) => all.indexOf(slug) === index);
+    const providerSnapshots: ReadonlyArray<ServerProvider> = input?.providerSnapshots ?? [
       {
         instanceId: modelSelection.instanceId,
+        driver: defaultDriver,
         enabled: true,
         installed: true,
+        version: "1.0.0",
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: now,
         nativeSubagents: {
           toolName: "spawn_agent",
           maxRecommendedSubagents: 8,
         },
+        fetchWorkers: {
+          maxRecommendedWorkers: 8,
+          commandExecutionPolicy:
+            defaultDriver === ProviderDriverKind.make("codex") ? "read-only-sandbox" : "deny",
+        },
         ...(input?.requiresNewThreadForModelChange === true
           ? { requiresNewThreadForModelChange: true }
           : {}),
+        models: defaultModelSlugs.map((slug) => ({
+          slug,
+          name: slug,
+          isCustom: false,
+          capabilities: null,
+        })),
+        slashCommands: [],
+        skills: [],
       },
     ];
+
+    const runFetch = vi.fn((fetchInput: FetchRunInput) =>
+      input?.runFetchEffect
+        ? input.runFetchEffect(fetchInput)
+        : Effect.succeed({
+            runId: "fetch-run-1",
+            status: "skipped" as const,
+            warnings: [],
+            plannedWorkers: 0,
+            completedWorkers: 0,
+            successfulWorkers: 0,
+            providerInstanceId: fetchInput.modelSelection.instanceId,
+            providerDriver: fetchInput.providerDriver,
+            modelSelection: fetchInput.modelSelection,
+          }),
+    );
+    const fetchHandoffInputs: Array<{ readonly threadId: ThreadId; readonly runId: string }> = [];
+    const handoffToMain: FetchWorkerCoordinator["Service"]["handoffToMain"] = (
+      handoffInput,
+      sendMainEffect,
+    ) => {
+      fetchHandoffInputs.push(handoffInput);
+      return input?.fetchHandoffAllowed === false
+        ? Effect.succeed(false)
+        : sendMainEffect.pipe(Effect.as(true));
+    };
+    const requestFetchInterrupt = vi.fn<FetchWorkerCoordinator["Service"]["requestInterrupt"]>(() =>
+      Effect.succeed(input?.fetchInterruptHandled ?? false),
+    );
 
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
     const service: ProviderServiceShape = {
       startSession: startSession as ProviderServiceShape["startSession"],
+      startTransientSession: () => unsupported(),
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
       interruptTurn: interruptTurn as ProviderServiceShape["interruptTurn"],
       resolveAbortTarget: () => unsupported(),
@@ -350,6 +509,7 @@ describe("ProviderCommandReactor", () => {
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
+      stopTransientSession: () => unsupported(),
       listSessions: () => Effect.succeed(runtimeSessions),
       getCapabilities: (_provider) =>
         Effect.succeed({
@@ -429,7 +589,15 @@ describe("ProviderCommandReactor", () => {
           settleCooperative: () => Effect.succeed(false),
         }),
       ),
-      Layer.provideMerge(makeProviderRegistryLayer(providerSnapshots as never)),
+      Layer.provideMerge(
+        Layer.succeed(FetchWorkerCoordinator, {
+          run: runFetch,
+          handoffToMain,
+          requestInterrupt: requestFetchInterrupt,
+          hasActiveRun: () => Effect.succeed(false),
+        }),
+      ),
+      Layer.provideMerge(makeProviderRegistryLayer(providerSnapshots)),
       Layer.provideMerge(
         Layer.mock(GitWorkflowService.GitWorkflowService)({
           renameBranch,
@@ -451,7 +619,13 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
       Layer.provideMerge(NoOpSkillEngineLayer),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(
+        ServerSettingsService.layerTest(
+          input?.fetchModelSelection !== undefined
+            ? { fetchModelSelection: input.fetchModelSelection }
+            : {},
+        ),
+      ),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -627,6 +801,9 @@ describe("ProviderCommandReactor", () => {
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       startSession,
       sendTurn,
+      runFetch,
+      fetchHandoffInputs,
+      requestFetchInterrupt,
       interruptTurn,
       requestAbort,
       respondToRequest,
@@ -647,6 +824,9 @@ describe("ProviderCommandReactor", () => {
       runEffect,
       get titleRegenerationCompletionDispatchAttempts() {
         return titleRegenerationCompletionDispatchAttempts;
+      },
+      get sendTurnExecutions() {
+        return sendTurnExecutions;
       },
     };
   }
@@ -676,6 +856,9 @@ describe("ProviderCommandReactor", () => {
       readonly id: string;
       readonly status: OrchestrationSubagentSummary["status"];
       readonly latestTurnState?: NonNullable<OrchestrationSubagentSummary["latestTurn"]>["state"];
+      readonly origin?: OrchestrationSubagentSummary["origin"];
+      readonly providerInstanceId?: ProviderInstanceId | null;
+      readonly providerDriver?: ProviderDriverKind | null;
     }): OrchestrationSubagentSummary => {
       const id = SubagentId.make(input.id);
       const completedAt =
@@ -707,6 +890,9 @@ describe("ProviderCommandReactor", () => {
         task: null,
         model: null,
         reasoningEffort: null,
+        origin: input.origin ?? "provider-native",
+        providerInstanceId: input.providerInstanceId ?? null,
+        providerDriver: input.providerDriver ?? null,
         depth: 1,
         status: input.status,
         statusMessage: null,
@@ -829,9 +1015,12 @@ describe("ProviderCommandReactor", () => {
 
     it("durably settles orphaned active subagents when no provider runtime survives startup", async () => {
       const runningChild = makeProjectedSubagent({
-        id: "codex:running-child-before-restart",
+        id: "fetch:thread-1:run-before-restart:0",
         status: "running",
         latestTurnState: "running",
+        origin: "t3-fetch",
+        providerInstanceId: ProviderInstanceId.make("claude_fetch"),
+        providerDriver: ProviderDriverKind.make("claudeAgent"),
       });
       const terminalChildWithStaleStatus = makeProjectedSubagent({
         id: "codex:completed-child-before-restart",
@@ -864,6 +1053,9 @@ describe("ProviderCommandReactor", () => {
       expect(repairedAt).not.toBeNull();
       expect(thread?.subagents.find((subagent) => subagent.id === runningChild.id)).toMatchObject({
         status: "interrupted",
+        origin: "t3-fetch",
+        providerInstanceId: ProviderInstanceId.make("claude_fetch"),
+        providerDriver: ProviderDriverKind.make("claudeAgent"),
         statusMessage: null,
         latestProgress: {
           kind: "state.interrupted",
@@ -1081,6 +1273,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.runFetch.mock.calls.length === 1);
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.startSession.mock.calls[0]?.[0]).toEqual(ThreadId.make("thread-1"));
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
@@ -1099,15 +1292,441 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.runtimeMode).toBe("approval-required");
     expect(thread?.messages.at(-1)?.text).toBe("hello reactor");
     const providerInput = harness.sendTurn.mock.calls[0]?.[0]?.input;
-    expect(providerInput).toMatch(/^T3 TURN INSTRUCTIONS:\n/);
-    expect(providerInput).toContain("exactly 3 direct child subagents");
-    expect(providerInput).toContain("`spawn_agent`");
-    expect(providerInput).toContain("one parallel batch");
-    expect(providerInput).toContain("must not modify files");
-    expect(providerInput).toContain(
-      "wait for all three results before the first file modification",
+    expect(providerInput).toBe("hello reactor");
+    expect(providerInput).not.toContain("T3 TURN INSTRUCTIONS");
+    expect(harness.runFetch.mock.calls[0]?.[0]).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      cwd: "/tmp/provider-project",
+      userRequest: "hello reactor",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.3-codex-spark",
+      },
+      providerDriver: ProviderDriverKind.make("codex"),
+      maxRecommendedWorkers: 8,
+      commandExecutionPolicy: "read-only-sandbox",
+      contextMaxChars: 64_000,
+      lunaFallback: {
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.6-luna",
+          options: [{ id: "reasoningEffort", value: "low" }],
+        },
+        providerDriver: ProviderDriverKind.make("codex"),
+        maxRecommendedWorkers: 8,
+        commandExecutionPolicy: "read-only-sandbox",
+      },
+    });
+    expect(harness.startSession.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.runFetch.mock.invocationCallOrder[0]!,
     );
-    expect(providerInput).toMatch(/\n\nUSER REQUEST:\nhello reactor$/);
+  });
+
+  effectIt.effect("waits for independent Claude Fetch workers before sending a Codex turn", () =>
+    Effect.gen(function* () {
+      const fetchResult = yield* Deferred.make<FetchRunResult>();
+      const claudeFetchSelection: ModelSelection = {
+        instanceId: ProviderInstanceId.make("claude_fetch"),
+        model: "claude-opus-4-6",
+        options: [{ id: "effort", value: "high" }],
+      };
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          fetchModelSelection: claudeFetchSelection,
+          providerSnapshots: [
+            fetchProviderFixture({
+              instanceId: "codex",
+              driver: "codex",
+              models: ["gpt-5-codex", "gpt-5.3-codex-spark", "gpt-5.6-luna"],
+            }),
+            fetchProviderFixture({
+              instanceId: "claude_fetch",
+              driver: "claudeAgent",
+              models: ["claude-opus-4-6"],
+              maxRecommendedWorkers: 10,
+            }),
+          ],
+          runFetchEffect: () => Deferred.await(fetchResult),
+        }),
+      );
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-fetch-claude"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-fetch-claude"),
+          role: "user",
+          text: "trace the provider boundary",
+          attachments: [],
+        },
+        fetchMode: "repository-exploration",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      });
+
+      yield* Effect.promise(() => waitFor(() => harness.runFetch.mock.calls.length === 1));
+      expect(harness.sendTurn).not.toHaveBeenCalled();
+      const duringFetch = yield* Effect.promise(() => harness.readModel());
+      expect(
+        duringFetch.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.session
+          ?.status,
+      ).toBe("starting");
+      expect(harness.runFetch.mock.calls[0]?.[0]).toMatchObject({
+        modelSelection: claudeFetchSelection,
+        providerDriver: ProviderDriverKind.make("claudeAgent"),
+        maxRecommendedWorkers: 10,
+        commandExecutionPolicy: "deny",
+      });
+
+      yield* Deferred.succeed(fetchResult, {
+        runId: "fetch-run-claude",
+        status: "completed",
+        context: "T3 FETCH CONTEXT\nClaude evidence",
+        warnings: [],
+        plannedWorkers: 2,
+        completedWorkers: 2,
+        successfulWorkers: 2,
+        providerInstanceId: claudeFetchSelection.instanceId,
+        providerDriver: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: claudeFetchSelection,
+      });
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+
+      expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        modelSelection: { instanceId: ProviderInstanceId.make("codex") },
+      });
+      expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toBe(
+        "trace the provider boundary\n\nT3 FETCH CONTEXT\nClaude evidence",
+      );
+      expect(harness.fetchHandoffInputs).toEqual([
+        { threadId: ThreadId.make("thread-1"), runId: "fetch-run-claude" },
+      ]);
+    }),
+  );
+
+  it.each([
+    {
+      label: "Cursor main with Codex Fetch",
+      mainSelection: {
+        instanceId: ProviderInstanceId.make("cursor"),
+        model: "cursor-sonnet-4.5",
+      } satisfies ModelSelection,
+      mainDriver: "cursor",
+      fetchSelection: {
+        instanceId: ProviderInstanceId.make("codex_fetch"),
+        model: "gpt-5.6-luna",
+        options: [
+          { id: "reasoningEffort", value: "low" },
+          { id: "serviceTier", value: "priority" },
+        ],
+      } satisfies ModelSelection,
+      fetchDriver: "codex",
+    },
+    {
+      label: "Grok main with OpenCode Fetch",
+      mainSelection: {
+        instanceId: ProviderInstanceId.make("grok"),
+        model: "grok-code-fast-1",
+      } satisfies ModelSelection,
+      mainDriver: "grok",
+      fetchSelection: {
+        instanceId: ProviderInstanceId.make("opencode_fetch"),
+        model: "anthropic/claude-sonnet-4-5",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      } satisfies ModelSelection,
+      fetchDriver: "opencode",
+    },
+  ])("routes $label independently with exact Fetch traits", async (testCase) => {
+    const harness = await createHarness({
+      threadModelSelection: testCase.mainSelection,
+      fetchModelSelection: testCase.fetchSelection,
+      providerSnapshots: [
+        fetchProviderFixture({
+          instanceId: testCase.mainSelection.instanceId,
+          driver: testCase.mainDriver,
+          models: [testCase.mainSelection.model],
+        }),
+        fetchProviderFixture({
+          instanceId: testCase.fetchSelection.instanceId,
+          driver: testCase.fetchDriver,
+          models: [testCase.fetchSelection.model],
+        }),
+      ],
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make(`cmd-${testCase.label.replaceAll(" ", "-")}`),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId(`message-${testCase.label.replaceAll(" ", "-")}`),
+          role: "user",
+          text: `verify ${testCase.label}`,
+          attachments: [],
+        },
+        fetchMode: "repository-exploration",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      providerInstanceId: testCase.mainSelection.instanceId,
+      modelSelection: testCase.mainSelection,
+    });
+    expect(harness.runFetch.mock.calls[0]?.[0]).toMatchObject({
+      modelSelection: testCase.fetchSelection,
+      providerDriver: ProviderDriverKind.make(testCase.fetchDriver),
+      commandExecutionPolicy: testCase.fetchDriver === "codex" ? "read-only-sandbox" : "deny",
+    });
+  });
+
+  it.each([
+    {
+      label: "planner fallback",
+      warning: "Fetch planning failed; T3 used one broad repository worker.",
+      plannedWorkers: 1,
+      completedWorkers: 1,
+      successfulWorkers: 1,
+      context: "T3 FETCH CONTEXT\nbroad worker evidence",
+    },
+    {
+      label: "partial worker failure",
+      warning: "Fetch completed with partial results; failed workers were not retried.",
+      plannedWorkers: 2,
+      completedWorkers: 1,
+      successfulWorkers: 1,
+      context: "T3 FETCH CONTEXT\npartial evidence",
+    },
+    {
+      label: "all-worker failure",
+      warning: "Every Fetch worker failed or returned no findings; the main turn will continue.",
+      plannedWorkers: 2,
+      completedWorkers: 0,
+      successfulWorkers: 0,
+      context: undefined,
+    },
+  ])("continues the main turn after Fetch $label", async (testCase) => {
+    const harness = await createHarness({
+      runFetchEffect: (fetchInput) =>
+        Effect.succeed({
+          runId: `fetch-${testCase.label.replaceAll(" ", "-")}`,
+          status: "completed",
+          ...(testCase.context !== undefined ? { context: testCase.context } : {}),
+          warnings: [testCase.warning],
+          plannedWorkers: testCase.plannedWorkers,
+          completedWorkers: testCase.completedWorkers,
+          successfulWorkers: testCase.successfulWorkers,
+          providerInstanceId: fetchInput.modelSelection.instanceId,
+          providerDriver: fetchInput.providerDriver,
+          modelSelection: fetchInput.modelSelection,
+        }),
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make(`cmd-fetch-${testCase.label.replaceAll(" ", "-")}`),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId(`message-fetch-${testCase.label.replaceAll(" ", "-")}`),
+          role: "user",
+          text: `continue after ${testCase.label}`,
+          attachments: [],
+        },
+        fetchMode: "repository-exploration",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    const providerInput = harness.sendTurn.mock.calls[0]?.[0]?.input;
+    expect(providerInput).toContain(`continue after ${testCase.label}`);
+    if (testCase.context !== undefined) expect(providerInput).toContain(testCase.context);
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.activities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "fetch.warning",
+          payload: expect.objectContaining({ detail: testCase.warning }),
+        }),
+      ]),
+    );
+  });
+
+  it("keeps a full-size main request unchanged and warns when no Fetch context space remains", async () => {
+    const mainRequest = "u".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+    const harness = await createHarness({
+      runFetchEffect: (fetchInput) =>
+        Effect.succeed({
+          runId: "fetch-no-context-space",
+          status: "completed",
+          warnings: [],
+          plannedWorkers: 1,
+          completedWorkers: 1,
+          successfulWorkers: 1,
+          providerInstanceId: fetchInput.modelSelection.instanceId,
+          providerDriver: fetchInput.providerDriver,
+          modelSelection: fetchInput.modelSelection,
+        }),
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-fetch-no-context-space"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("message-fetch-no-context-space"),
+          role: "user",
+          text: mainRequest,
+          attachments: [],
+        },
+        fetchMode: "repository-exploration",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.runFetch.mock.calls[0]?.[0]?.contextMaxChars).toBe(0);
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toBe(mainRequest);
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.activities.some((activity) => activity.kind === "coordination.warning")).toBe(
+      false,
+    );
+    expect(thread?.activities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "fetch.warning",
+          summary: "Fetch context omitted",
+        }),
+      ]),
+    );
+  });
+
+  it("continues unchanged and warns when an explicit Fetch selection is unavailable", async () => {
+    const harness = await createHarness({
+      fetchModelSelection: {
+        instanceId: ProviderInstanceId.make("claude_disabled"),
+        model: "claude-opus-4-6",
+        options: [{ id: "effort", value: "high" }],
+      },
+      providerSnapshots: [
+        fetchProviderFixture({
+          instanceId: "codex",
+          driver: "codex",
+          models: ["gpt-5-codex", "gpt-5.3-codex-spark", "gpt-5.6-luna"],
+        }),
+        fetchProviderFixture({
+          instanceId: "claude_disabled",
+          driver: "claudeAgent",
+          models: ["claude-opus-4-6"],
+          enabled: false,
+        }),
+      ],
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-fetch-unavailable"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-fetch-unavailable"),
+          role: "user",
+          text: "continue without unavailable Fetch",
+          attachments: [],
+        },
+        fetchMode: "repository-exploration",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.runFetch).not.toHaveBeenCalled();
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toBe("continue without unavailable Fetch");
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.activities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "fetch.warning",
+          summary: "Fetch unavailable",
+          payload: expect.objectContaining({
+            detail: expect.stringContaining("T3 did not substitute another model"),
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("does not invoke Fetch coordination when the turn has no Fetch mode", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-without-fetch"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-without-fetch"),
+          role: "user",
+          text: "normal provider turn",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.runFetch).not.toHaveBeenCalled();
+    expect(harness.fetchHandoffInputs).toHaveLength(0);
+  });
+
+  it("does not dispatch the main turn when Fetch cancellation wins the handoff", async () => {
+    const harness = await createHarness({ fetchHandoffAllowed: false });
+    const now = "2026-01-01T00:00:00.000Z";
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-fetch-cancelled-at-handoff"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-fetch-cancelled-at-handoff"),
+          role: "user",
+          text: "do not send after stop",
+          attachments: [],
+        },
+        fetchMode: "repository-exploration",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.fetchHandoffInputs.length === 1);
+    expect(harness.sendTurnExecutions).toBe(0);
   });
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>
@@ -2814,7 +3433,18 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("switches cross-driver providers with a fresh session and full transcript handoff", async () => {
-    const harness = await createHarness();
+    const oldRuntimeSessionId = RuntimeSessionId.make("runtime-codex-before-switch");
+    const newRuntimeSessionId = RuntimeSessionId.make("runtime-claude-after-switch");
+    const harness = await createHarness({
+      startSessionEffect: (session) =>
+        Effect.succeed({
+          ...session,
+          runtimeSessionId:
+            session.provider === ProviderDriverKind.make("claudeAgent")
+              ? newRuntimeSessionId
+              : oldRuntimeSessionId,
+        }),
+    });
     const now = "2026-01-01T00:00:00.000Z";
 
     await Effect.runPromise(
@@ -2870,8 +3500,98 @@ describe("ProviderCommandReactor", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.providerName).toBe("claudeAgent");
+    expect(thread?.session?.runtimeSessionId).toBe(newRuntimeSessionId);
+    expect(thread?.session?.runtimeSessionId).not.toBe(oldRuntimeSessionId);
     expect(thread?.modelSelection.instanceId).toBe(ProviderInstanceId.make("claudeAgent"));
   });
+
+  effectIt.effect(
+    "clears the old runtime generation before switching a Codex thread to OpenCode Gemini",
+    () =>
+      Effect.gen(function* () {
+        const oldRuntimeSessionId = RuntimeSessionId.make("runtime-codex-before-opencode");
+        const newRuntimeSessionId = RuntimeSessionId.make("runtime-opencode-after-switch");
+        const releaseOpenCodeStart = yield* Deferred.make<void>();
+        const openCodeProvider = ProviderDriverKind.make("opencode");
+        const openCodeInstanceId = ProviderInstanceId.make("opencode");
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            startSessionEffect: (session) =>
+              session.provider === openCodeProvider
+                ? Deferred.await(releaseOpenCodeStart).pipe(
+                    Effect.as({ ...session, runtimeSessionId: newRuntimeSessionId }),
+                  )
+                : Effect.succeed({ ...session, runtimeSessionId: oldRuntimeSessionId }),
+          }),
+        );
+        const now = "2026-01-01T00:00:00.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-codex-before-opencode"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-codex-before-opencode"),
+            role: "user",
+            text: "first",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        });
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-opencode-gemini"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-opencode-gemini"),
+            role: "user",
+            text: "continue with Gemini",
+            attachments: [],
+          },
+          modelSelection: {
+            instanceId: openCodeInstanceId,
+            model: "google/gemini-2.5-flash",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        });
+
+        yield* Effect.promise(() => waitFor(() => harness.startSession.mock.calls.length === 2));
+        const duringStartup = yield* Effect.promise(() => harness.readModel());
+        const startingThread = duringStartup.threads.find(
+          (entry) => entry.id === ThreadId.make("thread-1"),
+        );
+        expect(startingThread?.session).toMatchObject({
+          status: "starting",
+          providerName: openCodeProvider,
+          providerInstanceId: openCodeInstanceId,
+          runtimeSessionId: null,
+        });
+        expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+
+        yield* Deferred.succeed(releaseOpenCodeStart, undefined);
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 2));
+
+        const completedSwitch = yield* Effect.promise(() => harness.readModel());
+        const switchedThread = completedSwitch.threads.find(
+          (entry) => entry.id === ThreadId.make("thread-1"),
+        );
+        expect(switchedThread?.session).toMatchObject({
+          providerName: openCodeProvider,
+          providerInstanceId: openCodeInstanceId,
+          runtimeSessionId: newRuntimeSessionId,
+        });
+        expect(switchedThread?.modelSelection).toMatchObject({
+          instanceId: openCodeInstanceId,
+          model: "google/gemini-2.5-flash",
+        });
+      }),
+  );
 
   it("starts cross-driver provider changes fresh after the existing thread session has stopped", async () => {
     const harness = await createHarness();
@@ -2967,6 +3687,47 @@ describe("ProviderCommandReactor", () => {
       requestedAt: now,
     });
     expect(harness.interruptTurn).not.toHaveBeenCalled();
+  });
+
+  it("offers a stop to the active Fetch preflight before the normal abort lane", async () => {
+    const harness = await createHarness({ fetchInterruptHandled: true });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-fetch-preflight"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "starting",
+          providerName: ProviderDriverKind.make("codex"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeSessionId: null,
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          abortState: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-fetch-preflight"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.requestFetchInterrupt.mock.calls.length === 1);
+    expect(harness.requestFetchInterrupt.mock.calls[0]?.[0]).toEqual({
+      threadId: ThreadId.make("thread-1"),
+      requestedAt: now,
+    });
+    expect(harness.requestAbort).not.toHaveBeenCalled();
   });
 
   it("starts a fresh session when only projected session state exists", async () => {

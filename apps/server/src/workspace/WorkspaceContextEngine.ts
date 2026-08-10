@@ -57,6 +57,7 @@ export type WorkspaceContextDiscovery = {
   readonly truncated: boolean;
   readonly warnings: ReadonlyArray<string>;
   readonly inventoryCount: number;
+  readonly inventoryFilePaths?: ReadonlyArray<string> | undefined;
 };
 
 type InventoryEntry = {
@@ -457,6 +458,7 @@ async function discoverGit(
   workspaceRoot: string,
   queries: ReadonlyArray<WorkspaceContextEngineQuery>,
   deadlineAt: number,
+  includeInventoryFilePaths: boolean,
 ): Promise<WorkspaceContextDiscovery | null> {
   const inventoryCommand = await runGit(
     workspaceRoot,
@@ -502,6 +504,9 @@ async function discoverGit(
     truncated: inventory.truncated || queryResults.some((query) => query.truncated),
     warnings: inventory.truncated ? ["Workspace inventory reached its 25,000-entry limit."] : [],
     inventoryCount: inventory.entries.length,
+    ...(includeInventoryFilePaths
+      ? { inventoryFilePaths: [...inventory.filePaths].toSorted() }
+      : {}),
   };
 }
 
@@ -649,6 +654,7 @@ async function discoverFilesystem(
   workspaceRoot: string,
   queries: ReadonlyArray<WorkspaceContextEngineQuery>,
   deadlineAt: number,
+  includeInventoryFilePaths = false,
 ): Promise<WorkspaceContextDiscovery> {
   const scan = await scanFilesystem(workspaceRoot, deadlineAt);
   const contentQueries = queries.filter((query) => query.mode !== "path");
@@ -725,17 +731,32 @@ async function discoverFilesystem(
       scan.inventory.truncated || deadlineReached || results.some((query) => query.truncated),
     warnings,
     inventoryCount: scan.inventory.entries.length,
+    ...(includeInventoryFilePaths
+      ? { inventoryFilePaths: [...scan.inventory.filePaths].toSorted() }
+      : {}),
   };
 }
 
 export async function discoverWorkspaceContext(input: {
   readonly workspaceRoot: string;
   readonly queries: ReadonlyArray<WorkspaceContextEngineQuery>;
+  readonly includeInventoryFilePaths?: boolean | undefined;
 }): Promise<WorkspaceContextDiscovery> {
   const deadlineAt = performance.now() + WORKSPACE_CONTEXT_SEARCH_DEADLINE_MS;
-  const git = await discoverGit(input.workspaceRoot, input.queries, deadlineAt);
+  const includeInventoryFilePaths = input.includeInventoryFilePaths === true;
+  const git = await discoverGit(
+    input.workspaceRoot,
+    input.queries,
+    deadlineAt,
+    includeInventoryFilePaths,
+  );
   if (git) return git;
-  return discoverFilesystem(input.workspaceRoot, input.queries, deadlineAt);
+  return discoverFilesystem(
+    input.workspaceRoot,
+    input.queries,
+    deadlineAt,
+    includeInventoryFilePaths,
+  );
 }
 
 /** Internal deterministic boundaries exposed only for focused unit tests. */

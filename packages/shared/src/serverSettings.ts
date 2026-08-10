@@ -160,6 +160,7 @@ export function applyServerSettingsPatch(
   patch: ServerSettingsPatch,
 ): ServerSettings {
   const textGenerationSelectionPatch = patch.textGenerationModelSelection;
+  const fetchModelSelectionPatch = patch.fetchModelSelection;
   const voiceTranslationSelectionPatch = patch.voiceTranslationModelSelection;
   const parallelPlanReviewSelectionPatch = patch.parallelPlanReviewModelSelection;
   const {
@@ -168,6 +169,7 @@ export function applyServerSettingsPatch(
     backgroundActivityProfile,
     backgroundActivity,
     textGenerationModelSelection: _textGenerationModelSelection,
+    fetchModelSelection: _fetchModelSelection,
     voiceTranslationModelSelection: _voiceTranslationModelSelection,
     parallelPlanReviewModelSelection: _parallelPlanReviewModelSelection,
     ...patchForMerge
@@ -228,6 +230,9 @@ export function applyServerSettingsPatch(
       : {}),
     ...(patch.sourceControlWriterModelSelection !== undefined
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }
+      : {}),
+    ...(fetchModelSelectionPatch !== undefined
+      ? { fetchModelSelection: fetchModelSelectionPatch }
       : {}),
     ...(voiceTranslationSelectionPatch !== undefined
       ? { voiceTranslationModelSelection: voiceTranslationSelectionPatch }

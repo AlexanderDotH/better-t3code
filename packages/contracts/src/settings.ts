@@ -618,6 +618,9 @@ export const ServerSettings = Schema.Struct({
       }),
     ),
   ),
+  fetchModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   voiceTranslationModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -791,6 +794,9 @@ export const ServerSettingsPatch = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  // Fetch selection is an atomic value: provider, model, and traits must
+  // always be replaced together so a patch cannot mix two runtimes.
+  fetchModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   voiceTranslationModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   parallelPlanReviewModelSelection: Schema.optionalKey(ModelSelectionPatch),
   agentEnhancement: Schema.optionalKey(AgentEnhancementSettingsPatch),

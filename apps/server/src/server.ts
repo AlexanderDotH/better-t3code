@@ -65,6 +65,7 @@ import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationRe
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
+import { FetchWorkerCoordinatorLive } from "./fetch/FetchWorkerCoordinator.ts";
 import { TurnAbortCoordinatorLive } from "./orchestration/Layers/TurnAbortCoordinator.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
@@ -234,6 +235,7 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
   Layer.provideMerge(ProviderCommandReactorLive),
+  Layer.provideMerge(FetchWorkerCoordinatorLive),
   Layer.provideMerge(TurnAbortCoordinatorLive),
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
