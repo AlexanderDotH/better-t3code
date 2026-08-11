@@ -1,6 +1,5 @@
 .git-compact-card button:focus-visible,
-.git-workbench-drawer button:focus-visible,
-.git-workbench-drawer__resize-handle:focus-visible {
+.git-workbench-drawer button:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
@@ -300,7 +299,6 @@
 .git-workbench-drawer {
   display: flex;
   width: 100%;
-  height: var(--git-workbench-drawer-height);
   min-height: 0;
   flex: none;
   flex-direction: column;
@@ -319,41 +317,12 @@
   box-shadow: none;
 }
 
-.git-workbench-drawer--embedded .git-workbench-drawer__resize-handle {
-  inset-block-start: 0;
-}
-
 .git-workbench-drawer--embedded .git-workbench-drawer__content {
   overflow: hidden;
 }
 
 .git-workbench-drawer--embedded [data-git-workbench] {
   background: transparent;
-}
-
-.git-workbench-drawer__resize-handle {
-  position: absolute;
-  z-index: 5;
-  inset-inline: 0;
-  inset-block-start: -0.375rem;
-  display: flex;
-  height: 0.75rem;
-  align-items: center;
-  justify-content: center;
-  cursor: row-resize;
-  touch-action: none;
-}
-
-.git-workbench-drawer__resize-handle > span {
-  width: 2.75rem;
-  height: 0.1875rem;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--muted-foreground) 34%, transparent);
-}
-
-.git-workbench-drawer__resize-handle:hover > span,
-.git-workbench-drawer__resize-handle:focus-visible > span {
-  background: var(--muted-foreground);
 }
 
 .git-workbench-drawer__header {

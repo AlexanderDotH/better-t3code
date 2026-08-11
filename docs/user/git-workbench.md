@@ -19,7 +19,7 @@ The compact Git card shows observable repository facts rather than a generated q
 
 If an agent needs an approval or answer while Git is selected, Chat returns to the front. Finish or cancel active voice recording before switching cards.
 
-Use the upward arrow—or pull the small grabber at the top of the compact card upward—to expand the workbench inside the selected Git card. The card keeps the composer's centered width and grows upward rather than opening a full-width surface across the chat column. The two neighboring card edges stay visible. Selecting one first collapses Git completely to the composer's compact height and only then shuffles the requested card forward. Once expanded, drag Git's top edge vertically to resize it. The remembered height is local to the device. Expanding Git temporarily hides the terminal drawer without closing its terminal sessions; collapsing Git restores it.
+Use the upward arrow—or pull the small grabber at the top of the compact card upward—to expand the workbench inside the selected Git card. The card keeps the composer's centered width and grows upward rather than opening a full-width surface across the chat column. The two neighboring card edges stay visible. Selecting one first collapses Git completely to the composer's compact height and only then shuffles the requested card forward. Once expanded, the card follows the active Git section's content height up to the available safe maximum; taller sections scroll inside the workbench. Expanding Git temporarily hides the terminal drawer without closing its terminal sessions; collapsing Git restores it.
 
 ## Overview
 

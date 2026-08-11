@@ -342,7 +342,25 @@ describe("GitCompactCard", () => {
 });
 
 describe("GitWorkbenchDrawerShell", () => {
-  it("renders the five-tab workbench at its clamped default height", () => {
+  it("content-sizes against the safe tall-screen maximum instead of a fixed drawer height", () => {
+    const html = renderToStaticMarkup(
+      <GitWorkbenchDrawerShell
+        open
+        availableHeight={1_400}
+        activeTab="overview"
+        onActiveTabChange={vi.fn()}
+        onOpenChange={vi.fn()}
+      >
+        <div>Repository pulse</div>
+      </GitWorkbenchDrawerShell>,
+    );
+
+    expect(html).toContain('data-workspace-card-drawer-sizing="content"');
+    expect(html).toContain("--workspace-card-drawer-max-height:1120px");
+    expect(html).not.toContain("--workspace-card-drawer-height:");
+  });
+
+  it("renders the five-tab workbench without a manual resize handle", () => {
     const html = renderToStaticMarkup(
       <GitWorkbenchDrawerShell
         open
@@ -355,10 +373,10 @@ describe("GitWorkbenchDrawerShell", () => {
       </GitWorkbenchDrawerShell>,
     );
 
-    expect(html).toContain("--git-workbench-drawer-height:384px");
+    expect(html).toContain("--workspace-card-drawer-max-height:460px");
     expect(html).toContain('role="tablist"');
-    expect(html).toContain('aria-label="Resize Git workbench vertically"');
-    expect(html).toContain('aria-orientation="horizontal"');
+    expect(html).not.toContain('aria-label="Resize Git workbench vertically"');
+    expect(html).not.toContain('role="separator"');
     expect(html).toContain("aria-controls=");
     expect(html).toContain("aria-labelledby=");
     expect(html).toContain("Overview");

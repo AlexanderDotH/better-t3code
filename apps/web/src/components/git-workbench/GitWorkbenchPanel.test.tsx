@@ -183,4 +183,56 @@ describe("GitWorkbenchPanel", () => {
     expect(markup).not.toContain('role="tabpanel"');
     expect(markup).toContain('aria-label="overview Git view"');
   });
+
+  it("lets a short overview determine the workbench height", () => {
+    const markup = renderToStaticMarkup(<GitWorkbenchPanel {...baseProps()} showTabs={false} />);
+    const workbench = markup.match(/<section[^>]*data-git-workbench-layout="content"[^>]*>/)?.[0];
+    const activeView = markup.match(/<div[^>]*data-git-workbench-view="overview"[^>]*>/)?.[0];
+
+    expect(workbench).toContain("h-fit");
+    expect(workbench).toContain("max-h-full");
+    expect(workbench).toContain("overflow-hidden");
+    expect(workbench).not.toContain("size-full");
+    expect(activeView).toContain("flex-auto");
+    expect(activeView).toContain("overflow-auto");
+  });
+
+  it("keeps loading and unavailable states naturally sized", () => {
+    const loadingProps = baseProps();
+    loadingProps.loading = true;
+    loadingProps.snapshot = null;
+    const loadingMarkup = renderToStaticMarkup(<GitWorkbenchPanel {...loadingProps} />);
+    const unavailableProps = baseProps();
+    unavailableProps.snapshot = null;
+    const unavailableMarkup = renderToStaticMarkup(<GitWorkbenchPanel {...unavailableProps} />);
+
+    const loading = loadingMarkup.match(/<div[^>]*data-git-workbench-state="loading"[^>]*>/)?.[0];
+    const unavailable = unavailableMarkup.match(
+      /<div[^>]*data-git-workbench-state="unavailable"[^>]*>/,
+    )?.[0];
+    expect(loading).toContain("min-h-48");
+    expect(loading).toContain("w-full");
+    expect(loading).not.toContain("size-full");
+    expect(unavailable).toContain("min-h-48");
+    expect(unavailable).toContain("w-full");
+    expect(unavailable).not.toContain("size-full");
+  });
+
+  it("preserves the commit list as History's virtualized scroll owner", () => {
+    const props = baseProps();
+    props.activeTab = "history";
+    const markup = renderToStaticMarkup(<GitWorkbenchPanel {...props} />);
+    const history = markup.match(/<div[^>]*data-git-history-layout="content"[^>]*>/)?.[0];
+    const commits = markup.match(/<div[^>]*data-git-history-scroll-region="commits"[^>]*>/)?.[0];
+    const details = markup.match(/<main[^>]*data-git-history-scroll-region="details"[^>]*>/)?.[0];
+
+    expect(history).toContain("h-fit");
+    expect(history).toContain("max-h-full");
+    expect(history).toContain("overflow-hidden");
+    expect(history).not.toContain("size-full");
+    expect(commits).toContain("min-h-0");
+    expect(commits).toContain("flex-1");
+    expect(commits).toContain("overflow-auto");
+    expect(details).toContain("overflow-auto");
+  });
 });

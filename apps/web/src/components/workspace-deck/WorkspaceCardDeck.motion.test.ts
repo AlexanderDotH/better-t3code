@@ -121,7 +121,7 @@ describe("workspace card deck motion", () => {
         /\[data-git-workspace-context-control="true"\]\s*\{[^}]*z-index:\s*3;[^}]*pointer-events:\s*auto;/,
       );
       expect(css).toMatch(
-        /\.workspace-card-deck__peek-content > \[data-workspace-card-peek-id\]\s*\{[^}]*display:\s*flex;[^}]*height:\s*100%;[^}]*align-items:\s*center;[^}]*padding-inline:\s*0\.75rem;/,
+        /\.workspace-card-deck__peek-content > \[data-workspace-card-peek-id\]\s*\{[^}]*display:\s*flex;[^}]*height:\s*100%;[^}]*align-items:\s*center;[^}]*padding-inline:\s*1rem;/,
       );
     }),
   );

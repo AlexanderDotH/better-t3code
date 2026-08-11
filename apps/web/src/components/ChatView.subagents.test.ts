@@ -2,6 +2,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import chatAgentStackSource from "./ChatAgentStack.tsx?raw";
 import chatViewSource from "./ChatView.tsx?raw";
+import rightPanelTabsSource from "./RightPanelTabs.tsx?raw";
+import messagesTimelineSource from "./chat/MessagesTimeline.tsx?raw";
+import panelLayoutControlsSource from "./chat/PanelLayoutControls.tsx?raw";
+import rightPanelStoreSource from "../rightPanelStore.ts?raw";
 
 describe("ChatView subagent integration", () => {
   it("mounts an empty pill stack in a named chat-column container", () => {
@@ -17,6 +21,20 @@ describe("ChatView subagent integration", () => {
     expect(chatViewSource).toContain("useEnvironmentSubagent(");
     expect(chatViewSource).not.toContain("SUBAGENT_DEDICATED_PANE_MEDIA_QUERY");
     expect(chatViewSource).not.toContain("openSubagent(");
+  });
+
+  it("keeps the spawn notification without reintroducing an Agents sidebar", () => {
+    expect(messagesTimelineSource).toContain("Kicked off ${agentCount}");
+    expect(messagesTimelineSource).toContain("data-subagent-spawn-notification");
+    expect(messagesTimelineSource).not.toContain("onOpenAgents");
+    expect(messagesTimelineSource).not.toContain("Open Agents");
+
+    expect(chatViewSource).not.toContain("<AgentsPanel");
+    expect(chatViewSource).not.toContain("addAgentsSurface");
+    expect(rightPanelTabsSource).not.toContain('label: "Agents"');
+    expect(rightPanelTabsSource).not.toContain("onAddAgents");
+    expect(panelLayoutControlsSource).not.toContain("liveAgentCount");
+    expect(rightPanelStoreSource).not.toContain('| { id: "agents"; kind: "agents" }');
   });
 
   it("offers a compact accessible agent disclosure when the side gutter is unavailable", () => {

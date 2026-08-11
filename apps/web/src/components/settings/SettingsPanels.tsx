@@ -1651,14 +1651,14 @@ function LegacyFeaturesSection() {
           <div className="relative space-y-1 overflow-visible pt-3 text-foreground">
             <SettingsRow
               {...searchableSetting("legacy-plan-mode")}
-              description="Brings back the Build/Plan toggle in the composer along with the /plan and /default commands and the Shift+Tab shortcut. While off, every thread runs in build mode."
+              description="Shows the Build/Plan selector for other providers that support it, along with the /plan and /default commands and the Shift+Tab shortcut. Codex always includes these controls."
               control={
                 <Switch
                   checked={settings.planModeEnabled}
                   onCheckedChange={(checked) =>
                     updateSettings({ planModeEnabled: Boolean(checked) })
                   }
-                  aria-label="Plan mode (legacy)"
+                  aria-label="Plan mode for other providers (legacy)"
                 />
               }
             />

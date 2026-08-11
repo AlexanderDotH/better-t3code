@@ -1,15 +1,6 @@
 import type { ContextMenuItem, PreviewSessionSnapshot, PullRequestState } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import {
-  Bot,
-  FileDiff,
-  Files,
-  GitPullRequest,
-  Globe2,
-  Plus,
-  TerminalSquare,
-  X,
-} from "lucide-react";
+import { FileDiff, Files, GitPullRequest, Globe2, Plus, TerminalSquare, X } from "lucide-react";
 import {
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
@@ -58,16 +49,12 @@ interface RightPanelTabsProps {
   onAddDiff: () => void;
   onAddFiles: () => void;
   onAddPullRequest: () => void;
-  onAddAgents: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
-  agentsAvailable: boolean;
   pullRequestStatuses?: Readonly<Record<string, PullRequestTabStatus>>;
-  /** Running + waiting subagents; badges the Agents card in the empty state. */
-  liveAgentCount: number;
   children: ReactNode;
 }
 
@@ -85,7 +72,6 @@ const SURFACE_DISABLED_REASONS = {
   files: "Files are only available when a project is open.",
   diff: "Diff is only available for server threads in Git repositories.",
   pullRequest: "This thread's branch has no pull request yet.",
-  agents: "Agents are only available from a thread.",
 } as const;
 
 type TabContextMenuAction = "copy-path" | "close" | "close-others" | "close-to-right" | "close-all";
@@ -124,14 +110,11 @@ function RightPanelEmptyState(props: {
   onAddDiff: () => void;
   onAddFiles: () => void;
   onAddPullRequest: () => void;
-  onAddAgents: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
-  agentsAvailable: boolean;
-  liveAgentCount: number;
 }) {
   const actions = [
     {
@@ -141,7 +124,6 @@ function RightPanelEmptyState(props: {
       available: props.browserAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.browser,
       onClick: props.onAddBrowser,
-      badgeCount: 0,
     },
     {
       label: "Terminal",
@@ -150,7 +132,6 @@ function RightPanelEmptyState(props: {
       available: props.terminalAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.terminal,
       onClick: props.onAddTerminal,
-      badgeCount: 0,
     },
     {
       label: "Files",
@@ -159,7 +140,6 @@ function RightPanelEmptyState(props: {
       available: props.filesAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.files,
       onClick: props.onAddFiles,
-      badgeCount: 0,
     },
     {
       label: "Diff",
@@ -168,7 +148,6 @@ function RightPanelEmptyState(props: {
       available: props.diffAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.diff,
       onClick: props.onAddDiff,
-      badgeCount: 0,
     },
     {
       label: "Pull request",
@@ -177,16 +156,6 @@ function RightPanelEmptyState(props: {
       available: props.pullRequestAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.pullRequest,
       onClick: props.onAddPullRequest,
-      badgeCount: 0,
-    },
-    {
-      label: "Agents",
-      description: "Watch subagents and workflows run.",
-      icon: Bot,
-      available: props.agentsAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.agents,
-      onClick: props.onAddAgents,
-      badgeCount: props.liveAgentCount,
     },
   ] as const;
 
@@ -204,17 +173,7 @@ function RightPanelEmptyState(props: {
             const Icon = action.icon;
             const content = (
               <>
-                <span className="relative mb-3 inline-flex">
-                  <Icon className="size-5" />
-                  {action.badgeCount > 0 ? (
-                    <span
-                      aria-hidden
-                      className="absolute -top-1.5 -right-2 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-info px-1 text-[9px] font-semibold tabular-nums text-white"
-                    >
-                      {action.badgeCount}
-                    </span>
-                  ) : null}
-                </span>
+                <Icon className="mb-3 size-5" />
                 <span className="text-sm font-medium">{action.label}</span>
                 <span className="mt-1 text-xs leading-relaxed text-muted-foreground">
                   {action.description}
@@ -275,8 +234,6 @@ export function rightPanelSurfaceTitle(
       );
     case "pull-request":
       return `#${surface.number}`;
-    case "agents":
-      return "Agents";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -352,8 +309,6 @@ function SurfaceIcon({
                 : "text-muted-foreground";
       return <GitPullRequest className={cn("size-3 shrink-0", toneClassName)} />;
     }
-    case "agents":
-      return <Bot className="size-3 shrink-0" />;
   }
 }
 
@@ -573,14 +528,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     <GitPullRequest />
                     Pull request
                   </SurfaceMenuItem>
-                  <SurfaceMenuItem
-                    available={props.agentsAvailable}
-                    disabledReason={SURFACE_DISABLED_REASONS.agents}
-                    onClick={props.onAddAgents}
-                  >
-                    <Bot />
-                    Agents
-                  </SurfaceMenuItem>
                 </MenuPopup>
               </Menu>
             ) : null}
@@ -596,14 +543,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
             onAddPullRequest={props.onAddPullRequest}
-            onAddAgents={props.onAddAgents}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
             pullRequestAvailable={props.pullRequestAvailable}
-            agentsAvailable={props.agentsAvailable}
-            liveAgentCount={props.liveAgentCount}
           />
         ) : (
           props.children

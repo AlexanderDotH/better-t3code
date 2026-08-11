@@ -51,13 +51,17 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
   const groups = groupGitChanges(props.changes);
   const selected = props.changes.find((change) => change.id === props.selectedChangeId) ?? null;
   return (
-    <div className="grid size-full min-h-0 @container/git-changes @3xl/git-changes:grid-cols-[minmax(15rem,0.7fr)_minmax(0,1.7fr)]">
+    <div
+      className="grid h-fit max-h-full w-full min-h-0 grid-rows-[minmax(0,1fr)] overflow-hidden @container/git-changes @3xl/git-changes:grid-cols-[minmax(15rem,0.7fr)_minmax(0,1.7fr)]"
+      data-git-changes-layout="content"
+    >
       <aside
         aria-label="Changed files"
         className={cn(
           "min-h-0 overflow-auto border-r",
           selected ? "hidden @3xl/git-changes:block" : "block",
         )}
+        data-git-changes-scroll-region="files"
       >
         {groups.length ? (
           groups.map((group) => (
@@ -116,11 +120,17 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
         )}
       </aside>
 
-      <main className={cn("min-h-0", selected ? "block" : "hidden @3xl/git-changes:block")}>
+      <main
+        className={cn(
+          "min-h-0 overflow-auto",
+          selected ? "block" : "hidden @3xl/git-changes:block",
+        )}
+        data-git-changes-scroll-region="details"
+      >
         {selected ? (
           <GitChangeDetail {...props} change={selected} />
         ) : (
-          <div className="grid size-full min-h-48 place-content-center text-muted-foreground text-sm">
+          <div className="grid min-h-48 w-full place-content-center text-muted-foreground text-sm">
             Select a changed file to inspect its diff.
           </div>
         )}
@@ -175,7 +185,7 @@ function GitChangeDetail({
   };
 
   return (
-    <div className="flex size-full min-h-0 flex-col">
+    <div className="flex h-fit max-h-full w-full min-h-0 flex-col" data-git-change-detail="content">
       <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
         <Button
           aria-label="Back to changed files"

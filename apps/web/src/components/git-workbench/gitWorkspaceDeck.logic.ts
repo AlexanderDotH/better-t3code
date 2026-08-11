@@ -1,10 +1,6 @@
 export type WorkspaceDeckCard = "chat" | "git";
 export type WorkspaceDeckShuffleDirection = "to-chat" | "to-git";
 
-export const GIT_DRAWER_DEFAULT_HEIGHT_RATIO = 0.62;
-export const GIT_DRAWER_MAX_HEIGHT_RATIO = 0.8;
-export const GIT_DRAWER_MIN_HEIGHT = 320;
-export const GIT_DRAWER_MIN_TIMELINE_HEIGHT = 160;
 export const GIT_COMPACT_PULL_THRESHOLD = 36;
 export const GIT_COMPACT_PULL_VERTICAL_DOMINANCE = 1.25;
 
@@ -75,58 +71,6 @@ export function resolveActionRequiredDeckState(
   };
 }
 
-export interface GitDrawerHeightRequest {
-  readonly availableHeight: number;
-  readonly requestedHeight?: number;
-}
-
-export interface GitDrawerHeightBounds {
-  readonly min: number;
-  readonly max: number;
-}
-
-function normalizeAvailableHeight(availableHeight: number): number {
-  return Number.isFinite(availableHeight) ? Math.max(0, Math.round(availableHeight)) : 0;
-}
-
-export function resolveGitDrawerHeightBounds(availableHeight: number): GitDrawerHeightBounds {
-  const safeAvailableHeight = normalizeAvailableHeight(availableHeight);
-  const maxByRatio = Math.floor(safeAvailableHeight * GIT_DRAWER_MAX_HEIGHT_RATIO);
-  const maxByTimeline = Math.max(0, safeAvailableHeight - GIT_DRAWER_MIN_TIMELINE_HEIGHT);
-  const max = Math.min(maxByRatio, maxByTimeline);
-
-  return {
-    min: Math.min(GIT_DRAWER_MIN_HEIGHT, max),
-    max,
-  };
-}
-
-export function resolveGitDrawerHeight(request: GitDrawerHeightRequest): number {
-  const bounds = resolveGitDrawerHeightBounds(request.availableHeight);
-  const defaultHeight = Math.round(
-    normalizeAvailableHeight(request.availableHeight) * GIT_DRAWER_DEFAULT_HEIGHT_RATIO,
-  );
-  const requestedHeight = Number.isFinite(request.requestedHeight)
-    ? Math.round(request.requestedHeight ?? defaultHeight)
-    : defaultHeight;
-
-  return Math.min(Math.max(requestedHeight, bounds.min), bounds.max);
-}
-
-export interface GitDrawerPointerHeightRequest {
-  readonly availableHeight: number;
-  readonly currentY: number;
-  readonly startHeight: number;
-  readonly startY: number;
-}
-
-export function nextGitDrawerHeightFromPointer(request: GitDrawerPointerHeightRequest): number {
-  return resolveGitDrawerHeight({
-    availableHeight: request.availableHeight,
-    requestedHeight: request.startHeight + (request.startY - request.currentY),
-  });
-}
-
 export interface GitCompactPullGesture {
   readonly button: number;
   readonly cancelled: boolean;
@@ -146,12 +90,6 @@ export function shouldExpandGitCompactPull(gesture: GitCompactPullGesture): bool
     upwardDistance >= GIT_COMPACT_PULL_THRESHOLD &&
     upwardDistance >= horizontalDistance * GIT_COMPACT_PULL_VERTICAL_DOMINANCE
   );
-}
-
-export function parsePersistedGitDrawerHeight(value: string | null): number | null {
-  if (value === null || value.trim().length === 0) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 export interface BufferedEditScope {

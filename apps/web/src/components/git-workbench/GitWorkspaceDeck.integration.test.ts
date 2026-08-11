@@ -7,6 +7,7 @@ import envModeSelectorSource from "../BranchToolbarEnvModeSelector.tsx?raw";
 import chatViewSource from "../ChatView.tsx?raw";
 import compactCardSource from "./GitCompactCard.tsx?raw";
 import deckControllerSource from "./GitWorkspaceDeckController.tsx?raw";
+import drawerShellSource from "./GitWorkbenchDrawerShell.tsx?raw";
 import changesIndicatorSource from "./GitWorkspaceChangesIndicator.tsx?raw";
 
 describe("Git workspace deck surface integration", () => {
@@ -84,6 +85,8 @@ describe("Git workspace deck surface integration", () => {
     expect(branchSelectorSource.match(/data-git-workspace-context-control="true"/g)).toHaveLength(
       2,
     );
+    expect(branchSelectorSource).toContain("max-w-[180px]");
+    expect(branchSelectorSource).not.toContain("max-w-[240px]");
     expect(changesIndicatorSource).not.toContain("<button");
     expect(changesIndicatorSource).not.toContain("onOpen");
   });
@@ -105,6 +108,14 @@ describe("Git workspace deck surface integration", () => {
     expect(chatViewSource).not.toContain("data-git-workbench-drawer-host");
     expect(centeredCardIndex).toBeGreaterThan(-1);
     expect(controllerIndex).toBeGreaterThan(centeredCardIndex);
+  });
+
+  it("content-sizes Git without retaining manual drawer height state", () => {
+    expect(drawerShellSource).toContain('sizingMode="content"');
+    expect(drawerShellSource).not.toContain("DRAWER_HEIGHT_STORAGE_KEY");
+    expect(drawerShellSource).not.toContain("DRAWER_DEFAULT_MAX_HEIGHT");
+    expect(drawerShellSource).not.toContain('resizeLabel="Resize Git workbench vertically"');
+    expect(deckControllerSource).toContain("onHeightChange: props.onDrawerHeightChange");
   });
 
   it("reserves the measured expanded card height without blocking the full chat width", () => {

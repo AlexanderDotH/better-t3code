@@ -388,8 +388,8 @@ function deriveTurnFolds(input: {
       if (entry.id === group.terminalEntry?.id) {
         continue;
       }
-      // Agent-spawn CTA rows never fold: workflows outlive their launching
-      // turn (dynamic spawns, background execution), and folding the CTA
+      // Agent-spawn notifications never fold: workflows outlive their launching
+      // turn (dynamic spawns, background execution), and folding the notification
       // when the turn settles makes a still-running fleet invisible.
       if (entry.kind === "work" && entry.entry.agentSpawn !== undefined) {
         continue;
@@ -529,7 +529,7 @@ export function deriveMessagesTimelineRows(input: {
         } else {
           const groupId = `work-group:${timelineEntry.id}`;
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
-          // Agent-spawn CTA rows are always visible: a running fleet must
+          // Agent-spawn notifications are always visible: a running fleet must
           // never hide behind a "+N tool calls" toggle. Selection is by
           // membership (spawn OR recent-tail), preserving the group's
           // chronological order in both collapsed and expanded states

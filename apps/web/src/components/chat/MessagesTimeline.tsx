@@ -13,7 +13,6 @@ import {
 } from "@t3tools/client-runtime/state/subagentRuntime";
 
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
-const NOOP_OPEN_AGENTS = () => {};
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import {
   createContext,
@@ -144,7 +143,6 @@ interface TimelineRowSharedState {
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   shouldAnimateInitialStreamChunk: (messageId: MessageId, isStreaming: boolean) => boolean;
   agentPanelModel: AgentPanelModel;
-  onOpenAgents: () => void;
 }
 
 interface TimelineRowActivityState {
@@ -223,7 +221,6 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
 
 interface MessagesTimelineProps {
   agentPanelModel?: AgentPanelModel;
-  onOpenAgents?: () => void;
   isWorking: boolean;
   workingStepLabel?: string | null;
   activeTurnInProgress: boolean;
@@ -273,7 +270,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   activeTurnInProgress,
   activeTurnStartedAt,
   agentPanelModel = EMPTY_AGENT_PANEL_MODEL,
-  onOpenAgents = NOOP_OPEN_AGENTS,
   listRef,
   timelineEntries,
   latestTurn,
@@ -541,7 +537,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       shouldAnimateInitialStreamChunk,
       agentPanelModel,
-      onOpenAgents,
     }),
     [
       timestampFormat,
@@ -558,7 +553,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       shouldAnimateInitialStreamChunk,
       agentPanelModel,
-      onOpenAgents,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -2182,15 +2176,16 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
 /**
- * A1 spawn CTA: one anchored row per workflow run (or per-turn direct-spawn
+ * One anchored notification per workflow run (or per-turn direct-spawn
  * batch). Live status is derived from the shared agent panel model at render
- * time — the row itself never re-renders a roster; the Agents panel is the
- * only roster. Freezes to past tense when every member settles. Static dot,
- * no animation.
+ * time and freezes to past tense when every member settles. Agent inspection
+ * stays in the animated pill stack and centered transcript dialog.
  */
-const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: TimelineWorkEntry }) {
+const AgentSpawnNotificationRow = memo(function AgentSpawnNotificationRow(props: {
+  workEntry: TimelineWorkEntry;
+}) {
   const { workEntry } = props;
-  const { agentPanelModel, onOpenAgents } = use(TimelineRowCtx);
+  const { agentPanelModel } = use(TimelineRowCtx);
   const spawn = workEntry.agentSpawn;
   if (!spawn) {
     return null;
@@ -2253,10 +2248,11 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
       : "✓ completed";
 
   return (
-    <button
-      type="button"
-      onClick={onOpenAgents}
-      className="-mx-1 flex w-full items-center gap-2 rounded-md border border-border/60 bg-card/50 px-2.5 py-1.5 text-left text-[13px] transition hover:bg-accent/50"
+    <div
+      role="status"
+      aria-atomic="true"
+      data-subagent-spawn-notification
+      className="-mx-1 flex w-full items-center gap-2 rounded-md border border-border/60 bg-card/50 px-2.5 py-1.5 text-left text-[13px]"
     >
       <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", dotClass)} />
       <WorkEntryIconSvg name="bot" className="size-3.5 shrink-0 text-muted-foreground" />
@@ -2269,9 +2265,8 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
         {totalTokens > 0 ? (
           <span className="tabular-nums">Σ {formatSubagentTokenCount(totalTokens)}</span>
         ) : null}
-        <span className="text-info-foreground">{live ? "Open Agents ▸" : "View ▸"}</span>
       </span>
-    </button>
+    </div>
   );
 });
 
@@ -2280,9 +2275,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workspaceRoot: string | undefined;
 }) {
   const { workEntry, workspaceRoot } = props;
-  // Before any hooks: spawn CTA rows render their own component.
+  // Before any hooks: spawn notifications render their own component.
   if (workEntry.agentSpawn) {
-    return <AgentSpawnCtaRow workEntry={workEntry} />;
+    return <AgentSpawnNotificationRow workEntry={workEntry} />;
   }
   return <PlainWorkEntryRow workEntry={workEntry} workspaceRoot={workspaceRoot} />;
 });

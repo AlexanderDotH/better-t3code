@@ -60,6 +60,7 @@ interface BranchToolbarProps {
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
   gitControl?: ReactNode;
   orientation?: "previous" | "next";
+  cardPeek?: boolean;
 }
 
 interface MobileRunContextSelectorProps {
@@ -328,6 +329,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   onEnvironmentChange,
   gitControl,
   orientation = "next",
+  cardPeek = false,
 }: BranchToolbarProps) {
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -409,7 +411,10 @@ export const BranchToolbar = memo(function BranchToolbar({
       ref={setStripElement}
       data-compact={labelsOverflow ? "" : undefined}
       className={cn(
-        "chat-composer-context-strip group/composer-context mx-auto flex w-[calc(100%-2.75rem)] max-w-[calc(48rem-2.75rem)] items-center gap-2 ps-1 pe-2",
+        "chat-composer-context-strip group/composer-context flex items-center gap-2",
+        cardPeek
+          ? "mx-0 w-full max-w-none px-0"
+          : "mx-auto w-[calc(100%-2.75rem)] max-w-[calc(48rem-2.75rem)] ps-1 pe-2",
         orientation === "previous"
           ? "chat-composer-context-strip--previous -mb-4 pt-1 pb-5"
           : "chat-composer-context-strip--next -mt-4 pt-5 pb-1",

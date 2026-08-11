@@ -1,4 +1,14 @@
-import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  EnvironmentId,
+  MessageId,
+  TurnId,
+  type OrchestrationThreadActivity,
+} from "@t3tools/contracts";
+import {
+  deriveAgentPanelModel,
+  foldSubagentActivities,
+} from "@t3tools/client-runtime/state/subagentRuntime";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
@@ -631,6 +641,56 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Received request from API agent");
     expect(markup).toContain("lucide-message-circle");
+  });
+
+  it("renders subagent launches as informational status notifications", () => {
+    const agentPanelModel = deriveAgentPanelModel({
+      agents: foldSubagentActivities([
+        {
+          id: "activity-agent-started",
+          tone: "info",
+          kind: "task.started",
+          summary: "Started subagent",
+          payload: {
+            taskId: "child-1",
+            taskType: "local_agent",
+            agentKind: "agent",
+            title: "Explore the repository",
+          },
+          turnId: null,
+          createdAt: MESSAGE_CREATED_AT,
+        } as OrchestrationThreadActivity,
+      ]),
+    });
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        agentPanelModel={agentPanelModel}
+        timelineEntries={[
+          {
+            id: "agent-spawn-notification",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "agent-spawn-notification",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Started subagents",
+              tone: "info",
+              agentSpawn: {
+                workflowId: null,
+                agentTaskIds: ["child-1", "child-2", "child-3", "child-4"],
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-subagent-spawn-notification="true"');
+    expect(markup).toContain('role="status"');
+    expect(markup).toContain("Kicked off 4 subagents");
+    expect(markup).toContain("1 working");
+    expect(markup).not.toContain("Open Agents");
   });
 
   it("formats changed file paths from the workspace root", () => {

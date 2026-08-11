@@ -14,8 +14,9 @@ export function GitWorkbenchPanel(props: GitWorkbenchPanelProps) {
   return (
     <section
       aria-label="Git workbench"
-      className="@container/git-panel flex size-full min-h-0 flex-col bg-background"
+      className="@container/git-panel flex h-fit max-h-full w-full min-h-0 flex-col overflow-hidden bg-background"
       data-git-workbench=""
+      data-git-workbench-layout="content"
     >
       {showTabs ? (
         <GitWorkbenchTabs
@@ -41,7 +42,8 @@ export function GitWorkbenchPanel(props: GitWorkbenchPanelProps) {
       <div
         aria-label={showTabs ? undefined : `${props.activeTab} Git view`}
         aria-labelledby={showTabs ? `git-workbench-tab-${props.activeTab}` : undefined}
-        className="relative min-h-0 flex-1 overflow-auto"
+        className="relative min-h-0 flex-auto overflow-auto"
+        data-git-workbench-view={props.activeTab}
         id={`git-workbench-panel-${props.activeTab}`}
         role={showTabs ? "tabpanel" : undefined}
         tabIndex={showTabs ? 0 : undefined}
@@ -158,7 +160,8 @@ function ActivePanel(
 function LoadingWorkbench() {
   return (
     <div
-      className="grid size-full min-h-48 place-content-center gap-2 text-center text-muted-foreground"
+      className="grid min-h-48 w-full place-content-center gap-2 text-center text-muted-foreground"
+      data-git-workbench-state="loading"
       role="status"
     >
       <LoaderCircle
@@ -172,7 +175,10 @@ function LoadingWorkbench() {
 
 function UnavailableWorkbench({ upgradeRequired }: { readonly upgradeRequired: boolean }) {
   return (
-    <div className="grid size-full min-h-48 place-content-center gap-2 p-6 text-center text-muted-foreground">
+    <div
+      className="grid min-h-48 w-full place-content-center gap-2 p-6 text-center text-muted-foreground"
+      data-git-workbench-state="unavailable"
+    >
       <CircleOff aria-hidden="true" className="mx-auto size-7" />
       <p className="font-medium text-foreground text-sm">
         {upgradeRequired ? "Server upgrade required" : "Git workbench unavailable"}

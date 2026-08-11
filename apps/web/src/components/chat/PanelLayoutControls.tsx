@@ -12,8 +12,6 @@ interface PanelLayoutControlsProps {
   rightPanelAvailable: boolean;
   rightPanelOpen: boolean;
   rightPanelShortcutLabel: string | null;
-  /** Running + waiting subagents in this thread; badges the right panel toggle. */
-  liveAgentCount: number;
   onToggleTerminal: () => void;
   onToggleRightPanel: () => void;
 }
@@ -26,7 +24,6 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   rightPanelAvailable,
   rightPanelOpen,
   rightPanelShortcutLabel,
-  liveAgentCount,
   onToggleTerminal,
   onToggleRightPanel,
 }: PanelLayoutControlsProps) {
@@ -66,34 +63,18 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={rightPanelOpen}
               onPressedChange={onToggleRightPanel}
-              aria-label={
-                liveAgentCount > 0
-                  ? `Toggle right panel, ${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
-                  : "Toggle right panel"
-              }
+              aria-label="Toggle right panel"
               variant="ghost"
               size="sm"
               disabled={!rightPanelAvailable}
             >
               <PanelRightIcon className="size-3.5" />
-              {liveAgentCount > 0 ? (
-                <span
-                  aria-hidden
-                  className="absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-info px-1 text-[9px] font-semibold tabular-nums text-white"
-                >
-                  {liveAgentCount}
-                </span>
-              ) : null}
             </Toggle>
           }
         />
         <TooltipPopup side="bottom">
           {rightPanelAvailable
-            ? `Toggle right panel${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}${
-                liveAgentCount > 0
-                  ? ` · ${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
-                  : ""
-              }`
+            ? `Toggle right panel${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}`
             : "Right panel is unavailable"}
         </TooltipPopup>
       </Tooltip>

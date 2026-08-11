@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   findDuplicateWorkspaceDeckCardId,
   pruneWorkspaceDeckMeasurements,
+  resolveWorkspaceCardDrawerHeight,
+  resolveWorkspaceCardDrawerHeightBounds,
   resolveWorkspaceDeckActiveCard,
   resolveWorkspaceDeckCompactHeight,
   resolveWorkspaceDeckDirection,
@@ -11,6 +13,20 @@ import {
 } from "./workspaceCardDeck.logic";
 
 const repositoryCards = ["chat", "git", "example"] as const;
+
+describe("workspace drawer height", () => {
+  it("leaves 160 pixels for the timeline while capping the drawer at 80 percent", () => {
+    expect(resolveWorkspaceCardDrawerHeightBounds(620)).toEqual({ min: 320, max: 460 });
+    expect(resolveWorkspaceCardDrawerHeightBounds(1_400)).toEqual({ min: 320, max: 1_120 });
+  });
+
+  it("uses the proportional default only for manually resizable drawers", () => {
+    expect(resolveWorkspaceCardDrawerHeight({ availableHeight: 1_400 })).toBe(868);
+    expect(resolveWorkspaceCardDrawerHeight({ availableHeight: 1_400, requestedHeight: 900 })).toBe(
+      900,
+    );
+  });
+});
 
 describe("workspace card roles", () => {
   it("places Example above and Git below Chat in canonical order", () => {

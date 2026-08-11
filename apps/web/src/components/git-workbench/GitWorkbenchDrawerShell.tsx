@@ -13,7 +13,6 @@ export type GitWorkbenchDrawerTabId =
   | "branches"
   | "operations";
 
-const DRAWER_HEIGHT_STORAGE_KEY = "t3code:git-workbench-drawer-height:v1";
 const WORKBENCH_TABS: readonly WorkspaceCardDrawerTab<GitWorkbenchDrawerTabId>[] = [
   { id: "overview", label: "Overview" },
   { id: "changes", label: "Changes" },
@@ -33,7 +32,6 @@ export interface GitWorkbenchDrawerShellProps {
   readonly returnFocusRef?: RefObject<HTMLElement | null>;
   readonly showOperationsTab?: boolean;
   readonly showTabs?: boolean;
-  readonly storageKey?: string;
   readonly onActiveTabChange: (tab: GitWorkbenchDrawerTabId) => void;
   readonly onEscapeBeforeCollapse?: () => boolean;
   readonly onHeightChange?: (height: number) => void;
@@ -51,8 +49,7 @@ export function GitWorkbenchDrawerShell(props: GitWorkbenchDrawerShellProps) {
       activeTab={props.activeTab}
       ariaLabel="Git workbench"
       collapseLabel="Collapse Git workbench"
-      resizeLabel="Resize Git workbench vertically"
-      storageKey={props.storageKey ?? DRAWER_HEIGHT_STORAGE_KEY}
+      sizingMode="content"
       tabs={tabs}
       title="Git workbench"
       open={props.open}
@@ -63,7 +60,6 @@ export function GitWorkbenchDrawerShell(props: GitWorkbenchDrawerShellProps) {
         content: "git-workbench-drawer__content",
         header: "git-workbench-drawer__header",
         headerActions: "git-workbench-drawer__header-actions",
-        resizeHandle: "git-workbench-drawer__resize-handle",
         root: "git-workbench-drawer",
         tabs: "git-workbench-drawer__tabs",
       }}

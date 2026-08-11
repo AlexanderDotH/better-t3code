@@ -59,7 +59,10 @@ export function GitHistoryPanel(props: GitHistoryPanelProps) {
   };
 
   return (
-    <div className="grid size-full min-h-0 @container/git-history @3xl/git-history:grid-cols-[minmax(18rem,0.85fr)_minmax(0,1.4fr)]">
+    <div
+      className="grid h-fit max-h-full w-full min-h-0 grid-rows-[minmax(0,1fr)] overflow-hidden @container/git-history @3xl/git-history:grid-cols-[minmax(18rem,0.85fr)_minmax(0,1.4fr)]"
+      data-git-history-layout="content"
+    >
       <aside
         className={cn(
           "flex min-h-0 flex-col border-r",
@@ -99,6 +102,7 @@ export function GitHistoryPanel(props: GitHistoryPanelProps) {
         <div
           aria-label="Commit history"
           className="min-h-0 flex-1 overflow-auto"
+          data-git-history-scroll-region="commits"
           onScroll={onScroll}
           role="list"
         >
@@ -157,11 +161,12 @@ export function GitHistoryPanel(props: GitHistoryPanelProps) {
           "min-h-0 overflow-auto",
           props.selectedCommit ? "block" : "hidden @3xl/git-history:block",
         )}
+        data-git-history-scroll-region="details"
       >
         {props.selectedCommit ? (
           <GitCommitDetailPanel {...props} commit={props.selectedCommit} />
         ) : (
-          <div className="grid size-full min-h-48 place-content-center text-muted-foreground text-sm">
+          <div className="grid min-h-48 w-full place-content-center text-muted-foreground text-sm">
             Select a commit to inspect its metadata and changed files.
           </div>
         )}

@@ -47,6 +47,17 @@ only then does the vertical card shuffle begin. Escape closes a nested dialog fi
 collapses the foreground panel; it never rotates the deck. Mobile keeps its existing composer and
 Git controls and does not show the carousel or MCP workspace card.
 
+## Planning with Codex
+
+Codex chats on web and desktop include a **Build/Plan** selector in the message composer. **Build**
+asks Codex to work directly on the task. **Plan** keeps the thread in a planning workflow so you can
+explore requirements and agree on an implementation plan before changing code. The selection is
+stored per thread and is sent with the next turn.
+
+The `/plan` and `/default` commands select the same modes. With the composer focused, **Shift+Tab**
+switches between them. Providers other than Codex only show these controls when they advertise plan
+mode support and **Plan mode (legacy)** is enabled in **Settings > General > Legacy features**.
+
 ## Voice input
 
 Web and desktop can stream microphone input to AssemblyAI from the chat composer. The waveform and

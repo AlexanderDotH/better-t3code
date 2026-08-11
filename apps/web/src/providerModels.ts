@@ -53,6 +53,17 @@ export function getProviderInteractionModeToggle(
   return getProviderSnapshot(providers, provider)?.showInteractionModeToggle ?? true;
 }
 
+export function isPlanModeAvailable(input: {
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly provider: ProviderDriverKind;
+  readonly legacyPlanModeEnabled: boolean;
+}): boolean {
+  if (!getProviderInteractionModeToggle(input.providers, input.provider)) {
+    return false;
+  }
+  return input.provider === DEFAULT_DRIVER_KIND || input.legacyPlanModeEnabled;
+}
+
 export function isProviderEnabled(
   providers: ReadonlyArray<ServerProvider>,
   provider: ProviderDriverKind,

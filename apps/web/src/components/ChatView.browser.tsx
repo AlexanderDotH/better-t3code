@@ -1801,16 +1801,15 @@ async function expectComposerActionsContained(): Promise<void> {
   );
 }
 
-async function waitForInteractionModeButton(
+async function waitForInteractionModeSelect(
   expectedLabel: "Build" | "Plan",
 ): Promise<HTMLButtonElement> {
-  return waitForElement(
-    () =>
-      Array.from(document.querySelectorAll("button")).find(
-        (button) => button.textContent?.trim() === expectedLabel,
-      ) as HTMLButtonElement | null,
-    `Unable to find ${expectedLabel} interaction mode button.`,
-  );
+  return waitForElement(() => {
+    const trigger = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Interaction mode"]',
+    );
+    return trigger?.textContent?.trim() === expectedLabel ? trigger : null;
+  }, `Unable to find ${expectedLabel} interaction mode select.`);
 }
 
 async function waitForBranchSelectorButton(): Promise<HTMLButtonElement> {
@@ -3855,10 +3854,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("toggles plan mode with Shift+Tab only while the composer is focused", async () => {
+  it("shows the Codex plan-mode select and scopes Shift+Tab to the composer", async () => {
     __setClientSettingsForTests({
       ...DEFAULT_CLIENT_SETTINGS,
-      planModeEnabled: true,
+      planModeEnabled: false,
     });
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -3870,8 +3869,20 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       await waitForServerConfigToApply();
-      const initialModeButton = await waitForInteractionModeButton("Build");
-      expect(initialModeButton.getAttribute("aria-label")).toContain("enter plan mode");
+      const initialModeSelect = await waitForInteractionModeSelect("Build");
+      expect(initialModeSelect.getAttribute("role")).toBe("combobox");
+      initialModeSelect.click();
+
+      const planModeItem = await waitForSelectItemContainingText("Plan");
+      expect(planModeItem.textContent).toContain("Explore and agree on a plan");
+      planModeItem.click();
+
+      await vi.waitFor(
+        async () => {
+          expect(await waitForInteractionModeSelect("Plan")).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
 
       window.dispatchEvent(
         new KeyboardEvent("keydown", {
@@ -3883,9 +3894,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       await waitForLayout();
 
-      expect((await waitForInteractionModeButton("Build")).getAttribute("aria-label")).toContain(
-        "enter plan mode",
-      );
+      expect(await waitForInteractionModeSelect("Plan")).toBeTruthy();
 
       const composerEditor = await waitForComposerEditor();
       composerEditor.focus();
@@ -3900,9 +3909,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         async () => {
-          expect((await waitForInteractionModeButton("Plan")).getAttribute("aria-label")).toContain(
-            "return to normal build mode",
-          );
+          expect(await waitForInteractionModeSelect("Build")).toBeTruthy();
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -3918,9 +3925,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         async () => {
-          expect(
-            (await waitForInteractionModeButton("Build")).getAttribute("aria-label"),
-          ).toContain("enter plan mode");
+          expect(await waitForInteractionModeSelect("Plan")).toBeTruthy();
         },
         { timeout: 8_000, interval: 16 },
       );

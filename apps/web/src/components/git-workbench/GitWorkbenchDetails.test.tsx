@@ -76,6 +76,36 @@ describe("GitChangesPanel", () => {
     expect(markup).toContain("Unified");
     expect(markup).toContain("Split");
   });
+
+  it("fits its split panes to content while retaining their scroll owners", () => {
+    const markup = renderToStaticMarkup(
+      <GitChangesPanel
+        changes={[selectedChange]}
+        currentFile={null}
+        onApplySelection={vi.fn()}
+        onOpenCurrentFile={vi.fn()}
+        onSaveCurrentFile={vi.fn()}
+        onSelectChange={vi.fn()}
+        readOnly={false}
+        selectedChangeId={selectedChange.id}
+        stateToken="state-1"
+      />,
+    );
+    const layout = markup.match(/<div[^>]*data-git-changes-layout="content"[^>]*>/)?.[0];
+    const files = markup.match(/<aside[^>]*data-git-changes-scroll-region="files"[^>]*>/)?.[0];
+    const details = markup.match(/<main[^>]*data-git-changes-scroll-region="details"[^>]*>/)?.[0];
+    const detailLayout = markup.match(/<div[^>]*data-git-change-detail="content"[^>]*>/)?.[0];
+
+    expect(layout).toContain("h-fit");
+    expect(layout).toContain("max-h-full");
+    expect(layout).toContain("overflow-hidden");
+    expect(layout).not.toContain("size-full");
+    expect(files).toContain("overflow-auto");
+    expect(details).toContain("overflow-auto");
+    expect(detailLayout).toContain("h-fit");
+    expect(detailLayout).toContain("max-h-full");
+    expect(detailLayout).not.toContain("size-full");
+  });
 });
 
 describe("GitConflictPanel", () => {

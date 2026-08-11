@@ -1798,8 +1798,8 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
     }
 
     const entries = deriveWorkLogEntries(activities);
-    // A1 CTA design: all direct spawns in one turn collapse into ONE
-    // call-to-action row carrying the batch's agent ids.
+    // All direct spawns in one turn collapse into one notification carrying
+    // the batch's agent ids.
     const spawnRows = entries.filter((entry) => entry.agentSpawn !== undefined);
     expect(spawnRows).toHaveLength(1);
     expect(spawnRows[0]!.agentSpawn!.agentTaskIds).toHaveLength(5);
@@ -1808,7 +1808,7 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
     expect(entries.some((entry) => entry.sourceActivityKind?.startsWith("tool."))).toBe(false);
   });
 
-  it("a workflow run and its members collapse into one CTA row keyed to the coordinator", () => {
+  it("a workflow run and its members collapse into one notification keyed to the coordinator", () => {
     const entries = deriveWorkLogEntries([
       makeActivity({
         kind: "task.progress",
@@ -1851,9 +1851,9 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
     expect(entries).toHaveLength(1);
   });
 
-  it("folds timelineBypass agent rows into one CTA (Codex children, workflow members)", () => {
+  it("folds timelineBypass agent rows into one notification (Codex children, workflow members)", () => {
     // Codex children carry their parent's spawn turn (spawnTurnId stamping),
-    // which is what batches a fleet into one CTA.
+    // which is what batches a fleet into one notification.
     const entries = deriveWorkLogEntries([
       makeActivity({
         kind: "task.progress",
@@ -1871,7 +1871,7 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
       }),
     ]);
     // Not suppressed outright (a Codex fleet's rows are ALL bypassed and
-    // still need a CTA anchor) — but never more than the batch's single row.
+    // still need a notification anchor) — but never more than the batch's single row.
     expect(entries).toHaveLength(1);
     expect(entries[0]!.agentSpawn?.agentTaskIds).toEqual(["child-1", "child-2"]);
   });
@@ -1910,7 +1910,7 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
 describe("rerun workflows", () => {
   it("turn-less direct spawns do not collapse into one global batch", () => {
     // Rows that lost their turn id (defensive path) group per task, so two
-    // unrelated turn-less spawns never merge into one immortal CTA.
+    // unrelated turn-less spawns never merge into one immortal notification.
     const entries = deriveWorkLogEntries([
       makeActivity({
         kind: "task.started",
@@ -1933,7 +1933,7 @@ describe("rerun workflows", () => {
     ]);
   });
 
-  it("each workflow run gets its own CTA row (distinct coordinator ids)", () => {
+  it("each workflow run gets its own notification (distinct coordinator ids)", () => {
     const entries = deriveWorkLogEntries([
       makeActivity({
         kind: "task.progress",

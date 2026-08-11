@@ -912,7 +912,6 @@ function PullRequestsRouteView() {
       rightPanelAvailable={rightPanelState.surfaces.length > 0}
       rightPanelOpen={rightPanelState.isOpen}
       rightPanelShortcutLabel={null}
-      liveAgentCount={0}
       onToggleTerminal={() => undefined}
       onToggleRightPanel={toggleRightPanel}
     />
@@ -1146,14 +1145,11 @@ function PullRequestsRouteView() {
             onAddDiff={() => undefined}
             onAddFiles={() => undefined}
             onAddPullRequest={() => undefined}
-            onAddAgents={() => undefined}
             browserAvailable={false}
             terminalAvailable={false}
             diffAvailable={false}
             filesAvailable={false}
             pullRequestAvailable={false}
-            agentsAvailable={false}
-            liveAgentCount={0}
             pullRequestStatuses={pullRequestTabStatuses}
           >
             <PullRequestDetailPanel

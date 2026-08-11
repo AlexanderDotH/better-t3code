@@ -21,7 +21,6 @@ export const RIGHT_PANEL_KINDS = [
   "preview",
   "terminal",
   "pull-request",
-  "agents",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -55,14 +54,14 @@ export type RightPanelSurface =
       projectId: string;
       repository: string;
       number: number;
-    }
-  | { id: "agents"; kind: "agents" };
+    };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
-const RIGHT_PANEL_STORAGE_VERSION = 11;
+// v12 removes the duplicate Agents surface in favor of the chat's animated pill stack.
+const RIGHT_PANEL_STORAGE_VERSION = 12;
 
 /**
  * The pull-request list's shared panel (see PULL_REQUESTS_PANEL_ID in the route) is session
@@ -128,8 +127,6 @@ const singletonSurface = (
       return { id: "diff", kind };
     case "files":
       return { id: "files", kind };
-    case "agents":
-      return { id: "agents", kind };
   }
 };
 
@@ -231,9 +228,6 @@ function normalizePersistedRightPanelSurface(surface: unknown): RightPanelSurfac
   }
   if (kind === "files") {
     return id === kind ? { id: "files", kind: "files" } : null;
-  }
-  if (kind === "agents") {
-    return id === kind ? { id: "agents", kind: "agents" } : null;
   }
   if (kind === "preview") {
     if (id === "browser:new" && record.resourceId === null) {

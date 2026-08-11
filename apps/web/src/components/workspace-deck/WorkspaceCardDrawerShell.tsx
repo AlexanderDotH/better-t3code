@@ -37,14 +37,12 @@ export interface WorkspaceCardDrawerClassNames {
   readonly tabs?: string;
 }
 
-export interface WorkspaceCardDrawerShellProps<TabId extends string> {
+interface WorkspaceCardDrawerShellCommonProps<TabId extends string> {
   readonly open: boolean;
   readonly activeTab: TabId;
   readonly ariaLabel: string;
   readonly children: ReactNode;
   readonly collapseLabel: string;
-  readonly resizeLabel: string;
-  readonly storageKey: string;
   readonly tabs: readonly WorkspaceCardDrawerTab<TabId>[];
   readonly title: string;
   readonly availableHeight?: number;
@@ -61,6 +59,22 @@ export interface WorkspaceCardDrawerShellProps<TabId extends string> {
   readonly onOpenChange: (open: boolean) => void;
   readonly onVisibilityChange?: (visible: boolean) => void;
 }
+
+interface ResizableWorkspaceCardDrawerShellProps {
+  readonly sizingMode?: "resizable";
+  readonly resizeLabel: string;
+  readonly storageKey: string;
+}
+
+interface ContentWorkspaceCardDrawerShellProps {
+  readonly sizingMode: "content";
+  readonly resizeLabel?: never;
+  readonly storageKey?: never;
+}
+
+export type WorkspaceCardDrawerShellProps<TabId extends string> =
+  WorkspaceCardDrawerShellCommonProps<TabId> &
+    (ResizableWorkspaceCardDrawerShellProps | ContentWorkspaceCardDrawerShellProps);
 
 interface DrawerResizeState {
   readonly pointerId: number;
@@ -121,8 +135,13 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
 ) {
   const accessibilityId = useId();
   const availableHeight = useAvailableDrawerHeight(props.availableHeight);
+  const sizingMode = props.sizingMode === "content" ? "content" : "resizable";
+  const storageKey = props.sizingMode === "content" ? null : props.storageKey;
   const [height, setHeight] = useState(() => {
-    const storedHeight = readStoredHeight(props.storageKey);
+    if (storageKey === null) {
+      return resolveWorkspaceCardDrawerHeight({ availableHeight });
+    }
+    const storedHeight = readStoredHeight(storageKey);
     return resolveWorkspaceCardDrawerHeight(
       storedHeight === null
         ? { availableHeight }
@@ -145,13 +164,37 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
   const notifyVisibilityChange = useEffectEvent((visible: boolean) => {
     props.onVisibilityChange?.(visible);
   });
+  const contentHeightNotificationsEnabled =
+    sizingMode === "content" && props.onHeightChange !== undefined;
 
   useEffect(() => {
+    if (sizingMode !== "resizable") return;
     setHeight((currentHeight) =>
       resolveWorkspaceCardDrawerHeight({ availableHeight, requestedHeight: currentHeight }),
     );
-  }, [availableHeight]);
-  useEffect(() => notifyHeightChange(clampedHeight), [clampedHeight]);
+  }, [availableHeight, sizingMode]);
+  useEffect(() => {
+    if (sizingMode === "resizable") notifyHeightChange(clampedHeight);
+  }, [clampedHeight, sizingMode]);
+  useLayoutEffect(() => {
+    if (!contentHeightNotificationsEnabled || !props.open) return;
+    const drawer = drawerRef.current;
+    if (!drawer) return;
+
+    let previousHeight: number | null = null;
+    const reportHeight = () => {
+      const nextHeight = drawer.getBoundingClientRect().height;
+      if (!Number.isFinite(nextHeight) || nextHeight === previousHeight) return;
+      previousHeight = nextHeight;
+      notifyHeightChange(nextHeight);
+    };
+
+    reportHeight();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(reportHeight);
+    observer.observe(drawer, { box: "border-box" });
+    return () => observer.disconnect();
+  }, [contentHeightNotificationsEnabled, props.open]);
   useEffect(() => {
     visibleRef.current = props.open;
     notifyVisibilityChange(props.open);
@@ -231,6 +274,7 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
 
   const onResizePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
+      if (sizingMode !== "resizable") return;
       if (event.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
@@ -252,7 +296,7 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
       document.body.style.cursor = "row-resize";
       document.body.style.userSelect = "none";
     },
-    [clampedHeight],
+    [clampedHeight, sizingMode],
   );
   const onResizePointerMove = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
@@ -284,9 +328,9 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
         requestedHeight: state.pendingHeight,
       });
       setHeight(finalHeight);
-      writeStoredHeight(props.storageKey, finalHeight);
+      if (storageKey !== null) writeStoredHeight(storageKey, finalHeight);
     },
-    [availableHeight, props.storageKey, releaseResize],
+    [availableHeight, releaseResize, storageKey],
   );
   const onResizePointerCancel = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
@@ -302,9 +346,9 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
         requestedHeight: nextHeight,
       });
       setHeight(resolvedHeight);
-      writeStoredHeight(props.storageKey, resolvedHeight);
+      if (storageKey !== null) writeStoredHeight(storageKey, resolvedHeight);
     },
-    [availableHeight, props.storageKey],
+    [availableHeight, storageKey],
   );
   const onResizeKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLElement>) => {
@@ -335,10 +379,12 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
 
   if (!props.open) return null;
   const showTabs = props.showTabs !== false && props.tabs.length > 0;
-  const style = {
-    "--workspace-card-drawer-height": `${clampedHeight}px`,
-    "--git-workbench-drawer-height": `${clampedHeight}px`,
-  } as CSSProperties;
+  const style =
+    sizingMode === "content"
+      ? ({ "--workspace-card-drawer-max-height": `${bounds.max}px` } as CSSProperties)
+      : ({
+          "--workspace-card-drawer-height": `${clampedHeight}px`,
+        } as CSSProperties);
   return (
     <section
       ref={drawerRef}
@@ -346,25 +392,28 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
       style={style}
       aria-label={props.ariaLabel}
       data-workspace-card-drawer="true"
+      data-workspace-card-drawer-sizing={sizingMode}
       {...props.dataAttributes}
     >
-      <div
-        className={cn("workspace-card-drawer__resize-handle", props.classNames?.resizeHandle)}
-        role="separator"
-        aria-label={props.resizeLabel}
-        aria-orientation="horizontal"
-        aria-valuemin={bounds.min}
-        aria-valuemax={bounds.max}
-        aria-valuenow={clampedHeight}
-        tabIndex={0}
-        onKeyDown={onResizeKeyDown}
-        onPointerCancel={onResizePointerCancel}
-        onPointerDown={onResizePointerDown}
-        onPointerMove={onResizePointerMove}
-        onPointerUp={onResizePointerUp}
-      >
-        <span aria-hidden />
-      </div>
+      {props.sizingMode === "content" ? null : (
+        <div
+          className={cn("workspace-card-drawer__resize-handle", props.classNames?.resizeHandle)}
+          role="separator"
+          aria-label={props.resizeLabel}
+          aria-orientation="horizontal"
+          aria-valuemin={bounds.min}
+          aria-valuemax={bounds.max}
+          aria-valuenow={clampedHeight}
+          tabIndex={0}
+          onKeyDown={onResizeKeyDown}
+          onPointerCancel={onResizePointerCancel}
+          onPointerDown={onResizePointerDown}
+          onPointerMove={onResizePointerMove}
+          onPointerUp={onResizePointerUp}
+        >
+          <span aria-hidden />
+        </div>
+      )}
       <header className={cn("workspace-card-drawer__header", props.classNames?.header)}>
         <div className="min-w-0">
           <div className="flex items-center gap-2">

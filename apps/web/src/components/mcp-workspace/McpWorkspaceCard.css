@@ -117,11 +117,13 @@
 .mcp-workspace-peek .workspace-card-deck__peek-content > .mcp-workspace-peek__content {
   display: flex;
   gap: 0.75rem;
+  color: color-mix(in srgb, var(--muted-foreground) 78%, transparent);
 }
 
 .mcp-workspace-peek__content strong {
   flex: none;
-  color: var(--foreground);
+  margin-inline-start: calc(var(--spacing) * 2 - 1px);
+  color: inherit;
   font-weight: 500;
 }
 
@@ -138,13 +140,9 @@
 
 .mcp-workspace-peek__status {
   margin-inline-start: auto;
+  margin-inline-end: calc(var(--spacing) * 2 - 1px);
   flex: none;
   max-width: 50%;
-}
-
-.mcp-workspace-peek__status[data-mcp-workspace-state="upgrade-required"],
-.mcp-workspace-peek__status[data-mcp-workspace-state="disconnected"] {
-  color: var(--warning-foreground);
 }
 
 .mcp-workspace-panel {

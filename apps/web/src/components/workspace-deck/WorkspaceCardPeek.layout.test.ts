@@ -1,25 +1,20 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
+import { describe, expect, it } from "vite-plus/test";
 
-const indexCssPath = decodeURIComponent(new URL("../../index.css", import.meta.url).pathname);
-const readIndexCss = Effect.gen(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
-  return yield* fileSystem.readFileString(indexCssPath);
-}).pipe(Effect.provide(NodeServices.layer));
+import branchToolbarSource from "../BranchToolbar.tsx?raw";
+import chatViewSource from "../ChatView.tsx?raw";
+import indexCssSource from "../../index.css?raw";
 
 describe("workspace card peek layout", () => {
-  it.effect("anchors Git checkout controls to the left and right card edges", () =>
-    Effect.gen(function* () {
-      const css = yield* readIndexCss;
-
-      expect(css).toMatch(
-        /\.workspace-card-deck__peek \.chat-composer-context-strip\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*none;[^}]*margin-inline:\s*0;[^}]*padding-inline:\s*0\.75rem;/,
-      );
-      expect(css).not.toMatch(
-        /\.workspace-card-deck__peek \.chat-composer-context-strip > div\s*\{[^}]*display:\s*grid;/,
-      );
-    }),
-  );
+  it("uses card-peek utilities to align Git controls with MCP edge guides", () => {
+    expect(branchToolbarSource).toContain("cardPeek?: boolean");
+    expect(branchToolbarSource).toMatch(/cardPeek\s*\?\s*"mx-0 w-full max-w-none px-0"/);
+    expect(branchToolbarSource).toContain(
+      '"mx-auto w-[calc(100%-2.75rem)] max-w-[calc(48rem-2.75rem)] ps-1 pe-2"',
+    );
+    expect(chatViewSource).toContain("cardPeek={cardPeek}");
+    expect(chatViewSource).toMatch(/data-workspace-card-peek-id=\{cardPeek \? "git" : undefined\}/);
+    expect(indexCssSource).not.toMatch(
+      /\.workspace-card-deck__peek \.chat-composer-context-strip\s*\{[^}]*width:/,
+    );
+  });
 });

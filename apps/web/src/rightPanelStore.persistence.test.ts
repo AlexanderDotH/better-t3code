@@ -26,20 +26,19 @@ afterEach(() => {
 });
 
 describe("rightPanelStore persisted-state hydration", () => {
-  it("rehydrates v8 tabs, removes retired plan and subagent surfaces, and rewrites the current version", async () => {
+  it("rehydrates v11 tabs, removes the retired Agents surface, and rewrites the current version", async () => {
     const localStorage = createLocalStorageStub();
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
-        version: 8,
+        version: 11,
         state: {
           byThreadKey: {
             "env-1:thread-A": {
               isOpen: true,
-              activeSurfaceId: "subagent:agent-1",
+              activeSurfaceId: "agents",
               surfaces: [
-                { id: "plan", kind: "plan" },
-                { id: "subagent:agent-1", kind: "subagent", resourceId: "agent-1" },
+                { id: "agents", kind: "agents" },
                 { id: "browser:tab-a", kind: "preview", resourceId: "tab-a" },
               ],
             },
@@ -61,7 +60,7 @@ describe("rightPanelStore persisted-state hydration", () => {
       },
     });
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}")).toMatchObject({
-      version: 11,
+      version: 12,
     });
   });
 });

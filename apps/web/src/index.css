@@ -578,14 +578,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     box-shadow: 0 -12px 28px -18px rgb(0 0 0 / 40%);
   }
 
-  /* The generic peek already supplies the 22px inline inset. Let the Git
-     strip fill that slot, and keep only its marked selectors above the
-     peek's activation button. */
+  /* The generic peek owns the inset and chrome. Keep only the marked Git
+     selectors above the peek's activation button. */
   .workspace-card-deck__peek .chat-composer-context-strip {
-    width: 100%;
-    max-width: none;
-    margin-inline: 0;
-    padding-inline: 0.75rem;
     isolation: auto;
   }
 

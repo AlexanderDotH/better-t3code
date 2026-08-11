@@ -58,9 +58,8 @@ describe("Git workspace deck motion CSS", () => {
       expect(css).toMatch(
         /\.git-workbench-drawer--embedded\s*\{[^}]*border-block-start:\s*0;[^}]*border-radius:\s*inherit;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/,
       );
-      expect(css).toMatch(
-        /\.git-workbench-drawer--embedded \.git-workbench-drawer__resize-handle\s*\{[^}]*inset-block-start:\s*0;/,
-      );
+      expect(css).not.toContain("var(--git-workbench-drawer-height)");
+      expect(css).not.toContain(".git-workbench-drawer__resize-handle");
       expect(css).not.toContain("100vw");
     }),
   );

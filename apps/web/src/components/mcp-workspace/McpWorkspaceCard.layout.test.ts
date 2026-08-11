@@ -23,4 +23,31 @@ describe("MCP workspace card layout", () => {
       expect(css).not.toMatch(/\.mcp-workspace-peek__provider\s*\{[^}]*justify-self:\s*center;/);
     }),
   );
+
+  it.effect("uses the Git notch control inset for both MCP label edges", () =>
+    Effect.gen(function* () {
+      const css = yield* readCardCss;
+
+      expect(css).toMatch(
+        /\.mcp-workspace-peek__content strong\s*\{[^}]*margin-inline-start:\s*calc\(var\(--spacing\) \* 2 - 1px\);/,
+      );
+      expect(css).toMatch(
+        /\.mcp-workspace-peek__status\s*\{[^}]*margin-inline-end:\s*calc\(var\(--spacing\) \* 2 - 1px\);/,
+      );
+    }),
+  );
+
+  it.effect("renders every MCP peek state as gently faded neutral metadata", () =>
+    Effect.gen(function* () {
+      const css = yield* readCardCss;
+
+      expect(css).toMatch(
+        /\.mcp-workspace-peek \.workspace-card-deck__peek-content > \.mcp-workspace-peek__content\s*\{[^}]*color:\s*color-mix\(in srgb, var\(--muted-foreground\) 78%, transparent\);/,
+      );
+      expect(css).toMatch(/\.mcp-workspace-peek__content strong\s*\{[^}]*color:\s*inherit;/);
+      expect(css).not.toContain(
+        '.mcp-workspace-peek__status[data-mcp-workspace-state="upgrade-required"]',
+      );
+    }),
+  );
 });
