@@ -123,6 +123,39 @@ describe("partitionSidebarProjectsByActivity", () => {
     expect(result.nextTransitionAtMs).toBe(NOW_MS + 1);
   });
 
+  it("moves an older project back to recent as soon as renewed thread activity arrives", () => {
+    const oldTimestamp = timestampAtAge(SIDEBAR_PROJECT_INACTIVITY_MS + 1);
+    const project = makeProject("project", [
+      makeMember("project", { createdAt: oldTimestamp, updatedAt: oldTimestamp }),
+    ]);
+    const inactiveThread = makeThread({
+      createdAt: oldTimestamp,
+      updatedAt: oldTimestamp,
+      latestUserMessageAt: oldTimestamp,
+    });
+
+    const beforeActivity = partition([project], new Map([["project", [inactiveThread]]]));
+    const afterActivity = partition(
+      [project],
+      new Map([
+        [
+          "project",
+          [
+            {
+              ...inactiveThread,
+              latestUserMessageAt: timestampAtAge(0),
+            },
+          ],
+        ],
+      ]),
+    );
+
+    expect(beforeActivity.recentProjects).toEqual([]);
+    expect(beforeActivity.olderProjects).toEqual([project]);
+    expect(afterActivity.recentProjects).toEqual([project]);
+    expect(afterActivity.olderProjects).toEqual([]);
+  });
+
   it("uses project metadata activity and falls back to project creation", () => {
     const updatedProject = makeProject("updated", [
       makeMember("updated", {

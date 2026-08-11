@@ -47,7 +47,8 @@ describe("ExperimentalSettingsPanelView", () => {
     expect(markup).toContain("Fetch model");
     expect(markup).toContain("Auto");
     expect(markup).toContain("Spark");
-    expect(markup).toContain("chooses the worker count dynamically");
+    expect(markup).toContain("main agent handles simple or focused requests itself");
+    expect(markup).toContain("chooses the smallest useful worker count dynamically");
     expect(markup).toContain("additional provider quota");
     expect(markup).toContain("Agent count review model");
     expect(markup).toContain('aria-label="Agent count review model"');

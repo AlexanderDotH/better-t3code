@@ -480,6 +480,31 @@ describe("FetchWorkerCoordinator service", () => {
     }),
   );
 
+  it.effect("a planner failure leaves repository inspection to the main agent", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        plan: () =>
+          Effect.fail(
+            new TextGenerationError({
+              operation: "planFetchExploration",
+              detail: "planner failed",
+            }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const coordinator = yield* FetchWorkerCoordinator;
+        const result = yield* coordinator.run(runInput({ userRequest: "Briefly inspect this." }));
+
+        expect(result.status).toBe("skipped");
+        expect(result.plannedWorkers).toBe(0);
+        expect(result.warnings).toContain(
+          "Fetch planning failed; the main agent continued without repository workers.",
+        );
+        expect(yield* Ref.get(harness.starts)).toHaveLength(0);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("terminalizes a registered worker when its initial transcript import fails", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ failWorkerMessageImport: true });

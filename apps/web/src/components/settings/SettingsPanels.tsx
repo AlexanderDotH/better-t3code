@@ -117,6 +117,7 @@ import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThemeLibrary } from "./ThemeSettings";
+import { SidebarLayoutSelector } from "./SidebarLayoutSetting";
 import {
   backgroundActivityOverrideSettings,
   backgroundActivitySharedPolicySettings,
@@ -1076,6 +1077,19 @@ export function AppearanceSettingsPanel() {
         ) : null}
       </SettingsSection>
 
+      <SettingsSection title="Sidebar">
+        <SettingsRow
+          {...searchableSetting("sidebar-layout")}
+          description="Choose between the current activity-focused sidebar and the classic per-project thread trees."
+          control={
+            <SidebarLayoutSelector
+              legacySidebarEnabled={settings.legacySidebarEnabled}
+              onChange={(legacySidebarEnabled) => updateSettings({ legacySidebarEnabled })}
+            />
+          }
+        />
+      </SettingsSection>
+
       <TypographySection />
     </SettingsPageContainer>
   );
@@ -1596,7 +1610,6 @@ function AutoSettleDaysInput({
 const LEGACY_FEATURE_TARGET_IDS: ReadonlySet<string> = new Set([
   "legacy-plan-mode",
   "legacy-token-streaming",
-  "legacy-sidebar",
 ]);
 
 /**
@@ -1680,19 +1693,6 @@ function LegacyFeaturesSection() {
                     })();
                   }}
                   aria-label="Stream token by token (legacy)"
-                />
-              }
-            />
-            <SettingsRow
-              {...searchableSetting("legacy-sidebar")}
-              description="Brings back the original sidebar with per-project thread trees. The default sidebar shows one flat list: active work as rich cards, settled threads as compact rows."
-              control={
-                <Switch
-                  checked={settings.legacySidebarEnabled}
-                  onCheckedChange={(checked) =>
-                    updateSettings({ legacySidebarEnabled: Boolean(checked) })
-                  }
-                  aria-label="Sidebar (legacy)"
                 />
               }
             />

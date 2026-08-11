@@ -149,7 +149,7 @@ it.effect("passes bounded orientation, exact model traits, and the advertised bu
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("falls back to exactly one broad worker after invalid output", () =>
+it.effect("lets the main agent continue without workers after invalid output", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-fetch-planner-invalid-" });
@@ -171,12 +171,11 @@ it.effect("falls back to exactly one broad worker after invalid output", () =>
     }).pipe(Effect.provideService(TextGeneration.TextGeneration, textGeneration));
 
     expect(outcome.fallbackReason).toBe("invalid-plan");
-    expect(outcome.plan.decision).toBe("run");
-    expect(outcome.plan.workers).toHaveLength(1);
+    expect(outcome.plan).toEqual({ decision: "skip", workers: [] });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("falls back to exactly one broad worker after planner failure", () =>
+it.effect("lets the main agent continue without workers after planner failure", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-fetch-planner-failed-" });
@@ -192,11 +191,11 @@ it.effect("falls back to exactly one broad worker after planner failure", () =>
     }).pipe(Effect.provideService(TextGeneration.TextGeneration, textGeneration));
 
     expect(outcome.fallbackReason).toBe("planner-failed");
-    expect(outcome.plan.workers).toHaveLength(1);
+    expect(outcome.plan).toEqual({ decision: "skip", workers: [] });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("falls back to exactly one broad worker when planning reaches 20 seconds", () =>
+it.effect("lets the main agent continue without workers when planning reaches 20 seconds", () =>
   Effect.gen(function* () {
     const textGeneration = makeTextGeneration(() => Effect.never);
     const fiber = yield* requestFetchExplorationPlan({
@@ -211,7 +210,7 @@ it.effect("falls back to exactly one broad worker when planning reaches 20 secon
     const outcome = yield* Fiber.join(fiber);
 
     expect(outcome.fallbackReason).toBe("planner-failed");
-    expect(outcome.plan.workers).toHaveLength(1);
+    expect(outcome.plan).toEqual({ decision: "skip", workers: [] });
   }).pipe(Effect.provide(TestClock.layer())),
 );
 

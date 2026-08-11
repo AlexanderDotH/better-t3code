@@ -10,15 +10,17 @@ const readCardCss = Effect.gen(function* () {
 }).pipe(Effect.provide(NodeServices.layer));
 
 describe("MCP workspace card layout", () => {
-  it.effect("positions peek labels in the same left, center, and right columns as Git", () =>
+  it.effect("groups the MCP identity at the left and status at the right", () =>
     Effect.gen(function* () {
       const css = yield* readCardCss;
 
       expect(css).toMatch(
-        /\.mcp-workspace-peek__content\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto minmax\(0, 1fr\);/,
+        /\.mcp-workspace-peek \.workspace-card-deck__peek-content > \.mcp-workspace-peek__content\s*\{[^}]*display:\s*flex;/,
       );
-      expect(css).toMatch(/\.mcp-workspace-peek__provider\s*\{[^}]*justify-self:\s*center;/);
-      expect(css).toMatch(/\.mcp-workspace-peek__status\s*\{[^}]*justify-self:\s*end;/);
+      expect(css).toMatch(
+        /\.mcp-workspace-peek__status\s*\{[^}]*margin-inline-start:\s*auto;[^}]*max-width:\s*50%;/,
+      );
+      expect(css).not.toMatch(/\.mcp-workspace-peek__provider\s*\{[^}]*justify-self:\s*center;/);
     }),
   );
 });

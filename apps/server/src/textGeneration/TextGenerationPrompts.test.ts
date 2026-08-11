@@ -338,17 +338,23 @@ describe("buildPlanParallelismReviewPrompt", () => {
 });
 
 describe("buildFetchExplorationPrompt", () => {
-  it("asks for bounded repository-read-only scopes and allows a skip plan", () => {
+  it("gives the main agent first refusal and keeps parallel exploration conservative", () => {
     const result = buildFetchExplorationPrompt({
       userRequest: "Explain how authentication works.",
       repositoryOrientation: "Top-level areas: apps, packages\nTests: apps/server/auth.test.ts",
       maxRecommendedWorkers: 12,
     });
 
+    expect(result.prompt).toContain("Default to decision=skip");
+    expect(result.prompt).toContain("main agent can inspect the repository with its own tools");
+    expect(result.prompt).toContain("simple, narrow, or briefly investigative requests");
+    expect(result.prompt).toContain("asks the main agent to work alone");
+    expect(result.prompt).toContain("If uncertain, skip");
+    expect(result.prompt).toContain("smallest useful worker count");
+    expect(result.prompt).toContain("Never use three workers as a default");
     expect(result.prompt).toContain("between 1 and 12 workers");
     expect(result.prompt).toContain("concrete, non-overlapping");
     expect(result.prompt).toContain("repository-read-only discovery");
-    expect(result.prompt).toContain("4-6 workers for broad cross-layer work");
     expect(result.prompt).toContain("zero workers");
     expect(result.prompt).toContain("Top-level areas: apps, packages");
     expect(decodeFetchExplorationOutput({ decision: "skip", workers: [] })).toEqual({

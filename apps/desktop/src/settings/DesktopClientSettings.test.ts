@@ -123,6 +123,29 @@ describe("DesktopClientSettings", () => {
     ),
   );
 
+  it.effect("persists and reloads the classic sidebar preference", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        const classicSidebarSettings = {
+          ...clientSettings,
+          legacySidebarEnabled: true,
+        };
+
+        yield* settings.set(classicSidebarSettings);
+
+        assert.deepEqual(yield* settings.get, Option.some(classicSidebarSettings));
+        assert.isTrue(
+          (yield* decodeClientSettingsJson(
+            yield* fileSystem.readFileString(environment.clientSettingsPath),
+          )).legacySidebarEnabled,
+        );
+      }),
+    ),
+  );
+
   it.effect("reports the failed client settings write operation and path", () =>
     withClientSettings(
       Effect.gen(function* () {
@@ -204,7 +227,12 @@ describe("DesktopClientSettings", () => {
         yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
         yield* fileSystem.writeFileString(environment.clientSettingsPath, "{}\n");
 
-        assert.deepEqual(yield* settings.get, Option.some(yield* decodeClientSettingsJson("{}")));
+        const persisted = yield* settings.get;
+        assert.deepEqual(persisted, Option.some(yield* decodeClientSettingsJson("{}")));
+        assert.isTrue(Option.isSome(persisted));
+        if (Option.isSome(persisted)) {
+          assert.isFalse(persisted.value.legacySidebarEnabled);
+        }
       }),
     ),
   );

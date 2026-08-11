@@ -118,10 +118,14 @@ selection to Auto.
 
 Fetch is independent of the thread's main model. A Cursor turn can use Claude, Codex, Grok, Cursor,
 or OpenCode workers, and every worker in one run uses the same exact selection and model traits. A
-hidden structured planner uses that selection too. It chooses zero workers for requests that do not
-benefit from repository exploration, or between one and the provider's advertised worker budget.
-The five built-in providers initially advertise eight; T3 Code has no separate global ceiling, so a
-provider or fork may advertise more. A planner failure falls back to one broad repository worker.
+hidden structured planner uses that selection too. It gives the main agent first refusal: simple,
+focused, or briefly investigative requests use zero workers even when the main agent will read the
+repository itself. An explicit request to work alone or avoid Fetch, workers, subagents, or delegation
+also uses zero workers. Fetch runs only when parallel exploration materially helps, and then chooses
+the smallest useful count between one and the provider's advertised worker budget. Three workers is
+not a default. The five built-in providers initially advertise eight; T3 Code has no separate global
+ceiling, so a provider or fork may advertise more. An invalid, failed, or timed-out plan safely skips
+workers and lets the unchanged main turn continue.
 
 Workers are fresh, transient provider sessions rooted at the project or worktree owned by the
 connected environment. They are restricted to read-only exploration, do not receive configured MCP

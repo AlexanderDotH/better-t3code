@@ -15,8 +15,6 @@ import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings"
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
-import LegacyThreadSidebar from "./LegacySidebar";
-import ThreadSidebar from "./Sidebar";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
@@ -37,6 +35,7 @@ import {
   useSidebarVisibility,
 } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { resolveThreadSidebarLayout, ThreadSidebarSelection } from "./ThreadSidebarSelection";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "90px";
 
@@ -130,6 +129,7 @@ function ProjectProjectionRetention() {
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const legacySidebarEnabled = useLegacySidebarEnabled();
+  const threadSidebarLayout = resolveThreadSidebarLayout(legacySidebarEnabled);
   // Settings routes show the settings nav in place of whichever thread
   // sidebar is active.
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -198,6 +198,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         side="left"
         collapsible="offcanvas"
         data-app-sidebar=""
+        data-thread-sidebar-layout={threadSidebarLayout}
         className="border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
         resizable={{
           maxWidth: sidebarMaximumWidth,
@@ -214,10 +215,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
             <SidebarChromeHeader isElectron={isElectron} />
             <SettingsSidebarNav pathname={pathname} />
           </>
-        ) : legacySidebarEnabled ? (
-          <LegacyThreadSidebar />
         ) : (
-          <ThreadSidebar />
+          <ThreadSidebarSelection layout={threadSidebarLayout} />
         )}
         <SidebarRail />
       </Sidebar>

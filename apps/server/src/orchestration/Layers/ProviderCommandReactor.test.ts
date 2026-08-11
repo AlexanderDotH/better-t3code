@@ -1571,12 +1571,12 @@ describe("ProviderCommandReactor", () => {
 
   it.each([
     {
-      label: "planner fallback",
-      warning: "Fetch planning failed; T3 used one broad repository worker.",
-      plannedWorkers: 1,
-      completedWorkers: 1,
-      successfulWorkers: 1,
-      context: "T3 FETCH CONTEXT\nbroad worker evidence",
+      label: "planner failure",
+      warning: "Fetch planning failed; the main agent continued without repository workers.",
+      plannedWorkers: 0,
+      completedWorkers: 0,
+      successfulWorkers: 0,
+      context: undefined,
     },
     {
       label: "partial worker failure",

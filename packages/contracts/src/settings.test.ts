@@ -17,6 +17,7 @@ const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
 const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
+const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 
 describe("ClientSettings word wrap", () => {
@@ -142,6 +143,19 @@ describe("ClientSettings sidebar", () => {
     expect(decodeClientSettingsPatch({ legacySidebarEnabled: true }).legacySidebarEnabled).toBe(
       true,
     );
+    expect(decodeClientSettingsPatch({ legacySidebarEnabled: false }).legacySidebarEnabled).toBe(
+      false,
+    );
+  });
+
+  it("round-trips the classic sidebar preference under the existing settings key", () => {
+    const encoded = encodeClientSettings({
+      ...DEFAULT_CLIENT_SETTINGS,
+      legacySidebarEnabled: true,
+    });
+
+    expect(encoded.legacySidebarEnabled).toBe(true);
+    expect(decodeClientSettings(encoded).legacySidebarEnabled).toBe(true);
   });
 
   it("allows auto-settle by inactivity to be disabled", () => {

@@ -72,6 +72,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "appearance",
   },
   {
+    id: "sidebar-layout",
+    title: "Sidebar layout",
+    to: "/settings/appearance",
+  },
+  {
     id: "interface-font",
     title: "Interface font",
     to: "/settings/appearance",
@@ -175,11 +180,6 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "legacy-token-streaming",
     title: "Stream token by token (legacy)",
-    to: "/settings/general",
-  },
-  {
-    id: "legacy-sidebar",
-    title: "Sidebar (legacy)",
     to: "/settings/general",
   },
   {

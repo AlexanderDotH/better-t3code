@@ -106,7 +106,7 @@ export function ExperimentalSettingsPanelView({
       <SettingsSection title="Experimental">
         <SettingsRow
           title="Fetch"
-          description="Use transient read-only provider sessions to explore repository tasks before the main agent starts."
+          description="Let T3 use transient read-only workers only when parallel repository exploration would materially help; the main agent handles simple or focused requests itself."
           resetAction={
             fetchEnabled !== DEFAULT_CLIENT_SETTINGS.experimentalFetch ? (
               <SettingResetButton label="Fetch" onClick={onResetFetch} />
@@ -123,7 +123,7 @@ export function ExperimentalSettingsPanelView({
 
         <SettingsRow
           title="Fetch model"
-          description="Choose an independent provider and model for Fetch. T3 chooses the worker count dynamically; multiple provider sessions may consume additional provider quota."
+          description="Choose an independent provider and model for Fetch. T3 chooses the smallest useful worker count dynamically; multiple provider sessions may consume additional provider quota."
           status={
             fetchModelWarning ? (
               <span role="alert" className="text-warning">

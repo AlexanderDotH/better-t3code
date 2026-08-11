@@ -31,16 +31,9 @@ export interface FetchExplorationPlanningOutcome {
     | null;
 }
 
-const FALLBACK_PLAN: TextGeneration.FetchExplorationPlan = {
-  decision: "run",
-  workers: [
-    {
-      scope: "Broad repository orientation and implementation-path discovery",
-      questions: [
-        "Which exact files, symbols, conventions, tests, and risks are relevant to the request?",
-      ],
-    },
-  ],
+const SAFE_FALLBACK_PLAN: TextGeneration.FetchExplorationPlan = {
+  decision: "skip",
+  workers: [],
 };
 
 const SOURCE_EXTENSIONS = new Set([
@@ -305,16 +298,16 @@ export const requestFetchExplorationPlan = Effect.fn("FetchExplorationPlanner.re
       Effect.timeoutOption(FETCH_EXPLORATION_PLANNER_TIMEOUT),
     );
     if (Option.isNone(attempted)) {
-      return { plan: FALLBACK_PLAN, fallbackReason: "planner-failed" };
+      return { plan: SAFE_FALLBACK_PLAN, fallbackReason: "planner-failed" };
     }
     if (attempted.value.status === "failure") {
       return {
-        plan: FALLBACK_PLAN,
+        plan: SAFE_FALLBACK_PLAN,
         fallbackReason: attempted.value.modelReason ?? "planner-failed",
       };
     }
     const plan = validateFetchExplorationPlan(attempted.value.plan, input.maxRecommendedWorkers);
-    if (!plan) return { plan: FALLBACK_PLAN, fallbackReason: "invalid-plan" };
+    if (!plan) return { plan: SAFE_FALLBACK_PLAN, fallbackReason: "invalid-plan" };
     return { plan, fallbackReason: null };
   },
 );
@@ -341,7 +334,7 @@ export const planFetchExploration = Effect.fn("FetchExplorationPlanner.plan")(fu
     }).pipe(Effect.provideService(TextGeneration.TextGeneration, textGeneration));
   }).pipe(Effect.timeoutOption(FETCH_EXPLORATION_PLANNER_TIMEOUT));
   return Option.getOrElse(planned, () => ({
-    plan: FALLBACK_PLAN,
+    plan: SAFE_FALLBACK_PLAN,
     fallbackReason: "planner-failed" as const,
   }));
 });

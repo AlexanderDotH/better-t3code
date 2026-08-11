@@ -97,8 +97,13 @@ Luna-low after a typed entitlement or model-unavailable error before workers sta
 The client sends only `fetchMode: "repository-exploration"`. It does not choose worker prompts,
 counts, provider instructions, or filesystem roots. The server builds bounded repository
 orientation and asks the selected text-generation implementation for a structured skip/run plan.
-The planner has 20 seconds and may choose zero workers or one through the provider's advertised
-budget; an invalid, failed, or timed-out plan becomes one broad worker.
+The conservative planner gives the main agent first refusal and chooses zero workers for simple,
+focused, or briefly investigative requests that the main agent can handle with its own tools. It
+also skips when the user explicitly asks the main agent to work alone or avoid Fetch, workers,
+subagents, or delegation. It uses the smallest useful count only when parallel discovery materially
+helps; three workers is not a default. The planner has 20 seconds and may choose one through the
+provider's advertised budget for genuinely independent scopes. An invalid, failed, or timed-out plan
+skips workers.
 
 `FetchWorkerCoordinator` owns one subscription to `ProviderService.streamEvents` and demultiplexes
 registered synthetic worker thread IDs. It starts planned workers concurrently as fresh

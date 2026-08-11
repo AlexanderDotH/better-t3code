@@ -1136,10 +1136,14 @@ const make = Effect.gen(function* () {
         };
       }
       if (planning.fallbackReason === "planner-failed") {
-        warnings.push("Fetch planning failed; T3 used one broad repository worker.");
+        warnings.push(
+          "Fetch planning failed; the main agent continued without repository workers.",
+        );
       }
       if (planning.fallbackReason === "invalid-plan") {
-        warnings.push("Fetch returned an invalid plan; T3 used one broad repository worker.");
+        warnings.push(
+          "Fetch returned an invalid plan; the main agent continued without repository workers.",
+        );
       }
       if (planning.plan.decision === "skip") {
         active.phase = "settled";

@@ -59,10 +59,11 @@ power-user plumbing around the chat.
 > [!NOTE]
 > **Fetch** and **Parallel plan implementation** are experimental, off by default, and currently
 > available in the web and desktop clients. Fetch is independent of the main chat provider: its
-> server-side planner may skip irrelevant requests or launch workers up to the Fetch provider's
-> advertised budget. The built-in providers begin at eight workers, with no application-wide fixed
-> ceiling. Each transient worker can consume additional provider quota. Experimental means “useful
-> enough to keep” and “spicy enough to deserve a switch.”
+> server-side planner leaves simple and focused requests with the main agent, and launches the
+> smallest useful number of workers only when parallel exploration materially helps. The built-in
+> providers currently advertise eight-worker budgets, with no application-wide fixed ceiling; three
+> is not a default. Each transient worker can consume additional provider quota. Experimental means
+> “useful enough to keep” and “spicy enough to deserve a switch.”
 
 Fetch model selection defaults to **Auto**: eligible Codex Spark, then Codex Luna with low
 reasoning, then the environment's text-generation model or first Fetch-capable model. The environment

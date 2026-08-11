@@ -52,6 +52,21 @@ describe("resolveEnvironmentIdentificationMode", () => {
 });
 
 describe("mergeEnvironmentSettings", () => {
+  it("keeps the current sidebar as the default client preference", () => {
+    const settings = mergeEnvironmentSettings(DEFAULT_SERVER_SETTINGS, DEFAULT_CLIENT_SETTINGS);
+
+    expect(settings.legacySidebarEnabled).toBe(false);
+  });
+
+  it("preserves a hydrated classic sidebar preference", () => {
+    const settings = mergeEnvironmentSettings(DEFAULT_SERVER_SETTINGS, {
+      ...DEFAULT_CLIENT_SETTINGS,
+      legacySidebarEnabled: true,
+    });
+
+    expect(settings.legacySidebarEnabled).toBe(true);
+  });
+
   it("combines the selected environment's server settings with client preferences", () => {
     const serverSettings = {
       ...DEFAULT_SERVER_SETTINGS,

@@ -85,4 +85,18 @@ describe("searchSettings", () => {
       targetId: "appearance",
     });
   });
+
+  it("routes Sidebar layout to its stable Appearance control", () => {
+    expect(searchSettings("sidebar layout")).toEqual([
+      {
+        id: "sidebar-layout",
+        title: "Sidebar layout",
+        to: "/settings/appearance",
+      },
+    ]);
+    expect(searchableSetting("sidebar-layout")).toEqual({
+      id: "sidebar-layout",
+      title: "Sidebar layout",
+    });
+  });
 });

@@ -585,16 +585,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     width: 100%;
     max-width: none;
     margin-inline: 0;
+    padding-inline: 0.75rem;
     isolation: auto;
-  }
-
-  .workspace-card-deck__peek .chat-composer-context-strip > div {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  }
-
-  .workspace-card-deck__peek .chat-composer-context-strip > div > :last-child {
-    justify-self: end;
   }
 
   .workspace-card-deck__peek .chat-composer-context-strip::before {
