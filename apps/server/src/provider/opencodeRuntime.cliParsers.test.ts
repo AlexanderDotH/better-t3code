@@ -158,6 +158,31 @@ describe("parseModelsCliOutput", () => {
     NodeAssert.equal(provider.models["gemini-2.5-flash"].name, "Gemini 2.5 Flash");
     NodeAssert.equal(provider.models["gemini-2.5-pro"].id, "gemini-2.5-pro");
   });
+
+  it("keeps a model whose JSON body has a slash and no interior whitespace", () => {
+    // OpenRouter-style: the model id contains a `/` and no string value has a
+    // space, so the JSON body line itself matches the slug regex. It must still
+    // be treated as the body of the preceding slug, not a new slug.
+    const stdout = [
+      "openrouter/qwen/qwen3-coder",
+      JSON.stringify({
+        id: "qwen/qwen3-coder",
+        providerID: "openrouter",
+        name: "qwen3-coder",
+        status: "active",
+      }),
+    ].join("\n");
+
+    const result = parseModelsCliOutput(stdout);
+    NodeAssert.equal(result.providers.size, 1);
+    NodeAssert.deepEqual([...result.connected], ["openrouter"]);
+    const provider = result.providers.get("openrouter")!;
+    NodeAssert.ok(provider);
+    const model = provider.models["qwen/qwen3-coder"]!;
+    NodeAssert.ok(model);
+    NodeAssert.equal(model.id, "qwen/qwen3-coder");
+    NodeAssert.equal(model.providerID, "openrouter");
+  });
 });
 
 describe("parseAgentListCliOutput", () => {
@@ -274,6 +299,14 @@ describe("parseOpenCodeModelSlug", () => {
     NodeAssert.ok(parsed);
     NodeAssert.equal(parsed?.providerID, "google");
     NodeAssert.equal(parsed?.modelID, "gemini-2.5-flash");
+  });
+
+  it("keeps slash-containing model ids", () => {
+    const parsed = parseOpenCodeModelSlug("openrouter/qwen/qwen3-coder");
+    NodeAssert.deepEqual(parsed, {
+      providerID: "openrouter",
+      modelID: "qwen/qwen3-coder",
+    });
   });
 
   it("rejects malformed model slugs", () => {

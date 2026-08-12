@@ -9,7 +9,16 @@ import {
   HistoryIcon,
   MonitorIcon,
 } from "lucide-react";
-import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { cn } from "../lib/utils";
@@ -222,16 +231,20 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
 /**
  * Collapse the strip's labels to icons only when the text no longer fits.
  *
- * Hidden labels stay measurable (they collapse to invisible absolute boxes,
- * which keep their natural width), so the required width can be recomputed in
- * either state on every pass - no remembered widths that could go stale or
- * latch the strip compact. A small hysteresis keeps the boundary from
- * flapping between states.
+ * Hidden labels stay measurable because their inner text keeps its natural
+ * width while the outer layout box collapses. This lets every pass recompute
+ * the expanded width without remembered values that could go stale or latch
+ * the strip compact. A small hysteresis keeps the boundary from flapping.
  */
 const COMPACT_EXPAND_HYSTERESIS_PX = 16;
+const COMPOSER_CONTEXT_MOTION_DURATION_MS = 180;
+const COMPOSER_CONTEXT_MOTION_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
+const COMPOSER_CONTEXT_CONTROL_SELECTOR = "[data-composer-context-control]";
 
 function useLabelsOverflow(element: HTMLDivElement | null): boolean {
   const [overflows, setOverflows] = useState(false);
+  const pendingControlRectsRef = useRef<Map<HTMLElement, DOMRect> | null>(null);
+  const controlAnimationsRef = useRef(new Map<HTMLElement, Animation>());
   // A render-synced mirror instead of useEffectEvent: the compiler memoizes
   // the event callback, which left observers reading the first render's null
   // element forever.
@@ -245,7 +258,7 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
     if (available === 0) return;
     // flex-1 stretches the groups to fill the strip, so their own boxes always
     // measure "full". Sum the laid-out content instead, skipping hidden form
-    // artifacts and absolutely-positioned nodes (the compact-hidden labels).
+    // artifacts and other out-of-flow nodes.
     const contentWidth = (parent: Element): number => {
       const gap = Number.parseFloat(getComputedStyle(parent).columnGap) || 0;
       let width = 0;
@@ -287,8 +300,70 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
         needed += Math.max(0, textWidth - label.clientWidth);
       }
     }
-    setOverflows(compact ? needed > available - COMPACT_EXPAND_HYSTERESIS_PX : needed > available);
+    const nextOverflows = compact
+      ? needed > available - COMPACT_EXPAND_HYSTERESIS_PX
+      : needed > available;
+    if (nextOverflows !== compact) {
+      pendingControlRectsRef.current = new Map(
+        Array.from(current.querySelectorAll<HTMLElement>(COMPOSER_CONTEXT_CONTROL_SELECTOR)).map(
+          (control) => [control, control.getBoundingClientRect()],
+        ),
+      );
+    }
+    setOverflows(nextOverflows);
   }, []);
+
+  useLayoutEffect(() => {
+    const previousRects = pendingControlRectsRef.current;
+    if (!previousRects) return;
+    pendingControlRectsRef.current = null;
+
+    for (const animation of controlAnimationsRef.current.values()) {
+      animation.cancel();
+    }
+    controlAnimationsRef.current.clear();
+
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+    for (const [control, previousRect] of previousRects) {
+      if (!control.isConnected) continue;
+      const nextRect = control.getBoundingClientRect();
+      const deltaX = previousRect.left - nextRect.left;
+      const deltaY = previousRect.top - nextRect.top;
+      if (Math.abs(deltaX) < 0.5 && Math.abs(deltaY) < 0.5) continue;
+
+      const animation = control.animate(
+        [
+          { transform: `translate3d(${deltaX}px, ${deltaY}px, 0)` },
+          { transform: "translate3d(0, 0, 0)" },
+        ],
+        {
+          duration: COMPOSER_CONTEXT_MOTION_DURATION_MS,
+          easing: COMPOSER_CONTEXT_MOTION_EASING,
+          fill: "backwards",
+        },
+      );
+      controlAnimationsRef.current.set(control, animation);
+      animation.addEventListener(
+        "finish",
+        () => {
+          if (controlAnimationsRef.current.get(control) === animation) {
+            controlAnimationsRef.current.delete(control);
+          }
+        },
+        { once: true },
+      );
+    }
+  }, [overflows]);
+
+  useEffect(
+    () => () => {
+      for (const animation of controlAnimationsRef.current.values()) {
+        animation.cancel();
+      }
+    },
+    [],
+  );
 
   // Label widths can change without the strip box moving (font family or
   // size preferences), so re-measure on every render as well as on resize
@@ -411,7 +486,7 @@ export const BranchToolbar = memo(function BranchToolbar({
       ref={setStripElement}
       data-compact={labelsOverflow ? "" : undefined}
       className={cn(
-        "chat-composer-context-strip group/composer-context flex items-center gap-2",
+        "chat-composer-context-strip group/composer-context flex items-center gap-2 overflow-x-clip overflow-y-visible",
         cardPeek
           ? "mx-0 w-full max-w-none px-0"
           : "mx-auto w-[calc(100%-2.75rem)] max-w-[calc(48rem-2.75rem)] ps-1 pe-2",
@@ -447,7 +522,11 @@ export const BranchToolbar = memo(function BranchToolbar({
                 {...(showEnvironmentPicker && onEnvironmentChange ? { onEnvironmentChange } : {})}
               />
               {showGitControls ? (
-                <Separator orientation="vertical" className="mx-0.5 h-3.5!" />
+                <Separator
+                  orientation="vertical"
+                  className="mx-0.5 h-3.5!"
+                  data-composer-context-control
+                />
               ) : null}
             </>
           )}
