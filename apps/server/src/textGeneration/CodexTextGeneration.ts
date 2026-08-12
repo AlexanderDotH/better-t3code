@@ -1,7 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -17,8 +16,6 @@ import {
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
-import { resolveAttachmentPath } from "../attachmentStore.ts";
-import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import { codexExecLaunchArgs, resolveCodexLaunchArgs } from "../provider/Layers/codexLaunchArgs.ts";
 import * as TextGeneration from "./TextGeneration.ts";
@@ -74,14 +71,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
   environment?: NodeJS.ProcessEnv,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const serverConfig = yield* Effect.service(ServerConfig.ServerConfig);
   const resolvedEnvironment = environment ?? process.env;
-
-  type MaterializedImageAttachments = {
-    readonly imagePaths: ReadonlyArray<string>;
-  };
 
   const readStreamAsString = <E>(
     operation: string,
@@ -145,50 +136,11 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       ),
     );
 
-  const materializeImageAttachments = Effect.fn("materializeImageAttachments")(function* (
-    _operation:
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadTitle"
-      | "translateTranscriptToEnglish"
-      | "improvePrompt"
-      | "reviewPlanParallelism"
-      | "planFetchExploration",
-    attachments: TextGeneration.BranchNameGenerationInput["attachments"],
-  ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> {
-    if (!attachments || attachments.length === 0) {
-      return { imagePaths: [] };
-    }
-
-    const imagePaths: string[] = [];
-    for (const attachment of attachments) {
-      if (attachment.type !== "image") {
-        continue;
-      }
-
-      const resolvedPath = resolveAttachmentPath({
-        attachmentsDir: serverConfig.attachmentsDir,
-        attachment,
-      });
-      if (!resolvedPath || !path.isAbsolute(resolvedPath)) {
-        continue;
-      }
-      const fileInfo = yield* fileSystem.stat(resolvedPath).pipe(Effect.orElseSucceed(() => null));
-      if (!fileInfo || fileInfo.type !== "File") {
-        continue;
-      }
-      imagePaths.push(resolvedPath);
-    }
-    return { imagePaths };
-  });
-
   const runCodexJson = Effect.fn("runCodexJson")(function* <S extends Schema.Top>({
     operation,
     cwd,
     prompt,
     outputSchemaJson,
-    imagePaths = [],
     cleanupPaths = [],
     modelSelection,
   }: {
@@ -204,7 +156,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
-    imagePaths?: ReadonlyArray<string>;
     cleanupPaths?: ReadonlyArray<string>;
     modelSelection: ModelSelection;
   }): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
@@ -241,7 +192,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           schemaPath,
           "--output-last-message",
           outputPath,
-          ...imagePaths.flatMap((imagePath) => ["--image", imagePath]),
           "-",
         ]),
         { env: resolvedEnvironment },
@@ -398,10 +348,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
 
   const generateBranchName: TextGeneration.TextGeneration["Service"]["generateBranchName"] =
     Effect.fn("CodexTextGeneration.generateBranchName")(function* (input) {
-      const { imagePaths } = yield* materializeImageAttachments(
-        "generateBranchName",
-        input.attachments,
-      );
       const { prompt, outputSchema } = buildBranchNamePrompt({
         message: input.message,
         attachments: input.attachments,
@@ -412,7 +358,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         cwd: input.cwd,
         prompt,
         outputSchemaJson: outputSchema,
-        imagePaths,
         modelSelection: input.modelSelection,
       });
 
@@ -423,10 +368,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
 
   const generateThreadTitle: TextGeneration.TextGeneration["Service"]["generateThreadTitle"] =
     Effect.fn("CodexTextGeneration.generateThreadTitle")(function* (input) {
-      const { imagePaths } = yield* materializeImageAttachments(
-        "generateThreadTitle",
-        input.attachments,
-      );
       const { prompt, outputSchema } = buildThreadTitlePrompt({
         message: input.message,
         previousTitle: input.previousTitle,
@@ -438,7 +379,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         cwd: input.cwd,
         prompt,
         outputSchemaJson: outputSchema,
-        imagePaths,
         modelSelection: input.modelSelection,
       });
 

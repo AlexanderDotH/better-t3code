@@ -265,6 +265,60 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
     ),
   );
 
+  it.effect("keeps naming-job image attachments as metadata-only prompt context", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        const attachments = [
+          {
+            type: "image" as const,
+            id: "naming-job-image-attachment",
+            name: "bug.png",
+            mimeType: "image/png",
+            sizeBytes: 5,
+          },
+        ];
+
+        runtimeMock.state.promptResult = {
+          data: {
+            parts: [{ type: "text", text: JSON.stringify({ branch: "fix/ui-regression" }) }],
+          },
+        };
+        yield* textGeneration.generateBranchName({
+          cwd: process.cwd(),
+          message: "Fix layout bug from screenshot.",
+          attachments,
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
+
+        expect(runtimeMock.state.promptCalls.at(-1)?.parts).toEqual([
+          {
+            type: "text",
+            text: expect.stringContaining("Attachment metadata:"),
+          },
+        ]);
+
+        runtimeMock.state.promptResult = {
+          data: {
+            parts: [{ type: "text", text: JSON.stringify({ title: "Fix UI regression" }) }],
+          },
+        };
+        yield* textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Fix layout bug from screenshot.",
+          attachments,
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
+
+        expect(runtimeMock.state.promptCalls.at(-1)?.parts).toEqual([
+          {
+            type: "text",
+            text: expect.stringContaining("Attachment metadata:"),
+          },
+        ]);
+      }),
+    ),
+  );
+
   it.effect("starts a new server after the warm server idles out", () =>
     withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {

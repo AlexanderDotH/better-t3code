@@ -50,6 +50,7 @@ export interface PrContentGenerationResult {
 export interface BranchNameGenerationInput {
   cwd: string;
   message: string;
+  /** Metadata-only context. Naming providers must not load or attach the binary payload. */
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;
@@ -64,6 +65,7 @@ export interface ThreadTitleGenerationInput {
   message: string;
   /** Present when replacing an existing title from the current thread history. */
   previousTitle?: string | undefined;
+  /** Metadata-only context. Naming providers must not load or attach the binary payload. */
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;

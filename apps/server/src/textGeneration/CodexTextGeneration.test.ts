@@ -31,7 +31,6 @@ function makeFakeCodexBinary(
     output: string;
     exitCode?: number;
     stderr?: string;
-    requireImage?: boolean;
     requireServiceTier?: string;
     requireReasoningEffort?: string;
     forbidReasoningEffort?: boolean;
@@ -54,18 +53,9 @@ function makeFakeCodexBinary(
         "#!/bin/sh",
         'original_args="$*"',
         'output_path=""',
-        'seen_image="0"',
         'seen_service_tier=""',
         'seen_reasoning_effort=""',
         "while [ $# -gt 0 ]; do",
-        '  if [ "$1" = "--image" ]; then',
-        "    shift",
-        '    if [ -n "$1" ]; then',
-        '      seen_image="1"',
-        "    fi",
-        "    shift",
-        "    continue",
-        "  fi",
         '  if [ "$1" = "--config" ]; then',
         "    shift",
         '    case "$1" in',
@@ -104,14 +94,6 @@ function makeFakeCodexBinary(
               `  printf "%s\\n" "forbidden arg: ${input.forbidArg}" >&2`,
               `  exit 9`,
               "esac",
-            ]
-          : []),
-        ...(input.requireImage
-          ? [
-              'if [ "$seen_image" != "1" ]; then',
-              '  printf "%s\\n" "missing --image input" >&2',
-              `  exit 2`,
-              "fi",
             ]
           : []),
         ...(input.requireServiceTier
@@ -181,7 +163,6 @@ function withFakeCodexEnv<A, E, R>(
     output: string;
     exitCode?: number;
     stderr?: string;
-    requireImage?: boolean;
     requireServiceTier?: string;
     requireReasoningEffort?: string;
     forbidReasoningEffort?: boolean;
@@ -589,13 +570,13 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("passes image attachments through as codex image inputs", () =>
+  it.effect("keeps branch-name image attachments as metadata without passing --image", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
           branch: "fix/ui-regression",
         }),
-        requireImage: true,
+        forbidArg: "--image",
         stdinMustContain: "Attachment metadata:",
       },
       (textGeneration) =>
@@ -628,94 +609,73 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("resolves persisted attachment ids to files for codex image inputs", () =>
+  it.effect("keeps thread-title image attachments as metadata without passing --image", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
-          branch: "fix/ui-regression",
+          title: "Fix UI regression",
         }),
-        requireImage: true,
+        forbidArg: "--image",
+        stdinMustContain: "Attachment metadata:",
       },
       (textGeneration) =>
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const { attachmentsDir } = yield* ServerConfig.ServerConfig;
-          const attachmentId = "thread-1-attachment";
-          const imagePath = path.join(attachmentsDir, `${attachmentId}.png`);
+          const attachmentId = "thread-title-image-attachment";
+          const attachmentPath = path.join(attachmentsDir, `${attachmentId}.png`);
           yield* fs.makeDirectory(attachmentsDir, { recursive: true });
-          yield* fs.writeFile(imagePath, Buffer.from("hello"));
+          yield* fs.writeFile(attachmentPath, Buffer.from("hello"));
 
-          const generated = yield* textGeneration
-            .generateBranchName({
-              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-              cwd: process.cwd(),
-              message: "Fix layout bug from screenshot.",
-              attachments: [
-                {
-                  type: "image",
-                  id: attachmentId,
-                  name: "bug.png",
-                  mimeType: "image/png",
-                  sizeBytes: 5,
-                },
-              ],
-            })
-            .pipe(
-              Effect.tap(() =>
-                fs.stat(imagePath).pipe(
-                  Effect.map((fileInfo) => {
-                    expect(fileInfo.type).toBe("File");
-                  }),
-                ),
-              ),
-              Effect.ensuring(fs.remove(imagePath).pipe(Effect.catch(() => Effect.void))),
-            );
+          const generated = yield* textGeneration.generateThreadTitle({
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            cwd: process.cwd(),
+            message: "Fix layout bug from screenshot.",
+            attachments: [
+              {
+                type: "image",
+                id: attachmentId,
+                name: "bug.png",
+                mimeType: "image/png",
+                sizeBytes: 5,
+              },
+            ],
+          });
 
-          expect(generated.branch).toBe("fix/ui-regression");
+          expect(generated.title).toBe("Fix UI regression");
         }),
     ),
   );
 
-  it.effect("ignores missing attachment ids for codex image inputs", () =>
+  it.effect("does not read missing attachment files for metadata-only naming prompts", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
           branch: "fix/ui-regression",
         }),
-        requireImage: true,
+        forbidArg: "--image",
+        stdinMustContain: "Attachment metadata:",
       },
       (textGeneration) =>
         Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const { attachmentsDir } = yield* ServerConfig.ServerConfig;
           const missingAttachmentId = "thread-missing-attachment";
-          const missingPath = path.join(attachmentsDir, `${missingAttachmentId}.png`);
-          yield* fs.remove(missingPath).pipe(Effect.catch(() => Effect.void));
+          const generated = yield* textGeneration.generateBranchName({
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            cwd: process.cwd(),
+            message: "Fix layout bug from screenshot.",
+            attachments: [
+              {
+                type: "image",
+                id: missingAttachmentId,
+                name: "outside.png",
+                mimeType: "image/png",
+                sizeBytes: 5,
+              },
+            ],
+          });
 
-          const result = yield* textGeneration
-            .generateBranchName({
-              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-              cwd: process.cwd(),
-              message: "Fix layout bug from screenshot.",
-              attachments: [
-                {
-                  type: "image",
-                  id: missingAttachmentId,
-                  name: "outside.png",
-                  mimeType: "image/png",
-                  sizeBytes: 5,
-                },
-              ],
-            })
-            .pipe(Effect.result);
-
-          expect(Result.isFailure(result)).toBe(true);
-          if (Result.isFailure(result)) {
-            expect(result.failure).toBeInstanceOf(TextGenerationError);
-            expect(result.failure.message).toContain("missing --image input");
-          }
+          expect(generated.branch).toBe("fix/ui-regression");
         }),
     ),
   );

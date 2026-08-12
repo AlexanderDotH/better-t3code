@@ -164,6 +164,8 @@ describe("buildBranchNamePrompt", () => {
     expect(result.prompt).toContain("screenshot.png");
     expect(result.prompt).toContain("image/png");
     expect(result.prompt).toContain("12345 bytes");
+    expect(result.prompt).toContain("Attachment contents are unavailable");
+    expect(result.prompt).not.toContain("use them as primary context");
   });
 });
 
@@ -208,6 +210,8 @@ describe("buildThreadTitlePrompt", () => {
     expect(result.prompt).toContain("thread.png");
     expect(result.prompt).toContain("image/png");
     expect(result.prompt).toContain("67890 bytes");
+    expect(result.prompt).toContain("Attachment contents are unavailable");
+    expect(result.prompt).not.toContain("Use attached images as primary context");
   });
 
   it("regenerates from recent thread contents and identifies the previous title", () => {

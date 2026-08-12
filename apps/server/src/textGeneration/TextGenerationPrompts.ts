@@ -190,7 +190,7 @@ export function buildBranchNamePrompt(input: BranchNamePromptInput) {
       "Branch should describe the requested work from the user message.",
       "Keep it short and specific (2-6 words).",
       "Use plain words only, no issue prefixes and no punctuation-heavy text.",
-      "If images are attached, use them as primary context for visual/UI issues.",
+      "Attachment contents are unavailable; use only the listed filename, MIME type, and size as supporting context.",
     ],
     message: input.message,
     attachments: input.attachments,
@@ -237,8 +237,8 @@ Editorial rules:
 - Do not claim the work is complete.
 - Do not copy and truncate the user's message.
 - Avoid project names already visible in the UI, quotes, labels, filler, and trailing punctuation.
-- Use attached images as primary context for UI issues.
-- When a URL or attachment is the only source of the subject, use available tools to inspect it. If it cannot be resolved, remain accurate rather than guessing.`;
+- Attachment contents are unavailable. Use only listed metadata as supporting context, and do not infer visual details.
+- When a URL is the only source of the subject, use available tools to inspect it. If it cannot be resolved, remain accurate rather than guessing.`;
 
 function regenerateThreadTitlePrompt(previousTitle: string): string {
   return `Regenerate the title for an existing T3 Code thread so the user can recognize it weeks later.
@@ -264,8 +264,8 @@ Editorial rules:
 - Do not claim the work is complete.
 - Do not copy and truncate a thread message.
 - Avoid project names already visible in the UI, PR numbers, quotes, labels, filler, and trailing punctuation.
-- Use attached images as primary context for UI issues.
-- When a URL or attachment is the only source of the subject, use available tools to inspect it. If it cannot be resolved, remain accurate rather than guessing.
+- Attachment contents are unavailable. Use only listed metadata as supporting context, and do not infer visual details.
+- When a URL is the only source of the subject, use available tools to inspect it. If it cannot be resolved, remain accurate rather than guessing.
 - Return a meaningfully improved title, not a cosmetic paraphrase of the previous title.
 
 Examples of the distinction:

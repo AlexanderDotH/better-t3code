@@ -8,7 +8,6 @@ import * as Semaphore from "effect/Semaphore";
 import {
   NonNegativeInt,
   TextGenerationError,
-  type ChatAttachment,
   type ModelSelection,
   type OpenCodeSettings,
 } from "@t3tools/contracts";
@@ -16,8 +15,6 @@ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shar
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
-import * as ServerConfig from "../config.ts";
-import { resolveAttachmentPath } from "../attachmentStore.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -203,7 +200,6 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
   openCodeSettings: OpenCodeSettings,
   environment?: NodeJS.ProcessEnv,
 ) {
-  const serverConfig = yield* ServerConfig.ServerConfig;
   const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
   const resolvedEnvironment = environment ?? process.env;
   const idleFiberScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
@@ -378,7 +374,6 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     readonly prompt: string;
     readonly outputSchemaJson: S;
     readonly modelSelection: ModelSelection;
-    readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
   }) {
     const parsedModel = OpenCodeRuntime.parseOpenCodeModelSlug(input.modelSelection.model);
     if (!parsedModel) {
@@ -387,12 +382,6 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         detail: OPENCODE_MODEL_SELECTION_FORMAT_ERROR,
       });
     }
-
-    const fileParts = OpenCodeRuntime.toOpenCodeFileParts({
-      attachments: input.attachments,
-      resolveAttachmentPath: (attachment) =>
-        resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
-    });
 
     const runAgainstServer = Effect.fn("runOpenCodeJson.runAgainstServer")(
       function* (server: Pick<OpenCodeRuntime.OpenCodeServerConnection, "url">) {
@@ -440,7 +429,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
                 model: parsedModel,
                 ...(selectedAgent ? { agent: selectedAgent } : {}),
                 ...(selectedVariant ? { variant: selectedVariant } : {}),
-                parts: [{ type: "text", text: input.prompt }, ...fileParts],
+                parts: [{ type: "text", text: input.prompt }],
               },
               { signal },
             ),
@@ -603,7 +592,6 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         prompt,
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,
-        attachments: input.attachments,
       });
 
       return {
@@ -624,7 +612,6 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         prompt,
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,
-        attachments: input.attachments,
       });
 
       return {
