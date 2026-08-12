@@ -309,3 +309,75 @@ CI-equivalent gates to run again. Promotion is complete only when `origin/main` 
 commit, the recorded upstream commit is a merge parent, every known custom branch tip is an
 ancestor, the worktree is clean, CI is green, and the installed user-local AppImage hash matches the
 built artifact without restarting the running application.
+
+## August 12, 2026 synchronization
+
+This synchronization started from `integration/upstream-20260810` at
+`ea5c9472e9bc430bf6a52c542c38a5b8ebaf1d4f`. At that point the fork's published `main` was
+`8288b6e78c8c0a6f8ca44c2b9ab25879d8b212c7`, the previous upstream integration point was
+`a7b0366cbe1e9eabc9e37eb079a38f6b6691f999`, and the live comparison contained 52 fork-side
+commits and 41 upstream-only commits.
+
+Before staging any work, the dirty checkout was captured under
+`/home/alex/.local/state/t3code-repo-rescue/2026-08-12-clean-fork`. The verified rescue contains an
+all-refs bundle, tracked binary and staged patches, a NUL-safe manifest and gzip archive for the
+five untracked files, repository-state manifests, and SHA-256 checksums. A disposable clone restored
+the tracked and untracked work successfully. The rescue directory is retained permanently.
+
+The three initially uncommitted feature slices survive as separate commits:
+
+| Commit                                     | Preserved behavior                                       |
+| ------------------------------------------ | -------------------------------------------------------- |
+| `aa15c27aaa7f1618ed0d011a51ff266b1016462a` | Metadata-only naming attachments                         |
+| `a3ebea155aeda5ae288af9c22e9671c29b517eb3` | Strictly serial, shell-free repository Fetch workers     |
+| `2b5d44d58122ec250879458486ccb446e9099a2b` | Per-project checkpoint capture controls and migration 51 |
+
+`upstream/main` was fetched by its exact destination ref and verified against `git ls-remote` at
+`8d24b5131f439d11876815996df41a57d791d3ad`. After the feature commits, divergence was 55 fork-side
+commits and 41 upstream-only commits. The ordinary no-fast-forward upstream merge is
+`eb0652d3e67dd1b2049543955509be0f9d93d1c9`; its second parent is the pinned upstream SHA.
+
+The merge produced ten textual conflicts. They were resolved semantically as follows:
+
+- Mobile `ThreadComposer.tsx` keeps upstream's stabilized editor focus and native iOS settings menu
+  while retaining filtered provider selection, parallel plan implementation, fast mode,
+  cooperative abort, and exact-runtime force stop.
+- `opencodeRuntime.ts` and its parser tests accept slash-containing model identifiers by splitting
+  only at the first slash and reject JSON protocol lines, while retaining Gemini-via-OpenCode,
+  provider switching, runtime rebinding, MCP state, and existing whitespace compatibility.
+- `BranchToolbar.tsx` and `BranchToolbarBranchSelector.tsx` combine upstream's resize-animation
+  cleanup with the fork's simplified status, environment/provider controls, card sizing, and Git
+  workbench interactions.
+- `RightPanelTabs.tsx` keeps upstream's keyboard-aware empty state without restoring the removed
+  Agents sidebar; lifecycle pills, History, transcript dialog, Git, and MCP surfaces remain.
+- `Sidebar.tsx` combines Copy Thread ID, Shift-click new thread, and persisted shelf state with
+  Older Projects, the exact seven-day boundary, layout and project settings, and attention-aware
+  ordering.
+- `ComposerPrimaryActions.tsx` and its tests retain upstream's theme-aware environment artwork plus
+  Fetch, parallel plan implementation, fast mode, reasoning controls, and abort escalation.
+- `pnpm-lock.yaml` was regenerated with Node 24.18.1 and pnpm 11.10.0 after resolving package
+  manifests; it was not hand-merged.
+
+Migration IDs 1 through 44 remain immutable, compatibility migrations 45 through 50 keep their
+existing identity and order, and `051_ProjectionProjectCheckpointsEnabled` is appended with
+`NOT NULL DEFAULT 1`. Project-created, project-updated, and snapshot decoding defaults remain
+`true`, preserving old events, cached snapshots, old clients, and mixed-version connections.
+
+Focused validation before recording the merge covered 128 naming and Fetch tests, 285 checkpoint
+and compatibility tests, 291 upstream-conflict regression tests, all five targeted package
+typechecks, lockfile policy validation, conflict-marker and whitespace checks, and a production web
+build. The conflict regression set included OpenCode parsing, toolbar/composer/sidebar/right-panel
+logic, subagent UI, and affected mobile thread behavior. The remaining promotion gates are run on
+the recorded tree before the fork-only pull request is frozen.
+
+The local Git configuration keeps upstream reads available but hard-disables upstream writes:
+
+```text
+remote.upstream.url = https://github.com/pingdotgg/t3code.git
+remote.upstream.pushurl = disabled://github.com/pingdotgg/t3code.git
+remote.pushDefault = origin
+```
+
+All pushes name `origin` and their destination ref explicitly. No upstream branch, pull request, or
+other upstream state is written. Existing remote archive branches remain intentionally retained;
+only fully merged local branches are removed after fork `main` promotion and both CI gates.
