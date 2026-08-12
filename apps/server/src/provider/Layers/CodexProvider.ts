@@ -50,7 +50,7 @@ const CODEX_PRESENTATION = {
   },
   fetchWorkers: {
     maxRecommendedWorkers: 8,
-    commandExecutionPolicy: "read-only-sandbox",
+    commandExecutionPolicy: "deny",
   },
 } as const;
 

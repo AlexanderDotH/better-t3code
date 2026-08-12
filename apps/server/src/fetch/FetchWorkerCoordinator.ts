@@ -29,6 +29,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
+import * as Predicate from "effect/Predicate";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -162,6 +163,8 @@ Return concise exploratory evidence with exact paths, symbols, existing conventi
 Policy:
 - Do not edit files, apply patches, create files, or change repository state.
 - Do not run mutating commands or make external changes.
+- Use the authenticated T3 workspace_context tool for batched repository searches and bounded reads when it is available. Otherwise use only provider-native bounded file, path, and text-search tools.
+- Do not execute shell or terminal commands, including read-only Git commands, and do not use general-purpose code execution tools to invoke them indirectly.
 - Do not ask the user questions; work only from the supplied request and repository.
 - Do not start or delegate to nested agents.
 - Do not implement the requested change. Return discovery findings only.`;
@@ -174,16 +177,6 @@ export function fetchApprovalAction(input: {
 }): FetchApprovalAction {
   if (input.requestType === "tool_user_input") return "fail-worker";
   if (input.requestType === "file_read_approval") return "accept";
-  const isCommand =
-    input.requestType === "command_execution_approval" ||
-    input.requestType === "exec_command_approval";
-  if (
-    isCommand &&
-    input.providerDriver === ProviderDriverKind.make("codex") &&
-    input.commandExecutionPolicy === "read-only-sandbox"
-  ) {
-    return "accept";
-  }
   return "decline";
 }
 
@@ -385,16 +378,62 @@ function isNestedAgentEvent(event: ProviderRuntimeEvent): boolean {
   );
 }
 
-function isMutationEvent(event: ProviderRuntimeEvent, worker: ActiveWorker): boolean {
-  return (
-    event.type === "files.persisted" ||
-    ((event.type === "item.started" || event.type === "item.updated") &&
-      (event.payload.itemType === "file_change" ||
-        event.payload.itemType === "dynamic_tool_call" ||
-        (event.payload.itemType === "command_execution" &&
-          (worker.run.providerDriver !== ProviderDriverKind.make("codex") ||
-            worker.run.commandExecutionPolicy !== "read-only-sandbox"))))
+const BOUNDED_READ_TOOL_NAMES = new Set(["read", "grep", "glob", "list", "search", "find"]);
+
+function isProviderNativeBoundedReadEvent(
+  event: Extract<
+    ProviderRuntimeEvent,
+    { type: "item.started" | "item.updated" | "item.completed" }
+  >,
+): boolean {
+  if (event.payload.itemType !== "dynamic_tool_call") return false;
+  if (!Predicate.isObject(event.payload.data)) return false;
+  const nestedItem = Predicate.isObject(event.payload.data.item)
+    ? event.payload.data.item
+    : undefined;
+  const candidates = [
+    event.payload.data.toolName,
+    event.payload.data.tool,
+    event.payload.data.kind,
+    nestedItem?.toolName,
+    nestedItem?.tool,
+    nestedItem?.kind,
+  ];
+  return candidates.some(
+    (candidate) =>
+      Predicate.isString(candidate) && BOUNDED_READ_TOOL_NAMES.has(candidate.trim().toLowerCase()),
   );
+}
+
+function isAuthenticatedWorkspaceContextEvent(
+  event: Extract<
+    ProviderRuntimeEvent,
+    { type: "item.started" | "item.updated" | "item.completed" }
+  >,
+): boolean {
+  if (event.payload.itemType !== "mcp_tool_call") return false;
+  if (!Predicate.isObject(event.payload.data)) return false;
+  const item = Predicate.isObject(event.payload.data.item) ? event.payload.data.item : undefined;
+  const server = Predicate.isString(item?.server) ? item.server.trim().toLowerCase() : undefined;
+  const tool = Predicate.isString(item?.tool) ? item.tool.trim().toLowerCase() : undefined;
+  return server === "t3-code" && tool === "workspace_context";
+}
+
+function isMutationEvent(event: ProviderRuntimeEvent): boolean {
+  if (event.type === "files.persisted") return true;
+  if (
+    event.type !== "item.started" &&
+    event.type !== "item.updated" &&
+    event.type !== "item.completed"
+  ) {
+    return false;
+  }
+  if (event.payload.itemType === "file_change") return true;
+  if (event.payload.itemType === "command_execution") return true;
+  if (event.payload.itemType === "mcp_tool_call") {
+    return !isAuthenticatedWorkspaceContextEvent(event);
+  }
+  return event.payload.itemType === "dynamic_tool_call" && !isProviderNativeBoundedReadEvent(event);
 }
 
 const make = Effect.gen(function* () {
@@ -659,7 +698,7 @@ const make = Effect.gen(function* () {
       );
       return;
     }
-    if (isMutationEvent(event, worker)) {
+    if (isMutationEvent(event)) {
       yield* failForPolicyViolation(worker, "A mutation-capable Fetch tool was blocked.");
       yield* appendActivity(worker, event).pipe(
         Effect.catchCause((cause) =>
@@ -918,6 +957,15 @@ const make = Effect.gen(function* () {
   const runWorkerLifecycle = Effect.fn("FetchWorkerCoordinator.runWorkerLifecycle")(function* (
     worker: ActiveWorker,
   ) {
+    if (worker.run.cancelled) {
+      return {
+        index: worker.index,
+        scope: worker.assignment.scope,
+        status: "interrupted",
+        findings: worker.findings,
+        detail: "Fetch was cancelled before this worker started.",
+      } satisfies FetchWorkerOutcome;
+    }
     const prompt = buildFetchWorkerPrompt({
       userRequest: worker.run.input.userRequest,
       scope: worker.assignment.scope,
@@ -925,18 +973,22 @@ const make = Effect.gen(function* () {
     });
     worker.sessionStarted = true;
     const started = yield* Effect.exit(
-      providerService.startTransientSession(worker.syntheticThreadId, {
-        threadId: worker.syntheticThreadId,
-        purpose: "fetch-worker",
-        runtimeSessionId: worker.runtimeSessionId,
-        providerInstanceId: worker.run.selection.instanceId,
-        cwd: worker.run.input.cwd,
-        modelSelection: worker.run.selection,
-        freshSession: true,
-        approvalPolicy: "on-request",
-        sandboxMode: "read-only",
-        runtimeMode: "approval-required",
-      }),
+      providerService.startTransientSession(
+        worker.syntheticThreadId,
+        {
+          threadId: worker.syntheticThreadId,
+          purpose: "fetch-worker",
+          runtimeSessionId: worker.runtimeSessionId,
+          providerInstanceId: worker.run.selection.instanceId,
+          cwd: worker.run.input.cwd,
+          modelSelection: worker.run.selection,
+          freshSession: true,
+          approvalPolicy: "on-request",
+          sandboxMode: "read-only",
+          runtimeMode: "approval-required",
+        },
+        { workspaceContextThreadId: worker.run.input.threadId },
+      ),
     );
     if (Exit.isFailure(started)) {
       const failed: FetchWorkerOutcome = {
@@ -1167,7 +1219,7 @@ const make = Effect.gen(function* () {
         ),
       );
       const outcomes = Array.from(
-        yield* Effect.forEach(active.workers, runWorker, { concurrency: "unbounded" }),
+        yield* Effect.forEach(active.workers, runWorker, { concurrency: 1 }),
       );
       active.phase = "settled";
       if (active.cancelled) {

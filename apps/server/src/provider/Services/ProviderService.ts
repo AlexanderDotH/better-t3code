@@ -48,6 +48,15 @@ export interface ProviderTransientSessionTarget {
   readonly providerInstanceId: ProviderInstanceId;
 }
 
+export interface ProviderTransientSessionOptions {
+  /**
+   * Durable parent thread whose authenticated workspace may be exposed to a
+   * transient read-only worker. The provider runtime itself remains keyed by
+   * the synthetic transient thread id.
+   */
+  readonly workspaceContextThreadId?: ThreadId;
+}
+
 /**
  * ProviderServiceShape - Service API for provider session and turn orchestration.
  */
@@ -68,6 +77,7 @@ export interface ProviderServiceShape {
   readonly startTransientSession: (
     threadId: ThreadId,
     input: ProviderSessionStartInput,
+    options?: ProviderTransientSessionOptions,
   ) => Effect.Effect<ProviderSession, ProviderServiceError>;
 
   /**

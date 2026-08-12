@@ -65,7 +65,18 @@ const selection: ModelSelection = {
   ],
 };
 
-type EventMode = "normal" | "isolation-approvals" | "hidden-input" | "mutation" | "nested";
+type EventMode =
+  | "normal"
+  | "isolation-approvals"
+  | "native-read"
+  | "workspace-context"
+  | "other-mcp"
+  | "hidden-input"
+  | "mutation"
+  | "command"
+  | "completed-command"
+  | "unknown-dynamic"
+  | "nested";
 
 interface HarnessOptions {
   readonly workerCount?: number;
@@ -108,10 +119,12 @@ const makeHarness = (options: HarnessOptions = {}) =>
     const eventMode = options.eventMode ?? "normal";
     const events = yield* PubSub.unbounded<ProviderRuntimeEvent>();
     const starts = yield* Ref.make<ReadonlyArray<ProviderSessionStartInput>>([]);
+    const workspaceContextThreads = yield* Ref.make<ReadonlyArray<ThreadId | undefined>>([]);
     const sends = yield* Ref.make<ReadonlyArray<ProviderSendTurnInput>>([]);
     const stops = yield* Ref.make<
       ReadonlyArray<{ threadId: ThreadId; runtimeSessionId: RuntimeSessionId }>
     >([]);
+    const lifecycle = yield* Ref.make<ReadonlyArray<string>>([]);
     const interrupts = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
     const forces = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
     const responses = yield* Ref.make<
@@ -122,7 +135,9 @@ const makeHarness = (options: HarnessOptions = {}) =>
       ReadonlyArray<TextGeneration.FetchExplorationGenerationInput>
     >([]);
     const allStartsEntered = yield* Deferred.make<void>();
+    const firstStartEntered = yield* Deferred.make<void>();
     const allInterruptsEntered = yield* Deferred.make<void>();
+    const firstInterruptEntered = yield* Deferred.make<void>();
     const releaseStarts = yield* Deferred.make<void>();
     const plannerEntered = yield* Deferred.make<void>();
     const stopEntered = yield* Deferred.make<void>();
@@ -215,6 +230,13 @@ const makeHarness = (options: HarnessOptions = {}) =>
           ...baseEvent(input.threadId, binding.runtimeSessionId, binding.instanceId),
           type: "request.opened",
           turnId,
+          requestId: RuntimeRequestId.make(`command-${index}`),
+          payload: { requestType: "command_execution_approval", detail: "Run git status" },
+        });
+        yield* publish({
+          ...baseEvent(input.threadId, binding.runtimeSessionId, binding.instanceId),
+          type: "request.opened",
+          turnId,
           requestId: RuntimeRequestId.make(`dynamic-${index}`),
           payload: { requestType: "dynamic_tool_call", detail: "Unknown dynamic tool" },
         });
@@ -246,6 +268,56 @@ const makeHarness = (options: HarnessOptions = {}) =>
           payload: { itemType: "file_change", title: "Edit source" },
         });
       }
+      if (eventMode === "command") {
+        yield* publish({
+          ...baseEvent(input.threadId, binding.runtimeSessionId, binding.instanceId),
+          type: "item.started",
+          turnId,
+          payload: { itemType: "command_execution", title: "Run git status" },
+        });
+      }
+      if (eventMode === "native-read" || eventMode === "unknown-dynamic") {
+        for (const type of eventMode === "native-read"
+          ? (["item.started", "item.updated", "item.completed"] as const)
+          : (["item.started"] as const)) {
+          yield* publish({
+            ...baseEvent(input.threadId, binding.runtimeSessionId, binding.instanceId),
+            type,
+            turnId,
+            payload: {
+              itemType: "dynamic_tool_call",
+              title: eventMode === "native-read" ? "Read" : "Unknown tool",
+              data:
+                eventMode === "native-read"
+                  ? { toolName: "Read", kind: "read" }
+                  : { toolName: "arbitrary-code", kind: "other" },
+            },
+          });
+        }
+      }
+      if (eventMode === "workspace-context" || eventMode === "other-mcp") {
+        const tool = eventMode === "workspace-context" ? "workspace_context" : "preview_status";
+        for (const type of ["item.started", "item.completed"] as const) {
+          yield* publish({
+            ...baseEvent(input.threadId, binding.runtimeSessionId, binding.instanceId),
+            type,
+            turnId,
+            payload: {
+              itemType: "mcp_tool_call",
+              title: `t3-code · ${tool}`,
+              data: { item: { type: "mcpToolCall", server: "t3-code", tool } },
+            },
+          });
+        }
+      }
+      if (eventMode === "completed-command") {
+        yield* publish({
+          ...baseEvent(input.threadId, binding.runtimeSessionId, binding.instanceId),
+          type: "item.completed",
+          turnId,
+          payload: { itemType: "command_execution", title: "Ran a hidden command" },
+        });
+      }
       if (eventMode === "nested") {
         yield* publish({
           ...baseEvent(input.threadId, binding.runtimeSessionId, binding.instanceId),
@@ -258,7 +330,12 @@ const makeHarness = (options: HarnessOptions = {}) =>
         });
       }
 
-      if (eventMode === "normal" || eventMode === "isolation-approvals") {
+      if (
+        eventMode === "normal" ||
+        eventMode === "isolation-approvals" ||
+        eventMode === "native-read" ||
+        eventMode === "workspace-context"
+      ) {
         yield* publish({
           ...baseEvent(input.threadId, binding.runtimeSessionId, binding.instanceId),
           type: "content.delta",
@@ -281,13 +358,20 @@ const makeHarness = (options: HarnessOptions = {}) =>
     const startTransientSession: ProviderServiceShape["startTransientSession"] = (
       threadId,
       input,
+      sessionOptions,
     ) =>
       Effect.gen(function* () {
         yield* Ref.update(starts, (values) => [...values, input]);
+        yield* Ref.update(workspaceContextThreads, (values) => [
+          ...values,
+          sessionOptions?.workspaceContextThreadId,
+        ]);
+        yield* Ref.update(lifecycle, (values) => [...values, `start:${workerIndex(threadId)}`]);
         const runtimeSessionId = input.runtimeSessionId!;
         const instanceId = input.providerInstanceId!;
         runtimeByThread.set(threadId, { runtimeSessionId, instanceId });
         const count = (yield* Ref.get(starts)).length;
+        if (count === 1) yield* Deferred.succeed(firstStartEntered, undefined).pipe(Effect.ignore);
         if (count >= workerCount)
           yield* Deferred.succeed(allStartsEntered, undefined).pipe(Effect.ignore);
         if (options.neverStart === true) return yield* Effect.never;
@@ -325,9 +409,17 @@ const makeHarness = (options: HarnessOptions = {}) =>
       interruptAbortTarget: (target) =>
         Ref.updateAndGet(interrupts, (values) => [...values, target.threadId]).pipe(
           Effect.tap((values) =>
-            values.length >= workerCount
-              ? Deferred.succeed(allInterruptsEntered, undefined).pipe(Effect.ignore)
-              : Effect.void,
+            Effect.all(
+              [
+                values.length === 1
+                  ? Deferred.succeed(firstInterruptEntered, undefined).pipe(Effect.ignore)
+                  : Effect.void,
+                values.length >= workerCount
+                  ? Deferred.succeed(allInterruptsEntered, undefined).pipe(Effect.ignore)
+                  : Effect.void,
+              ],
+              { discard: true },
+            ),
           ),
         ),
       forceStopAbortTarget: (target) =>
@@ -339,6 +431,9 @@ const makeHarness = (options: HarnessOptions = {}) =>
           ...values,
           { threadId: target.threadId, runtimeSessionId: target.runtimeSessionId },
         ]).pipe(
+          Effect.andThen(
+            Ref.update(lifecycle, (values) => [...values, `stop:${workerIndex(target.threadId)}`]),
+          ),
           Effect.andThen(Deferred.succeed(stopEntered, undefined).pipe(Effect.ignore)),
           Effect.andThen(options.neverStop === true ? Effect.never : Effect.void),
         ),
@@ -431,8 +526,10 @@ const makeHarness = (options: HarnessOptions = {}) =>
     return {
       layer,
       starts,
+      workspaceContextThreads,
       sends,
       stops,
+      lifecycle,
       interrupts,
       forces,
       responses,
@@ -440,7 +537,9 @@ const makeHarness = (options: HarnessOptions = {}) =>
       planInputs,
       session,
       allStartsEntered,
+      firstStartEntered,
       allInterruptsEntered,
+      firstInterruptEntered,
       releaseStarts,
       plannerEntered,
       stopEntered,
@@ -541,7 +640,7 @@ describe("FetchWorkerCoordinator service", () => {
         yield* Effect.gen(function* () {
           const coordinator = yield* FetchWorkerCoordinator;
           const runFiber = yield* coordinator.run(runInput()).pipe(Effect.forkChild);
-          yield* Deferred.await(harness.allStartsEntered);
+          yield* Deferred.await(harness.firstStartEntered);
           yield* Fiber.interrupt(runFiber);
 
           expect(yield* Ref.get(harness.forces)).toHaveLength(1);
@@ -558,13 +657,12 @@ describe("FetchWorkerCoordinator service", () => {
       }),
   );
 
-  it.effect("starts the full advertised worker budget concurrently with one exact selection", () =>
+  it.effect("runs the full advertised worker budget serially with one exact selection", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness({ workerCount: 8, gateStarts: true });
+      const harness = yield* makeHarness({ workerCount: 8 });
       yield* Effect.gen(function* () {
         const coordinator = yield* FetchWorkerCoordinator;
-        const fiber = yield* coordinator.run(runInput()).pipe(Effect.forkChild);
-        yield* Deferred.await(harness.allStartsEntered);
+        const result = yield* coordinator.run(runInput());
         const starts = yield* Ref.get(harness.starts);
         expect(starts).toHaveLength(8);
         for (const start of starts) {
@@ -574,11 +672,15 @@ describe("FetchWorkerCoordinator service", () => {
           expect(start.sandboxMode).toBe("read-only");
           expect(start.freshSession).toBe(true);
         }
-        yield* Deferred.succeed(harness.releaseStarts, undefined);
-        const result = yield* Fiber.join(fiber);
         expect(result.successfulWorkers).toBe(8);
+        expect(yield* Ref.get(harness.workspaceContextThreads)).toEqual(
+          Array.from({ length: 8 }, () => parentThreadId),
+        );
         expect(yield* Ref.get(harness.sends)).toHaveLength(8);
         expect(yield* Ref.get(harness.stops)).toHaveLength(8);
+        expect(yield* Ref.get(harness.lifecycle)).toEqual(
+          Array.from({ length: 8 }, (_, index) => [`start:${index}`, `stop:${index}`]).flat(),
+        );
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
@@ -633,6 +735,7 @@ describe("FetchWorkerCoordinator service", () => {
         expect(result.context).not.toContain("LEAK-");
         expect(yield* Ref.get(harness.responses)).toEqual([
           { requestId: "read-0", decision: "accept" },
+          { requestId: "command-0", decision: "decline" },
           { requestId: "dynamic-0", decision: "decline" },
         ]);
         const approvalCommands = (yield* Ref.get(harness.commands)).filter(
@@ -662,6 +765,7 @@ describe("FetchWorkerCoordinator service", () => {
         expect(result.successfulWorkers).toBe(1);
         expect(yield* Ref.get(harness.responses)).toEqual([
           { requestId: "read-0", decision: "accept" },
+          { requestId: "command-0", decision: "decline" },
           { requestId: "dynamic-0", decision: "decline" },
         ]);
         const upserts = (yield* Ref.get(harness.commands)).filter(
@@ -672,6 +776,32 @@ describe("FetchWorkerCoordinator service", () => {
         if (finalUpsert?.type === "thread.subagent.upsert") {
           expect(finalUpsert.subagent.status).toBe("completed");
         }
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("allows a provider-native bounded read tool", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ eventMode: "native-read" });
+      yield* Effect.gen(function* () {
+        const coordinator = yield* FetchWorkerCoordinator;
+        const result = yield* coordinator.run(runInput());
+        expect(result.successfulWorkers).toBe(1);
+        expect(result.context).toContain("Evidence from worker 0");
+        expect(yield* Ref.get(harness.interrupts)).toHaveLength(0);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("allows only the authenticated workspace_context MCP tool", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ eventMode: "workspace-context" });
+      yield* Effect.gen(function* () {
+        const coordinator = yield* FetchWorkerCoordinator;
+        const result = yield* coordinator.run(runInput());
+        expect(result.successfulWorkers).toBe(1);
+        expect(result.context).toContain("Evidence from worker 0");
+        expect(yield* Ref.get(harness.interrupts)).toHaveLength(0);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
@@ -697,7 +827,15 @@ describe("FetchWorkerCoordinator service", () => {
     }),
   );
 
-  for (const eventMode of ["hidden-input", "mutation", "nested"] as const) {
+  for (const eventMode of [
+    "hidden-input",
+    "mutation",
+    "command",
+    "completed-command",
+    "unknown-dynamic",
+    "other-mcp",
+    "nested",
+  ] as const) {
     it.effect(`fails and interrupts a worker after a ${eventMode} policy violation`, () =>
       Effect.gen(function* () {
         const harness = yield* makeHarness({ eventMode });
@@ -779,7 +917,7 @@ describe("FetchWorkerCoordinator service", () => {
         yield* Effect.gen(function* () {
           const coordinator = yield* FetchWorkerCoordinator;
           const runFiber = yield* coordinator.run(runInput()).pipe(Effect.forkChild);
-          yield* Deferred.await(harness.allStartsEntered);
+          yield* Deferred.await(harness.firstStartEntered);
           expect(
             yield* coordinator.requestInterrupt({
               threadId: parentThreadId,
@@ -795,10 +933,11 @@ describe("FetchWorkerCoordinator service", () => {
               requestedAt: createdAt,
             }),
           ).toBe(true);
-          expect((yield* Ref.get(harness.forces)).length).toBe(2);
+          expect((yield* Ref.get(harness.forces)).length).toBe(1);
           yield* Deferred.succeed(harness.releaseStarts, undefined);
           const result = yield* Fiber.join(runFiber);
           expect(result.status).toBe("cancelled");
+          expect(yield* Ref.get(harness.starts)).toHaveLength(1);
           expect((yield* Ref.get(harness.session)).runtimeSessionId).toBeNull();
           expect(
             yield* coordinator.handoffToMain(
@@ -820,7 +959,7 @@ describe("FetchWorkerCoordinator service", () => {
       yield* Effect.gen(function* () {
         const coordinator = yield* FetchWorkerCoordinator;
         const runFiber = yield* coordinator.run(runInput()).pipe(Effect.forkChild);
-        yield* Deferred.await(harness.allStartsEntered);
+        yield* Deferred.await(harness.firstStartEntered);
 
         expect(
           yield* coordinator.requestInterrupt({
@@ -828,8 +967,8 @@ describe("FetchWorkerCoordinator service", () => {
             requestedAt: createdAt,
           }),
         ).toBe(true);
-        yield* Deferred.await(harness.allInterruptsEntered);
-        expect(yield* Ref.get(harness.interrupts)).toHaveLength(2);
+        yield* Deferred.await(harness.firstInterruptEntered);
+        expect(yield* Ref.get(harness.interrupts)).toHaveLength(1);
 
         expect(
           yield* coordinator.requestInterrupt({
@@ -837,10 +976,11 @@ describe("FetchWorkerCoordinator service", () => {
             requestedAt: createdAt,
           }),
         ).toBe(true);
-        expect(yield* Ref.get(harness.forces)).toHaveLength(2);
+        expect(yield* Ref.get(harness.forces)).toHaveLength(1);
 
         yield* Deferred.succeed(harness.releaseStarts, undefined);
         expect((yield* Fiber.join(runFiber)).status).toBe("cancelled");
+        expect(yield* Ref.get(harness.starts)).toHaveLength(1);
         const restored = yield* Ref.get(harness.session);
         expect(restored.status).toBe("ready");
         expect(restored.abortState).toBeNull();

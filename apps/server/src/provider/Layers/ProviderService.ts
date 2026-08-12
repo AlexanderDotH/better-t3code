@@ -427,8 +427,17 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     threadId: ThreadId,
     providerInstanceId: ProviderInstanceId,
     provider: ProviderDriverKind,
+    options?: {
+      readonly workspaceContextThreadId?: ThreadId;
+      readonly workspaceOnly?: boolean;
+    },
   ) =>
-    McpSessionRegistry.issueActiveMcpCredential({ threadId, providerInstanceId, provider }).pipe(
+    McpSessionRegistry.issueActiveMcpCredential({
+      threadId,
+      providerInstanceId,
+      provider,
+      ...options,
+    }).pipe(
       Effect.tap((credential) =>
         credential
           ? Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config))
@@ -474,6 +483,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly runtimeSessionId?: RuntimeSessionId;
     readonly persistence?: ProviderRuntimeLease["persistence"];
     readonly mountMcp?: boolean;
+    readonly workspaceContextThreadId?: ThreadId;
+    readonly workspaceOnlyMcp?: boolean;
     readonly sessionInput: Parameters<
       ProviderAdapterShape<ProviderAdapterError>["startSession"]
     >[0];
@@ -510,6 +521,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             input.sessionInput.threadId,
             input.providerInstanceId,
             input.adapter.provider,
+            {
+              ...(input.workspaceContextThreadId !== undefined
+                ? { workspaceContextThreadId: input.workspaceContextThreadId }
+                : {}),
+              ...(input.workspaceOnlyMcp !== undefined
+                ? { workspaceOnly: input.workspaceOnlyMcp }
+                : {}),
+            },
           );
     const startExit = yield* Effect.exit(
       prepareSession.pipe(
@@ -1018,7 +1037,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const startTransientSession: ProviderServiceMethod<"startTransientSession"> = Effect.fn(
     "startTransientSession",
-  )(function* (threadId, rawInput) {
+  )(function* (threadId, rawInput, options) {
     const parsed = yield* decodeInputOrValidationError({
       operation: "ProviderService.startTransientSession",
       schema: ProviderSessionStartInput,
@@ -1093,7 +1112,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       providerInstanceId: resolvedInstanceId,
       runtimeSessionId: parsed.runtimeSessionId,
       persistence: "transient",
-      mountMcp: false,
+      ...(options?.workspaceContextThreadId !== undefined
+        ? {
+            workspaceContextThreadId: options.workspaceContextThreadId,
+            workspaceOnlyMcp: true,
+          }
+        : { mountMcp: false }),
       sessionInput: {
         ...safeInput,
         threadId,

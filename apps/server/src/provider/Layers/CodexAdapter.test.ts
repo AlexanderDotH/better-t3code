@@ -877,7 +877,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
     }),
   );
 
-  it.effect("hard-fences Fetch workers to read-only Codex without MCP or delegation", () => {
+  it.effect("gives Fetch workers only the authenticated workspace MCP without delegation", () => {
     const runtimeFactory = makeRuntimeFactory();
     const resolveMcpServers = vi.fn(() =>
       Effect.succeed([
@@ -908,11 +908,20 @@ validationLayer("CodexAdapterLive validation", (it) => {
       Layer.provideMerge(NodeServices.layer),
     );
 
+    const threadId = asThreadId("fetch:thread:run:0");
     return Effect.gen(function* () {
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-fetch"),
+        threadId,
+        providerSessionId: "provider-session-fetch",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        endpoint: "http://127.0.0.1:43123/mcp/workspace",
+        authorizationHeader: "Bearer fetch-token",
+      });
       const adapter = yield* CodexAdapter;
       yield* adapter.startSession({
         provider: ProviderDriverKind.make("codex"),
-        threadId: asThreadId("fetch:thread:run:0"),
+        threadId,
         purpose: "fetch-worker",
         resumeCursor: { threadId: "must-not-resume" },
         runtimeMode: "full-access",
@@ -925,11 +934,21 @@ validationLayer("CodexAdapterLive validation", (it) => {
         "--disable",
         "multi_agent",
         "-c",
-        "mcp_servers={}",
+        "mcp_servers.t3-code.url=http://127.0.0.1:43123/mcp/workspace",
+        "-c",
+        'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
       ]);
       NodeAssert.equal(runtimeInput?.resumeCursor, undefined);
       NodeAssert.deepStrictEqual(runtimeInput?.mcpServers, []);
-    }).pipe(Effect.provide(layer));
+      NodeAssert.equal(runtimeInput?.environment?.T3_MCP_BEARER_TOKEN, "fetch-token");
+      NodeAssert.deepStrictEqual(runtimeInput?.internalMcpServer, {
+        url: "http://127.0.0.1:43123/mcp/workspace",
+        bearerTokenEnvVar: "T3_MCP_BEARER_TOKEN",
+      });
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+    );
   });
 });
 

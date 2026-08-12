@@ -44,10 +44,12 @@ describe("FetchWorkerCoordinator helpers", () => {
     expect(prompt).toContain("Where is session validation?");
     expect(prompt).toContain("exact paths");
     expect(prompt).toContain("Do not edit files");
+    expect(prompt).toContain("workspace_context");
+    expect(prompt).toContain("Do not execute shell or terminal commands");
     expect(prompt).toContain("Do not start or delegate to nested agents");
   });
 
-  it("accepts reads and only accepts Codex commands inside the hard read-only sandbox", () => {
+  it("accepts file reads while declining every shell command", () => {
     expect(
       fetchApprovalAction({
         requestType: "file_read_approval",
@@ -61,7 +63,14 @@ describe("FetchWorkerCoordinator helpers", () => {
         providerDriver,
         commandExecutionPolicy: "read-only-sandbox",
       }),
-    ).toBe("accept");
+    ).toBe("decline");
+    expect(
+      fetchApprovalAction({
+        requestType: "exec_command_approval",
+        providerDriver,
+        commandExecutionPolicy: "read-only-sandbox",
+      }),
+    ).toBe("decline");
     expect(
       fetchApprovalAction({
         requestType: "exec_command_approval",

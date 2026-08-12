@@ -2557,11 +2557,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           !fetchWorker && options?.resolveMcpServers
             ? yield* options.resolveMcpServers({ cwd })
             : [];
-        const mcpSession = fetchWorker
-          ? undefined
-          : McpProviderSession.readMcpProviderSession(input.threadId);
+        const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
         const appServerArgs = [
-          ...(fetchWorker ? ["--disable", "multi_agent", "-c", "mcp_servers={}"] : []),
+          ...(fetchWorker ? ["--disable", "multi_agent"] : []),
+          ...(fetchWorker && mcpSession === undefined ? ["-c", "mcp_servers={}"] : []),
           ...(mcpSession
             ? [
                 "-c",

@@ -243,7 +243,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       expect(personalSnapshot.enabled).toBe(false);
       expect(personalSnapshot.fetchWorkers).toEqual({
         maxRecommendedWorkers: 8,
-        commandExecutionPolicy: "read-only-sandbox",
+        commandExecutionPolicy: "deny",
       });
       expect(personalSnapshot.continuation?.groupKey).toBe(
         "codex:home:/home/julius/.codex_personal",
@@ -255,7 +255,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       expect(workSnapshot.enabled).toBe(false);
       expect(workSnapshot.fetchWorkers).toEqual({
         maxRecommendedWorkers: 8,
-        commandExecutionPolicy: "read-only-sandbox",
+        commandExecutionPolicy: "deny",
       });
       expect(workSnapshot.continuation?.groupKey).toBe("codex:home:/home/julius/.codex");
 
@@ -471,7 +471,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(codexSnapshot.enabled).toBe(false);
       expect(codexSnapshot.fetchWorkers).toEqual({
         maxRecommendedWorkers: 8,
-        commandExecutionPolicy: "read-only-sandbox",
+        commandExecutionPolicy: "deny",
       });
       expect(codexSnapshot.continuation?.groupKey).toBe("codex:home:/home/julius/.codex");
 

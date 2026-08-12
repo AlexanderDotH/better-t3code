@@ -65,6 +65,31 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
   }),
 );
 
+it.effect("scopes transient workspace-only credentials to a durable parent thread", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const ownerThreadId = ThreadId.make("fetch:parent-thread:run-1:0");
+    const workspaceContextThreadId = ThreadId.make("parent-thread");
+    const issued = yield* registry.issue({
+      threadId: ownerThreadId,
+      workspaceContextThreadId,
+      workspaceOnly: true,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      provider: CODEX_DRIVER_KIND,
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    const resolved = yield* registry.resolve(token);
+
+    expect(issued.config.threadId).toBe(ownerThreadId);
+    expect(issued.config.endpoint).toBe("http://127.0.0.1:43123/mcp/workspace");
+    expect(resolved?.threadId).toBe(workspaceContextThreadId);
+    expect(Array.from(resolved?.capabilities ?? [])).toEqual(["workspace"]);
+
+    yield* registry.revokeThread(ownerThreadId);
+    expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
 it.effect("builds MCP endpoints from the bound server host", () =>
   Effect.gen(function* () {
     const cases = [
