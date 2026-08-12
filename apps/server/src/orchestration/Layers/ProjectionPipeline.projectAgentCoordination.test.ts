@@ -79,6 +79,7 @@ it.layer(TestLayer)("project agent coordination projections", (it) => {
           title: "Coordination projection",
           workspaceRoot: "/workspace/coordination",
           defaultModelSelection: null,
+          checkpointsEnabled: true,
           scripts: [],
           createdAt: now,
           updatedAt: now,
