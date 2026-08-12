@@ -96,6 +96,7 @@ import {
 } from "../ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
+import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   WorkspaceBreadcrumb,
@@ -109,6 +110,7 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { ProjectFaviconPickerDialog } from "./ProjectFaviconPickerDialog";
+import { resolveProjectCheckpointSetting } from "./projectCheckpointSettings";
 
 export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
@@ -365,6 +367,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         title: string;
         defaultModelSelection: ModelSelection | null;
         defaultThreadEnvMode: ThreadEnvMode | null;
+        checkpointsEnabled: boolean;
         faviconPath: string | null;
       }>,
       failureTitle: string,
@@ -439,6 +442,13 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         { defaultThreadEnvMode: mode },
         "Failed to update new-thread workspace",
       ),
+    [updateAllMembers],
+  );
+
+  const checkpointSetting = resolveProjectCheckpointSetting(group.memberProjects);
+  const setCheckpointsEnabled = useCallback(
+    (enabled: boolean) =>
+      void updateAllMembers({ checkpointsEnabled: enabled }, "Failed to update checkpoint setting"),
     [updateAllMembers],
   );
 
@@ -907,6 +917,25 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                   <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
                 </SelectPopup>
               </Select>
+            }
+          />
+        </SettingsSection>
+
+        <SettingsSection title="Checkpoints">
+          <SettingsRow
+            title="Create checkpoints"
+            description="Save hidden Git checkpoints before and after turns for diffs and restore. Disable this for very large repositories to avoid checkpoint overhead. Applies to every checkout in this group."
+            control={
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  {checkpointSetting.state === "mixed" ? "Mixed" : null}
+                </span>
+                <Switch
+                  aria-label="Create checkpoints after turns"
+                  checked={checkpointSetting.effectiveEnabled}
+                  onCheckedChange={setCheckpointsEnabled}
+                />
+              </div>
             }
           />
         </SettingsSection>

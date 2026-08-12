@@ -32,6 +32,7 @@ function makeMember(
       instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5.4",
     },
+    checkpointsEnabled: true,
     scripts: [],
     createdAt: timestampAtAge(0),
     updatedAt: timestampAtAge(0),

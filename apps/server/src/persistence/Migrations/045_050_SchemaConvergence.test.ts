@@ -12,6 +12,7 @@ import Migration047 from "./047_ProjectionTurnsKeysetIndexCompatibility.ts";
 import Migration048 from "./048_ProjectionThreadsPinOrderKeyCompatibility.ts";
 import Migration049 from "./049_ProjectionProjectsDefaultThreadEnvModeCompatibility.ts";
 import Migration050 from "./050_ProjectionProjectFaviconPathCompatibility.ts";
+import Migration051 from "./051_ProjectionProjectCheckpointsEnabled.ts";
 
 const expectedTail = [
   [33, "ProjectionThreadsSettled"],
@@ -32,6 +33,7 @@ const expectedTail = [
   [48, "ProjectionThreadsPinOrderKeyCompatibility"],
   [49, "ProjectionProjectsDefaultThreadEnvModeCompatibility"],
   [50, "ProjectionProjectFaviconPathCompatibility"],
+  [51, "ProjectionProjectCheckpointsEnabled"],
 ] as const;
 
 const applyUpstreamSchema = Effect.gen(function* () {
@@ -45,6 +47,7 @@ const applyUpstreamSchema = Effect.gen(function* () {
 const applyCompatibilityTail = Effect.gen(function* () {
   yield* Migration045;
   yield* applyUpstreamSchema;
+  yield* Migration051;
 });
 
 interface SchemaEntry {
@@ -154,7 +157,7 @@ const repeatedScenario = Effect.gen(function* () {
   assert.deepStrictEqual(yield* runMigrations(), []);
 });
 
-it("preserves immutable migration IDs 1-44 and appends convergence migrations 45-50", () => {
+it("preserves immutable migration IDs 1-44 and appends convergence migrations 45-51", () => {
   assert.deepStrictEqual(
     migrationEntries.slice(-expectedTail.length).map(([id, name]) => [id, name] as const),
     Array.from(expectedTail),
@@ -164,6 +167,49 @@ it("preserves immutable migration IDs 1-44 and appends convergence migrations 45
     migrationEntries.map(([id, name]) => [id, name] as const),
   );
 });
+
+it.effect("enables checkpoints for projects created before migration 51", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* runMigrations({ toMigrationInclusive: 50 });
+    yield* sql`
+      INSERT INTO projection_projects (
+        project_id,
+        title,
+        workspace_root,
+        default_model_selection_json,
+        default_thread_env_mode,
+        favicon_path,
+        scripts_json,
+        created_at,
+        updated_at,
+        deleted_at
+      )
+      VALUES (
+        'legacy-project',
+        'Legacy project',
+        '/tmp/legacy-project',
+        NULL,
+        NULL,
+        NULL,
+        '[]',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z',
+        NULL
+      )
+    `;
+
+    yield* Migration051;
+    yield* Migration051;
+
+    const rows = yield* sql<{ readonly checkpointsEnabled: number }>`
+      SELECT checkpoints_enabled AS "checkpointsEnabled"
+      FROM projection_projects
+      WHERE project_id = 'legacy-project'
+    `;
+    assert.deepStrictEqual(rows, [{ checkpointsEnabled: 1 }]);
+  }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+);
 
 it.effect("converges fresh, fork, upstream, and historical-collision ledgers", () =>
   Effect.gen(function* () {

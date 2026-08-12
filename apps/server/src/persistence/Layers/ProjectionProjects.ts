@@ -2,6 +2,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 
@@ -18,10 +19,18 @@ import {
 const ProjectionProjectDbRow = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
+    checkpointsEnabled: Schema.Number,
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
   }),
 );
 type ProjectionProjectDbRow = typeof ProjectionProjectDbRow.Type;
+
+function toProjectionProject(row: ProjectionProjectDbRow): ProjectionProject {
+  return {
+    ...row,
+    checkpointsEnabled: row.checkpointsEnabled === 1,
+  };
+}
 
 const makeProjectionProjectRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -36,6 +45,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root,
           default_model_selection_json,
           default_thread_env_mode,
+          checkpoints_enabled,
           favicon_path,
           scripts_json,
           created_at,
@@ -48,6 +58,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           ${row.workspaceRoot},
           ${row.defaultModelSelection !== null ? JSON.stringify(row.defaultModelSelection) : null},
           ${row.defaultThreadEnvMode},
+          ${row.checkpointsEnabled ? 1 : 0},
           ${row.faviconPath ?? null},
           ${JSON.stringify(row.scripts)},
           ${row.createdAt},
@@ -60,6 +71,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root = excluded.workspace_root,
           default_model_selection_json = excluded.default_model_selection_json,
           default_thread_env_mode = excluded.default_thread_env_mode,
+          checkpoints_enabled = excluded.checkpoints_enabled,
           favicon_path = excluded.favicon_path,
           scripts_json = excluded.scripts_json,
           created_at = excluded.created_at,
@@ -79,6 +91,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
+          checkpoints_enabled AS "checkpointsEnabled",
           favicon_path AS "faviconPath",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -100,6 +113,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
+          checkpoints_enabled AS "checkpointsEnabled",
           favicon_path AS "faviconPath",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -126,11 +140,13 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
 
   const getById: ProjectionProjectRepositoryShape["getById"] = (input) =>
     getProjectionProjectRow(input).pipe(
+      Effect.map(Option.map(toProjectionProject)),
       Effect.mapError(toPersistenceSqlError("ProjectionProjectRepository.getById:query")),
     );
 
   const listAll: ProjectionProjectRepositoryShape["listAll"] = () =>
     listProjectionProjectRows().pipe(
+      Effect.map((rows) => rows.map(toProjectionProject)),
       Effect.mapError(toPersistenceSqlError("ProjectionProjectRepository.listAll:query")),
     );
 

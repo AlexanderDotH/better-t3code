@@ -76,6 +76,12 @@ function checkpointStatusFromRuntime(status: string | undefined): "ready" | "mis
   }
 }
 
+function areProjectCheckpointsEnabled(
+  projects: ReadonlyArray<{ readonly checkpointsEnabled: boolean }>,
+): boolean {
+  return projects.every((project) => project.checkpointsEnabled);
+}
+
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const randomUUID = crypto.randomUUIDv4;
@@ -90,6 +96,25 @@ const make = Effect.gen(function* () {
   const turnQuiescenceNotifier = yield* TurnQuiescenceNotifier;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
+
+  const publishTurnProcessingQuiesced = Effect.fn("publishTurnProcessingQuiesced")(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId;
+      readonly checkpointTurnCount: number;
+      readonly createdAt: string;
+    }) {
+      const receipt = {
+        type: "turn.processing.quiesced",
+        threadId: input.threadId,
+        turnId: input.turnId,
+        checkpointTurnCount: input.checkpointTurnCount,
+        createdAt: input.createdAt,
+      } as const;
+      yield* receiptBus.publish(receipt);
+      yield* turnQuiescenceNotifier.publish(receipt);
+    },
+  );
 
   const appendRevertFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -332,15 +357,12 @@ const make = Effect.gen(function* () {
       status: input.status,
       createdAt: input.createdAt,
     });
-    const quiescenceReceipt = {
-      type: "turn.processing.quiesced",
+    yield* publishTurnProcessingQuiesced({
       threadId: input.threadId,
       turnId: input.turnId,
       checkpointTurnCount: input.turnCount,
       createdAt: input.createdAt,
-    } as const;
-    yield* receiptBus.publish(quiescenceReceipt);
-    yield* turnQuiescenceNotifier.publish(quiescenceReceipt);
+    });
 
     yield* orchestrationEngine.dispatch({
       type: "thread.activity.append",
@@ -392,6 +414,19 @@ const make = Effect.gen(function* () {
       }
 
       const projects = yield* resolveThreadProjects(thread.projectId);
+      const currentTurnCount = thread.checkpoints.reduce(
+        (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
+        0,
+      );
+      if (!areProjectCheckpointsEnabled(projects)) {
+        yield* publishTurnProcessingQuiesced({
+          threadId: thread.id,
+          turnId,
+          checkpointTurnCount: currentTurnCount,
+          createdAt: event.createdAt,
+        });
+        return;
+      }
       const checkpointCwd = yield* resolveCheckpointCwd({
         threadId: thread.id,
         thread,
@@ -406,10 +441,6 @@ const make = Effect.gen(function* () {
       // instead of incrementing past it.
       const existingPlaceholder = thread.checkpoints.find(
         (checkpoint) => checkpoint.turnId === turnId && checkpoint.status === "missing",
-      );
-      const currentTurnCount = thread.checkpoints.reduce(
-        (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-        0,
       );
       const nextTurnCount = existingPlaceholder
         ? existingPlaceholder.checkpointTurnCount
@@ -468,6 +499,15 @@ const make = Effect.gen(function* () {
     }
 
     const projects = yield* resolveThreadProjects(thread.projectId);
+    if (!areProjectCheckpointsEnabled(projects)) {
+      yield* publishTurnProcessingQuiesced({
+        threadId,
+        turnId,
+        checkpointTurnCount,
+        createdAt: event.payload.completedAt,
+      });
+      return;
+    }
     const checkpointCwd = yield* resolveCheckpointCwd({
       threadId,
       thread,
@@ -503,6 +543,9 @@ const make = Effect.gen(function* () {
       }
 
       const projects = yield* resolveThreadProjects(thread.projectId);
+      if (!areProjectCheckpointsEnabled(projects)) {
+        return;
+      }
       const checkpointCwd = yield* resolveCheckpointCwd({
         threadId: thread.id,
         thread,
@@ -662,6 +705,9 @@ const make = Effect.gen(function* () {
     }
 
     const projects = yield* resolveThreadProjects(thread.projectId);
+    if (!areProjectCheckpointsEnabled(projects)) {
+      return;
+    }
     const checkpointCwd = yield* resolveCheckpointCwd({
       threadId,
       thread,

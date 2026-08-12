@@ -321,6 +321,7 @@ function project(environmentId: EnvironmentId, title: string, workspaceRoot: str
     title,
     workspaceRoot,
     defaultModelSelection: null,
+    checkpointsEnabled: true,
     scripts: [],
     createdAt: now,
     updatedAt: now,

@@ -23,6 +23,21 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // it small; cold opens still render instantly from the cached snapshot.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
 
+export function resolveSidebarProjectSettingsTarget(
+  scopedProject: { readonly projectKey: string } | null,
+):
+  | { readonly to: "/settings/projects" }
+  | {
+      readonly to: "/projects/$projectKey";
+      readonly params: { readonly projectKey: string };
+    } {
+  if (scopedProject === null) return { to: "/settings/projects" };
+  return {
+    to: "/projects/$projectKey",
+    params: { projectKey: scopedProject.projectKey },
+  };
+}
+
 type SidebarProject = {
   id: string;
   title: string;

@@ -93,6 +93,7 @@ const decodeSubagentDetail = Schema.decodeUnknownEffect(OrchestrationSubagentDet
 const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
+    checkpointsEnabled: Schema.Number,
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
   }),
 );
@@ -208,6 +209,7 @@ const ProjectionThreadCheckpointContextThreadRowSchema = Schema.Struct({
   projectId: ProjectId,
   workspaceRoot: Schema.String,
   worktreePath: Schema.NullOr(Schema.String),
+  checkpointsEnabled: Schema.Number,
 });
 const FullThreadDiffContextLookupInput = Schema.Struct({
   threadId: ThreadId,
@@ -354,6 +356,7 @@ function mapProjectShellRow(
     repositoryIdentity,
     defaultModelSelection: row.defaultModelSelection,
     defaultThreadEnvMode: row.defaultThreadEnvMode,
+    checkpointsEnabled: row.checkpointsEnabled === 1,
     faviconPath: row.faviconPath ?? null,
     scripts: row.scripts,
     createdAt: row.createdAt,
@@ -529,6 +532,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
+          checkpoints_enabled AS "checkpointsEnabled",
           favicon_path AS "faviconPath",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -1057,6 +1061,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
+          checkpoints_enabled AS "checkpointsEnabled",
           favicon_path AS "faviconPath",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -1081,6 +1086,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
+          checkpoints_enabled AS "checkpointsEnabled",
           favicon_path AS "faviconPath",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -1149,7 +1155,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           threads.thread_id AS "threadId",
           threads.project_id AS "projectId",
           projects.workspace_root AS "workspaceRoot",
-          threads.worktree_path AS "worktreePath"
+          threads.worktree_path AS "worktreePath",
+          projects.checkpoints_enabled AS "checkpointsEnabled"
         FROM projection_threads AS threads
         INNER JOIN projection_projects AS projects
           ON projects.project_id = threads.project_id
@@ -1862,6 +1869,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 repositoryIdentity: repositoryIdentities.get(row.projectId) ?? null,
                 defaultModelSelection: row.defaultModelSelection,
                 defaultThreadEnvMode: row.defaultThreadEnvMode,
+                checkpointsEnabled: row.checkpointsEnabled === 1,
                 faviconPath: row.faviconPath ?? null,
                 scripts: row.scripts,
                 coordinationClaims: coordinationClaimsByProject.get(row.projectId) ?? [],
@@ -2019,6 +2027,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   workspaceRoot: row.workspaceRoot,
                   defaultModelSelection: row.defaultModelSelection,
                   defaultThreadEnvMode: row.defaultThreadEnvMode,
+                  checkpointsEnabled: row.checkpointsEnabled === 1,
                   faviconPath: row.faviconPath ?? null,
                   scripts: row.scripts,
                   coordinationClaims: coordinationClaimsByProject.get(row.projectId) ?? [],
@@ -2532,6 +2541,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                     repositoryIdentity,
                     defaultModelSelection: option.value.defaultModelSelection,
                     defaultThreadEnvMode: option.value.defaultThreadEnvMode,
+                    checkpointsEnabled: option.value.checkpointsEnabled === 1,
                     faviconPath: option.value.faviconPath ?? null,
                     scripts: option.value.scripts,
                     coordinationClaims: [],
@@ -2620,6 +2630,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         projectId: threadRow.value.projectId,
         workspaceRoot: threadRow.value.workspaceRoot,
         worktreePath: threadRow.value.worktreePath,
+        checkpointsEnabled: threadRow.value.checkpointsEnabled === 1,
         checkpoints: checkpointRows.map(
           (row): OrchestrationCheckpointSummary => ({
             turnId: row.turnId,

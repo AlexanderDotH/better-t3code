@@ -34,6 +34,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
           model: "gpt-5.4",
         },
         defaultThreadEnvMode: null,
+        checkpointsEnabled: true,
         scripts: [],
         createdAt: "2026-03-24T00:00:00.000Z",
         updatedAt: "2026-03-24T00:00:00.000Z",
@@ -68,6 +69,30 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5.4",
       });
+    }),
+  );
+
+  it.effect("round-trips disabled project checkpoint capture", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectionProjectRepository;
+
+      yield* projects.upsert({
+        projectId: ProjectId.make("project-checkpoints-disabled"),
+        title: "Checkpoints disabled",
+        workspaceRoot: "/tmp/project-checkpoints-disabled",
+        defaultModelSelection: null,
+        defaultThreadEnvMode: null,
+        checkpointsEnabled: false,
+        scripts: [],
+        createdAt: "2026-03-24T00:00:00.000Z",
+        updatedAt: "2026-03-24T00:00:00.000Z",
+        deletedAt: null,
+      });
+
+      const persisted = yield* projects.getById({
+        projectId: ProjectId.make("project-checkpoints-disabled"),
+      });
+      assert.strictEqual(Option.getOrNull(persisted)?.checkpointsEnabled, false);
     }),
   );
 

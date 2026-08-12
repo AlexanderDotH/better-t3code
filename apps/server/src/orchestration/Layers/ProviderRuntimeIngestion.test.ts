@@ -3696,6 +3696,36 @@ describe("ProviderRuntimeIngestion", () => {
     expect(checkpoint?.checkpointRef).toBe("provider-diff:evt-turn-diff-updated");
   });
 
+  it("does not project provider diff checkpoints when project checkpoints are disabled", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.dispatch({
+      type: "project.meta.update",
+      commandId: CommandId.make("cmd-provider-project-checkpoints-disable"),
+      projectId: asProjectId("project-1"),
+      checkpointsEnabled: false,
+    });
+
+    harness.emit({
+      type: "turn.diff.updated",
+      eventId: asEventId("evt-turn-diff-updated-checkpoints-disabled"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-checkpoints-disabled"),
+      itemId: asItemId("item-checkpoints-disabled"),
+      payload: {
+        unifiedDiff: "diff --git a/file.txt b/file.txt\n+hello\n",
+      },
+    });
+    await harness.drain();
+
+    const snapshot = await harness.readModel();
+    const thread = snapshot.threads.find((entry) => entry.id === asThreadId("thread-1"));
+    expect(thread?.checkpoints).toEqual([]);
+  });
+
   it("projects context window updates into normalized thread activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

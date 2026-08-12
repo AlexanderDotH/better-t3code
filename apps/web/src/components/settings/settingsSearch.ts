@@ -1,5 +1,6 @@
 export type SettingsPath =
   | "/settings/general"
+  | "/settings/projects"
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/providers"
@@ -24,6 +25,7 @@ export interface SettingsSearchItem {
  */
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/general": "General",
+  "/settings/projects": "Projects",
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
@@ -43,6 +45,11 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
  * here once instead of separately in the panel and the index.
  */
 export const SETTINGS_SEARCH_ITEMS = [
+  {
+    id: "checkpoints",
+    title: "Checkpoints",
+    to: "/settings/projects",
+  },
   {
     id: "color-scheme",
     title: "Color scheme",

@@ -45,6 +45,7 @@ export interface ProjectionThreadCheckpointContext {
   readonly projectId: ProjectId;
   readonly workspaceRoot: string;
   readonly worktreePath: string | null;
+  readonly checkpointsEnabled: boolean;
   readonly checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>;
 }
 

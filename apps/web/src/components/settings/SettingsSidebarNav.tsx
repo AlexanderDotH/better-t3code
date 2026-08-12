@@ -13,6 +13,7 @@ import {
   BotIcon,
   DownloadIcon,
   FlaskConicalIcon,
+  FolderIcon,
   GitBranchIcon,
   KeyboardIcon,
   Link2Icon,
@@ -50,6 +51,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   Record<SettingsPath, ComponentType<{ className?: string }>>
 > = {
   "/settings/general": Settings2Icon,
+  "/settings/projects": FolderIcon,
   "/settings/appearance": PaletteIcon,
   "/settings/keybindings": KeyboardIcon,
   "/settings/providers": BotIcon,

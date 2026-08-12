@@ -11,6 +11,14 @@ vi.mock("./settingsLayout", async (importOriginal) => ({
 }));
 
 describe("Experimental settings navigation", () => {
+  it("places Projects immediately after General", () => {
+    const labels = SETTINGS_NAV_ITEMS.map((item) => item.label);
+    const generalIndex = labels.indexOf("General");
+
+    expect(generalIndex).toBeGreaterThanOrEqual(0);
+    expect(labels[generalIndex + 1]).toBe("Projects");
+  });
+
   it("places Experimental immediately after Connections", () => {
     const labels = SETTINGS_NAV_ITEMS.map((item) => item.label);
     const connectionsIndex = labels.indexOf("Connections");

@@ -367,6 +367,7 @@ export function projectEvent(
             workspaceRoot: payload.workspaceRoot,
             defaultModelSelection: payload.defaultModelSelection,
             defaultThreadEnvMode: null,
+            checkpointsEnabled: payload.checkpointsEnabled,
             faviconPath: payload.faviconPath ?? null,
             scripts: payload.scripts,
             coordinationClaims: [],
@@ -403,6 +404,9 @@ export function projectEvent(
                     : {}),
                   ...(payload.defaultThreadEnvMode !== undefined
                     ? { defaultThreadEnvMode: payload.defaultThreadEnvMode }
+                    : {}),
+                  ...(payload.checkpointsEnabled !== undefined
+                    ? { checkpointsEnabled: payload.checkpointsEnabled }
                     : {}),
                   ...(payload.faviconPath !== undefined
                     ? { faviconPath: payload.faviconPath }

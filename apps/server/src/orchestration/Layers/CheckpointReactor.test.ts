@@ -15,6 +15,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
+  type OrchestrationCommand,
   ProjectId,
   ThreadId,
   TurnId,
@@ -34,7 +35,10 @@ import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
-import { TurnQuiescenceNotifierLive } from "../../git-workbench/TurnQuiescenceNotifier.ts";
+import {
+  TurnQuiescenceNotifier,
+  TurnQuiescenceNotifierLive,
+} from "../../git-workbench/TurnQuiescenceNotifier.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { CheckpointReactorLive } from "./CheckpointReactor.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
@@ -252,7 +256,8 @@ describe("CheckpointReactor", () => {
     | OrchestrationEngineService
     | CheckpointReactor
     | CheckpointStore.CheckpointStore
-    | ProjectionSnapshotQuery,
+    | ProjectionSnapshotQuery
+    | TurnQuiescenceNotifier,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -379,6 +384,7 @@ describe("CheckpointReactor", () => {
     const checkpointStore = await runtime.runPromise(
       Effect.service(CheckpointStore.CheckpointStore),
     );
+    const turnQuiescenceNotifier = await runtime.runPromise(Effect.service(TurnQuiescenceNotifier));
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(reactor.drain);
@@ -469,6 +475,13 @@ describe("CheckpointReactor", () => {
       provider,
       cwd,
       drain,
+      dispatch: (command: OrchestrationCommand) => runtime!.runPromise(engine.dispatch(command)),
+      subscribeToTurnQuiescence: async () => {
+        const subscription = await runtime!.runPromise(
+          turnQuiescenceNotifier.subscribe.pipe(Scope.provide(scope!)),
+        );
+        return () => runtime!.runPromise(PubSub.take(subscription));
+      },
     };
   }
 
@@ -573,6 +586,141 @@ describe("CheckpointReactor", () => {
     await harness.drain();
 
     expect(gitStatusRefreshCalls).toEqual([harness.cwd]);
+  });
+
+  it("skips baseline and turn checkpoint refs when project checkpoints are disabled", async () => {
+    const gitStatusRefreshCalls: string[] = [];
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      gitStatusRefreshCalls,
+    });
+
+    await harness.dispatch({
+      type: "project.meta.update",
+      commandId: CommandId.make("cmd-project-checkpoints-disable"),
+      projectId: asProjectId("project-1"),
+      checkpointsEnabled: false,
+    });
+    await harness.dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.make("cmd-turn-start-checkpoints-disabled"),
+      threadId: ThreadId.make("thread-1"),
+      message: {
+        messageId: MessageId.make("message-checkpoints-disabled"),
+        role: "user",
+        text: "start without checkpoints",
+        attachments: [],
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    await harness.drain();
+
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-turn-started-checkpoints-disabled"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-checkpoints-disabled"),
+    });
+    await harness.drain();
+
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v2\n", "utf8");
+    const takeTurnQuiescence = await harness.subscribeToTurnQuiescence();
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-checkpoints-disabled"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-checkpoints-disabled"),
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+    const quiescenceReceipt = await takeTurnQuiescence();
+
+    const snapshot = await harness.readModel();
+    const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.checkpoints).toEqual([]);
+    expect(
+      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0)),
+    ).toBe(false);
+    expect(
+      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1)),
+    ).toBe(false);
+    expect(gitStatusRefreshCalls).toEqual([harness.cwd]);
+    expect(quiescenceReceipt).toMatchObject({
+      type: "turn.processing.quiesced",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-checkpoints-disabled"),
+      checkpointTurnCount: 0,
+    });
+  });
+
+  it("captures the next turn after project checkpoints are re-enabled", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+
+    await harness.dispatch({
+      type: "project.meta.update",
+      commandId: CommandId.make("cmd-project-checkpoints-disable-before-reenable"),
+      projectId: asProjectId("project-1"),
+      checkpointsEnabled: false,
+    });
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-turn-started-before-reenable"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-before-reenable"),
+    });
+    await harness.drain();
+
+    await harness.dispatch({
+      type: "project.meta.update",
+      commandId: CommandId.make("cmd-project-checkpoints-reenable"),
+      projectId: asProjectId("project-1"),
+      checkpointsEnabled: true,
+    });
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-turn-started-after-reenable"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-after-reenable"),
+    });
+    await waitForGitRefExists(
+      harness.cwd,
+      checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
+    );
+
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v2\n", "utf8");
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-after-reenable"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-after-reenable"),
+      payload: { state: "completed" },
+    });
+
+    await waitForEvent(harness.engine, (event) => event.type === "thread.turn-diff-completed");
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.checkpoints.length === 1,
+    );
+    expect(thread.checkpoints[0]?.turnId).toBe(asTurnId("turn-after-reenable"));
+    expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
+    expect(
+      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0)),
+    ).toBe(true);
+    expect(
+      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1)),
+    ).toBe(true);
   });
 
   it("adopts a drifted checkout as the thread branch on a dedicated worktree", async () => {
@@ -1025,7 +1173,7 @@ describe("CheckpointReactor", () => {
     ).toBe(true);
   });
 
-  it("executes provider revert and emits thread.reverted for checkpoint revert requests", async () => {
+  it("keeps existing checkpoint refs restorable after project checkpoints are disabled", async () => {
     const workspaceEntryIndexCalls: string[] = [];
     const harness = await createHarness({ workspaceEntryIndexCalls });
     const createdAt = "2026-01-01T00:00:00.000Z";
@@ -1076,6 +1224,17 @@ describe("CheckpointReactor", () => {
         createdAt,
       }),
     );
+
+    await harness.dispatch({
+      type: "project.meta.update",
+      commandId: CommandId.make("cmd-project-checkpoints-disable-before-revert"),
+      projectId: asProjectId("project-1"),
+      checkpointsEnabled: false,
+    });
+    const disabledSnapshot = await harness.readModel();
+    expect(
+      disabledSnapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.checkpoints,
+    ).toHaveLength(2);
 
     await Effect.runPromise(
       harness.engine.dispatch({

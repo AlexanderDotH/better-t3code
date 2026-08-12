@@ -64,6 +64,7 @@ const makeLayer = (options?: {
                 options?.worktreePath === undefined
                   ? "/workspace/project/.t3/worktrees/feature"
                   : options.worktreePath,
+              checkpointsEnabled: true,
               checkpoints: [],
             }),
       );

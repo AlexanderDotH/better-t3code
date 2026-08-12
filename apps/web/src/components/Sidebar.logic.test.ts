@@ -15,6 +15,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
+  resolveSidebarProjectSettingsTarget,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
   resolveSidebarThreadStatus,
@@ -50,6 +51,21 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("resolveSidebarProjectSettingsTarget", () => {
+  it("opens the selected project's settings", () => {
+    expect(resolveSidebarProjectSettingsTarget({ projectKey: "better-t3code" })).toEqual({
+      to: "/projects/$projectKey",
+      params: { projectKey: "better-t3code" },
+    });
+  });
+
+  it("opens the projects index when all projects are selected", () => {
+    expect(resolveSidebarProjectSettingsTarget(null)).toEqual({
+      to: "/settings/projects",
+    });
+  });
+});
 
 describe("shouldNavigateAfterProjectRemoval", () => {
   const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];
@@ -1253,6 +1269,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
       model: "gpt-5.4",
       ...defaultModelSelection,
     },
+    checkpointsEnabled: true,
     createdAt: "2026-03-09T10:00:00.000Z",
     updatedAt: "2026-03-09T10:00:00.000Z",
     scripts: [],

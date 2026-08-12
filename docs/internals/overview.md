@@ -118,7 +118,9 @@ Each turn is bracketed by workspace checkpoints so diffs and reverts are exact. 
 captures state as hidden Git refs through the VCS driver's checkpoint operations;
 `CheckpointDiffQuery` answers turn and full-thread diff requests; `CheckpointReactor` coordinates
 baseline capture, completed-turn capture, diff projection, and reverting both the workspace and the
-provider conversation. The storage contract is `VcsCheckpointOps` in
+provider conversation. Projects can disable new checkpoint capture; the reactor still publishes the
+turn-quiescence boundary while skipping Git refs and provider diff placeholders. Existing refs stay
+available for restore. The storage contract is `VcsCheckpointOps` in
 [`VcsDriver.ts`](../../apps/server/src/vcs/VcsDriver.ts), implemented for Git in the same directory.
 
 ## Startup

@@ -99,4 +99,14 @@ describe("searchSettings", () => {
       title: "Sidebar layout",
     });
   });
+
+  it("routes checkpoint searches to project settings", () => {
+    expect(searchSettings("checkpoints")).toEqual([
+      {
+        id: "checkpoints",
+        title: "Checkpoints",
+        to: "/settings/projects",
+      },
+    ]);
+  });
 });

@@ -275,6 +275,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
+          checkpointsEnabled: true,
           faviconPath: null,
           scripts: [
             {
@@ -399,6 +400,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
+          checkpointsEnabled: true,
           faviconPath: null,
           scripts: [
             {
@@ -976,6 +978,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           projectId: asProjectId("project-context"),
           workspaceRoot: "/tmp/context-workspace",
           worktreePath: "/tmp/context-worktree",
+          checkpointsEnabled: true,
           checkpoints: [
             {
               turnId: asTurnId("turn-1"),

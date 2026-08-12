@@ -200,6 +200,7 @@ it.effect(
                 projectId: ProjectId.make("project-mcp-test"),
                 workspaceRoot: "/workspace/project",
                 worktreePath: null,
+                checkpointsEnabled: true,
                 checkpoints: [],
               }),
             ),

@@ -18,6 +18,7 @@ import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
 import { Route as SettingsSkillsRouteImport } from './routes/settings.skills'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
+import { Route as SettingsProjectsRouteImport } from './routes/settings.projects'
 import { Route as SettingsMcpRouteImport } from './routes/settings.mcp'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
 import { Route as SettingsImportChatsRouteImport } from './routes/settings.import-chats'
@@ -75,6 +76,11 @@ const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
 const SettingsProvidersRoute = SettingsProvidersRouteImport.update({
   id: '/providers',
   path: '/providers',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsProjectsRoute = SettingsProjectsRouteImport.update({
+  id: '/projects',
+  path: '/projects',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsMcpRoute = SettingsMcpRouteImport.update({
@@ -167,6 +173,7 @@ export interface FileRoutesByFullPath {
   '/settings/import-chats': typeof SettingsImportChatsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/mcp': typeof SettingsMcpRoute
+  '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
@@ -190,6 +197,7 @@ export interface FileRoutesByTo {
   '/settings/import-chats': typeof SettingsImportChatsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/mcp': typeof SettingsMcpRoute
+  '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
@@ -216,6 +224,7 @@ export interface FileRoutesById {
   '/settings/import-chats': typeof SettingsImportChatsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/mcp': typeof SettingsMcpRoute
+  '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
@@ -243,6 +252,7 @@ export interface FileRouteTypes {
     | '/settings/import-chats'
     | '/settings/keybindings'
     | '/settings/mcp'
+    | '/settings/projects'
     | '/settings/providers'
     | '/settings/skills'
     | '/settings/source-control'
@@ -266,6 +276,7 @@ export interface FileRouteTypes {
     | '/settings/import-chats'
     | '/settings/keybindings'
     | '/settings/mcp'
+    | '/settings/projects'
     | '/settings/providers'
     | '/settings/skills'
     | '/settings/source-control'
@@ -291,6 +302,7 @@ export interface FileRouteTypes {
     | '/settings/import-chats'
     | '/settings/keybindings'
     | '/settings/mcp'
+    | '/settings/projects'
     | '/settings/providers'
     | '/settings/skills'
     | '/settings/source-control'
@@ -372,6 +384,13 @@ declare module '@tanstack/react-router' {
       path: '/providers'
       fullPath: '/settings/providers'
       preLoaderRoute: typeof SettingsProvidersRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/projects': {
+      id: '/settings/projects'
+      path: '/projects'
+      fullPath: '/settings/projects'
+      preLoaderRoute: typeof SettingsProjectsRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/mcp': {
@@ -501,6 +520,7 @@ interface SettingsRouteChildren {
   SettingsImportChatsRoute: typeof SettingsImportChatsRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
   SettingsMcpRoute: typeof SettingsMcpRoute
+  SettingsProjectsRoute: typeof SettingsProjectsRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
   SettingsSkillsRoute: typeof SettingsSkillsRoute
   SettingsSourceControlRoute: typeof SettingsSourceControlRoute
@@ -516,6 +536,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsImportChatsRoute: SettingsImportChatsRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
   SettingsMcpRoute: SettingsMcpRoute,
+  SettingsProjectsRoute: SettingsProjectsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
   SettingsSkillsRoute: SettingsSkillsRoute,
   SettingsSourceControlRoute: SettingsSourceControlRoute,

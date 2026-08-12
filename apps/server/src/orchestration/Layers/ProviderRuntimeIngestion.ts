@@ -2723,7 +2723,13 @@ const make = Effect.gen(function* () {
           : undefined;
         const workspaceCwd =
           checkpointContext?.worktreePath ?? checkpointContext?.workspaceRoot ?? undefined;
-        if (turnId && checkpointContext && workspaceCwd && isGitRepository(workspaceCwd)) {
+        if (
+          turnId &&
+          checkpointContext &&
+          checkpointContext.checkpointsEnabled &&
+          workspaceCwd &&
+          isGitRepository(workspaceCwd)
+        ) {
           // Skip if a checkpoint already exists for this turn. A real
           // (non-placeholder) capture from CheckpointReactor should not
           // be clobbered, and dispatching a duplicate placeholder for the

@@ -24,6 +24,7 @@ function makeThreadCheckpointContext(input: {
     projectId: input.projectId,
     workspaceRoot: input.workspaceRoot,
     worktreePath: input.worktreePath,
+    checkpointsEnabled: true,
     checkpoints: [
       {
         turnId: TurnId.make("turn-1"),

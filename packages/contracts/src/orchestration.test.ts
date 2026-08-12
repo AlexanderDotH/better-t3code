@@ -13,6 +13,7 @@ import {
   OrchestrationGetTurnDiffInput,
   OrchestrationLatestTurn,
   OrchestrationProposedPlan,
+  OrchestrationReadModel,
   OrchestrationSubagentDetail,
   OrchestrationSubagentSummary,
   OrchestrationThread,
@@ -42,6 +43,7 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
 );
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
+const decodeOrchestrationReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
 const decodeOrchestrationThreadShell = Schema.decodeUnknownEffect(OrchestrationThreadShell);
@@ -180,6 +182,32 @@ it.effect("decodes historical project.created payloads with a default provider",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.defaultModelSelection?.instanceId, "codex");
+    assert.strictEqual(parsed.checkpointsEnabled, true);
+  }),
+);
+
+it.effect("defaults checkpoint capture for projects in historical cached snapshots", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationReadModel({
+      snapshotSequence: 1,
+      projects: [
+        {
+          id: "project-1",
+          title: "Historical project",
+          workspaceRoot: "/tmp/historical-project",
+          defaultModelSelection: null,
+          scripts: [],
+          coordinationClaims: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          deletedAt: null,
+        },
+      ],
+      threads: [],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.projects[0]?.checkpointsEnabled, true);
   }),
 );
 
