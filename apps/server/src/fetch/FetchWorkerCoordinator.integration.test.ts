@@ -554,7 +554,7 @@ function runInput(overrides: Partial<FetchRunInput> = {}): FetchRunInput {
     modelSelection: selection,
     providerDriver: codexDriver,
     maxRecommendedWorkers: 8,
-    commandExecutionPolicy: "read-only-sandbox",
+    commandExecutionPolicy: "deny",
     ...overrides,
   };
 }
@@ -1060,7 +1060,7 @@ describe("FetchWorkerCoordinator service", () => {
               modelSelection: fallbackSelection,
               providerDriver: codexDriver,
               maxRecommendedWorkers: 10,
-              commandExecutionPolicy: "read-only-sandbox",
+              commandExecutionPolicy: "deny",
             },
           }),
         );

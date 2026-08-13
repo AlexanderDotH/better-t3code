@@ -170,13 +170,9 @@ Policy:
 - Do not implement the requested change. Return discovery findings only.`;
 }
 
-export function fetchApprovalAction(input: {
-  readonly requestType: string;
-  readonly providerDriver: ProviderDriverKind;
-  readonly commandExecutionPolicy: ServerProviderFetchWorkerCommandExecutionPolicy;
-}): FetchApprovalAction {
-  if (input.requestType === "tool_user_input") return "fail-worker";
-  if (input.requestType === "file_read_approval") return "accept";
+export function fetchApprovalAction(requestType: string): FetchApprovalAction {
+  if (requestType === "tool_user_input") return "fail-worker";
+  if (requestType === "file_read_approval") return "accept";
   return "decline";
 }
 
@@ -298,7 +294,6 @@ interface ActiveRun {
   selection: ModelSelection;
   providerDriver: ProviderDriverKind;
   maxRecommendedWorkers: number;
-  commandExecutionPolicy: ServerProviderFetchWorkerCommandExecutionPolicy;
   phase: "planning" | "workers" | "settled" | "cancelling" | "handoff";
   cancelled: boolean;
   forceRequested: boolean;
@@ -643,11 +638,7 @@ const make = Effect.gen(function* () {
     worker: ActiveWorker,
     event: Extract<ProviderRuntimeEvent, { type: "request.opened" }>,
   ) {
-    const action = fetchApprovalAction({
-      requestType: event.payload.requestType,
-      providerDriver: worker.run.providerDriver,
-      commandExecutionPolicy: worker.run.commandExecutionPolicy,
-    });
+    const action = fetchApprovalAction(event.payload.requestType);
     if (action === "fail-worker") {
       yield* failForPolicyViolation(worker, "Fetch workers cannot request hidden user input.");
       return;
@@ -1086,7 +1077,6 @@ const make = Effect.gen(function* () {
     run.selection = run.input.lunaFallback.modelSelection;
     run.providerDriver = run.input.lunaFallback.providerDriver;
     run.maxRecommendedWorkers = run.input.lunaFallback.maxRecommendedWorkers;
-    run.commandExecutionPolicy = run.input.lunaFallback.commandExecutionPolicy;
     const fallbackFiber = yield* execute(run.selection).pipe(Effect.forkIn(coordinatorScope));
     run.plannerFiber = fallbackFiber;
     const fallbackExit = yield* Fiber.await(fallbackFiber);
@@ -1138,7 +1128,6 @@ const make = Effect.gen(function* () {
         selection: input.modelSelection,
         providerDriver: input.providerDriver,
         maxRecommendedWorkers: input.maxRecommendedWorkers,
-        commandExecutionPolicy: input.commandExecutionPolicy,
         phase: "planning",
         cancelled: false,
         forceRequested: false,

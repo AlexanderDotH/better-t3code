@@ -50,48 +50,11 @@ describe("FetchWorkerCoordinator helpers", () => {
   });
 
   it("accepts file reads while declining every shell command", () => {
-    expect(
-      fetchApprovalAction({
-        requestType: "file_read_approval",
-        providerDriver,
-        commandExecutionPolicy: "read-only-sandbox",
-      }),
-    ).toBe("accept");
-    expect(
-      fetchApprovalAction({
-        requestType: "command_execution_approval",
-        providerDriver,
-        commandExecutionPolicy: "read-only-sandbox",
-      }),
-    ).toBe("decline");
-    expect(
-      fetchApprovalAction({
-        requestType: "exec_command_approval",
-        providerDriver,
-        commandExecutionPolicy: "read-only-sandbox",
-      }),
-    ).toBe("decline");
-    expect(
-      fetchApprovalAction({
-        requestType: "exec_command_approval",
-        providerDriver: ProviderDriverKind.make("claudeAgent"),
-        commandExecutionPolicy: "deny",
-      }),
-    ).toBe("decline");
-    expect(
-      fetchApprovalAction({
-        requestType: "apply_patch_approval",
-        providerDriver,
-        commandExecutionPolicy: "read-only-sandbox",
-      }),
-    ).toBe("decline");
-    expect(
-      fetchApprovalAction({
-        requestType: "tool_user_input",
-        providerDriver,
-        commandExecutionPolicy: "read-only-sandbox",
-      }),
-    ).toBe("fail-worker");
+    expect(fetchApprovalAction("file_read_approval")).toBe("accept");
+    expect(fetchApprovalAction("command_execution_approval")).toBe("decline");
+    expect(fetchApprovalAction("exec_command_approval")).toBe("decline");
+    expect(fetchApprovalAction("apply_patch_approval")).toBe("decline");
+    expect(fetchApprovalAction("tool_user_input")).toBe("fail-worker");
   });
 
   it("builds a fair bounded context with provider traits and explicit truncation markers", () => {

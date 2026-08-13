@@ -107,8 +107,7 @@ function fetchProviderFixture(input: {
     checkedAt: "2026-01-01T00:00:00.000Z",
     fetchWorkers: {
       maxRecommendedWorkers: input.maxRecommendedWorkers ?? 8,
-      commandExecutionPolicy:
-        driver === ProviderDriverKind.make("codex") ? "read-only-sandbox" : "deny",
+      commandExecutionPolicy: "deny",
     },
     models: input.models.map((slug) => ({
       slug,
@@ -457,8 +456,7 @@ describe("ProviderCommandReactor", () => {
         },
         fetchWorkers: {
           maxRecommendedWorkers: 8,
-          commandExecutionPolicy:
-            defaultDriver === ProviderDriverKind.make("codex") ? "read-only-sandbox" : "deny",
+          commandExecutionPolicy: "deny",
         },
         ...(input?.requiresNewThreadForModelChange === true
           ? { requiresNewThreadForModelChange: true }
@@ -1357,7 +1355,7 @@ describe("ProviderCommandReactor", () => {
       },
       providerDriver: ProviderDriverKind.make("codex"),
       maxRecommendedWorkers: 8,
-      commandExecutionPolicy: "read-only-sandbox",
+      commandExecutionPolicy: "deny",
       contextMaxChars: 64_000,
       lunaFallback: {
         modelSelection: {
@@ -1367,7 +1365,7 @@ describe("ProviderCommandReactor", () => {
         },
         providerDriver: ProviderDriverKind.make("codex"),
         maxRecommendedWorkers: 8,
-        commandExecutionPolicy: "read-only-sandbox",
+        commandExecutionPolicy: "deny",
       },
     });
     expect(harness.startSession.mock.invocationCallOrder[0]).toBeLessThan(
@@ -1565,7 +1563,7 @@ describe("ProviderCommandReactor", () => {
     expect(harness.runFetch.mock.calls[0]?.[0]).toMatchObject({
       modelSelection: testCase.fetchSelection,
       providerDriver: ProviderDriverKind.make(testCase.fetchDriver),
-      commandExecutionPolicy: testCase.fetchDriver === "codex" ? "read-only-sandbox" : "deny",
+      commandExecutionPolicy: "deny",
     });
   });
 
