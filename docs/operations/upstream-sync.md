@@ -410,3 +410,56 @@ remote.pushDefault = origin
 All pushes name `origin` and their destination ref explicitly. No upstream branch, pull request, or
 other upstream state is written. Existing remote archive branches remain intentionally retained;
 only fully merged local branches are removed after fork `main` promotion and both CI gates.
+
+## August 13, 2026 post-promotion closure
+
+The synchronization was promoted through fork-only PR
+[#2](https://github.com/AlexanderDotH/better-t3code/pull/2) at
+`e15aaaa4d42010f0f5cc03b1c8a9eab70fcb71f6`. A post-promotion audit found three gaps in the
+operational guardrails and edge-case semantics. They were repaired forward without rebasing,
+force-pushing, squashing, or changing any upstream ref:
+
+| Concern                      | Fork-only promotion                                                                                        | Resolution                                                                                                                                                                                   |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Production automation safety | [PR #3](https://github.com/AlexanderDotH/better-t3code/pull/3), `e320ad75df7db9737d4738ccf2991eaf1ac89b13` | Every production-capable job is source-guarded behind the upstream repository identity or an explicit fork opt-in.                                                                           |
+| Grouped checkpoint controls  | [PR #4](https://github.com/AlexanderDotH/better-t3code/pull/4), `946c24ebabb1efbb78f4e816e7b4a7dd43ef6747` | Group updates are serial, fenced, attempt every checkout, and report every failed environment; checkpoint capture follows the thread's physical project and fails closed when it is missing. |
+| Fetch worker policy          | [PR #5](https://github.com/AlexanderDotH/better-t3code/pull/5), `1400fdb3000adb8769423d18c519b78d005d996e` | Worker approvals are provider-independent and shell-free, and provider selection rejects snapshots that advertise sandboxed command execution.                                               |
+
+Checkpoint settings remain owned by each physical checkout. The grouped control reports `Mixed`
+with an effective disabled state until the user chooses **Enable all** or **Disable all**, while
+threads already belonging to individual checkouts continue to honor those checkouts' saved values.
+Disabling capture still emits turn-quiescence receipts and retains existing restore points;
+re-enabling resumes capture on the next turn. Migration IDs 1 through 50 remain unchanged, and
+`051_ProjectionProjectCheckpointsEnabled` remains the only appended migration, with
+`NOT NULL DEFAULT 1` and decoding defaults of `true`.
+
+Fetch accepts file-read approvals, fails a worker that requests hidden user input, and declines all
+other approval requests, including shell commands, Git, patches, and dynamic execution. The shared
+provider selector now requires `commandExecutionPolicy: "deny"`. The legacy
+`"read-only-sandbox"` literal remains decodable in the wire schema for mixed-version compatibility,
+but it is no longer eligible to start a Fetch run.
+
+### Fork safety and validation evidence
+
+- The eight scheduled Release runs that were queued at the safety audit were cancelled. The
+  Release, production EAS, and production relay workflows remain `disabled_manually`; the fork
+  opt-in variable is unset, and the fork has no GitHub releases.
+- Ruleset `20793066` is active on the default branch with no bypass actors. It blocks branch
+  deletion and non-fast-forward updates and requires Test, Check, Mobile Native Static Analysis,
+  and Release Smoke.
+- PR/main CI pairs `31691761359` / `31692389361`, `31693916935` / `31694586430`, and
+  `31695426252` / `31696320763` passed all four required jobs on the exact commits promoted by
+  PRs #3, #4, and #5 respectively.
+- Focused checkpoint validation covered 27 files and 147 tests. Focused Fetch validation covered
+  125 coordinator, selection, routing, and registry tests plus the Cursor and Grok Fetch
+  regressions. Targeted typechecks, lint, formatting, and whitespace checks passed under Node
+  24.18.1.
+- The August 12 rescue directory remains external and permanent. All 26 recorded artifact
+  checksums and the 1,005-ref all-refs bundle were reverified after promotion.
+- `remote.upstream.pushurl` remains the disabled protocol, every publication explicitly targeted
+  `origin`, and all retained `origin/*` feature and archive tips are ancestors of fork `main`.
+
+The live upstream tip was observed at `5015d7cf9f98fe551115b625031f01e3f022cd2d` after the formal
+`1e59b4c4004ce3c724d09ca0b140ed4523758d1e` freeze. As specified by the freeze boundary, that newer
+upstream work belongs to the next synchronization cycle. No browser or emulator pass was added;
+no T3 Code process or live T3 home state was managed or mutated.
