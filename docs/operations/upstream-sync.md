@@ -332,10 +332,25 @@ The three initially uncommitted feature slices survive as separate commits:
 | `a3ebea155aeda5ae288af9c22e9671c29b517eb3` | Strictly serial, shell-free repository Fetch workers     |
 | `2b5d44d58122ec250879458486ccb446e9099a2b` | Per-project checkpoint capture controls and migration 51 |
 
-`upstream/main` was fetched by its exact destination ref and verified against `git ls-remote` at
-`8d24b5131f439d11876815996df41a57d791d3ad`. After the feature commits, divergence was 55 fork-side
-commits and 41 upstream-only commits. The ordinary no-fast-forward upstream merge is
-`eb0652d3e67dd1b2049543955509be0f9d93d1c9`; its second parent is the pinned upstream SHA.
+`upstream/main` was initially fetched by its exact destination ref and verified against
+`git ls-remote` at `8d24b5131f439d11876815996df41a57d791d3ad`. After the feature commits,
+divergence was 55 fork-side commits and 41 upstream-only commits. The initial ordinary
+no-fast-forward upstream merge is `eb0652d3e67dd1b2049543955509be0f9d93d1c9`; its second parent
+is that initially pinned upstream SHA.
+
+The final pre-PR freeze found one additional upstream commit. The live tip was fetched and verified
+again at `18918d1c4d0933b565d1336a75cc5069547ff5e6`, which is the final pinned upstream SHA for this
+synchronization. Its mobile command-popover glass fix merged without conflicts as
+`f8214547d6c12061f03f8fe3361cdae0daddc678`; that merge commit's second parent is the final pinned
+SHA. The delta passed 39 affected mobile thread/composer tests, the mobile typecheck, targeted lint,
+and formatting before the merge was recorded.
+
+The first fork PR run also exposed three pull-request workflows that still named upstream's
+organization-only Blacksmith runners. `f5d9fe4a38962deacd0d46727f2d8d68e9db63ce` moves the mobile
+fingerprint, mobile EAS preview, and web preview jobs to GitHub-hosted `ubuntu-24.04`, matching this
+fork's existing CI policy. The required Check, Test, Mobile Native Static Analysis, and Release
+Smoke jobs had already passed on the preceding source-identical tree; the complete PR gate is rerun
+on the final recorded SHA.
 
 The merge produced ten textual conflicts. They were resolved semantically as follows:
 
