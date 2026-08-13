@@ -338,12 +338,11 @@ divergence was 55 fork-side commits and 41 upstream-only commits. The initial or
 no-fast-forward upstream merge is `eb0652d3e67dd1b2049543955509be0f9d93d1c9`; its second parent
 is that initially pinned upstream SHA.
 
-The final pre-PR freeze found one additional upstream commit. The live tip was fetched and verified
-again at `18918d1c4d0933b565d1336a75cc5069547ff5e6`, which is the final pinned upstream SHA for this
-synchronization. Its mobile command-popover glass fix merged without conflicts as
-`f8214547d6c12061f03f8fe3361cdae0daddc678`; that merge commit's second parent is the final pinned
-SHA. The delta passed 39 affected mobile thread/composer tests, the mobile typecheck, targeted lint,
-and formatting before the merge was recorded.
+The first pre-PR freeze found one additional upstream commit. The live tip was fetched and verified
+at `18918d1c4d0933b565d1336a75cc5069547ff5e6`. Its mobile command-popover glass fix merged without
+conflicts as `f8214547d6c12061f03f8fe3361cdae0daddc678`; that merge commit's second parent is the
+observed upstream SHA. The delta passed 39 affected mobile thread/composer tests, the mobile
+typecheck, targeted lint, and formatting before the merge was recorded.
 
 The first fork PR run also exposed three pull-request workflows that still named upstream's
 organization-only Blacksmith runners. `f5d9fe4a38962deacd0d46727f2d8d68e9db63ce` moves the mobile
@@ -351,6 +350,21 @@ fingerprint, mobile EAS preview, and web preview jobs to GitHub-hosted `ubuntu-2
 fork's existing CI policy. The required Check, Test, Mobile Native Static Analysis, and Release
 Smoke jobs had already passed on the preceding source-identical tree; the complete PR gate is rerun
 on the final recorded SHA.
+
+The August 13 final freeze then found nine more upstream commits. The exact fetched and
+`git ls-remote`-verified tip `1e59b4c4004ce3c724d09ca0b140ed4523758d1e` is the final pinned
+upstream SHA for this synchronization. It adds the expanded pull-request surfaces plus focused web,
+relay, theme, and mobile-showcase fixes. The normal merge is
+`3b45192de83c28a62db3a9bfdcaa618748b4c358`; its second parent is the final pinned SHA.
+
+That delta produced one textual conflict in `rightPanelStore.ts`. The resolution retains the
+fork's strict persisted-surface validation, removed-Agents migration, and deterministic active-tab
+fallback while adopting upstream's optional environment identity for cross-server pull-request
+tabs. Validation covered all 36 changed upstream test files with 1,122 passing tests, 226 additional
+fork-sensitive ChatView, subagent, Older Projects, snooze, project-settings, and right-panel tests,
+the four affected package typechecks, changed-file lint and formatting, marker and whitespace
+checks, and a production web build. This is the formal final freeze; later upstream commits belong
+to the next synchronization cycle.
 
 The merge produced ten textual conflicts. They were resolved semantically as follows:
 
