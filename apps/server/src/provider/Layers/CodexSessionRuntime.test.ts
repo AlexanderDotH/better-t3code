@@ -310,7 +310,14 @@ describe("T3 browser developer instructions", () => {
     }
   });
 
-  it("prefers batched workspace context before native repository exploration", () => {
+  it("keeps current collaboration guidance alongside workspace discovery", () => {
+    NodeAssert.match(CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS, /concise by default/);
+    NodeAssert.match(CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS, /complete replacement/);
+    NodeAssert.match(
+      CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+      /request_user_input.*listed in the available tools/,
+    );
+
     for (const instructions of [
       CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
       CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
