@@ -29,7 +29,9 @@ permissions:
 jobs:
   check_changes:
     name: Check for changes since last nightly
-    if: github.event_name == 'schedule'
+    if: |
+      (github.repository == 'pingdotgg/t3code' || vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true') &&
+      github.event_name == 'schedule'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     outputs:
       has_changes: ${{ steps.check.outputs.has_changes }}
@@ -68,6 +70,7 @@ jobs:
     name: Preflight
     needs: [check_changes]
     if: |
+      (github.repository == 'pingdotgg/t3code' || vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true') &&
       !failure() && !cancelled() &&
       (github.event_name != 'schedule' || needs.check_changes.outputs.has_changes == 'true')
     runs-on: blacksmith-8vcpu-ubuntu-2404
@@ -177,7 +180,9 @@ jobs:
   relay_public_config:
     name: Resolve T3 Connect public config
     needs: preflight
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
+    if: |
+      (github.repository == 'pingdotgg/t3code' || vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true') &&
+      !failure() && !cancelled() && needs.preflight.result == 'success'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 5
     environment:
@@ -273,7 +278,9 @@ jobs:
   build_wsl_node_pty:
     name: Build WSL node-pty (linux-x64)
     needs: [preflight]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
+    if: |
+      (github.repository == 'pingdotgg/t3code' || vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true') &&
+      !failure() && !cancelled() && needs.preflight.result == 'success'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:
@@ -326,7 +333,9 @@ jobs:
     # build_wsl_node_pty failed; the Windows-only download step below then fails
     # that single platform if the prebuild is missing.
     needs: [preflight, relay_public_config, build_wsl_node_pty]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' }}
+    if: |
+      (github.repository == 'pingdotgg/t3code' || vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true') &&
+      !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     env:
@@ -665,7 +674,9 @@ jobs:
   publish_cli:
     name: Publish CLI to npm
     needs: [preflight, relay_public_config, build]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build.result == 'success' }}
+    if: |
+      (github.repository == 'pingdotgg/t3code' || vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true') &&
+      !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build.result == 'success'
     runs-on: ubuntu-24.04 # blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
@@ -744,7 +755,9 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: [preflight, build, publish_cli]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.publish_cli.result == 'success' }}
+    if: |
+      (github.repository == 'pingdotgg/t3code' || vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true') &&
+      !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.publish_cli.result == 'success'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 30
     permissions:
@@ -859,7 +872,9 @@ jobs:
   deploy_web:
     name: Deploy hosted web app
     needs: [preflight, relay_public_config, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.release.result == 'success' }}
+    if: |
+      (github.repository == 'pingdotgg/t3code' || vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true') &&
+      !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.release.result == 'success'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     env:
@@ -977,7 +992,9 @@ jobs:
 
   finalize:
     name: Finalize release
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' }}
+    if: |
+      (github.repository == 'pingdotgg/t3code' || vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true') &&
+      !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable'
     needs: [preflight, release]
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
@@ -1057,6 +1074,7 @@ jobs:
   announce_discord:
     name: Announce release on Discord
     if: |
+      (github.repository == 'pingdotgg/t3code' || vars.T3_ENABLE_PRODUCTION_AUTOMATION == 'true') &&
       always() && !cancelled() &&
       needs.preflight.result == 'success' &&
       needs.relay_public_config.result == 'success' &&
