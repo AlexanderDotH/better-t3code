@@ -13,6 +13,16 @@ Turn off **Create checkpoints** for projects where that overhead is a problem. N
 creating checkpoint refs and provider diff placeholders; existing checkpoints are kept and can
 still be restored. Turn processing and Git status updates continue normally.
 
+Each checkout stores this setting on its own environment. Changing a normalized project group
+updates every checkout in the group. T3 Code attempts the update on all connected environments even
+if one fails, then identifies every environment that needs attention.
+
+If grouped checkouts disagree, the control shows **Mixed**. In that state, each checkout continues
+using its own saved value: enabled checkouts create checkpoints and disabled checkouts do not. Use
+**Enable all** or **Disable all** to normalize the group. These actions are serialized, so a second
+click cannot overlap an update that is still in progress; after a partial failure, retry the desired
+action once the unavailable environment is reachable.
+
 ## Project icon
 
 T3 Code selects a project icon automatically. It checks `t3.json`, common favicon and app icon

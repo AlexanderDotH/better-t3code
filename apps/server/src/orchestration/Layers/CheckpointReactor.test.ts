@@ -40,7 +40,7 @@ import {
   TurnQuiescenceNotifierLive,
 } from "../../git-workbench/TurnQuiescenceNotifier.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
-import { CheckpointReactorLive } from "./CheckpointReactor.ts";
+import { CheckpointReactorLive, isProjectCheckpointCaptureEnabled } from "./CheckpointReactor.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
@@ -67,6 +67,14 @@ import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
+
+describe("isProjectCheckpointCaptureEnabled", () => {
+  it("uses only the thread's physical project and fails closed when it is missing", () => {
+    expect(isProjectCheckpointCaptureEnabled({ checkpointsEnabled: true })).toBe(true);
+    expect(isProjectCheckpointCaptureEnabled({ checkpointsEnabled: false })).toBe(false);
+    expect(isProjectCheckpointCaptureEnabled(undefined)).toBe(false);
+  });
+});
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
@@ -219,7 +227,7 @@ function createGitRepository() {
   runGit(cwd, ["config", "user.name", "Test User"]);
   NodeFS.writeFileSync(NodePath.join(cwd, "README.md"), "v1\n", "utf8");
   runGit(cwd, ["add", "."]);
-  runGit(cwd, ["commit", "-m", "Initial"]);
+  runGit(cwd, ["-c", "commit.gpgSign=false", "commit", "-m", "Initial"]);
   return cwd;
 }
 

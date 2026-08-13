@@ -96,7 +96,6 @@ import {
 } from "../ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
-import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   WorkspaceBreadcrumb,
@@ -110,7 +109,13 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { ProjectFaviconPickerDialog } from "./ProjectFaviconPickerDialog";
-import { resolveProjectCheckpointSetting } from "./projectCheckpointSettings";
+import { ProjectCheckpointControls } from "./ProjectCheckpointControls";
+import {
+  resolveProjectCheckpointSetting,
+  runExclusiveProjectGroupUpdate,
+  updateProjectGroupMembers,
+  type ProjectGroupUpdateFailure,
+} from "./projectCheckpointSettings";
 
 export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
@@ -358,6 +363,35 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       }),
     );
   }, []);
+  const reportGroupFailures = useCallback(
+    (
+      title: string,
+      failures: ReadonlyArray<ProjectGroupUpdateFailure<SidebarProjectGroupMember, unknown>>,
+    ) => {
+      const reportable = failures.filter(({ result }) => !isAtomCommandInterrupted(result));
+      if (reportable.length === 0) return;
+      const descriptions = reportable.map(({ member, result }) => {
+        const error = squashAtomCommandFailure(result);
+        const message =
+          error instanceof Error
+            ? error.message
+            : typeof error === "string"
+              ? error
+              : "An error occurred.";
+        return group.memberProjects.length > 1
+          ? `${member.environmentLabel ?? member.environmentId}: ${message}`
+          : message;
+      });
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title,
+          description: descriptions.join("; "),
+        }),
+      );
+    },
+    [group.memberProjects.length],
+  );
 
   // Group-shared fields live on each physical project record, so a
   // group-level edit fans out to every member.
@@ -371,30 +405,21 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         faviconPath: string | null;
       }>,
       failureTitle: string,
-    ): Promise<AtomCommandResult<void, unknown>> => {
-      for (const member of group.memberProjects) {
-        const result = mapAtomCommandResult(
+    ): Promise<void> => {
+      const { failures } = await updateProjectGroupMembers(group.memberProjects, async (member) =>
+        mapAtomCommandResult(
           await updateProject({
             environmentId: member.environmentId,
             input: { projectId: member.id, ...input },
           }),
           () => undefined,
-        );
-        if (result._tag === "Failure") {
-          // A partial fan-out is possible: earlier members already took the
-          // write. Name the environment so the user knows where it stopped.
-          reportFailure(
-            group.memberProjects.length > 1
-              ? `${failureTitle} on ${member.environmentLabel ?? "the current environment"}`
-              : failureTitle,
-            result,
-          );
-          return result;
-        }
+        ),
+      );
+      if (failures.length > 0) {
+        reportGroupFailures(failureTitle, failures);
       }
-      return AsyncResult.success(undefined);
     },
-    [group.memberProjects, reportFailure, updateProject],
+    [group.memberProjects, reportGroupFailures, updateProject],
   );
 
   const renameGroup = useCallback(
@@ -446,10 +471,26 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   );
 
   const checkpointSetting = resolveProjectCheckpointSetting(group.memberProjects);
+  const [isSavingCheckpointSetting, setIsSavingCheckpointSetting] = useState(false);
+  const savingCheckpointSettingRef = useRef(false);
   const setCheckpointsEnabled = useCallback(
-    (enabled: boolean) =>
-      void updateAllMembers({ checkpointsEnabled: enabled }, "Failed to update checkpoint setting"),
-    [updateAllMembers],
+    async (enabled: boolean) => {
+      if (checkpointSetting.state !== "mixed" && checkpointSetting.effectiveEnabled === enabled) {
+        return;
+      }
+      await runExclusiveProjectGroupUpdate(savingCheckpointSettingRef, async () => {
+        setIsSavingCheckpointSetting(true);
+        try {
+          await updateAllMembers(
+            { checkpointsEnabled: enabled },
+            "Failed to update checkpoint setting",
+          );
+        } finally {
+          setIsSavingCheckpointSetting(false);
+        }
+      });
+    },
+    [checkpointSetting.effectiveEnabled, checkpointSetting.state, updateAllMembers],
   );
 
   // ----- favicon -----
@@ -924,18 +965,13 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         <SettingsSection title="Checkpoints">
           <SettingsRow
             title="Create checkpoints"
-            description="Save hidden Git checkpoints before and after turns for diffs and restore. Disable this for very large repositories to avoid checkpoint overhead. Applies to every checkout in this group."
+            description="Save hidden Git checkpoints before and after turns for diffs and restore. Disable this for very large repositories to avoid checkpoint overhead. Each grouped checkout stores its own value; mixed values can be normalized here."
             control={
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">
-                  {checkpointSetting.state === "mixed" ? "Mixed" : null}
-                </span>
-                <Switch
-                  aria-label="Create checkpoints after turns"
-                  checked={checkpointSetting.effectiveEnabled}
-                  onCheckedChange={setCheckpointsEnabled}
-                />
-              </div>
+              <ProjectCheckpointControls
+                setting={checkpointSetting}
+                isSaving={isSavingCheckpointSetting}
+                onChange={(enabled) => void setCheckpointsEnabled(enabled)}
+              />
             }
           />
         </SettingsSection>

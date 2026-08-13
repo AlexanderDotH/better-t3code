@@ -76,10 +76,10 @@ function checkpointStatusFromRuntime(status: string | undefined): "ready" | "mis
   }
 }
 
-function areProjectCheckpointsEnabled(
-  projects: ReadonlyArray<{ readonly checkpointsEnabled: boolean }>,
+export function isProjectCheckpointCaptureEnabled(
+  project: { readonly checkpointsEnabled: boolean } | undefined,
 ): boolean {
-  return projects.every((project) => project.checkpointsEnabled);
+  return project?.checkpointsEnabled === true;
 }
 
 const make = Effect.gen(function* () {
@@ -195,13 +195,10 @@ const make = Effect.gen(function* () {
       .pipe(Effect.map(Option.getOrUndefined));
   });
 
-  const resolveThreadProjects = Effect.fn("resolveThreadProjects")(function* (
-    projectId: ProjectId,
-  ) {
-    const project = yield* projectionSnapshotQuery
+  const resolveThreadProject = Effect.fn("resolveThreadProject")(function* (projectId: ProjectId) {
+    return yield* projectionSnapshotQuery
       .getProjectShellById(projectId)
       .pipe(Effect.map(Option.getOrUndefined));
-    return project ? [project] : [];
   });
 
   const isGitWorkspace = (cwd: string) => isGitRepository(cwd);
@@ -213,14 +210,16 @@ const make = Effect.gen(function* () {
   const resolveCheckpointCwd = Effect.fn("resolveCheckpointCwd")(function* (input: {
     readonly threadId: ThreadId;
     readonly thread: { readonly projectId: ProjectId; readonly worktreePath: string | null };
-    readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly workspaceRoot: string }>;
+    readonly project: { readonly id: ProjectId; readonly workspaceRoot: string } | undefined;
     readonly preferSessionRuntime: boolean;
   }): Effect.fn.Return<string | undefined> {
     const fromSession = yield* resolveSessionRuntimeForThread(input.threadId);
-    const fromThread = resolveThreadWorkspaceCwd({
-      thread: input.thread,
-      projects: input.projects,
-    });
+    const fromThread = input.project
+      ? resolveThreadWorkspaceCwd({
+          thread: input.thread,
+          projects: [input.project],
+        })
+      : undefined;
 
     const cwd = input.preferSessionRuntime
       ? (Option.match(fromSession, {
@@ -413,12 +412,12 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      const projects = yield* resolveThreadProjects(thread.projectId);
+      const project = yield* resolveThreadProject(thread.projectId);
       const currentTurnCount = thread.checkpoints.reduce(
         (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
         0,
       );
-      if (!areProjectCheckpointsEnabled(projects)) {
+      if (!isProjectCheckpointCaptureEnabled(project)) {
         yield* publishTurnProcessingQuiesced({
           threadId: thread.id,
           turnId,
@@ -430,7 +429,7 @@ const make = Effect.gen(function* () {
       const checkpointCwd = yield* resolveCheckpointCwd({
         threadId: thread.id,
         thread,
-        projects,
+        project,
         preferSessionRuntime: true,
       });
       if (!checkpointCwd) {
@@ -498,8 +497,8 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const projects = yield* resolveThreadProjects(thread.projectId);
-    if (!areProjectCheckpointsEnabled(projects)) {
+    const project = yield* resolveThreadProject(thread.projectId);
+    if (!isProjectCheckpointCaptureEnabled(project)) {
       yield* publishTurnProcessingQuiesced({
         threadId,
         turnId,
@@ -511,7 +510,7 @@ const make = Effect.gen(function* () {
     const checkpointCwd = yield* resolveCheckpointCwd({
       threadId,
       thread,
-      projects,
+      project,
       preferSessionRuntime: true,
     });
     if (!checkpointCwd) {
@@ -542,14 +541,14 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      const projects = yield* resolveThreadProjects(thread.projectId);
-      if (!areProjectCheckpointsEnabled(projects)) {
+      const project = yield* resolveThreadProject(thread.projectId);
+      if (!isProjectCheckpointCaptureEnabled(project)) {
         return;
       }
       const checkpointCwd = yield* resolveCheckpointCwd({
         threadId: thread.id,
         thread,
-        projects,
+        project,
         preferSessionRuntime: false,
       });
       if (!checkpointCwd) {
@@ -704,14 +703,14 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const projects = yield* resolveThreadProjects(thread.projectId);
-    if (!areProjectCheckpointsEnabled(projects)) {
+    const project = yield* resolveThreadProject(thread.projectId);
+    if (!isProjectCheckpointCaptureEnabled(project)) {
       return;
     }
     const checkpointCwd = yield* resolveCheckpointCwd({
       threadId,
       thread,
-      projects,
+      project,
       preferSessionRuntime: false,
     });
     if (!checkpointCwd) {
