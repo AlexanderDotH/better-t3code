@@ -498,3 +498,11 @@ parent's ancestry, including the stricter deny-only Fetch policy, project-scoped
 controls, provider/runtime behavior, and metadata-only naming attachments. Upstream writes remain
 hard-disabled, remote archive branches remain intentionally retained, and no browser, emulator,
 T3 Code process, or live T3 home state was used or modified.
+
+The final pre-promotion check found one additional upstream commit. The live fetch and remote check
+both resolved to `97db94c9bf6fa5d83f94c8fff85566d7fc96276e`, which is the final pinned
+upstream SHA for this cycle. Its pull-request preview containment fix merged without conflicts as
+`a991b3d4863a789a8c0b11890dd7f33444fb54e0`; the second parent is the final pinned SHA and the
+first parent is the previously validated fork tip. The affected pull-request surface passed 18
+focused files and 295 tests, the web typecheck, changed-file lint and formatting, and whitespace
+checks before the fork-only PR gate was restarted on the new exact head.
