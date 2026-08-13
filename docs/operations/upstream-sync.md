@@ -463,3 +463,38 @@ The live upstream tip was observed at `5015d7cf9f98fe551115b625031f01e3f022cd2d`
 `1e59b4c4004ce3c724d09ca0b140ed4523758d1e` freeze. As specified by the freeze boundary, that newer
 upstream work belongs to the next synchronization cycle. No browser or emulator pass was added;
 no T3 Code process or live T3 home state was managed or mutated.
+
+## August 13, 2026 incremental synchronization
+
+The next synchronization cycle started from clean fork `main` at
+`72e83d675854cfa9ef3ddf6cc5687dcd428d70bd`. The previous pinned upstream tip was
+`1e59b4c4004ce3c724d09ca0b140ed4523758d1e`; the live fetch and `git ls-remote` check both resolved
+`upstream/main` to `5015d7cf9f98fe551115b625031f01e3f022cd2d`. The three-commit delta contains
+the upstream diff-list scrolling correction, Codex collaboration-prompt alignment, and stable turn
+minimap positioning while the composer changes height.
+
+Before integration, all refs—including the retained archive branches and T3 checkpoint refs—were
+captured in the verified external bundle at
+`/home/alex/.local/state/t3code-repo-rescue/20260813-upstream-5015d7cf9/all-refs.bundle`. Its SHA-256
+is `97da17ed115f0fa7651cba9077a982d9401e59a1667d880150b5f531988f0a40`.
+
+The ordinary two-parent merge is `8bad92bf746023cc5081895d4f26b55411ff00f6`; its second parent
+is the pinned upstream tip. One textual conflict occurred in `CodexDeveloperInstructions.ts`. The
+resolution adopts upstream's concise-plan, replacement-plan, and conditional `request_user_input`
+guidance while retaining Better T3 Code's product-native browser and batched `workspace_context`
+instructions in both collaboration modes. A focused assertion covers both sides of that seam.
+Upstream's minimap and virtualized-diff fixes merged without conflict alongside the fork's custom
+timeline, lifecycle, and Git-workbench behavior.
+
+Local validation under Node 24.18.1 and pnpm 11.10.0 covered 34 focused files and 570 tests. The
+suites exercise the changed Codex, minimap, and diff behavior plus Fetch safety, metadata-only
+naming, checkpoint capture and migration 51, provider handoff, project-agent coordination,
+subagent lifecycle, mobile activity, workspace/Git surfaces, and local packaging scripts. Targeted
+typechecks passed for `t3`, contracts, client-runtime, web, and mobile; changed-file lint,
+non-rewriting formatting, conflict-marker, and whitespace checks also passed.
+
+Migration identities 1 through 51 are unchanged. All pre-sync fork commits remain in the first
+parent's ancestry, including the stricter deny-only Fetch policy, project-scoped checkpoint
+controls, provider/runtime behavior, and metadata-only naming attachments. Upstream writes remain
+hard-disabled, remote archive branches remain intentionally retained, and no browser, emulator,
+T3 Code process, or live T3 home state was used or modified.
