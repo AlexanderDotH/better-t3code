@@ -45,11 +45,13 @@ export function resolveFetchMode(input: {
 }
 
 export function isFetchCapableProvider(provider: ServerProvider): boolean {
-  const budget = provider.fetchWorkers?.maxRecommendedWorkers;
+  const fetchWorkers = provider.fetchWorkers;
+  const budget = fetchWorkers?.maxRecommendedWorkers;
   return (
     provider.enabled &&
     provider.installed &&
     provider.availability !== "unavailable" &&
+    fetchWorkers?.commandExecutionPolicy === "deny" &&
     Number.isInteger(budget) &&
     (budget ?? 0) > 0
   );

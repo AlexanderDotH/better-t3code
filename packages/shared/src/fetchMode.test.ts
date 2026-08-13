@@ -34,6 +34,9 @@ function provider(input: {
   readonly installed?: boolean;
   readonly availability?: ServerProvider["availability"];
   readonly fetchCapable?: boolean;
+  readonly commandExecutionPolicy?: NonNullable<
+    ServerProvider["fetchWorkers"]
+  >["commandExecutionPolicy"];
 }): ServerProvider {
   return {
     instanceId: ProviderInstanceId.make(input.instanceId),
@@ -50,7 +53,7 @@ function provider(input: {
       : {
           fetchWorkers: {
             maxRecommendedWorkers: 8,
-            commandExecutionPolicy: input.driver === "codex" ? "read-only-sandbox" : "deny",
+            commandExecutionPolicy: input.commandExecutionPolicy ?? "deny",
           },
         }),
     models: [...input.models],
@@ -73,6 +76,21 @@ describe("Fetch request mode", () => {
   it("arms Fetch from the device toggle independently of the main provider", () => {
     expect(resolveFetchMode({ featureEnabled: false })).toBeUndefined();
     expect(resolveFetchMode({ featureEnabled: true })).toBe(FETCH_MODE);
+  });
+});
+
+describe("Fetch provider eligibility", () => {
+  it("requires providers to deny command execution", () => {
+    const input = {
+      instanceId: "codex",
+      driver: "codex",
+      models: [model("gpt-5.6-luna")],
+    } as const;
+
+    expect(isFetchCapableProvider(provider(input))).toBe(true);
+    expect(
+      isFetchCapableProvider(provider({ ...input, commandExecutionPolicy: "read-only-sandbox" })),
+    ).toBe(false);
   });
 });
 
