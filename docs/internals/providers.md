@@ -7,7 +7,7 @@ orchestration layer does not know which one is behind a thread.
 
 ## Built-in drivers
 
-[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with five entries:
+[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with six entries:
 
 | Driver kind   | Driver source                           |
 | ------------- | --------------------------------------- |
@@ -16,6 +16,7 @@ orchestration layer does not know which one is behind a thread.
 | `cursor`      | [`Drivers/CursorDriver.ts`][cursor]     |
 | `grok`        | [`Drivers/GrokDriver.ts`][grok]         |
 | `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode] |
+| `gemini`      | [`Drivers/GeminiDriver.ts`][gemini]     |
 
 Each driver declares its `driverKind`, a `configSchema`, and a `create` function that builds an
 adapter in a child scope. Adapter implementations live beside them in
@@ -62,6 +63,7 @@ delivery is one such capability:
 | Cursor   | Session configuration      | Yes               | Yes                  |
 | OpenCode | Session configuration      | Yes               | Yes                  |
 | Grok     | Preview-only configuration | No                | Yes                  |
+| Gemini   | Unsupported (direct tools) | Yes               | No                   |
 
 Codex, Claude, Cursor, and OpenCode receive the authenticated `/mcp/workspace` endpoint; Grok
 receives `/mcp`. Both expose collaborative preview and project-agent coordination tools, while only
@@ -69,6 +71,12 @@ the workspace endpoint adds read-only `workspace_context`. The provider cannot c
 project, thread identity, or workspace root. User-configured MCP routing and exact-session runtime
 health stay separate from this internal server. See [Internal provider MCP](./internal-mcp.md) and
 [MCP configuration and runtime status](./mcp-runtime-status.md).
+
+Gemini is deliberately different: T3 is its harness and calls the official `@google/genai` SDK
+directly. T3 owns Gemini history, streaming, approvals, interruption, and the function-call loop.
+Its `workspace_context`, edit, and bounded command tools invoke T3 services directly instead of
+giving the model an MCP transport. User MCP and project-agent coordination are therefore reported
+as unsupported by this adapter rather than silently pretending to be connected.
 
 Fetch eligibility is another provider-snapshot capability. Providers without `fetchWorkers` do not
 appear in the Fetch model picker. The capability owns the recommended planning budget and command
@@ -81,6 +89,7 @@ policy for transient exploration workers:
 | Cursor   | 8                     | Deny commands        |
 | Grok     | 8                     | Deny commands        |
 | OpenCode | 8                     | Deny commands        |
+| Gemini   | 8                     | Deny commands        |
 
 The budget is a provider declaration, not an application-wide clamp. A provider or fork may
 advertise a larger supported worker count.
@@ -178,6 +187,7 @@ when a request opens (approval) or user input is requested, via
 [cursor]: ../../apps/server/src/provider/Drivers/CursorDriver.ts
 [grok]: ../../apps/server/src/provider/Drivers/GrokDriver.ts
 [opencode]: ../../apps/server/src/provider/Drivers/OpenCodeDriver.ts
+[gemini]: ../../apps/server/src/provider/Drivers/GeminiDriver.ts
 [adapter]: ../../apps/server/src/provider/Services/ProviderAdapter.ts
 [instances]: ../../apps/server/src/provider/Services/ProviderInstanceRegistry.ts
 [registry]: ../../apps/server/src/provider/Services/ProviderAdapterRegistry.ts

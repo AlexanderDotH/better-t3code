@@ -100,5 +100,6 @@ environment server. If the provider requires a callback available only on the ho
 relay, or tunnel client is directed to finish authorization on that host instead of receiving a
 button that cannot complete safely.
 
-The native mobile app keeps its existing UI and does not expose the workspace deck or MCP management
-card.
+The native mobile app does not expose the workspace deck or live-runtime MCP card. Under
+**Settings > Agents & Servers**, it can still inspect configured servers and enable or disable them
+on each capable environment.

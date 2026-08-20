@@ -16,7 +16,7 @@
 - [MCP servers](./user/mcp-servers.md)
 - [Background service (Linux)](./user/background-service.md)
 - Providers: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) ·
-  [OpenCode](./user/providers-opencode.md)
+  [OpenCode](./user/providers-opencode.md) · [Gemini](./user/providers-gemini.md)
 
 Mobile app: [apps/mobile/README.md](../apps/mobile/README.md)
 

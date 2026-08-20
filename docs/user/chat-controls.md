@@ -49,28 +49,60 @@ Git controls and does not show the carousel or MCP workspace card.
 
 ## Planning with Codex
 
-Codex chats on web and desktop include a **Build/Plan** selector in the message composer. **Build**
-asks Codex to work directly on the task. **Plan** keeps the thread in a planning workflow so you can
-explore requirements and agree on an implementation plan before changing code. The selection is
-stored per thread and is sent with the next turn.
+On web and desktop, enable **Plan mode (legacy)** in **Settings > General > Legacy features** to show
+the **Build/Plan** selector for providers that support it, including Codex. **Build** asks the agent
+to work directly on the task. **Plan** keeps the thread in a planning workflow so you can explore
+requirements and agree on an implementation plan before changing code. The selection is stored per
+thread and is sent with the next turn. Mobile keeps its existing interaction-mode behavior and is
+not controlled by this setting.
 
-The `/plan` and `/default` commands select the same modes. With the composer focused, **Shift+Tab**
-switches between them. Providers other than Codex only show these controls when they advertise plan
-mode support and **Plan mode (legacy)** is enabled in **Settings > General > Legacy features**.
+While enabled, the `/plan` and `/default` commands select the same modes. With the composer focused,
+**Shift+Tab** switches between them. Turning the setting off hides these controls and runs every
+thread in Build mode.
+
+## Codex context window
+
+Codex chats on web and desktop show a separate **Context** chip beside the other composer controls.
+Open it to choose one of 20 stable slider positions, from **Model default** through **1.05M** tokens.
+The chip always shows the selected size. **Model default** leaves the context size to Codex and the
+active model instead of sending an override.
+
+The selection belongs to the current chat, is stored with its thread, and synchronizes through the
+owning T3 environment to web, desktop, and mobile clients. It does not become the default for new
+chats. Mobile exposes the same selection in the chat's thread settings. A changed size is applied
+when the next Codex turn starts; an existing resumable Codex thread is reopened with that size.
 
 ## Voice input
 
-Web and desktop can stream microphone input to AssemblyAI from the chat composer. The waveform and
+Web, desktop, and mobile can stream microphone input to AssemblyAI from the chat composer. The waveform and
 stop control stay gray while the connection is opening, turn red once the microphone stream is
-ready for speech, and return to gray while the final transcript is being finished. Press **Escape**
-to cancel and restore the draft from before recording.
+ready for speech, and return to gray while the final transcript is being finished. On web and
+desktop, press **Escape** to cancel and restore the draft from before recording. Mobile exposes the
+same cancel behavior from its native composer control.
 
 In **Settings > Connections > Voice input**, **Output language** can keep the spoken language or
 translate the finished transcript to English. **Voice post-processing model** selects the agent model
 used only for that optional English translation; AssemblyAI still performs the live speech
 recognition. The selection inherits the global text generation model until a dedicated override is
 chosen. This setting belongs to the server environment, so configure it on the environment that owns
-the project. Mobile does not currently expose voice input.
+the project. On mobile, configure the key, translation model, and device-local English-output switch
+under **Settings > Agents & Servers**. The same screen lists each connected environment's project
+speech profiles. Expand a project to inspect the active AssemblyAI prompt and context counts, index
+or reindex repository terminology, or choose basic context derived only from project metadata.
+Indexing extracts terminology and technology names; it does not send source snippets.
+
+## Chat portability
+
+Copying a thread transcript exports the complete, unredacted conversation as Markdown, including
+history outside the client's currently loaded message window. On mobile, open the composer's thread
+settings and choose **Copy complete transcript**. The action waits until the active turn settles so
+the clipboard receives one stable snapshot.
+
+To bring chats across from another local T3 Code installation, open **Settings > Agents & Servers**
+on mobile and use **Import chats** for the environment that owns those files. The server scans its
+local `.t3` and `.t3-*` data directories and reports the projects, chats, messages, and attachments
+it synchronized. Imported chats receive new local IDs and cannot resume the source provider session.
+Running the same import again updates the existing imported chats without creating duplicates.
 
 ## Stopping a generation
 
@@ -84,6 +116,29 @@ user waiting on an unresponsive provider:
 If the cooperative stop has not settled after five seconds, T3 Code automatically performs the
 same force stop. While the force stop is running, the button shows progress and cannot be selected
 again. Sending another message remains unavailable until the stop has settled.
+
+## Memory protection during parallel agent work
+
+T3 Code protects the server from memory spikes without imposing a fixed agent limit. When the
+environment is short on available memory, new Codex turns and subagents remain queued. The affected
+thread shows **Subagent wartet auf freien Speicher** for a queued subagent, while Codex reports
+**Agent wartet auf freien Speicher** before a queued root turn starts. Every queued start is kept in
+arrival order and starts automatically once enough memory is available.
+
+An admitted Codex turn or subagent keeps its memory reservation until that exact turn or subagent
+stops. This prevents a short startup measurement from making the same memory look available to
+several still-running agents.
+
+If an already running provider grows fast enough to threaten the protected memory reserve, T3 Code
+temporarily pauses only that provider process tree. The affected thread shows **Provider
+vorübergehend gedrosselt** until the reserve has recovered. The provider then continues from the
+same point; its model, reasoning setting, tools, MCP servers, sandbox, and result are unchanged.
+
+There is no configurable agent-count cap. Safe concurrency adapts to current available memory and
+the measured growth of the active configurations. A start can wait for as long as memory remains
+scarce, and **Stop generation** remains available while it waits or while a provider is paused. The
+server owns these decisions, so the same behavior and status apply to web, desktop, and mobile
+clients over local, LAN, relay, or tunnel connections.
 
 ## Temporarily lowering reasoning effort
 
@@ -106,8 +161,9 @@ between web, desktop, and mobile, and T3 Code never silently lowers the saved th
 ## Exploring repositories with Fetch
 
 Enable **Fetch** in **Settings > Experimental** to explore a repository before the main provider
-starts its turn. The enable switch is device-local, defaults off, and is currently available in web
-and desktop. The **Fetch model** selection below it is stored on the connected T3 environment, so
+starts its turn. The enable switch is device-local, defaults off, and is available in web, desktop,
+and mobile. On mobile it appears in the composer settings and under **Settings > Agents & Servers**.
+The **Fetch model** selection is stored on the connected T3 environment, so
 every client using that environment sees the same provider, model, and traits. Turning Fetch off
 disables the selector visually but retains its value.
 
@@ -134,7 +190,7 @@ focused, or briefly investigative requests use zero workers even when the main a
 repository itself. An explicit request to work alone or avoid Fetch, workers, subagents, or delegation
 also uses zero workers. Fetch runs only when parallel exploration materially helps, and then chooses
 the smallest useful count between one and the provider's advertised worker budget. Three workers is
-not a default. The five built-in providers initially advertise eight; T3 Code has no separate global
+not a default. The six built-in providers initially advertise eight; T3 Code has no separate global
 ceiling, so a provider or fork may advertise more. An invalid, failed, or timed-out plan safely skips
 workers and lets the unchanged main turn continue.
 
@@ -146,6 +202,10 @@ including their Fetch origin, provider instance, model, and reasoning or effort.
 collected before the main provider receives the turn, and the main provider remains responsible for
 verifying them before editing.
 
+Long-running agent transcripts open with their recent activity so desktop and mobile stay responsive
+even after heavy parallel work. Select **Load earlier activity** at the top of the transcript to page
+back through older tool and coordination events; messages and proposed plans remain available.
+
 Partial failures and timeouts do not discard successful findings or retry failed workers. If all
 workers fail, or no input space remains for their bounded context, the main turn still continues and
 Fetch shows a warning. Select **Stop generation** while Fetch is running to interrupt the planner
@@ -155,8 +215,8 @@ Each planner or worker session can consume additional quota from the selected pr
 For remote projects, resolution and execution happen on the T3 environment that owns the project,
 using that environment's provider instances, credentials, filesystem, and persisted Fetch model.
 The remote client only opts the turn into Fetch, observes its busy state and transcripts, and can
-stop it through the normal session controls. Mobile does not expose the Fetch enable switch, but it
-can still observe and stop a Fetch-enabled turn started elsewhere.
+stop it through the normal session controls. Offline mobile turns retain their Fetch choice and run
+it on the owning environment after reconnect.
 
 ## Coordinating parallel project chats
 
@@ -199,8 +259,9 @@ hover the implementation action to see that fallback. Successful reviews are cac
 current app session and are refreshed when the plan version, implementation provider capability, or
 review-model selection changes.
 
-Use **Agent count review model** in **Settings > Experimental** to select the provider, model, and
+Use **Agent count review model** in **Settings > Experimental** on web and desktop, or **Parallel
+plan review** under **Settings > Agents & Servers** on mobile, to select the provider, model, and
 model options used for this estimate. Codex defaults to `gpt-5.6-luna` with low reasoning and the
 priority service tier when the provider reports that option. The reviewer supports Codex, Claude,
-Cursor, Grok, and OpenCode instances. This experimental control is currently available in web and
-desktop; mobile does not yet expose the proposed-plan implementation flow.
+Cursor, Grok, and OpenCode instances. Mobile shows the same reviewed default and provider-native
+agent-count choices on proposed plans.

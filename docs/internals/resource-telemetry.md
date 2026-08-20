@@ -134,9 +134,11 @@ History stays in the sidecar until a `readHistory` request and is returned in
 bounded chunks. The first bound reached wins, so high process counts or large
 process names and command lines shorten the effective history window.
 
-Periodic snapshot streaming is disabled by default. The server enables it only
-while at least one diagnostics subscription is retained. `sampleNow` remains
-available for explicit refreshes and identity validation.
+Periodic snapshot streaming is disabled by default. The server enables it while
+at least one diagnostics subscription is retained or while resource protection
+has a waiting admission, active measurement, registered provider process, or
+paused process tree. `sampleNow` remains available for explicit refreshes and
+identity validation.
 
 The server adjusts native sampling without restarting the sidecar:
 
@@ -145,6 +147,10 @@ The server adjusts native sampling without restarting the sidecar:
 - normal AC: 1 second;
 - unknown or stale power: 5 seconds in the background and 1 second while live
   diagnostics is open.
+
+Resource-protection demand always forces a 1-second interval, including on
+battery or under thermal constraints. Diagnostics-only subscriptions keep the
+power-adaptive cadence.
 
 ### Sampling limits
 
@@ -284,6 +290,69 @@ Merges native and Electron data and owns public telemetry semantics.
 Electron and monitor processes are visible but are not valid targets for the
 existing process-signal RPC.
 
+### `SubagentResourceGovernor`
+
+`apps/server/src/resourceProtection/SubagentResourceGovernor.ts` is the sole
+authority for protected agent admission and memory-pressure throttling. It consumes a
+dedicated scoped native stream at 1 Hz whenever provider work makes monitoring
+necessary; it does not persist samples or decisions.
+
+Admission uses these rules:
+
+- reserve 20 percent of physical RAM, clamped to 2–6 GiB;
+- reserve 4 GiB for an unknown provider/model/MCP configuration;
+- measure one unknown configuration at a time for five samples;
+- after observations exist, reserve the larger of 4 GiB or 1.25 times the
+  observed P95 growth;
+- retain admitted Codex root-turn reservations through `Stop` and confirmed
+  native-subagent reservations through the matching `SubagentStop`;
+- grant queued starts in strict FIFO order without an agent-count limit.
+
+Codex root turns use additive synchronous `UserPromptSubmit` and `Stop` hooks.
+Native subagents reserve through `PreToolUse` for `spawn_agent`, bind that
+reservation to the stable `agent_id` from `SubagentStart`, and release it from
+`SubagentStop`. Duplicate lifecycle notifications are idempotent. Claude waits
+inside `canUseTool("Agent")`; OpenCode exposes its `task` permission internally
+as `ask` and auto-approves that one request after admission. Fetch workers call
+the same service directly before starting their transient provider session.
+Admission does not alter provider arguments, models, reasoning, tools, MCP
+configuration, sandboxing, or resume behavior.
+
+Every owned provider root is registered with `(pid, startTimeMs)`. The governor
+rebuilds only that root's descendant tree from native samples. Linux spawn-time
+identities are normalized to the monitor's one-second precision; immediately
+before every signal, `/proc` is read again and compared at the same precision.
+This permits the real process while fencing PID reuse.
+
+The five-second growth projection sums all exact registered provider trees. If
+it falls below the core reserve for two consecutive samples, admission stops
+and the fastest-growing exact provider tree receives `SIGSTOP`, root first.
+After five healthy samples the same identities receive `SIGCONT`, children
+first. A failed partial stop is rolled back. T3's server, Electron, and
+unregistered host applications are never signal candidates; stop and scope
+cleanup resume a paused tree before removing its registration.
+
+The governor publishes the ephemeral `ResourceProtectionSnapshot` contract
+with `normal`, `waiting`, `throttled`, `recovering`, or `unavailable` state,
+memory and reservation totals, waiting count, and affected thread IDs. The
+WebSocket subscription is server-authoritative across local, relay, and tunnel
+connections; web/desktop and mobile only present that state.
+
+### Provider event backpressure
+
+Provider session queues are bounded to 256 events and 32 MiB; adapter/runtime
+broadcast queues are bounded to 512 events and 64 MiB. Producers wait for count
+and byte capacity, preserving every event and its order. Shutdown releases
+blocked producers and all queue, session, process, and registry ownership is
+scoped so failed spawn, stop, exit, replacement, and restart converge on the
+same cleanup path.
+
+Native, canonical, and orchestration diagnostic logs keep bounded batching and
+retention. An individual serialized diagnostic copy at or above 256 KiB is
+replaced only in the log with a bounded preview plus its original byte count
+and SHA-256. Provider transcripts, canonical tool results, and completion
+events remain complete.
+
 ### History projection
 
 `ResourceTelemetryHistory` is a pure on-demand projection. It replays raw native
@@ -356,7 +425,8 @@ with the CLI. Missing platform artifacts degrade native telemetry to
 Steady state uses:
 
 - one native process;
-- power-adaptive native counter sampling with no periodic Node snapshot stream;
+- power-adaptive native counter sampling, overridden to 1 Hz only while
+  resource protection has active provider demand;
 - event-driven Electron power updates plus profile-driven heartbeats (30–60
   seconds while active and 2–10 minutes while idle);
 - no `app.getAppMetrics()` calls while diagnostics is closed;

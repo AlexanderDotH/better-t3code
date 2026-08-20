@@ -115,8 +115,9 @@ Projects.
 
 The old standalone Cursor SDK, Gemini, Hyperagent, and OpenAI-compatible driver experiments are not
 part of the surviving feature contract. Commit `7479ada80bf9324d43621e7460d86aeffde2bf84`
-deliberately converged on T3 Code's native Codex, Claude, Cursor, Grok, and OpenCode drivers. Gemini
-selection survives through OpenCode rather than by restoring the obsolete standalone driver.
+deliberately converged on T3 Code's native Codex, Claude, Cursor, Grok, and OpenCode drivers. The
+current Gemini driver is a separate T3-owned harness built on the official SDK; it does not restore
+that obsolete implementation, and the independent OpenCode `google/...` route remains supported.
 
 `d208ca33a85aa1efaad828cead1c2ccce6b84aed` is the merge record for that old provider
 lineage. `git diff-tree --cc` reports zero combined-diff paths, so it has no independent conflict
@@ -209,7 +210,7 @@ Every upstream conflict and later refactor must preserve these behaviors:
 
 - Provider/model switching hands off the complete transcript and rebinds the runtime, including
   OpenCode with Gemini models.
-- Codex, Claude, Cursor, Grok, and OpenCode remain supported. An unknown persisted provider driver
+- Codex, Claude, Cursor, Grok, OpenCode, and the direct-SDK Gemini driver remain supported. An unknown persisted provider driver
   remains inspectable instead of making historical threads undecodable.
 - Repository Fetch remains configurable across providers and uses dynamically created, read-only,
   fenced workers with bounded concurrency, cancellation, and partial-failure reporting.

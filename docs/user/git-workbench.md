@@ -1,6 +1,10 @@
 # Git workbench
 
-The Git workbench brings repository context and common source-control tasks into the bottom of a T3 Code chat. It is available in the web and desktop clients when the connected server advertises Git workbench support. Mobile continues to use its existing Git surfaces.
+The Git workbench brings repository context and common source-control tasks into a T3 Code chat. Web
+and desktop expose the full workspace card when the connected server advertises Git workbench
+support. Mobile uses the same typed repository state and safe operations in its Git sheet: it shows
+staged, unstaged, untracked, and conflicted files, supports whole-file stage, unstage, and discard,
+and includes the active operation, latest commit, and recent history.
 
 ## Open the Git card
 
@@ -115,8 +119,13 @@ Undo is local to the repository host. It does not reverse a push, pull-request u
 
 Credentials with orchestration read permission can browse status, changes, history, patches, and insights. Mutation controls are disabled unless the connection also has operate permission.
 
-When an older server does not advertise Git workbench support, T3 Code keeps the existing compact status and header Git shortcut but omits Git from the workspace carousel. Chat and MCP remain available. T3 Code never claims that an unsupported repository is clean.
+When an older server does not advertise Git workbench support, web and desktop keep the existing
+compact status and header Git shortcut but omit Git from the workspace carousel. Mobile falls back
+to its legacy Git actions. T3 Code never claims that an unsupported repository is clean.
 
 ## Not included
 
-The first workbench release does not add tag management, stash management, bisect, submodule management, arbitrary Git command execution, raw force push, remote-history undo, historical-file editing, or a mobile workbench.
+The first workbench release does not add tag management, stash management, bisect, submodule
+management, arbitrary Git command execution, raw force push, remote-history undo, or historical-file
+editing. Advanced history rewriting, queued workflows, and patch-level selection remain web and
+desktop surfaces; mobile intentionally exposes the smaller whole-file workbench described above.

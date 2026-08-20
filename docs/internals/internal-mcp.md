@@ -31,12 +31,15 @@ Provider support follows the adapter's MCP transport capability:
 | Cursor              | Per-session MCP configuration  | `/mcp/workspace` |
 | OpenCode            | Per-session MCP configuration  | `/mcp/workspace` |
 | Grok                | Preview-only MCP configuration | `/mcp`           |
+| Gemini              | Direct T3 function-tool bridge | None             |
 | Unregistered driver | No adapter transport           | None             |
 
-Every built-in driver receives project-agent coordination tools. This distinction only keeps
-`workspace_context` out of the advertised tool list for Grok and unsupported drivers instead of
-allowing a tool call that can only fail. An explicit instance for an unregistered driver remains
-visible as unavailable, but no adapter exists to receive an internal MCP credential.
+MCP-capable built-in drivers receive project-agent coordination tools. Gemini instead uses a direct
+T3-owned function-tool bridge for bounded workspace reads and mutations, so no MCP credential is
+issued to its SDK client. The distinction also keeps `workspace_context` out of the advertised MCP
+tool list for Grok and unsupported drivers instead of allowing a tool call that can only fail. An
+explicit instance for an unregistered driver remains visible as unavailable, but no adapter exists
+to receive an internal MCP credential.
 
 ## Credentials and authorization
 

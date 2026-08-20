@@ -6,7 +6,7 @@ T3 Code is a web and desktop GUI for running coding agents on your machine.
 
 Node.js `^22.16 || ^23.11 || >=24.10` on the machine that runs the T3 Code server.
 
-At least one provider CLI, installed and authenticated. See [Providers](#providers) below.
+At least one authenticated provider CLI or a Gemini API key. See [Providers](#providers) below.
 
 ## Run Without Installing
 
@@ -43,8 +43,8 @@ yay -S t3code-bin
 
 ## Providers
 
-T3 Code drives provider CLIs; it does not ship them. Install the CLI for each provider you want
-to use, then authenticate it.
+T3 Code drives provider CLIs for Codex, Claude, Cursor, Grok, and OpenCode. Gemini uses the official
+Google SDK directly and needs an API key instead of a separate CLI.
 
 | Provider   | CLI                                                   | Default binary | Log in with           |
 | ---------- | ----------------------------------------------------- | -------------- | --------------------- |
@@ -53,6 +53,7 @@ to use, then authenticate it.
 | Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent` | `agent login`         |
 | Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`         | `grok login`          |
 | OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode`     | `opencode auth login` |
+| Gemini     | [Gemini API](https://ai.google.dev/gemini-api/docs)   | None           | Add an API key in T3  |
 
 Cursor is the one to watch: install Cursor CLI, which provides the `cursor-agent` binary that
 T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`.
@@ -60,9 +61,13 @@ T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`
 Run the login command on the machine running the T3 Code server, not on the device you browse
 from.
 
+For Gemini, add `GOOGLE_API_KEY` (preferred) or `GEMINI_API_KEY` to the Gemini provider instance's
+**Environment variables** in Settings. The key stays on the T3 server; web, desktop, and mobile
+clients only see the provider status and model catalog. See [Gemini](./providers-gemini.md).
+
 ### Binary Discovery
 
-Each provider CLI must be on the server's `PATH`, or have an explicit binary path set in
+Each CLI-backed provider must be on the server's `PATH`, or have an explicit binary path set in
 **Settings** → the provider instance → **Binary path**. Use the explicit path when a version
 manager or a non-standard install location keeps the CLI off the `PATH` of the shell that
 started T3 Code.
@@ -72,7 +77,7 @@ started T3 Code.
 Provider auth is required before you start a session with that provider, not before you start
 T3 Code. You can install T3 Code, open it, and add providers afterwards. A provider that is not
 authenticated shows its status in **Settings** and fails at session start with the login command
-to run.
+to run or the missing API-key variable to add.
 
 For multi-account setups, see [Codex](./providers-codex.md) and [Claude](./providers-claude.md).
 

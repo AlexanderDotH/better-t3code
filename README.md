@@ -15,7 +15,7 @@ for people who looked at one coding agent and thought, “Great. Can it have cow
 </div>
 
 Better T3 Code keeps the fast, open, remote-ready T3 Code core: bring your own Codex, Claude Code,
-Cursor, Grok Build, or OpenCode subscription and control it from the web, desktop, or mobile clients.
+Cursor, Grok Build, OpenCode, or Gemini access and control it from the web, desktop, or mobile clients.
 This fork adds the opinionated workflows around that core—the things that usually begin with,
 “Okay, but could it also…?”
 
@@ -32,6 +32,7 @@ This fork adds the opinionated workflows around that core—the things that usua
 > - Cursor: install [Cursor CLI](https://cursor.com/cli) and run `agent login`
 > - Grok Build: install [Grok Build CLI](https://x.ai/cli) and run `grok login`
 > - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
+> - Gemini: add `GOOGLE_API_KEY` or `GEMINI_API_KEY` to a Gemini provider instance
 
 ## “Yeah, but what does this thing actually do better than T3 Code?”
 
@@ -58,7 +59,7 @@ power-user plumbing around the chat.
 
 > [!NOTE]
 > **Fetch** and **Parallel plan implementation** are experimental, off by default, and currently
-> available in the web and desktop clients. Fetch is independent of the main chat provider: its
+> available in the web, desktop, and mobile clients. Fetch is independent of the main chat provider: its
 > server-side planner leaves simple and focused requests with the main agent, and launches the
 > smallest useful number of workers only when parallel exploration materially helps. The built-in
 > providers currently advertise eight-worker budgets, with no application-wide fixed ceiling; three
@@ -77,7 +78,7 @@ contract and legacy-branch audit live in the [upstream synchronization record](.
 
 ## The upstream good stuff is still here
 
-- Use existing subscriptions for Codex, Claude Code, Cursor, Grok Build, and OpenCode.
+- Use existing subscriptions for Codex, Claude Code, Cursor, Grok Build, and OpenCode, or a Gemini API key.
 - Work from the web, the Electron desktop client, or the iOS and Android mobile clients.
 - Connect locally, across a LAN or tailnet, or through T3 Connect.
 - Keep durable threads, project state, provider sessions, and git checkpoints.
@@ -94,7 +95,7 @@ contract and legacy-branch audit live in the [upstream synchronization record](.
   [Claude Code](https://claude.com/product/claude-code),
   [Cursor](https://cursor.com/cli),
   [Grok Build](https://x.ai/cli), or
-  [OpenCode](https://opencode.ai)
+  [OpenCode](https://opencode.ai), or a [Gemini API key](https://aistudio.google.com/app/apikey)
 
 Install Vite+ on macOS or Linux:
 
@@ -152,6 +153,7 @@ npx t3@latest
 - [Keybindings](./docs/user/keybindings.md)
 - [Multiple Codex accounts](./docs/user/providers-codex.md)
 - [Multiple Claude accounts](./docs/user/providers-claude.md)
+- [Gemini API provider](./docs/user/providers-gemini.md)
 - [Internal architecture](./docs/internals/overview.md)
 - [Internal glossary](./docs/internals/glossary.md)
 - [Upstream synchronization and fork contract](./docs/operations/upstream-sync.md)

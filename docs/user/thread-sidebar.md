@@ -16,13 +16,32 @@ default when no choice has been saved.
 On mobile, the equivalent **Settings → Appearance → Thread list layout** choice is stored on that
 device, so its layout can differ from web and desktop.
 
+## Limit chats shown per project
+
+The **Classic** layout initially shows up to three chats in each project. Choose **Chats per
+project** in **Settings → Appearance** to set any value from 1 through 15. Web and desktop also
+offer the same control from the Classic sidebar menu. Use **Show more** to reveal the rest of a
+project's chats and **Show less** to return to the configured limit. Searching continues to show
+every matching chat, regardless of the limit.
+
+This preference is shared through every connected environment that supports synchronized
+appearance settings, while each device keeps an offline copy for immediate use. Changes made
+offline are retried when an environment reconnects. If Settings identifies an environment that
+needs an update, that environment is skipped until its T3 Code server is updated; the remaining
+compatible environments still synchronize normally.
+
+The first upgrade changes the former six-chat value to the new default of three when no
+synchronized choice exists. Other saved values are preserved, and choosing six afterward remains
+a normal preference. The **Current** activity-based layout is not affected by this setting.
+
 ## Recent and older projects
 
 Both sidebar layouts use the same activity rule for **Older projects**. A project remains in the
 recent area through exactly seven days without work and moves to **Older projects** only after that
 boundary. Starting work in the project or one of its threads moves it back to the recent area
 immediately. Work that still needs attention, such as a running session or a pending approval, also
-keeps the project recent.
+keeps the project recent. Mobile's project-grouped thread list uses the same boundary and stores the
+Older projects disclosure state on that device.
 
 ## Pin and arrange threads
 
