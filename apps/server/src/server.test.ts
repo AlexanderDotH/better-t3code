@@ -1535,6 +1535,18 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("serves minimal container liveness and readiness probes without auth", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      for (const path of ["/healthz", "/readyz"]) {
+        const response = yield* fetchEffect(yield* getHttpServerUrl(path));
+        assert.equal(response.status, 200);
+        assert.deepEqual(yield* responseJsonEffect(response), { status: "ok" });
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("compresses large JSON responses through the composed routes", () =>
     Effect.gen(function* () {
       const descriptor = {

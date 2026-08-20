@@ -74,6 +74,8 @@ export function serverUpdateGuidance(
       return `Update the ${serverLabel} so they stay in sync.`;
     case "desktop-managed":
       return `The ${serverLabel} is run by the T3 Code desktop app on its machine — update the desktop app there to sync them.`;
+    case "container-managed":
+      return `Pull the updated image and recreate the ${serverLabel} to sync them.`;
     default:
       return `Relaunch the ${serverLabel} with the copied command to sync them.`;
   }

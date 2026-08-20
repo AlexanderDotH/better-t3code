@@ -10,6 +10,7 @@
 - [Review usage](./user/usage.md)
 - [Customize a project icon](./user/project-settings.md)
 - [Remote access](./user/remote-access.md)
+- [Container server](./user/container-server.md)
 - [Keeping app and server in sync](./user/updating.md)
 - [Source control integrations](./user/source-control.md)
 - [Git workbench](./user/git-workbench.md)

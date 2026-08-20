@@ -140,6 +140,16 @@ Want stock T3 Code instead? This is the intentionally boring command:
 npx t3@latest
 ```
 
+### Run the native server with Docker
+
+```bash
+T3CODE_ADVERTISED_URL=http://localhost:3773 docker compose up --build
+```
+
+The image runs the same headless server and includes every Better T3 Code provider CLI. Provider
+credentials and projects stay outside the image in explicit volumes. See the
+[container server guide](./docs/user/container-server.md).
+
 ## Documentation
 
 - [Documentation map](./docs/README.md)
