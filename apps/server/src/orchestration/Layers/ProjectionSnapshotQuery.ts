@@ -30,6 +30,7 @@ import {
   type OrchestrationThreadShell,
   ModelSelection,
   ProjectId,
+  SubagentId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
@@ -61,7 +62,10 @@ import { ProjectionThreadSubagentActivityRepositoryLive } from "../../persistenc
 import { ProjectionThreadSubagentMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadSubagentMessages.ts";
 import { ProjectionThreadSubagentProposedPlanRepositoryLive } from "../../persistence/Layers/ProjectionThreadSubagentProposedPlans.ts";
 import { ProjectionThreadSubagentRepositoryLive } from "../../persistence/Layers/ProjectionThreadSubagents.ts";
-import { ProjectionThreadSubagentActivityRepository } from "../../persistence/Services/ProjectionThreadSubagentActivities.ts";
+import {
+  ProjectionThreadSubagentActivityRepository,
+  type ProjectionThreadSubagentActivity,
+} from "../../persistence/Services/ProjectionThreadSubagentActivities.ts";
 import { ProjectionThreadSubagentMessageRepository } from "../../persistence/Services/ProjectionThreadSubagentMessages.ts";
 import { ProjectionThreadSubagentProposedPlanRepository } from "../../persistence/Services/ProjectionThreadSubagentProposedPlans.ts";
 import {
@@ -75,6 +79,10 @@ import {
   decodeThreadDetailPageCursor,
   encodeThreadDetailPageCursor,
 } from "../threadDetailCursor.ts";
+import {
+  decodeSubagentActivityPageCursor,
+  encodeSubagentActivityPageCursor,
+} from "../subagentActivityCursor.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
@@ -2908,80 +2916,89 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       );
     });
 
+  const getSubagentDetailWithActivities = Effect.fn(
+    "ProjectionSnapshotQuery.getSubagentDetailWithActivities",
+  )(function* (
+    threadId: ThreadId,
+    subagentId: SubagentId,
+    activityRowsOverride?: ReadonlyArray<ProjectionThreadSubagentActivity>,
+  ) {
+    const summaryRow = yield* projectionThreadSubagentRepository.getById({
+      threadId,
+      subagentId,
+    });
+    if (Option.isNone(summaryRow)) {
+      return Option.none<OrchestrationSubagentDetail>();
+    }
+    if (isLegacyRootSubagentRow(summaryRow.value)) {
+      return Option.none<OrchestrationSubagentDetail>();
+    }
+
+    const [messageRows, proposedPlanRows, activityRows] = yield* Effect.all([
+      projectionThreadSubagentMessageRepository.listBySubagentId({
+        threadId,
+        subagentId,
+      }),
+      projectionThreadSubagentProposedPlanRepository.listBySubagentId({
+        threadId,
+        subagentId,
+      }),
+      activityRowsOverride === undefined
+        ? projectionThreadSubagentActivityRepository.listBySubagentId({
+            threadId,
+            subagentId,
+          })
+        : Effect.succeed(activityRowsOverride),
+    ]);
+
+    const detail = {
+      ...mapSubagentSummaryRow(summaryRow.value),
+      messages: messageRows.map((row) => ({
+        id: row.messageId,
+        role: row.role,
+        text: row.text,
+        ...(row.attachments !== undefined ? { attachments: row.attachments } : {}),
+        turnId: row.turnId,
+        streaming: row.isStreaming,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      })),
+      proposedPlans: proposedPlanRows.map((row) => ({
+        id: row.planId,
+        turnId: row.turnId,
+        planMarkdown: row.planMarkdown,
+        implementedAt: row.implementedAt,
+        implementationThreadId: row.implementationThreadId,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      })),
+      activities: activityRows.map((row) => ({
+        id: row.activityId,
+        tone: row.tone,
+        kind: row.kind,
+        summary: row.summary,
+        payload: row.payload,
+        turnId: row.turnId,
+        ...(row.sequence !== undefined ? { sequence: row.sequence } : {}),
+        createdAt: row.createdAt,
+      })),
+    };
+
+    return Option.some(
+      yield* decodeSubagentDetail(detail).pipe(
+        Effect.mapError(
+          toPersistenceDecodeError(
+            "ProjectionSnapshotQuery.getSubagentDetailById:decodeSubagentDetail",
+          ),
+        ),
+      ),
+    );
+  });
+
   const getSubagentDetailById: ProjectionSnapshotQueryShape["getSubagentDetailById"] = (
     threadId,
     subagentId,
-  ) =>
-    Effect.gen(function* () {
-      const summaryRow = yield* projectionThreadSubagentRepository.getById({
-        threadId,
-        subagentId,
-      });
-      if (Option.isNone(summaryRow)) {
-        return Option.none<OrchestrationSubagentDetail>();
-      }
-      if (isLegacyRootSubagentRow(summaryRow.value)) {
-        return Option.none<OrchestrationSubagentDetail>();
-      }
-
-      const [messageRows, proposedPlanRows, activityRows] = yield* Effect.all([
-        projectionThreadSubagentMessageRepository.listBySubagentId({
-          threadId,
-          subagentId,
-        }),
-        projectionThreadSubagentProposedPlanRepository.listBySubagentId({
-          threadId,
-          subagentId,
-        }),
-        projectionThreadSubagentActivityRepository.listBySubagentId({
-          threadId,
-          subagentId,
-        }),
-      ]);
-
-      const detail = {
-        ...mapSubagentSummaryRow(summaryRow.value),
-        messages: messageRows.map((row) => ({
-          id: row.messageId,
-          role: row.role,
-          text: row.text,
-          ...(row.attachments !== undefined ? { attachments: row.attachments } : {}),
-          turnId: row.turnId,
-          streaming: row.isStreaming,
-          createdAt: row.createdAt,
-          updatedAt: row.updatedAt,
-        })),
-        proposedPlans: proposedPlanRows.map((row) => ({
-          id: row.planId,
-          turnId: row.turnId,
-          planMarkdown: row.planMarkdown,
-          implementedAt: row.implementedAt,
-          implementationThreadId: row.implementationThreadId,
-          createdAt: row.createdAt,
-          updatedAt: row.updatedAt,
-        })),
-        activities: activityRows.map((row) => ({
-          id: row.activityId,
-          tone: row.tone,
-          kind: row.kind,
-          summary: row.summary,
-          payload: row.payload,
-          turnId: row.turnId,
-          ...(row.sequence !== undefined ? { sequence: row.sequence } : {}),
-          createdAt: row.createdAt,
-        })),
-      };
-
-      return Option.some(
-        yield* decodeSubagentDetail(detail).pipe(
-          Effect.mapError(
-            toPersistenceDecodeError(
-              "ProjectionSnapshotQuery.getSubagentDetailById:decodeSubagentDetail",
-            ),
-          ),
-        ),
-      );
-    });
+  ) => getSubagentDetailWithActivities(threadId, subagentId);
 
   const getThreadDetailById: ProjectionSnapshotQueryShape["getThreadDetailById"] = (threadId) =>
     getThreadDetailByIdBounded(threadId, undefined);
@@ -3131,19 +3148,105 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const getSubagentDetailSnapshot: ProjectionSnapshotQueryShape["getSubagentDetailSnapshot"] = (
     threadId,
     subagentId,
+    window,
   ) =>
     sql
       .withTransaction(
         Effect.gen(function* () {
-          const subagent = yield* getSubagentDetailById(threadId, subagentId);
+          if (window?.activityLimit === undefined) {
+            const subagent = yield* getSubagentDetailById(threadId, subagentId);
+            if (Option.isNone(subagent)) {
+              return Option.none<OrchestrationSubagentDetailSnapshot>();
+            }
+            const { snapshotSequence } = yield* getSnapshotSequence();
+            return Option.some({
+              snapshotSequence,
+              threadId,
+              subagent: subagent.value,
+            });
+          }
+
+          const decodedCursor =
+            window.beforeCursor === undefined
+              ? null
+              : decodeSubagentActivityPageCursor(window.beforeCursor);
+          const cursor =
+            decodedCursor?.threadId === threadId && decodedCursor.subagentId === subagentId
+              ? decodedCursor
+              : null;
+          const activityLimit = Math.min(window.activityLimit, 200);
+          const activityRows =
+            yield* projectionThreadSubagentActivityRepository.listPageBySubagentId({
+              threadId,
+              subagentId,
+              before:
+                cursor === null
+                  ? null
+                  : {
+                      sequence: cursor.sequence,
+                      createdAt: cursor.createdAt,
+                      activityId: cursor.activityId,
+                    },
+              limit: activityLimit,
+              maxBytes: 4 * 1024 * 1024,
+            });
+          const subagent = yield* getSubagentDetailWithActivities(
+            threadId,
+            subagentId,
+            activityRows,
+          );
           if (Option.isNone(subagent)) {
             return Option.none<OrchestrationSubagentDetailSnapshot>();
           }
+          const oldest = activityRows[0];
+          const hasMore =
+            oldest !== undefined &&
+            (yield* projectionThreadSubagentActivityRepository.listPageBySubagentId({
+              threadId,
+              subagentId,
+              before: {
+                sequence: oldest.sequence ?? null,
+                createdAt: oldest.createdAt,
+                activityId: oldest.activityId,
+              },
+              limit: 1,
+              maxBytes: 1,
+            })).length > 0;
           const { snapshotSequence } = yield* getSnapshotSequence();
+          const watermarkRow = yield* getThreadEventWatermarkRow({
+            threadId,
+            maxSequence: snapshotSequence,
+          }).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSubagentDetailSnapshot:threadWatermark:query",
+                "ProjectionSnapshotQuery.getSubagentDetailSnapshot:threadWatermark:decodeRow",
+              ),
+            ),
+          );
+          const threadSequence = Option.match(watermarkRow, {
+            onNone: () => 0,
+            onSome: (row) => row.threadSequence ?? 0,
+          });
           return Option.some({
             snapshotSequence,
             threadId,
             subagent: subagent.value,
+            page: {
+              beforeCursor:
+                hasMore && oldest !== undefined
+                  ? encodeSubagentActivityPageCursor({
+                      threadId,
+                      subagentId,
+                      sequence: oldest.sequence ?? null,
+                      createdAt: oldest.createdAt,
+                      activityId: oldest.activityId,
+                    })
+                  : null,
+              hasMore,
+              snapshotSequence,
+              threadSequence,
+            },
           });
         }),
       )

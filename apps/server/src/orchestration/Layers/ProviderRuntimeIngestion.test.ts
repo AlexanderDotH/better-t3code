@@ -49,7 +49,10 @@ import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
-import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
+import {
+  PROVIDER_RUNTIME_INGESTION_MEMORY_LIMITS,
+  ProviderRuntimeIngestionLive,
+} from "./ProviderRuntimeIngestion.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -212,6 +215,17 @@ describe("ProviderRuntimeIngestion", () => {
   let scope: Scope.Closeable | null = null;
   const tempDirs: string[] = [];
 
+  it("bounds transient provider buffers for high-fan-out agent work", () => {
+    expect(
+      PROVIDER_RUNTIME_INGESTION_MEMORY_LIMITS.bufferedContentStreams *
+        PROVIDER_RUNTIME_INGESTION_MEMORY_LIMITS.bufferedContentStreamChars,
+    ).toBeLessThanOrEqual(32_768_000);
+    expect(
+      PROVIDER_RUNTIME_INGESTION_MEMORY_LIMITS.bufferedAssistantMessages *
+        PROVIDER_RUNTIME_INGESTION_MEMORY_LIMITS.bufferedAssistantChars,
+    ).toBeLessThanOrEqual(24_576_000);
+  });
+
   function makeTempDir(prefix: string): string {
     const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), prefix));
     tempDirs.push(dir);
@@ -341,6 +355,7 @@ describe("ProviderRuntimeIngestion", () => {
       engine,
       dispatch,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
+      readShell: () => Effect.runPromise(snapshotQuery.getShellSnapshot()),
       readEvents: () =>
         Effect.runPromise(
           Stream.runCollect(engine.readEvents(0)).pipe(Effect.map((chunk) => Array.from(chunk))),
@@ -4449,6 +4464,71 @@ describe("ProviderRuntimeIngestion", () => {
     expect(stateIndex).toBeGreaterThan(upsertIndex);
   });
 
+  it("keeps background liveness synchronized with authoritative subagent state", async () => {
+    const harness = await createHarness();
+    const subagentId = asSubagentId("codex:provider-background-child");
+    const runningAt = "2026-07-30T10:01:05.000Z";
+    const completedAt = "2026-07-30T10:01:06.000Z";
+
+    harness.emit({
+      type: "subagent.discovered",
+      eventId: asEventId("evt-background-child-discovered"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: runningAt,
+      threadId: asThreadId("thread-1"),
+      subagentId,
+      payload: {
+        subagentId,
+        providerThreadId: "provider-background-child",
+        agentPath: "/root/background-child",
+      },
+    });
+    harness.emit({
+      type: "subagent.state.changed",
+      eventId: asEventId("evt-background-child-running"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: runningAt,
+      threadId: asThreadId("thread-1"),
+      subagentId,
+      payload: { subagentId, state: "running" },
+    });
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-background-child-legacy-task-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: runningAt,
+      threadId: asThreadId("thread-1"),
+      payload: { taskId: "provider-background-child" },
+    });
+
+    await harness.drain();
+    let thread = (await harness.readModel()).threads.find((entry) => entry.id === "thread-1");
+    let shell = (await harness.readShell()).threads.find((entry) => entry.id === "thread-1");
+    expect(thread?.subagents.find((subagent) => subagent.id === subagentId)?.status).toBe(
+      "running",
+    );
+    expect(shell?.backgroundLiveness).toBe("working");
+
+    harness.emit({
+      type: "subagent.state.changed",
+      eventId: asEventId("evt-background-child-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: completedAt,
+      threadId: asThreadId("thread-1"),
+      subagentId,
+      payload: { subagentId, state: "completed" },
+    });
+
+    await harness.drain();
+    thread = (await harness.readModel()).threads.find((entry) => entry.id === "thread-1");
+    shell = (await harness.readShell()).threads.find((entry) => entry.id === "thread-1");
+    expect(thread?.subagents.find((subagent) => subagent.id === subagentId)?.status).toBe(
+      "completed",
+    );
+    expect(shell?.backgroundLiveness).toBeNull();
+    expect(thread?.session).toMatchObject({ status: "ready", activeTurnId: null });
+  });
+
   it("uses a child turn completion as authoritative lifecycle state", async () => {
     const harness = await createHarness();
     const subagentId = asSubagentId("codex:provider-terminal-turn");
@@ -4471,6 +4551,11 @@ describe("ProviderRuntimeIngestion", () => {
     await waitForThread(harness.readModel, (entry) =>
       entry.subagents.some((agent) => agent.id === subagentId && agent.status === "running"),
     );
+    await harness.drain();
+    expect(
+      (await harness.readShell()).threads.find((entry) => entry.id === "thread-1")
+        ?.backgroundLiveness,
+    ).toBe("working");
 
     // Providers normally emit a companion subagent.state.changed event. The
     // child turn itself is still authoritative when that notification is lost.
@@ -4506,6 +4591,11 @@ describe("ProviderRuntimeIngestion", () => {
       },
       completedAt,
     });
+    await harness.drain();
+    expect(
+      (await harness.readShell()).threads.find((entry) => entry.id === "thread-1")
+        ?.backgroundLiveness,
+    ).toBeNull();
     expect(thread.session).toMatchObject({ status: "ready", activeTurnId: null });
   });
 
@@ -4561,6 +4651,72 @@ describe("ProviderRuntimeIngestion", () => {
       },
       completedAt: exitedAt,
     });
+  });
+
+  it("flushes and releases child stream buffers when the root provider session exits", async () => {
+    const harness = await createHarness();
+    const subagentId = asSubagentId("codex:buffered-child");
+    const childTurnId = asTurnId("child-buffered-turn");
+    const childItemId = asItemId("child-buffered-item");
+    const now = "2026-07-30T10:01:50.000Z";
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-child-buffered-reasoning"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      subagentId,
+      turnId: childTurnId,
+      itemId: childItemId,
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "Buffered child reasoning before the provider disappeared.",
+      },
+    });
+    await harness.drain();
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-root-exit-flushes-child-buffer"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: { reason: "Provider process exited" },
+    });
+    await harness.drain();
+
+    const activitiesAfterExit = (await harness.readEvents()).filter(
+      (event) =>
+        event.type === "thread.activity-appended" &&
+        event.payload.subagentId === subagentId &&
+        event.payload.activity.kind === "reasoning.text",
+    );
+    expect(activitiesAfterExit).toHaveLength(1);
+    expect(activitiesAfterExit[0]?.payload.activity.payload).toMatchObject({
+      text: "Buffered child reasoning before the provider disappeared.",
+      flushReason: "session.exited",
+    });
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-late-child-buffer-completion"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      subagentId,
+      turnId: childTurnId,
+      itemId: childItemId,
+      payload: { itemType: "reasoning", status: "completed" },
+    });
+    await harness.drain();
+
+    const activitiesAfterLateCompletion = (await harness.readEvents()).filter(
+      (event) =>
+        event.type === "thread.activity-appended" &&
+        event.payload.subagentId === subagentId &&
+        event.payload.activity.kind === "reasoning.text",
+    );
+    expect(activitiesAfterLateCompletion).toHaveLength(1);
   });
 
   it("routes child assistant, plan, and activity events to namespaced subagent commands", async () => {

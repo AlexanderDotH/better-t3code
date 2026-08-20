@@ -17,6 +17,7 @@ import type {
   OrchestrationShellSnapshot,
   OrchestrationSubagentDetail,
   OrchestrationSubagentDetailSnapshot,
+  OrchestrationSubagentDetailWindow,
   OrchestrationThread,
   OrchestrationThreadDetailSnapshot,
   OrchestrationThreadDetailWindow,
@@ -200,6 +201,7 @@ export interface ProjectionSnapshotQueryShape {
   readonly getSubagentDetailSnapshot: (
     threadId: ThreadId,
     subagentId: SubagentId,
+    window?: OrchestrationSubagentDetailWindow,
   ) => Effect.Effect<Option.Option<OrchestrationSubagentDetailSnapshot>, ProjectionRepositoryError>;
 
   /**

@@ -17,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import { resolveFetchLunaFallback, resolveFetchModelSelection } from "@t3tools/shared/fetchMode";
+import { resolveCodexContextWindowTokens } from "@t3tools/shared/model";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -116,6 +117,23 @@ const MAX_FIRST_USER_TITLE_CONTEXT_CHARS = 2_000;
 const THREAD_TITLE_CONTEXT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
 const FETCH_CONTEXT_TRUNCATION_MARKER = "\n[T3 Fetch context truncated]";
 const FIRST_USER_CONTEXT_TRUNCATION_MARKER = "\n[First user message truncated]";
+
+export function requiresProviderSessionRestartForModelSelectionChange(input: {
+  readonly provider: ProviderDriverKind;
+  readonly previous: ModelSelection | undefined;
+  readonly next: ModelSelection;
+  readonly explicitlyRequested: boolean;
+}): boolean {
+  if (input.provider === "claudeAgent") {
+    return input.explicitlyRequested && !Equal.equals(input.previous, input.next);
+  }
+  if (input.provider !== "codex") {
+    return false;
+  }
+  return (
+    resolveCodexContextWindowTokens(input.previous) !== resolveCodexContextWindowTokens(input.next)
+  );
+}
 
 export function applyFetchContextToProviderInput(input: {
   readonly providerInput?: string;
@@ -812,9 +830,12 @@ const make = Effect.gen(function* () {
         requiresFreshSessionForModelChange;
       const previousModelSelection = threadModelSelections.get(threadId);
       const shouldRestartForModelSelectionChange =
-        preferredProvider === "claudeAgent" &&
-        requestedModelSelection !== undefined &&
-        !Equal.equals(previousModelSelection, requestedModelSelection);
+        requiresProviderSessionRestartForModelSelectionChange({
+          provider: preferredProvider,
+          previous: previousModelSelection,
+          next: desiredModelSelection,
+          explicitlyRequested: requestedModelSelection !== undefined,
+        });
 
       if (
         !runtimeModeChanged &&
@@ -909,9 +930,7 @@ const make = Effect.gen(function* () {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       pendingTurnStart: true,
     });
-    if (input.modelSelection !== undefined) {
-      threadModelSelections.set(input.threadId, sessionPreparation.modelSelection);
-    }
+    threadModelSelections.set(input.threadId, sessionPreparation.modelSelection);
     const normalizedAttachments = input.attachments ?? [];
     const activeSession = yield* providerService
       .listSessions()

@@ -291,6 +291,103 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
         assert.deepEqual(snapshot.value.subagent, detail._tag === "Some" ? detail.value : null);
       }
 
+      for (const sequence of [4, 5, 6, 7]) {
+        yield* sql`
+          INSERT INTO projection_thread_subagent_activities (
+            thread_id,
+            subagent_id,
+            activity_id,
+            turn_id,
+            tone,
+            kind,
+            summary,
+            payload_json,
+            sequence,
+            created_at
+          )
+          VALUES (
+            ${threadId},
+            ${subagentId},
+            ${`activity-subagent-query-${sequence}`},
+            'turn-subagent-query',
+            'info',
+            'command.completed',
+            ${`Activity ${sequence}`},
+            '{}',
+            ${sequence},
+            ${`2026-07-30T11:00:0${sequence}.000Z`}
+          )
+        `;
+      }
+
+      const recentPage = yield* query.getSubagentDetailSnapshot(threadId, subagentId, {
+        activityLimit: 2,
+      });
+      assert.equal(recentPage._tag, "Some");
+      if (recentPage._tag === "Some") {
+        assert.deepEqual(
+          recentPage.value.subagent.activities.map((activity) => activity.sequence),
+          [6, 7],
+        );
+        assert.equal(recentPage.value.page?.hasMore, true);
+        assert.notEqual(recentPage.value.page?.beforeCursor, null);
+
+        const olderPage = yield* query.getSubagentDetailSnapshot(threadId, subagentId, {
+          activityLimit: 2,
+          beforeCursor: recentPage.value.page?.beforeCursor ?? undefined,
+        });
+        assert.equal(olderPage._tag, "Some");
+        if (olderPage._tag === "Some") {
+          assert.deepEqual(
+            olderPage.value.subagent.activities.map((activity) => activity.sequence),
+            [4, 5],
+          );
+          assert.equal(olderPage.value.page?.hasMore, true);
+        }
+      }
+
+      const largePayload = JSON.stringify({ output: "x".repeat(2_500_000) });
+      for (const sequence of [8, 9, 10]) {
+        yield* sql`
+          INSERT INTO projection_thread_subagent_activities (
+            thread_id,
+            subagent_id,
+            activity_id,
+            turn_id,
+            tone,
+            kind,
+            summary,
+            payload_json,
+            sequence,
+            created_at
+          )
+          VALUES (
+            ${threadId},
+            ${subagentId},
+            ${`activity-subagent-large-${sequence}`},
+            'turn-subagent-query',
+            'tool',
+            'tool.completed',
+            ${`Large activity ${sequence}`},
+            ${largePayload},
+            ${sequence},
+            ${`2026-07-30T11:00:${sequence}.000Z`}
+          )
+        `;
+      }
+
+      const byteBoundedPage = yield* query.getSubagentDetailSnapshot(threadId, subagentId, {
+        activityLimit: 100,
+      });
+      assert.equal(byteBoundedPage._tag, "Some");
+      if (byteBoundedPage._tag === "Some") {
+        assert.deepEqual(
+          byteBoundedPage.value.subagent.activities.map((activity) => activity.sequence),
+          [10],
+        );
+        assert.equal(byteBoundedPage.value.page?.hasMore, true);
+      }
+
       const missing = yield* query.getSubagentDetailById(
         threadId,
         SubagentId.make("agent-missing"),

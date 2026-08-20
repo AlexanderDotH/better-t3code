@@ -95,7 +95,18 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
 
           const snapshot = yield* projectionSnapshotQuery
-            .getSubagentDetailSnapshot(args.params.threadId, args.params.subagentId)
+            .getSubagentDetailSnapshot(
+              args.params.threadId,
+              args.params.subagentId,
+              args.payload.activityLimit === undefined
+                ? undefined
+                : {
+                    activityLimit: args.payload.activityLimit,
+                    ...(args.payload.beforeCursor !== undefined
+                      ? { beforeCursor: args.payload.beforeCursor }
+                      : {}),
+                  },
+            )
             .pipe(
               Effect.catch((cause) =>
                 failEnvironmentInternal("orchestration_subagent_snapshot_failed", cause),

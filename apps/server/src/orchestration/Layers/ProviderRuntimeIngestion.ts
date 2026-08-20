@@ -122,17 +122,34 @@ interface BufferedContentStream {
   lastEvent: ProviderRuntimeEvent;
 }
 
-const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
+export const PROVIDER_RUNTIME_INGESTION_MEMORY_LIMITS = {
+  turnStateEntries: 2_048,
+  bufferedAssistantMessages: 1_024,
+  bufferedProposedPlans: 512,
+  taskDescriptions: 4_096,
+  bufferedContentStreams: 512,
+  bufferedAssistantChars: 24_000,
+  bufferedContentStreamChars: 64_000,
+} as const;
+
+const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY =
+  PROVIDER_RUNTIME_INGESTION_MEMORY_LIMITS.turnStateEntries;
 const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(120);
-const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
+const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY =
+  PROVIDER_RUNTIME_INGESTION_MEMORY_LIMITS.bufferedAssistantMessages;
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL = Duration.minutes(120);
-const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
+const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY =
+  PROVIDER_RUNTIME_INGESTION_MEMORY_LIMITS.bufferedProposedPlans;
 const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
-const TASK_DESCRIPTION_BY_TASK_CACHE_CAPACITY = 10_000;
+const TASK_DESCRIPTION_BY_TASK_CACHE_CAPACITY =
+  PROVIDER_RUNTIME_INGESTION_MEMORY_LIMITS.taskDescriptions;
 const TASK_DESCRIPTION_BY_TASK_TTL = Duration.minutes(120);
-const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
-const MAX_BUFFERED_CONTENT_STREAM_CHARS = 64_000;
-const MAX_BUFFERED_CONTENT_STREAMS = 20_000;
+const MAX_BUFFERED_ASSISTANT_CHARS =
+  PROVIDER_RUNTIME_INGESTION_MEMORY_LIMITS.bufferedAssistantChars;
+const MAX_BUFFERED_CONTENT_STREAM_CHARS =
+  PROVIDER_RUNTIME_INGESTION_MEMORY_LIMITS.bufferedContentStreamChars;
+const MAX_BUFFERED_CONTENT_STREAMS =
+  PROVIDER_RUNTIME_INGESTION_MEMORY_LIMITS.bufferedContentStreams;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
 type TurnStartRequestedDomainEvent = Extract<
@@ -1187,6 +1204,25 @@ const make = Effect.gen(function* () {
       Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
     );
 
+  const synchronizeSubagentBackgroundLiveness = (
+    threadId: ThreadId,
+    subagent: Pick<OrchestrationSubagentSummary, "id" | "providerThreadId">,
+    status: OrchestrationSubagentSummary["status"],
+  ) => {
+    // Dedicated lifecycle events may arrive without a companion task.updated.
+    // Record both identities so a terminal state also clears any legacy task alias.
+    const livenessStatus = isActiveSubagentStatus(status) ? "running" : "completed";
+    for (const taskId of new Set<string>([subagent.id, subagent.providerThreadId])) {
+      threadBackgroundLiveness.recordTaskLiveness({
+        threadId,
+        taskId,
+        taskType: undefined,
+        status: livenessStatus,
+        kind: "updated",
+      });
+    }
+  };
+
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
     timeToLive: TURN_MESSAGE_IDS_BY_TURN_TTL,
@@ -1366,7 +1402,8 @@ const make = Effect.gen(function* () {
     const eventItemId = event.itemId ?? null;
     const shouldFlush = (stream: BufferedContentStream): boolean => {
       if (stream.threadId !== threadId) return false;
-      if (stream.subagentId !== event.subagentId) return false;
+      const isRootSessionExit = event.type === "session.exited" && event.subagentId === undefined;
+      if (!isRootSessionExit && stream.subagentId !== event.subagentId) return false;
       switch (event.type) {
         case "item.completed":
           return eventItemId !== null && stream.itemId === eventItemId;
@@ -2169,18 +2206,20 @@ const make = Effect.gen(function* () {
         const existing = detailedThread?.subagents.find(
           (entry) => entry.id === event.payload.subagentId,
         );
+        const subagent = discoveredSubagentSummary(event, existing);
         yield* orchestrationEngine.dispatch({
           type: "thread.subagent.upsert",
           commandId: yield* providerCommandId(event, "subagent-discovered-upsert"),
           threadId: thread.id,
-          subagent: discoveredSubagentSummary(event, existing),
+          subagent,
           createdAt: now,
         });
+        synchronizeSubagentBackgroundLiveness(thread.id, subagent, subagent.status);
         return;
       }
 
       if (event.type === "subagent.state.changed") {
-        yield* ensureSubagentSummary(event.payload.subagentId);
+        const subagent = yield* ensureSubagentSummary(event.payload.subagentId);
         yield* orchestrationEngine.dispatch({
           type: "thread.subagent.state.set",
           commandId: yield* providerCommandId(event, "subagent-state-set"),
@@ -2202,6 +2241,7 @@ const make = Effect.gen(function* () {
           ),
           updatedAt: now,
         });
+        synchronizeSubagentBackgroundLiveness(thread.id, subagent, event.payload.state);
         return;
       }
 
@@ -2250,6 +2290,7 @@ const make = Effect.gen(function* () {
             },
             createdAt: now,
           });
+          synchronizeSubagentBackgroundLiveness(thread.id, subagent, state);
         }
       }
 

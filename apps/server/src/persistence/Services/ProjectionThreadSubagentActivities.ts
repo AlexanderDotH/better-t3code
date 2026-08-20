@@ -3,6 +3,7 @@ import {
   IsoDateTime,
   NonNegativeInt,
   OrchestrationThreadActivityTone,
+  PositiveInt,
   SubagentId,
   ThreadId,
   TurnId,
@@ -34,6 +35,24 @@ export const ListProjectionThreadSubagentActivitiesInput = Schema.Struct({
 export type ListProjectionThreadSubagentActivitiesInput =
   typeof ListProjectionThreadSubagentActivitiesInput.Type;
 
+export const ProjectionThreadSubagentActivityPageBoundary = Schema.Struct({
+  sequence: Schema.NullOr(NonNegativeInt),
+  createdAt: IsoDateTime,
+  activityId: EventId,
+});
+export type ProjectionThreadSubagentActivityPageBoundary =
+  typeof ProjectionThreadSubagentActivityPageBoundary.Type;
+
+export const ListProjectionThreadSubagentActivityPageInput = Schema.Struct({
+  threadId: ThreadId,
+  subagentId: SubagentId,
+  before: Schema.NullOr(ProjectionThreadSubagentActivityPageBoundary),
+  limit: PositiveInt,
+  maxBytes: PositiveInt,
+});
+export type ListProjectionThreadSubagentActivityPageInput =
+  typeof ListProjectionThreadSubagentActivityPageInput.Type;
+
 export const DeleteProjectionThreadSubagentActivitiesInput =
   ListProjectionThreadSubagentActivitiesInput;
 export type DeleteProjectionThreadSubagentActivitiesInput =
@@ -51,6 +70,9 @@ export interface ProjectionThreadSubagentActivityRepositoryShape {
   ) => Effect.Effect<void, ProjectionRepositoryError>;
   readonly listBySubagentId: (
     input: ListProjectionThreadSubagentActivitiesInput,
+  ) => Effect.Effect<ReadonlyArray<ProjectionThreadSubagentActivity>, ProjectionRepositoryError>;
+  readonly listPageBySubagentId: (
+    input: ListProjectionThreadSubagentActivityPageInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadSubagentActivity>, ProjectionRepositoryError>;
   readonly deleteBySubagentId: (
     input: DeleteProjectionThreadSubagentActivitiesInput,
