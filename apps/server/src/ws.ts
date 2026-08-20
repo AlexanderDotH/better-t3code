@@ -117,6 +117,7 @@ import { requiredScopeForRpcMethod } from "./auth/RpcAuthorization.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
+import * as ResourceProtection from "./resourceProtection/SubagentResourceGovernor.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -329,6 +330,10 @@ const SHELL_RESUME_MAX_GAP = 1_000;
 // hundreds of thousands of events behind have OOM-killed servers on large
 // databases. Past this gap the client is reset with a fresh thread snapshot.
 const THREAD_RESUME_MAX_GAP = 1_000;
+// Subagent replays traverse the same global event log as thread replays and
+// then filter it. Never decode an arbitrarily stale gap merely because the
+// selected transcript is narrow; fall back to its bounded recent snapshot.
+const SUBAGENT_RESUME_MAX_GAP = 1_000;
 
 function toAuthAccessStreamEvent(
   change: PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange,
@@ -466,6 +471,7 @@ const makeWsRpcLayer = (
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
+      const resourceProtection = yield* ResourceProtection.SubagentResourceGovernor;
       const usage = yield* UsageService.UsageService;
       const relayClient = yield* RelayClient.RelayClient;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
@@ -1075,6 +1081,7 @@ const makeWsRpcLayer = (
           shellResumeCompletionMarker: true,
           threadResumeCompletionMarker: true,
           threadSnapshotPagination: true,
+          subagentSnapshotPagination: true,
         };
       });
 
@@ -1505,24 +1512,34 @@ const makeWsRpcLayer = (
 
               if (input.afterSequence !== undefined) {
                 const afterSequence = input.afterSequence;
-                const catchUpStream = orchestrationEngine
-                  .readEvents(afterSequence, Number.MAX_SAFE_INTEGER)
-                  .pipe(
-                    Stream.filter(isThisThreadEvent),
-                    Stream.map(routeSubagentStreamItem),
-                    Stream.mapError(
-                      (cause) =>
-                        new OrchestrationGetSnapshotError({
-                          message: `Failed to replay subagent ${input.subagentId} events`,
-                          cause,
-                        }),
-                    ),
-                  );
-                return Stream.concat(catchUpStream, bufferedLiveStream);
+                const headSequence = yield* orchestrationEngine.latestSequence;
+                const replayGap = headSequence - afterSequence;
+                if (replayGap >= 0 && replayGap <= SUBAGENT_RESUME_MAX_GAP) {
+                  const catchUpStream = orchestrationEngine
+                    .readEvents(afterSequence, replayGap)
+                    .pipe(
+                      Stream.filter(isThisThreadEvent),
+                      Stream.map(routeSubagentStreamItem),
+                      Stream.mapError(
+                        (cause) =>
+                          new OrchestrationGetSnapshotError({
+                            message: `Failed to replay subagent ${input.subagentId} events`,
+                            cause,
+                          }),
+                      ),
+                    );
+                  return Stream.concat(catchUpStream, bufferedLiveStream);
+                }
               }
 
               const snapshot = yield* projectionSnapshotQuery
-                .getSubagentDetailSnapshot(input.threadId, input.subagentId)
+                .getSubagentDetailSnapshot(
+                  input.threadId,
+                  input.subagentId,
+                  input.activityLimit === undefined
+                    ? undefined
+                    : { activityLimit: input.activityLimit },
+                )
                 .pipe(
                   Effect.mapError(
                     (cause) =>
@@ -2716,6 +2733,16 @@ const makeWsRpcLayer = (
             WS_METHODS.subscribeResourceTelemetry,
             Stream.unwrap(
               Effect.map(resourceTelemetry.subscribe, ({ latest, changes }) =>
+                Stream.concat(Stream.make(latest), changes),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.subscribeResourceProtection]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeResourceProtection,
+            Stream.unwrap(
+              Effect.map(resourceProtection.subscribe, ({ latest, changes }) =>
                 Stream.concat(Stream.make(latest), changes),
               ),
             ),
