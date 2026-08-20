@@ -39,7 +39,9 @@ export function selectableChoices(
 export type ThreadSettingsMenuEvent =
   | { readonly type: "select-model"; readonly option: ModelOption }
   | { readonly type: "set-option"; readonly optionId: string; readonly value: string | boolean }
-  | { readonly type: "set-runtime"; readonly mode: RuntimeMode };
+  | { readonly type: "set-fetch"; readonly enabled: boolean }
+  | { readonly type: "set-runtime"; readonly mode: RuntimeMode }
+  | { readonly type: "copy-transcript" };
 
 export type ThreadSettingsMenu = {
   readonly actions: MenuAction[];
@@ -63,6 +65,10 @@ export function buildThreadSettingsMenu(input: {
   readonly selectedModel: ModelSelection | null;
   readonly optionDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
   readonly runtimeMode: RuntimeMode;
+  readonly fetchSupported?: boolean;
+  readonly fetchEnabled?: boolean;
+  readonly copyTranscriptAvailable?: boolean;
+  readonly copyTranscriptDisabled?: boolean;
 }): ThreadSettingsMenu {
   const events = new Map<string, ThreadSettingsMenuEvent>();
   const actions: MenuAction[] = [];
@@ -180,6 +186,18 @@ export function buildThreadSettingsMenu(input: {
     });
   }
 
+  if (input.fetchSupported) {
+    const id = "workflow:fetch";
+    events.set(id, { type: "set-fetch", enabled: !input.fetchEnabled });
+    actions.push({
+      id,
+      title: "Fetch repository",
+      subtitle: "Use read-only agents to map the repository first",
+      state: input.fetchEnabled ? "on" : "off",
+      attributes: keepPresented,
+    });
+  }
+
   const runtimeLabel = RUNTIME_MODE_CHOICES.find(
     (choice) => choice.mode === input.runtimeMode,
   )?.label;
@@ -197,6 +215,17 @@ export function buildThreadSettingsMenu(input: {
       };
     }),
   });
+
+  if (input.copyTranscriptAvailable) {
+    const id = "thread:copy-transcript";
+    events.set(id, { type: "copy-transcript" });
+    actions.push({
+      id,
+      title: "Copy complete transcript",
+      subtitle: "Unredacted Markdown with the full thread history",
+      ...(input.copyTranscriptDisabled ? { attributes: { disabled: true } } : {}),
+    });
+  }
 
   return { actions, events };
 }

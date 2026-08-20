@@ -1,4 +1,5 @@
 import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass";
+import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
   MessageId,
@@ -16,10 +17,12 @@ import {
   type ComposerTrigger,
 } from "@t3tools/shared/composerTrigger";
 import * as Haptics from "expo-haptics";
+import { AsyncResult } from "effect/unstable/reactivity";
 import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Platform,
   Pressable,
@@ -75,8 +78,15 @@ import {
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
 import { buildThreadSettingsMenu } from "./thread-settings-menu";
-import { ThreadSettingsSheet, threadSettingsSummaryLabel } from "./ThreadSettingsSheet";
+import { ThreadSettingsSheet } from "./ThreadSettingsSheet";
+import { threadSettingsSummaryLabel } from "./thread-settings-summary";
 import { useThreadSettingsSheetPresentation } from "./use-thread-settings-sheet-presentation";
+import { mobilePreferencesAtom } from "../../state/preferences";
+import { useEnvironmentQuery } from "../../state/query";
+import { serverEnvironment } from "../../state/server";
+import { NativeVoiceDictationControl } from "./NativeVoiceDictationControl";
+import { resolveMobileResourceProtectionStatus } from "./resource-protection-status";
+import { useNativeAssemblyAiDictation } from "./use-native-assembly-ai-dictation";
 
 /**
  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
@@ -121,6 +131,13 @@ export interface ThreadComposerProps {
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
+  readonly fetchSupported: boolean;
+  readonly fetchEnabled: boolean;
+  readonly isImprovingPrompt: boolean;
+  readonly onImproveDraft: () => Promise<void>;
+  readonly onUpdateFetchEnabled: (enabled: boolean) => void;
+  readonly onCopyTranscript?: () => Promise<void>;
+  readonly transcriptExportBusy?: boolean;
   readonly onReconnectEnvironment: () => void;
   readonly onExpandedChange?: (expanded: boolean) => void;
   /** Fires on editor focus/blur; hosts use it to vet stale keyboard state. */
@@ -191,7 +208,7 @@ export function ComposerSurface(props: {
 }
 
 type ComposerStatusPillState = {
-  readonly kind: "unavailable" | "reconnecting" | "syncing";
+  readonly kind: "unavailable" | "reconnecting" | "syncing" | "waiting" | "throttled";
   readonly label: string;
 };
 
@@ -242,10 +259,16 @@ function composerConnectionStatus(input: {
 }
 
 const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(props: {
-  readonly onPress: () => void;
+  readonly onPress?: () => void;
   readonly status: ComposerStatusPillState;
 }) {
-  const isReconnecting = props.status.kind !== "unavailable";
+  const isLoading = props.status.kind === "reconnecting" || props.status.kind === "syncing";
+  const statusDotClassName =
+    props.status.kind === "throttled"
+      ? "h-2 w-2 rounded-full bg-amber-500"
+      : props.status.kind === "waiting"
+        ? "h-2 w-2 rounded-full bg-blue-500"
+        : "h-2 w-2 rounded-full bg-red-500";
 
   return (
     <Animated.View
@@ -255,14 +278,15 @@ const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(
       pointerEvents="box-none"
     >
       <Pressable
-        accessibilityRole="button"
+        accessibilityRole={props.onPress ? "button" : undefined}
+        disabled={!props.onPress}
         onPress={props.onPress}
         className="max-w-full flex-row items-center gap-2 rounded-full bg-white/90 px-3 py-2 shadow-sm active:opacity-70 dark:bg-neutral-900/90"
       >
-        {isReconnecting ? (
+        {isLoading ? (
           <ActivityIndicator size="small" color="#8e8e93" />
         ) : (
-          <View className="h-2 w-2 rounded-full bg-red-500" />
+          <View className={statusDotClassName} />
         )}
         <Text
           className="max-w-[260px] text-sm font-t3-bold leading-snug text-foreground"
@@ -292,13 +316,40 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const { onExpandedChange } = props;
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const resourceProtectionQuery = useEnvironmentQuery(
+    serverEnvironment.resourceProtection({
+      environmentId: props.environmentId,
+      input: {},
+    }),
+  );
+  const voiceOutputLanguage =
+    AsyncResult.isSuccess(preferencesResult) &&
+    preferencesResult.value.voiceInputOutputLanguage === "english"
+      ? "english"
+      : "native";
+  const assemblyAiKey = props.serverConfig?.settings.speechTranscription.assemblyAi.apiKey;
+  const voiceConfigured =
+    (props.serverConfig?.environment.capabilities.environmentSettingsVersion ?? 0) >= 1 &&
+    (assemblyAiKey?.valueRedacted === true || (assemblyAiKey?.value.trim().length ?? 0) > 0);
+  const voiceDictation = useNativeAssemblyAiDictation({
+    configured: voiceConfigured,
+    environmentId: props.environmentId,
+    projectId: props.selectedThread.projectId,
+    lifecycleKey: scopedThreadKey(props.environmentId, props.selectedThread.id),
+    draftText: props.draftMessage,
+    outputLanguage: voiceOutputLanguage,
+    onChangeDraftText: props.onChangeDraftMessage,
+    onNotice: (title, error) => Alert.alert(title, error.message),
+  });
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
   // Opening and closing count as active so the composer stays expanded while
   // focus moves between its native editor and the settings modal.
-  const isExpanded = isFocused || settingsSheetPresentation.isActive;
+  const isExpanded = isFocused || settingsSheetPresentation.isActive || voiceDictation.active;
   const stopAction = resolveThreadAbortPresentation(props.selectedThread.session);
   const isForceStopping = stopAction.phase === "force-stopping";
-  const canSend = hasContent && stopAction.phase === null;
+  const canSend =
+    hasContent && stopAction.phase === null && !props.isImprovingPrompt && !voiceDictation.active;
 
   // Notify the parent from the derived value, not focus events: the parent
   // sizes the feed inset from this, and blur-during-sheet would otherwise
@@ -345,6 +396,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     environmentLabel: props.environmentLabel,
     threadSyncPhase: props.threadSyncPhase,
   });
+  const resourceProtectionStatus = resolveMobileResourceProtectionStatus(
+    resourceProtectionQuery.data,
+    props.selectedThread.id,
+  );
+  const composerStatus = connectionStatus ?? resourceProtectionStatus;
   const toolbarFadeOpaque = isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)";
   const toolbarFadeTransparent = isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)";
   const selectedProviderStatus = useMemo(() => {
@@ -642,6 +698,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     optionDescriptors: providerOptionDescriptors,
     runtimeMode: currentRuntimeMode,
     interactionMode: currentInteractionMode,
+    fetchEnabled: props.fetchEnabled,
   });
 
   // iOS gets a native menu on the trigger pill: the everyday adjustments
@@ -655,9 +712,23 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             selectedModel: currentModelSelection,
             optionDescriptors: providerOptionDescriptors,
             runtimeMode: currentRuntimeMode,
+            fetchSupported: props.fetchSupported,
+            fetchEnabled: props.fetchEnabled,
+            copyTranscriptAvailable: props.onCopyTranscript !== undefined,
+            copyTranscriptDisabled: props.transcriptExportBusy === true || props.activeThreadBusy,
           })
         : null,
-    [providerGroups, currentModelSelection, providerOptionDescriptors, currentRuntimeMode],
+    [
+      providerGroups,
+      currentModelSelection,
+      providerOptionDescriptors,
+      currentRuntimeMode,
+      props.fetchEnabled,
+      props.fetchSupported,
+      props.onCopyTranscript,
+      props.transcriptExportBusy,
+      props.activeThreadBusy,
+    ],
   );
 
   const onUpdateModelSelection = props.onUpdateModelSelection;
@@ -688,12 +759,21 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           void Haptics.selectionAsync();
           onUpdateRuntimeMode(event.mode);
           return;
+        case "set-fetch":
+          void Haptics.selectionAsync();
+          props.onUpdateFetchEnabled(event.enabled);
+          return;
+        case "copy-transcript":
+          void props.onCopyTranscript?.();
+          return;
       }
     },
     [
       currentModelSelection,
       onUpdateModelSelection,
       onUpdateRuntimeMode,
+      props.onUpdateFetchEnabled,
+      props.onCopyTranscript,
       providerOptionDescriptors,
       settingsMenu,
     ],
@@ -738,10 +818,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           </View>
         ) : null}
 
-        {connectionStatus ? (
+        {composerStatus ? (
           <ComposerConnectionStatusPill
-            status={connectionStatus}
-            onPress={props.onReconnectEnvironment}
+            status={composerStatus}
+            onPress={connectionStatus ? props.onReconnectEnvironment : undefined}
           />
         ) : null}
 
@@ -784,6 +864,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           <View className={isExpanded ? undefined : "min-w-0 flex-1"}>
             <ComposerEditor
               ref={inputRef}
+              editable={!voiceDictation.active}
               multiline
               value={props.draftMessage}
               skills={selectedProviderStatus?.skills ?? []}
@@ -853,6 +934,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   disabled={isForceStopping}
                   onPress={props.onStopThread}
                 />
+              ) : voiceDictation.active || (!hasContent && voiceConfigured) ? (
+                <NativeVoiceDictationControl
+                  state={voiceDictation.state}
+                  audioWaveform={voiceDictation.audioWaveform}
+                  disabled={props.serverConfig === null || props.isImprovingPrompt}
+                  onStart={voiceDictation.start}
+                  onStop={voiceDictation.stop}
+                  onCancel={voiceDictation.cancel}
+                />
               ) : (
                 <ControlPill
                   icon="arrow.up"
@@ -879,6 +969,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   onPress={() => void props.onPickDraftImages()}
                   showChevron={false}
                 />
+                {voiceConfigured || voiceDictation.active ? (
+                  <NativeVoiceDictationControl
+                    state={voiceDictation.state}
+                    audioWaveform={voiceDictation.audioWaveform}
+                    disabled={stopAction.phase !== null || props.isImprovingPrompt}
+                    onStart={voiceDictation.start}
+                    onStop={voiceDictation.stop}
+                    onCancel={voiceDictation.cancel}
+                  />
+                ) : null}
                 {settingsMenu ? (
                   <ControlPillMenu
                     actions={settingsMenu.actions}
@@ -919,6 +1019,24 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     showChevron={false}
                   />
                 ) : null}
+                {props.fetchSupported && hasContent ? (
+                  <ComposerToolbarButton
+                    accessibilityLabel="Improve prompt"
+                    icon={
+                      props.isImprovingPrompt
+                        ? undefined
+                        : { ios: "sparkles", android: "auto_awesome" }
+                    }
+                    iconNode={
+                      props.isImprovingPrompt ? (
+                        <ActivityIndicator size="small" color={foregroundColor} />
+                      ) : undefined
+                    }
+                    disabled={props.isImprovingPrompt}
+                    onPress={() => void props.onImproveDraft()}
+                    showChevron={false}
+                  />
+                ) : null}
               </ComposerToolbarScroller>
               <ComposerToolbarButton
                 accessibilityLabel={sendLabel}
@@ -956,6 +1074,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         }
         runtimeMode={currentRuntimeMode}
         onUpdateRuntimeMode={props.onUpdateRuntimeMode}
+        fetchSupported={props.fetchSupported}
+        fetchEnabled={props.fetchEnabled}
+        onUpdateFetchEnabled={props.onUpdateFetchEnabled}
+        onCopyTranscript={props.onCopyTranscript}
+        transcriptExportBusy={props.transcriptExportBusy || props.activeThreadBusy}
       />
 
       <ImageViewing

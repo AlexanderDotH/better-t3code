@@ -1,7 +1,23 @@
 import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
-import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  MessageId,
+  OrchestrationProposedPlan,
+  ServerProvider,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
+import {
+  resolvePlanImplementationSuggestion,
+  type PlanImplementationStrategy,
+} from "@t3tools/client-runtime/plan-implementation";
+import {
+  buildCollapsedProposedPlanPreviewMarkdown,
+  proposedPlanTitle,
+  stripDisplayedPlanMarkdown,
+} from "@t3tools/client-runtime/proposed-plan";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
 import { SymbolView } from "../../components/AppSymbol";
@@ -165,6 +181,13 @@ export interface ThreadFeedProps {
     readonly loading: boolean;
     readonly onLoadEarlier: () => void;
   } | null;
+  readonly planImplementationProvider?: ServerProvider | null;
+  readonly parallelPlanImplementationEnabled?: boolean;
+  readonly reviewedPlanSubagentCounts?: Readonly<Record<string, number>>;
+  readonly onImplementPlan?: (
+    plan: OrchestrationProposedPlan,
+    strategy: PlanImplementationStrategy,
+  ) => Promise<MessageId | null>;
 }
 
 function MessageAttachmentImage(props: {
@@ -820,7 +843,14 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
 
 function renderFeedEntry(
   info: { item: ThreadFeedEntry; index: number },
-  props: Pick<ThreadFeedProps, "environmentId" | "skills"> & {
+  props: Pick<
+    ThreadFeedProps,
+    | "environmentId"
+    | "skills"
+    | "planImplementationProvider"
+    | "parallelPlanImplementationEnabled"
+    | "reviewedPlanSubagentCounts"
+  > & {
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
@@ -831,6 +861,12 @@ function renderFeedEntry(
     readonly onToggleTurnFold: (turnId: TurnId) => void;
     readonly onPressImage: (uri: string, headers?: Record<string, string>) => void;
     readonly onMarkdownLinkPress: (href: string) => void;
+    readonly implementingPlanIds: ReadonlySet<string>;
+    readonly onImplementPlan: (
+      plan: OrchestrationProposedPlan,
+      strategy: PlanImplementationStrategy,
+    ) => void;
+    readonly canImplementPlan: boolean;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
     readonly userBubbleColor: string | import("react-native").ColorValue;
     readonly markdownStyles: MarkdownStyleSets;
@@ -876,6 +912,30 @@ function renderFeedEntry(
         iconSubtleColor={iconSubtleColor}
         onlyToolActivities={entry.onlyToolActivities}
         onToggle={() => props.onToggleWorkGroup(entry.groupId)}
+      />
+    );
+  }
+
+  if (entry.type === "proposed-plan") {
+    const suggestion = resolvePlanImplementationSuggestion({
+      featureEnabled: props.parallelPlanImplementationEnabled === true,
+      planMarkdown: entry.proposedPlan.planMarkdown,
+      provider: props.planImplementationProvider,
+      reviewedSubagentCount: props.reviewedPlanSubagentCounts?.[entry.proposedPlan.id],
+    });
+    return (
+      <MobileProposedPlanCard
+        plan={entry.proposedPlan}
+        implementing={props.implementingPlanIds.has(entry.proposedPlan.id)}
+        markdownStyles={markdownStyles.assistant}
+        skills={props.skills}
+        suggestion={suggestion}
+        onLinkPress={props.onMarkdownLinkPress}
+        onImplement={
+          props.canImplementPlan
+            ? (strategy) => props.onImplementPlan(entry.proposedPlan, strategy)
+            : undefined
+        }
       />
     );
   }
@@ -1032,6 +1092,105 @@ function renderFeedEntry(
     />
   );
 }
+
+const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
+  readonly plan: OrchestrationProposedPlan;
+  readonly implementing: boolean;
+  readonly markdownStyles: MarkdownStyleSet;
+  readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
+  readonly suggestion: ReturnType<typeof resolvePlanImplementationSuggestion>;
+  readonly onLinkPress: (href: string) => void;
+  readonly onImplement?: (strategy: PlanImplementationStrategy) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const implemented = props.plan.implementedAt !== null;
+  const canCollapse =
+    props.plan.planMarkdown.length > 900 || props.plan.planMarkdown.split("\n").length > 20;
+  const markdown =
+    canCollapse && !expanded
+      ? buildCollapsedProposedPlanPreviewMarkdown(props.plan.planMarkdown, { maxLines: 10 })
+      : stripDisplayedPlanMarkdown(props.plan.planMarkdown);
+  const title = proposedPlanTitle(props.plan.planMarkdown) ?? "Proposed plan";
+
+  return (
+    <View className="mb-5 overflow-hidden rounded-[22px] border border-neutral-200 bg-white/80 dark:border-white/10 dark:bg-neutral-900/80">
+      <View className="flex-row items-center gap-2 border-b border-neutral-200 px-4 py-3 dark:border-white/10">
+        <View className="rounded-full bg-blue-500/10 px-2 py-1">
+          <Text className="font-t3-bold text-2xs uppercase tracking-widest text-blue-600 dark:text-blue-400">
+            Plan
+          </Text>
+        </View>
+        <Text className="min-w-0 flex-1 font-t3-bold text-sm text-foreground" numberOfLines={1}>
+          {title}
+        </Text>
+        {implemented ? (
+          <Text className="font-t3-medium text-xs text-emerald-600 dark:text-emerald-400">
+            Implemented
+          </Text>
+        ) : null}
+      </View>
+      <View className="px-4 py-4">
+        {hasNativeSelectableMarkdownText() ? (
+          <SelectableMarkdownText
+            markdown={markdown}
+            skills={props.skills}
+            textStyle={props.markdownStyles.nativeTextStyle}
+            onLinkPress={props.onLinkPress}
+          />
+        ) : (
+          <Markdown
+            options={{ gfm: true }}
+            renderers={props.markdownStyles.renderers}
+            styles={props.markdownStyles.styles}
+            theme={props.markdownStyles.theme}
+          >
+            {markdown}
+          </Markdown>
+        )}
+      </View>
+      {canCollapse ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded }}
+          className="items-center px-4 pb-3 active:opacity-60"
+          onPress={() => setExpanded((current) => !current)}
+        >
+          <Text className="font-t3-medium text-xs text-foreground-muted">
+            {expanded ? "Collapse plan" : "Expand plan"}
+          </Text>
+        </Pressable>
+      ) : null}
+      {!implemented && props.onImplement ? (
+        <View className="flex-row flex-wrap gap-2 border-t border-neutral-200 px-4 py-3 dark:border-white/10">
+          <Pressable
+            accessibilityRole="button"
+            disabled={props.implementing}
+            className="min-h-10 flex-1 items-center justify-center rounded-xl bg-primary px-4 active:opacity-75 disabled:opacity-50"
+            onPress={() => props.onImplement?.({ kind: "standard" })}
+          >
+            {props.implementing ? (
+              <ActivityIndicator color="white" size="small" />
+            ) : (
+              <Text className="font-t3-bold text-sm text-primary-foreground">Implement</Text>
+            )}
+          </Pressable>
+          {props.suggestion ? (
+            <Pressable
+              accessibilityRole="button"
+              disabled={props.implementing}
+              className="min-h-10 flex-1 items-center justify-center rounded-xl border border-neutral-300 px-4 active:opacity-60 disabled:opacity-50 dark:border-white/15"
+              onPress={() => props.onImplement?.(props.suggestion!.strategy)}
+            >
+              <Text className="font-t3-bold text-sm text-foreground">
+                {props.suggestion.strategy.count} agents
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  );
+});
 
 const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly startedAt: string }) {
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -1386,6 +1545,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     uri: string;
     headers?: Record<string, string>;
   } | null>(null);
+  const [implementingPlanIds, setImplementingPlanIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const horizontalPadding = props.layoutVariant === "split" ? 20 : 16;
   const contentHorizontalPadding = deriveCenteredContentHorizontalPadding({
     viewportWidth,
@@ -1784,6 +1946,23 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const onPressImage = useCallback((uri: string, headers?: Record<string, string>) => {
     setExpandedImage({ uri, headers });
   }, []);
+  const onImplementPlan = useCallback(
+    (plan: OrchestrationProposedPlan, strategy: PlanImplementationStrategy) => {
+      if (!props.onImplementPlan || implementingPlanIds.has(plan.id)) {
+        return;
+      }
+      void Haptics.selectionAsync();
+      setImplementingPlanIds((current) => new Set(current).add(plan.id));
+      void props.onImplementPlan(plan, strategy).finally(() => {
+        setImplementingPlanIds((current) => {
+          const next = new Set(current);
+          next.delete(plan.id);
+          return next;
+        });
+      });
+    },
+    [implementingPlanIds, props.onImplementPlan],
+  );
 
   // Rows whose height is known before they ever render. Without this, every
   // row above the viewport is assumed to be estimatedItemSize tall, and
@@ -1831,6 +2010,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         onToggleTurnFold,
         onPressImage,
         onMarkdownLinkPress,
+        implementingPlanIds,
+        onImplementPlan,
+        canImplementPlan: props.onImplementPlan !== undefined,
+        planImplementationProvider: props.planImplementationProvider,
+        parallelPlanImplementationEnabled: props.parallelPlanImplementationEnabled,
+        reviewedPlanSubagentCounts: props.reviewedPlanSubagentCounts,
         iconSubtleColor,
         userBubbleColor,
         markdownStyles,
@@ -1852,11 +2037,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       userBubbleMaxWidth,
       onCopyWorkRow,
       onMarkdownLinkPress,
+      implementingPlanIds,
+      onImplementPlan,
       onPressImage,
       onToggleTurnFold,
       onToggleWorkGroup,
       onToggleWorkRow,
       props.environmentId,
+      props.planImplementationProvider,
+      props.parallelPlanImplementationEnabled,
+      props.reviewedPlanSubagentCounts,
       props.skills,
     ],
   );

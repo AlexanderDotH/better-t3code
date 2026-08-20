@@ -3,6 +3,7 @@ import type {
   PendingReasoningOverride,
   ReasoningRecommendation,
 } from "@t3tools/client-runtime/reasoning-recommendation";
+import type { PlanImplementationStrategy } from "@t3tools/client-runtime/plan-implementation";
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import type { LegendListRef } from "@legendapp/list/react-native";
@@ -13,6 +14,8 @@ import type {
   MessageId,
   ModelSelection,
   OrchestrationThreadShell,
+  OrchestrationProposedPlan,
+  OrchestrationSubagentSummary,
   ProviderApprovalDecision,
   ProviderInteractionMode,
   RuntimeMode,
@@ -82,6 +85,8 @@ import {
   ThreadComposer,
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
+import { ThreadSubagentStack } from "./ThreadSubagentStack";
+import { useMobilePlanParallelismReview } from "./use-plan-parallelism-review";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 
 export interface ThreadDetailScreenProps {
@@ -91,6 +96,7 @@ export interface ThreadDetailScreenProps {
   readonly connectionError: string | null;
   readonly environmentLabel: string | null;
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
+  readonly subagents: ReadonlyArray<OrchestrationSubagentSummary>;
   readonly activeWorkStartedAt: string | null;
   readonly activePendingApproval: PendingApproval | null;
   readonly respondingApprovalId: ApprovalRequestId | null;
@@ -127,6 +133,18 @@ export interface ThreadDetailScreenProps {
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateThreadInteractionMode: (interactionMode: ProviderInteractionMode) => void;
+  readonly fetchSupported: boolean;
+  readonly fetchEnabled: boolean;
+  readonly isImprovingPrompt: boolean;
+  readonly onImproveDraft: () => Promise<void>;
+  readonly onUpdateFetchEnabled: (enabled: boolean) => void;
+  readonly onCopyTranscript?: () => Promise<void>;
+  readonly transcriptExportBusy?: boolean;
+  readonly parallelPlanImplementationEnabled: boolean;
+  readonly onImplementPlan: (
+    plan: OrchestrationProposedPlan,
+    strategy: PlanImplementationStrategy,
+  ) => Promise<MessageId | null>;
   readonly onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -455,11 +473,40 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const contentMaxWidth = isSplitLayout ? CHAT_CONTENT_MAX_WIDTH : undefined;
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
-  const selectedProviderSkills = useMemo(
+  const selectedProvider = useMemo(
     () =>
-      props.serverConfig?.providers.find((provider) => provider.instanceId === selectedInstanceId)
-        ?.skills ?? [],
+      props.serverConfig?.providers.find(
+        (provider) => provider.instanceId === selectedInstanceId,
+      ) ?? null,
     [props.serverConfig, selectedInstanceId],
+  );
+  const workflowActionsSupported =
+    (props.serverConfig?.environment.capabilities.agentWorkflowVersion ?? 0) >= 1;
+  const selectedProviderSkills = selectedProvider?.skills ?? [];
+  const latestActionablePlan = useMemo(() => {
+    for (let index = props.selectedThreadFeed.length - 1; index >= 0; index -= 1) {
+      const entry = props.selectedThreadFeed[index];
+      if (entry?.type === "proposed-plan" && entry.proposedPlan.implementedAt === null) {
+        return entry.proposedPlan;
+      }
+    }
+    return null;
+  }, [props.selectedThreadFeed]);
+  const reviewedSubagentCount = useMobilePlanParallelismReview({
+    enabled: workflowActionsSupported && props.parallelPlanImplementationEnabled,
+    environmentId: props.environmentId,
+    threadId: props.selectedThread.id,
+    plan: latestActionablePlan,
+    implementationProvider: selectedProvider,
+    reviewerSelection: props.serverConfig?.settings.parallelPlanReviewModelSelection ?? null,
+    providers: props.serverConfig?.providers ?? [],
+  });
+  const reviewedPlanSubagentCounts = useMemo(
+    () =>
+      latestActionablePlan && reviewedSubagentCount !== null
+        ? { [latestActionablePlan.id]: reviewedSubagentCount }
+        : undefined,
+    [latestActionablePlan, reviewedSubagentCount],
   );
 
   useLayoutEffect(() => {
@@ -537,6 +584,19 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     return messageId;
   }, [props.onSendMessage, selectedThreadKey]);
 
+  const handleImplementPlan = useCallback(
+    async (plan: OrchestrationProposedPlan, strategy: PlanImplementationStrategy) => {
+      if (!workflowActionsSupported) return null;
+      const targetThreadKey = selectedThreadKey;
+      const messageId = await props.onImplementPlan(plan, strategy);
+      if (messageId !== null && selectedThreadKeyRef.current === targetThreadKey) {
+        setAnchorMessageId(messageId);
+      }
+      return messageId;
+    },
+    [props.onImplementPlan, selectedThreadKey, workflowActionsSupported],
+  );
+
   const collapseComposer = useCallback(() => {
     composerEditorRef.current?.blur();
   }, []);
@@ -613,6 +673,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
             onEndFollowEnabledChange={setEndFollowEnabled}
             skills={selectedProviderSkills}
+            planImplementationProvider={selectedProvider}
+            parallelPlanImplementationEnabled={props.parallelPlanImplementationEnabled}
+            reviewedPlanSubagentCounts={reviewedPlanSubagentCounts}
+            onImplementPlan={workflowActionsSupported ? handleImplementPlan : undefined}
             loadEarlier={props.loadEarlier ?? null}
           />
         </View>
@@ -678,6 +742,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               </Animated.View>
             ) : null}
             <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
+              <ThreadSubagentStack
+                environmentId={props.environmentId}
+                threadId={props.selectedThread.id}
+                subagents={props.subagents}
+              />
               {props.activePendingApproval || props.activePendingUserInput ? (
                 <Animated.View
                   className="shrink-0 gap-3 px-4 pb-3"
@@ -765,6 +834,13 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 onUpdateModelSelection={props.onUpdateThreadModelSelection}
                 onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
                 onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
+                fetchSupported={props.fetchSupported}
+                fetchEnabled={props.fetchEnabled}
+                isImprovingPrompt={props.isImprovingPrompt}
+                onImproveDraft={props.onImproveDraft}
+                onUpdateFetchEnabled={props.onUpdateFetchEnabled}
+                onCopyTranscript={props.onCopyTranscript}
+                transcriptExportBusy={props.transcriptExportBusy}
                 onExpandedChange={setComposerExpanded}
                 onEditorFocusChange={handleOwnedInputFocusChange}
               />

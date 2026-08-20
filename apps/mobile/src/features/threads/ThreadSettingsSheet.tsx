@@ -1,6 +1,5 @@
 import type {
   ModelSelection,
-  ProviderInteractionMode,
   ProviderOptionDescriptor,
   ProviderOptionSelection,
   RuntimeMode,
@@ -13,6 +12,7 @@ import {
 import * as Haptics from "expo-haptics";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Modal,
   Platform,
   Pressable,
@@ -28,7 +28,7 @@ import { AppText as Text } from "../../components/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
-import { applyProviderOptionSelection, providerOptionValueLabels } from "../../lib/providerOptions";
+import { applyProviderOptionSelection } from "../../lib/providerOptions";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { RUNTIME_MODE_CHOICES, selectableChoices } from "./thread-settings-menu";
 import { pendingModelAfterPress } from "./thread-settings-sheet-state";
@@ -40,25 +40,6 @@ import type { ThreadSettingsSheetCloseReason } from "./use-thread-settings-sheet
  * bury the list.
  */
 const PRIMARY_PROVIDER_DRIVERS: ReadonlySet<string> = new Set(["claudeAgent", "codex"]);
-
-/**
- * Compact "Fable 5 · Max · Auto" style summary for the composer trigger pill,
- * covering model, provider options, runtime mode, and plan mode in one label.
- */
-export function threadSettingsSummaryLabel(input: {
-  readonly modelLabel: string;
-  readonly optionDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
-  readonly runtimeMode: RuntimeMode;
-  readonly interactionMode: ProviderInteractionMode;
-}): string {
-  const runtime = RUNTIME_MODE_CHOICES.find((choice) => choice.mode === input.runtimeMode);
-  return [
-    input.modelLabel,
-    ...providerOptionValueLabels(input.optionDescriptors),
-    ...(runtime ? [runtime.shortLabel] : []),
-    ...(input.interactionMode === "plan" ? ["Plan"] : []),
-  ].join(" · ");
-}
 
 function ModelRow(props: {
   readonly option: ModelOption;
@@ -286,6 +267,11 @@ export function ThreadSettingsSheet(props: {
   readonly onUpdateOptionSelections: (selections: ReadonlyArray<ProviderOptionSelection>) => void;
   readonly runtimeMode: RuntimeMode;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
+  readonly fetchSupported?: boolean;
+  readonly fetchEnabled?: boolean;
+  readonly onUpdateFetchEnabled?: (enabled: boolean) => void;
+  readonly onCopyTranscript?: () => Promise<void>;
+  readonly transcriptExportBusy?: boolean;
 }) {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
@@ -595,6 +581,38 @@ export function ThreadSettingsSheet(props: {
               }
               onPress={() => setSubmenu({ kind: "runtime" })}
             />
+            {props.fetchSupported && props.onUpdateFetchEnabled ? (
+              <SwitchRow
+                label="Fetch repository"
+                value={props.fetchEnabled === true}
+                onValueChange={props.onUpdateFetchEnabled}
+              />
+            ) : null}
+            {props.onCopyTranscript ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{
+                  busy: props.transcriptExportBusy === true,
+                  disabled: props.transcriptExportBusy === true,
+                }}
+                disabled={props.transcriptExportBusy}
+                onPress={() => void props.onCopyTranscript?.()}
+                className="mx-4 mt-2 flex-row items-center justify-center gap-2 rounded-full bg-subtle px-4 py-3 disabled:opacity-40"
+              >
+                {props.transcriptExportBusy ? (
+                  <ActivityIndicator size="small" />
+                ) : (
+                  <SymbolView
+                    name={{ ios: "doc.on.doc", android: "content_copy" }}
+                    size={15}
+                    type="monochrome"
+                  />
+                )}
+                <Text className="text-sm font-t3-medium text-foreground">
+                  {props.transcriptExportBusy ? "Copying transcript…" : "Copy complete transcript"}
+                </Text>
+              </Pressable>
+            ) : null}
             <Pressable
               accessibilityRole="button"
               onPress={handleSave}

@@ -9,9 +9,10 @@ import {
 } from "@t3tools/client-runtime/state/thread-search";
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from "react-native";
 import { Platform, Pressable, StyleSheet, TextInput, View, useColorScheme } from "react-native";
@@ -30,12 +31,14 @@ import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadListV2Enabled } from "./use-thread-list-v2-enabled";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   hasCustomHomeListOptions,
   PROJECT_SORT_OPTIONS,
@@ -54,6 +57,7 @@ import {
 } from "../home/homeListItems";
 import { buildHomeProjectScopes, buildHomeThreadGroups } from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
+import { useHomeProjectActivity } from "../home/use-home-project-activity";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
 import {
@@ -67,6 +71,7 @@ import { SidebarNavigationShell } from "./sidebar-navigation-shell";
 import {
   PendingTaskListRow,
   ThreadListGroupHeader,
+  ThreadListOlderProjectsHeader,
   ThreadListRow,
   ThreadListShowMoreRow,
 } from "./thread-list-items";
@@ -214,6 +219,9 @@ function ThreadNavigationSidebarPane(
     regenerateThreadTitle,
   } = useThreadListActions();
   const threadListV2Enabled = useThreadListV2Enabled();
+  const { appearance } = useAppearancePreferences();
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
@@ -385,14 +393,50 @@ function ThreadNavigationSidebarPane(
     });
   }, []);
   const hasSearchQuery = props.searchQuery.trim().length > 0;
+  const projectActivity = useHomeProjectActivity(groups, !hasSearchQuery);
+  const persistedOlderProjectsExpanded =
+    AsyncResult.isSuccess(preferencesResult) &&
+    preferencesResult.value.olderProjectsExpanded === true;
+  const selectedOlderProjectKey =
+    projectActivity.olderGroups.find(
+      (group) =>
+        (selectedProjectScope !== null && group.key === selectedProjectScope.key) ||
+        group.threads.some(
+          (thread) => scopedThreadKey(thread.environmentId, thread.id) === props.selectedThreadKey,
+        ),
+    )?.key ?? null;
+  const [dismissedAutoRevealProjectKey, setDismissedAutoRevealProjectKey] = useState<string | null>(
+    null,
+  );
+  const autoRevealOlderProjects =
+    selectedOlderProjectKey !== null && selectedOlderProjectKey !== dismissedAutoRevealProjectKey;
+  const olderProjectsExpanded = persistedOlderProjectsExpanded || autoRevealOlderProjects;
+  const toggleOlderProjects = useCallback(() => {
+    if (olderProjectsExpanded) {
+      savePreferences({ olderProjectsExpanded: false });
+      setDismissedAutoRevealProjectKey(selectedOlderProjectKey);
+      return;
+    }
+    setDismissedAutoRevealProjectKey(null);
+    savePreferences({ olderProjectsExpanded: true });
+  }, [olderProjectsExpanded, savePreferences, selectedOlderProjectKey]);
   const listLayout = useMemo(
     () =>
       buildHomeListLayout({
-        groups,
+        groups: projectActivity.recentGroups,
+        olderGroups: projectActivity.olderGroups,
+        olderProjectsExpanded,
+        projectThreadPreviewCount: appearance.projectThreadPreviewCount,
         displayStates: groupDisplayStates,
         showAllThreads: hasSearchQuery,
       }),
-    [groups, groupDisplayStates, hasSearchQuery],
+    [
+      appearance.projectThreadPreviewCount,
+      groupDisplayStates,
+      hasSearchQuery,
+      olderProjectsExpanded,
+      projectActivity,
+    ],
   );
   const projectCwdByKey = useMemo(() => {
     const map = new Map<string, string>();
@@ -1020,6 +1064,15 @@ function ThreadNavigationSidebarPane(
               </Text>
             </Pressable>
           );
+        case "older-projects":
+          return (
+            <ThreadListOlderProjectsHeader
+              variant="sidebar"
+              count={item.count}
+              expanded={item.expanded}
+              onToggle={toggleOlderProjects}
+            />
+          );
         case "header":
           return (
             <ThreadListGroupHeader
@@ -1135,6 +1188,7 @@ function ThreadNavigationSidebarPane(
       nowMinute,
       toggleSettledShelf,
       toggleSnoozedShelf,
+      toggleOlderProjects,
       unpinThread,
       unsettleThread,
       unsnoozeThread,

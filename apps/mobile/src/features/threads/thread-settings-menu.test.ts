@@ -208,6 +208,38 @@ describe("buildThreadSettingsMenu", () => {
     });
   });
 
+  it("adds a device-local Fetch toggle only for capable servers", () => {
+    const unsupported = buildThreadSettingsMenu(baseInput());
+    const supported = buildThreadSettingsMenu({
+      ...baseInput(),
+      fetchSupported: true,
+      fetchEnabled: false,
+    });
+
+    expect(unsupported.actions.some((action) => action.title === "Fetch repository")).toBe(false);
+    const fetch = supported.actions.find((action) => action.title === "Fetch repository");
+    expect(fetch?.state).toBe("off");
+    expect(eventFor(supported, fetch?.id)).toEqual({ type: "set-fetch", enabled: true });
+  });
+
+  it("adds transcript export only when available and disables it while the thread is busy", () => {
+    const unavailable = buildThreadSettingsMenu(baseInput());
+    const available = buildThreadSettingsMenu({
+      ...baseInput(),
+      copyTranscriptAvailable: true,
+      copyTranscriptDisabled: true,
+    });
+
+    expect(unavailable.actions.some((action) => action.title === "Copy complete transcript")).toBe(
+      false,
+    );
+    const transcript = available.actions.find(
+      (action) => action.title === "Copy complete transcript",
+    );
+    expect(transcript?.attributes?.disabled).toBe(true);
+    expect(eventFor(available, transcript?.id)).toEqual({ type: "copy-transcript" });
+  });
+
   it("keeps the menu presented only for top-level toggles", () => {
     const menu = buildThreadSettingsMenu(baseInput());
 

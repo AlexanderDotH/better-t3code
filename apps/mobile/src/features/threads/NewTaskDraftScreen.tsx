@@ -1,6 +1,7 @@
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, usePreventRemove } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { Alert, InteractionManager, Platform, View, useColorScheme } from "react-native";
 import {
   KeyboardAvoidingView,
@@ -11,11 +12,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useFontFamily } from "../../lib/useFontFamily";
 
-import { EnvironmentId, ProviderDriverKind } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ProviderDriverKind } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { AsyncResult } from "effect/unstable/reactivity";
 
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import {
@@ -29,7 +31,8 @@ import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStri
 import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ComposerSurface } from "./ThreadComposer";
-import { ThreadSettingsSheet, threadSettingsSummaryLabel } from "./ThreadSettingsSheet";
+import { ThreadSettingsSheet } from "./ThreadSettingsSheet";
+import { threadSettingsSummaryLabel } from "./thread-settings-summary";
 import { useThreadSettingsSheetPresentation } from "./use-thread-settings-sheet-presentation";
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
@@ -54,6 +57,12 @@ import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { useCreateProjectThread } from "./use-project-actions";
 import { resolveDraftProjectSelection } from "./new-task-project-selection";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { resolveMobileAgentWorkflowSettings } from "../../state/agent-workflow-settings";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { NativeVoiceDictationControl } from "./NativeVoiceDictationControl";
+import { useNativeAssemblyAiDictation } from "./use-native-assembly-ai-dictation";
 
 function formatWorkspaceLabel(input: {
   readonly workspaceMode: string;
@@ -97,6 +106,60 @@ export function NewTaskDraftScreen(props: {
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
     selectedProject?.environmentId ?? null,
   );
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const improvePrompt = useAtomCommand(serverEnvironment.improvePrompt, { reportFailure: false });
+  const [isImprovingPrompt, setIsImprovingPrompt] = useState(false);
+  const preferences = AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : {};
+  const effectiveExperimentalFetch = flow.editingPendingTask
+    ? flow.fetchMode === "repository-exploration"
+    : preferences.experimentalFetch;
+  const workflowSettings = useMemo(
+    () =>
+      resolveMobileAgentWorkflowSettings({
+        agentWorkflowVersion:
+          selectedEnvironmentServerConfig?.environment.capabilities.agentWorkflowVersion,
+        experimentalFetch: effectiveExperimentalFetch,
+      }),
+    [
+      effectiveExperimentalFetch,
+      selectedEnvironmentServerConfig?.environment.capabilities.agentWorkflowVersion,
+    ],
+  );
+  const shouldImprovePromptBeforeSend =
+    workflowSettings.supported &&
+    (flow.editingPendingTask
+      ? flow.editingPendingTask.improvePromptBeforeSend === true
+      : preferences.improvePromptBeforeSend === true);
+  const updateFetchEnabled = useCallback(
+    (enabled: boolean) => {
+      if (flow.editingPendingTask) {
+        flow.setFetchMode(enabled ? "repository-exploration" : undefined);
+        return;
+      }
+      savePreferences({ experimentalFetch: enabled });
+    },
+    [flow.editingPendingTask, flow.setFetchMode, savePreferences],
+  );
+  const voiceOutputLanguage =
+    preferences.voiceInputOutputLanguage === "english" ? "english" : "native";
+  const assemblyAiKey =
+    selectedEnvironmentServerConfig?.settings.speechTranscription.assemblyAi.apiKey;
+  const voiceConfigured =
+    selectedProject !== null &&
+    (selectedEnvironmentServerConfig?.environment.capabilities.environmentSettingsVersion ?? 0) >=
+      1 &&
+    (assemblyAiKey?.valueRedacted === true || (assemblyAiKey?.value.trim().length ?? 0) > 0);
+  const voiceDictation = useNativeAssemblyAiDictation({
+    configured: voiceConfigured,
+    environmentId: selectedProject?.environmentId ?? EnvironmentId.make("unavailable"),
+    projectId: selectedProject?.id ?? ProjectId.make("unavailable"),
+    lifecycleKey: selectedProjectKey ?? "new-task-unselected",
+    draftText: flow.prompt,
+    outputLanguage: voiceOutputLanguage,
+    onChangeDraftText: flow.setPrompt,
+    onNotice: (title, error) => Alert.alert(title, error.message),
+  });
   const environmentConnected =
     selectedProject !== null &&
     connectedEnvironments.find(
@@ -646,6 +709,7 @@ export function NewTaskDraftScreen(props: {
     optionDescriptors: providerOptionDescriptors,
     runtimeMode: flow.runtimeMode,
     interactionMode: flow.interactionMode,
+    fetchEnabled: workflowSettings.fetchEnabled,
   });
   const workspaceLabel = useMemo(
     () =>
@@ -696,6 +760,40 @@ export function NewTaskDraftScreen(props: {
     }
   }
 
+  async function handleImprovePrompt(): Promise<void> {
+    const selectedProject = flow.selectedProject;
+    const draftKey = flow.draftKey;
+    if (!selectedProject || !draftKey || !workflowSettings.supported || isImprovingPrompt) {
+      return;
+    }
+    const original = getComposerDraftSnapshot(draftKey).text;
+    const text = original.trim();
+    if (text.length === 0) {
+      return;
+    }
+
+    setIsImprovingPrompt(true);
+    const result = await improvePrompt({
+      environmentId: selectedProject.environmentId,
+      input: { projectId: selectedProject.id, text },
+    });
+    setIsImprovingPrompt(false);
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        Alert.alert(
+          "Could not improve prompt",
+          error instanceof Error ? error.message : "The prompt could not be improved.",
+        );
+      }
+      return;
+    }
+    if (getComposerDraftSnapshot(draftKey).text !== original) {
+      return;
+    }
+    flow.setPrompt(result.value.text);
+  }
+
   const handleNativePasteImages = useCallback(
     async (uris: ReadonlyArray<string>) => {
       try {
@@ -735,7 +833,7 @@ export function NewTaskDraftScreen(props: {
     const startFromOrigin = draft.workspaceSelection?.startFromOrigin ?? flow.startFromOrigin;
     const runtimeMode = draft.runtimeMode ?? flow.runtimeMode;
     const interactionMode = draft.interactionMode ?? flow.interactionMode;
-    const initialMessageText = draft.text.trim();
+    let initialMessageText = draft.text.trim();
 
     if (
       !modelSelection ||
@@ -774,9 +872,18 @@ export function NewTaskDraftScreen(props: {
       if (!message) {
         return;
       }
+      const queuedMessage = {
+        ...message,
+        ...(workflowSettings.fetchMode === undefined
+          ? {}
+          : { fetchMode: workflowSettings.fetchMode }),
+        ...(shouldImprovePromptBeforeSend && initialMessageText.length > 0
+          ? { improvePromptBeforeSend: true }
+          : {}),
+      };
       flow.setSubmitting(true);
       try {
-        await enqueueThreadOutboxMessage(message);
+        await enqueueThreadOutboxMessage(queuedMessage);
       } catch (error) {
         Alert.alert(
           "Could not queue task",
@@ -797,6 +904,29 @@ export function NewTaskDraftScreen(props: {
       return;
     }
 
+    if (shouldImprovePromptBeforeSend) {
+      setIsImprovingPrompt(true);
+      const improved = await improvePrompt({
+        environmentId: selectedProject.environmentId,
+        input: { projectId: selectedProject.id, text: initialMessageText },
+      });
+      setIsImprovingPrompt(false);
+      if (improved._tag === "Failure") {
+        if (!isAtomCommandInterrupted(improved)) {
+          const error = squashAtomCommandFailure(improved);
+          Alert.alert(
+            "Could not improve prompt",
+            error instanceof Error ? error.message : "The prompt could not be improved.",
+          );
+        }
+        return;
+      }
+      if (getComposerDraftSnapshot(draftKey).text !== draft.text) {
+        return;
+      }
+      initialMessageText = improved.value.text.trim();
+    }
+
     flow.setSubmitting(true);
     // Arm the lock-screen card before the async thread creation: backgrounding
     // the app right after tapping submit would otherwise reject the foreground
@@ -815,6 +945,9 @@ export function NewTaskDraftScreen(props: {
       startFromOrigin,
       runtimeMode,
       interactionMode,
+      ...(workflowSettings.fetchMode === undefined
+        ? {}
+        : { fetchMode: workflowSettings.fetchMode }),
       initialMessageText,
       initialAttachments: draft.attachments,
       ...(editingPendingTask
@@ -880,7 +1013,8 @@ export function NewTaskDraftScreen(props: {
   // the touch gesture that opens the keyboard.
   // The settings sheet dismisses the keyboard, so its flag keeps the Android
   // draft composer expanded through the blur (mirrors ThreadComposer).
-  const isExpanded = !isAndroid || isComposerFocused || settingsSheetPresentation.isActive;
+  const isExpanded =
+    !isAndroid || isComposerFocused || settingsSheetPresentation.isActive || voiceDictation.active;
   const canStart =
     Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
@@ -888,6 +1022,8 @@ export function NewTaskDraftScreen(props: {
     isIncomingShareReady &&
     !isImportingShare &&
     !flow.submitting &&
+    !isImprovingPrompt &&
+    !voiceDictation.active &&
     !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
   const promptEditor = (
     <ComposerEditor
@@ -897,7 +1033,7 @@ export function NewTaskDraftScreen(props: {
       // animation and stalls it. The runAfterInteractions effect above focuses
       // the editor once the transition settles instead.
       autoFocus={false}
-      editable={!isIncomingShareTransferPending}
+      editable={!isIncomingShareTransferPending && !voiceDictation.active}
       multiline
       scrollEnabled={isExpanded}
       value={flow.prompt}
@@ -934,6 +1070,25 @@ export function NewTaskDraftScreen(props: {
         showChevron={false}
         disabled={isIncomingShareTransferPending}
       />
+      {voiceConfigured || voiceDictation.active ? (
+        <NativeVoiceDictationControl
+          state={voiceDictation.state}
+          audioWaveform={voiceDictation.audioWaveform}
+          disabled={!environmentConnected || isIncomingShareTransferPending || isImprovingPrompt}
+          onStart={voiceDictation.start}
+          onStop={voiceDictation.stop}
+          onCancel={voiceDictation.cancel}
+        />
+      ) : null}
+      {workflowSettings.supported && flow.prompt.trim().length > 0 ? (
+        <ComposerToolbarButton
+          accessibilityLabel="Improve prompt"
+          icon={isImprovingPrompt ? undefined : { ios: "sparkles", android: "auto_awesome" }}
+          disabled={isImprovingPrompt}
+          onPress={() => void handleImprovePrompt()}
+          showChevron={false}
+        />
+      ) : null}
       <ComposerToolbarTrigger
         accessibilityLabel="Thread settings"
         disabled={isIncomingShareTransferPending}
@@ -979,6 +1134,9 @@ export function NewTaskDraftScreen(props: {
       onUpdateOptionSelections={flow.setSelectedModelOptions}
       runtimeMode={flow.runtimeMode}
       onUpdateRuntimeMode={flow.setRuntimeMode}
+      fetchSupported={workflowSettings.supported}
+      fetchEnabled={workflowSettings.fetchEnabled}
+      onUpdateFetchEnabled={updateFetchEnabled}
     />
   );
 
@@ -1064,12 +1222,23 @@ export function NewTaskDraftScreen(props: {
               ) : null}
               <View className={isExpanded ? undefined : "min-w-0 flex-1"}>{promptEditor}</View>
               {!isExpanded ? (
-                <ControlPill
-                  icon="arrow.up"
-                  variant="primary"
-                  disabled={!canStart}
-                  onPress={() => void handleStart()}
-                />
+                voiceDictation.active || (flow.prompt.trim().length === 0 && voiceConfigured) ? (
+                  <NativeVoiceDictationControl
+                    state={voiceDictation.state}
+                    audioWaveform={voiceDictation.audioWaveform}
+                    disabled={!environmentConnected || isIncomingShareTransferPending}
+                    onStart={voiceDictation.start}
+                    onStop={voiceDictation.stop}
+                    onCancel={voiceDictation.cancel}
+                  />
+                ) : (
+                  <ControlPill
+                    icon="arrow.up"
+                    variant="primary"
+                    disabled={!canStart}
+                    onPress={() => void handleStart()}
+                  />
+                )
               ) : null}
             </ComposerSurface>
 

@@ -20,8 +20,14 @@ import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { Platform, ScrollView, View } from "react-native";
+import * as Clipboard from "expo-clipboard";
+import * as Haptics from "expo-haptics";
+import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useEnvironmentQuery } from "../../state/query";
@@ -71,6 +77,7 @@ import { useSelectedThreadRequests } from "../../state/use-selected-thread-reque
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { threadEnvironment } from "../../state/threads";
+import { orchestrationEnvironment } from "../../state/orchestration";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import {
   useAdaptiveWorkspaceLayout,
@@ -224,6 +231,10 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const exportThreadTranscript = useAtomCommand(orchestrationEnvironment.exportThreadTranscript, {
+    reportFailure: false,
+  });
+  const [transcriptExportBusy, setTranscriptExportBusy] = useState(false);
   const navigation = useNavigation();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
@@ -291,6 +302,8 @@ function ThreadRouteContent(
   );
   const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
+  const transcriptExportSupported =
+    (serverConfig?.environment.capabilities.agentWorkflowVersion ?? 0) >= 1;
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
@@ -685,6 +698,54 @@ function ThreadRouteContent(
       terminalMenuSessions,
     ],
   );
+  const handleCopyTranscript = useCallback(async () => {
+    if (
+      selectedThread === null ||
+      !transcriptExportSupported ||
+      transcriptExportBusy ||
+      composer.activeThreadBusy
+    ) {
+      return;
+    }
+
+    setTranscriptExportBusy(true);
+    try {
+      const result = await exportThreadTranscript({
+        environmentId: selectedThread.environmentId,
+        input: { threadId: selectedThread.id },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          Alert.alert(
+            "Could not copy transcript",
+            error instanceof Error ? error.message : "The transcript export failed.",
+          );
+        }
+        return;
+      }
+
+      try {
+        await Clipboard.setStringAsync(result.value.content);
+      } catch {
+        Alert.alert("Could not copy transcript", "The clipboard could not be updated.");
+        return;
+      }
+      void Haptics.selectionAsync().catch(() => undefined);
+      Alert.alert(
+        "Transcript copied",
+        "The complete, unredacted Markdown transcript is now on your clipboard.",
+      );
+    } finally {
+      setTranscriptExportBusy(false);
+    }
+  }, [
+    composer.activeThreadBusy,
+    exportThreadTranscript,
+    selectedThread,
+    transcriptExportBusy,
+    transcriptExportSupported,
+  ]);
   const threadGitControlProps = {
     environmentId: environmentIdRaw ?? "",
     threadId: threadId ?? "",
@@ -849,6 +910,7 @@ function ThreadRouteContent(
           connectionError={routeConnectionError}
           environmentLabel={selectedEnvironmentConnection?.environmentLabel ?? null}
           selectedThreadFeed={composer.selectedThreadFeed}
+          subagents={selectedThreadDetail?.subagents ?? []}
           activeWorkStartedAt={composer.activeWorkStartedAt}
           activePendingApproval={requests.activePendingApproval}
           respondingApprovalId={requests.respondingApprovalId}
@@ -878,6 +940,15 @@ function ThreadRouteContent(
           serverConfig={serverConfig}
           onStopThread={handleStopThread}
           onSendMessage={composer.onSendMessage}
+          fetchSupported={composer.fetchSupported}
+          fetchEnabled={composer.fetchEnabled}
+          isImprovingPrompt={composer.isImprovingPrompt}
+          onImproveDraft={composer.onImproveDraft}
+          onUpdateFetchEnabled={composer.onUpdateFetchEnabled}
+          onCopyTranscript={transcriptExportSupported ? handleCopyTranscript : undefined}
+          transcriptExportBusy={transcriptExportBusy || composer.activeThreadBusy}
+          parallelPlanImplementationEnabled={composer.parallelPlanImplementationEnabled}
+          onImplementPlan={composer.onImplementPlan}
           onReconnectEnvironment={handleReconnectEnvironment}
           onUpdateThreadModelSelection={composer.onUpdateModelSelection}
           onUpdateThreadRuntimeMode={composer.onUpdateRuntimeMode}

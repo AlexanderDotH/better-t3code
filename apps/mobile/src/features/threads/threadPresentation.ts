@@ -73,7 +73,10 @@ export function resolveThreadStatus(
     };
   }
 
-  if (thread.session?.status === "running") {
+  if (
+    thread.session?.status === "running" ||
+    (thread.session?.status === "starting" && thread.backgroundLiveness === "working")
+  ) {
     return {
       kind: "working",
       label: "Working",

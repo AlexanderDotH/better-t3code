@@ -182,6 +182,42 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
   );
 });
 
+export const ThreadListOlderProjectsHeader = memo(function ThreadListOlderProjectsHeader(props: {
+  readonly variant: ThreadListVariant;
+  readonly count: number;
+  readonly expanded: boolean;
+  readonly onToggle: () => void;
+}) {
+  const mutedColor = useThemeColor("--color-foreground-muted");
+  return (
+    <Pressable
+      accessibilityHint={
+        props.expanded ? "Collapses the older projects." : "Expands the older projects."
+      }
+      accessibilityLabel={`${props.count} older ${props.count === 1 ? "project" : "projects"}`}
+      accessibilityRole="button"
+      accessibilityState={{ expanded: props.expanded }}
+      className="mb-1.5 mt-4 flex-row items-center gap-2.5"
+      onPress={props.onToggle}
+      style={({ pressed }) => ({
+        opacity: pressed ? 0.6 : 1,
+        paddingHorizontal: props.variant === "sidebar" ? 12 : 20,
+      })}
+    >
+      <Text className="text-xs font-t3-medium text-foreground-tertiary">
+        {props.expanded ? "Older projects" : `Older projects (${props.count})`}
+      </Text>
+      <View className="h-px flex-1 bg-border" />
+      <SymbolView
+        name={props.expanded ? "chevron.up" : "chevron.down"}
+        size={10}
+        tintColor={mutedColor}
+        type="monochrome"
+      />
+    </Pressable>
+  );
+});
+
 /* ─── Show more / show less row ──────────────────────────────────────── */
 
 export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: {

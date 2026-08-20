@@ -142,6 +142,7 @@ type NewTaskFlowContextValue = {
   readonly availableBranches: ReadonlyArray<VcsRef>;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  readonly fetchMode: "repository-exploration" | undefined;
   readonly expandedProvider: string | null;
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
@@ -178,6 +179,7 @@ type NewTaskFlowContextValue = {
   readonly loadBranches: () => Promise<void>;
   readonly setRuntimeMode: (value: RuntimeMode) => void;
   readonly setInteractionMode: (value: ProviderInteractionMode) => void;
+  readonly setFetchMode: (value: "repository-exploration" | undefined) => void;
   readonly setSelectedModelOptions: (
     value: ReadonlyArray<ProviderOptionSelection> | undefined,
   ) => void;
@@ -397,6 +399,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     true;
   const runtimeMode = selectedProjectDraft.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode = selectedProjectDraft.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE;
+  const fetchMode = selectedProjectDraft.fetchMode;
 
   // Stored selections only count while their provider is usable on the
   // server; otherwise the server's default model wins instead of silently
@@ -694,6 +697,14 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     },
     [selectedProjectDraftKey],
   );
+  const setFetchMode = useCallback(
+    (value: "repository-exploration" | undefined) => {
+      if (selectedProjectDraftKey) {
+        updateComposerDraftSettings(selectedProjectDraftKey, { fetchMode: value });
+      }
+    },
+    [selectedProjectDraftKey],
+  );
 
   const beginEditingPendingTask = useCallback((messageId: string): boolean => {
     const message = findQueuedPendingTask(messageId);
@@ -709,6 +720,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         modelSelection: message.modelSelection,
         runtimeMode: message.runtimeMode,
         interactionMode: message.interactionMode,
+        fetchMode: message.fetchMode,
         workspaceSelection: {
           mode: message.creation.workspaceMode,
           branch: message.creation.branch,
@@ -769,6 +781,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         modelSelection: draftModelSelection,
         runtimeMode: draft.runtimeMode ?? DEFAULT_RUNTIME_MODE,
         interactionMode: draft.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
+        ...(draft.fetchMode === undefined ? {} : { fetchMode: draft.fetchMode }),
+        ...(editingPendingTask?.improvePromptBeforeSend === true
+          ? { improvePromptBeforeSend: true }
+          : {}),
         creation: {
           projectId: selectedProject.id,
           ...(projectTitle !== undefined ? { projectTitle } : {}),
@@ -908,6 +924,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       availableBranches,
       runtimeMode,
       interactionMode,
+      fetchMode,
       expandedProvider,
       environments,
       selectedProject,
@@ -938,6 +955,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       loadBranches,
       setRuntimeMode,
       setInteractionMode,
+      setFetchMode,
       setSelectedModelOptions,
       setExpandedProvider,
     }),
@@ -955,6 +973,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       filteredBranches,
       finishEditingPendingTask,
       interactionMode,
+      fetchMode,
       loadBranches,
       projectScopes,
       modelOptions,
@@ -978,6 +997,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectBranch,
       selectEnvironment,
       setInteractionMode,
+      setFetchMode,
       setPrompt,
       setRuntimeMode,
       setSelectedModelKey,

@@ -18,6 +18,7 @@ import { Alert, Platform, Pressable, RefreshControl, ScrollView, View } from "re
 import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../../lib/useThemeColor";
+import { useEnvironmentServerConfig } from "../../../state/entities";
 
 import { AndroidSheetHeader } from "../../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../../components/AppText";
@@ -30,6 +31,7 @@ import { useSelectedThreadGitState } from "../../../state/use-selected-thread-gi
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
 import { vcsEnvironment } from "../../../state/vcs";
 import { resolveGitOverviewReviewNavigationAction } from "./git-overview-navigation";
+import { GitWorkbenchSection } from "./GitWorkbenchSection";
 import { MetaCard, SheetListRow, menuItemIconName, statusSummary } from "./gitSheetComponents";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
@@ -53,6 +55,9 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
+  const serverConfig = useEnvironmentServerConfig(environmentId);
+  const gitWorkbenchEnabled =
+    (serverConfig?.environment.capabilities.gitWorkbenchVersion ?? 0) >= 1;
 
   const iconColor = useThemeColor("--color-icon");
   const foregroundColor = String(useThemeColor("--color-foreground"));
@@ -225,6 +230,11 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullRefresh()} />
       }
     >
+      <GitWorkbenchSection
+        enabled={gitWorkbenchEnabled}
+        environmentId={environmentId}
+        cwd={selectedThreadCwd}
+      />
       <View
         className={
           isInspector
