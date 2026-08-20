@@ -2,9 +2,17 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  MessageId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   buildHomeListLayout,
   DEFAULT_GROUP_DISPLAY_STATE,
@@ -77,6 +85,29 @@ function makeGroup(key: string, threadCount: number): HomeThreadGroup {
   };
 }
 
+function makePendingTask(projectId: ProjectId): PendingNewTask {
+  const creation = {
+    projectId,
+    workspaceMode: "local" as const,
+    branch: null,
+    worktreePath: null,
+  };
+  return {
+    creation,
+    message: {
+      environmentId,
+      threadId: ThreadId.make("pending-thread"),
+      messageId: MessageId.make("pending-message"),
+      commandId: CommandId.make("pending-command"),
+      text: "Pending task",
+      attachments: [],
+      creation,
+      createdAt: "2026-06-01T00:00:00.000Z",
+    },
+    title: "Pending task",
+  };
+}
+
 function itemTypes(items: ReadonlyArray<HomeListItem>): string[] {
   return items.map((item) => item.type);
 }
@@ -88,9 +119,22 @@ function displayStates(
 }
 
 describe("buildHomeListLayout", () => {
+  it("uses three threads as the default project preview count", () => {
+    expect(HOME_INITIAL_VISIBLE_THREADS).toBe(3);
+
+    const layout = buildHomeListLayout({
+      groups: [makeGroup("alpha", 8)],
+      projectThreadPreviewCount: HOME_INITIAL_VISIBLE_THREADS,
+      displayStates: displayStates({}),
+    });
+
+    expect(layout.items.filter((item) => item.type === "thread")).toHaveLength(3);
+  });
+
   it("renders a header plus all threads for a small group without a show-more row", () => {
     const layout = buildHomeListLayout({
       groups: [makeGroup("alpha", 3)],
+      projectThreadPreviewCount: HOME_INITIAL_VISIBLE_THREADS,
       displayStates: displayStates({}),
     });
 
@@ -102,6 +146,7 @@ describe("buildHomeListLayout", () => {
   it("limits large groups to the initial visible count with a show-more row", () => {
     const layout = buildHomeListLayout({
       groups: [makeGroup("alpha", 133)],
+      projectThreadPreviewCount: HOME_INITIAL_VISIBLE_THREADS,
       displayStates: displayStates({}),
     });
 
@@ -122,6 +167,7 @@ describe("buildHomeListLayout", () => {
 
     const expandedOnce = buildHomeListLayout({
       groups: [group],
+      projectThreadPreviewCount: HOME_INITIAL_VISIBLE_THREADS,
       displayStates: displayStates({
         alpha: nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "show-more"),
       }),
@@ -131,12 +177,13 @@ describe("buildHomeListLayout", () => {
     );
     expect(expandedOnce.items.at(-1)).toMatchObject({
       type: "show-more",
-      hiddenCount: 4,
+      hiddenCount: 7,
       canShowLess: true,
     });
 
     const fullyExpanded = buildHomeListLayout({
       groups: [group],
+      projectThreadPreviewCount: HOME_INITIAL_VISIBLE_THREADS,
       displayStates: displayStates({
         alpha: nextGroupDisplayState(
           nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "show-more"),
@@ -158,7 +205,39 @@ describe("buildHomeListLayout", () => {
       ),
       "show-less",
     );
-    expect(reset.visibleCount).toBe(HOME_INITIAL_VISIBLE_THREADS);
+    expect(reset.additionalVisibleCount).toBe(0);
+  });
+
+  it("rebases the expanded amount when the configured preview count changes", () => {
+    const group = makeGroup("alpha", 20);
+    const displayState = nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "show-more");
+
+    const withThree = buildHomeListLayout({
+      groups: [group],
+      projectThreadPreviewCount: 3,
+      displayStates: displayStates({ alpha: displayState }),
+    });
+    const withFive = buildHomeListLayout({
+      groups: [group],
+      projectThreadPreviewCount: 5,
+      displayStates: displayStates({ alpha: displayState }),
+    });
+
+    expect(withThree.items.filter((item) => item.type === "thread")).toHaveLength(13);
+    expect(withFive.items.filter((item) => item.type === "thread")).toHaveLength(15);
+  });
+
+  it("honors custom and maximum project preview counts", () => {
+    const group = makeGroup("alpha", 20);
+
+    for (const count of [5, 15]) {
+      const layout = buildHomeListLayout({
+        groups: [group],
+        projectThreadPreviewCount: count,
+        displayStates: displayStates({}),
+      });
+      expect(layout.items.filter((item) => item.type === "thread")).toHaveLength(count);
+    }
   });
 
   it("offers show-less after expanding a stale group whose baseline is below the page size", () => {
@@ -180,6 +259,7 @@ describe("buildHomeListLayout", () => {
 
     const collapsedToRecent = buildHomeListLayout({
       groups: [group],
+      projectThreadPreviewCount: HOME_INITIAL_VISIBLE_THREADS,
       displayStates: displayStates({}),
     });
     expect(collapsedToRecent.items.filter((item) => item.type === "thread")).toHaveLength(3);
@@ -191,6 +271,7 @@ describe("buildHomeListLayout", () => {
 
     const expanded = buildHomeListLayout({
       groups: [group],
+      projectThreadPreviewCount: HOME_INITIAL_VISIBLE_THREADS,
       displayStates: displayStates({
         stale: nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "show-more"),
       }),
@@ -206,6 +287,7 @@ describe("buildHomeListLayout", () => {
   it("hides threads and the show-more row for collapsed groups", () => {
     const layout = buildHomeListLayout({
       groups: [makeGroup("alpha", 12), makeGroup("beta", 2)],
+      projectThreadPreviewCount: HOME_INITIAL_VISIBLE_THREADS,
       displayStates: displayStates({
         alpha: nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "toggle-collapsed"),
       }),
@@ -220,6 +302,7 @@ describe("buildHomeListLayout", () => {
   it("suspends collapse and pagination while searching", () => {
     const layout = buildHomeListLayout({
       groups: [makeGroup("alpha", 12)],
+      projectThreadPreviewCount: 1,
       displayStates: displayStates({
         alpha: nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "toggle-collapsed"),
       }),
@@ -230,14 +313,62 @@ describe("buildHomeListLayout", () => {
     expect(layout.items.some((item) => item.type === "show-more")).toBe(false);
   });
 
-  it("keeps sticky indices aligned across multiple expanded groups", () => {
+  it("keeps pending unsent tasks outside the configured thread count", () => {
+    const group = makeGroup("alpha", 8);
     const layout = buildHomeListLayout({
-      groups: [makeGroup("alpha", 8), makeGroup("beta", 1)],
+      groups: [{ ...group, pendingTasks: [makePendingTask(group.representative.id)] }],
+      projectThreadPreviewCount: 3,
       displayStates: displayStates({}),
     });
 
-    // header + 6 threads + show-more = 8 items, so beta's header is index 8.
-    expect(layout.stickyHeaderIndices).toEqual([0, 8]);
-    expect(layout.items[8]).toMatchObject({ type: "header", isFirst: false });
+    expect(layout.items.filter((item) => item.type === "pending-task")).toHaveLength(1);
+    expect(layout.items.filter((item) => item.type === "thread")).toHaveLength(3);
+  });
+
+  it("keeps sticky indices aligned across multiple expanded groups", () => {
+    const layout = buildHomeListLayout({
+      groups: [makeGroup("alpha", 8), makeGroup("beta", 1)],
+      projectThreadPreviewCount: HOME_INITIAL_VISIBLE_THREADS,
+      displayStates: displayStates({}),
+    });
+
+    // header + 3 threads + show-more = 5 items, so beta's header is index 5.
+    expect(layout.stickyHeaderIndices).toEqual([0, 5]);
+    expect(layout.items[5]).toMatchObject({ type: "header", isFirst: false });
+  });
+
+  it("keeps older project groups behind one expandable shelf", () => {
+    const recent = makeGroup("recent", 1);
+    const older = makeGroup("older", 1);
+    const collapsed = buildHomeListLayout({
+      groups: [recent],
+      olderGroups: [older],
+      olderProjectsExpanded: false,
+      projectThreadPreviewCount: HOME_INITIAL_VISIBLE_THREADS,
+      displayStates: displayStates({}),
+    });
+
+    expect(itemTypes(collapsed.items)).toEqual(["header", "thread", "older-projects"]);
+    expect(collapsed.items.at(-1)).toMatchObject({
+      type: "older-projects",
+      count: 1,
+      expanded: false,
+    });
+
+    const expanded = buildHomeListLayout({
+      groups: [recent],
+      olderGroups: [older],
+      olderProjectsExpanded: true,
+      projectThreadPreviewCount: HOME_INITIAL_VISIBLE_THREADS,
+      displayStates: displayStates({}),
+    });
+    expect(itemTypes(expanded.items)).toEqual([
+      "header",
+      "thread",
+      "older-projects",
+      "header",
+      "thread",
+    ]);
+    expect(expanded.stickyHeaderIndices).toEqual([0, 3]);
   });
 });

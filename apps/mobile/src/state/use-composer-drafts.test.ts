@@ -42,6 +42,7 @@ describe("mobile composer drafts", () => {
             },
             runtimeMode: "approval-required",
             interactionMode: "plan",
+            fetchMode: "repository-exploration",
             workspaceSelection: {
               mode: "worktree",
               branch: "main",
@@ -64,6 +65,7 @@ describe("mobile composer drafts", () => {
         },
         runtimeMode: "approval-required",
         interactionMode: "plan",
+        fetchMode: "repository-exploration",
         workspaceSelection: {
           mode: "worktree",
           branch: "main",

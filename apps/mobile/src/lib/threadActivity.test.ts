@@ -7,6 +7,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   TurnId,
+  type OrchestrationProposedPlan,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
@@ -152,6 +153,40 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("places proposed plans in timeline order and preserves their implementation state", () => {
+    const proposedPlan: OrchestrationProposedPlan = {
+      id: "plan-1",
+      turnId: TurnId.make("turn-1"),
+      planMarkdown: "# Mobile parity\n\n- Add plan cards\n- Add subagents",
+      implementedAt: null,
+      implementationThreadId: null,
+      createdAt: "2026-04-01T00:00:02.000Z",
+      updatedAt: "2026-04-01T00:00:02.000Z",
+    };
+    const thread = makeThread({
+      id: ThreadId.make("thread-plan"),
+      projectId: ProjectId.make("project-1"),
+      title: "Plan thread",
+      messages: [
+        {
+          id: MessageId.make("before-plan"),
+          role: "assistant",
+          text: "I made a plan.",
+          turnId: TurnId.make("turn-1"),
+          streaming: false,
+          createdAt: "2026-04-01T00:00:01.000Z",
+          updatedAt: "2026-04-01T00:00:01.000Z",
+        },
+      ],
+      proposedPlans: [proposedPlan],
+    });
+
+    expect(buildThreadFeed(thread)).toMatchObject([
+      { type: "message", id: "before-plan" },
+      { type: "proposed-plan", id: "plan-1", proposedPlan },
+    ]);
+  });
+
   it("keeps historic work entries attributed to their turns", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-1"),

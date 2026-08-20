@@ -33,12 +33,14 @@ import { scopedProjectKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadSearch } from "../../state/queries";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import { environmentServerConfigsAtom } from "../../state/server";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   PendingTaskListRow,
   ThreadListGroupHeader,
+  ThreadListOlderProjectsHeader,
   ThreadListRow,
   ThreadListShowMoreRow,
 } from "../threads/thread-list-items";
@@ -72,6 +74,7 @@ import {
   type HomeProjectSortOrder,
 } from "./homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
+import { useHomeProjectActivity } from "./use-home-project-activity";
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
 
@@ -207,6 +210,7 @@ export function HomeScreen(props: HomeScreenProps) {
   >(() => new Map());
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const threadListV2Enabled = useThreadListV2Enabled();
+  const { appearance } = useAppearancePreferences();
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const listRef = useRef<LegendListRef | null>(null);
@@ -393,14 +397,47 @@ export function HomeScreen(props: HomeScreenProps) {
   );
 
   const hasSearchQuery = props.searchQuery.trim().length > 0;
+  const projectActivity = useHomeProjectActivity(projectGroups, !hasSearchQuery);
+  const persistedOlderProjectsExpanded =
+    AsyncResult.isSuccess(preferencesResult) &&
+    preferencesResult.value.olderProjectsExpanded === true;
+  const selectedOlderProjectKey =
+    selectedProjectScope !== null &&
+    projectActivity.olderGroups.some((group) => group.key === selectedProjectScope.key)
+      ? selectedProjectScope.key
+      : null;
+  const [dismissedAutoRevealProjectKey, setDismissedAutoRevealProjectKey] = useState<string | null>(
+    null,
+  );
+  const autoRevealOlderProjects =
+    selectedOlderProjectKey !== null && selectedOlderProjectKey !== dismissedAutoRevealProjectKey;
+  const olderProjectsExpanded = persistedOlderProjectsExpanded || autoRevealOlderProjects;
+  const toggleOlderProjects = useCallback(() => {
+    if (olderProjectsExpanded) {
+      savePreferences({ olderProjectsExpanded: false });
+      setDismissedAutoRevealProjectKey(selectedOlderProjectKey);
+      return;
+    }
+    setDismissedAutoRevealProjectKey(null);
+    savePreferences({ olderProjectsExpanded: true });
+  }, [olderProjectsExpanded, savePreferences, selectedOlderProjectKey]);
   const listLayout = useMemo(
     () =>
       buildHomeListLayout({
-        groups: projectGroups,
+        groups: projectActivity.recentGroups,
+        olderGroups: projectActivity.olderGroups,
+        olderProjectsExpanded,
+        projectThreadPreviewCount: appearance.projectThreadPreviewCount,
         displayStates: effectiveGroupDisplayStates,
         showAllThreads: hasSearchQuery,
       }),
-    [projectGroups, effectiveGroupDisplayStates, hasSearchQuery],
+    [
+      appearance.projectThreadPreviewCount,
+      effectiveGroupDisplayStates,
+      hasSearchQuery,
+      olderProjectsExpanded,
+      projectActivity,
+    ],
   );
 
   const projectCwdByKey = useMemo(() => {
@@ -931,6 +968,15 @@ export function HomeScreen(props: HomeScreenProps) {
   const renderItem = useCallback(
     ({ item }: LegendListRenderItemProps<HomeListItem>) => {
       switch (item.type) {
+        case "older-projects":
+          return (
+            <ThreadListOlderProjectsHeader
+              variant="compact"
+              count={item.count}
+              expanded={item.expanded}
+              onToggle={toggleOlderProjects}
+            />
+          );
         case "header":
           return (
             <ThreadListGroupHeader
@@ -1022,6 +1068,7 @@ export function HomeScreen(props: HomeScreenProps) {
       props.savedConnectionsById,
       threadSearchMatchByKey,
       titleRegenerationEnvironmentIds,
+      toggleOlderProjects,
       updateGroupDisplay,
     ],
   );

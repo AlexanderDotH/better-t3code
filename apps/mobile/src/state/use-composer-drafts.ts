@@ -47,6 +47,7 @@ export interface ComposerDraft {
   readonly modelSelection?: ModelSelection;
   readonly runtimeMode?: RuntimeMode;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly fetchMode?: "repository-exploration";
   readonly workspaceSelection?: ComposerDraftWorkspaceSelection;
   readonly reasoningRecommendation?: ReasoningRecommendationState;
 }
@@ -69,6 +70,7 @@ export type ComposerDraftSettingsUpdate = Pick<
   | "modelSelection"
   | "runtimeMode"
   | "interactionMode"
+  | "fetchMode"
   | "workspaceSelection"
   | "reasoningRecommendation"
 >;
@@ -87,6 +89,7 @@ const ComposerDraftSchema = Schema.Struct({
   modelSelection: Schema.optional(ModelSelectionSchema),
   runtimeMode: Schema.optional(RuntimeModeSchema),
   interactionMode: Schema.optional(ProviderInteractionModeSchema),
+  fetchMode: Schema.optional(Schema.Literal("repository-exploration")),
   workspaceSelection: Schema.optional(ComposerDraftWorkspaceSelectionSchema),
   reasoningRecommendation: Schema.optional(
     Schema.Struct({
@@ -156,6 +159,7 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
     draft.modelSelection === undefined &&
     draft.runtimeMode === undefined &&
     draft.interactionMode === undefined &&
+    draft.fetchMode === undefined &&
     draft.workspaceSelection === undefined &&
     draft.reasoningRecommendation === undefined
   );

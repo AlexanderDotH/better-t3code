@@ -236,6 +236,15 @@ const config: ExpoConfig = {
   plugins: [
     "expo-asset",
     [
+      "expo-audio",
+      {
+        microphonePermission: "Allow $(PRODUCT_NAME) to turn speech into coding prompts.",
+        recordAudioAndroid: true,
+        enableBackgroundRecording: false,
+        enableBackgroundPlayback: false,
+      },
+    ],
+    [
       "expo-font",
       {
         ios: {

@@ -5,7 +5,11 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
+import {
+  ProjectThreadPreviewSyncRecord,
+  type ProjectThreadPreviewSyncRecord as ProjectThreadPreviewSyncRecordType,
+  type SidebarProjectGroupingMode,
+} from "@t3tools/contracts";
 
 import * as MobileDatabase from "./mobile-database";
 import * as MobileSecureStorage from "./mobile-secure-storage";
@@ -13,9 +17,16 @@ import { MobileStorageDecodeError, MobileStorageEncodeError } from "./mobile-sto
 
 const PREFERENCES_KEY = "t3code.preferences";
 const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
+const decodeProjectThreadPreviewSyncRecord = Schema.decodeUnknownOption(
+  ProjectThreadPreviewSyncRecord,
+);
 
 export interface Preferences {
   readonly liveActivitiesEnabled?: boolean;
+  readonly experimentalFetch?: boolean;
+  readonly experimentalParallelPlanImplementation?: boolean;
+  readonly improvePromptBeforeSend?: boolean;
+  readonly voiceInputOutputLanguage?: "native" | "english";
   readonly baseFontSize?: number;
   readonly terminalFontSize?: number | null;
   readonly markdownFontSize?: number;
@@ -23,6 +34,11 @@ export interface Preferences {
   readonly codeWordBreak?: boolean;
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
+  readonly olderProjectsExpanded?: boolean;
+  /** Offline mirror of the newest synchronized per-project Classic preview limit. */
+  readonly projectThreadPreviewSyncRecord?: ProjectThreadPreviewSyncRecordType;
+  /** Records that Mobile transitioned from its former fixed six-row preview to default three. */
+  readonly projectThreadPreviewMigrationVersion?: 1;
   /** @deprecated Kept temporarily so older OTA bundles retain the selected mode. */
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
@@ -73,9 +89,13 @@ export class MobilePreferencesStore extends Context.Service<
   }
 >()("@t3tools/mobile/persistence/MobilePreferencesStore") {}
 
-function sanitizePreferences(parsed: Preferences): Preferences {
+export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
   const preferences: {
     liveActivitiesEnabled?: boolean;
+    experimentalFetch?: boolean;
+    experimentalParallelPlanImplementation?: boolean;
+    improvePromptBeforeSend?: boolean;
+    voiceInputOutputLanguage?: "native" | "english";
     baseFontSize?: number;
     terminalFontSize?: number | null;
     markdownFontSize?: number;
@@ -83,6 +103,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     codeWordBreak?: boolean;
     connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
     collapsedProjectGroups?: readonly string[];
+    olderProjectsExpanded?: boolean;
+    projectThreadPreviewSyncRecord?: ProjectThreadPreviewSyncRecordType;
+    projectThreadPreviewMigrationVersion?: 1;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     legacyThreadListEnabled?: boolean;
@@ -90,6 +113,22 @@ function sanitizePreferences(parsed: Preferences): Preferences {
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
     preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;
+  }
+  if (typeof parsed.experimentalFetch === "boolean") {
+    preferences.experimentalFetch = parsed.experimentalFetch;
+  }
+  if (typeof parsed.experimentalParallelPlanImplementation === "boolean") {
+    preferences.experimentalParallelPlanImplementation =
+      parsed.experimentalParallelPlanImplementation;
+  }
+  if (typeof parsed.improvePromptBeforeSend === "boolean") {
+    preferences.improvePromptBeforeSend = parsed.improvePromptBeforeSend;
+  }
+  if (
+    parsed.voiceInputOutputLanguage === "native" ||
+    parsed.voiceInputOutputLanguage === "english"
+  ) {
+    preferences.voiceInputOutputLanguage = parsed.voiceInputOutputLanguage;
   }
   if (typeof parsed.baseFontSize === "number") preferences.baseFontSize = parsed.baseFontSize;
   if (typeof parsed.terminalFontSize === "number" || parsed.terminalFontSize === null) {
@@ -111,6 +150,18 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.collapsedProjectGroups = parsed.collapsedProjectGroups.filter(
       (key): key is string => typeof key === "string",
     );
+  }
+  if (typeof parsed.olderProjectsExpanded === "boolean") {
+    preferences.olderProjectsExpanded = parsed.olderProjectsExpanded;
+  }
+  const projectThreadPreviewSyncRecord = decodeProjectThreadPreviewSyncRecord(
+    parsed.projectThreadPreviewSyncRecord,
+  );
+  if (Option.isSome(projectThreadPreviewSyncRecord)) {
+    preferences.projectThreadPreviewSyncRecord = projectThreadPreviewSyncRecord.value;
+  }
+  if (parsed.projectThreadPreviewMigrationVersion === 1) {
+    preferences.projectThreadPreviewMigrationVersion = 1;
   }
   if (typeof parsed.projectGroupingEnabled === "boolean") {
     preferences.projectGroupingEnabled = parsed.projectGroupingEnabled;
@@ -292,7 +343,7 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
       }
     }
 
-    return parsed === null ? {} : sanitizePreferences(parsed);
+    return parsed === null ? {} : sanitizeMobilePreferences(parsed);
   });
 
   const load = lock

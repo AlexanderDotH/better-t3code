@@ -1,15 +1,20 @@
-import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useEffect, useMemo } from "react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   CommandId,
   MessageId,
   type EnvironmentId,
   type ModelSelection,
+  type OrchestrationProposedPlan,
   type ProviderInteractionMode,
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
+import {
+  buildPlanImplementationPrompt,
+  type PlanImplementationStrategy,
+} from "@t3tools/client-runtime/plan-implementation";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import {
   consumeReasoningRecommendationOverride,
@@ -17,7 +22,10 @@ import {
   resolveReasoningTurnModelSelection,
   type ReasoningRecommendationState,
 } from "@t3tools/client-runtime/reasoning-recommendation";
+import { resolveCodexContextWindowTokens } from "@t3tools/shared/model";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import {
@@ -42,11 +50,20 @@ import {
   updateComposerDraftSettings,
   useComposerDraft,
 } from "./use-composer-drafts";
-import { setPendingConnectionError } from "../state/use-remote-environment-registry";
+import {
+  setPendingConnectionError,
+  useRemoteConnectionStatus,
+} from "../state/use-remote-environment-registry";
 import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
+import { useEnvironmentServerConfig } from "./entities";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "./preferences";
+import { serverEnvironment } from "./server";
+import { threadEnvironment } from "./threads";
+import { useAtomCommand } from "./use-atom-command";
+import { resolveMobileAgentWorkflowSettings } from "./agent-workflow-settings";
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -84,6 +101,24 @@ export function useThreadComposerState() {
   const selectedThreadDetail = useSelectedThreadDetail();
   const composerDrafts = useAtomValue(composerDraftsAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const improvePrompt = useAtomCommand(serverEnvironment.improvePrompt, { reportFailure: false });
+  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const [isImprovingPrompt, setIsImprovingPrompt] = useState(false);
+  const serverConfig = useEnvironmentServerConfig(selectedThreadShell?.environmentId ?? null);
+  const { connectedEnvironments } = useRemoteConnectionStatus();
+  const preferences = AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : {};
+  const workflowSettings = useMemo(
+    () =>
+      resolveMobileAgentWorkflowSettings({
+        agentWorkflowVersion: serverConfig?.environment.capabilities.agentWorkflowVersion,
+        experimentalFetch: preferences.experimentalFetch,
+      }),
+    [preferences.experimentalFetch, serverConfig?.environment.capabilities.agentWorkflowVersion],
+  );
 
   useEffect(() => {
     ensureComposerDraftsLoaded();
@@ -148,10 +183,39 @@ export function useThreadComposerState() {
     const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
     const draft = getComposerDraftSnapshot(threadKey);
     const thread = selectedThreadDetail ?? selectedThreadShell;
-    const text = draft.text.trim();
+    let text = draft.text.trim();
     const attachments = draft.attachments;
     if (text.length === 0 && attachments.length === 0) {
       return null;
+    }
+
+    const shouldImprovePromptBeforeSend =
+      workflowSettings.supported && preferences.improvePromptBeforeSend === true && text.length > 0;
+    const environmentConnected = connectedEnvironments.some(
+      (environment) =>
+        environment.environmentId === selectedThreadShell.environmentId &&
+        environment.connectionState === "connected",
+    );
+
+    if (shouldImprovePromptBeforeSend && environmentConnected) {
+      setIsImprovingPrompt(true);
+      const result = await improvePrompt({
+        environmentId: selectedThreadShell.environmentId,
+        input: { projectId: selectedThreadShell.projectId, text },
+      });
+      setIsImprovingPrompt(false);
+      if (AsyncResult.isFailure(result)) {
+        const error = Cause.squash(result.cause);
+        setPendingConnectionError(
+          error instanceof Error ? error.message : "Could not improve the prompt.",
+        );
+        return null;
+      }
+      const currentDraft = getComposerDraftSnapshot(threadKey);
+      if (currentDraft.text !== draft.text) {
+        return null;
+      }
+      text = result.value.text.trim();
     }
 
     const metadata = makeQueuedMessageMetadata();
@@ -179,6 +243,12 @@ export function useThreadComposerState() {
       modelSelection: durableModelSelection,
       ...(reasoningTurnSelection.applied
         ? { turnModelSelection: reasoningTurnSelection.turnModelSelection }
+        : {}),
+      ...(workflowSettings.fetchMode === undefined
+        ? {}
+        : { fetchMode: workflowSettings.fetchMode }),
+      ...(shouldImprovePromptBeforeSend && !environmentConnected
+        ? { improvePromptBeforeSend: true }
         : {}),
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
       interactionMode: draft.interactionMode ?? thread.interactionMode,
@@ -213,7 +283,118 @@ export function useThreadComposerState() {
       );
     });
     return messageId;
-  }, [selectedThreadDetail, selectedThreadShell]);
+  }, [
+    improvePrompt,
+    connectedEnvironments,
+    preferences.improvePromptBeforeSend,
+    selectedThreadDetail,
+    selectedThreadShell,
+    workflowSettings.fetchMode,
+    workflowSettings.supported,
+  ]);
+
+  const onImproveDraft = useCallback(async () => {
+    if (!selectedThreadShell || !workflowSettings.supported || isImprovingPrompt) {
+      return;
+    }
+    const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
+    const original = getComposerDraftSnapshot(threadKey).text;
+    const text = original.trim();
+    if (text.length === 0) {
+      return;
+    }
+
+    setIsImprovingPrompt(true);
+    const result = await improvePrompt({
+      environmentId: selectedThreadShell.environmentId,
+      input: { projectId: selectedThreadShell.projectId, text },
+    });
+    setIsImprovingPrompt(false);
+    if (AsyncResult.isFailure(result)) {
+      const error = Cause.squash(result.cause);
+      setPendingConnectionError(
+        error instanceof Error ? error.message : "Could not improve the prompt.",
+      );
+      return;
+    }
+    if (getComposerDraftSnapshot(threadKey).text !== original) {
+      return;
+    }
+    setComposerDraftText(threadKey, result.value.text);
+    setPendingConnectionError(null);
+  }, [improvePrompt, isImprovingPrompt, selectedThreadShell, workflowSettings.supported]);
+
+  const onImplementPlan = useCallback(
+    async (
+      proposedPlan: OrchestrationProposedPlan,
+      strategy: PlanImplementationStrategy,
+    ): Promise<MessageId | null> => {
+      if (
+        !selectedThreadShell ||
+        !workflowSettings.supported ||
+        proposedPlan.implementedAt !== null
+      ) {
+        return null;
+      }
+      const thread = selectedThreadDetail ?? selectedThreadShell;
+      const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
+      const draft = getComposerDraftSnapshot(threadKey);
+      const durableModelSelection = draft.modelSelection ?? thread.modelSelection;
+      const provider = serverConfig?.providers.find(
+        (candidate) => candidate.instanceId === durableModelSelection.instanceId,
+      );
+      let text: string;
+      try {
+        text = buildPlanImplementationPrompt(proposedPlan.planMarkdown, {
+          strategy,
+          ...(provider ? { provider } : {}),
+        });
+      } catch (error) {
+        setPendingConnectionError(
+          error instanceof Error ? error.message : "This provider cannot implement in parallel.",
+        );
+        return null;
+      }
+
+      const metadata = makeQueuedMessageMetadata();
+      const messageId = MessageId.make(metadata.messageId);
+      try {
+        await enqueueThreadOutboxMessage({
+          environmentId: selectedThreadShell.environmentId,
+          threadId: selectedThreadShell.id,
+          messageId,
+          commandId: CommandId.make(metadata.commandId),
+          text,
+          attachments: [],
+          modelSelection: durableModelSelection,
+          ...(workflowSettings.fetchMode === undefined
+            ? {}
+            : { fetchMode: workflowSettings.fetchMode }),
+          runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
+          interactionMode: "default",
+          sourceProposedPlan: {
+            threadId: selectedThreadShell.id,
+            planId: proposedPlan.id,
+          },
+          createdAt: metadata.createdAt,
+        });
+      } catch (error) {
+        setPendingConnectionError(
+          error instanceof Error ? error.message : "Failed to queue plan implementation.",
+        );
+        return null;
+      }
+      setPendingConnectionError(null);
+      return messageId;
+    },
+    [
+      selectedThreadDetail,
+      selectedThreadShell,
+      serverConfig,
+      workflowSettings.fetchMode,
+      workflowSettings.supported,
+    ],
+  );
 
   const onChangeDraftMessage = useCallback(
     (value: string) => {
@@ -314,8 +495,24 @@ export function useThreadComposerState() {
         modelSelection: value,
         ...(reconciled && reconciled !== current ? { reasoningRecommendation: reconciled } : {}),
       });
+
+      const updatesCurrentChatContext =
+        modelSelection !== null &&
+        selectedThreadShell !== null &&
+        value.instanceId === modelSelection.instanceId &&
+        value.model === modelSelection.model &&
+        resolveCodexContextWindowTokens(value) !== resolveCodexContextWindowTokens(modelSelection);
+      if (updatesCurrentChatContext) {
+        void updateThreadMetadata({
+          environmentId: selectedThreadShell.environmentId,
+          input: {
+            threadId: selectedThreadShell.id,
+            modelSelection: value,
+          },
+        });
+      }
     },
-    [selectedThreadKey],
+    [modelSelection, selectedThreadKey, selectedThreadShell, updateThreadMetadata],
   );
 
   const onSetReasoningRecommendation = useCallback(
@@ -348,6 +545,16 @@ export function useThreadComposerState() {
     [selectedThreadKey],
   );
 
+  const onUpdateFetchEnabled = useCallback(
+    (value: boolean) => {
+      if (!workflowSettings.supported) {
+        return;
+      }
+      savePreferences({ experimentalFetch: value });
+    },
+    [savePreferences, workflowSettings.supported],
+  );
+
   return {
     selectedThreadFeed,
     selectedThreadQueueCount,
@@ -358,6 +565,11 @@ export function useThreadComposerState() {
     runtimeMode,
     interactionMode,
     reasoningRecommendationState,
+    fetchSupported: workflowSettings.supported,
+    fetchEnabled: workflowSettings.fetchEnabled,
+    parallelPlanImplementationEnabled:
+      workflowSettings.supported && preferences.experimentalParallelPlanImplementation === true,
+    isImprovingPrompt,
     activeThreadBusy,
     onChangeDraftMessage,
     onPickDraftImages,
@@ -365,6 +577,9 @@ export function useThreadComposerState() {
     onNativePasteImages,
     onRemoveDraftImage,
     onSendMessage,
+    onImproveDraft,
+    onImplementPlan,
+    onUpdateFetchEnabled,
     onUpdateModelSelection,
     onUpdateRuntimeMode,
     onUpdateInteractionMode,

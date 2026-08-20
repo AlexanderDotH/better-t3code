@@ -164,6 +164,96 @@ export interface HomeThreadGroup {
   readonly newThreadTarget: EnvironmentProject | null;
 }
 
+export const HOME_PROJECT_INACTIVITY_MS = 7 * 24 * 60 * 60 * 1_000;
+
+export interface HomeProjectActivityPartition {
+  readonly recentGroups: ReadonlyArray<HomeThreadGroup>;
+  readonly olderGroups: ReadonlyArray<HomeThreadGroup>;
+  readonly nextTransitionAtMs: number | null;
+}
+
+function homeThreadRequiresAttention(thread: EnvironmentThreadShell): boolean {
+  return (
+    thread.session?.status === "starting" ||
+    thread.session?.status === "running" ||
+    thread.latestTurn?.state === "running" ||
+    thread.hasPendingApprovals ||
+    thread.hasPendingUserInput ||
+    thread.hasActionableProposedPlan
+  );
+}
+
+function parseActivityTimestamp(nowMs: number, ...values: readonly unknown[]): number | null {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const timestampMs = Date.parse(value);
+    if (Number.isFinite(timestampMs)) return Math.min(timestampMs, nowMs);
+  }
+  return null;
+}
+
+/**
+ * Applies the same exact seven-day, attention-aware Older Projects boundary as
+ * the web sidebar. Pending offline tasks count as attention so queued work can
+ * never disappear behind a collapsed shelf.
+ */
+export function partitionHomeProjectGroupsByActivity(input: {
+  readonly groups: ReadonlyArray<HomeThreadGroup>;
+  readonly nowMs: number;
+}): HomeProjectActivityPartition {
+  if (!Number.isFinite(input.nowMs)) {
+    return { recentGroups: input.groups, olderGroups: [], nextTransitionAtMs: null };
+  }
+
+  const recentGroups: HomeThreadGroup[] = [];
+  const olderGroups: HomeThreadGroup[] = [];
+  let nextTransitionAtMs: number | null = null;
+
+  for (const group of input.groups) {
+    const activeThreads = group.threads.filter((thread) => thread.archivedAt === null);
+    if (group.pendingTasks.length > 0 || activeThreads.some(homeThreadRequiresAttention)) {
+      recentGroups.push(group);
+      continue;
+    }
+
+    const activityTimestamps =
+      activeThreads.length > 0
+        ? activeThreads.map((thread) =>
+            parseActivityTimestamp(
+              input.nowMs,
+              thread.latestUserMessageAt,
+              thread.updatedAt,
+              thread.createdAt,
+            ),
+          )
+        : group.projects.map((project) =>
+            parseActivityTimestamp(input.nowMs, project.updatedAt, project.createdAt),
+          );
+    let latestActivityAtMs = Number.NEGATIVE_INFINITY;
+    for (const timestampMs of activityTimestamps) {
+      if (timestampMs !== null) latestActivityAtMs = Math.max(latestActivityAtMs, timestampMs);
+    }
+
+    if (!Number.isFinite(latestActivityAtMs)) {
+      recentGroups.push(group);
+      continue;
+    }
+
+    const transitionAtMs = latestActivityAtMs + HOME_PROJECT_INACTIVITY_MS + 1;
+    if (input.nowMs >= transitionAtMs) {
+      olderGroups.push(group);
+      continue;
+    }
+
+    recentGroups.push(group);
+    if (nextTransitionAtMs === null || transitionAtMs < nextTransitionAtMs) {
+      nextTransitionAtMs = transitionAtMs;
+    }
+  }
+
+  return { recentGroups, olderGroups, nextTransitionAtMs };
+}
+
 interface MutableHomeThreadGroup {
   readonly key: string;
   readonly projects: EnvironmentProject[];

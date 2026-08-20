@@ -6,6 +6,7 @@ import {
   IsoDateTime,
   MessageId,
   ModelSelection,
+  OrchestrationProposedPlanId,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -21,7 +22,7 @@ import { DraftComposerImageAttachmentSchema } from "../lib/composer-image-schema
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 
-const THREAD_OUTBOX_SCHEMA_VERSION = 4;
+const THREAD_OUTBOX_SCHEMA_VERSION = 7;
 const THREAD_OUTBOX_MAX_RETRY_DELAY_MS = 16_000;
 
 const QueuedThreadCreationSchema = Schema.Struct({
@@ -37,7 +38,7 @@ const QueuedThreadCreationSchema = Schema.Struct({
 });
 
 export const QueuedThreadMessageSchema = Schema.Struct({
-  schemaVersion: Schema.Literals([1, 2, 3, THREAD_OUTBOX_SCHEMA_VERSION]),
+  schemaVersion: Schema.Literals([1, 2, 3, 4, 5, 6, THREAD_OUTBOX_SCHEMA_VERSION]),
   environmentId: EnvironmentId,
   threadId: ThreadId,
   messageId: MessageId,
@@ -46,8 +47,13 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   attachments: Schema.Array(DraftComposerImageAttachmentSchema),
   modelSelection: Schema.optional(ModelSelection),
   turnModelSelection: Schema.optional(ModelSelection),
+  fetchMode: Schema.optional(Schema.Literal("repository-exploration")),
+  improvePromptBeforeSend: Schema.optional(Schema.Boolean),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  sourceProposedPlan: Schema.optional(
+    Schema.Struct({ threadId: ThreadId, planId: OrchestrationProposedPlanId }),
+  ),
   // Present when the queued item creates a brand-new thread (pending task)
   // instead of appending a turn to an existing one.
   creation: Schema.optional(QueuedThreadCreationSchema),
@@ -76,8 +82,14 @@ export interface QueuedThreadMessage {
   readonly attachments: ReadonlyArray<DraftComposerImageAttachment>;
   readonly modelSelection?: ModelSelectionType;
   readonly turnModelSelection?: ModelSelectionType;
+  readonly fetchMode?: "repository-exploration";
+  readonly improvePromptBeforeSend?: boolean;
   readonly runtimeMode?: RuntimeModeType;
   readonly interactionMode?: ProviderInteractionModeType;
+  readonly sourceProposedPlan?: {
+    readonly threadId: ThreadId;
+    readonly planId: typeof OrchestrationProposedPlanId.Type;
+  };
   readonly creation?: QueuedThreadCreation;
   readonly createdAt: string;
 }

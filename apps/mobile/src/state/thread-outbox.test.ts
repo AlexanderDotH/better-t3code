@@ -116,6 +116,62 @@ describe("thread outbox", () => {
     });
   });
 
+  it("persists Fetch for reconnect delivery while older queued messages remain valid", () => {
+    const legacyMessage = queuedMessage({
+      messageId: "message-legacy-fetch",
+      createdAt: "2026-06-08T10:00:01.000Z",
+    });
+    const fetchMessage = {
+      ...legacyMessage,
+      fetchMode: "repository-exploration",
+    } satisfies QueuedThreadMessage;
+
+    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(fetchMessage))).toEqual(
+      fetchMessage,
+    );
+    expect(
+      decodeQueuedThreadMessage({ schemaVersion: 4, ...legacyMessage }).fetchMode,
+    ).toBeUndefined();
+  });
+
+  it("persists deferred prompt improvement for offline delivery", () => {
+    const deferredMessage = {
+      ...queuedMessage({
+        messageId: "message-improve",
+        createdAt: "2026-06-08T10:00:01.000Z",
+      }),
+      improvePromptBeforeSend: true,
+    } satisfies QueuedThreadMessage;
+
+    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(deferredMessage))).toEqual(
+      deferredMessage,
+    );
+    expect(
+      decodeQueuedThreadMessage({
+        schemaVersion: 6,
+        ...queuedMessage({
+          messageId: "message-before-improvement",
+          createdAt: "2026-06-08T10:00:01.000Z",
+        }),
+      }).improvePromptBeforeSend,
+    ).toBeUndefined();
+  });
+
+  it("persists the proposed-plan source used to mark implementation", () => {
+    const planMessage = {
+      ...queuedMessage({
+        messageId: "message-plan",
+        createdAt: "2026-06-08T10:00:01.000Z",
+      }),
+      sourceProposedPlan: {
+        threadId: ThreadId.make("thread-1"),
+        planId: "plan-1",
+      },
+    } satisfies QueuedThreadMessage;
+
+    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(planMessage))).toEqual(planMessage);
+  });
+
   it("keeps the durable selector separate from a one-turn override", () => {
     const durable = {
       instanceId: ProviderInstanceId.make("codex"),

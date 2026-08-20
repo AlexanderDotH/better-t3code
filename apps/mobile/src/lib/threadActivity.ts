@@ -1,6 +1,7 @@
 import { ApprovalRequestId, isToolLifecycleItemType } from "@t3tools/contracts";
 import type {
   OrchestrationLatestTurn,
+  OrchestrationProposedPlan,
   OrchestrationThread,
   OrchestrationThreadActivity,
   ToolLifecycleItemType,
@@ -86,6 +87,12 @@ interface DerivedWorkLogEntry extends WorkLogEntry {
 
 type RawThreadFeedEntry =
   | {
+      readonly type: "proposed-plan";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly proposedPlan: OrchestrationProposedPlan;
+    }
+  | {
       readonly type: "message";
       readonly id: string;
       readonly createdAt: string;
@@ -101,6 +108,7 @@ type RawThreadFeedEntry =
 
 export type ThreadFeedEntry =
   | Extract<RawThreadFeedEntry, { type: "message" }>
+  | Extract<RawThreadFeedEntry, { type: "proposed-plan" }>
   | {
       readonly type: "working";
       readonly id: string;
@@ -1531,6 +1539,18 @@ export function buildThreadFeed(
         createdAt: message.createdAt,
         message,
       })),
+      ...thread.proposedPlans
+        .filter(
+          (proposedPlan) =>
+            oldestLoadedMessageCreatedAt === null ||
+            proposedPlan.createdAt >= oldestLoadedMessageCreatedAt,
+        )
+        .map<RawThreadFeedEntry>((proposedPlan) => ({
+          type: "proposed-plan",
+          id: proposedPlan.id,
+          createdAt: proposedPlan.createdAt,
+          proposedPlan,
+        })),
       ...workLogEntries
         .filter((entry) => {
           if (options?.loadedMessages === undefined) {

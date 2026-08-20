@@ -25,6 +25,7 @@ import {
   confirmThreadOutboxMessageQueued,
   ensureThreadOutboxLoaded,
   removeThreadOutboxMessage,
+  updateThreadOutboxMessage,
 } from "./thread-outbox";
 import {
   isQueuedThreadCreationSendable,
@@ -38,7 +39,9 @@ import {
   type QueuedThreadMessage,
   type ThreadOutboxCommandStage,
 } from "./thread-outbox-model";
+import { prepareQueuedPromptForDelivery } from "./thread-outbox-prompt-improvement";
 import { environmentThreadShells, threadEnvironment } from "./threads";
+import { serverEnvironment } from "./server";
 import { useAtomCommand } from "./use-atom-command";
 import {
   editingQueuedMessageIdsAtom,
@@ -88,6 +91,7 @@ function settingsCommandId(message: QueuedThreadMessage, setting: string): Comma
 
 export function useThreadOutboxDrain(): void {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const improvePrompt = useAtomCommand(serverEnvironment.improvePrompt, { reportFailure: false });
   const setThreadRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, {
     reportFailure: false,
   });
@@ -166,12 +170,53 @@ export function useThreadOutboxDrain(): void {
     return { reportFailure, completeDelivery };
   }, []);
 
+  const improveQueuedPrompt = useCallback(
+    async (queuedMessage: QueuedThreadMessage, projectId: QueuedThreadCreation["projectId"]) =>
+      prepareQueuedPromptForDelivery({
+        message: queuedMessage,
+        projectId,
+        improve: async (text, targetProjectId) => {
+          const result = await improvePrompt({
+            environmentId: queuedMessage.environmentId,
+            input: { projectId: targetProjectId, text },
+          });
+          if (AsyncResult.isFailure(result)) throw Cause.squash(result.cause);
+          return result.value.text;
+        },
+        persist: updateThreadOutboxMessage,
+        onError: (stage, error) =>
+          console.warn("[thread-outbox] deferred prompt improvement failed", {
+            environmentId: queuedMessage.environmentId,
+            threadId: queuedMessage.threadId,
+            messageId: queuedMessage.messageId,
+            stage,
+            error,
+          }),
+      }),
+    [improvePrompt],
+  );
+
   const sendQueuedMessage = useCallback(
-    async (queuedMessage: QueuedThreadMessage, thread: EnvironmentThreadShell) => {
-      const settings = resolveQueuedThreadSettings(queuedMessage, thread);
+    async (originalMessage: QueuedThreadMessage, thread: EnvironmentThreadShell) => {
+      const preparation = await improveQueuedPrompt(originalMessage, thread.projectId);
+      if (preparation._tag !== "ready") return preparation._tag === "removed";
+      const queuedMessage = preparation.message;
+      if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) return true;
+      const currentThread = findThread(
+        appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
+        queuedMessage,
+      );
+      if (
+        currentThread === undefined ||
+        currentThread.session?.status === "running" ||
+        currentThread.session?.status === "starting"
+      ) {
+        return true;
+      }
+      const settings = resolveQueuedThreadSettings(queuedMessage, currentThread);
       const { reportFailure, completeDelivery } = makeDeliveryHelpers(queuedMessage);
 
-      if (!modelSelectionsEqual(settings.modelSelection, thread.modelSelection)) {
+      if (!modelSelectionsEqual(settings.modelSelection, currentThread.modelSelection)) {
         const metadataResult = await updateThreadMetadata({
           environmentId: queuedMessage.environmentId,
           input: {
@@ -186,7 +231,7 @@ export function useThreadOutboxDrain(): void {
         }
       }
 
-      if (settings.runtimeMode !== thread.runtimeMode) {
+      if (settings.runtimeMode !== currentThread.runtimeMode) {
         const runtimeResult = await setThreadRuntimeMode({
           environmentId: queuedMessage.environmentId,
           input: {
@@ -202,7 +247,7 @@ export function useThreadOutboxDrain(): void {
         }
       }
 
-      if (settings.interactionMode !== thread.interactionMode) {
+      if (settings.interactionMode !== currentThread.interactionMode) {
         const interactionResult = await setThreadInteractionMode({
           environmentId: queuedMessage.environmentId,
           input: {
@@ -229,9 +274,13 @@ export function useThreadOutboxDrain(): void {
             text: queuedMessage.text,
             attachments: toUploadChatImageAttachments(queuedMessage.attachments),
           },
-          modelSelection: resolveQueuedThreadTurnModelSelection(queuedMessage, thread),
+          ...(queuedMessage.fetchMode === undefined ? {} : { fetchMode: queuedMessage.fetchMode }),
+          modelSelection: resolveQueuedThreadTurnModelSelection(queuedMessage, currentThread),
           runtimeMode: settings.runtimeMode,
           interactionMode: settings.interactionMode,
+          ...(queuedMessage.sourceProposedPlan === undefined
+            ? {}
+            : { sourceProposedPlan: queuedMessage.sourceProposedPlan }),
           createdAt: queuedMessage.createdAt,
         },
       });
@@ -239,6 +288,7 @@ export function useThreadOutboxDrain(): void {
     },
     [
       makeDeliveryHelpers,
+      improveQueuedPrompt,
       setThreadInteractionMode,
       setThreadRuntimeMode,
       startTurn,
@@ -248,10 +298,19 @@ export function useThreadOutboxDrain(): void {
 
   const sendQueuedCreation = useCallback(
     async (
-      queuedMessage: QueuedThreadMessage,
+      originalMessage: QueuedThreadMessage,
       creation: QueuedThreadCreation,
       projectCwd: string,
     ) => {
+      const preparation = await improveQueuedPrompt(originalMessage, creation.projectId);
+      if (preparation._tag !== "ready") return preparation._tag === "removed";
+      const queuedMessage = preparation.message;
+      if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) return true;
+      if (
+        findThread(appAtomRegistry.get(environmentThreadShells.threadShellsAtom), queuedMessage)
+      ) {
+        return true;
+      }
       const modelSelection = queuedMessage.modelSelection;
       if (modelSelection === undefined) {
         return false;
@@ -272,6 +331,7 @@ export function useThreadOutboxDrain(): void {
           ...(queuedMessage.turnModelSelection
             ? { turnModelSelection: queuedMessage.turnModelSelection }
             : {}),
+          ...(queuedMessage.fetchMode === undefined ? {} : { fetchMode: queuedMessage.fetchMode }),
           runtimeMode: queuedMessage.runtimeMode ?? DEFAULT_RUNTIME_MODE,
           interactionMode: queuedMessage.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
           workspaceMode: creation.workspaceMode,
@@ -283,7 +343,7 @@ export function useThreadOutboxDrain(): void {
       });
       return completeDelivery(deliveryResult);
     },
-    [makeDeliveryHelpers, startTurn],
+    [improveQueuedPrompt, makeDeliveryHelpers, startTurn],
   );
 
   useEffect(() => {

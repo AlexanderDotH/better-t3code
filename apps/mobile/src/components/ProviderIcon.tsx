@@ -1,5 +1,5 @@
 import { useColorScheme } from "react-native";
-import { Path, Svg } from "react-native-svg";
+import { Defs, LinearGradient, Path, Stop, Svg } from "react-native-svg";
 
 type ProviderIconProps = {
   readonly provider: string | null | undefined;
@@ -33,6 +33,24 @@ export function ProviderIcon(props: ProviderIconProps) {
         <Path
           fill={fill}
           d="M7.62249 16.7237C4.83113 14.0422 5.3124 9.89222 7.69417 7.49905C9.45541 5.72786 12.341 5.00497 14.86 6.06768L17.5653 4.81138C17.0779 4.45714 16.4533 4.07613 15.7365 3.80839C12.4966 2.46764 8.6178 3.13492 5.98413 5.78141C3.45081 8.32904 2.65415 12.2463 4.02219 15.5889C5.04412 18.0871 3.36889 19.8541 1.68137 21.6377C1.08337 22.2699 0.483318 22.9022 0 23.5716L7.62045 16.7257"
+        />
+      </Svg>
+    );
+  }
+
+  if (props.provider === "gemini") {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <Defs>
+          <LinearGradient id="gemini-gradient" x1="3" y1="21" x2="21" y2="3">
+            <Stop offset="0" stopColor="#1C7DFF" />
+            <Stop offset="0.5" stopColor="#8E75E6" />
+            <Stop offset="1" stopColor="#E9659B" />
+          </LinearGradient>
+        </Defs>
+        <Path
+          fill="url(#gemini-gradient)"
+          d="M12 0c0 6.627 5.373 12 12 12-6.627 0-12 5.373-12 12 0-6.627-5.373-12-12-12 6.627 0 12-5.373 12-12Z"
         />
       </Svg>
     );

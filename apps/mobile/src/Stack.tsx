@@ -44,9 +44,11 @@ import { NewTaskRouteScreen } from "./features/threads/NewTaskRouteScreen";
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
+import { SettingsAgentEnvironmentsRouteScreen } from "./features/settings/SettingsAgentEnvironmentsRouteScreen";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import { SettingsProjectGroupingRouteScreen } from "./features/settings/SettingsProjectGroupingRouteScreen";
+import { SettingsProjectsRouteScreen } from "./features/settings/SettingsProjectsRouteScreen";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
@@ -155,6 +157,13 @@ const SettingsContentStack = createNativeStackNavigator({
         title: "Environments",
       },
     }),
+    SettingsAgents: createNativeStackScreen({
+      screen: SettingsAgentEnvironmentsRouteScreen,
+      linking: "agents",
+      options: {
+        title: "Agents & Servers",
+      },
+    }),
     SettingsEnvironmentNew: createNativeStackScreen({
       screen: ConnectionsNewRouteScreen,
       linking: "environment-new",
@@ -181,6 +190,13 @@ const SettingsContentStack = createNativeStackNavigator({
       linking: "project-grouping",
       options: {
         title: "Project Grouping",
+      },
+    }),
+    SettingsProjects: createNativeStackScreen({
+      screen: SettingsProjectsRouteScreen,
+      linking: "projects",
+      options: {
+        title: "Projects",
       },
     }),
     SettingsClientStorage: createNativeStackScreen({

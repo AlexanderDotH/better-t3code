@@ -9,6 +9,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildHomeProjectScopes,
   buildHomeThreadGroups,
+  HOME_PROJECT_INACTIVITY_MS,
+  partitionHomeProjectGroupsByActivity,
   sortHomeProjectScopes,
 } from "./homeThreadList";
 
@@ -743,5 +745,112 @@ describe("buildHomeThreadGroups", () => {
     expect(groups[0]?.projects).toHaveLength(2);
     expect(groups[0]?.newThreadTarget?.environmentId).toBe(desktopEnv);
     expect(groups[0]?.newThreadTarget?.id).toBe(desktopProject.id);
+  });
+});
+
+describe("partitionHomeProjectGroupsByActivity", () => {
+  it("keeps exactly seven days recent and moves one millisecond older", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const exactProject = makeProject({
+      environmentId,
+      id: ProjectId.make("project-exact"),
+      title: "Exact",
+    });
+    const olderProject = makeProject({
+      environmentId,
+      id: ProjectId.make("project-older"),
+      title: "Older",
+    });
+    const exactTimestamp = new Date(NOW - HOME_PROJECT_INACTIVITY_MS).toISOString();
+    const olderTimestamp = new Date(NOW - HOME_PROJECT_INACTIVITY_MS - 1).toISOString();
+    const groups = buildGroups(
+      [exactProject, olderProject],
+      [
+        makeThread({
+          environmentId,
+          id: ThreadId.make("thread-exact"),
+          projectId: exactProject.id,
+          title: "Exact",
+          createdAt: exactTimestamp,
+          updatedAt: exactTimestamp,
+          latestUserMessageAt: exactTimestamp,
+        }),
+        makeThread({
+          environmentId,
+          id: ThreadId.make("thread-older"),
+          projectId: olderProject.id,
+          title: "Older",
+          createdAt: olderTimestamp,
+          updatedAt: olderTimestamp,
+          latestUserMessageAt: olderTimestamp,
+        }),
+      ],
+      { projectGroupingMode: "separate" },
+    );
+
+    const result = partitionHomeProjectGroupsByActivity({ groups, nowMs: NOW });
+
+    expect(result.recentGroups.map((group) => group.representative.id)).toEqual([exactProject.id]);
+    expect(result.olderGroups.map((group) => group.representative.id)).toEqual([olderProject.id]);
+    expect(result.nextTransitionAtMs).toBe(NOW + 1);
+  });
+
+  it("keeps stale work recent when it needs attention", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project-attention"),
+      title: "Attention",
+    });
+    const oldTimestamp = new Date(NOW - HOME_PROJECT_INACTIVITY_MS - 1).toISOString();
+    const [group] = buildGroups(
+      [project],
+      [
+        makeThread({
+          environmentId,
+          id: ThreadId.make("thread-attention"),
+          projectId: project.id,
+          title: "Attention",
+          createdAt: oldTimestamp,
+          updatedAt: oldTimestamp,
+          latestUserMessageAt: oldTimestamp,
+          hasActionableProposedPlan: true,
+        }),
+      ],
+    );
+
+    const result = partitionHomeProjectGroupsByActivity({ groups: [group!], nowMs: NOW });
+
+    expect(result.recentGroups).toEqual([group]);
+    expect(result.olderGroups).toEqual([]);
+  });
+
+  it("moves an older project back to recent on renewed user activity", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project-renewed"),
+      title: "Renewed",
+    });
+    const oldTimestamp = new Date(NOW - HOME_PROJECT_INACTIVITY_MS - 1).toISOString();
+    const [group] = buildGroups(
+      [project],
+      [
+        makeThread({
+          environmentId,
+          id: ThreadId.make("thread-renewed"),
+          projectId: project.id,
+          title: "Renewed",
+          createdAt: oldTimestamp,
+          updatedAt: oldTimestamp,
+          latestUserMessageAt: new Date(NOW - 1_000).toISOString(),
+        }),
+      ],
+    );
+
+    const result = partitionHomeProjectGroupsByActivity({ groups: [group!], nowMs: NOW });
+
+    expect(result.recentGroups).toEqual([group]);
+    expect(result.olderGroups).toEqual([]);
   });
 });

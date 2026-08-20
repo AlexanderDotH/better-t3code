@@ -32,6 +32,7 @@ export interface ProjectThreadStartTurnSpec {
   readonly attachments: ReadonlyArray<DraftComposerImageAttachment>;
   readonly durableModelSelection: ModelSelection;
   readonly turnModelSelection?: ModelSelection;
+  readonly fetchMode?: "repository-exploration";
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceMode: "local" | "worktree";
@@ -59,6 +60,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
       text: spec.text,
       attachments: toUploadChatImageAttachments(spec.attachments),
     },
+    ...(spec.fetchMode === undefined ? {} : { fetchMode: spec.fetchMode }),
     modelSelection: spec.turnModelSelection ?? spec.durableModelSelection,
     titleSeed: title,
     runtimeMode: spec.runtimeMode,
