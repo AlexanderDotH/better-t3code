@@ -1,4 +1,14 @@
 import type { AssemblyAiStreamingTokenResult } from "@t3tools/contracts";
+import {
+  AssemblyAiTranscriptAccumulator,
+  buildAssemblyAiStreamingUrl,
+} from "@t3tools/client-runtime/assembly-ai";
+
+export {
+  AssemblyAiTranscriptAccumulator,
+  Pcm16ChunkEncoder,
+  buildAssemblyAiStreamingUrl,
+} from "@t3tools/client-runtime/assembly-ai";
 
 import assemblyAiAudioWorkletUrl from "./assemblyAiAudioWorklet.ts?worker&url";
 
@@ -135,116 +145,6 @@ interface TranscriptTurnUpdate {
   readonly transcript: string;
   readonly endOfTurn: boolean;
   readonly turnOrder: number | null;
-}
-
-function pcm16Sample(value: number): number {
-  const clamped = Math.max(-1, Math.min(1, value));
-  return Math.round(clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff);
-}
-
-function pcm16Buffer(samples: ReadonlyArray<number>): ArrayBuffer {
-  const buffer = new ArrayBuffer(samples.length * 2);
-  const view = new DataView(buffer);
-  samples.forEach((sample, index) => view.setInt16(index * 2, pcm16Sample(sample), true));
-  return buffer;
-}
-
-export class Pcm16ChunkEncoder {
-  readonly #ratio: number;
-  readonly #chunkSamples: number;
-  #source: number[] = [];
-  #sourcePosition = 0;
-  #pending: number[] = [];
-
-  constructor(inputSampleRate: number, outputSampleRate: number, chunkMs: number) {
-    if (inputSampleRate <= 0 || outputSampleRate <= 0 || chunkMs <= 0) {
-      throw new Error("Audio sample rates and chunk duration must be positive.");
-    }
-    this.#ratio = inputSampleRate / outputSampleRate;
-    this.#chunkSamples = Math.max(1, Math.round((outputSampleRate * chunkMs) / 1_000));
-  }
-
-  push(input: Float32Array): ArrayBuffer[] {
-    for (const sample of input) this.#source.push(sample);
-
-    while (this.#sourcePosition < this.#source.length) {
-      const index = Math.floor(this.#sourcePosition);
-      const fraction = this.#sourcePosition - index;
-      if (fraction > 0 && index + 1 >= this.#source.length) break;
-      const left = this.#source[index] ?? 0;
-      const right = this.#source[index + 1] ?? left;
-      this.#pending.push(left + (right - left) * fraction);
-      this.#sourcePosition += this.#ratio;
-    }
-
-    const consumed = Math.min(Math.floor(this.#sourcePosition), this.#source.length);
-    if (consumed > 0) {
-      this.#source.splice(0, consumed);
-      this.#sourcePosition -= consumed;
-    }
-
-    const chunks: ArrayBuffer[] = [];
-    while (this.#pending.length >= this.#chunkSamples) {
-      chunks.push(pcm16Buffer(this.#pending.splice(0, this.#chunkSamples)));
-    }
-    return chunks;
-  }
-}
-
-function normalizedTranscript(value: string): string {
-  return value.trim().replace(/\s+/gu, " ");
-}
-
-export class AssemblyAiTranscriptAccumulator {
-  readonly #orderedFinalized = new Map<number, string>();
-  #unorderedFinalized: string[] = [];
-  #partial = "";
-  #partialOrder: number | null = null;
-
-  update(update: TranscriptTurnUpdate): string {
-    const transcript = normalizedTranscript(update.transcript);
-    if (update.endOfTurn) {
-      if (transcript.length > 0) {
-        if (update.turnOrder !== null) {
-          this.#orderedFinalized.set(update.turnOrder, transcript);
-        } else if (this.#unorderedFinalized.at(-1) !== transcript) {
-          this.#unorderedFinalized.push(transcript);
-        }
-      }
-      if (update.turnOrder === null || update.turnOrder === this.#partialOrder) {
-        this.#partial = "";
-        this.#partialOrder = null;
-      }
-    } else {
-      this.#partial = transcript;
-      this.#partialOrder = update.turnOrder;
-    }
-    return this.text;
-  }
-
-  get text(): string {
-    const finalized = [
-      ...[...this.#orderedFinalized.entries()]
-        .toSorted(([left], [right]) => left - right)
-        .map(([, text]) => text),
-      ...this.#unorderedFinalized,
-    ];
-    return [...finalized, this.#partial].filter((part) => part.length > 0).join(" ");
-  }
-}
-
-export function buildAssemblyAiStreamingUrl(config: AssemblyAiStreamingTokenResult): string {
-  const url = new URL(config.websocketUrl);
-  url.searchParams.set("sample_rate", String(config.sampleRate));
-  url.searchParams.set("encoding", config.encoding);
-  url.searchParams.set("speech_model", config.speechModel);
-  url.searchParams.set("format_turns", "true");
-  url.searchParams.set("prompt", config.context.prompt);
-  if (config.context.keyterms.length > 0) {
-    url.searchParams.set("keyterms_prompt", JSON.stringify(config.context.keyterms));
-  }
-  url.searchParams.set("token", config.token);
-  return url.toString();
 }
 
 function errorName(value: unknown): string | null {

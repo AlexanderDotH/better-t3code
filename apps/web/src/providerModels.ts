@@ -58,10 +58,9 @@ export function isPlanModeAvailable(input: {
   readonly provider: ProviderDriverKind;
   readonly legacyPlanModeEnabled: boolean;
 }): boolean {
-  if (!getProviderInteractionModeToggle(input.providers, input.provider)) {
-    return false;
-  }
-  return input.provider === DEFAULT_DRIVER_KIND || input.legacyPlanModeEnabled;
+  return (
+    input.legacyPlanModeEnabled && getProviderInteractionModeToggle(input.providers, input.provider)
+  );
 }
 
 export function isProviderEnabled(

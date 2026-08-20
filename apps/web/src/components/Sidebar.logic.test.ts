@@ -1068,6 +1068,7 @@ describe("formatWorkingDurationLabel", () => {
 
 describe("resolveThreadStatusPill", () => {
   const baseThread = {
+    backgroundLiveness: null,
     hasActionableProposedPlan: false,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
@@ -1115,6 +1116,22 @@ describe("resolveThreadStatusPill", () => {
     expect(
       resolveThreadStatusPill({
         thread: baseThread,
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("shows working when background agents are live while the main session is starting", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          backgroundLiveness: "working",
+          session: {
+            ...baseThread.session,
+            status: "starting",
+            activeTurnId: null,
+          },
+        },
       }),
     ).toMatchObject({ label: "Working", pulse: true });
   });

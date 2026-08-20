@@ -27,13 +27,14 @@ import {
 } from "./session-logic";
 
 describe("provider options", () => {
-  it("offers exactly the five native provider drivers", () => {
+  it("offers exactly the six native provider drivers", () => {
     expect(PROVIDER_OPTIONS.map((option) => option.value)).toEqual([
       ProviderDriverKind.make("codex"),
       ProviderDriverKind.make("claudeAgent"),
       ProviderDriverKind.make("opencode"),
       ProviderDriverKind.make("cursor"),
       ProviderDriverKind.make("grok"),
+      ProviderDriverKind.make("gemini"),
     ]);
   });
 });

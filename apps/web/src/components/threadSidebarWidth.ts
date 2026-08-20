@@ -10,13 +10,22 @@ export function resolveThreadSidebarMaximumWidth(viewportWidth: number): number 
   );
 }
 
+export function resolveRenderedThreadSidebarWidth(
+  preferredWidth: number,
+  viewportWidth: number,
+): number {
+  return Math.min(
+    Math.max(THREAD_SIDEBAR_MIN_WIDTH, preferredWidth),
+    resolveThreadSidebarMaximumWidth(viewportWidth),
+  );
+}
+
 export function resolveInitialThreadSidebarWidth(
   storedWidth: number | null,
   viewportWidth: number,
 ): number {
-  const preferredWidth =
-    storedWidth === null
-      ? THREAD_SIDEBAR_DEFAULT_WIDTH
-      : Math.max(THREAD_SIDEBAR_MIN_WIDTH, storedWidth);
-  return Math.min(preferredWidth, resolveThreadSidebarMaximumWidth(viewportWidth));
+  return resolveRenderedThreadSidebarWidth(
+    storedWidth ?? THREAD_SIDEBAR_DEFAULT_WIDTH,
+    viewportWidth,
+  );
 }

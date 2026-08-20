@@ -18,6 +18,9 @@ export interface SubagentTranscriptDialogProps {
   readonly markdownCwd?: string;
   readonly threadRef?: ScopedThreadRef;
   readonly timestampFormat?: TimestampFormat;
+  readonly hasOlderActivities?: boolean;
+  readonly isLoadingOlderActivities?: boolean;
+  readonly onLoadOlderActivities?: () => void;
 }
 
 type SubagentTranscriptDialogContentProps = Omit<
@@ -32,6 +35,9 @@ export const SubagentTranscriptDialogContent = memo(function SubagentTranscriptD
   markdownCwd,
   threadRef,
   timestampFormat = "locale",
+  hasOlderActivities = false,
+  isLoadingOlderActivities = false,
+  onLoadOlderActivities,
 }: SubagentTranscriptDialogContentProps) {
   return (
     <div data-subagent-transcript-dialog="true" className="contents">
@@ -42,6 +48,9 @@ export const SubagentTranscriptDialogContent = memo(function SubagentTranscriptD
         {...(markdownCwd ? { markdownCwd } : {})}
         {...(threadRef ? { threadRef } : {})}
         timestampFormat={timestampFormat}
+        hasOlderActivities={hasOlderActivities}
+        isLoadingOlderActivities={isLoadingOlderActivities}
+        {...(onLoadOlderActivities ? { onLoadOlderActivities } : {})}
         className="min-h-0 flex-1"
       />
     </div>
@@ -57,6 +66,9 @@ export const SubagentTranscriptDialog = memo(function SubagentTranscriptDialog({
   markdownCwd,
   threadRef,
   timestampFormat = "locale",
+  hasOlderActivities = false,
+  isLoadingOlderActivities = false,
+  onLoadOlderActivities,
 }: SubagentTranscriptDialogProps) {
   const title = subagent
     ? `${resolveSubagentDisplayName(subagent)} transcript`
@@ -77,6 +89,9 @@ export const SubagentTranscriptDialog = memo(function SubagentTranscriptDialog({
           {...(markdownCwd ? { markdownCwd } : {})}
           {...(threadRef ? { threadRef } : {})}
           timestampFormat={timestampFormat}
+          hasOlderActivities={hasOlderActivities}
+          isLoadingOlderActivities={isLoadingOlderActivities}
+          {...(onLoadOlderActivities ? { onLoadOlderActivities } : {})}
         />
       </DialogPopup>
     </Dialog>

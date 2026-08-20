@@ -673,7 +673,10 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.session?.status === "running") {
+  if (
+    thread.session?.status === "running" ||
+    (thread.session?.status === "starting" && thread.backgroundLiveness === "working")
+  ) {
     return {
       label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",

@@ -257,6 +257,10 @@ export function mergeEnvironmentSettings(
         ...DEFAULT_SERVER_SETTINGS.providers.opencode,
         ...providerSettings?.opencode,
       },
+      gemini: {
+        ...DEFAULT_SERVER_SETTINGS.providers.gemini,
+        ...providerSettings?.gemini,
+      },
     },
     providerInstances:
       serverSettings.providerInstances ?? DEFAULT_SERVER_SETTINGS.providerInstances,

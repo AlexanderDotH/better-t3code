@@ -29,12 +29,21 @@ function provider(driver: ProviderDriverKind, showInteractionModeToggle: boolean
 }
 
 describe("isPlanModeAvailable", () => {
-  it("makes plan mode available for Codex without the legacy setting", () => {
+  it("requires the legacy setting for Codex plan mode", () => {
+    const providers = [provider(CODEX, true)];
+
     expect(
       isPlanModeAvailable({
-        providers: [provider(CODEX, true)],
+        providers,
         provider: CODEX,
         legacyPlanModeEnabled: false,
+      }),
+    ).toBe(false);
+    expect(
+      isPlanModeAvailable({
+        providers,
+        provider: CODEX,
+        legacyPlanModeEnabled: true,
       }),
     ).toBe(true);
   });

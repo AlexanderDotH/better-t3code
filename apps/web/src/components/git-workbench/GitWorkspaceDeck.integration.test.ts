@@ -38,6 +38,11 @@ describe("Git workspace deck surface integration", () => {
     );
   });
 
+  it("waits for confirmed Git status before rendering repository context", () => {
+    expect(chatViewSource).toContain("const isGitRepo = gitStatusQuery.data?.isRepo === true;");
+    expect(chatViewSource).not.toContain("gitStatusQuery.data?.isRepo ?? true");
+  });
+
   it("tracks every non-Chat card so type-anywhere never steals focus from the deck", () => {
     expect(chatViewSource).toContain("nonChatWorkspaceCardActive");
     expect(chatViewSource).not.toContain("gitWorkbenchFrontmost");

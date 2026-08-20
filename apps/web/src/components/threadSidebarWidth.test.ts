@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   resolveInitialThreadSidebarWidth,
+  resolveRenderedThreadSidebarWidth,
   THREAD_MAIN_CONTENT_MIN_WIDTH,
   THREAD_SIDEBAR_DEFAULT_WIDTH,
   THREAD_SIDEBAR_MIN_WIDTH,
@@ -33,6 +34,20 @@ describe("thread sidebar width", () => {
 
   it("keeps the sidebar minimum when the whole layout is narrower than its minimums", () => {
     expect(resolveInitialThreadSidebarWidth(900, 700)).toBe(THREAD_SIDEBAR_MIN_WIDTH);
+  });
+
+  it("reclamps a wide sidebar while the window narrows and restores it when room returns", () => {
+    const preferredSidebarWidth = 700;
+
+    expect(resolveRenderedThreadSidebarWidth(preferredSidebarWidth, 1_400)).toBe(
+      preferredSidebarWidth,
+    );
+    expect(resolveRenderedThreadSidebarWidth(preferredSidebarWidth, 840)).toBe(
+      THREAD_SIDEBAR_MIN_WIDTH,
+    );
+    expect(resolveRenderedThreadSidebarWidth(preferredSidebarWidth, 1_400)).toBe(
+      preferredSidebarWidth,
+    );
   });
 
   it("shows the desktop wordmark across the sidebar's full legal width range", () => {

@@ -5,6 +5,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
+import { LegendList } from "@legendapp/list/react";
 import {
   BotIcon,
   CircleAlertIcon,
@@ -33,6 +34,12 @@ import { Spinner } from "./ui/spinner";
 
 const EMPTY_COMMITTED_MESSAGE_IDS: ReadonlySet<string> = new Set();
 
+export const SUBAGENT_TRANSCRIPT_VIRTUALIZATION_THRESHOLD = 80;
+
+export function shouldVirtualizeSubagentTranscript(entryCount: number): boolean {
+  return entryCount > SUBAGENT_TRANSCRIPT_VIRTUALIZATION_THRESHOLD;
+}
+
 export interface SubagentTranscriptPanelProps {
   readonly subagent: OrchestrationSubagentDetail | null;
   readonly isLoading?: boolean;
@@ -41,6 +48,9 @@ export interface SubagentTranscriptPanelProps {
   readonly threadRef?: ScopedThreadRef;
   readonly timestampFormat?: TimestampFormat;
   readonly className?: string;
+  readonly hasOlderActivities?: boolean;
+  readonly isLoadingOlderActivities?: boolean;
+  readonly onLoadOlderActivities?: () => void;
 }
 
 interface SubagentInitialStreamAnimationInput {
@@ -76,6 +86,9 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
   threadRef,
   timestampFormat = "locale",
   className,
+  hasOlderActivities = false,
+  isLoadingOlderActivities = false,
+  onLoadOlderActivities,
 }: SubagentTranscriptPanelProps) {
   const entries = useMemo(
     () => (subagent ? deriveSubagentTranscriptEntries(subagent) : []),
@@ -86,6 +99,49 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
     streamScopeId,
     entries,
   );
+  const name = subagent ? resolveSubagentDisplayName(subagent) : "";
+  const renderEntry = useCallback(
+    (entry: SubagentTranscriptEntry) => (
+      <SubagentTranscriptEntryView
+        entry={entry}
+        agentName={name}
+        markdownCwd={markdownCwd}
+        threadRef={threadRef}
+        timestampFormat={timestampFormat}
+        streamScopeId={streamScopeId}
+        animateInitialStreamChunk={
+          entry.kind === "message" &&
+          shouldAnimateInitialStreamChunk(
+            entry.message.id,
+            entry.message.role === "assistant",
+            entry.message.streaming,
+          )
+        }
+      />
+    ),
+    [markdownCwd, name, shouldAnimateInitialStreamChunk, streamScopeId, threadRef, timestampFormat],
+  );
+  const renderVirtualizedEntry = useCallback(
+    ({ item }: { readonly item: SubagentTranscriptEntry }) => (
+      <div role="listitem" className="mx-auto w-full max-w-3xl px-4 pb-3 sm:px-5">
+        {renderEntry(item)}
+      </div>
+    ),
+    [renderEntry],
+  );
+  const olderActivityControl = hasOlderActivities ? (
+    <div className="mx-auto flex w-full max-w-3xl justify-center px-4 pt-4 sm:px-5">
+      <button
+        type="button"
+        disabled={isLoadingOlderActivities}
+        onClick={onLoadOlderActivities}
+        className="inline-flex h-8 items-center gap-2 rounded-md border border-border/70 bg-background px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:cursor-wait disabled:opacity-60"
+      >
+        {isLoadingOlderActivities ? <Spinner className="size-3" /> : null}
+        {isLoadingOlderActivities ? "Loading earlier activity" : "Load earlier activity"}
+      </button>
+    </div>
+  ) : null;
 
   if (isLoading && !subagent) {
     return (
@@ -115,7 +171,6 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
     );
   }
 
-  const name = resolveSubagentDisplayName(subagent);
   const status = resolveSubagentStatusPresentation(subagent);
 
   return (
@@ -129,35 +184,35 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
         status={status}
         errorMessage={errorMessage}
       />
-      <ScrollArea className="min-h-0 flex-1" scrollFade scrollbarGutter>
-        <ol className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4 sm:px-5">
-          {entries.map((entry) => (
-            <li key={`${entry.kind}:${entry.id}`}>
-              <SubagentTranscriptEntryView
-                entry={entry}
-                agentName={name}
-                markdownCwd={markdownCwd}
-                threadRef={threadRef}
-                timestampFormat={timestampFormat}
-                streamScopeId={streamScopeId}
-                animateInitialStreamChunk={
-                  entry.kind === "message" &&
-                  shouldAnimateInitialStreamChunk(
-                    entry.message.id,
-                    entry.message.role === "assistant",
-                    entry.message.streaming,
-                  )
-                }
-              />
-            </li>
-          ))}
-          {entries.length === 0 ? (
-            <li className="py-12 text-center text-sm text-muted-foreground">
-              No transcript events yet.
-            </li>
-          ) : null}
-        </ol>
-      </ScrollArea>
+      {shouldVirtualizeSubagentTranscript(entries.length) ? (
+        <LegendList<SubagentTranscriptEntry>
+          role="list"
+          data={entries}
+          keyExtractor={subagentTranscriptEntryKey}
+          getItemType={subagentTranscriptEntryType}
+          renderItem={renderVirtualizedEntry}
+          estimatedItemSize={150}
+          drawDistance={600}
+          recycleItems={false}
+          ListHeaderComponent={olderActivityControl}
+          contentContainerStyle={{ paddingTop: 16, paddingBottom: 4 }}
+          className="scrollbar-gutter-stable min-h-0 flex-1 overflow-x-hidden overscroll-y-contain"
+        />
+      ) : (
+        <ScrollArea className="min-h-0 flex-1" scrollFade scrollbarGutter>
+          <ol className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4 sm:px-5">
+            {olderActivityControl ? <li>{olderActivityControl}</li> : null}
+            {entries.map((entry) => (
+              <li key={subagentTranscriptEntryKey(entry)}>{renderEntry(entry)}</li>
+            ))}
+            {entries.length === 0 ? (
+              <li className="py-12 text-center text-sm text-muted-foreground">
+                No transcript events yet.
+              </li>
+            ) : null}
+          </ol>
+        </ScrollArea>
+      )}
     </section>
   );
 });
@@ -356,10 +411,7 @@ function useSubagentInitialStreamAnimationRegistry(
     readonly messageIds: ReadonlySet<string>;
   } | null>(null);
   const currentMessageIds = useMemo(
-    () =>
-      new Set(
-        entries.flatMap((entry) => (entry.kind === "message" ? [String(entry.message.id)] : [])),
-      ),
+    () => collectSubagentStreamingAssistantMessageIds(entries),
     [entries],
   );
 
@@ -379,6 +431,28 @@ function useSubagentInitialStreamAnimationRegistry(
       }),
     [scopeId],
   );
+}
+
+export function collectSubagentStreamingAssistantMessageIds(
+  entries: ReadonlyArray<SubagentTranscriptEntry>,
+): ReadonlySet<string> {
+  const messageIds = new Set<string>();
+  for (const entry of entries) {
+    if (entry.kind === "message" && entry.message.role === "assistant" && entry.message.streaming) {
+      messageIds.add(String(entry.message.id));
+    }
+  }
+  return messageIds;
+}
+
+function subagentTranscriptEntryKey(entry: SubagentTranscriptEntry): string {
+  return `${entry.kind}:${entry.id}`;
+}
+
+function subagentTranscriptEntryType(
+  entry: SubagentTranscriptEntry,
+): SubagentTranscriptEntry["kind"] {
+  return entry.kind;
 }
 
 function TranscriptActivity({

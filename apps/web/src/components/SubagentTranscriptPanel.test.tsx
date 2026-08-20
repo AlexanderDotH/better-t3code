@@ -10,9 +10,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  collectSubagentStreamingAssistantMessageIds,
   resolveSubagentInitialStreamAnimation,
+  shouldVirtualizeSubagentTranscript,
+  SUBAGENT_TRANSCRIPT_VIRTUALIZATION_THRESHOLD,
   SubagentTranscriptPanel,
 } from "./SubagentTranscriptPanel";
+import { deriveSubagentTranscriptEntries } from "./subagents/subagentPresentation";
 
 function makeDetail(): OrchestrationSubagentDetail {
   return {
@@ -137,6 +141,38 @@ describe("SubagentTranscriptPanel", () => {
     ).toBe(false);
   });
 
+  it("tracks only live assistant ids and virtualizes large transcripts", () => {
+    const detail = makeDetail();
+    const completed = detail.messages[0]!;
+    const entries = deriveSubagentTranscriptEntries({
+      messages: [
+        completed,
+        {
+          ...completed,
+          id: MessageId.make("message-live"),
+          text: "Still working",
+          streaming: true,
+        },
+        {
+          ...completed,
+          id: MessageId.make("message-user"),
+          role: "user",
+          streaming: true,
+        },
+      ],
+      proposedPlans: [],
+      activities: [],
+    });
+
+    expect([...collectSubagentStreamingAssistantMessageIds(entries)]).toEqual(["message-live"]);
+    expect(shouldVirtualizeSubagentTranscript(SUBAGENT_TRANSCRIPT_VIRTUALIZATION_THRESHOLD)).toBe(
+      false,
+    );
+    expect(
+      shouldVirtualizeSubagentTranscript(SUBAGENT_TRANSCRIPT_VIRTUALIZATION_THRESHOLD + 1),
+    ).toBe(true);
+  });
+
   it("renders loading and unselected states without control actions", () => {
     expect(renderToStaticMarkup(<SubagentTranscriptPanel subagent={null} isLoading />)).toContain(
       "Loading agent transcript",
@@ -176,5 +212,19 @@ describe("SubagentTranscriptPanel", () => {
 
     expect(html).toContain("Agent transcript unavailable");
     expect(html).toContain("The agent transcript could not be loaded.");
+  });
+
+  it("renders a bounded-history control when older activity is available", () => {
+    const html = renderToStaticMarkup(
+      <SubagentTranscriptPanel
+        subagent={makeDetail()}
+        hasOlderActivities
+        isLoadingOlderActivities
+        onLoadOlderActivities={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Loading earlier activity");
+    expect(html).toContain("disabled");
   });
 });
