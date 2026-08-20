@@ -5,7 +5,38 @@ import {
   applyPreferredCodexDefaultModel,
   isLegacyCodexModel,
   mapCodexModelCapabilities,
+  parseCodexDebugModelCatalog,
 } from "./CodexProvider.ts";
+
+const TEST_CONTEXT_WINDOW = {
+  defaultTokens: 272_000,
+  maxTokens: 1_048_576,
+  effectivePercent: 95,
+} as const;
+
+it("extracts bounded context metadata from Codex's raw model catalog", () => {
+  assert.deepStrictEqual(
+    parseCodexDebugModelCatalog({
+      models: [
+        {
+          slug: "gpt-5.6-sol",
+          context_window: 272_000,
+          max_context_window: 872_000,
+          effective_context_window_percent: 95,
+          model_messages: { instructions_template: "must not survive parsing" },
+        },
+        {
+          slug: "broken",
+          context_window: -1,
+          max_context_window: 10,
+        },
+      ],
+    }),
+    new Map([
+      ["gpt-5.6-sol", { defaultTokens: 272_000, maxTokens: 872_000, effectivePercent: 95 }],
+    ]),
+  );
+});
 
 it("keeps only the GPT-5.6 Codex family out of legacy models", () => {
   assert.deepStrictEqual(
@@ -23,35 +54,38 @@ it("keeps only the GPT-5.6 Codex family out of legacy models", () => {
 });
 
 it("maps current Codex model capability fields", () => {
-  const capabilities = mapCodexModelCapabilities({
-    additionalSpeedTiers: [],
-    defaultReasoningEffort: "super-high",
-    description: "Test model",
-    displayName: "GPT Test",
-    hidden: false,
-    id: "gpt-test",
-    isDefault: true,
-    model: "gpt-test",
-    defaultServiceTier: "flex",
-    serviceTiers: [
-      {
-        id: "priority",
-        name: "Fast",
-        description: "Lower latency responses.",
-      },
-      {
-        id: "flex",
-        name: "Flex",
-        description: "Lower-cost asynchronous routing.",
-      },
-    ],
-    supportedReasoningEfforts: [
-      {
-        description: "Maximum reasoning",
-        reasoningEffort: "super-high",
-      },
-    ],
-  });
+  const capabilities = mapCodexModelCapabilities(
+    {
+      additionalSpeedTiers: [],
+      defaultReasoningEffort: "super-high",
+      description: "Test model",
+      displayName: "GPT Test",
+      hidden: false,
+      id: "gpt-test",
+      isDefault: true,
+      model: "gpt-test",
+      defaultServiceTier: "flex",
+      serviceTiers: [
+        {
+          id: "priority",
+          name: "Fast",
+          description: "Lower latency responses.",
+        },
+        {
+          id: "flex",
+          name: "Flex",
+          description: "Lower-cost asynchronous routing.",
+        },
+      ],
+      supportedReasoningEfforts: [
+        {
+          description: "Maximum reasoning",
+          reasoningEffort: "super-high",
+        },
+      ],
+    },
+    TEST_CONTEXT_WINDOW,
+  );
 
   assert.deepStrictEqual(capabilities.optionDescriptors, [
     {
@@ -86,25 +120,28 @@ it("maps current Codex model capability fields", () => {
 });
 
 it("uses standard routing when the catalog has no default service tier", () => {
-  const capabilities = mapCodexModelCapabilities({
-    additionalSpeedTiers: ["fast"],
-    defaultReasoningEffort: "medium",
-    defaultServiceTier: null,
-    description: "Test model",
-    displayName: "GPT Test",
-    hidden: false,
-    id: "gpt-test",
-    isDefault: true,
-    model: "gpt-test",
-    serviceTiers: [
-      {
-        id: "priority",
-        name: "Fast",
-        description: "1.5x speed, increased usage",
-      },
-    ],
-    supportedReasoningEfforts: [],
-  });
+  const capabilities = mapCodexModelCapabilities(
+    {
+      additionalSpeedTiers: ["fast"],
+      defaultReasoningEffort: "medium",
+      defaultServiceTier: null,
+      description: "Test model",
+      displayName: "GPT Test",
+      hidden: false,
+      id: "gpt-test",
+      isDefault: true,
+      model: "gpt-test",
+      serviceTiers: [
+        {
+          id: "priority",
+          name: "Fast",
+          description: "1.5x speed, increased usage",
+        },
+      ],
+      supportedReasoningEfforts: [],
+    },
+    TEST_CONTEXT_WINDOW,
+  );
 
   assert.deepStrictEqual(capabilities.optionDescriptors, [
     {
@@ -126,19 +163,22 @@ it("uses standard routing when the catalog has no default service tier", () => {
 });
 
 it("canonicalizes the legacy fast catalog tier to priority", () => {
-  const capabilities = mapCodexModelCapabilities({
-    additionalSpeedTiers: ["fast"],
-    defaultReasoningEffort: "medium",
-    defaultServiceTier: "fast",
-    description: "Legacy catalog model",
-    displayName: "GPT Legacy",
-    hidden: false,
-    id: "gpt-legacy",
-    isDefault: false,
-    model: "gpt-legacy",
-    serviceTiers: [],
-    supportedReasoningEfforts: [],
-  });
+  const capabilities = mapCodexModelCapabilities(
+    {
+      additionalSpeedTiers: ["fast"],
+      defaultReasoningEffort: "medium",
+      defaultServiceTier: "fast",
+      description: "Legacy catalog model",
+      displayName: "GPT Legacy",
+      hidden: false,
+      id: "gpt-legacy",
+      isDefault: false,
+      model: "gpt-legacy",
+      serviceTiers: [],
+      supportedReasoningEfforts: [],
+    },
+    TEST_CONTEXT_WINDOW,
+  );
 
   assert.deepStrictEqual(capabilities.optionDescriptors, [
     {

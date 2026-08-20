@@ -4,6 +4,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ModelCapabilities } from "
 import {
   buildProviderOptionSelectionsFromDescriptors,
   CODEX_CONTEXT_WINDOW_CHOICES,
+  createCodexContextWindowDescriptor,
   createModelCapabilities,
   createModelSelection,
   getModelSelectionBooleanOptionValue,
@@ -150,16 +151,60 @@ describe("descriptor helpers", () => {
 });
 
 describe("Codex context window", () => {
-  it("offers twenty stable steps from model default through 1.05M tokens", () => {
+  it("offers twenty stable ordered steps through 1.05M tokens", () => {
     expect(CODEX_CONTEXT_WINDOW_CHOICES).toHaveLength(20);
-    expect(CODEX_CONTEXT_WINDOW_CHOICES[0]).toEqual({
+    expect(CODEX_CONTEXT_WINDOW_CHOICES[10]).toEqual({
       id: "default",
-      label: "Model default",
+      label: "272K",
+      description: "Model default",
+      isDefault: true,
     });
     expect(CODEX_CONTEXT_WINDOW_CHOICES.at(-1)).toEqual({
       id: "1048576",
       label: "1.05M",
     });
+  });
+
+  it("places the numeric model default in token order and caps choices at the model maximum", () => {
+    const descriptor = createCodexContextWindowDescriptor({
+      defaultTokens: 272_000,
+      maxTokens: 872_000,
+      effectivePercent: 95,
+    });
+
+    expect(descriptor.currentValue).toBe("default");
+    expect(descriptor.options.find((choice) => choice.id === "default")).toEqual({
+      id: "default",
+      label: "272K",
+      description: "Model default",
+      isDefault: true,
+    });
+    expect(descriptor.options.map((choice) => choice.label)).toContain("872K");
+    expect(descriptor.options.map((choice) => Number(choice.id))).not.toContain(917_504);
+    expect(descriptor.options.map((choice) => choice.label)).toEqual(
+      [...descriptor.options]
+        .sort(
+          (left, right) =>
+            Number(left.id === "default" ? 272_000 : left.id) -
+            Number(right.id === "default" ? 272_000 : right.id),
+        )
+        .map((choice) => choice.label),
+    );
+  });
+
+  it("uses a single numeric default tick when default and maximum are equal", () => {
+    const descriptor = createCodexContextWindowDescriptor({
+      defaultTokens: 128_000,
+      maxTokens: 128_000,
+    });
+
+    expect(descriptor.options.at(-1)).toEqual({
+      id: "default",
+      label: "128K",
+      description: "Model default",
+      isDefault: true,
+    });
+    expect(descriptor.options.filter((choice) => choice.label === "128K")).toHaveLength(1);
   });
 
   it("resolves only advertised numeric selections to runtime token counts", () => {

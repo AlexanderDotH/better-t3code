@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderDriverKind } from "./providerInstance.ts";
 
 export const ProviderOptionDescriptorType = Schema.Literals(["select", "boolean"]);
@@ -129,6 +129,15 @@ export const DEFAULT_AGENT_REASONING_EFFORT: AgentReasoningEffort = "medium";
 
 export const ModelCapabilities = Schema.Struct({
   optionDescriptors: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
+  contextWindow: Schema.optional(
+    Schema.Struct({
+      defaultTokens: PositiveInt,
+      maxTokens: PositiveInt,
+      effectivePercent: Schema.optional(
+        Schema.Number.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+      ),
+    }),
+  ),
 });
 export type ModelCapabilities = typeof ModelCapabilities.Type;
 

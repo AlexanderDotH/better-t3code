@@ -67,17 +67,17 @@ describe("buildTraitsTriggerDisplay", () => {
       currentLabel: "1M",
       maxIndex: 1,
       progressPercent: 100,
-      triggerLabel: "Context 1M",
+      triggerLabel: "1M",
     });
   });
 
-  it("shows model default at the first context slider position", () => {
+  it("shows the numeric model default at its ordered context slider position", () => {
     expect(buildContextWindowSliderState(CODEX_CONTEXT_WINDOW_DESCRIPTOR)).toEqual({
-      currentIndex: 0,
-      currentLabel: "Model default",
+      currentIndex: 10,
+      currentLabel: "272K",
       maxIndex: 19,
-      progressPercent: 0,
-      triggerLabel: "Context Default",
+      progressPercent: (10 / 19) * 100,
+      triggerLabel: "272K",
     });
   });
 

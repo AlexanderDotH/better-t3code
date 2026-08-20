@@ -73,4 +73,23 @@ describe("multi-provider model contracts", () => {
       "boolean",
     ]);
   });
+
+  it("decodes optional model context-window metadata without changing older capabilities", () => {
+    expect(
+      decodeModelCapabilities({
+        contextWindow: {
+          defaultTokens: 272_000,
+          maxTokens: 872_000,
+          effectivePercent: 95,
+        },
+      }),
+    ).toEqual({
+      contextWindow: {
+        defaultTokens: 272_000,
+        maxTokens: 872_000,
+        effectivePercent: 95,
+      },
+    });
+    expect(decodeModelCapabilities({})).toEqual({});
+  });
 });
