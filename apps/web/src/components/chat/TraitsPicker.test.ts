@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind, type ProviderOptionDescriptor } from "@t3tools/contracts";
+import { CODEX_CONTEXT_WINDOW_DESCRIPTOR } from "@t3tools/shared/model";
+import { buildContextWindowSliderState } from "./ContextWindowPicker";
 import { buildTraitsTriggerDisplay } from "./TraitsPicker";
 
 function selectDescriptor(
@@ -47,15 +49,35 @@ function display(descriptors: ReadonlyArray<ProviderOptionDescriptor>) {
 describe("buildTraitsTriggerDisplay", () => {
   it("omits fast mode from the label entirely when it is off", () => {
     expect(display([EFFORT, fastModeDescriptor(false), CONTEXT_WINDOW])).toEqual({
-      label: "High · 1M",
+      label: "High",
       showFastModeIcon: false,
     });
   });
 
   it("shows the bolt instead of a text label when fast mode is on", () => {
     expect(display([EFFORT, fastModeDescriptor(true), CONTEXT_WINDOW])).toEqual({
-      label: "High · 1M",
+      label: "High",
       showFastModeIcon: true,
+    });
+  });
+
+  it("maps the selected context choice to a stepped slider chip", () => {
+    expect(buildContextWindowSliderState(CONTEXT_WINDOW)).toEqual({
+      currentIndex: 1,
+      currentLabel: "1M",
+      maxIndex: 1,
+      progressPercent: 100,
+      triggerLabel: "Context 1M",
+    });
+  });
+
+  it("shows model default at the first context slider position", () => {
+    expect(buildContextWindowSliderState(CODEX_CONTEXT_WINDOW_DESCRIPTOR)).toEqual({
+      currentIndex: 0,
+      currentLabel: "Model default",
+      maxIndex: 19,
+      progressPercent: 0,
+      triggerLabel: "Context Default",
     });
   });
 

@@ -8,9 +8,11 @@ import {
 import {
   getComposerPromptInjectionState,
   getComposerProviderState,
+  renderProviderContextWindowPicker,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
 } from "./composerProviderState";
+import { DraftId } from "../../composerDraftStore";
 
 // Everything in composerProviderState is now data-driven by the model's
 // optionDescriptors, so these tests use a single synthetic provider/model and
@@ -292,6 +294,23 @@ describe("getComposerProviderState", () => {
     );
   });
 
+  it("does not treat a Codex context-only selection as reasoning effort", () => {
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("contextWindow", [
+          { id: "default", label: "Model default", isDefault: true },
+          { id: "262144", label: "256K" },
+        ]),
+      ]),
+      modelOptions: selections(["contextWindow", "262144"]),
+    });
+
+    expect(state.promptEffort).toBeNull();
+    expect(state.modelOptionsForDispatch).toEqual(selections(["contextWindow", "262144"]));
+  });
+
   it("returns undefined dispatch options when the model declares no descriptors", () => {
     const state = getComposerProviderState({
       provider: PROVIDER,
@@ -371,5 +390,25 @@ describe("provider traits render guards", () => {
 
     expect(renderProviderTraitsPicker(args)).toBeNull();
     expect(renderProviderTraitsMenuContent(args)).toBeNull();
+  });
+
+  it("renders Codex context as its own composer control", () => {
+    const args = {
+      provider: PROVIDER,
+      draftId: DraftId.make("draft-context-window"),
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("contextWindow", [
+          { id: "default", label: "Model default", isDefault: true },
+          { id: "262144", label: "256K" },
+        ]),
+      ]),
+      modelOptions: selections(["contextWindow", "262144"]),
+      prompt: "",
+      onPromptChange: () => {},
+    };
+
+    expect(renderProviderContextWindowPicker(args)).not.toBeNull();
+    expect(renderProviderTraitsPicker(args)).toBeNull();
   });
 });

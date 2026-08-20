@@ -9,6 +9,7 @@ import {
 import {
   applyClaudePromptEffortPrefix,
   buildProviderOptionSelectionsFromDescriptors,
+  CODEX_CONTEXT_WINDOW_OPTION_ID,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
@@ -102,7 +103,7 @@ function getSelectedTraits(
     caps,
     selections: modelOptions,
   });
-  const selectDescriptors = descriptors.filter(
+  const allSelectDescriptors = descriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
       descriptor.type === "select",
   );
@@ -110,9 +111,19 @@ function getSelectedTraits(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "boolean" }> =>
       descriptor.type === "boolean",
   );
-  const primarySelectDescriptor = selectDescriptors[0] ?? null;
   const contextWindowDescriptor =
-    selectDescriptors.find((descriptor) => descriptor.id === "contextWindow") ?? null;
+    provider === "codex"
+      ? (allSelectDescriptors.find(
+          (descriptor) => descriptor.id === CODEX_CONTEXT_WINDOW_OPTION_ID,
+        ) ?? null)
+      : null;
+  const selectDescriptors =
+    provider === "codex"
+      ? allSelectDescriptors.filter(
+          (descriptor) => descriptor.id !== CODEX_CONTEXT_WINDOW_OPTION_ID,
+        )
+      : allSelectDescriptors;
+  const primarySelectDescriptor = selectDescriptors[0] ?? null;
   const agentDescriptor = selectDescriptors.find((descriptor) => descriptor.id === "agent") ?? null;
   const fastModeDescriptor =
     booleanDescriptors.find((descriptor) => descriptor.id === "fastMode") ?? null;
@@ -190,7 +201,7 @@ function getTraitsSectionVisibility(input: {
     showFastMode,
     showContextWindow,
     showAgent,
-    hasAnyControls: showEffort || showThinking || showFastMode || showContextWindow || showAgent,
+    hasAnyControls: showEffort || showThinking || showFastMode || showAgent,
   };
 }
 
@@ -397,6 +408,9 @@ export function buildTraitsTriggerDisplay(input: {
   let fastModeEnabled = false;
   const labels: Array<string> = [];
   for (const descriptor of input.descriptors) {
+    if (input.provider === "codex" && descriptor.id === CODEX_CONTEXT_WINDOW_OPTION_ID) {
+      continue;
+    }
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
       hasFastMode = true;
       fastModeEnabled = descriptor.currentValue === true;

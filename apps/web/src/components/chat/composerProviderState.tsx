@@ -1,5 +1,6 @@
 import {
   defaultInstanceIdForDriver,
+  type ModelSelection,
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderOptionSelection,
@@ -8,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
+  CODEX_CONTEXT_WINDOW_OPTION_ID,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
@@ -17,6 +19,7 @@ import type { ReactNode } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
+import { ContextWindowPicker, shouldRenderContextWindowControl } from "./ContextWindowPicker";
 import { shouldRenderTraitsControls, TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
 
 export type ComposerProviderStateInput = {
@@ -48,6 +51,10 @@ type TraitsRenderInput = {
   modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
   prompt: string;
   onPromptChange: (prompt: string) => void;
+  onThreadModelSelectionChange?: (
+    threadRef: ScopedThreadRef,
+    modelSelection: ModelSelection,
+  ) => void;
 };
 
 export function getComposerPromptInjectionState(prompt: string): ComposerPromptInjectionState {
@@ -72,7 +79,8 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
   });
   const primarySelectDescriptor = descriptors.find(
     (descriptor): descriptor is Extract<(typeof descriptors)[number], { type: "select" }> =>
-      descriptor.type === "select",
+      descriptor.type === "select" &&
+      !(provider === "codex" && descriptor.id === CODEX_CONTEXT_WINDOW_OPTION_ID),
   );
   const primaryValue = getProviderOptionCurrentValue(primarySelectDescriptor ?? null);
   const promptEffort = typeof primaryValue === "string" ? primaryValue : null;
@@ -137,4 +145,27 @@ export function renderProviderTraitsMenuContent(input: TraitsRenderInput): React
 
 export function renderProviderTraitsPicker(input: TraitsRenderInput): ReactNode {
   return renderTraitsControl(TraitsPicker, input);
+}
+
+export function renderProviderContextWindowPicker(input: TraitsRenderInput): ReactNode {
+  if (
+    (input.threadRef === undefined && input.draftId === undefined) ||
+    !shouldRenderContextWindowControl(input)
+  ) {
+    return null;
+  }
+  return (
+    <ContextWindowPicker
+      provider={input.provider}
+      {...(input.instanceId ? { instanceId: input.instanceId } : {})}
+      models={input.models}
+      {...(input.threadRef ? { threadRef: input.threadRef } : {})}
+      {...(input.draftId ? { draftId: input.draftId } : {})}
+      model={input.model}
+      modelOptions={input.modelOptions}
+      {...(input.onThreadModelSelectionChange
+        ? { onThreadModelSelectionChange: input.onThreadModelSelectionChange }
+        : {})}
+    />
+  );
 }
