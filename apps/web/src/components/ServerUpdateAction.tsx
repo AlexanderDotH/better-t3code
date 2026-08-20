@@ -140,6 +140,14 @@ export function ServerUpdateAction({
     );
   }
 
+  if (selfUpdate === "container-managed") {
+    return (
+      <span className="text-muted-foreground text-xs">
+        Pull the updated image and recreate this container to update the server.
+      </span>
+    );
+  }
+
   if (selfUpdate === null) {
     const command = manualServerUpdateCommand(targetVersion);
     return (

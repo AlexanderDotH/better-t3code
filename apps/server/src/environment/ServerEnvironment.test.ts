@@ -16,8 +16,12 @@ const isServerEnvironmentIdPersistenceError = Schema.is(
 const makeServerEnvironmentLayer = (baseDir: string) =>
   ServerEnvironment.layer.pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)));
 
-const makeServerConfig = Effect.fn(function* (baseDir: string) {
+const makeServerConfig = Effect.fn(function* (
+  baseDir: string,
+  overrides: Partial<ServerConfig.ServerConfig["Service"]> = {},
+) {
   const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
+  yield* ServerConfig.ensureServerDirectories(derivedPaths);
 
   return {
     ...derivedPaths,
@@ -46,6 +50,7 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
     devAllowedOrigins: [],
     noBrowser: false,
     startupPresentation: "browser",
+    ...overrides,
   } satisfies ServerConfig.ServerConfig["Service"];
 });
 
@@ -76,6 +81,25 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(second.capabilities.environmentSettingsVersion).toBe(2);
       expect(second.capabilities.projectSettingsVersion).toBe(1);
       expect(second.capabilities.midChatProviderSwitching).toBe(true);
+    }),
+  );
+
+  it.effect("advertises container-managed updates for a container deployment", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-container-test-",
+      });
+      const config = yield* makeServerConfig(baseDir, { deploymentKind: "container" });
+      const descriptor = yield* Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        return yield* serverEnvironment.getDescriptor;
+      }).pipe(
+        Effect.provide(ServerEnvironment.layer.pipe(Layer.provide(ServerConfig.layer(config)))),
+      );
+
+      expect(descriptor.capabilities.serverSelfUpdate).toBe("container-managed");
+      expect(descriptor.capabilities.serverSelfUpdateProgress).toBeUndefined();
     }),
   );
 

@@ -19,6 +19,17 @@ it("keeps explicit bind hosts in the connection string", () => {
   expect(resolveHeadlessConnectionString("::1", 3773)).toBe("http://[::1]:3773");
 });
 
+it("prefers an explicitly advertised URL over container network interfaces", () => {
+  expect(
+    resolveHeadlessConnectionString(
+      "0.0.0.0",
+      3773,
+      {},
+      new URL("https://code.example.com/t3/ignored"),
+    ),
+  ).toBe("https://code.example.com/");
+});
+
 it("resolves wildcard hosts to a concrete external interface when one is available", () => {
   const connectionString = resolveHeadlessConnectionString("0.0.0.0", 3773, {
     en0: [

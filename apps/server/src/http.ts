@@ -44,6 +44,12 @@ const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const DESKTOP_RENDERER_ORIGINS = ["t3code://app", "t3code-dev://app"];
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
+const HEALTH_RESPONSE = HttpServerResponse.jsonUnsafe({ status: "ok" });
+
+export const healthRouteLayer = Layer.mergeAll(
+  HttpRouter.add("GET", "/healthz", HEALTH_RESPONSE),
+  HttpRouter.add("GET", "/readyz", HEALTH_RESPONSE),
+);
 
 export function assetResponseHeaders(filePath: string): Record<string, string> {
   return {

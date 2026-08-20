@@ -62,6 +62,22 @@ describe("serverRuntimeState", () => {
     }),
   );
 
+  it.effect("records the operator-advertised external URL separately from the bind origin", () =>
+    Effect.gen(function* () {
+      const state = yield* ServerRuntimeState.makePersistedServerRuntimeState({
+        config: {
+          host: "0.0.0.0",
+          devUrl: undefined,
+          advertisedUrl: new URL("https://code.example.com"),
+        },
+        port: 3_773,
+      });
+
+      assert.equal(state.origin, "http://127.0.0.1:3773");
+      assert.equal(state.advertisedUrl, "https://code.example.com/");
+    }),
+  );
+
   it.effect("treats a missing runtime state file as absent", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

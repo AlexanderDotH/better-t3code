@@ -16,6 +16,7 @@ import * as ServerSelfUpdate from "./selfUpdate.ts";
 
 interface HarnessOptions {
   readonly mode?: "web" | "desktop";
+  readonly deploymentKind?: "native" | "container";
   readonly managed?: boolean;
   readonly preflight?: "ready" | "blocked";
   readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
@@ -89,7 +90,13 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
     Effect.provideService(ProcessRunner.ProcessRunner, runner),
     Effect.provideService(ServiceLauncherClient.ServiceLauncherClient, launcher),
     Effect.provideService(HostProcessExecutablePath, "/usr/bin/node"),
-    Effect.provide(ServerConfig.layer({ ...config, mode: options.mode ?? "web" })),
+    Effect.provide(
+      ServerConfig.layer({
+        ...config,
+        mode: options.mode ?? "web",
+        ...(options.deploymentKind ? { deploymentKind: options.deploymentKind } : {}),
+      }),
+    ),
   );
   return { selfUpdate, order };
 });
@@ -118,6 +125,16 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         (yield* desktop.selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
       ).toContain("desktop app");
       expect([...web.order, ...desktop.order]).toEqual([]);
+    }),
+  );
+
+  it.effect("leaves container updates to the image lifecycle even when a launcher is present", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order } = yield* makeHarness({ deploymentKind: "container" });
+      expect(
+        (yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
+      ).toContain("recreate the container");
+      expect(order).toEqual([]);
     }),
   );
 
