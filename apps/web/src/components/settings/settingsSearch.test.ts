@@ -100,6 +100,20 @@ describe("searchSettings", () => {
     });
   });
 
+  it("routes chats-per-project searches to Appearance", () => {
+    expect(searchSettings("chats per project")).toEqual([
+      {
+        id: "chats-per-project",
+        title: "Chats per project",
+        to: "/settings/appearance",
+      },
+    ]);
+    expect(searchableSetting("chats-per-project")).toEqual({
+      id: "chats-per-project",
+      title: "Chats per project",
+    });
+  });
+
   it("routes checkpoint searches to project settings", () => {
     expect(searchSettings("checkpoints")).toEqual([
       {

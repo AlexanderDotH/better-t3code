@@ -34,7 +34,12 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 const DATABASE_NAME = "t3code:connection-runtime";
-const DATABASE_VERSION = 4;
+// Version 5 clears pre-pagination thread snapshots during the IndexedDB
+// upgrade. Some v2 records contain entire long-running threads and can exceed
+// tens of megabytes; reading and schema-decoding them merely to reject their
+// stale schema can exhaust the renderer heap during startup.
+const LEGACY_THREAD_CACHE_RESET_DATABASE_VERSION = 5;
+const DATABASE_VERSION = LEGACY_THREAD_CACHE_RESET_DATABASE_VERSION;
 const CATALOG_STORE_NAME = "catalog";
 const SHELL_STORE_NAME = "shell";
 const THREAD_STORE_NAME = "thread";
@@ -119,6 +124,32 @@ function persistenceError(
   });
 }
 
+export function upgradeConnectionStorageDatabase(
+  request: IDBOpenDBRequest,
+  oldVersion: number,
+): void {
+  const database = request.result;
+  if (!database.objectStoreNames.contains(CATALOG_STORE_NAME)) {
+    database.createObjectStore(CATALOG_STORE_NAME);
+  }
+  if (!database.objectStoreNames.contains(SHELL_STORE_NAME)) {
+    database.createObjectStore(SHELL_STORE_NAME);
+  }
+  if (!database.objectStoreNames.contains(THREAD_STORE_NAME)) {
+    database.createObjectStore(THREAD_STORE_NAME);
+  }
+  if (!database.objectStoreNames.contains(SERVER_CONFIG_STORE_NAME)) {
+    database.createObjectStore(SERVER_CONFIG_STORE_NAME);
+  }
+  if (!database.objectStoreNames.contains(VCS_REFS_STORE_NAME)) {
+    database.createObjectStore(VCS_REFS_STORE_NAME);
+  }
+
+  if (oldVersion > 0 && oldVersion < LEGACY_THREAD_CACHE_RESET_DATABASE_VERSION) {
+    request.transaction?.objectStore(THREAD_STORE_NAME).clear();
+  }
+}
+
 const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* () {
   return yield* Effect.callback<IDBDatabase, ConnectionTransientError>((resume) => {
     if (typeof indexedDB === "undefined") {
@@ -128,22 +159,8 @@ const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* (
       return;
     }
     const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
-    request.addEventListener("upgradeneeded", () => {
-      if (!request.result.objectStoreNames.contains(CATALOG_STORE_NAME)) {
-        request.result.createObjectStore(CATALOG_STORE_NAME);
-      }
-      if (!request.result.objectStoreNames.contains(SHELL_STORE_NAME)) {
-        request.result.createObjectStore(SHELL_STORE_NAME);
-      }
-      if (!request.result.objectStoreNames.contains(THREAD_STORE_NAME)) {
-        request.result.createObjectStore(THREAD_STORE_NAME);
-      }
-      if (!request.result.objectStoreNames.contains(SERVER_CONFIG_STORE_NAME)) {
-        request.result.createObjectStore(SERVER_CONFIG_STORE_NAME);
-      }
-      if (!request.result.objectStoreNames.contains(VCS_REFS_STORE_NAME)) {
-        request.result.createObjectStore(VCS_REFS_STORE_NAME);
-      }
+    request.addEventListener("upgradeneeded", (event) => {
+      upgradeConnectionStorageDatabase(request, event.oldVersion);
     });
     request.addEventListener("error", () => {
       resume(Effect.fail(catalogError("open", request.error ?? "Unknown IndexedDB error")));

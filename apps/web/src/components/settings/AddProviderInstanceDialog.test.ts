@@ -49,13 +49,14 @@ describe("resolveWizardNavigation", () => {
 });
 
 describe("provider driver groups", () => {
-  it("offers exactly the five native provider drivers", () => {
+  it("offers exactly the six native provider drivers", () => {
     expect(DRIVER_OPTIONS.map((option) => option.value)).toEqual([
       ProviderDriverKind.make("codex"),
       ProviderDriverKind.make("claudeAgent"),
       ProviderDriverKind.make("cursor"),
       ProviderDriverKind.make("grok"),
       ProviderDriverKind.make("opencode"),
+      ProviderDriverKind.make("gemini"),
     ]);
   });
 

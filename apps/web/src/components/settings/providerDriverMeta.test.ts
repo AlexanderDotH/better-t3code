@@ -32,10 +32,16 @@ const NATIVE_PROVIDER_DRIVERS = [
     label: "OpenCode",
     fields: ["binaryPath", "serverUrl", "serverPassword"],
   },
+  {
+    kind: "gemini",
+    label: "Gemini",
+    badgeLabel: "Early Access",
+    fields: [],
+  },
 ] as const;
 
 describe("providerDriverMeta", () => {
-  it("exposes exactly the five native provider drivers in upstream order", () => {
+  it("exposes exactly the six native provider drivers in upstream order", () => {
     expect(
       DRIVER_OPTIONS.map(({ value, label, badgeLabel }) => ({
         value,

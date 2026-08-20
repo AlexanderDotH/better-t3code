@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { afterEach, vi } from "vite-plus/test";
 
-import { makeCatalogBackend, makeCatalogStore } from "./storage";
+import { makeCatalogBackend, makeCatalogStore, upgradeConnectionStorageDatabase } from "./storage";
 
 const emptyCatalog = {
   schemaVersion: 1,
@@ -74,4 +74,46 @@ describe("makeCatalogBackend", () => {
       expect(setConnectionCatalog).toHaveBeenCalledWith("{}");
     }),
   );
+});
+
+describe("upgradeConnectionStorageDatabase", () => {
+  it("clears legacy thread snapshots when upgrading an existing database", () => {
+    const clear = vi.fn();
+    const objectStore = vi.fn(() => ({ clear }));
+    const createObjectStore = vi.fn();
+    const request = {
+      result: {
+        objectStoreNames: {
+          contains: () => true,
+        },
+        createObjectStore,
+      },
+      transaction: { objectStore },
+    } as unknown as IDBOpenDBRequest;
+
+    upgradeConnectionStorageDatabase(request, 4);
+
+    expect(objectStore).toHaveBeenCalledWith("thread");
+    expect(clear).toHaveBeenCalledOnce();
+    expect(createObjectStore).not.toHaveBeenCalled();
+  });
+
+  it("does not clear the thread store for a newly created database", () => {
+    const clear = vi.fn();
+    const objectStore = vi.fn(() => ({ clear }));
+    const request = {
+      result: {
+        objectStoreNames: {
+          contains: () => true,
+        },
+        createObjectStore: vi.fn(),
+      },
+      transaction: { objectStore },
+    } as unknown as IDBOpenDBRequest;
+
+    upgradeConnectionStorageDatabase(request, 0);
+
+    expect(objectStore).not.toHaveBeenCalled();
+    expect(clear).not.toHaveBeenCalled();
+  });
 });

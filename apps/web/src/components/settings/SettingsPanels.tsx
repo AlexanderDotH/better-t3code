@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type BackgroundActivityProfile,
+  DEFAULT_PROJECT_THREAD_PREVIEW_COUNT,
   type DesktopUpdateChannel,
   ProviderDriverKind,
   type ScopedThreadRef,
@@ -118,6 +119,12 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThemeLibrary } from "./ThemeSettings";
 import { SidebarLayoutSelector } from "./SidebarLayoutSetting";
+import { ProjectThreadPreviewCountSetting } from "./ProjectThreadPreviewCountSetting";
+import {
+  projectThreadPreviewSyncStatusText,
+  useProjectThreadPreviewCount,
+  useProjectThreadPreviewSyncStatus,
+} from "../../projectThreadPreviewSync";
 import {
   backgroundActivityOverrideSettings,
   backgroundActivitySharedPolicySettings,
@@ -463,6 +470,8 @@ export function useSettingsRestore(onRestored?: () => void) {
   } = useTheme();
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
+  const { count: projectThreadPreviewCount, setCount: setProjectThreadPreviewCount } =
+    useProjectThreadPreviewCount();
 
   const isTextGenerationModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
@@ -483,8 +492,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
-      ...(settings.sidebarThreadPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
-        ? ["Visible threads"]
+      ...(projectThreadPreviewCount !== DEFAULT_PROJECT_THREAD_PREVIEW_COUNT
+        ? ["Chats per project"]
         : []),
       ...(settings.sidebarProjectGroupingMode !==
       DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode
@@ -553,7 +562,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarProjectGroupingMode,
       settings.improvePromptBeforeSend,
-      settings.sidebarThreadPreviewCount,
+      projectThreadPreviewCount,
       settings.timestampFormat,
       settings.wordWrap,
       followSystem,
@@ -630,7 +639,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
-      sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
@@ -655,12 +663,14 @@ export function useSettingsRestore(onRestored?: () => void) {
       fontSizeCode: DEFAULT_UNIFIED_SETTINGS.fontSizeCode,
       fontSizeTerminal: DEFAULT_UNIFIED_SETTINGS.fontSizeTerminal,
     });
+    setProjectThreadPreviewCount(DEFAULT_PROJECT_THREAD_PREVIEW_COUNT);
     onRestored?.();
   }, [
     changedSettingLabels,
     clearThemeHalves,
     onRestored,
     setFollowSystem,
+    setProjectThreadPreviewCount,
     setTheme,
     setThemeHalf,
     theme,
@@ -955,6 +965,12 @@ export function AppearanceSettingsPanel() {
   const [isImportThemeOpen, setIsImportThemeOpen] = useState(false);
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
+  const { count: projectThreadPreviewCount, setCount: setProjectThreadPreviewCount } =
+    useProjectThreadPreviewCount();
+  const projectThreadPreviewSyncStatus = useProjectThreadPreviewSyncStatus();
+  const projectThreadPreviewStatusText =
+    projectThreadPreviewSyncStatusText(projectThreadPreviewSyncStatus) ??
+    (projectThreadPreviewSyncStatus.isSyncing ? "Syncing with connected servers…" : null);
   const environmentStageLabel = useEnvironmentStageLabel();
   const showEnvironmentIdentification =
     resolveEnvironmentIdentificationPillLabel(environmentStageLabel) !== null;
@@ -1083,6 +1099,11 @@ export function AppearanceSettingsPanel() {
               onChange={(legacySidebarEnabled) => updateSettings({ legacySidebarEnabled })}
             />
           }
+        />
+        <ProjectThreadPreviewCountSetting
+          count={projectThreadPreviewCount}
+          onChange={setProjectThreadPreviewCount}
+          status={projectThreadPreviewStatusText}
         />
       </SettingsSection>
 
@@ -1697,14 +1718,14 @@ function LegacyFeaturesSection() {
           <div className="relative space-y-1 overflow-visible pt-3 text-foreground">
             <SettingsRow
               {...searchableSetting("legacy-plan-mode")}
-              description="Shows the Build/Plan selector for other providers that support it, along with the /plan and /default commands and the Shift+Tab shortcut. Codex always includes these controls."
+              description="Brings back the Build/Plan selector in the composer along with the /plan and /default commands and the Shift+Tab shortcut. While off, every thread runs in Build mode."
               control={
                 <Switch
                   checked={settings.planModeEnabled}
                   onCheckedChange={(checked) =>
                     updateSettings({ planModeEnabled: Boolean(checked) })
                   }
-                  aria-label="Plan mode for other providers (legacy)"
+                  aria-label="Plan mode (legacy)"
                 />
               }
             />
