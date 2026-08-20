@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { CodeAppearanceSection } from "./appearance/sections/CodeAppearanceSection";
+import { ProjectThreadPreviewCountSection } from "./appearance/sections/ProjectThreadPreviewCountSection";
 import { TerminalAppearanceSection } from "./appearance/sections/TerminalAppearanceSection";
 import { TextAppearanceSection } from "./appearance/sections/TextAppearanceSection";
 import { ThreadListAppearanceSection } from "./appearance/sections/ThreadListAppearanceSection";
@@ -31,6 +32,7 @@ export function SettingsAppearanceRouteScreen() {
         }}
       >
         <ThreadListAppearanceSection />
+        <ProjectThreadPreviewCountSection />
         <TextAppearanceSection />
         <TerminalAppearanceSection />
         <CodeAppearanceSection />

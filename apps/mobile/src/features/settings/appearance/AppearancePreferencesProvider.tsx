@@ -2,6 +2,7 @@ import { createContext, use, useCallback, useEffect, useMemo, type ReactNode } f
 
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
+import type { ProjectThreadPreviewCount } from "@t3tools/contracts";
 
 import { Uniwind } from "uniwind";
 
@@ -13,11 +14,14 @@ import {
   type ResolvedAppearance,
 } from "../../../lib/appearancePreferences";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
+import { useProjectThreadPreviewSync } from "../../../state/use-project-thread-preview-sync";
 import { cacheTerminalFontSize } from "../../terminal/terminalUiState";
 
 interface AppearancePreferencesContextValue {
   /** Effective values with base-size derivation applied. Use this for rendering. */
-  readonly appearance: ResolvedAppearance;
+  readonly appearance: ResolvedAppearance & {
+    readonly projectThreadPreviewCount: ProjectThreadPreviewCount;
+  };
   readonly isReady: boolean;
   readonly setBaseFontSize: (value: number) => void;
   /** Pass null to clear the override and follow the base font size. */
@@ -25,6 +29,13 @@ interface AppearancePreferencesContextValue {
   /** Pass null to clear the override and follow the base font size. */
   readonly setCodeFontSize: (value: number | null) => void;
   readonly setCodeWordBreak: (value: boolean) => void;
+  readonly setProjectThreadPreviewCount: (value: ProjectThreadPreviewCount) => void;
+  readonly projectThreadPreviewSyncStatus: {
+    readonly isSyncing: boolean;
+    readonly failedEnvironmentLabels: readonly string[];
+    readonly deferredEnvironmentLabels: readonly string[];
+    readonly unsupportedEnvironmentLabels: readonly string[];
+  };
 }
 
 const AppearancePreferencesContext = createContext<AppearancePreferencesContextValue | null>(null);
@@ -49,6 +60,7 @@ function applyTextScaleVariables(baseFontSize: number) {
 export function AppearancePreferencesProvider(props: { readonly children: ReactNode }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const projectThreadPreviewSync = useProjectThreadPreviewSync();
   const preferences = useMemo(
     () =>
       resolveAppearancePreferences(
@@ -100,14 +112,32 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
 
   const value = useMemo(
     (): AppearancePreferencesContextValue => ({
-      appearance: resolveAppearance(preferences),
+      appearance: {
+        ...resolveAppearance(preferences),
+        projectThreadPreviewCount: projectThreadPreviewSync.count,
+      },
       isReady,
       setBaseFontSize,
       setTerminalFontSize,
       setCodeFontSize,
       setCodeWordBreak,
+      setProjectThreadPreviewCount: projectThreadPreviewSync.setCount,
+      projectThreadPreviewSyncStatus: {
+        isSyncing: projectThreadPreviewSync.isSyncing,
+        failedEnvironmentLabels: projectThreadPreviewSync.failedEnvironmentLabels,
+        deferredEnvironmentLabels: projectThreadPreviewSync.deferredEnvironmentLabels,
+        unsupportedEnvironmentLabels: projectThreadPreviewSync.unsupportedEnvironmentLabels,
+      },
     }),
-    [preferences, isReady, setBaseFontSize, setTerminalFontSize, setCodeFontSize, setCodeWordBreak],
+    [
+      preferences,
+      projectThreadPreviewSync,
+      isReady,
+      setBaseFontSize,
+      setTerminalFontSize,
+      setCodeFontSize,
+      setCodeWordBreak,
+    ],
   );
 
   return (

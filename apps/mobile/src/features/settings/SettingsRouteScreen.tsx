@@ -121,6 +121,7 @@ function LocalSettingsRouteScreen() {
             value={`${environmentCount}`}
             target="SettingsEnvironments"
           />
+          <SettingsRow icon="sparkles" label="Agents & Servers" target="SettingsAgents" />
         </SettingsSection>
 
         <GeneralSettingsSection />
@@ -466,6 +467,7 @@ function ConfiguredSettingsRouteScreen() {
             value={`${environmentCount}`}
             target="SettingsEnvironments"
           />
+          <SettingsRow icon="sparkles" label="Agents & Servers" target="SettingsAgents" />
           <SettingsSwitchRow
             icon="bell.badge"
             label="Device Notifications"
@@ -519,6 +521,7 @@ function ConfiguredSettingsRouteScreen() {
 function GeneralSettingsSection() {
   return (
     <SettingsSection title="General">
+      <SettingsRow icon="folder" label="Projects" target="SettingsProjects" />
       <SettingsRow icon="folder" label="Project Grouping" target="SettingsProjectGrouping" />
       <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
     </SettingsSection>
