@@ -30,6 +30,7 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import * as RpcSession from "../rpc/session.ts";
 import {
   makeEnvironmentSubagentState,
+  requestOlderSubagentActivities,
   SubagentSnapshotLoader,
   type EnvironmentSubagentState,
 } from "./subagents.ts";
@@ -80,10 +81,13 @@ const BASE_SUBAGENT: OrchestrationSubagentDetail = {
 
 type TestSubagentInput = OrchestrationSubagentStreamItem | Error;
 
-function testSession(client: WsRpcProtocolClient): RpcSession.RpcSession {
+function testSession(
+  client: WsRpcProtocolClient,
+  supportsPagination: boolean,
+): RpcSession.RpcSession {
   return {
     client,
-    initialConfig: Effect.never,
+    initialConfig: Effect.succeed({ subagentSnapshotPagination: supportsPagination } as never),
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,
@@ -99,16 +103,22 @@ function awaitSubagentState(
 
 const makeHarness = Effect.fn("TestEnvironmentSubagents.makeHarness")(function* (options?: {
   readonly httpSnapshot?: Option.Option<OrchestrationSubagentDetailSnapshot>;
+  readonly httpSnapshots?: ReadonlyArray<Option.Option<OrchestrationSubagentDetailSnapshot>>;
+  readonly supportsPagination?: boolean;
 }) {
   const inputs = yield* Queue.unbounded<TestSubagentInput>();
   const observed = yield* Queue.unbounded<EnvironmentSubagentState>();
   const subscriptionCount = yield* Ref.make(0);
   const loaderCalls = yield* Ref.make(0);
+  const loaderWindows = yield* Ref.make<
+    ReadonlyArray<{ readonly activityLimit: number; readonly beforeCursor?: string } | undefined>
+  >([]);
   const subscribeInputs = yield* Ref.make<
     ReadonlyArray<{
       readonly threadId: ThreadId;
       readonly subagentId: SubagentId;
       readonly afterSequence?: number;
+      readonly activityLimit?: number;
     }>
   >([]);
   const supervisorState = yield* SubscriptionRef.make<SupervisorConnectionState>(
@@ -125,6 +135,7 @@ const makeHarness = Effect.fn("TestEnvironmentSubagents.makeHarness")(function* 
       readonly threadId: ThreadId;
       readonly subagentId: SubagentId;
       readonly afterSequence?: number;
+      readonly activityLimit?: number;
     }) =>
       Stream.unwrap(
         Ref.updateAndGet(subscriptionCount, (count) => count + 1).pipe(
@@ -134,20 +145,30 @@ const makeHarness = Effect.fn("TestEnvironmentSubagents.makeHarness")(function* 
       ),
   } as unknown as WsRpcProtocolClient;
   const supervisorSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
-    Option.some(testSession(client)),
+    Option.some(testSession(client, options?.supportsPagination ?? true)),
   );
   const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(
     Option.some(PREPARED),
   );
   const snapshotLoader = SubagentSnapshotLoader.of({
-    load: (_prepared, threadId, subagentId) =>
-      Ref.update(loaderCalls, (count) => count + 1).pipe(
-        Effect.as(
-          threadId === THREAD_ID && subagentId === SUBAGENT_ID
-            ? (options?.httpSnapshot ?? Option.none<OrchestrationSubagentDetailSnapshot>())
-            : Option.none<OrchestrationSubagentDetailSnapshot>(),
-        ),
-      ),
+    load: (
+      _prepared,
+      threadId,
+      subagentId,
+      window?: { readonly activityLimit: number; readonly beforeCursor?: string },
+    ) =>
+      Effect.gen(function* () {
+        const call = yield* Ref.getAndUpdate(loaderCalls, (count) => count + 1);
+        yield* Ref.update(loaderWindows, (current) => [...current, window]);
+        if (threadId !== THREAD_ID || subagentId !== SUBAGENT_ID) {
+          return Option.none<OrchestrationSubagentDetailSnapshot>();
+        }
+        return (
+          options?.httpSnapshots?.[call] ??
+          options?.httpSnapshot ??
+          Option.none<OrchestrationSubagentDetailSnapshot>()
+        );
+      }),
   });
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: TARGET,
@@ -172,9 +193,14 @@ const makeHarness = Effect.fn("TestEnvironmentSubagents.makeHarness")(function* 
     observed,
     subscriptionCount,
     loaderCalls,
+    loaderWindows,
     subscribeInputs,
+    subagentState,
     supervisorSession,
-    replaceSession: SubscriptionRef.set(supervisorSession, Option.some(testSession(client))),
+    replaceSession: SubscriptionRef.set(
+      supervisorSession,
+      Option.some(testSession(client, options?.supportsPagination ?? true)),
+    ),
   };
 });
 
@@ -241,12 +267,94 @@ describe("EnvironmentSubagents", () => {
         threadId: THREAD_ID,
         subagentId: SUBAGENT_ID,
         afterSequence: SNAPSHOT_SEQUENCE,
+        activityLimit: 100,
       });
       expect(Option.getOrThrow(state.data).messages).toHaveLength(1);
       expect(Option.getOrThrow(state.data)).toMatchObject({
         origin: "t3-fetch",
         providerInstanceId: "claude-work",
         providerDriver: "claudeAgent",
+      });
+    }),
+  );
+
+  it.effect("loads bounded activity pages and merges older history on demand", () =>
+    Effect.gen(function* () {
+      const activity = (sequence: number) => ({
+        id: EventId.make(`activity-${sequence}`),
+        tone: "tool" as const,
+        kind: "tool.completed",
+        summary: `Activity ${sequence}`,
+        payload: { sequence },
+        turnId: null,
+        sequence,
+        createdAt: `2026-07-30T10:00:${sequence.toString().padStart(2, "0")}.000Z`,
+      });
+      const recent: OrchestrationSubagentDetailSnapshot = {
+        ...detailSnapshot(),
+        subagent: { ...BASE_SUBAGENT, activities: [activity(4), activity(5)] },
+        page: {
+          beforeCursor: "before-activity-4",
+          hasMore: true,
+          snapshotSequence: SNAPSHOT_SEQUENCE,
+          threadSequence: SNAPSHOT_SEQUENCE,
+        },
+      };
+      const older: OrchestrationSubagentDetailSnapshot = {
+        ...detailSnapshot(),
+        subagent: { ...BASE_SUBAGENT, activities: [activity(2), activity(3)] },
+        page: {
+          beforeCursor: null,
+          hasMore: false,
+          snapshotSequence: SNAPSHOT_SEQUENCE,
+          threadSequence: SNAPSHOT_SEQUENCE,
+        },
+      };
+      const harness = yield* makeHarness({
+        httpSnapshots: [Option.some(recent), Option.some(older)],
+      });
+
+      yield* awaitSubagentState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.activities.length === 2,
+      );
+      expect(requestOlderSubagentActivities(TARGET.environmentId, THREAD_ID, SUBAGENT_ID)).toBe(
+        true,
+      );
+
+      const state = yield* awaitSubagentState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.activities.length === 4,
+      );
+      expect(Option.getOrThrow(state.data).activities.map((entry) => entry.sequence)).toEqual([
+        2, 3, 4, 5,
+      ]);
+      expect(Option.getOrThrow(state.page).hasMore).toBe(false);
+      expect(yield* Ref.get(harness.loaderWindows)).toEqual([
+        { activityLimit: 100 },
+        { activityLimit: 200, beforeCursor: "before-activity-4" },
+      ]);
+    }),
+  );
+
+  it.effect("keeps full snapshots when the connected server lacks pagination", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        httpSnapshot: Option.some(detailSnapshot()),
+        supportsPagination: false,
+      });
+      yield* Queue.offer(harness.inputs, message("Legacy live output", 6));
+      yield* awaitSubagentState(
+        harness.observed,
+        (value) =>
+          Option.isSome(value.data) && value.data.value.messages[0]?.text === "Legacy live output",
+      );
+
+      expect(yield* Ref.get(harness.loaderWindows)).toEqual([undefined]);
+      expect((yield* Ref.get(harness.subscribeInputs))[0]).toEqual({
+        threadId: THREAD_ID,
+        subagentId: SUBAGENT_ID,
+        afterSequence: SNAPSHOT_SEQUENCE,
       });
     }),
   );
@@ -305,6 +413,26 @@ describe("EnvironmentSubagents", () => {
         "message-second",
       ]);
       expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+    }),
+  );
+
+  it.effect("returns cached transcript state to live after an empty resume", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        httpSnapshot: Option.some(detailSnapshot()),
+      });
+      yield* awaitSubagentState(
+        harness.observed,
+        (value) => value.status === "live" && Option.isSome(value.data),
+      );
+
+      yield* harness.replaceSession;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
+        yield* Effect.yieldNow;
+      }
+
+      expect((yield* SubscriptionRef.get(harness.subagentState)).status).toBe("live");
     }),
   );
 });

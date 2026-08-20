@@ -3,6 +3,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ModelCapabilities } from "
 
 import {
   buildProviderOptionSelectionsFromDescriptors,
+  CODEX_CONTEXT_WINDOW_CHOICES,
   createModelCapabilities,
   createModelSelection,
   getModelSelectionBooleanOptionValue,
@@ -12,6 +13,7 @@ import {
   getProviderOptionStringSelectionValue,
   normalizeCustomModelSlug,
   normalizeModelSlug,
+  resolveCodexContextWindowTokens,
 } from "./model.ts";
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
@@ -144,6 +146,44 @@ describe("descriptor helpers", () => {
     ).toBeUndefined();
     expect(getModelSelectionStringOptionValue(selection, "reasoningEffort")).toBe("high");
     expect(getModelSelectionBooleanOptionValue(selection, "fastMode")).toBe(true);
+  });
+});
+
+describe("Codex context window", () => {
+  it("offers twenty stable steps from model default through 1.05M tokens", () => {
+    expect(CODEX_CONTEXT_WINDOW_CHOICES).toHaveLength(20);
+    expect(CODEX_CONTEXT_WINDOW_CHOICES[0]).toEqual({
+      id: "default",
+      label: "Model default",
+    });
+    expect(CODEX_CONTEXT_WINDOW_CHOICES.at(-1)).toEqual({
+      id: "1048576",
+      label: "1.05M",
+    });
+  });
+
+  it("resolves only advertised numeric selections to runtime token counts", () => {
+    expect(
+      resolveCodexContextWindowTokens(
+        createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-sol", [
+          { id: "contextWindow", value: "262144" },
+        ]),
+      ),
+    ).toBe(262_144);
+    expect(
+      resolveCodexContextWindowTokens(
+        createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-sol", [
+          { id: "contextWindow", value: "default" },
+        ]),
+      ),
+    ).toBeUndefined();
+    expect(
+      resolveCodexContextWindowTokens(
+        createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-sol", [
+          { id: "contextWindow", value: "999999999" },
+        ]),
+      ),
+    ).toBeUndefined();
   });
 });
 

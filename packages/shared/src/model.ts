@@ -77,6 +77,60 @@ export function getModelSelectionBooleanOptionValue(
   return getProviderOptionBooleanSelectionValue(modelSelection?.options, id);
 }
 
+export const CODEX_CONTEXT_WINDOW_OPTION_ID = "contextWindow";
+export const CODEX_CONTEXT_WINDOW_DEFAULT_VALUE = "default";
+
+/**
+ * Stable slider positions for the per-chat Codex context override. The first
+ * position delegates to the model catalog; numeric positions use explicit
+ * token counts accepted by Codex's `model_context_window` setting.
+ */
+export const CODEX_CONTEXT_WINDOW_CHOICES = [
+  { id: CODEX_CONTEXT_WINDOW_DEFAULT_VALUE, label: "Model default" },
+  { id: "16384", label: "16K" },
+  { id: "32768", label: "32K" },
+  { id: "49152", label: "48K" },
+  { id: "65536", label: "64K" },
+  { id: "81920", label: "80K" },
+  { id: "98304", label: "96K" },
+  { id: "131072", label: "128K" },
+  { id: "163840", label: "160K" },
+  { id: "196608", label: "192K" },
+  { id: "262144", label: "256K" },
+  { id: "327680", label: "320K" },
+  { id: "393216", label: "384K" },
+  { id: "458752", label: "448K" },
+  { id: "524288", label: "512K" },
+  { id: "655360", label: "640K" },
+  { id: "786432", label: "768K" },
+  { id: "917504", label: "896K" },
+  { id: "1000000", label: "1M" },
+  { id: "1048576", label: "1.05M" },
+] as const;
+
+export const CODEX_CONTEXT_WINDOW_DESCRIPTOR = {
+  id: CODEX_CONTEXT_WINDOW_OPTION_ID,
+  label: "Context window",
+  description: "Override the active model context window for this chat.",
+  type: "select",
+  options: CODEX_CONTEXT_WINDOW_CHOICES,
+} as const satisfies ProviderOptionDescriptor;
+
+const CODEX_CONTEXT_WINDOW_TOKEN_VALUES = new Set<string>(
+  CODEX_CONTEXT_WINDOW_CHOICES.slice(1).map((choice) => choice.id),
+);
+
+export function resolveCodexContextWindowTokens(
+  modelSelection: ModelSelection | null | undefined,
+): number | undefined {
+  const value = getModelSelectionStringOptionValue(modelSelection, CODEX_CONTEXT_WINDOW_OPTION_ID);
+  if (!value || !CODEX_CONTEXT_WINDOW_TOKEN_VALUES.has(value)) {
+    return undefined;
+  }
+  const tokens = Number(value);
+  return Number.isSafeInteger(tokens) && tokens > 0 ? tokens : undefined;
+}
+
 function resolveDescriptorChoiceValue(
   descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
   raw: string | null | undefined,

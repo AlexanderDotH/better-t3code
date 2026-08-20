@@ -22,6 +22,7 @@ describe("createEnvironmentSubagentStateAtoms", () => {
     const subagentId = SubagentId.make("agent-1");
     const atom = subagents.stateAtom(environmentId, threadId, subagentId);
 
+    expect(SUBAGENT_STATE_IDLE_TTL_MS).toBe(30_000);
     expect(atom.idleTTL).toBe(SUBAGENT_STATE_IDLE_TTL_MS);
     expect(subagents.stateAtom(environmentId, threadId, subagentId)).toBe(atom);
     expect(subagents.stateAtom(environmentId, threadId, SubagentId.make("agent-2"))).not.toBe(atom);

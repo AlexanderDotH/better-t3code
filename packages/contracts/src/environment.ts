@@ -88,6 +88,15 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       Missing on older servers, so clients retain configuration-only MCP UI
       and do not issue workspace-specific runtime requests. */
   mcpWorkspaceVersion: Schema.optionalKey(PositiveInt),
+  /** Versioned Fetch, prompt-improvement, plan-review, subagent, and transcript surface.
+      Missing on older servers, so clients do not present extended agent actions. */
+  agentWorkflowVersion: Schema.optionalKey(PositiveInt),
+  /** Versioned provider, skill, speech, and import administration surface.
+      Missing on older servers, so clients retain connection-only settings. */
+  environmentSettingsVersion: Schema.optionalKey(PositiveInt),
+  /** Versioned project metadata and agent-coordination administration surface.
+      Missing on older servers, so clients keep project settings read-only. */
+  projectSettingsVersion: Schema.optionalKey(PositiveInt),
   midChatProviderSwitching: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;

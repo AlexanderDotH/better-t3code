@@ -18,6 +18,11 @@ import { buildEnvironmentAuthHeaders, withEnvironmentCredentials } from "./envir
 
 const DEFAULT_SUBAGENT_SNAPSHOT_TIMEOUT_MS = 6_000;
 
+export interface SubagentSnapshotWindow {
+  readonly activityLimit: number;
+  readonly beforeCursor?: string;
+}
+
 export function environmentSubagentSnapshotPath(
   threadId: ThreadId,
   subagentId: SubagentId,
@@ -38,6 +43,7 @@ export const fetchEnvironmentSubagentSnapshot = Effect.fn(
   readonly subagentId: SubagentId;
   readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
   readonly timeoutMs?: number;
+  readonly window?: SubagentSnapshotWindow;
 }) {
   const requestUrl = environmentEndpointUrl(
     input.prepared.httpBaseUrl,
@@ -61,6 +67,12 @@ export const fetchEnvironmentSubagentSnapshot = Effect.fn(
           threadId: input.threadId,
           subagentId: input.subagentId,
         },
+        payload: {
+          ...(input.window !== undefined ? { activityLimit: input.window.activityLimit } : {}),
+          ...(input.window?.beforeCursor !== undefined
+            ? { beforeCursor: input.window.beforeCursor }
+            : {}),
+        },
         headers,
       }),
     ),
@@ -76,6 +88,7 @@ export class SubagentSnapshotLoader extends Context.Service<
       prepared: PreparedConnection,
       threadId: ThreadId,
       subagentId: SubagentId,
+      window?: SubagentSnapshotWindow,
     ) => Effect.Effect<Option.Option<OrchestrationSubagentDetailSnapshot>>;
   }
 >()("@t3tools/client-runtime/state/subagentSnapshotHttp/SubagentSnapshotLoader") {}
@@ -91,12 +104,13 @@ export const subagentSnapshotLoaderLayer: Layer.Layer<
     const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
 
     return SubagentSnapshotLoader.of({
-      load: (prepared, threadId, subagentId) =>
+      load: (prepared, threadId, subagentId, window) =>
         fetchEnvironmentSubagentSnapshot({
           prepared,
           threadId,
           subagentId,
           signer,
+          ...(window !== undefined ? { window } : {}),
         }).pipe(
           Effect.map(Option.some<OrchestrationSubagentDetailSnapshot>),
           Effect.provideService(HttpClient.HttpClient, httpClient),

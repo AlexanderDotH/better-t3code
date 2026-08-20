@@ -304,7 +304,8 @@ export function applySubagentDetailEvent(
       const proposedPlans = [
         ...subagent.proposedPlans.filter((entry) => entry.id !== event.payload.proposedPlan.id),
         event.payload.proposedPlan,
-      ].toSorted(
+      ];
+      proposedPlans.sort(
         (left, right) =>
           left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
       );
@@ -321,7 +322,8 @@ export function applySubagentDetailEvent(
       const activities = [
         ...subagent.activities.filter((entry) => entry.id !== event.payload.activity.id),
         event.payload.activity,
-      ].toSorted(compareActivities);
+      ];
+      activities.sort(compareActivities);
       return {
         kind: "updated",
         subagent: {

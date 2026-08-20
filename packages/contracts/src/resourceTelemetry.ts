@@ -1,9 +1,9 @@
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { HostPowerSnapshot } from "./background.ts";
 
-export const RESOURCE_MONITOR_PROTOCOL_VERSION = 2 as const;
+export const RESOURCE_MONITOR_PROTOCOL_VERSION = 3 as const;
 
 export const ResourceTelemetryIoSemantics = Schema.Literals([
   "storage",
@@ -76,6 +76,14 @@ export const ResourceMonitorProcessSample = Schema.Struct({
   ioSemantics: Schema.Literals(["storage", "all-io"]),
 });
 export type ResourceMonitorProcessSample = typeof ResourceMonitorProcessSample.Type;
+
+export const ResourceMonitorHostMemory = Schema.Struct({
+  totalBytes: NonNegativeInt,
+  availableBytes: NonNegativeInt,
+  swapTotalBytes: NonNegativeInt,
+  swapFreeBytes: NonNegativeInt,
+});
+export type ResourceMonitorHostMemory = typeof ResourceMonitorHostMemory.Type;
 
 export const ResourceMonitorConfigureCommand = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
@@ -161,6 +169,7 @@ export const ResourceMonitorSnapshotEvent = Schema.Struct({
   scannedProcessCount: NonNegativeInt,
   retainedProcessCount: NonNegativeInt,
   inaccessibleProcessCount: NonNegativeInt,
+  memory: ResourceMonitorHostMemory,
   requestId: Schema.optionalKey(TrimmedNonEmptyString),
   externalProcesses: Schema.optionalKey(Schema.Array(ResourceMonitorExternalProcess)),
   processes: Schema.Array(ResourceMonitorProcessSample),
@@ -370,6 +379,27 @@ export const ResourceTelemetrySnapshot = Schema.Struct({
   health: ResourceTelemetryHealth,
 });
 export type ResourceTelemetrySnapshot = typeof ResourceTelemetrySnapshot.Type;
+
+export const ResourceProtectionState = Schema.Literals([
+  "normal",
+  "waiting",
+  "throttled",
+  "recovering",
+  "unavailable",
+]);
+export type ResourceProtectionState = typeof ResourceProtectionState.Type;
+
+/** Ephemeral server authority for admission and provider throttling state. */
+export const ResourceProtectionSnapshot = Schema.Struct({
+  state: ResourceProtectionState,
+  totalMemoryBytes: NonNegativeInt,
+  availableMemoryBytes: NonNegativeInt,
+  reservedMemoryBytes: NonNegativeInt,
+  coreReserveBytes: NonNegativeInt,
+  waitingStarts: NonNegativeInt,
+  affectedThreadIds: Schema.Array(ThreadId),
+});
+export type ResourceProtectionSnapshot = typeof ResourceProtectionSnapshot.Type;
 
 export const ResourceTelemetryHistoryInput = Schema.Struct({
   windowMs: NonNegativeInt,

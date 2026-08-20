@@ -137,6 +137,8 @@ export const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 export const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 export const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 export const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
+export const GEMINI_DRIVER_KIND = ProviderDriverKind.make("gemini");
+export const GEMINI_DEFAULT_MODEL = "gemini-3.6-flash";
 
 export const DEFAULT_MODEL = "gpt-5.6-sol";
 
@@ -159,6 +161,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [CURSOR_DRIVER_KIND]: "auto",
   [GROK_DRIVER_KIND]: "grok-build",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [GEMINI_DRIVER_KIND]: GEMINI_DEFAULT_MODEL,
 };
 
 /** Per-provider text generation model defaults. */
@@ -169,6 +172,7 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [GEMINI_DRIVER_KIND]: GEMINI_DEFAULT_MODEL,
 };
 export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER =
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER;
@@ -230,4 +234,5 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CURSOR_DRIVER_KIND]: "Cursor",
   [GROK_DRIVER_KIND]: "Grok",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
+  [GEMINI_DRIVER_KIND]: "Gemini",
 };

@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { NonNegativeInt, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { ThreadEnvMode } from "./environment.ts";
 import { McpSettings, McpServerDefinition } from "./mcp.ts";
 import {
@@ -15,6 +15,26 @@ import {
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
 import { SkillSettings } from "./skills.ts";
+
+// ── Synchronized Project Thread Preview Settings ───────────────
+
+export const MIN_PROJECT_THREAD_PREVIEW_COUNT = 1;
+export const MAX_PROJECT_THREAD_PREVIEW_COUNT = 15;
+export const ProjectThreadPreviewCount = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_PROJECT_THREAD_PREVIEW_COUNT,
+    maximum: MAX_PROJECT_THREAD_PREVIEW_COUNT,
+  }),
+);
+export type ProjectThreadPreviewCount = typeof ProjectThreadPreviewCount.Type;
+export const DEFAULT_PROJECT_THREAD_PREVIEW_COUNT: ProjectThreadPreviewCount = 3;
+
+export const ProjectThreadPreviewSyncRecord = Schema.Struct({
+  count: ProjectThreadPreviewCount,
+  updatedAt: NonNegativeInt,
+  updateId: TrimmedNonEmptyString,
+});
+export type ProjectThreadPreviewSyncRecord = typeof ProjectThreadPreviewSyncRecord.Type;
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -37,16 +57,12 @@ export const SidebarProjectGroupingMode = Schema.Literals([
 ]);
 export type SidebarProjectGroupingMode = typeof SidebarProjectGroupingMode.Type;
 export const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
-export const MIN_SIDEBAR_THREAD_PREVIEW_COUNT = 1;
-export const MAX_SIDEBAR_THREAD_PREVIEW_COUNT = 15;
-export const SidebarThreadPreviewCount = Schema.Int.check(
-  Schema.isBetween({
-    minimum: MIN_SIDEBAR_THREAD_PREVIEW_COUNT,
-    maximum: MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
-  }),
-);
-export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
-export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 4;
+export const MIN_SIDEBAR_THREAD_PREVIEW_COUNT = MIN_PROJECT_THREAD_PREVIEW_COUNT;
+export const MAX_SIDEBAR_THREAD_PREVIEW_COUNT = MAX_PROJECT_THREAD_PREVIEW_COUNT;
+export const SidebarThreadPreviewCount = ProjectThreadPreviewCount;
+export type SidebarThreadPreviewCount = ProjectThreadPreviewCount;
+export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount =
+  DEFAULT_PROJECT_THREAD_PREVIEW_COUNT;
 export const MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 1;
 export const MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 90;
 export const SidebarAutoSettleAfterDays = Schema.Number.check(
@@ -179,8 +195,8 @@ export const ClientSettingsSchema = Schema.Struct({
       modelOrder: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
     }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-  // Codex exposes plan mode by default. This legacy flag also restores it for
-  // other providers that advertise interaction-mode support.
+  // Legacy plan mode. The composer's Build/Plan controls are hidden by default;
+  // this flag restores them for providers that advertise interaction-mode support.
   planModeEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // Legacy sidebar (the original per-project tree). Deliberately a fresh key
   // (was `sidebarV2Enabled` + `sidebarV2ConfiguredByUser`): decoding drops the
@@ -203,6 +219,7 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarThreadSortOrder: SidebarThreadSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_SORT_ORDER)),
   ),
+  projectThreadPreviewMigrationVersion: Schema.optionalKey(Schema.Literal(1)),
   sidebarThreadPreviewCount: SidebarThreadPreviewCount.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT)),
   ),
@@ -437,6 +454,18 @@ export const GrokSettings = makeProviderSettingsSchema(
 );
 export type GrokSettings = typeof GrokSettings.Type;
 
+export const GeminiSettings = makeProviderSettingsSchema({
+  enabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+  customModels: Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+});
+export type GeminiSettings = typeof GeminiSettings.Type;
+
 export const OpenCodeSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -651,6 +680,7 @@ export const DEFAULT_PARALLEL_PLAN_REVIEW_MODEL_SELECTION: ModelSelection = {
 };
 
 export const ServerSettings = Schema.Struct({
+  projectThreadPreviewSyncRecord: Schema.optionalKey(ProjectThreadPreviewSyncRecord),
   // Legacy token-by-token assistant output. Persisted settings and patches
   // using the former `enableAssistantStreaming` key are normalized at the
   // server boundary; current clients only receive this canonical key.
@@ -725,6 +755,7 @@ export const ServerSettings = Schema.Struct({
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    gemini: GeminiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -826,6 +857,11 @@ const GrokSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const GeminiSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
 const OpenCodeSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
@@ -856,6 +892,7 @@ const SecretSettingValuePatch = Schema.Struct({
 
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
+  projectThreadPreviewSyncRecord: Schema.optionalKey(ProjectThreadPreviewSyncRecord),
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
   /** @deprecated Use `enableLegacyTokenStreaming`. Kept for mixed-version clients. */
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
@@ -921,6 +958,7 @@ export const ServerSettingsPatch = Schema.Struct({
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
+      gemini: Schema.optionalKey(GeminiSettingsPatch),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual
@@ -978,6 +1016,7 @@ export const ClientSettingsPatch = Schema.Struct({
   ),
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
+  projectThreadPreviewMigrationVersion: Schema.optionalKey(Schema.Literal(1)),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   voiceInputOutputLanguage: Schema.optionalKey(VoiceInputOutputLanguage),

@@ -8,6 +8,7 @@ import {
 const CODEX_DRIVER = "codex";
 const SERVICE_TIER_OPTION = "serviceTier";
 const LEGACY_FAST_MODE_OPTION = "fastMode";
+const CONTEXT_WINDOW_OPTION = "contextWindow";
 const STANDARD_SERVICE_TIER = "default";
 const FAST_SERVICE_TIER = "priority";
 const LEGACY_FAST_SERVICE_TIER = "fast";
@@ -97,6 +98,12 @@ function withoutCodexSpeedOptions(
   );
 }
 
+function withoutCodexStickyChatOptions(
+  options: ReadonlyArray<ProviderOptionSelection> | undefined,
+): Array<ProviderOptionSelection> {
+  return withoutCodexSpeedOptions(options).filter((option) => option.id !== CONTEXT_WINDOW_OPTION);
+}
+
 function withOptions(
   selection: ModelSelection,
   options: ReadonlyArray<ProviderOptionSelection>,
@@ -144,5 +151,5 @@ export function toStickyModelSelection(input: {
   if (input.provider !== CODEX_DRIVER) {
     return input.selection;
   }
-  return withOptions(input.selection, withoutCodexSpeedOptions(input.selection.options));
+  return withOptions(input.selection, withoutCodexStickyChatOptions(input.selection.options));
 }

@@ -46,18 +46,30 @@ describe("subagent transport contracts", () => {
     expect(ORCHESTRATION_WS_METHODS.subscribeSubagent).toBe("orchestration.subscribeSubagent");
   });
 
-  it("decodes a subagent detail snapshot with its routing identity", () => {
+  it("decodes a paged subagent detail snapshot with its routing identity", () => {
     const decode = Schema.decodeUnknownSync(OrchestrationSubagentDetailSnapshot);
 
     const snapshot = decode({
       snapshotSequence: 42,
       threadId: "thread-transport",
       subagent,
+      page: {
+        beforeCursor: "older-activities",
+        hasMore: true,
+        snapshotSequence: 42,
+        threadSequence: 40,
+      },
     });
 
     expect(snapshot.snapshotSequence).toBe(42);
     expect(snapshot.threadId).toBe("thread-transport");
     expect(snapshot.subagent.id).toBe("agent-contracts");
+    expect(snapshot.page).toEqual({
+      beforeCursor: "older-activities",
+      hasMore: true,
+      snapshotSequence: 42,
+      threadSequence: 40,
+    });
   });
 
   it("decodes resumable subagent subscription input", () => {
@@ -68,11 +80,13 @@ describe("subagent transport contracts", () => {
         threadId: "thread-transport",
         subagentId: "agent-contracts",
         afterSequence: 42,
+        activityLimit: 100,
       }),
     ).toMatchObject({
       threadId: "thread-transport",
       subagentId: "agent-contracts",
       afterSequence: 42,
+      activityLimit: 100,
     });
   });
 

@@ -8,17 +8,27 @@ import {
   DEFAULT_AGENT_ENHANCEMENT_SETTINGS,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_PARALLEL_PLAN_REVIEW_MODEL_SELECTION,
+  DEFAULT_PROJECT_THREAD_PREVIEW_COUNT,
   DEFAULT_SERVER_SETTINGS,
+  ProjectThreadPreviewCount,
+  ProjectThreadPreviewSyncRecord,
   ServerSettings,
   ServerSettingsPatch,
+  SidebarThreadPreviewCount,
 } from "./settings.ts";
 
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
 const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
+const decodeProjectThreadPreviewCount = Schema.decodeUnknownSync(ProjectThreadPreviewCount);
+const decodeSidebarThreadPreviewCount = Schema.decodeUnknownSync(SidebarThreadPreviewCount);
+const decodeProjectThreadPreviewSyncRecord = Schema.decodeUnknownSync(
+  ProjectThreadPreviewSyncRecord,
+);
 const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+const encodeProjectThreadPreviewSyncRecord = Schema.encodeSync(ProjectThreadPreviewSyncRecord);
 
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
@@ -106,18 +116,83 @@ describe("ClientSettings environment identification", () => {
 });
 
 describe("ClientSettings sidebar thread preview count", () => {
-  it("defaults to four visible chats per project when omitted", () => {
-    expect(decodeClientSettings({}).sidebarThreadPreviewCount).toBe(4);
+  it("defaults to three visible chats per project when omitted", () => {
+    expect(decodeClientSettings({}).sidebarThreadPreviewCount).toBe(3);
   });
 
-  it("exposes four as the default client setting", () => {
-    expect(DEFAULT_CLIENT_SETTINGS.sidebarThreadPreviewCount).toBe(4);
+  it("exposes three through both the project and legacy sidebar defaults", () => {
+    expect(DEFAULT_PROJECT_THREAD_PREVIEW_COUNT).toBe(3);
+    expect(DEFAULT_CLIENT_SETTINGS.sidebarThreadPreviewCount).toBe(3);
   });
 
   it("preserves an explicitly configured six-chat preview", () => {
     expect(decodeClientSettings({ sidebarThreadPreviewCount: 6 }).sidebarThreadPreviewCount).toBe(
       6,
     );
+  });
+
+  it("tracks completion of the one-time legacy preview migration", () => {
+    expect(decodeClientSettings({}).projectThreadPreviewMigrationVersion).toBeUndefined();
+    expect(
+      decodeClientSettings({ projectThreadPreviewMigrationVersion: 1 })
+        .projectThreadPreviewMigrationVersion,
+    ).toBe(1);
+    expect(
+      decodeClientSettingsPatch({ projectThreadPreviewMigrationVersion: 1 })
+        .projectThreadPreviewMigrationVersion,
+    ).toBe(1);
+    expect(() => decodeClientSettingsPatch({ projectThreadPreviewMigrationVersion: 2 })).toThrow();
+  });
+
+  it.each([1, 6, 15])("accepts a project preview count within 1..15: %s", (value) => {
+    expect(decodeProjectThreadPreviewCount(value)).toBe(value);
+    expect(decodeSidebarThreadPreviewCount(value)).toBe(value);
+  });
+
+  it.each([0, 16, 2.5])("rejects an invalid project preview count: %s", (value) => {
+    expect(() => decodeProjectThreadPreviewCount(value)).toThrow();
+    expect(() => decodeClientSettingsPatch({ sidebarThreadPreviewCount: value })).toThrow();
+  });
+});
+
+describe("ProjectThreadPreviewSyncRecord", () => {
+  const record = {
+    count: 6,
+    updatedAt: 1_787_178_400_000,
+    updateId: "device-a:preview-6",
+  } as const;
+
+  it("round-trips a synchronized explicit six-chat preview", () => {
+    const decoded = decodeProjectThreadPreviewSyncRecord(record);
+    const encoded = encodeProjectThreadPreviewSyncRecord(decoded);
+
+    expect(encoded).toEqual(record);
+    expect(decodeProjectThreadPreviewSyncRecord(encoded)).toEqual(record);
+  });
+
+  it("is optional in legacy server settings and accepted by settings patches", () => {
+    expect(decodeServerSettings({}).projectThreadPreviewSyncRecord).toBeUndefined();
+    expect(decodeServerSettingsPatch({})).not.toHaveProperty("projectThreadPreviewSyncRecord");
+
+    const decodedSettings = decodeServerSettings({ projectThreadPreviewSyncRecord: record });
+    expect(encodeServerSettings(decodedSettings).projectThreadPreviewSyncRecord).toEqual(record);
+    expect(
+      decodeServerSettingsPatch({ projectThreadPreviewSyncRecord: record })
+        .projectThreadPreviewSyncRecord,
+    ).toEqual(record);
+  });
+
+  it.each([
+    { ...record, count: 0 },
+    { ...record, count: 16 },
+    { ...record, updatedAt: -1 },
+    { ...record, updatedAt: 1.5 },
+    { ...record, updateId: "   " },
+  ])("rejects an invalid synchronized record: $record", (invalidRecord) => {
+    expect(() => decodeProjectThreadPreviewSyncRecord(invalidRecord)).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({ projectThreadPreviewSyncRecord: invalidRecord }),
+    ).toThrow();
   });
 });
 
@@ -254,7 +329,7 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
 });
 
 describe("ServerSettings native provider boundary", () => {
-  it("hydrates defaults for exactly the five native providers", () => {
+  it("hydrates defaults for exactly the six native providers", () => {
     const decoded = decodeServerSettings({});
 
     expect(Object.keys(decoded.providers)).toEqual([
@@ -263,6 +338,7 @@ describe("ServerSettings native provider boundary", () => {
       "cursor",
       "grok",
       "opencode",
+      "gemini",
     ]);
   });
 
@@ -274,7 +350,7 @@ describe("ServerSettings native provider boundary", () => {
         cursor: { binaryPath: "  /usr/local/bin/cursor-agent  " },
         grok: { binaryPath: "  /usr/local/bin/grok  " },
         opencode: { binaryPath: "  /usr/local/bin/opencode  " },
-        gemini: { apiKey: "  gemini-key  " },
+        gemini: { enabled: true, customModels: ["gemini-custom"] },
         openrouter: { apiKey: "  gateway-key  " },
         nvidiaNim: { apiKey: "  nvapi-key  " },
         localOpenAi: { v1BaseUrl: "  http://127.0.0.1:11434/v1  " },
@@ -292,8 +368,13 @@ describe("ServerSettings native provider boundary", () => {
       "cursor",
       "grok",
       "opencode",
+      "gemini",
     ]);
     expect(patch.providers?.codex?.binaryPath).toBe("/usr/local/bin/codex");
+    expect(patch.providers?.gemini).toEqual({
+      enabled: true,
+      customModels: ["gemini-custom"],
+    });
   });
 });
 

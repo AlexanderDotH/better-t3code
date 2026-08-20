@@ -34,6 +34,33 @@ describe("serverSettings helpers", () => {
     ).toBe(false);
   });
 
+  it("replaces the project thread preview sync record atomically and preserves it when omitted", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectThreadPreviewSyncRecord: {
+        count: 3,
+        updatedAt: 1_777_000_000_000,
+        updateId: "device-a:initial",
+      },
+    };
+    const replacement = {
+      count: 6,
+      updatedAt: 1_777_000_001_000,
+      updateId: "device-b:replacement",
+    };
+
+    const replaced = applyServerSettingsPatch(current, {
+      projectThreadPreviewSyncRecord: replacement,
+    });
+    const afterUnrelatedPatch = applyServerSettingsPatch(replaced, {
+      addProjectBaseDirectory: "~/Development",
+    });
+
+    expect(replaced.projectThreadPreviewSyncRecord).toEqual(replacement);
+    expect(afterUnrelatedPatch.projectThreadPreviewSyncRecord).toEqual(replacement);
+    expect(afterUnrelatedPatch.addProjectBaseDirectory).toBe("~/Development");
+  });
+
   it("normalizes optional persisted strings", () => {
     expect(normalizePersistedServerSettingString(undefined)).toBeUndefined();
     expect(normalizePersistedServerSettingString("   ")).toBeUndefined();

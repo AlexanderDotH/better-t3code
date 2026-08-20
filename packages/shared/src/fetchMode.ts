@@ -88,13 +88,15 @@ function resolveManualSelection(
 function orderedCodexProviders(
   providers: ReadonlyArray<ServerProvider>,
 ): ReadonlyArray<ServerProvider> {
-  return providers
-    .filter((provider) => provider.driver === CODEX_DRIVER && isFetchCapableProvider(provider))
-    .toSorted((left, right) => {
-      if (left.instanceId === DEFAULT_CODEX_INSTANCE) return -1;
-      if (right.instanceId === DEFAULT_CODEX_INSTANCE) return 1;
-      return left.instanceId.localeCompare(right.instanceId);
-    });
+  const codexProviders = providers.filter(
+    (provider) => provider.driver === CODEX_DRIVER && isFetchCapableProvider(provider),
+  );
+  codexProviders.sort((left, right) => {
+    if (left.instanceId === DEFAULT_CODEX_INSTANCE) return -1;
+    if (right.instanceId === DEFAULT_CODEX_INSTANCE) return 1;
+    return left.instanceId.localeCompare(right.instanceId);
+  });
+  return codexProviders;
 }
 
 function findBuiltInModel(

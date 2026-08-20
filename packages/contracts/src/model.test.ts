@@ -8,6 +8,7 @@ import {
   CURSOR_DRIVER_KIND,
   DEFAULT_AGENT_REASONING_EFFORT,
   DEFAULT_MODEL_BY_PROVIDER,
+  GEMINI_DRIVER_KIND,
   GROK_DRIVER_KIND,
   ModelCapabilities,
   OPENCODE_DRIVER_KIND,
@@ -25,6 +26,7 @@ describe("multi-provider model contracts", () => {
       [CURSOR_DRIVER_KIND]: "auto",
       [GROK_DRIVER_KIND]: "grok-build",
       [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+      [GEMINI_DRIVER_KIND]: "gemini-3.6-flash",
     });
   });
 
@@ -35,6 +37,7 @@ describe("multi-provider model contracts", () => {
       [CURSOR_DRIVER_KIND]: "Cursor",
       [GROK_DRIVER_KIND]: "Grok",
       [OPENCODE_DRIVER_KIND]: "OpenCode",
+      [GEMINI_DRIVER_KIND]: "Gemini",
     });
   });
 

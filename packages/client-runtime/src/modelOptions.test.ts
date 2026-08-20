@@ -144,7 +144,7 @@ describe("normalizeClientModelSelection", () => {
 });
 
 describe("toStickyModelSelection", () => {
-  it("keeps reasoning sticky while service tier remains scoped to the current Codex chat", () => {
+  it("keeps reasoning sticky while speed and context remain scoped to the current Codex chat", () => {
     expect(
       toStickyModelSelection({
         provider: CODEX,
@@ -152,6 +152,7 @@ describe("toStickyModelSelection", () => {
           { id: "reasoningEffort", value: "high" },
           { id: "serviceTier", value: "priority" },
           { id: "fastMode", value: true },
+          { id: "contextWindow", value: "262144" },
         ]),
       }),
     ).toEqual(codexSelection([{ id: "reasoningEffort", value: "high" }]));

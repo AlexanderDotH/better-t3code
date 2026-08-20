@@ -41,6 +41,31 @@ describe("ExecutionEnvironmentCapabilities", () => {
       decodeCapabilities({ repositoryIdentity: true, mcpWorkspaceVersion: 0 }),
     ).toThrow();
   });
+
+  it("keeps extended agent workflows optional for legacy servers", () => {
+    const legacy = decodeCapabilities({ repositoryIdentity: true });
+    const current = decodeCapabilities({ repositoryIdentity: true, agentWorkflowVersion: 1 });
+
+    expect(legacy.agentWorkflowVersion).toBeUndefined();
+    expect(current.agentWorkflowVersion).toBe(1);
+    expect(() =>
+      decodeCapabilities({ repositoryIdentity: true, agentWorkflowVersion: 0 }),
+    ).toThrow();
+  });
+
+  it("keeps environment and project settings optional under version skew", () => {
+    const legacy = decodeCapabilities({ repositoryIdentity: true });
+    const current = decodeCapabilities({
+      repositoryIdentity: true,
+      environmentSettingsVersion: 1,
+      projectSettingsVersion: 1,
+    });
+
+    expect(legacy.environmentSettingsVersion).toBeUndefined();
+    expect(legacy.projectSettingsVersion).toBeUndefined();
+    expect(current.environmentSettingsVersion).toBe(1);
+    expect(current.projectSettingsVersion).toBe(1);
+  });
 });
 
 const descriptor = {

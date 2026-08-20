@@ -681,6 +681,11 @@ export const OrchestrationSubscribeSubagentInput = Schema.Struct({
    * events without sending their payloads.
    */
   afterSequence: Schema.optionalKey(NonNegativeInt),
+  /**
+   * Windows fallback snapshots to the newest activities. Absent preserves the
+   * full-snapshot behavior used by clients predating subagent pagination.
+   */
+  activityLimit: Schema.optionalKey(PositiveInt),
 });
 export type OrchestrationSubscribeSubagentInput = typeof OrchestrationSubscribeSubagentInput.Type;
 
@@ -747,10 +752,32 @@ export const OrchestrationThreadDetailSnapshot = Schema.Struct({
 });
 export type OrchestrationThreadDetailSnapshot = typeof OrchestrationThreadDetailSnapshot.Type;
 
+/**
+ * Bounds a subagent detail read to a recent activity window. Messages and
+ * proposed plans remain complete because activity payloads dominate retained
+ * transcript memory on long-running, highly parallel threads.
+ */
+export const OrchestrationSubagentDetailWindow = Schema.Struct({
+  activityLimit: Schema.optionalKey(PositiveInt),
+  beforeCursor: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type OrchestrationSubagentDetailWindow = typeof OrchestrationSubagentDetailWindow.Type;
+
+export const OrchestrationSubagentDetailPage = Schema.Struct({
+  beforeCursor: Schema.NullOr(TrimmedNonEmptyString),
+  hasMore: Schema.Boolean,
+  snapshotSequence: NonNegativeInt,
+  /** Thread-scoped watermark reachable through subagent cursor frames. */
+  threadSequence: Schema.optionalKey(NonNegativeInt),
+});
+export type OrchestrationSubagentDetailPage = typeof OrchestrationSubagentDetailPage.Type;
+
 export const OrchestrationSubagentDetailSnapshot = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   threadId: ThreadId,
   subagent: OrchestrationSubagentDetail,
+  // Present only for opt-in windowed responses. Absent means fully loaded.
+  page: Schema.optional(OrchestrationSubagentDetailPage),
 });
 export type OrchestrationSubagentDetailSnapshot = typeof OrchestrationSubagentDetailSnapshot.Type;
 

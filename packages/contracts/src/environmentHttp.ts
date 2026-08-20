@@ -507,6 +507,13 @@ const EnvironmentOrchestrationThreadSnapshotQuery = {
   beforeCursor: Schema.optional(TrimmedNonEmptyString),
 };
 
+const EnvironmentOrchestrationSubagentSnapshotQuery = {
+  activityLimit: Schema.optional(
+    Schema.FiniteFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
+  ),
+  beforeCursor: Schema.optional(TrimmedNonEmptyString),
+};
+
 export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
   .add(
     HttpApiEndpoint.get("snapshot", "/api/orchestration/snapshot", {
@@ -538,6 +545,7 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
       {
         headers: OptionalBearerHeaders,
         params: EnvironmentOrchestrationSubagentSnapshotParams,
+        payload: EnvironmentOrchestrationSubagentSnapshotQuery,
         success: OrchestrationSubagentDetailSnapshot,
         error: EnvironmentOrchestrationThreadSnapshotErrors,
       },
