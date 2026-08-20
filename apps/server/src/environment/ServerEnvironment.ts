@@ -155,6 +155,9 @@ export const make = Effect.gen(function* () {
         : {}),
       gitWorkbenchVersion: 1,
       mcpWorkspaceVersion: 1,
+      agentWorkflowVersion: 1,
+      environmentSettingsVersion: 2,
+      projectSettingsVersion: 1,
       midChatProviderSwitching: true,
     },
   };

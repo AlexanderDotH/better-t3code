@@ -36,10 +36,12 @@ import * as Stream from "effect/Stream";
 
 import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
 import { ProviderService } from "../provider/Services/ProviderService.ts";
+import * as ResourceProtection from "../resourceProtection/SubagentResourceGovernor.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import type { OrchestrationDispatchError } from "../orchestration/Errors.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ThreadBackgroundLivenessService } from "../orchestration/ThreadBackgroundLiveness.ts";
 import { runtimeEventToActivities } from "../orchestration/Layers/ProviderRuntimeIngestion.ts";
 import {
   planFetchExploration,
@@ -321,6 +323,7 @@ interface ActiveWorker {
   findingsTruncated: boolean;
   transcriptBuffer: string;
   assistantProjected: boolean;
+  lastProgressFingerprint: string | null;
 }
 
 function syntheticWorkerId(parentThreadId: ThreadId, runId: string, index: number): string {
@@ -434,8 +437,12 @@ function isMutationEvent(event: ProviderRuntimeEvent): boolean {
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const providerService = yield* ProviderService;
+  const resourceGovernor = Option.getOrUndefined(
+    yield* Effect.serviceOption(ResourceProtection.SubagentResourceGovernor),
+  );
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
   const textGeneration = yield* TextGeneration.TextGeneration;
   const coordinatorScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
     Scope.close(scope, Exit.void),
@@ -488,6 +495,8 @@ const make = Effect.gen(function* () {
     input: { readonly kind: string; readonly summary: string; readonly detail: string | null },
     updatedAt: string,
   ) {
+    const fingerprint = `${input.kind}\u0000${input.summary}\u0000${input.detail ?? ""}`;
+    if (worker.lastProgressFingerprint === fingerprint) return;
     yield* orchestrationEngine.dispatch({
       type: "thread.subagent.progress.set",
       commandId: yield* commandId(worker.run.runId, `worker-${worker.index}-progress`),
@@ -496,6 +505,7 @@ const make = Effect.gen(function* () {
       progress: { ...input, createdAt: updatedAt },
       updatedAt,
     });
+    worker.lastProgressFingerprint = fingerprint;
   });
 
   const flushTranscript = Effect.fn("FetchWorkerCoordinator.flushTranscript")(function* (
@@ -597,17 +607,21 @@ const make = Effect.gen(function* () {
   });
 
   const interruptWorker = (worker: ActiveWorker) =>
-    worker.sessionStarted
-      ? providerService.interruptAbortTarget(workerAbortTarget(worker)).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Fetch worker cooperative interrupt failed", {
-              threadId: worker.syntheticThreadId,
-              runtimeSessionId: worker.runtimeSessionId,
-              cause: Cause.pretty(cause),
-            }),
-          ),
-        )
-      : Effect.void;
+    Effect.gen(function* () {
+      if (resourceGovernor) {
+        yield* resourceGovernor.cancelThread(worker.syntheticThreadId);
+      }
+      if (!worker.sessionStarted) return;
+      yield* providerService.interruptAbortTarget(workerAbortTarget(worker)).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Fetch worker cooperative interrupt failed", {
+            threadId: worker.syntheticThreadId,
+            runtimeSessionId: worker.runtimeSessionId,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
+    });
 
   const forceStopWorker = (worker: ActiveWorker) =>
     worker.sessionStarted
@@ -833,8 +847,16 @@ const make = Effect.gen(function* () {
       findingsTruncated: false,
       transcriptBuffer: "",
       assistantProjected: false,
+      lastProgressFingerprint: null,
     };
     workersByThread.set(syntheticThreadId, worker);
+    threadBackgroundLiveness.recordTaskLiveness({
+      threadId: run.input.threadId,
+      taskId: subagentId,
+      taskType: "subagent",
+      status: "starting",
+      kind: "started",
+    });
     yield* dispatchSummary(worker, summary);
     const prompt = buildFetchWorkerPrompt({
       userRequest: run.input.userRequest,
@@ -862,6 +884,9 @@ const make = Effect.gen(function* () {
   const cleanupWorker = Effect.fn("FetchWorkerCoordinator.cleanupWorker")(function* (
     worker: ActiveWorker,
   ) {
+    if (resourceGovernor) {
+      yield* resourceGovernor.cancelThread(worker.syntheticThreadId);
+    }
     const target = {
       threadId: worker.syntheticThreadId,
       runtimeSessionId: worker.runtimeSessionId,
@@ -904,6 +929,13 @@ const make = Effect.gen(function* () {
           : outcome.status === "completed"
             ? "completed"
             : outcome.status;
+      threadBackgroundLiveness.recordTaskLiveness({
+        threadId: worker.run.input.threadId,
+        taskId: worker.subagentId,
+        taskType: "subagent",
+        status: orchestrationStatus,
+        kind: "completed",
+      });
       yield* dispatchSummary(worker, {
         ...worker.summary,
         status: orchestrationStatus,
@@ -962,6 +994,37 @@ const make = Effect.gen(function* () {
       scope: worker.assignment.scope,
       questions: worker.assignment.questions,
     });
+    if (resourceGovernor) {
+      const admitted = yield* resourceGovernor.awaitAdmission({
+        threadId: worker.syntheticThreadId,
+        provider: worker.run.providerDriver,
+        providerInstanceId: worker.run.selection.instanceId,
+        configurationKey: ResourceProtection.resourceConfigurationKey([
+          "fetch-worker",
+          worker.run.providerDriver,
+          worker.run.selection.instanceId,
+          worker.run.selection,
+        ]),
+      });
+      if (!admitted) {
+        return {
+          index: worker.index,
+          scope: worker.assignment.scope,
+          status: "interrupted",
+          findings: worker.findings,
+          detail: "Fetch was cancelled while waiting for free memory.",
+        } satisfies FetchWorkerOutcome;
+      }
+    }
+    if (worker.run.cancelled) {
+      return {
+        index: worker.index,
+        scope: worker.assignment.scope,
+        status: "interrupted",
+        findings: worker.findings,
+        detail: "Fetch was cancelled while waiting for free memory.",
+      } satisfies FetchWorkerOutcome;
+    }
     worker.sessionStarted = true;
     const started = yield* Effect.exit(
       providerService.startTransientSession(

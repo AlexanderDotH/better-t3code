@@ -17,6 +17,7 @@ import {
   MessageId,
   ExternalLauncherCommandNotFoundError,
   OrchestrationThreadDetailSnapshot,
+  type OrchestrationSubagentDetail,
   type OrchestrationThreadStreamItem,
   type OrchestrationThreadShell,
   TerminalNotRunningError,
@@ -29,6 +30,7 @@ import {
   ProviderInstanceId,
   OrchestrationProposedPlanId,
   ResolvedKeybindingRule,
+  SubagentId,
   ThreadId,
   WS_METHODS,
   WsRpcGroup,
@@ -161,6 +163,7 @@ import * as DesktopTelemetryReceiver from "./resourceTelemetry/DesktopTelemetryR
 import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClient.ts";
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
+import * as SubagentResourceGovernor from "./resourceProtection/SubagentResourceGovernor.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as Data from "effect/Data";
 
@@ -880,6 +883,7 @@ const buildAppUnderTest = (options?: {
 
     const appLayer = servedRoutesLayer.pipe(
       Layer.provide(resourceTelemetryLayer),
+      Layer.provide(SubagentResourceGovernor.layer),
       Layer.provide(UsageService.layerTest),
       Layer.provide(
         Layer.mock(BrowserTraceCollector.BrowserTraceCollector)({
@@ -4697,6 +4701,24 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes websocket resource protection through the subscription", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const snapshot = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.subscribeResourceProtection]({}).pipe(Stream.runHead),
+        ),
+      );
+
+      assertTrue(Option.isSome(snapshot));
+      assert.equal(snapshot.value.state, "unavailable");
+      assert.equal(snapshot.value.waitingStarts, 0);
+      assert.deepEqual(snapshot.value.affectedThreadIds, []);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc subscribeServerConfig emits provider status updates", () =>
     Effect.gen(function* () {
       const nextProviders = [
@@ -6388,6 +6410,111 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       // The replay is bounded to the head captured before the read, not
       // Number.MAX_SAFE_INTEGER.
       assert.equal(replayLimit, 50);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("subscribeSubagent replaces a stale cursor with a bounded activity snapshot", () =>
+    Effect.gen(function* () {
+      let readEventsCalls = 0;
+      let requestedActivityLimit: number | undefined;
+      const subagentId = SubagentId.make("agent-memory-bound");
+      const now = "2026-01-01T00:00:00.000Z";
+      const replayedEvent = {
+        sequence: 6,
+        eventId: EventId.make("event-stale-subagent-replay"),
+        aggregateKind: "thread",
+        aggregateId: defaultThreadId,
+        occurredAt: now,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "thread.message-sent",
+        payload: {
+          threadId: defaultThreadId,
+          subagentId,
+          messageId: MessageId.make("message-stale-subagent-replay"),
+          role: "assistant",
+          text: "This replay should be replaced by a snapshot.",
+          turnId: null,
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      } satisfies Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
+      const subagent: OrchestrationSubagentDetail = {
+        id: subagentId,
+        origin: "provider-native",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerDriver: ProviderDriverKind.make("codex"),
+        providerThreadId: "provider-agent-memory-bound",
+        parentId: null,
+        path: "/root/memory_bound",
+        name: "memory_bound",
+        nickname: null,
+        role: "worker",
+        task: "Bound retained activity history",
+        model: "gpt-5.6",
+        reasoningEffort: "ultra",
+        depth: 1,
+        status: "running",
+        statusMessage: null,
+        latestProgress: null,
+        latestTurn: null,
+        startedAt: now,
+        updatedAt: now,
+        completedAt: null,
+        messages: [],
+        proposedPlans: [],
+        activities: [],
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(100_000),
+            readEvents: () =>
+              Stream.sync(() => {
+                readEventsCalls += 1;
+                return replayedEvent;
+              }),
+          },
+          projectionSnapshotQuery: {
+            getSubagentDetailSnapshot: (_threadId, _subagentId, window) => {
+              requestedActivityLimit = window?.activityLimit;
+              return Effect.succeed(
+                Option.some({
+                  snapshotSequence: 100_000,
+                  threadId: defaultThreadId,
+                  subagent,
+                  page: {
+                    beforeCursor: "older-activity-cursor",
+                    hasMore: true,
+                    snapshotSequence: 100_000,
+                    threadSequence: 100_000,
+                  },
+                }),
+              );
+            },
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeSubagent]({
+            threadId: defaultThreadId,
+            subagentId,
+            afterSequence: 5,
+            activityLimit: 100,
+          }).pipe(Stream.take(1), Stream.runCollect),
+        ),
+      );
+
+      assert.equal(items[0]?.kind, "snapshot");
+      assert.equal(readEventsCalls, 0);
+      assert.equal(requestedActivityLimit, 100);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

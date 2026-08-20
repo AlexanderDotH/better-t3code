@@ -124,6 +124,7 @@ import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClien
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinary.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
+import * as SubagentResourceGovernor from "./resourceProtection/SubagentResourceGovernor.ts";
 import { AssemblyAiStreamingTokenLive } from "./speech/Layers/AssemblyAiStreamingToken.ts";
 import * as ProjectSpeechProfileStore from "./speech/ProjectSpeechProfileStore.ts";
 import * as ProjectSpeechWorkspaceScanner from "./speech/ProjectSpeechWorkspaceScanner.ts";
@@ -178,6 +179,10 @@ const ResourceTelemetryLayerLive = ResourceTelemetry.layer.pipe(
   Layer.provideMerge(DesktopTelemetryReceiverLayerLive),
 );
 
+const ResourceProtectionLayerLive = SubagentResourceGovernor.layerLive.pipe(
+  Layer.provide(NativeTelemetryLayerLive),
+);
+
 const HostPowerMonitorLayerLive = HostPowerMonitor.layer.pipe(
   Layer.provide(DesktopTelemetryReceiverLayerLive),
 );
@@ -191,6 +196,7 @@ const UsageLayerLive = UsageService.layer.pipe(Layer.provide(ServerSettingsLayer
 
 const ResourceDiagnosticsLayerLive = Layer.mergeAll(
   ResourceTelemetryLayerLive,
+  ResourceProtectionLayerLive,
   ProcessDiagnostics.layer.pipe(Layer.provide(ResourceTelemetryLayerLive)),
   ProcessResourceMonitor.layer.pipe(Layer.provide(ResourceTelemetryLayerLive)),
 );

@@ -21,6 +21,7 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import * as ResourceProtection from "../resourceProtection/SubagentResourceGovernor.ts";
 import * as WorkspaceContext from "../workspace/WorkspaceContext.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
@@ -65,6 +66,79 @@ it("normalizes empty successful notification responses to accepted", () => {
   );
   expect(resultResponse.status).toBe(200);
 });
+
+it.effect("routes Codex resource reservations through their exact lifecycle", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const governor = yield* ResourceProtection.makeSubagentResourceGovernor();
+      yield* governor.observe({
+        sampledAtMs: 0,
+        memory: {
+          totalBytes: 16 * ResourceProtection.GIBIBYTE,
+          availableBytes: 16 * ResourceProtection.GIBIBYTE,
+          swapTotalBytes: 8 * ResourceProtection.GIBIBYTE,
+          swapFreeBytes: 8 * ResourceProtection.GIBIBYTE,
+        },
+        processes: [],
+      });
+      const registryLayer = Layer.succeed(McpSessionRegistry.McpSessionRegistry, {
+        issue: () => Effect.die("unused"),
+        resolve: (token) => Effect.succeed(token === "resource-token" ? invocation : undefined),
+        touch: () => Effect.void,
+        revokeProviderSession: () => Effect.void,
+        revokeThread: () => Effect.void,
+        revokeAll: Effect.void,
+      });
+      const route = McpHttpServer.CodexResourceAdmissionRouteLive.pipe(
+        Layer.provide(registryLayer),
+        Layer.provideMerge(Layer.succeed(ResourceProtection.SubagentResourceGovernor, governor)),
+      );
+      yield* HttpRouter.serve(route, {
+        disableListenLog: true,
+        disableLogger: true,
+      }).pipe(Layer.build);
+      const httpClient = yield* HttpClient.HttpClient;
+      const post = (body: unknown) =>
+        httpClient.post("/internal/resource-protection/codex-admit", {
+          headers: { authorization: "Bearer resource-token" },
+          body: HttpBody.text(JSON.stringify(body), "application/json"),
+        });
+
+      const rootAdmission = yield* post({
+        action: "admit-root-turn",
+        configurationKey: "codex-config",
+        lifecycleId: "turn-1",
+      });
+      expect(rootAdmission.status).toBe(200);
+      expect((yield* governor.latest).reservedMemoryBytes).toBe(4 * ResourceProtection.GIBIBYTE);
+
+      expect((yield* post({ action: "release-root-turn", lifecycleId: "turn-1" })).status).toBe(
+        200,
+      );
+      expect((yield* governor.latest).reservedMemoryBytes).toBe(0);
+
+      expect(
+        (yield* post({
+          action: "admit-subagent",
+          configurationKey: "codex-config",
+          lifecycleId: "tool-use-1",
+        })).status,
+      ).toBe(200);
+      expect(
+        (yield* post({
+          action: "confirm-subagent",
+          configurationKey: "codex-config",
+          agentId: "agent-1",
+        })).status,
+      ).toBe(200);
+      expect((yield* governor.latest).reservedMemoryBytes).toBe(4 * ResourceProtection.GIBIBYTE);
+
+      expect((yield* post({ action: "release-subagent", agentId: "agent-1" })).status).toBe(200);
+      expect((yield* governor.latest).reservedMemoryBytes).toBe(0);
+      expect((yield* post({ action: "unknown" })).status).toBe(400);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
 
 it.effect("returns bounded structural preview snapshot failures", () =>
   Effect.scoped(

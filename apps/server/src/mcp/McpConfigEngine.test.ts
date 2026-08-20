@@ -273,6 +273,7 @@ describe("MCP config helpers", () => {
       provider("claudeAgent"),
       provider("opencode"),
       provider("grok"),
+      provider("gemini"),
       provider("futureAgent"),
     ];
     const capabilities = new Map(
@@ -312,6 +313,12 @@ describe("MCP config helpers", () => {
       },
       {
         provider: "grok",
+        capability: "unsupported",
+        state: "unsupported",
+        activeServerCount: 0,
+      },
+      {
+        provider: "gemini",
         capability: "unsupported",
         state: "unsupported",
         activeServerCount: 0,
@@ -517,7 +524,7 @@ effectIt.layer(NodeServices.layer)("McpConfigEngineLive", (it) => {
       });
       expect(disabledForClaude.servers[0]?.providerRouting).toEqual({
         mode: "selected",
-        instanceIds: ["codex", "cursor", "grok", "opencode"],
+        instanceIds: ["codex", "cursor", "grok", "opencode", "gemini"],
       });
       expect(
         yield* engine.resolveActiveServers({
@@ -545,7 +552,7 @@ effectIt.layer(NodeServices.layer)("McpConfigEngineLive", (it) => {
       });
       expect(reenabledForClaude.servers[0]?.providerRouting).toEqual({
         mode: "selected",
-        instanceIds: ["codex", "cursor", "grok", "opencode", "claudeAgent"],
+        instanceIds: ["codex", "cursor", "grok", "opencode", "gemini", "claudeAgent"],
       });
 
       yield* engine.setEnabled(McpServerId.make("github"), false);

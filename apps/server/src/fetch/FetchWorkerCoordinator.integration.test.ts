@@ -43,6 +43,8 @@ import {
   ProjectionSnapshotQuery,
   type ProjectionSnapshotQueryShape,
 } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ThreadBackgroundLiveness from "../orchestration/ThreadBackgroundLiveness.ts";
+import * as ResourceProtection from "../resourceProtection/SubagentResourceGovernor.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import {
   FETCH_ABORT_FORCE_DELAY,
@@ -85,6 +87,7 @@ interface HarnessOptions {
   readonly neverStart?: boolean;
   readonly neverStop?: boolean;
   readonly eventMode?: EventMode;
+  readonly assistantDeltaCount?: number;
   readonly failureIndexes?: ReadonlySet<number>;
   readonly failAbortProjection?: boolean;
   readonly failWorkerMessageImport?: boolean;
@@ -164,6 +167,7 @@ const makeHarness = (options: HarnessOptions = {}) =>
       updatedAt: createdAt,
     };
     const session = yield* Ref.make<OrchestrationSession>(initialSession);
+    const backgroundLiveness = ThreadBackgroundLiveness.make();
 
     const publish = (event: ProviderRuntimeEvent) =>
       PubSub.publish(events, event).pipe(Effect.asVoid);
@@ -336,12 +340,20 @@ const makeHarness = (options: HarnessOptions = {}) =>
         eventMode === "native-read" ||
         eventMode === "workspace-context"
       ) {
-        yield* publish({
-          ...baseEvent(input.threadId, binding.runtimeSessionId, binding.instanceId),
-          type: "content.delta",
-          turnId,
-          payload: { streamKind: "assistant_text", delta: `Evidence from worker ${index}` },
-        });
+        for (let deltaIndex = 0; deltaIndex < (options.assistantDeltaCount ?? 1); deltaIndex += 1) {
+          yield* publish({
+            ...baseEvent(input.threadId, binding.runtimeSessionId, binding.instanceId),
+            type: "content.delta",
+            turnId,
+            payload: {
+              streamKind: "assistant_text",
+              delta:
+                deltaIndex === 0
+                  ? `Evidence from worker ${index}`
+                  : `; additional evidence ${deltaIndex}`,
+            },
+          });
+        }
       }
       const failed = options.failureIndexes?.has(index) === true;
       yield* publish({
@@ -519,6 +531,9 @@ const makeHarness = (options: HarnessOptions = {}) =>
       Layer.provideMerge(Layer.succeed(ProviderService, providerService)),
       Layer.provideMerge(Layer.succeed(OrchestrationEngineService, engine)),
       Layer.provideMerge(Layer.succeed(ProjectionSnapshotQuery, query)),
+      Layer.provideMerge(
+        Layer.succeed(ThreadBackgroundLiveness.ThreadBackgroundLivenessService, backgroundLiveness),
+      ),
       Layer.provideMerge(Layer.succeed(TextGeneration.TextGeneration, makeTextGeneration(plan))),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -534,6 +549,7 @@ const makeHarness = (options: HarnessOptions = {}) =>
       forces,
       responses,
       commands,
+      backgroundLiveness,
       planInputs,
       session,
       allStartsEntered,
@@ -681,6 +697,92 @@ describe("FetchWorkerCoordinator service", () => {
         expect(yield* Ref.get(harness.lifecycle)).toEqual(
           Array.from({ length: 8 }, (_, index) => [`start:${index}`, `stop:${index}`]).flat(),
         );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("waits for shared resource admission immediately before a Fetch session starts", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const governor = yield* ResourceProtection.makeSubagentResourceGovernor();
+      yield* governor.observe({
+        sampledAtMs: 0,
+        memory: {
+          totalBytes: 16 * ResourceProtection.GIBIBYTE,
+          availableBytes: 3 * ResourceProtection.GIBIBYTE,
+          swapTotalBytes: 8 * ResourceProtection.GIBIBYTE,
+          swapFreeBytes: 8 * ResourceProtection.GIBIBYTE,
+        },
+        processes: [],
+      });
+      const protectedLayer = harness.layer.pipe(
+        Layer.provideMerge(Layer.succeed(ResourceProtection.SubagentResourceGovernor, governor)),
+      );
+
+      yield* Effect.gen(function* () {
+        const coordinator = yield* FetchWorkerCoordinator;
+        const waitingSnapshot = yield* governor.changes.pipe(
+          Stream.filter((snapshot) => snapshot.state === "waiting"),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        const runFiber = yield* coordinator.run(runInput()).pipe(Effect.forkChild);
+        const waiting = yield* Fiber.join(waitingSnapshot);
+        expect(waiting._tag).toBe("Some");
+        expect(yield* Ref.get(harness.starts)).toHaveLength(0);
+
+        yield* governor.observe({
+          sampledAtMs: 1_000,
+          memory: {
+            totalBytes: 16 * ResourceProtection.GIBIBYTE,
+            availableBytes: 10 * ResourceProtection.GIBIBYTE,
+            swapTotalBytes: 8 * ResourceProtection.GIBIBYTE,
+            swapFreeBytes: 8 * ResourceProtection.GIBIBYTE,
+          },
+          processes: [],
+        });
+        const result = yield* Fiber.join(runFiber);
+
+        expect(result.successfulWorkers).toBe(1);
+        expect(yield* Ref.get(harness.starts)).toHaveLength(1);
+        expect((yield* governor.latest).waitingStarts).toBe(0);
+        expect((yield* governor.latest).reservedMemoryBytes).toBe(0);
+      }).pipe(Effect.provide(protectedLayer), Effect.scoped, Effect.ensuring(governor.shutdown));
+    }),
+  );
+
+  it.effect("reports Fetch workers as active background work until they settle", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ gateStarts: true });
+      yield* Effect.gen(function* () {
+        const coordinator = yield* FetchWorkerCoordinator;
+        const runFiber = yield* coordinator.run(runInput()).pipe(Effect.forkChild);
+        yield* Deferred.await(harness.firstStartEntered);
+
+        expect(harness.backgroundLiveness.getThreadBackgroundLiveness(parentThreadId)).toBe(
+          "working",
+        );
+
+        yield* Deferred.succeed(harness.releaseStarts, undefined);
+        yield* Fiber.join(runFiber);
+        expect(harness.backgroundLiveness.getThreadBackgroundLiveness(parentThreadId)).toBeNull();
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("coalesces repeated Fetch findings progress across streaming deltas", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ assistantDeltaCount: 200 });
+      yield* Effect.gen(function* () {
+        const coordinator = yield* FetchWorkerCoordinator;
+        yield* coordinator.run(runInput());
+
+        const findingsProgress = (yield* Ref.get(harness.commands)).filter(
+          (command) =>
+            command.type === "thread.subagent.progress.set" &&
+            command.progress?.kind === "fetch.findings",
+        );
+        expect(findingsProgress).toHaveLength(1);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

@@ -3,6 +3,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
@@ -13,6 +14,8 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import * as ResourceProtection from "../resourceProtection/SubagentResourceGovernor.ts";
+import { ProviderDriverKind } from "@t3tools/contracts";
 import {
   PreviewSnapshotToolkitHandlersLive,
   PreviewStandardToolkitHandlersLive,
@@ -274,4 +277,113 @@ const WorkspaceMcpEndpointLive = Layer.fresh(
   ),
 );
 
-export const layer = Layer.mergeAll(PreviewMcpEndpointLive, WorkspaceMcpEndpointLive);
+const CodexResourceLifecycleId = Schema.String.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(4_096),
+);
+const CodexResourceConfigurationKey = Schema.String.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(4_096),
+);
+const CodexResourceAction = Schema.Union([
+  Schema.Struct({
+    action: Schema.Literal("admit-root-turn"),
+    configurationKey: CodexResourceConfigurationKey,
+    lifecycleId: CodexResourceLifecycleId,
+  }),
+  Schema.Struct({
+    action: Schema.Literal("release-root-turn"),
+    lifecycleId: CodexResourceLifecycleId,
+  }),
+  Schema.Struct({
+    action: Schema.Literal("admit-subagent"),
+    configurationKey: CodexResourceConfigurationKey,
+    lifecycleId: CodexResourceLifecycleId,
+  }),
+  Schema.Struct({
+    action: Schema.Literal("confirm-subagent"),
+    configurationKey: CodexResourceConfigurationKey,
+    agentId: CodexResourceLifecycleId,
+  }),
+  Schema.Struct({
+    action: Schema.Literal("release-subagent"),
+    agentId: CodexResourceLifecycleId,
+  }),
+]);
+const decodeCodexResourceAction = Schema.decodeUnknownOption(CodexResourceAction);
+
+export const CodexResourceAdmissionRouteLive = HttpRouter.add(
+  "POST",
+  "/internal/resource-protection/codex-admit",
+  Effect.gen(function* () {
+    const invocation = yield* McpInvocationContext.McpInvocationContext;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const governor = Option.getOrUndefined(
+      yield* Effect.serviceOption(ResourceProtection.SubagentResourceGovernor),
+    );
+    if (!governor) {
+      return HttpServerResponse.jsonUnsafe(
+        { admitted: false, state: "unavailable" },
+        { status: 503, headers: { "cache-control": "no-store" } },
+      );
+    }
+    const action = Option.getOrUndefined(
+      decodeCodexResourceAction(yield* request.json.pipe(Effect.orElseSucceed(() => undefined))),
+    );
+    if (!action) {
+      return HttpServerResponse.jsonUnsafe(
+        { error: "invalid_resource_protection_action" },
+        { status: 400, headers: { "cache-control": "no-store" } },
+      );
+    }
+
+    const owner = {
+      threadId: invocation.threadId,
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: invocation.providerInstanceId,
+    } as const;
+    let admitted = true;
+    switch (action.action) {
+      case "admit-root-turn":
+        admitted = yield* governor.awaitAdmission({
+          ...owner,
+          configurationKey: `root-turn:${action.configurationKey}`,
+          retention: { kind: "root-turn", lifecycleId: action.lifecycleId },
+        });
+        break;
+      case "release-root-turn":
+        yield* governor.releaseRootTurn({ ...owner, lifecycleId: action.lifecycleId });
+        break;
+      case "admit-subagent":
+        admitted = yield* governor.awaitAdmission({
+          ...owner,
+          configurationKey: `subagent:${action.configurationKey}`,
+          retention: { kind: "subagent", lifecycleId: action.lifecycleId },
+        });
+        break;
+      case "confirm-subagent":
+        yield* governor.confirmSubagent({
+          ...owner,
+          configurationKey: `subagent:${action.configurationKey}`,
+          agentId: action.agentId,
+        });
+        break;
+      case "release-subagent":
+        yield* governor.releaseSubagent({ ...owner, agentId: action.agentId });
+        break;
+    }
+    return HttpServerResponse.jsonUnsafe(
+      { admitted },
+      {
+        status: admitted ? 200 : 409,
+        headers: { "cache-control": "no-store" },
+      },
+    );
+  }),
+).pipe(Layer.provide(makeMcpAuthMiddlewareLive()));
+
+export const layer = Layer.mergeAll(
+  PreviewMcpEndpointLive,
+  WorkspaceMcpEndpointLive,
+  CodexResourceAdmissionRouteLive,
+);

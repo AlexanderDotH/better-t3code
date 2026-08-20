@@ -33,7 +33,7 @@ import {
 const SKILL_FILE_NAME = "SKILL.md";
 const RESERVED_SLASH_COMMANDS = new Set(["model", "plan", "default"]);
 const PROMPT_SKILL_NAME_PATTERN = "[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}";
-const BUILT_IN_PROVIDERS = new Set(["codex", "cursor", "claudeAgent", "opencode"]);
+const BUILT_IN_PROVIDERS = new Set(["codex", "cursor", "claudeAgent", "opencode", "gemini"]);
 
 interface SkillRoots {
   readonly globalRoot: string;

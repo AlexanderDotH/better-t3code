@@ -16,6 +16,7 @@ import { projectCommand } from "./cli/project.ts";
 import { runServerCommand, serveCommand, startCommand } from "./cli/server.ts";
 import { serviceCommand } from "./cli/service.ts";
 import { servicePreflightCommand } from "./cli/servicePreflight.ts";
+import { runCodexResourceGovernorHook } from "./resourceProtection/CodexResourceGovernorHook.ts";
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
@@ -43,6 +44,11 @@ const connectUnavailableCommand = Command.make("connect", {
   ),
 );
 
+const resourceGovernorHookCommand = Command.make("resource-governor-hook").pipe(
+  Command.withHidden,
+  Command.withHandler(() => Effect.promise(() => runCodexResourceGovernorHook())),
+);
+
 export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
   Command.make("t3", { ...sharedServerCommandFlags }).pipe(
     Command.withDescription("Run the T3 Code server."),
@@ -55,6 +61,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       projectCommand,
       serviceCommand,
       servicePreflightCommand,
+      resourceGovernorHookCommand,
       cloudEnabled ? connectCommand : connectUnavailableCommand,
     ]),
   );

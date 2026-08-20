@@ -19,7 +19,7 @@ function makeNativeSnapshot(
   processes: ResourceMonitorSnapshotEvent["processes"],
 ): ResourceMonitorSnapshotEvent {
   return {
-    version: 2,
+    version: 3,
     type: "snapshot",
     sequence: 1,
     sampledAtUnixMs: DateTime.toEpochMillis(DateTime.makeUnsafe("2026-05-05T10:00:00.000Z")),
@@ -27,6 +27,12 @@ function makeNativeSnapshot(
     scannedProcessCount: processes.length,
     retainedProcessCount: processes.length,
     inaccessibleProcessCount: 0,
+    memory: {
+      totalBytes: 16 * 1024 ** 3,
+      availableBytes: 8 * 1024 ** 3,
+      swapTotalBytes: 8 * 1024 ** 3,
+      swapFreeBytes: 8 * 1024 ** 3,
+    },
     processes,
   };
 }

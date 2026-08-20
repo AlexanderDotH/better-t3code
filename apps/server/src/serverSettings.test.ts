@@ -121,6 +121,23 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           },
         },
       );
+
+      assert.deepEqual(
+        yield* decodeSettingsPatch({
+          projectThreadPreviewSyncRecord: {
+            count: 6,
+            updatedAt: 1_777_000_001_000,
+            updateId: "device-b:replacement",
+          },
+        }),
+        {
+          projectThreadPreviewSyncRecord: {
+            count: 6,
+            updatedAt: 1_777_000_001_000,
+            updateId: "device-b:replacement",
+          },
+        },
+      );
     }),
   );
 
@@ -722,6 +739,52 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       const persisted = JSON.parse(raw);
       assert.deepEqual(persisted.parallelPlanReviewModelSelection, selection);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("persists and replaces the project thread preview sync record", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const initial = {
+        count: 3,
+        updatedAt: 1_777_000_000_000,
+        updateId: "device-a:initial",
+      };
+      const replacement = {
+        count: 6,
+        updatedAt: 1_777_000_001_000,
+        updateId: "device-b:replacement",
+      };
+
+      const saved = yield* serverSettings.updateSettings({
+        projectThreadPreviewSyncRecord: initial,
+      });
+      const afterUnrelatedPatch = yield* serverSettings.updateSettings({
+        addProjectBaseDirectory: "~/Development",
+      });
+      const replaced = yield* serverSettings.updateSettings({
+        projectThreadPreviewSyncRecord: replacement,
+      });
+
+      assert.deepEqual(saved.projectThreadPreviewSyncRecord, initial);
+      assert.deepEqual(
+        redactServerSettingsForClient(saved).projectThreadPreviewSyncRecord,
+        initial,
+      );
+      assert.deepEqual(afterUnrelatedPatch.projectThreadPreviewSyncRecord, initial);
+      assert.deepEqual(replaced.projectThreadPreviewSyncRecord, replacement);
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const persisted = JSON.parse(raw);
+      assert.deepEqual(persisted.projectThreadPreviewSyncRecord, replacement);
+      assert.deepEqual(
+        (yield* decodeServerSettings(persisted)).projectThreadPreviewSyncRecord,
+        replacement,
+      );
+      assert.equal(persisted.addProjectBaseDirectory, "~/Development");
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 

@@ -72,6 +72,9 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(second.capabilities.pullRequests).toBe(true);
       expect(second.capabilities.threadTitleRegeneration).toBe(true);
       expect(second.capabilities.mcpWorkspaceVersion).toBe(1);
+      expect(second.capabilities.agentWorkflowVersion).toBe(1);
+      expect(second.capabilities.environmentSettingsVersion).toBe(2);
+      expect(second.capabilities.projectSettingsVersion).toBe(1);
       expect(second.capabilities.midChatProviderSwitching).toBe(true);
     }),
   );
