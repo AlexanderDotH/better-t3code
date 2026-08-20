@@ -9,7 +9,6 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -21,11 +20,20 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   forceTerminateOwnedChildProcessAndCleanup,
   type OwnedChildProcessTerminationError,
 } from "../../process/OwnedChildProcess.ts";
+import * as ResourceProtection from "../../resourceProtection/SubagentResourceGovernor.ts";
+import {
+  type BoundedProviderEventQueue,
+  makeBoundedProviderEventQueue,
+  providerEventEncodedBytes,
+  PROVIDER_SESSION_EVENT_QUEUE_BYTE_CAPACITY,
+  PROVIDER_SESSION_EVENT_QUEUE_CAPACITY,
+} from "../boundedEventQueue.ts";
 import {
   collectSessionConfigOptionValues,
   extractModelConfigId,
@@ -64,6 +72,10 @@ export interface AcpSpawnInput {
 
 export interface AcpSessionRuntimeOptions {
   readonly spawn: AcpSpawnInput;
+  readonly providerProcess?: Omit<
+    ResourceProtection.ProviderProcessRegistration,
+    "pid" | "startTimeMs"
+  >;
   readonly cwd: string;
   readonly resumeSessionId?: string;
   readonly sessionLoadTimeout?: Duration.Input;
@@ -282,9 +294,17 @@ export const make = (
 > =>
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
+    const hostPlatform = yield* HostProcessPlatform;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeScope = yield* Scope.Scope;
-    const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
+    const resourceGovernor = Option.getOrUndefined(
+      yield* Effect.serviceOption(ResourceProtection.SubagentResourceGovernor),
+    );
+    const eventQueue = yield* makeBoundedProviderEventQueue<AcpSessionRuntimeEvent>({
+      capacity: PROVIDER_SESSION_EVENT_QUEUE_CAPACITY,
+      byteCapacity: PROVIDER_SESSION_EVENT_QUEUE_BYTE_CAPACITY,
+      sizeOf: providerEventEncodedBytes,
+    });
     const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
     const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallState>());
     const assistantItemRuntimeId = yield* crypto.randomUUIDv4.pipe(
@@ -359,6 +379,26 @@ export const make = (
             }),
         ),
       );
+
+    if (options.providerProcess && resourceGovernor) {
+      const pid = Number(child.pid);
+      const startTimeMs = ResourceProtection.providerProcessStartTimeMs(pid, hostPlatform);
+      yield* resourceGovernor.registerProviderProcess({
+        ...options.providerProcess,
+        pid,
+        ...(startTimeMs === undefined ? {} : { startTimeMs }),
+      });
+      const unregister = resourceGovernor.unregisterProviderProcess({
+        pid,
+        ...(startTimeMs === undefined ? {} : { startTimeMs }),
+      });
+      yield* Scope.addFinalizer(runtimeScope, unregister);
+      yield* child.exitCode.pipe(
+        Effect.andThen(unregister),
+        Effect.ignore,
+        Effect.forkIn(runtimeScope),
+      );
+    }
 
     const acpContext = yield* Layer.build(
       EffectAcpClient.layerChildProcess(child, {
@@ -706,7 +746,7 @@ export const make = (
       }
       yield* forceTerminateOwnedChildProcessAndCleanup(
         { child },
-        Scope.close(runtimeScope, Exit.void).pipe(Effect.ensuring(Queue.shutdown(eventQueue))),
+        Scope.close(runtimeScope, Exit.void).pipe(Effect.ensuring(eventQueue.shutdown)),
       );
     });
 
@@ -727,10 +767,10 @@ export const make = (
       handleExtRequest: acp.handleExtRequest,
       handleExtNotification: acp.handleExtNotification,
       start: () => start,
-      getEvents: () => Stream.fromQueue(eventQueue),
+      getEvents: () => eventQueue.stream,
       drainEvents: Effect.gen(function* () {
         const acknowledge = yield* Deferred.make<void>();
-        yield* Queue.offer(eventQueue, {
+        yield* eventQueue.offer({
           _tag: "EventStreamBarrier",
           acknowledge,
         });
@@ -872,7 +912,7 @@ const handleSessionUpdate = ({
   assistantItemRuntimeId,
   params,
 }: {
-  readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
+  readonly queue: BoundedProviderEventQueue<AcpSessionRuntimeEvent>;
   readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
   readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallState>>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
@@ -906,7 +946,7 @@ const handleSessionUpdate = ({
         if (!shouldEmitToolCallUpdate(previous, merged)) {
           continue;
         }
-        yield* Queue.offer(queue, {
+        yield* queue.offer({
           _tag: "ToolCallUpdated",
           toolCall: merged,
           rawPayload: event.rawPayload,
@@ -926,13 +966,13 @@ const handleSessionUpdate = ({
           sessionId: params.sessionId,
           assistantItemRuntimeId,
         });
-        yield* Queue.offer(queue, {
+        yield* queue.offer({
           ...event,
           itemId,
         });
         continue;
       }
-      yield* Queue.offer(queue, event);
+      yield* queue.offer(event);
     }
   });
 
@@ -971,7 +1011,7 @@ const ensureActiveAssistantSegment = ({
   sessionId,
   assistantItemRuntimeId,
 }: {
-  readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
+  readonly queue: BoundedProviderEventQueue<AcpSessionRuntimeEvent>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
   readonly sessionId: string;
   readonly assistantItemRuntimeId: string;
@@ -1000,7 +1040,7 @@ const ensureActiveAssistantSegment = ({
   ).pipe(
     Effect.flatMap((result) =>
       result.startedEvent
-        ? Queue.offer(queue, result.startedEvent).pipe(Effect.as(result.itemId))
+        ? queue.offer(result.startedEvent).pipe(Effect.as(result.itemId))
         : Effect.succeed(result.itemId),
     ),
   );
@@ -1009,7 +1049,7 @@ const closeActiveAssistantSegment = ({
   queue,
   assistantSegmentRef,
 }: {
-  readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
+  readonly queue: BoundedProviderEventQueue<AcpSessionRuntimeEvent>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
 }) =>
   Ref.modify(assistantSegmentRef, (current) => {
@@ -1025,4 +1065,4 @@ const closeActiveAssistantSegment = ({
         nextSegmentIndex: current.nextSegmentIndex,
       } satisfies AcpAssistantSegmentState,
     ] as const;
-  }).pipe(Effect.flatMap((event) => (event ? Queue.offer(queue, event) : Effect.void)));
+  }).pipe(Effect.flatMap((event) => (event ? queue.offer(event) : Effect.void)));

@@ -47,12 +47,14 @@ type OpenCodeMcpConfig = Record<string, McpLocalConfig | McpRemoteConfig>;
 export interface OpenCodeServerProcess {
   readonly url: string;
   readonly exitCode: Effect.Effect<number, never>;
+  readonly pid?: number;
 }
 
 export interface OpenCodeServerConnection {
   readonly url: string;
   readonly exitCode: Effect.Effect<number, never> | null;
   readonly external: boolean;
+  readonly pid?: number;
 }
 
 const OPENCODE_RUNTIME_ERROR_TAG = "OpenCodeRuntimeError";
@@ -345,7 +347,10 @@ export function toOpenCodeFileParts(input: {
 
 export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): PermissionRuleset {
   if (runtimeMode === "full-access") {
-    return [{ permission: "*", pattern: "*", action: "allow" }];
+    return [
+      { permission: "*", pattern: "*", action: "allow" },
+      { permission: "task", pattern: "*", action: "ask" },
+    ];
   }
 
   return [
@@ -604,6 +609,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
 
       return {
         url: readyOption.value,
+        pid: Number(child.pid),
         exitCode: child.exitCode.pipe(
           Effect.map(Number),
           Effect.orElseSucceed(() => 0),
@@ -634,6 +640,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         url: server.url,
         exitCode: server.exitCode,
         external: false,
+        ...(server.pid === undefined ? {} : { pid: server.pid }),
       })),
     );
   };

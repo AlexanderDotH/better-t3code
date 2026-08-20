@@ -35,7 +35,6 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -72,6 +71,12 @@ import {
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import { applyCursorAcpModelSelection, makeCursorAcpRuntime } from "../acp/CursorAcpSupport.ts";
 import { bindProviderRuntimeEventOrigin } from "../runtimeEventOrigin.ts";
+import {
+  makeBoundedProviderEventBroadcast,
+  providerEventEncodedBytes,
+  PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
+  PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
+} from "../boundedEventQueue.ts";
 import {
   CursorAskQuestionRequest,
   CursorCreatePlanRequest,
@@ -398,7 +403,11 @@ export function makeCursorAdapter(
 
     const sessions = new Map<ThreadId, CursorSessionContext>();
     const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
-    const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+    const runtimeEventBroadcast = yield* makeBoundedProviderEventBroadcast<ProviderRuntimeEvent>({
+      capacity: PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
+      byteCapacity: PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
+      sizeOf: providerEventEncodedBytes,
+    });
 
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
     const randomUUIDv4 = crypto.randomUUIDv4.pipe(
@@ -426,7 +435,7 @@ export function makeCursorAdapter(
       );
 
     const publishRuntimeEvent = (event: ProviderRuntimeEvent) =>
-      PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
+      runtimeEventBroadcast.publish(event).pipe(Effect.asVoid);
 
     const getThreadSemaphore = (threadId: string) =>
       SynchronizedRef.modifyEffect(threadLocksRef, (current) => {
@@ -671,6 +680,11 @@ export function makeCursorAdapter(
             ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
             cwd,
+            providerProcess: {
+              threadId: input.threadId,
+              provider: PROVIDER,
+              providerInstanceId: boundInstanceId,
+            },
             mcpServers: configuredMcpServers,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
@@ -1346,12 +1360,12 @@ export function makeCursorAdapter(
         Effect.catch((cause) =>
           Effect.logError("Failed to emit Cursor session shutdown event.", { cause }),
         ),
-        Effect.tap(() => PubSub.shutdown(runtimeEventPubSub)),
+        Effect.tap(() => runtimeEventBroadcast.shutdown),
         Effect.tap(() => managedNativeEventLogger?.close() ?? Effect.void),
       ),
     );
 
-    const streamEvents = Stream.fromPubSub(runtimeEventPubSub);
+    const streamEvents = runtimeEventBroadcast.stream;
 
     return {
       provider: PROVIDER,

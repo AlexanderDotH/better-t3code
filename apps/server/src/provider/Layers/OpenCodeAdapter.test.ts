@@ -27,6 +27,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { ServerConfig } from "../../config.ts";
 import type { OpenCodeMcpServerConfig } from "../../mcp/McpConfigEngine.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as ResourceProtection from "../../resourceProtection/SubagentResourceGovernor.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import type { OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
@@ -86,6 +87,8 @@ const runtimeMock = {
     sessionDirectoryById: new Map<string, string>(),
     sessionUpdateCalls: [] as Array<{ sessionID: string; permission: unknown }>,
     forkCalls: [] as Array<{ sessionID: string; directory?: string }>,
+    permissionReplyCalls: [] as Array<{ requestID: string; reply: string }>,
+    permissionReplyWaiters: [] as Array<() => void>,
   },
   reset() {
     this.state.startCalls.length = 0;
@@ -113,6 +116,8 @@ const runtimeMock = {
     this.state.sessionDirectoryById.clear();
     this.state.sessionUpdateCalls.length = 0;
     this.state.forkCalls.length = 0;
+    this.state.permissionReplyCalls.length = 0;
+    this.state.permissionReplyWaiters.length = 0;
   },
 };
 
@@ -234,6 +239,13 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           })(),
         }),
       },
+      permission: {
+        reply: async (input: { requestID: string; reply: string }) => {
+          runtimeMock.state.permissionReplyCalls.push(input);
+          for (const resolve of runtimeMock.state.permissionReplyWaiters.splice(0)) resolve();
+          return { data: true };
+        },
+      },
       mcp: {
         add: async (input: unknown) => {
           runtimeMock.state.mcpAddCalls.push(input);
@@ -333,6 +345,157 @@ beforeEach(() => {
 
 const advanceTestClock = (ms: number) =>
   TestClock.adjust(`${ms} millis`).pipe(Effect.andThen(Effect.yieldNow));
+
+const resourceProtectedOpenCodeLayer = (
+  governor: ResourceProtection.SubagentResourceGovernor["Service"],
+) =>
+  Layer.effect(OpenCodeAdapter, makeOpenCodeAdapter(openCodeAdapterTestSettings)).pipe(
+    Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+    Layer.provideMerge(Layer.succeed(ResourceProtection.SubagentResourceGovernor, governor)),
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+it.effect("resource-gates task permission and auto-allows it once in full-access mode", () =>
+  Effect.gen(function* () {
+    const governor = yield* ResourceProtection.makeSubagentResourceGovernor();
+    yield* governor.observe({
+      sampledAtMs: 0,
+      memory: {
+        totalBytes: 16 * ResourceProtection.GIBIBYTE,
+        availableBytes: 3 * ResourceProtection.GIBIBYTE,
+        swapTotalBytes: 8 * ResourceProtection.GIBIBYTE,
+        swapFreeBytes: 8 * ResourceProtection.GIBIBYTE,
+      },
+      processes: [],
+    });
+    runtimeMock.state.subscribedEvents = [
+      {
+        id: "event-task-permission",
+        type: "permission.asked",
+        properties: {
+          id: "permission-task-1",
+          sessionID: "http://127.0.0.1:9999/session",
+          permission: "task",
+          patterns: ["*"],
+          metadata: { description: "spawn an agent" },
+          always: [],
+        },
+      },
+    ];
+    const protectedLayer = resourceProtectedOpenCodeLayer(governor);
+
+    yield* Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-resource-gate");
+      const waitingSnapshot = yield* governor.changes.pipe(
+        Stream.filter((snapshot) => snapshot.state === "waiting"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const waiting = yield* Fiber.join(waitingSnapshot);
+
+      NodeAssert.deepEqual(
+        (runtimeMock.state.sessionCreateInputs[0] as { permission?: unknown } | undefined)
+          ?.permission,
+        [
+          { permission: "*", pattern: "*", action: "allow" },
+          { permission: "task", pattern: "*", action: "ask" },
+        ],
+      );
+      NodeAssert.equal(waiting._tag, "Some");
+      NodeAssert.equal((yield* governor.latest).waitingStarts, 1);
+      NodeAssert.deepEqual(runtimeMock.state.permissionReplyCalls, []);
+
+      const replyObserved = new Promise<void>((resolve) => {
+        runtimeMock.state.permissionReplyWaiters.push(resolve);
+      });
+      yield* governor.observe({
+        sampledAtMs: 1_000,
+        memory: {
+          totalBytes: 16 * ResourceProtection.GIBIBYTE,
+          availableBytes: 10 * ResourceProtection.GIBIBYTE,
+          swapTotalBytes: 8 * ResourceProtection.GIBIBYTE,
+          swapFreeBytes: 8 * ResourceProtection.GIBIBYTE,
+        },
+        processes: [],
+      });
+      yield* Effect.promise(() => replyObserved);
+
+      NodeAssert.deepEqual(runtimeMock.state.permissionReplyCalls, [
+        { requestID: "permission-task-1", reply: "once" },
+      ]);
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.provide(protectedLayer), Effect.ensuring(governor.shutdown));
+  }),
+);
+
+it.effect("keeps normal user approval semantics after task resource admission", () =>
+  Effect.gen(function* () {
+    const governor = yield* ResourceProtection.makeSubagentResourceGovernor();
+    yield* governor.observe({
+      sampledAtMs: 0,
+      memory: {
+        totalBytes: 16 * ResourceProtection.GIBIBYTE,
+        availableBytes: 10 * ResourceProtection.GIBIBYTE,
+        swapTotalBytes: 8 * ResourceProtection.GIBIBYTE,
+        swapFreeBytes: 8 * ResourceProtection.GIBIBYTE,
+      },
+      processes: [],
+    });
+    runtimeMock.state.subscribedEvents = [
+      {
+        id: "event-task-user-permission",
+        type: "permission.asked",
+        properties: {
+          id: "permission-task-user-1",
+          sessionID: "http://127.0.0.1:9999/session",
+          permission: "task",
+          patterns: ["*"],
+          metadata: { description: "ask before spawning" },
+          always: [],
+        },
+      },
+    ];
+
+    yield* Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-user-approval");
+      const requestOpened = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "request.opened"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+
+      const opened = yield* Fiber.join(requestOpened);
+      NodeAssert.equal(opened._tag, "Some");
+      if (opened._tag !== "Some" || opened.value.type !== "request.opened") return;
+      NodeAssert.equal(opened.value.payload.requestType, "unknown");
+      NodeAssert.deepEqual(runtimeMock.state.permissionReplyCalls, []);
+
+      yield* adapter.respondToRequest(threadId, opened.value.requestId!, "accept");
+      NodeAssert.deepEqual(runtimeMock.state.permissionReplyCalls, [
+        { requestID: "permission-task-user-1", reply: "once" },
+      ]);
+      yield* adapter.stopSession(threadId);
+    }).pipe(
+      Effect.provide(resourceProtectedOpenCodeLayer(governor)),
+      Effect.ensuring(governor.shutdown),
+    );
+  }),
+);
 
 it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
   it.effect("reuses a configured OpenCode server URL instead of spawning a local server", () =>

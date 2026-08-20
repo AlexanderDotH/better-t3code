@@ -29,6 +29,7 @@ import {
   type ClaudeSettings,
   type CodexSettings,
   type CursorSettings,
+  type GeminiSettings,
   type GrokSettings,
   type OpenCodeSettings,
   ProviderDriverKind,
@@ -46,12 +47,15 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { BUILT_IN_DRIVERS } from "../builtInDrivers.ts";
 import { GrokDriver, type GrokDriverEnv } from "../Drivers/GrokDriver.ts";
+import { GeminiDriver, type GeminiDriverEnv } from "../Drivers/GeminiDriver.ts";
 import { NoOpMcpConfigEngineLayer } from "../../mcp/testUtils.ts";
 import { ClaudeDriver, type ClaudeDriverEnv } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "../Drivers/CodexDriver.ts";
 import { CursorDriver, type CursorDriverEnv } from "../Drivers/CursorDriver.ts";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "../Drivers/OpenCodeDriver.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
+import * as WorkspaceContext from "../../workspace/WorkspaceContext.ts";
+import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import type { AnyProviderDriver } from "../ProviderDriver.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { deriveProviderInstanceConfigMap } from "./ProviderInstanceRegistryHydration.ts";
@@ -129,6 +133,12 @@ const makeGrokConfig = (overrides: Partial<GrokSettings>): GrokSettings => ({
   ...overrides,
 });
 
+const makeGeminiConfig = (overrides: Partial<GeminiSettings>): GeminiSettings => ({
+  enabled: false,
+  customModels: [],
+  ...overrides,
+});
+
 const makeOpenCodeConfig = (overrides: Partial<OpenCodeSettings>): OpenCodeSettings => ({
   enabled: false,
   binaryPath: "opencode",
@@ -146,12 +156,13 @@ describe("BUILT_IN_DRIVERS", () => {
       ProviderDriverKind.make("cursor"),
       ProviderDriverKind.make("grok"),
       ProviderDriverKind.make("opencode"),
+      ProviderDriverKind.make("gemini"),
     ]);
   });
 });
 
 describe("deriveProviderInstanceConfigMap", () => {
-  it("hydrates exactly the five native default instances", () => {
+  it("hydrates exactly the six native default instances", () => {
     const configMap = deriveProviderInstanceConfigMap(DEFAULT_SERVER_SETTINGS);
 
     expect(
@@ -162,6 +173,7 @@ describe("deriveProviderInstanceConfigMap", () => {
       ["cursor", "cursor"],
       ["grok", "grok"],
       ["opencode", "opencode"],
+      ["gemini", "gemini"],
     ]);
   });
 });
@@ -319,7 +331,25 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
   // provides `OpenCodeRuntimeLive`'s deps while keeping its own outputs
   // surfaced; that merged layer then provides `ServerConfig.layerTest`'s
   // `FileSystem` dep while keeping everything else surfaced to the test.
-  const infraLayer = OpenCodeRuntimeLive.pipe(Layer.provideMerge(NodeServices.layer));
+  const GeminiWorkspaceLayer = Layer.merge(
+    Layer.succeed(
+      WorkspaceContext.WorkspaceContext,
+      WorkspaceContext.WorkspaceContext.of({
+        execute: () => Effect.succeed({ queries: [], reads: [], truncated: false, warnings: [] }),
+      }),
+    ),
+    Layer.succeed(
+      WorkspaceFileSystem.WorkspaceFileSystem,
+      WorkspaceFileSystem.WorkspaceFileSystem.of({
+        readFile: () => Effect.die("unused Gemini workspace read in disabled-driver test"),
+        writeFile: () => Effect.die("unused Gemini workspace write in disabled-driver test"),
+      }),
+    ),
+  );
+  const infraLayer = OpenCodeRuntimeLive.pipe(
+    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(GeminiWorkspaceLayer),
+  );
   const testLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "provider-instance-registry-all-drivers-test",
   }).pipe(
@@ -338,12 +368,14 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const cursorId = ProviderInstanceId.make("cursor_default");
       const grokId = ProviderInstanceId.make("grok_default");
       const openCodeId = ProviderInstanceId.make("opencode_default");
+      const geminiId = ProviderInstanceId.make("gemini_default");
 
       const codexDriverKind = ProviderDriverKind.make("codex");
       const claudeDriverKind = ProviderDriverKind.make("claudeAgent");
       const cursorDriverKind = ProviderDriverKind.make("cursor");
       const grokDriverKind = ProviderDriverKind.make("grok");
       const openCodeDriverKind = ProviderDriverKind.make("opencode");
+      const geminiDriverKind = ProviderDriverKind.make("gemini");
 
       const configMap: ProviderInstanceConfigMap = {
         [codexId]: {
@@ -379,12 +411,19 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
           enabled: false,
           config: makeOpenCodeConfig({}),
         },
+        [geminiId]: {
+          driver: geminiDriverKind,
+          displayName: "Gemini",
+          enabled: false,
+          config: makeGeminiConfig({}),
+        },
       };
 
       type AllDriverEnv =
         | CodexDriverEnv
         | ClaudeDriverEnv
         | CursorDriverEnv
+        | GeminiDriverEnv
         | GrokDriverEnv
         | OpenCodeDriverEnv;
       const drivers: ReadonlyArray<AnyProviderDriver<AllDriverEnv>> = [
@@ -393,6 +432,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         CursorDriver,
         GrokDriver,
         OpenCodeDriver,
+        GeminiDriver,
       ];
       const { registry } = yield* makeProviderInstanceRegistry({
         drivers,
@@ -405,9 +445,9 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(unavailable).toEqual([]);
 
       const instances = yield* registry.listInstances;
-      expect(instances).toHaveLength(5);
+      expect(instances).toHaveLength(6);
       expect(instances.map((instance) => instance.instanceId).toSorted()).toEqual(
-        [codexId, claudeId, cursorId, grokId, openCodeId].toSorted(),
+        [codexId, claudeId, cursorId, grokId, openCodeId, geminiId].toSorted(),
       );
 
       // Instance lookup by id resolves each instance to its own bundle —
@@ -418,16 +458,19 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const cursor = yield* registry.getInstance(cursorId);
       const grok = yield* registry.getInstance(grokId);
       const openCode = yield* registry.getInstance(openCodeId);
+      const gemini = yield* registry.getInstance(geminiId);
       expect(codex?.driverKind).toBe(codexDriverKind);
       expect(claude?.driverKind).toBe(claudeDriverKind);
       expect(cursor?.driverKind).toBe(cursorDriverKind);
       expect(grok?.driverKind).toBe(grokDriverKind);
       expect(openCode?.driverKind).toBe(openCodeDriverKind);
+      expect(gemini?.driverKind).toBe(geminiDriverKind);
       expect(codex?.displayName).toBe("Codex");
       expect(claude?.displayName).toBe("Claude");
       expect(cursor?.displayName).toBe("Cursor");
       expect(grok?.displayName).toBe("Grok");
       expect(openCode?.displayName).toBe("OpenCode");
+      expect(gemini?.displayName).toBe("Gemini");
 
       // Every instance owns its own set of closures — no sharing across
       // drivers. `adapter` / `textGeneration` / `snapshot` are all
@@ -440,6 +483,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.adapter,
         grok!.adapter,
         openCode!.adapter,
+        gemini!.adapter,
       ];
       expect(new Set(adapters).size).toBe(adapters.length);
       const textGenerations = [
@@ -448,6 +492,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.textGeneration,
         grok!.textGeneration,
         openCode!.textGeneration,
+        gemini!.textGeneration,
       ];
       expect(new Set(textGenerations).size).toBe(textGenerations.length);
       const snapshots = [
@@ -456,6 +501,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.snapshot,
         grok!.snapshot,
         openCode!.snapshot,
+        gemini!.snapshot,
       ];
       expect(new Set(snapshots).size).toBe(snapshots.length);
 
@@ -517,6 +563,18 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       });
       expect(openCodeSnapshot.continuation?.groupKey).toBe(
         `${openCodeDriverKind}:instance:${openCodeId}`,
+      );
+
+      const geminiSnapshot = yield* gemini!.snapshot.getSnapshot;
+      expect(geminiSnapshot.instanceId).toBe(geminiId);
+      expect(geminiSnapshot.driver).toBe(geminiDriverKind);
+      expect(geminiSnapshot.enabled).toBe(false);
+      expect(geminiSnapshot.fetchWorkers).toEqual({
+        maxRecommendedWorkers: 8,
+        commandExecutionPolicy: "deny",
+      });
+      expect(geminiSnapshot.continuation?.groupKey).toBe(
+        `${geminiDriverKind}:instance:${geminiId}`,
       );
     }).pipe(Effect.provide(testLayer)),
   );

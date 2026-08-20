@@ -36,7 +36,6 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
@@ -45,6 +44,12 @@ import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
+import {
+  makeBoundedProviderEventBroadcast,
+  providerEventEncodedBytes,
+  PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
+  PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
+} from "../boundedEventQueue.ts";
 import {
   increment,
   providerMetricAttributes,
@@ -248,7 +253,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const mcpRuntimeRegistry = Option.getOrUndefined(yield* Effect.serviceOption(McpRuntimeRegistry));
-  const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+  const runtimeEventBroadcast = yield* makeBoundedProviderEventBroadcast<ProviderRuntimeEvent>({
+    capacity: PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
+    byteCapacity: PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
+    sizeOf: providerEventEncodedBytes,
+  });
   const serviceScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
     Scope.close(scope, Exit.void),
   );
@@ -583,7 +592,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ? canonicalEventLogger.write(canonicalEvent, canonicalEvent.threadId)
           : Effect.void,
       ),
-      Effect.flatMap((canonicalEvent) => PubSub.publish(runtimeEventPubSub, canonicalEvent)),
+      Effect.flatMap((canonicalEvent) => runtimeEventBroadcast.publish(canonicalEvent)),
       Effect.asVoid,
     );
 
@@ -1817,6 +1826,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       ),
     ),
   );
+  yield* Effect.addFinalizer(() => runtimeEventBroadcast.shutdown);
 
   return {
     startSession,
@@ -1835,11 +1845,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     getCapabilities,
     getInstanceInfo,
     rollbackConversation,
-    // Each access creates a fresh PubSub subscription so that multiple
+    // Each access creates a fresh bounded subscription so that multiple
     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
     // independently receive all runtime events.
     get streamEvents(): ProviderServiceMethod<"streamEvents"> {
-      return Stream.fromPubSub(runtimeEventPubSub);
+      return runtimeEventBroadcast.stream;
     },
   } satisfies ProviderService.ProviderService["Service"];
 });

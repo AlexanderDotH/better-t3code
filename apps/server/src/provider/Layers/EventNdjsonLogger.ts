@@ -7,6 +7,7 @@
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import * as NodeCrypto from "node:crypto";
 
 import type { ThreadId } from "@t3tools/contracts";
 import { RotatingFileSink } from "@t3tools/shared/logging";
@@ -32,9 +33,12 @@ const DEFAULT_MAX_AGE_MS = 14 * DAY_MS;
 const DEFAULT_RETENTION_CHECK_INTERVAL_MS = 5 * 60 * 1_000;
 const DEFAULT_MAX_BUFFERED_BYTES = MEBIBYTE;
 const DEFAULT_MAX_BUFFERED_RECORDS = 512;
+const DIAGNOSTIC_PAYLOAD_LIMIT_BYTES = 256 * 1024;
+const DIAGNOSTIC_PREVIEW_BYTES = 96 * 1024;
 const GLOBAL_THREAD_SEGMENT = "_global";
 const LOG_SCOPE = "provider-observability";
 const encodeUnknownJsonString = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+const encodeUnknownJsonStringSync = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 const transientCanonicalEventTypes = new Set([
   "content.delta",
@@ -438,13 +442,33 @@ function drainPending(input: {
 }
 
 const serializeEvent = Effect.fnUntraced(function* (event: unknown) {
-  return yield* encodeUnknownJsonString(event).pipe(
+  const payload = yield* encodeUnknownJsonString(event).pipe(
     Effect.catch((error) =>
       logWarning("failed to serialize provider event log record", {
         errorTag: errorTag(error),
       }).pipe(Effect.as(undefined)),
     ),
   );
+  if (
+    payload === undefined ||
+    Buffer.byteLength(payload, "utf8") < DIAGNOSTIC_PAYLOAD_LIMIT_BYTES
+  ) {
+    return payload;
+  }
+
+  const originalBytes = Buffer.byteLength(payload, "utf8");
+  const buffer = Buffer.from(payload, "utf8");
+  const half = Math.floor(DIAGNOSTIC_PREVIEW_BYTES / 2);
+  const preview = `${buffer.subarray(0, half).toString("utf8")}\n… diagnostic copy truncated …\n${buffer
+    .subarray(Math.max(half, buffer.byteLength - half))
+    .toString("utf8")}`;
+  return encodeUnknownJsonStringSync({
+    _t3DiagnosticTruncation: {
+      originalBytes,
+      sha256: NodeCrypto.createHash("sha256").update(buffer).digest("hex"),
+    },
+    preview,
+  });
 });
 
 export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (

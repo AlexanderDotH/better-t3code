@@ -5,6 +5,7 @@ import * as NodeURL from "node:url";
 import * as NodeFS from "node:fs";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { ProviderDriverKind, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -14,6 +15,7 @@ import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import * as ResourceProtection from "../../resourceProtection/SubagentResourceGovernor.ts";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -22,6 +24,46 @@ const mockAgentCommand = "node";
 const mockAgentArgs = [mockAgentPath];
 
 describe("AcpSessionRuntime", () => {
+  it.effect("registers and releases its owned provider process with the governor", () =>
+    Effect.gen(function* () {
+      const governor = yield* ResourceProtection.makeSubagentResourceGovernor();
+      const demands = yield* governor.monitoringDemand.pipe(
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+
+      yield* Effect.gen(function* () {
+        const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+        yield* runtime.start();
+      }).pipe(
+        Effect.provide(
+          AcpSessionRuntime.layer({
+            spawn: {
+              command: mockAgentCommand,
+              args: mockAgentArgs,
+            },
+            providerProcess: {
+              threadId: ThreadId.make("acp-governor-lifecycle"),
+              provider: ProviderDriverKind.make("cursor"),
+              providerInstanceId: ProviderInstanceId.make("cursor-main"),
+            },
+            cwd: process.cwd(),
+            clientInfo: { name: "t3-test", version: "0.0.0" },
+            authMethodId: "test",
+          }),
+        ),
+        Effect.provideService(ResourceProtection.SubagentResourceGovernor, governor),
+        Effect.scoped,
+        Effect.provide(NodeServices.layer),
+      );
+
+      expect(Array.from(yield* Fiber.join(demands))).toEqual([false, true, false]);
+      yield* governor.shutdown;
+    }),
+  );
+
   it.effect("merges custom initialize client capabilities into the ACP handshake", () => {
     const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
     return Effect.gen(function* () {

@@ -24,7 +24,6 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -37,12 +36,14 @@ import type {
   QuestionRequest,
 } from "@opencode-ai/sdk/v2";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { OpenCodeMcpServerConfig } from "../../mcp/McpConfigEngine.ts";
 import { sanitizeMcpRuntimeText } from "../../mcp/McpRuntimeSanitizer.ts";
+import * as ResourceProtection from "../../resourceProtection/SubagentResourceGovernor.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
   ProviderAdapterProcessError,
@@ -67,6 +68,12 @@ import {
   type OpenCodeServerConnection,
 } from "../opencodeRuntime.ts";
 import { bindProviderRuntimeEventOrigin } from "../runtimeEventOrigin.ts";
+import {
+  makeBoundedProviderEventQueue,
+  providerEventEncodedBytes,
+  PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
+  PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
+} from "../boundedEventQueue.ts";
 import * as Option from "effect/Option";
 
 const OPENCODE_PROVIDER = ProviderDriverKind.make("opencode");
@@ -237,6 +244,7 @@ interface OpenCodeSessionContext {
   managedMcpServers: Record<string, OpenCodeMcpServerConfig>;
   readonly builtInMcpExpected: boolean;
   readonly pendingPermissions: Map<string, PermissionRequest>;
+  readonly resourceAutoPermissionIds: Set<string>;
   readonly pendingQuestions: Map<string, QuestionRequest>;
   readonly messageRoleById: Map<string, "user" | "assistant">;
   readonly partById: Map<string, Part>;
@@ -744,10 +752,15 @@ function updateProviderSession(
 
 const stopOpenCodeContext = Effect.fn("stopOpenCodeContext")(function* (
   context: OpenCodeSessionContext,
+  resourceGovernor?: ResourceProtection.SubagentResourceGovernor["Service"],
 ) {
   // Race-safe one-shot: first caller flips the flag, everyone else no-ops.
   if (yield* Ref.getAndSet(context.stopped, true)) {
     return false;
+  }
+
+  if (resourceGovernor) {
+    yield* resourceGovernor.cancelThread(context.session.threadId);
   }
 
   // Best-effort remote abort. The scope close below tears down the local
@@ -779,8 +792,12 @@ export function makeOpenCodeAdapter(
       });
     const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("opencode");
     const serverConfig = yield* ServerConfig;
+    const hostPlatform = yield* HostProcessPlatform;
     const openCodeRuntime = yield* OpenCodeRuntime;
     const crypto = yield* Crypto.Crypto;
+    const resourceGovernor = Option.getOrUndefined(
+      yield* Effect.serviceOption(ResourceProtection.SubagentResourceGovernor),
+    );
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const sameDirectory = (left: string, right: string) =>
@@ -796,7 +813,11 @@ export function makeOpenCodeAdapter(
     // `options.nativeEventLogger`, they own its lifecycle.
     const managedNativeEventLogger =
       options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
-    const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
+    const runtimeEvents = yield* makeBoundedProviderEventQueue<ProviderRuntimeEvent>({
+      capacity: PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
+      byteCapacity: PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
+      sizeOf: providerEventEncodedBytes,
+    });
     const sessions = new Map<ThreadId, OpenCodeSessionContext>();
     const randomUUIDv4 = crypto.randomUUIDv4.pipe(
       Effect.mapError(
@@ -1044,7 +1065,7 @@ export function makeOpenCodeAdapter(
         // the remaining cleanups.
         yield* Effect.forEach(
           contexts,
-          (context) => Effect.ignoreCause(stopOpenCodeContext(context)),
+          (context) => Effect.ignoreCause(stopOpenCodeContext(context, resourceGovernor)),
           { concurrency: "unbounded", discard: true },
         );
         // Close the logger AFTER session teardown so any final lifecycle
@@ -1054,11 +1075,11 @@ export function makeOpenCodeAdapter(
         if (managedNativeEventLogger !== undefined) {
           yield* managedNativeEventLogger.close();
         }
-      }).pipe(Effect.ensuring(Queue.shutdown(runtimeEvents))),
+      }).pipe(Effect.ensuring(runtimeEvents.shutdown)),
     );
 
     const publishRuntimeEvent = (event: ProviderRuntimeEvent) =>
-      Queue.offer(runtimeEvents, event).pipe(Effect.asVoid);
+      runtimeEvents.offer(event).pipe(Effect.asVoid);
     const writeNativeEvent = (
       threadId: ThreadId,
       event: {
@@ -1118,6 +1139,9 @@ export function makeOpenCodeAdapter(
           },
         })
         .pipe(Effect.ignore);
+      if (resourceGovernor) {
+        yield* resourceGovernor.cancelThread(context.session.threadId);
+      }
       // Inline the teardown that `stopOpenCodeContext` would do; we can't
       // delegate to it because our `getAndSet` above already flipped the
       // one-shot guard, so the call would no-op.
@@ -1351,28 +1375,79 @@ export function makeOpenCodeAdapter(
         }
 
         case "permission.asked": {
-          context.pendingPermissions.set(event.properties.id, event.properties);
-          yield* context.emit({
-            ...(yield* buildEventBase({
-              threadId: context.session.threadId,
-              turnId,
-              requestId: event.properties.id,
-              raw: event,
-            })),
-            type: "request.opened",
-            payload: {
-              requestType: mapPermissionToRequestType(event.properties.permission),
-              detail:
-                event.properties.patterns.length > 0
-                  ? event.properties.patterns.join("\n")
-                  : event.properties.permission,
-              args: event.properties.metadata,
-            },
+          const openPermission = Effect.gen(function* () {
+            context.pendingPermissions.set(event.properties.id, event.properties);
+            yield* context.emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                turnId,
+                requestId: event.properties.id,
+                raw: event,
+              })),
+              type: "request.opened",
+              payload: {
+                requestType: mapPermissionToRequestType(event.properties.permission),
+                detail:
+                  event.properties.patterns.length > 0
+                    ? event.properties.patterns.join("\n")
+                    : event.properties.permission,
+                args: event.properties.metadata,
+              },
+            });
           });
+
+          if (event.properties.permission !== "task") {
+            yield* openPermission;
+            break;
+          }
+
+          yield* Effect.gen(function* () {
+            if (resourceGovernor) {
+              const admitted = yield* resourceGovernor.awaitAdmission({
+                threadId: context.session.threadId,
+                provider,
+                providerInstanceId: boundInstanceId,
+                configurationKey: ResourceProtection.resourceConfigurationKey([
+                  provider,
+                  boundInstanceId,
+                  context.session.model ?? "",
+                  context.activeAgent ?? "",
+                  context.activeVariant ?? "",
+                  context.managedMcpServers,
+                  context.builtInMcpExpected,
+                ]),
+              });
+              if (!admitted) return;
+            }
+            if (yield* Ref.get(context.stopped)) return;
+            if (context.session.runtimeMode !== "full-access") {
+              yield* openPermission;
+              return;
+            }
+
+            context.resourceAutoPermissionIds.add(event.properties.id);
+            yield* runOpenCodeSdk("permission.reply", () =>
+              context.client.permission.reply({
+                requestID: event.properties.id,
+                reply: "once",
+              }),
+            );
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logError("OpenCode resource-gated task permission failed", {
+                threadId: context.session.threadId,
+                cause,
+              }),
+            ),
+            Effect.forkIn(context.sessionScope),
+          );
           break;
         }
 
         case "permission.replied": {
+          if (context.resourceAutoPermissionIds.delete(event.properties.requestID)) {
+            break;
+          }
           context.pendingPermissions.delete(event.properties.requestID);
           yield* context.emit({
             ...(yield* buildEventBase({
@@ -1616,7 +1691,7 @@ export function makeOpenCodeAdapter(
             : {};
         const existing = sessions.get(input.threadId);
         if (existing) {
-          yield* stopOpenCodeContext(existing);
+          yield* stopOpenCodeContext(existing, resourceGovernor);
           sessions.delete(input.threadId);
         }
         const runtimeSessionId =
@@ -1635,6 +1710,26 @@ export function makeOpenCodeAdapter(
                 ...(options?.environment ? { environment: options.environment } : {}),
                 mcpServers,
               });
+              if (!server.external && server.pid !== undefined && resourceGovernor) {
+                const startTimeMs = ResourceProtection.providerProcessStartTimeMs(
+                  server.pid,
+                  hostPlatform,
+                );
+                yield* resourceGovernor.registerProviderProcess({
+                  threadId: input.threadId,
+                  provider,
+                  providerInstanceId: boundInstanceId,
+                  pid: server.pid,
+                  ...(startTimeMs === undefined ? {} : { startTimeMs }),
+                });
+                yield* Scope.addFinalizer(
+                  sessionScope,
+                  resourceGovernor.unregisterProviderProcess({
+                    pid: server.pid,
+                    ...(startTimeMs === undefined ? {} : { startTimeMs }),
+                  }),
+                );
+              }
               const client = openCodeRuntime.createOpenCodeSdkClient({
                 baseUrl: server.url,
                 directory,
@@ -1815,6 +1910,7 @@ export function makeOpenCodeAdapter(
           builtInMcpExpected: started.builtInMcpExpected,
           openCodeSessionId: started.openCodeSession.id,
           pendingPermissions: new Map(),
+          resourceAutoPermissionIds: new Set(),
           pendingQuestions: new Map(),
           partById: new Map(),
           emittedTextByPartId: new Map(),
@@ -2092,7 +2188,7 @@ export function makeOpenCodeAdapter(
             threadId,
           });
         }
-        const stopped = yield* stopOpenCodeContext(context);
+        const stopped = yield* stopOpenCodeContext(context, resourceGovernor);
         sessions.delete(threadId);
         if (!stopped) {
           return;
@@ -2176,7 +2272,7 @@ export function makeOpenCodeAdapter(
         // interrupt the sibling fibers. Same pattern as the layer finalizer.
         yield* Effect.forEach(
           contexts,
-          (context) => Effect.ignoreCause(stopOpenCodeContext(context)),
+          (context) => Effect.ignoreCause(stopOpenCodeContext(context, resourceGovernor)),
           { concurrency: "unbounded", discard: true },
         );
       });
@@ -2201,7 +2297,7 @@ export function makeOpenCodeAdapter(
       rollbackThread,
       stopAll,
       get streamEvents() {
-        return Stream.fromQueue(runtimeEvents);
+        return runtimeEvents.stream;
       },
     } satisfies OpenCodeAdapterShape;
   });
