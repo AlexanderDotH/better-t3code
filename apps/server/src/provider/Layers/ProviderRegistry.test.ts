@@ -49,6 +49,8 @@ import {
 import * as ServerConfig from "../../config.ts";
 import { NoOpMcpConfigEngineLayer } from "../../mcp/testUtils.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
+import * as WorkspaceContext from "../../workspace/WorkspaceContext.ts";
+import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import { readProviderStatusCache, resolveProviderStatusCachePath } from "../providerStatusCache.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
@@ -77,6 +79,29 @@ const TestHttpClientLive = Layer.succeed(
   HttpClient.make((request) =>
     Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" }))),
   ),
+);
+
+const GeminiWorkspaceLayer = Layer.merge(
+  Layer.succeed(
+    WorkspaceContext.WorkspaceContext,
+    WorkspaceContext.WorkspaceContext.of({
+      execute: () => Effect.succeed({ queries: [], reads: [], truncated: false, warnings: [] }),
+    }),
+  ),
+  Layer.succeed(
+    WorkspaceFileSystem.WorkspaceFileSystem,
+    WorkspaceFileSystem.WorkspaceFileSystem.of({
+      readFile: () => Effect.die("unused Gemini workspace read in provider registry test"),
+      writeFile: () => Effect.die("unused Gemini workspace write in provider registry test"),
+    }),
+  ),
+);
+
+const ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem = Layer.mergeAll(
+  NodeServices.layer,
+  ServerSettingsModule.layerTest(),
+  TestHttpClientLive,
+  GeminiWorkspaceLayer,
 );
 
 const BackgroundPolicyAlwaysRunLayer = Layer.mock(BackgroundPolicy.BackgroundPolicy)({
@@ -364,7 +389,7 @@ function makeMutableServerSettingsService(
   });
 }
 
-it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), TestHttpClientLive))(
+it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
   "ProviderRegistry",
   (it) => {
     describe("checkCodexProviderStatus", () => {
@@ -1471,6 +1496,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   codex: { enabled: false },
                   claudeAgent: { enabled: false },
                   cursor: { enabled: false },
+                  gemini: { enabled: false },
                   grok: { enabled: false },
                   opencode: { enabled: false },
                 },
@@ -1585,6 +1611,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   codex: { enabled: true, binaryPath: firstMissing },
                   claudeAgent: { enabled: false },
                   cursor: { enabled: false },
+                  gemini: { enabled: false },
                   grok: { enabled: false },
                   opencode: { enabled: false },
                 },
@@ -1701,6 +1728,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   codex: { enabled: false },
                   claudeAgent: { enabled: false },
                   cursor: { enabled: false },
+                  gemini: { enabled: false },
                   grok: { enabled: false },
                   opencode: { enabled: false },
                 },
@@ -1770,6 +1798,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                       enabled: false,
                     },
                     cursor: {
+                      enabled: false,
+                    },
+                    gemini: {
                       enabled: false,
                     },
                     grok: {
@@ -1845,6 +1876,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 "claudeAgent",
                 "codex",
                 "cursor",
+                "gemini",
                 "grok",
                 "opencode",
               ]);
