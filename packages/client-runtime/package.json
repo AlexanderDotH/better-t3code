@@ -43,6 +43,26 @@
       "types": "./src/reasoningRecommendation.ts",
       "default": "./src/reasoningRecommendation.ts"
     },
+    "./project-thread-preview-sync": {
+      "types": "./src/projectThreadPreviewSync.ts",
+      "default": "./src/projectThreadPreviewSync.ts"
+    },
+    "./resource-protection": {
+      "types": "./src/resourceProtection.ts",
+      "default": "./src/resourceProtection.ts"
+    },
+    "./plan-implementation": {
+      "types": "./src/planImplementation.ts",
+      "default": "./src/planImplementation.ts"
+    },
+    "./proposed-plan": {
+      "types": "./src/proposedPlan.ts",
+      "default": "./src/proposedPlan.ts"
+    },
+    "./assembly-ai": {
+      "types": "./src/assemblyAiStreaming.ts",
+      "default": "./src/assemblyAiStreaming.ts"
+    },
     "./git-workbench": {
       "types": "./src/git-workbench/index.ts",
       "default": "./src/git-workbench/index.ts"
