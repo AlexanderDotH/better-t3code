@@ -6,6 +6,9 @@
  *
  * @module ClaudeAdapterLive
  */
+// @effect-diagnostics nodeBuiltinImport:off - The Claude SDK requires a synchronous Node SpawnedProcess callback so T3 can register its exact child PID.
+import * as NodeChildProcess from "node:child_process";
+
 import {
   type CanUseTool,
   type McpServerConfig,
@@ -21,9 +24,11 @@ import {
   type SDKResultMessage,
   type SettingSource,
   type SDKUserMessage,
+  type SpawnedProcess,
   type ModelUsage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   ApprovalRequestId,
   type CanonicalItemType,
@@ -106,7 +111,14 @@ import type {
   ProviderMcpRuntimeTarget,
 } from "../Services/ProviderAdapter.ts";
 import { bindProviderRuntimeEventOrigin } from "../runtimeEventOrigin.ts";
+import {
+  makeBoundedProviderEventQueue,
+  providerEventEncodedBytes,
+  PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
+  PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
+} from "../boundedEventQueue.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import * as ResourceProtection from "../../resourceProtection/SubagentResourceGovernor.ts";
 import { claudeMcpRuntimeTools, normalizeClaudeMcpRuntimeServer } from "./ClaudeMcpRuntime.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
@@ -246,6 +258,7 @@ interface ClaudeSessionContext {
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
   readonly query: ClaudeQueryRuntime;
   managedMcpServerIds: ReadonlyMap<string, McpServerId>;
+  managedMcpServers: NonNullable<ClaudeQueryOptions["mcpServers"]>;
   readonly builtInMcpServers: NonNullable<ClaudeQueryOptions["mcpServers"]>;
   streamFiber: Fiber.Fiber<void, Error> | undefined;
   readonly startedAt: string;
@@ -1684,7 +1697,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig;
+  const hostPlatform = yield* HostProcessPlatform;
   const crypto = yield* Crypto.Crypto;
+  const resourceGovernor = Option.getOrUndefined(
+    yield* Effect.serviceOption(ResourceProtection.SubagentResourceGovernor),
+  );
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, options?.environment).pipe(
     Effect.provideService(Path.Path, path),
   );
@@ -1714,7 +1731,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }) as ClaudeQueryRuntime);
 
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
-  const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
+  const runtimeEventQueue = yield* makeBoundedProviderEventQueue<ProviderRuntimeEvent>({
+    capacity: PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
+    byteCapacity: PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
+    sizeOf: providerEventEncodedBytes,
+  });
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const randomUUIDv4 = crypto.randomUUIDv4.pipe(
@@ -1732,7 +1753,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const makeEventStamp = () => Effect.all({ eventId: nextEventId, createdAt: nowIso });
 
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
-    Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid);
+    runtimeEventQueue.offer(event).pipe(Effect.asVoid);
 
   const logNativeSdkMessage = Effect.fnUntraced(function* (
     context: ClaudeSessionContext,
@@ -3665,6 +3686,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     if (context.stopped) return;
 
     context.stopped = true;
+    if (resourceGovernor) {
+      yield* resourceGovernor.cancelThread(context.session.threadId);
+    }
 
     for (const [requestId, pending] of context.pendingApprovals) {
       yield* Deferred.succeed(pending.decision, "cancel");
@@ -3928,6 +3952,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     });
 
     context.managedMcpServerIds = managedMcpServerIds(managedServers);
+    context.managedMcpServers = managedServers;
     const statuses = yield* readMcpServerStatuses(context);
     const reportedKeys = new Set(statuses.map((status) => status.name));
     const missingCount = Object.keys(effectiveServers).filter(
@@ -4158,6 +4183,40 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             behavior: "deny",
             message: "Claude session context is unavailable.",
           } satisfies PermissionResult;
+        }
+
+        if (toolName === "Agent" && resourceGovernor) {
+          const abort = Effect.callback<boolean>((resume) => {
+            const onAbort = () => resume(Effect.succeed(false));
+            if (callbackOptions.signal.aborted) {
+              onAbort();
+              return;
+            }
+            callbackOptions.signal.addEventListener("abort", onAbort, { once: true });
+            return Effect.sync(() => callbackOptions.signal.removeEventListener("abort", onAbort));
+          });
+          const admitted = yield* Effect.raceFirst(
+            resourceGovernor.awaitAdmission({
+              threadId: context.session.threadId,
+              provider: PROVIDER,
+              providerInstanceId: boundInstanceId,
+              configurationKey: ResourceProtection.resourceConfigurationKey([
+                PROVIDER,
+                boundInstanceId,
+                context.currentApiModelId ?? "",
+                context.currentEffort ?? "",
+                context.managedMcpServers,
+                context.builtInMcpServers,
+              ]),
+            }),
+            abort,
+          );
+          if (!admitted || callbackOptions.signal.aborted || context.stopped) {
+            return {
+              behavior: "deny",
+              message: "User cancelled tool execution.",
+            } satisfies PermissionResult;
+          }
         }
 
         // Handle AskUserQuestion: surface clarifying questions to the
@@ -4411,6 +4470,49 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
         canUseTool,
+        ...(options?.createQuery === undefined
+          ? {
+              spawnClaudeCodeProcess: (spawnOptions): SpawnedProcess => {
+                const child = NodeChildProcess.spawn(spawnOptions.command, spawnOptions.args, {
+                  cwd: spawnOptions.cwd,
+                  env: spawnOptions.env,
+                  signal: spawnOptions.signal,
+                  stdio: ["pipe", "pipe", "ignore"],
+                  windowsHide: true,
+                });
+                if (child.pid !== undefined && resourceGovernor) {
+                  const pid = child.pid;
+                  const startTimeMs = ResourceProtection.providerProcessStartTimeMs(
+                    pid,
+                    hostPlatform,
+                  );
+                  let exited = false;
+                  const unregister = resourceGovernor.unregisterProviderProcess({
+                    pid,
+                    ...(startTimeMs === undefined ? {} : { startTimeMs }),
+                  });
+                  child.once("exit", () => {
+                    exited = true;
+                    runFork(unregister);
+                  });
+                  runFork(
+                    resourceGovernor
+                      .registerProviderProcess({
+                        threadId,
+                        provider: PROVIDER,
+                        providerInstanceId: boundInstanceId,
+                        pid,
+                        ...(startTimeMs === undefined ? {} : { startTimeMs }),
+                      })
+                      .pipe(
+                        Effect.andThen(Effect.suspend(() => (exited ? unregister : Effect.void))),
+                      ),
+                  );
+                }
+                return child as unknown as SpawnedProcess;
+              },
+            }
+          : {}),
         env: claudeEnvironment,
         additionalDirectories,
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
@@ -4485,6 +4587,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         promptQueue,
         query: queryRuntime,
         managedMcpServerIds: managedMcpServerIds(mcpServers),
+        managedMcpServers: mcpServers,
         builtInMcpServers,
         streamFiber: undefined,
         startedAt,
@@ -4934,7 +5037,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       Effect.catch((cause) =>
         Effect.logError("Failed to emit Claude session shutdown event.", { cause }),
       ),
-      Effect.tap(() => Queue.shutdown(runtimeEventQueue)),
+      Effect.tap(() => runtimeEventQueue.shutdown),
       Effect.tap(() => managedNativeEventLogger?.close() ?? Effect.void),
     ),
   );
@@ -4959,7 +5062,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     hasSession,
     stopAll,
     get streamEvents() {
-      return Stream.fromQueue(runtimeEventQueue);
+      return runtimeEventQueue.stream;
     },
   } satisfies ClaudeAdapterShape;
 });

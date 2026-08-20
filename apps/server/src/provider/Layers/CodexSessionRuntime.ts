@@ -5,7 +5,7 @@ import {
   ProviderDriverKind,
   ProviderItemId,
   type McpServerDefinition,
-  type ProviderInstanceId,
+  ProviderInstanceId,
   type ProviderApprovalDecision,
   type ProviderEvent,
   type ProviderInteractionMode,
@@ -20,13 +20,14 @@ import {
 } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { normalizeModelSlug } from "@t3tools/shared/model";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Queue from "effect/Queue";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -41,12 +42,19 @@ import {
   forceTerminateOwnedChildProcessAndCleanup,
   type OwnedChildProcessTerminationError,
 } from "../../process/OwnedChildProcess.ts";
+import * as ResourceProtection from "../../resourceProtection/SubagentResourceGovernor.ts";
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { managedMcpProviderKey } from "../../mcp/McpConfigEngine.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
 import { codexManagedFeatureArgs } from "../CodexProcessArgs.ts";
+import {
+  makeBoundedProviderEventQueue,
+  providerEventEncodedBytes,
+  PROVIDER_SESSION_EVENT_QUEUE_BYTE_CAPACITY,
+  PROVIDER_SESSION_EVENT_QUEUE_CAPACITY,
+} from "../boundedEventQueue.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
 
 const PROVIDER = ProviderDriverKind.make("codex");
@@ -160,9 +168,11 @@ export interface CodexSessionRuntimeOptions {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly model?: string;
+  readonly contextWindow?: number;
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
+  readonly appServerGlobalArgs?: ReadonlyArray<string>;
   readonly mcpServers?: ReadonlyArray<McpServerDefinition>;
   readonly internalMcpServer?: CodexInternalMcpServerConfig;
 }
@@ -428,18 +438,23 @@ function buildThreadStartParams(input: {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
+  readonly contextWindow: number | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly mcpServers?: ReadonlyArray<McpServerDefinition>;
   readonly internalMcpServer?: CodexInternalMcpServerConfig;
 }): EffectCodexSchema.V2ThreadStartParams {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
   const mcpConfig = codexThreadMcpConfig(input.mcpServers, input.internalMcpServer);
+  const threadConfig = {
+    ...mcpConfig,
+    ...(input.contextWindow !== undefined ? { model_context_window: input.contextWindow } : {}),
+  };
   return {
     cwd: input.cwd,
     approvalPolicy: config.approvalPolicy,
     sandbox: config.sandbox,
     approvalsReviewer: config.approvalsReviewer,
-    ...(mcpConfig ? { config: mcpConfig } : {}),
+    ...(Object.keys(threadConfig).length > 0 ? { config: threadConfig } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
   };
@@ -591,6 +606,7 @@ export const openCodexThread = (input: {
   readonly runtimeMode: RuntimeMode;
   readonly cwd: string;
   readonly requestedModel: string | undefined;
+  readonly contextWindow?: number;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
   readonly mcpServers?: ReadonlyArray<McpServerDefinition>;
@@ -601,6 +617,7 @@ export const openCodexThread = (input: {
     cwd: input.cwd,
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
+    contextWindow: input.contextWindow,
     serviceTier: input.serviceTier,
     ...(input.mcpServers ? { mcpServers: input.mcpServers } : {}),
     ...(input.internalMcpServer ? { internalMcpServer: input.internalMcpServer } : {}),
@@ -1008,9 +1025,17 @@ export const makeCodexSessionRuntime = (
 > =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const hostPlatform = yield* HostProcessPlatform;
     const runtimeScope = yield* Scope.Scope;
     const crypto = yield* Crypto.Crypto;
-    const events = yield* Queue.unbounded<ProviderEvent>();
+    const resourceGovernor = Option.getOrUndefined(
+      yield* Effect.serviceOption(ResourceProtection.SubagentResourceGovernor),
+    );
+    const events = yield* makeBoundedProviderEventQueue<ProviderEvent>({
+      capacity: PROVIDER_SESSION_EVENT_QUEUE_CAPACITY,
+      byteCapacity: PROVIDER_SESSION_EVENT_QUEUE_BYTE_CAPACITY,
+      sizeOf: providerEventEncodedBytes,
+    });
     const pendingApprovalsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingApproval>());
     const approvalCorrelationsRef = yield* Ref.make(new Map<string, ApprovalCorrelation>());
     const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
@@ -1029,10 +1054,13 @@ export const makeCodexSessionRuntime = (
       ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
     };
     const extendEnv = options.environment === undefined;
-    const appServerArgs = codexSessionAppServerArgs(
-      [...codexManagedFeatureArgs(), ...(options.appServerArgs ?? [])],
-      options.launchArgs,
-    );
+    const appServerArgs = [
+      ...(options.appServerGlobalArgs ?? []),
+      ...codexSessionAppServerArgs(
+        [...codexManagedFeatureArgs(), ...(options.appServerArgs ?? [])],
+        options.launchArgs,
+      ),
+    ];
     const spawnCommand = yield* resolveSpawnCommand(options.binaryPath, appServerArgs, {
       env,
       extendEnv,
@@ -1058,6 +1086,29 @@ export const makeCodexSessionRuntime = (
         ),
       );
 
+    if (resourceGovernor) {
+      const pid = Number(child.pid);
+      const startTimeMs = ResourceProtection.providerProcessStartTimeMs(pid, hostPlatform);
+      const providerInstanceId = options.providerInstanceId ?? ProviderInstanceId.make("codex");
+      yield* resourceGovernor.registerProviderProcess({
+        threadId: options.threadId,
+        provider: PROVIDER,
+        providerInstanceId,
+        pid,
+        ...(startTimeMs === undefined ? {} : { startTimeMs }),
+      });
+      const unregister = resourceGovernor.unregisterProviderProcess({
+        pid,
+        ...(startTimeMs === undefined ? {} : { startTimeMs }),
+      });
+      yield* Scope.addFinalizer(runtimeScope, unregister);
+      yield* child.exitCode.pipe(
+        Effect.andThen(unregister),
+        Effect.ignore,
+        Effect.forkIn(runtimeScope),
+      );
+    }
+
     const clientContext = yield* CodexClient.layerChildProcess(child).pipe(
       Layer.build,
       Effect.provideService(Scope.Scope, runtimeScope),
@@ -1065,7 +1116,11 @@ export const makeCodexSessionRuntime = (
     const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
       Effect.provide(clientContext),
     );
-    const serverNotifications = yield* Queue.unbounded<CodexServerNotification>();
+    const serverNotifications = yield* makeBoundedProviderEventQueue<CodexServerNotification>({
+      capacity: PROVIDER_SESSION_EVENT_QUEUE_CAPACITY,
+      byteCapacity: PROVIDER_SESSION_EVENT_QUEUE_BYTE_CAPACITY,
+      sizeOf: providerEventEncodedBytes,
+    });
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
     const randomUUIDv4 = (purpose: CodexErrors.CodexAppServerIdentifierPurpose) =>
       crypto.randomUUIDv4.pipe(
@@ -1092,7 +1147,7 @@ export const makeCodexSessionRuntime = (
       updatedAt: sessionCreatedAt,
     } satisfies ProviderSession;
     const sessionRef = yield* Ref.make<ProviderSession>(initialSession);
-    const offerEvent = (event: ProviderEvent) => Queue.offer(events, event).pipe(Effect.asVoid);
+    const offerEvent = (event: ProviderEvent) => events.offer(event).pipe(Effect.asVoid);
 
     const emitEvent = (event: Omit<ProviderEvent, "id" | "provider" | "createdAt">) =>
       Effect.gen(function* () {
@@ -1793,9 +1848,7 @@ export const makeCodexSessionRuntime = (
 
     const registerServerNotification = <M extends CodexRpc.ServerNotificationMethod>(method: M) =>
       client.handleServerNotification(method, (params) =>
-        Queue.offer(serverNotifications, makeCodexServerNotification(method, params)).pipe(
-          Effect.asVoid,
-        ),
+        serverNotifications.offer(makeCodexServerNotification(method, params)).pipe(Effect.asVoid),
       );
 
     yield* Effect.forEach(
@@ -1806,7 +1859,7 @@ export const makeCodexSessionRuntime = (
       { concurrency: 1, discard: true },
     );
 
-    yield* Stream.fromQueue(serverNotifications).pipe(
+    yield* serverNotifications.stream.pipe(
       Stream.runForEach(handleRawNotification),
       Effect.forkIn(runtimeScope),
     );
@@ -1884,6 +1937,7 @@ export const makeCodexSessionRuntime = (
         runtimeMode: options.runtimeMode,
         cwd: options.cwd,
         requestedModel,
+        ...(options.contextWindow !== undefined ? { contextWindow: options.contextWindow } : {}),
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
         ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
@@ -1931,17 +1985,16 @@ export const makeCodexSessionRuntime = (
         ),
       );
       yield* Scope.close(runtimeScope, Exit.void);
-      yield* Queue.shutdown(serverNotifications);
-      yield* Queue.shutdown(events);
+      yield* serverNotifications.shutdown;
+      yield* events.shutdown;
     });
 
     const forceClose = Effect.gen(function* () {
       yield* settlePendingApprovals("cancel");
       yield* settlePendingUserInputs({});
-      const shutdownQueues = Effect.all(
-        [Queue.shutdown(serverNotifications), Queue.shutdown(events)],
-        { discard: true },
-      );
+      const shutdownQueues = Effect.all([serverNotifications.shutdown, events.shutdown], {
+        discard: true,
+      });
       const cleanup = Effect.all(
         [
           Ref.set(closedRef, true),
@@ -2145,7 +2198,7 @@ export const makeCodexSessionRuntime = (
             },
           );
         }),
-      events: Stream.fromQueue(events),
+      events: events.stream,
       close,
       forceClose,
     } satisfies CodexSessionRuntimeShape;

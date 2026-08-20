@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { CODEX_CONTEXT_WINDOW_DESCRIPTOR } from "@t3tools/shared/model";
 
 import {
   applyPreferredCodexDefaultModel,
@@ -80,6 +81,7 @@ it("maps current Codex model capability fields", () => {
       ],
       currentValue: "flex",
     },
+    CODEX_CONTEXT_WINDOW_DESCRIPTOR,
   ]);
 });
 
@@ -119,6 +121,7 @@ it("uses standard routing when the catalog has no default service tier", () => {
       ],
       currentValue: "default",
     },
+    CODEX_CONTEXT_WINDOW_DESCRIPTOR,
   ]);
 });
 
@@ -148,6 +151,7 @@ it("canonicalizes the legacy fast catalog tier to priority", () => {
       ],
       currentValue: "priority",
     },
+    CODEX_CONTEXT_WINDOW_DESCRIPTOR,
   ]);
 });
 

@@ -41,6 +41,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as ResourceProtection from "../../resourceProtection/SubagentResourceGovernor.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import type { ClaudeGatewayModelProfile } from "../Drivers/ClaudeGatewayCatalog.ts";
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
@@ -4310,6 +4311,77 @@ describe("ClaudeAdapterLive", () => {
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );
+  });
+
+  it.effect("waits for memory before preserving the normal Agent approval flow", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const governor = yield* ResourceProtection.makeSubagentResourceGovernor();
+      yield* governor.observe({
+        sampledAtMs: 0,
+        memory: {
+          totalBytes: 16 * ResourceProtection.GIBIBYTE,
+          availableBytes: 3 * ResourceProtection.GIBIBYTE,
+          swapTotalBytes: 8 * ResourceProtection.GIBIBYTE,
+          swapFreeBytes: 8 * ResourceProtection.GIBIBYTE,
+        },
+        processes: [],
+      });
+      const protectedLayer = harness.layer.pipe(
+        Layer.provideMerge(Layer.succeed(ResourceProtection.SubagentResourceGovernor, governor)),
+      );
+
+      yield* Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "approval-required",
+        });
+        yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+        const canUseTool = harness.getLastCreateQueryInput()?.options.canUseTool;
+        assert.equal(typeof canUseTool, "function");
+        if (!canUseTool) return;
+        let settled = false;
+        const permissionPromise = canUseTool(
+          "Agent",
+          { description: "memory-gated agent" },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "tool-agent-memory-gated",
+          },
+        ).finally(() => {
+          settled = true;
+        });
+        yield* Effect.promise(() => Promise.resolve());
+
+        assert.equal(settled, false);
+        assert.equal((yield* governor.latest).waitingStarts, 1);
+        yield* governor.observe({
+          sampledAtMs: 1_000,
+          memory: {
+            totalBytes: 16 * ResourceProtection.GIBIBYTE,
+            availableBytes: 10 * ResourceProtection.GIBIBYTE,
+            swapTotalBytes: 8 * ResourceProtection.GIBIBYTE,
+            swapFreeBytes: 8 * ResourceProtection.GIBIBYTE,
+          },
+          processes: [],
+        });
+
+        const requested = yield* Stream.runHead(adapter.streamEvents);
+        assert.equal(requested._tag, "Some");
+        if (requested._tag !== "Some" || requested.value.type !== "request.opened") return;
+        assert.equal(requested.value.payload.requestType, "dynamic_tool_call");
+        yield* adapter.respondToRequest(
+          session.threadId,
+          ApprovalRequestId.make(String(requested.value.requestId)),
+          "accept",
+        );
+        yield* Stream.runHead(adapter.streamEvents);
+        assert.equal((yield* Effect.promise(() => permissionPromise)).behavior, "allow");
+      }).pipe(Effect.provide(protectedLayer), Effect.ensuring(governor.shutdown));
+    });
   });
 
   it.effect("passes Claude resume ids without pinning a stale assistant checkpoint", () => {

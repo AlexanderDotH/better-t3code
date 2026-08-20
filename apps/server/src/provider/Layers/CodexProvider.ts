@@ -24,7 +24,7 @@ import type {
 } from "@t3tools/contracts";
 import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
 
-import { createModelCapabilities } from "@t3tools/shared/model";
+import { CODEX_CONTEXT_WINDOW_DESCRIPTOR, createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   codexAppServerArgs as codexConfiguredAppServerArgs,
@@ -197,6 +197,7 @@ export function mapCodexModelCapabilities(
       currentValue: defaultServiceTier,
     });
   }
+  optionDescriptors.push(CODEX_CONTEXT_WINDOW_DESCRIPTOR);
 
   return createModelCapabilities({
     optionDescriptors,

@@ -44,6 +44,7 @@ import { describe } from "vite-plus/test";
 
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as ResourceProtection from "../../resourceProtection/SubagentResourceGovernor.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
@@ -503,6 +504,38 @@ describe("Codex subagent event mapping", () => {
       ["starting", "running", "interrupted", "completed", "error", "completed", "unavailable"],
     );
   });
+
+  it("synchronizes a completed collab turn with the dedicated subagent lifecycle", () => {
+    const mapEvent = makeCodexRuntimeEventMapper("provider-root");
+    const childId = SubagentId.make("codex:provider-child");
+
+    const events = mapEvent(
+      makeProviderNotification({
+        id: asEventId("evt-collab-turn-completed"),
+        method: "collabAgent/turnCompleted",
+        turnId: asTurnId("root-turn"),
+        payload: {
+          agentThreadId: "provider-child",
+          agentPath: "/root/audit-ui",
+          turn: { id: "child-turn", status: "completed", items: [] },
+        },
+      }),
+      asThreadId("thread-1"),
+    );
+
+    NodeAssert.deepStrictEqual(
+      events.find((event) => event.type === "subagent.state.changed")?.payload,
+      { subagentId: childId, state: "completed" },
+    );
+    NodeAssert.deepStrictEqual(events.find((event) => event.type === "task.updated")?.payload, {
+      taskId: "provider-child",
+      status: "idle",
+      role: "audit-ui",
+      title: "audit-ui",
+      agentPath: "/root/audit-ui",
+      timelineBypass: true,
+    });
+  });
 });
 
 describe("Codex MCP event mapping", () => {
@@ -952,6 +985,100 @@ validationLayer("CodexAdapterLive validation", (it) => {
   });
 });
 
+describe("CodexAdapter resource protection", () => {
+  it.effect("adds lifecycle hooks without changing MCP, model, or launch configuration", () =>
+    Effect.gen(function* () {
+      const governor = yield* ResourceProtection.makeSubagentResourceGovernor();
+      const runtimeFactory = makeRuntimeFactory();
+      const mcpServer = decodeMcpServerDefinition({
+        id: "mock-mcp",
+        name: "Mock MCP",
+        enabled: true,
+        scope: "global",
+        transport: "http",
+        url: "https://mcp.example.test",
+        headers: {
+          authorization: { value: "secret-never-in-hook-key", sensitive: true },
+        },
+      });
+      const layer = Layer.effect(
+        CodexAdapter,
+        Effect.gen(function* () {
+          const codexConfig = decodeCodexSettings({ launchArgs: "--strict-config" });
+          return yield* makeCodexAdapter(codexConfig, {
+            makeRuntime: runtimeFactory.factory,
+            resolveMcpServers: () => Effect.succeed([mcpServer]),
+          });
+        }),
+      ).pipe(
+        Layer.provideMerge(Layer.succeed(ResourceProtection.SubagentResourceGovernor, governor)),
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+        Layer.provideMerge(ServerSettingsService.layerTest()),
+        Layer.provideMerge(providerSessionDirectoryTestLayer),
+        Layer.provideMerge(NodeServices.layer),
+      );
+      const threadId = asThreadId("codex-resource-hook");
+      const modelSelection = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-sol", [
+        { id: "reasoningEffort", value: "high" },
+      ]);
+
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-resource-hook"),
+        threadId,
+        providerSessionId: "provider-session-resource-hook",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer hook-token",
+      });
+      yield* Effect.gen(function* () {
+        const adapter = yield* CodexAdapter;
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          runtimeMode: "full-access",
+          modelSelection,
+        });
+
+        const runtimeInput = runtimeFactory.factory.mock.calls[0]?.[0];
+        NodeAssert.deepStrictEqual(runtimeInput?.appServerGlobalArgs, [
+          "--dangerously-bypass-hook-trust",
+        ]);
+        NodeAssert.deepStrictEqual(runtimeInput?.mcpServers, [mcpServer]);
+        NodeAssert.equal(runtimeInput?.model, "gpt-5.6-sol");
+        NodeAssert.equal(runtimeInput?.launchArgs, "--strict-config");
+        NodeAssert.deepStrictEqual(runtimeInput?.appServerArgs?.slice(0, 4), [
+          "-c",
+          "mcp_servers.t3-code.url=http://127.0.0.1:43123/mcp",
+          "-c",
+          'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+        ]);
+        const hookOverrides =
+          runtimeInput?.appServerArgs?.filter((argument) => argument.startsWith("hooks.")) ?? [];
+        NodeAssert.deepStrictEqual(
+          hookOverrides.map((argument) => /^hooks\.([A-Za-z]+)=/u.exec(argument)?.[1]),
+          ["PreToolUse", "UserPromptSubmit", "Stop", "SubagentStart", "SubagentStop"],
+        );
+        NodeAssert.equal(
+          runtimeInput?.environment?.T3_RESOURCE_PROTECTION_URL,
+          "http://127.0.0.1:43123/internal/resource-protection/codex-admit",
+        );
+        NodeAssert.match(
+          runtimeInput?.environment?.T3_RESOURCE_PROTECTION_CONFIGURATION ?? "",
+          /^sha256:[a-f0-9]{64}$/u,
+        );
+        NodeAssert.doesNotMatch(
+          runtimeInput?.environment?.T3_RESOURCE_PROTECTION_CONFIGURATION ?? "",
+          /secret-never-in-hook-key/u,
+        );
+        yield* adapter.stopSession(threadId);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+      );
+    }),
+  );
+});
+
 const sessionRuntimeFactory = makeRuntimeFactory();
 const sessionErrorLayer = it.layer(
   Layer.effect(
@@ -1019,6 +1146,40 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         effort: "high",
         serviceTier: "priority",
       });
+    }),
+  );
+
+  it.effect("passes the per-chat context window into the session runtime", () =>
+    Effect.gen(function* () {
+      const runtimeFactory = makeRuntimeFactory();
+      const layer = Layer.effect(
+        CodexAdapter,
+        Effect.gen(function* () {
+          const codexConfig = decodeCodexSettings({});
+          return yield* makeCodexAdapter(codexConfig, {
+            makeRuntime: runtimeFactory.factory,
+          });
+        }),
+      ).pipe(
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+        Layer.provideMerge(ServerSettingsService.layerTest()),
+        Layer.provideMerge(providerSessionDirectoryTestLayer),
+        Layer.provideMerge(NodeServices.layer),
+      );
+
+      yield* Effect.gen(function* () {
+        const adapter = yield* CodexAdapter;
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("sess-context-window"),
+          runtimeMode: "full-access",
+          modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-sol", [
+            { id: "contextWindow", value: "262144" },
+          ]),
+        });
+
+        NodeAssert.equal(runtimeFactory.factory.mock.calls[0]?.[0].contextWindow, 262_144);
+      }).pipe(Effect.provide(layer));
     }),
   );
 

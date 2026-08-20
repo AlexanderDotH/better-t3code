@@ -43,7 +43,7 @@ import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import * as Queue from "effect/Queue";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -51,11 +51,20 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
-import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import {
+  getModelSelectionStringOptionValue,
+  resolveCodexContextWindowTokens,
+} from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { managedMcpProviderKey } from "../../mcp/McpConfigEngine.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { sanitizeMcpRuntimeText } from "../../mcp/McpRuntimeSanitizer.ts";
+import * as ResourceProtection from "../../resourceProtection/SubagentResourceGovernor.ts";
+import {
+  codexResourceGovernorHookLaunchConfiguration,
+  RESOURCE_PROTECTION_CONFIGURATION_ENV,
+  RESOURCE_PROTECTION_URL_ENV,
+} from "../../resourceProtection/CodexResourceGovernorHook.ts";
 
 import {
   ProviderAdapterRequestError,
@@ -81,6 +90,12 @@ import {
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 import { stampProviderRuntimeEventOrigin } from "../runtimeEventOrigin.ts";
+import {
+  makeBoundedProviderEventQueue,
+  providerEventEncodedBytes,
+  PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
+  PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
+} from "../boundedEventQueue.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
 const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
@@ -1348,7 +1363,8 @@ export function makeCodexRuntimeEventMapper(initialRootProviderThreadId?: string
 
 /**
  * Maps the session runtime's synthetic `collabAgent/*` events (native
- * multi-agent v2 child-thread signals) into the shared task.* lifecycle.
+ * multi-agent v2 child-thread signals) into the shared task.* and dedicated
+ * subagent lifecycles.
  * Agent identity = child thread id; nickname is the display title, role is
  * agentRole (fallback: last agentPath segment, then "general-purpose").
  * A completed child turn is idle (resumable), not terminal. timelineBypass
@@ -1368,6 +1384,9 @@ function mapCollabAgentEvent(
   }
   const base = runtimeEventBase(event, canonicalThreadId);
   const taskId = RuntimeTaskId.make(agentThreadId);
+  const subagentId = makeCodexSubagentId(agentThreadId);
+  const subagentStateChanged = (state: RuntimeSubagentState, statusMessage?: string | null) =>
+    makeSubagentStateChangedEvent(event, canonicalThreadId, subagentId, state, statusMessage);
   const agentPath = typeof payload.agentPath === "string" ? payload.agentPath : undefined;
   const pathLeaf = agentPath?.split("/").findLast((segment) => segment.length > 0);
   const nickname = typeof payload.nickname === "string" ? payload.nickname : undefined;
@@ -1391,6 +1410,7 @@ function mapCollabAgentEvent(
   switch (event.method) {
     case "collabAgent/started":
       return [
+        subagentStateChanged("starting"),
         {
           ...base,
           type: "task.started",
@@ -1411,6 +1431,7 @@ function mapCollabAgentEvent(
       const activityKind = typeof payload.activityKind === "string" ? payload.activityKind : "";
       if (activityKind === "interrupted") {
         return [
+          subagentStateChanged("interrupted"),
           {
             ...base,
             type: "task.updated",
@@ -1424,6 +1445,7 @@ function mapCollabAgentEvent(
         // shot at a task.started with a real name — agentPath leaf beats a
         // bare thread-id title.
         return [
+          subagentStateChanged("starting"),
           {
             ...base,
             type: "task.started",
@@ -1449,6 +1471,7 @@ function mapCollabAgentEvent(
     }
     case "collabAgent/turnStarted":
       return [
+        subagentStateChanged("running"),
         {
           ...base,
           type: "task.updated",
@@ -1468,7 +1491,17 @@ function mapCollabAgentEvent(
           : turnStatus === "interrupted"
             ? ("interrupted" as const)
             : ("idle" as const);
+      const subagentState =
+        status === "failed" ? "error" : status === "interrupted" ? "interrupted" : "completed";
+      const turnError =
+        typeof turn?.error === "object" && turn.error !== null
+          ? (turn.error as Record<string, unknown>)
+          : undefined;
       return [
+        subagentStateChanged(
+          subagentState,
+          typeof turnError?.message === "string" ? turnError.message : undefined,
+        ),
         {
           ...base,
           type: "task.updated",
@@ -1485,6 +1518,7 @@ function mapCollabAgentEvent(
       if (statusType === "systemError") {
         // Silently dropping this once left children stuck running forever.
         return [
+          subagentStateChanged("error"),
           {
             ...base,
             type: "task.updated",
@@ -1498,6 +1532,7 @@ function mapCollabAgentEvent(
           (flag) => flag === "waitingOnApproval" || flag === "waitingOnUserInput",
         );
         return [
+          subagentStateChanged(waiting ? "waiting" : "running"),
           {
             ...base,
             type: "task.updated",
@@ -1507,6 +1542,7 @@ function mapCollabAgentEvent(
       }
       if (statusType === "idle") {
         return [
+          subagentStateChanged("completed"),
           {
             ...base,
             type: "task.updated",
@@ -1598,6 +1634,7 @@ function mapCollabAgentEvent(
     }
     case "collabAgent/closed":
       return [
+        subagentStateChanged("interrupted"),
         {
           ...base,
           type: "task.updated",
@@ -2502,6 +2539,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const crypto = yield* Crypto.Crypto;
+  const resourceGovernor = Option.getOrUndefined(
+    yield* Effect.serviceOption(ResourceProtection.SubagentResourceGovernor),
+  );
   const serverConfig = yield* Effect.service(ServerConfig);
   const nativeEventLogger =
     options?.nativeEventLogger ??
@@ -2512,7 +2552,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       : undefined);
   const managedNativeEventLogger =
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
-  const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
+  const runtimeEventQueue = yield* makeBoundedProviderEventQueue<ProviderRuntimeEvent>({
+    capacity: PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
+    byteCapacity: PROVIDER_RUNTIME_EVENT_QUEUE_BYTE_CAPACITY,
+    sizeOf: providerEventEncodedBytes,
+  });
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>
@@ -2550,6 +2594,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           input.modelSelection?.instanceId === boundInstanceId
             ? getCodexServiceTierOptionValue(input.modelSelection)
             : undefined;
+        const contextWindow =
+          input.modelSelection?.instanceId === boundInstanceId
+            ? resolveCodexContextWindowTokens(input.modelSelection)
+            : undefined;
         const fetchWorker = input.purpose === "fetch-worker";
         const runtimeMode = fetchWorker ? "approval-required" : input.runtimeMode;
         const cwd = input.cwd ?? process.cwd();
@@ -2558,6 +2606,17 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? yield* options.resolveMcpServers({ cwd })
             : [];
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+        const resourceHook =
+          !fetchWorker && resourceGovernor && mcpSession
+            ? codexResourceGovernorHookLaunchConfiguration({})
+            : undefined;
+        const resourceConfigurationKey = ResourceProtection.resourceConfigurationKey([
+          PROVIDER,
+          boundInstanceId,
+          input.modelSelection ?? null,
+          resolvedMcpServers,
+          mcpSession ? "t3-code" : "",
+        ]);
         const appServerArgs = [
           ...(fetchWorker ? ["--disable", "multi_agent"] : []),
           ...(fetchWorker && mcpSession === undefined ? ["-c", "mcp_servers={}"] : []),
@@ -2569,6 +2628,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                 'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
               ]
             : []),
+          ...(resourceHook?.appServerArgs ?? []),
         ];
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
@@ -2585,12 +2645,22 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ...(input.modelSelection?.instanceId === boundInstanceId
             ? { model: input.modelSelection.model }
             : {}),
+          ...(contextWindow !== undefined ? { contextWindow } : {}),
           ...(serviceTier ? { serviceTier } : {}),
           ...(mcpSession
             ? {
                 environment: {
                   ...(options?.environment ?? process.env),
                   T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
+                  ...(resourceHook
+                    ? {
+                        [RESOURCE_PROTECTION_URL_ENV]: new URL(
+                          "/internal/resource-protection/codex-admit",
+                          mcpSession.endpoint,
+                        ).toString(),
+                        [RESOURCE_PROTECTION_CONFIGURATION_ENV]: resourceConfigurationKey,
+                      }
+                    : {}),
                 },
                 internalMcpServer: {
                   url: mcpSession.endpoint,
@@ -2599,6 +2669,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               }
             : {}),
           ...(appServerArgs.length > 0 ? { appServerArgs } : {}),
+          ...(resourceHook ? { appServerGlobalArgs: resourceHook.globalArgs } : {}),
           ...(options?.resolveMcpServers ? { mcpServers: resolvedMcpServers } : {}),
         };
         const sessionScope = yield* Scope.make("sequential");
@@ -2638,8 +2709,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               });
               return;
             }
-            yield* Queue.offerAll(
-              runtimeEventQueue,
+            yield* runtimeEventQueue.offerAll(
               runtimeEvents.map((runtimeEvent) =>
                 stampProviderRuntimeEventOrigin(runtimeSessionId, runtimeEvent),
               ),
@@ -3104,6 +3174,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     }
     session.stopped = true;
     sessions.delete(session.threadId);
+    if (resourceGovernor) {
+      yield* resourceGovernor.cancelThread(session.threadId);
+    }
     yield* session.runtime.close.pipe(Effect.ignore);
     yield* Effect.ignore(Scope.close(session.scope, Exit.void));
     yield* Fiber.interrupt(session.eventFiber).pipe(Effect.ignore);
@@ -3136,7 +3209,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
 
   yield* Effect.acquireRelease(Effect.void, () =>
     stopAll().pipe(
-      Effect.andThen(Queue.shutdown(runtimeEventQueue)),
+      Effect.andThen(runtimeEventQueue.shutdown),
       Effect.andThen(managedNativeEventLogger?.close() ?? Effect.void),
       Effect.ignore,
     ),
@@ -3167,7 +3240,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     hasSession,
     stopAll,
     get streamEvents() {
-      return Stream.fromQueue(runtimeEventQueue);
+      return runtimeEventQueue.stream;
     },
   } satisfies CodexAdapterShape;
 });

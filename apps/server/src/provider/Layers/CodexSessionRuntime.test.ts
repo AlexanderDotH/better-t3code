@@ -579,6 +579,7 @@ describe("openCodexThread", () => {
         runtimeMode: "full-access",
         cwd: "/tmp/project",
         requestedModel: "gpt-5.3-codex",
+        contextWindow: 262_144,
         serviceTier: undefined,
         resumeThreadId: undefined,
         mcpServers: [userManagedT3Server],
@@ -594,9 +595,11 @@ describe("openCodexThread", () => {
         firstCall.payload as {
           readonly config?: {
             readonly mcp_servers?: Readonly<Record<string, unknown>>;
+            readonly model_context_window?: number;
           };
         }
       ).config;
+      NodeAssert.equal(config?.model_context_window, 262_144);
       const mcpServers = config?.mcp_servers;
       NodeAssert.ok(mcpServers);
       NodeAssert.equal(Object.hasOwn(mcpServers, "t3-managed:t3-code"), true);
@@ -635,6 +638,7 @@ describe("openCodexThread", () => {
         runtimeMode: "full-access",
         cwd: "/tmp/project",
         requestedModel: "gpt-5.3-codex",
+        contextWindow: 524_288,
         serviceTier: undefined,
         resumeThreadId: "stale-thread",
       });
@@ -644,6 +648,13 @@ describe("openCodexThread", () => {
         calls.map((call) => call.method),
         ["thread/resume", "thread/start"],
       );
+      for (const call of calls) {
+        NodeAssert.equal(
+          (call.payload as { readonly config?: { readonly model_context_window?: number } }).config
+            ?.model_context_window,
+          524_288,
+        );
+      }
     }),
   );
 
