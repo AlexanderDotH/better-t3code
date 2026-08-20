@@ -82,7 +82,7 @@ function nativeSnapshot(input: {
     }),
   ];
   return {
-    version: 2,
+    version: 3,
     type: "snapshot",
     sequence: input.sequence,
     sampledAtUnixMs: input.sampledAtUnixMs,
@@ -90,6 +90,12 @@ function nativeSnapshot(input: {
     scannedProcessCount: 80,
     retainedProcessCount: processes.length,
     inaccessibleProcessCount: 1,
+    memory: {
+      totalBytes: 16 * 1024 ** 3,
+      availableBytes: 8 * 1024 ** 3,
+      swapTotalBytes: 8 * 1024 ** 3,
+      swapFreeBytes: 8 * 1024 ** 3,
+    },
     ...(input.externalProcesses === undefined
       ? {}
       : { externalProcesses: input.externalProcesses }),
@@ -497,7 +503,7 @@ describe("ResourceTelemetry", () => {
       const nativeHealth = yield* Ref.make<NativeTelemetryClient.NativeTelemetryClientHealth>({
         status: "healthy",
         hello: Option.some({
-          version: 2,
+          version: 3,
           type: "hello",
           sidecarVersion: "0.1.0",
           sidecarPid: 9_000,

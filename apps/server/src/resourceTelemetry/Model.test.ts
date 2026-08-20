@@ -39,7 +39,7 @@ function nativeSnapshot(
   sequence = 1,
 ): ResourceMonitorSnapshotEvent {
   return {
-    version: 2,
+    version: 3,
     type: "snapshot",
     sequence,
     sampledAtUnixMs,
@@ -47,6 +47,12 @@ function nativeSnapshot(
     scannedProcessCount: processes.length,
     retainedProcessCount: processes.length,
     inaccessibleProcessCount: 0,
+    memory: {
+      totalBytes: 16 * 1024 ** 3,
+      availableBytes: 8 * 1024 ** 3,
+      swapTotalBytes: 8 * 1024 ** 3,
+      swapFreeBytes: 8 * 1024 ** 3,
+    },
     processes: [...processes],
   };
 }

@@ -182,6 +182,10 @@ export class NativeTelemetryClient extends Context.Service<
   {
     readonly capabilities: Effect.Effect<ResourceMonitorCapabilities, NativeTelemetryClientError>;
     readonly snapshots: Stream.Stream<NativeTelemetrySnapshot, NativeTelemetryClientError>;
+    readonly resourceProtectionSnapshots: Stream.Stream<
+      NativeTelemetrySnapshot,
+      NativeTelemetryClientError
+    >;
     readonly readHistory: (
       windowMs: number,
     ) => Effect.Effect<ReadonlyArray<ResourceMonitorSnapshotEvent>, NativeTelemetryClientError>;
@@ -217,6 +221,7 @@ interface ClientState {
 export interface CollectionControl {
   readonly hostPower: HostPowerSnapshot;
   readonly liveSubscriberCount: number;
+  readonly resourceProtectionSubscriberCount: number;
   readonly sampleIntervalMs: number;
 }
 
@@ -255,7 +260,9 @@ function isThermallyConstrained(snapshot: HostPowerSnapshot): boolean {
 export function resolveNativeSampleIntervalMs(
   snapshot: HostPowerSnapshot,
   liveSubscriberCount: number,
+  resourceProtectionSubscriberCount: number,
 ): number {
+  if (resourceProtectionSubscriberCount > 0) return SAMPLE_INTERVAL_MS;
   if (snapshot.stale || snapshot.source === "unknown") {
     return liveSubscriberCount > 0 ? SAMPLE_INTERVAL_MS : UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS;
   }
@@ -379,6 +386,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       updatedAt: initializedAt,
     },
     liveSubscriberCount: 0,
+    resourceProtectionSubscriberCount: 0,
     sampleIntervalMs: UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS,
   });
   const appliedCollectionControl = yield* Ref.make(yield* Ref.get(collectionControl));
@@ -625,7 +633,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
               sampleIntervalMs: control.sampleIntervalMs,
               externalProcesses: [...(yield* Ref.get(externalProcesses))],
             });
-            if (control.liveSubscriberCount > 0) {
+            if (control.liveSubscriberCount > 0 || control.resourceProtectionSubscriberCount > 0) {
               yield* writeCommand(handle, {
                 version: RESOURCE_MONITOR_PROTOCOL_VERSION,
                 type: "setStreaming",
@@ -754,8 +762,10 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
           sampleIntervalMs: next.sampleIntervalMs,
         });
       }
-      const wasStreaming = previous.liveSubscriberCount > 0;
-      const isStreaming = next.liveSubscriberCount > 0;
+      const wasStreaming =
+        previous.liveSubscriberCount > 0 || previous.resourceProtectionSubscriberCount > 0;
+      const isStreaming =
+        next.liveSubscriberCount > 0 || next.resourceProtectionSubscriberCount > 0;
       if (wasStreaming !== isStreaming) {
         yield* writeCommand(handle, {
           version: RESOURCE_MONITOR_PROTOCOL_VERSION,
@@ -780,7 +790,11 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     updateCollectionControl((current) => ({
       ...current,
       hostPower,
-      sampleIntervalMs: resolveNativeSampleIntervalMs(hostPower, current.liveSubscriberCount),
+      sampleIntervalMs: resolveNativeSampleIntervalMs(
+        hostPower,
+        current.liveSubscriberCount,
+        current.resourceProtectionSubscriberCount,
+      ),
     }));
 
   const changeLiveSubscriberCount = Effect.fn(
@@ -791,7 +805,31 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       return {
         ...current,
         liveSubscriberCount,
-        sampleIntervalMs: resolveNativeSampleIntervalMs(current.hostPower, liveSubscriberCount),
+        sampleIntervalMs: resolveNativeSampleIntervalMs(
+          current.hostPower,
+          liveSubscriberCount,
+          current.resourceProtectionSubscriberCount,
+        ),
+      };
+    });
+  });
+
+  const changeResourceProtectionSubscriberCount = Effect.fn(
+    "resourceTelemetry.nativeTelemetryClient.changeResourceProtectionSubscriberCount",
+  )(function* (delta: 1 | -1) {
+    yield* updateCollectionControl((current) => {
+      const resourceProtectionSubscriberCount = Math.max(
+        0,
+        current.resourceProtectionSubscriberCount + delta,
+      );
+      return {
+        ...current,
+        resourceProtectionSubscriberCount,
+        sampleIntervalMs: resolveNativeSampleIntervalMs(
+          current.hostPower,
+          current.liveSubscriberCount,
+          resourceProtectionSubscriberCount,
+        ),
       };
     });
   });
@@ -801,6 +839,16 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       const subscription = yield* PubSub.subscribe(snapshots);
       yield* Effect.acquireRelease(changeLiveSubscriberCount(1), () =>
         changeLiveSubscriberCount(-1).pipe(Effect.ignore),
+      );
+      return Stream.fromSubscription(subscription);
+    }),
+  );
+
+  const resourceProtectionSnapshots = Stream.unwrap(
+    Effect.gen(function* () {
+      const subscription = yield* PubSub.subscribe(snapshots);
+      yield* Effect.acquireRelease(changeResourceProtectionSubscriberCount(1), () =>
+        changeResourceProtectionSubscriberCount(-1).pipe(Effect.ignore),
       );
       return Stream.fromSubscription(subscription);
     }),
@@ -951,6 +999,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       ),
     ),
     snapshots: liveSnapshots,
+    resourceProtectionSnapshots,
     readHistory,
     setExternalProcesses,
     setHostPowerState,
@@ -995,6 +1044,7 @@ export const layerTest = (
         processTree: true,
       }),
       snapshots: Stream.empty,
+      resourceProtectionSnapshots: overrides.snapshots ?? Stream.empty,
       readHistory: () =>
         Effect.fail(
           new NativeTelemetryUnavailable({

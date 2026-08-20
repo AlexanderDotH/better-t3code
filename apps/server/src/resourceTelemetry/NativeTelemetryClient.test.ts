@@ -35,13 +35,23 @@ const basePower: HostPowerSnapshot = {
 
 describe("resolveNativeSampleIntervalMs", () => {
   it("keeps a recovery cadence while suspended and backs off under host constraints", () => {
-    expect(resolveNativeSampleIntervalMs({ ...basePower, suspended: true }, 1)).toBe(15_000);
-    expect(resolveNativeSampleIntervalMs({ ...basePower, locked: "true" }, 1)).toBe(15_000);
-    expect(resolveNativeSampleIntervalMs({ ...basePower, lowPowerMode: "true" }, 1)).toBe(15_000);
-    expect(resolveNativeSampleIntervalMs({ ...basePower, thermalState: "critical" }, 1)).toBe(
+    expect(resolveNativeSampleIntervalMs({ ...basePower, suspended: true }, 1, 0)).toBe(15_000);
+    expect(resolveNativeSampleIntervalMs({ ...basePower, locked: "true" }, 1, 0)).toBe(15_000);
+    expect(resolveNativeSampleIntervalMs({ ...basePower, lowPowerMode: "true" }, 1, 0)).toBe(
       15_000,
     );
-    expect(resolveNativeSampleIntervalMs({ ...basePower, onBattery: "true" }, 1)).toBe(5_000);
+    expect(resolveNativeSampleIntervalMs({ ...basePower, thermalState: "critical" }, 1, 0)).toBe(
+      15_000,
+    );
+    expect(resolveNativeSampleIntervalMs({ ...basePower, onBattery: "true" }, 1, 0)).toBe(5_000);
+  });
+
+  it("samples resource protection at 1Hz even while the host is constrained", () => {
+    expect(resolveNativeSampleIntervalMs({ ...basePower, suspended: true }, 1, 1)).toBe(1_000);
+    expect(resolveNativeSampleIntervalMs({ ...basePower, thermalState: "critical" }, 0, 1)).toBe(
+      1_000,
+    );
+    expect(resolveNativeSampleIntervalMs({ ...basePower, onBattery: "true" }, 0, 1)).toBe(1_000);
   });
 
   it("keeps unknown background telemetry cheap but serves live diagnostics at 1Hz", () => {
@@ -50,15 +60,16 @@ describe("resolveNativeSampleIntervalMs", () => {
       source: "unknown",
       stale: true,
     };
-    expect(resolveNativeSampleIntervalMs(unknown, 0)).toBe(5_000);
-    expect(resolveNativeSampleIntervalMs(unknown, 1)).toBe(1_000);
+    expect(resolveNativeSampleIntervalMs(unknown, 0, 0)).toBe(5_000);
+    expect(resolveNativeSampleIntervalMs(unknown, 1, 0)).toBe(1_000);
     expect(
       resolveNativeSampleIntervalMs(
         { ...basePower, stale: true, locked: "true", suspended: true },
         0,
+        0,
       ),
     ).toBe(5_000);
-    expect(resolveNativeSampleIntervalMs(basePower, 0)).toBe(1_000);
+    expect(resolveNativeSampleIntervalMs(basePower, 0, 0)).toBe(1_000);
   });
 });
 
@@ -132,6 +143,7 @@ describe("commitCollectionControlUpdate", () => {
       const initial = {
         hostPower: basePower,
         liveSubscriberCount: 0,
+        resourceProtectionSubscriberCount: 0,
         sampleIntervalMs: 5_000,
       };
       const desired = yield* Ref.make(initial);
@@ -183,6 +195,7 @@ describe("commitCollectionControlUpdate", () => {
       const initial = {
         hostPower: basePower,
         liveSubscriberCount: 0,
+        resourceProtectionSubscriberCount: 0,
         sampleIntervalMs: 5_000,
       };
       const desired = yield* Ref.make(initial);
