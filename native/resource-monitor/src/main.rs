@@ -8,7 +8,7 @@ use sysinfo::{
     MINIMUM_CPU_UPDATE_INTERVAL, Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind,
 };
 
-const PROTOCOL_VERSION: u32 = 2;
+const PROTOCOL_VERSION: u32 = 3;
 const MIN_SAMPLE_INTERVAL_MS: u64 = 250;
 const MAX_SAMPLE_INTERVAL_MS: u64 = 60_000;
 const PROCESS_START_TIME_PRECISION_MS: u64 = 1_000;
@@ -155,6 +155,15 @@ impl ProcessSample {
     }
 }
 
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HostMemorySample {
+    total_bytes: u64,
+    available_bytes: u64,
+    swap_total_bytes: u64,
+    swap_free_bytes: u64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SnapshotEvent {
@@ -167,6 +176,7 @@ struct SnapshotEvent {
     scanned_process_count: usize,
     retained_process_count: usize,
     inaccessible_process_count: usize,
+    memory: HostMemorySample,
     #[serde(skip_serializing_if = "Option::is_none")]
     request_id: Option<String>,
     external_processes: Vec<ExternalProcess>,
@@ -354,7 +364,15 @@ impl Collector {
             true,
             process_refresh_kind(),
         );
+        self.system.refresh_memory();
         self.cpu_baseline_refreshed_at = Some(Instant::now());
+
+        let memory = HostMemorySample {
+            total_bytes: self.system.total_memory(),
+            available_bytes: self.system.available_memory(),
+            swap_total_bytes: self.system.total_swap(),
+            swap_free_bytes: self.system.free_swap(),
+        };
 
         let rows = self
             .system
@@ -443,6 +461,7 @@ impl Collector {
                 tracked_process_count,
                 processes.len(),
             ),
+            memory,
             request_id,
             external_processes,
             processes,
@@ -883,7 +902,7 @@ mod tests {
     #[test]
     fn decodes_protocol_commands() {
         let configure = serde_json::from_str::<Command>(
-            r#"{"version":2,"type":"configure","rootPid":42,"sampleIntervalMs":1000,"externalProcesses":[{"pid":7}]}"#,
+            r#"{"version":3,"type":"configure","rootPid":42,"sampleIntervalMs":1000,"externalProcesses":[{"pid":7}]}"#,
         )
         .expect("configure command");
 
@@ -903,7 +922,7 @@ mod tests {
         }
 
         let read_history = serde_json::from_str::<Command>(
-            r#"{"version":2,"type":"readHistory","requestId":"history-1","windowMs":60000}"#,
+            r#"{"version":3,"type":"readHistory","requestId":"history-1","windowMs":60000}"#,
         )
         .expect("read history command");
         assert!(matches!(
@@ -960,6 +979,7 @@ mod tests {
                 scanned_process_count: 0,
                 retained_process_count: 0,
                 inaccessible_process_count: 0,
+                memory: HostMemorySample::default(),
                 request_id: Some("request".to_owned()),
                 external_processes: vec![ExternalProcess {
                     pid: 7,
@@ -1001,6 +1021,7 @@ mod tests {
             scanned_process_count: 0,
             retained_process_count: 0,
             inaccessible_process_count: 0,
+            memory: HostMemorySample::default(),
             request_id: None,
             external_processes: Vec::new(),
             processes: Vec::new(),
@@ -1054,6 +1075,7 @@ mod tests {
                     scanned_process_count: 1,
                     retained_process_count: 1,
                     inaccessible_process_count: 0,
+                    memory: HostMemorySample::default(),
                     request_id: None,
                     external_processes: Vec::new(),
                     processes: vec![ProcessSample {
@@ -1094,6 +1116,7 @@ mod tests {
             scanned_process_count: 0,
             retained_process_count: 0,
             inaccessible_process_count: 0,
+            memory: HostMemorySample::default(),
             request_id: None,
             external_processes,
             processes: Vec::new(),

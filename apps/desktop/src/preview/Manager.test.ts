@@ -230,6 +230,20 @@ describe("PreviewManager", () => {
     webviewSend.mockClear();
   });
 
+  it("releases closed-tab lifecycle generations without reusing stale tokens", () => {
+    const generations = new PreviewManager.PreviewTabLifecycleGenerations();
+    const first = generations.create("tab-memory");
+
+    expect(generations.current("tab-memory")).toBe(first);
+    expect(generations.size).toBe(1);
+    generations.close("tab-memory");
+    expect(generations.current("tab-memory")).toBeUndefined();
+    expect(generations.size).toBe(0);
+
+    const second = generations.create("tab-memory");
+    expect(second).toBeGreaterThan(first);
+  });
+
   effectIt.effect("reports an unregistered webview as temporarily unavailable", () =>
     withManager((manager) =>
       Effect.gen(function* () {

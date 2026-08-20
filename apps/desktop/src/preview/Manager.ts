@@ -341,6 +341,30 @@ const nextZoomLevel = (current: number, direction: "in" | "out"): number => {
 type Listener = (tabId: string, state: PreviewTabState) => Effect.Effect<void>;
 type RecordingFrameListener = (frame: DesktopPreviewRecordingFrame) => Effect.Effect<void>;
 
+/** Live-tab generation tokens with monotonic identities and explicit release. */
+export class PreviewTabLifecycleGenerations {
+  readonly #live = new Map<string, number>();
+  #next = 0;
+
+  create(tabId: string): number {
+    const generation = ++this.#next;
+    this.#live.set(tabId, generation);
+    return generation;
+  }
+
+  current(tabId: string): number | undefined {
+    return this.#live.get(tabId);
+  }
+
+  close(tabId: string): void {
+    this.#live.delete(tabId);
+  }
+
+  get size(): number {
+    return this.#live.size;
+  }
+}
+
 type PreviewInputSignal =
   | { readonly kind: "pointer"; readonly x: number; readonly y: number; readonly button: number }
   | { readonly kind: "key"; readonly key: string; readonly code: string };
@@ -503,7 +527,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     string,
     { readonly semaphore: Semaphore.Semaphore; users: number }
   >();
-  const tabLifecycleGenerations = new Map<string, number>();
+  const tabLifecycleGenerations = new PreviewTabLifecycleGenerations();
 
   const attempt = <A>(errorContext: PreviewOperationContext, evaluate: () => A) =>
     Effect.try({
@@ -534,6 +558,20 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     update(copy);
     return copy;
   };
+  const releaseTabRetention = (tabId: string) =>
+    Effect.all(
+      [
+        Ref.update(expectedAgentInputsRef, (entries) =>
+          replaceMap(entries, (copy) => copy.delete(tabId)),
+        ),
+        Ref.update(controlEpochRef, (epochs) => replaceMap(epochs, (copy) => copy.delete(tabId))),
+        Ref.update(actionTimelineRef, (timelines) =>
+          replaceMap(timelines, (copy) => copy.delete(tabId)),
+        ),
+        Effect.sync(() => tabLifecycleGenerations.close(tabId)),
+      ],
+      { discard: true },
+    );
   const withTabLifecycleLock = <A, E, R>(
     tabId: string,
     effect: Effect.Effect<A, E, R>,
@@ -1469,7 +1507,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       },
     );
     if (result.created) {
-      tabLifecycleGenerations.set(tabId, (tabLifecycleGenerations.get(tabId) ?? 0) + 1);
+      tabLifecycleGenerations.create(tabId);
     }
     yield* emit(tabId, result.state);
     return result.state;
@@ -1480,7 +1518,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   const closeTabUnlocked = Effect.fn("PreviewManager.closeTabUnlocked")(function* (tabId: string) {
-    if (!(yield* SynchronizedRef.get(tabsRef)).has(tabId)) return;
+    if (!(yield* SynchronizedRef.get(tabsRef)).has(tabId)) {
+      yield* releaseTabRetention(tabId);
+      return;
+    }
     yield* Effect.all(
       [
         cancelPickElement(tabId),
@@ -1502,6 +1543,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }),
       ] as const;
     });
+    yield* releaseTabRetention(tabId);
     if (Option.isNone(tab)) return;
     const closedTab = tab.value;
     if (closedTab.webContentsId != null) {
@@ -1552,7 +1594,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
     if (
       !tab ||
-      tabLifecycleGenerations.get(tabId) !== expectedGeneration ||
+      tabLifecycleGenerations.current(tabId) !== expectedGeneration ||
       (yield* Ref.get(closingTabIdsRef)).has(tabId)
     ) {
       return yield* new PreviewTabNotFoundError({ tabId });
@@ -1594,7 +1636,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const currentTab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
     if (
       !currentTab ||
-      tabLifecycleGenerations.get(tabId) !== expectedGeneration ||
+      tabLifecycleGenerations.current(tabId) !== expectedGeneration ||
       (yield* Ref.get(closingTabIdsRef)).has(tabId)
     ) {
       return yield* new PreviewTabNotFoundError({ tabId });
@@ -1618,7 +1660,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         const current = tabs.get(tabId);
         if (
           !current ||
-          tabLifecycleGenerations.get(tabId) !== expectedGeneration ||
+          tabLifecycleGenerations.current(tabId) !== expectedGeneration ||
           (yield* Ref.get(closingTabIdsRef)).has(tabId)
         ) {
           return [
@@ -1679,7 +1721,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     webContentsId: number,
   ) {
-    const expectedGeneration = tabLifecycleGenerations.get(tabId);
+    const expectedGeneration = tabLifecycleGenerations.current(tabId);
     return yield* withTabLifecycleLock(
       tabId,
       registerWebviewUnlocked(tabId, webContentsId, expectedGeneration),
@@ -3263,6 +3305,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       [
         Ref.set(listenersRef, new Set()),
         Ref.set(expectedAgentInputsRef, new Map()),
+        Ref.set(controlEpochRef, new Map()),
+        Ref.set(actionTimelineRef, new Map()),
         Ref.set(pointerEventListenersRef, new Set()),
         Ref.set(recordingFrameListenersRef, new Set()),
       ],
