@@ -211,6 +211,25 @@ export const GrokIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+export const GeminiIcon: Icon = (props) => {
+  const gradientId = `${useId().replaceAll(":", "")}-gemini`;
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none">
+      <defs>
+        <linearGradient id={gradientId} x1="3" y1="21" x2="21" y2="3">
+          <stop stopColor="#1C7DFF" />
+          <stop offset="0.5" stopColor="#8E75E6" />
+          <stop offset="1" stopColor="#E9659B" />
+        </linearGradient>
+      </defs>
+      <path
+        fill={`url(#${gradientId})`}
+        d="M12 0c0 6.627 5.373 12 12 12-6.627 0-12 5.373-12 12 0-6.627-5.373-12-12-12 6.627 0 12-5.373 12-12Z"
+      />
+    </svg>
+  );
+};
+
 export const TraeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 24 24" fill="currentColor">
     {/* Back rectangle: left strip + bottom strip drawn separately — empty bottom-left corner is the gap between them */}

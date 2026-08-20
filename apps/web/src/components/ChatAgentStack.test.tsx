@@ -6,7 +6,11 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ChatAgentStack } from "./ChatAgentStack";
+import {
+  ARCHIVED_AGENT_RENDER_PAGE_SIZE,
+  ChatAgentStack,
+  selectArchivedAgentsForRender,
+} from "./ChatAgentStack";
 import { ASTERIX_AGENT_NAMES } from "./subagents/subagentPresentation";
 
 function makeSubagent(
@@ -124,5 +128,24 @@ describe("ChatAgentStack", () => {
 
     expect(html).not.toContain(">stream_routing_retry<");
     expect(ASTERIX_AGENT_NAMES.some((name) => html.includes(`>${name}<`))).toBe(true);
+  });
+
+  it("bounds archived rows while retaining a selected older agent", () => {
+    const oldTerminal = new Date(Date.now() - 31_000).toISOString();
+    const agents = Array.from({ length: ARCHIVED_AGENT_RENDER_PAGE_SIZE + 20 }, (_, index) =>
+      makeSubagent(`archive-${index}`, "completed", {
+        completedAt: oldTerminal,
+        updatedAt: oldTerminal,
+      }),
+    );
+    const selected = agents.at(-1)!;
+    const rendered = selectArchivedAgentsForRender(
+      agents,
+      ARCHIVED_AGENT_RENDER_PAGE_SIZE,
+      selected.id,
+    );
+
+    expect(rendered).toHaveLength(ARCHIVED_AGENT_RENDER_PAGE_SIZE + 1);
+    expect(rendered[0]).toBe(selected);
   });
 });

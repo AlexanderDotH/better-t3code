@@ -24,6 +24,7 @@ import {
 import { useProjects } from "../state/entities";
 import {
   resolveInitialThreadSidebarWidth,
+  resolveRenderedThreadSidebarWidth,
   resolveThreadSidebarMaximumWidth,
   THREAD_MAIN_CONTENT_MIN_WIDTH,
   THREAD_SIDEBAR_MIN_WIDTH,
@@ -39,6 +40,7 @@ import {
 } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { resolveThreadSidebarLayout, ThreadSidebarSelection } from "./ThreadSidebarSelection";
+import { ProjectThreadPreviewSyncCoordinator } from "../projectThreadPreviewSync";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "90px";
 
@@ -147,6 +149,9 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   // that would otherwise refresh a render-time snapshot.
   const viewportWidth = useSyncExternalStore(subscribeToViewportWidth, readViewportWidth);
   const sidebarMaximumWidth = resolveThreadSidebarMaximumWidth(viewportWidth);
+  // Keep the user's preferred width in state, but clamp the rendered width on
+  // every window resize so the chat cannot be squeezed below its layout floor.
+  const renderedSidebarWidth = resolveRenderedThreadSidebarWidth(sidebarWidth, viewportWidth);
   const resetSidebarWidth = () => {
     try {
       removeLocalStorageItem(THREAD_SIDEBAR_WIDTH_STORAGE_KEY);
@@ -162,7 +167,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       : false;
   });
   const sidebarProviderStyle = {
-    "--sidebar-width": `${sidebarWidth}px`,
+    "--sidebar-width": `${renderedSidebarWidth}px`,
     ...(isMacosDesktop && !isWindowFullscreen
       ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
       : {}),
@@ -207,6 +212,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
 
   return (
     <SidebarProvider className="h-dvh! min-h-0!" defaultOpen style={sidebarProviderStyle}>
+      <ProjectThreadPreviewSyncCoordinator />
       <ProjectProjectionRetention />
       <Sidebar
         side="left"

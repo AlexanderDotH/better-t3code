@@ -4,6 +4,7 @@ import {
   memo,
   useEffect,
   useId,
+  useMemo,
   useState,
   type AnimationEvent as ReactAnimationEvent,
 } from "react";
@@ -32,6 +33,21 @@ export interface ChatAgentStackProps {
   readonly selectedSubagentId: SubagentId | null;
   readonly onSelectSubagent: (subagentId: SubagentId) => void;
   readonly className?: string;
+}
+
+export const ARCHIVED_AGENT_RENDER_PAGE_SIZE = 50;
+
+export function selectArchivedAgentsForRender(
+  agents: ReadonlyArray<OrchestrationSubagentSummary>,
+  renderLimit: number,
+  selectedSubagentId: SubagentId | null,
+): ReadonlyArray<OrchestrationSubagentSummary> {
+  const limited = agents.slice(0, Math.max(0, renderLimit));
+  if (selectedSubagentId === null || limited.some((agent) => agent.id === selectedSubagentId)) {
+    return limited;
+  }
+  const selected = agents.find((agent) => agent.id === selectedSubagentId);
+  return selected ? [selected, ...limited] : limited;
 }
 
 function indicatorToneForPresence(entry: SubagentPresenceEntry): SubagentIndicatorTone {
@@ -230,12 +246,22 @@ function ArchivedAgentSection({
 }) {
   const selectedAgentIsArchived = agents.some((agent) => agent.id === selectedSubagentId);
   const [open, setOpen] = useState(selectedAgentIsArchived);
+  const [renderLimit, setRenderLimit] = useState(ARCHIVED_AGENT_RENDER_PAGE_SIZE);
+  const archiveBoundaryKey = `${agents.length}:${agents[0]?.id ?? ""}:${agents.at(-1)?.id ?? ""}`;
+  const renderedAgents = useMemo(
+    () => selectArchivedAgentsForRender(agents, renderLimit, selectedSubagentId),
+    [agents, renderLimit, selectedSubagentId],
+  );
+  const remainingAgentCount = Math.max(0, agents.length - renderLimit);
 
   useEffect(() => {
     if (selectedAgentIsArchived) {
       setOpen(true);
     }
   }, [selectedAgentIsArchived]);
+  useEffect(() => {
+    setRenderLimit(ARCHIVED_AGENT_RENDER_PAGE_SIZE);
+  }, [archiveBoundaryKey]);
 
   if (agents.length === 0) {
     return null;
@@ -259,7 +285,7 @@ function ArchivedAgentSection({
       </CollapsibleTrigger>
       <CollapsiblePanel className="mt-1 w-full transition-[height,opacity] data-starting-style:opacity-0 data-ending-style:opacity-0">
         <ul className="w-full" role="list" aria-label="Archived agents">
-          {agents.map((agent) => (
+          {renderedAgents.map((agent) => (
             <li key={agent.id} className="mb-1 h-7">
               <ChatAgentPill
                 agent={agent}
@@ -270,6 +296,15 @@ function ArchivedAgentSection({
             </li>
           ))}
         </ul>
+        {remainingAgentCount > 0 ? (
+          <button
+            type="button"
+            className="pointer-events-auto mt-1 h-7 rounded-full px-2.5 text-left text-xs font-medium text-muted-foreground outline-none hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => setRenderLimit((current) => current + ARCHIVED_AGENT_RENDER_PAGE_SIZE)}
+          >
+            Show {Math.min(ARCHIVED_AGENT_RENDER_PAGE_SIZE, remainingAgentCount)} more
+          </button>
+        ) : null}
       </CollapsiblePanel>
     </Collapsible>
   );

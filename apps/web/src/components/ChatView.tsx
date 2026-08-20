@@ -252,7 +252,9 @@ import {
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment, useEnvironmentSubagent, useEnvironmentThread } from "../state/threads";
+import { buildResourceProtectionBanner } from "./resourceProtectionBanner.ts";
 import {
+  requestOlderSubagentActivities,
   requestOlderThreadTurns,
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
@@ -1705,6 +1707,15 @@ function ChatViewContent(props: ChatViewProps) {
     selectedSubagent === null &&
     subagentErrorMessage === null &&
     subagentState.status !== "deleted";
+  const subagentPage = Option.getOrNull(subagentState.page);
+  const loadOlderSubagentActivities = useCallback(() => {
+    if (activeThreadRef === null || selectedSubagentId === null) return;
+    requestOlderSubagentActivities(
+      activeThreadRef.environmentId,
+      activeThreadRef.threadId,
+      selectedSubagentId,
+    );
+  }, [activeThreadRef, selectedSubagentId]);
   useEffect(() => {
     setSubagentDialogSelection((selection) =>
       selection?.threadKey === activeThreadKey ? selection : null,
@@ -2277,6 +2288,21 @@ function ChatViewContent(props: ChatViewProps) {
   const serverUpdateState = useAtomValue(
     serverEnvironment.updateStateAtom(serverUpdateEnvironmentId),
   );
+  const resourceProtectionQuery = useEnvironmentQuery(
+    activeThread
+      ? serverEnvironment.resourceProtection({
+          environmentId: activeThread.environmentId,
+          input: {},
+        })
+      : null,
+  );
+  const resourceProtectionBanner = activeThread
+    ? buildResourceProtectionBanner({
+        environmentId: activeThread.environmentId,
+        threadId: activeThread.id,
+        snapshot: resourceProtectionQuery.data,
+      })
+    : null;
   const systemComposerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const items: ComposerBannerStackItem[] = [];
     const updateRunning = serverUpdateState.status === "running";
@@ -2423,10 +2449,19 @@ function ChatViewContent(props: ChatViewProps) {
             }),
       });
     }
+    if (resourceProtectionBanner) {
+      items.push({
+        ...resourceProtectionBanner,
+        icon: <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />,
+      });
+    }
     return items;
   }, [
+    activeThread?.environmentId,
+    activeThread?.id,
     activeEnvironmentUnavailableState,
     reconnectWarningGraceElapsed,
+    resourceProtectionBanner,
     handleReconnectActiveEnvironment,
     navigate,
     setDismissedVersionMismatchKey,
@@ -3075,8 +3110,10 @@ function ChatViewContent(props: ChatViewProps) {
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
   const activeTerminalLaunchContext =
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
-  // Default true while loading to avoid toolbar flicker.
-  const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  // Repository-only surfaces must wait for status confirmation. Assuming Git
+  // while the query is unresolved leaves an empty context-strip outline in
+  // non-Git projects, especially while their environment is reconnecting.
+  const isGitRepo = gitStatusQuery.data?.isRepo === true;
   const showComposerContextStrip = shouldShowComposerContextStrip({
     hasActiveProject: activeProject !== null,
     isGitRepo,
@@ -6472,6 +6509,18 @@ function ChatViewContent(props: ChatViewProps) {
       settings,
     ],
   );
+  const onThreadModelSelectionChange = useCallback(
+    (threadRef: ScopedThreadRef, modelSelection: ModelSelection) => {
+      void updateThreadMetadata({
+        environmentId: threadRef.environmentId,
+        input: {
+          threadId: threadRef.threadId,
+          modelSelection,
+        },
+      });
+    },
+    [updateThreadMetadata],
+  );
   const onEnvModeChange = useCallback(
     (mode: DraftThreadEnvMode) => {
       if (canOverrideServerThreadEnvMode) {
@@ -7083,6 +7132,7 @@ function ChatViewContent(props: ChatViewProps) {
                                     onChangeActivePendingUserInputCustomAnswer
                                   }
                                   onProviderModelSelect={onProviderModelSelect}
+                                  onThreadModelSelectionChange={onThreadModelSelectionChange}
                                   getModelDisabledReason={getModelDisabledReason}
                                   toggleInteractionMode={toggleInteractionMode}
                                   handleRuntimeModeChange={handleRuntimeModeChange}
@@ -7287,6 +7337,9 @@ function ChatViewContent(props: ChatViewProps) {
           {...(gitCwd ? { markdownCwd: gitCwd } : {})}
           threadRef={activeThreadRef}
           timestampFormat={timestampFormat}
+          hasOlderActivities={subagentPage?.hasMore ?? false}
+          isLoadingOlderActivities={subagentPage?.loadingOlder ?? false}
+          onLoadOlderActivities={loadOlderSubagentActivities}
         />
       ) : null}
 

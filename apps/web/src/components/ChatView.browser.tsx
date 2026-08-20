@@ -3854,7 +3854,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("shows the Codex plan-mode select and scopes Shift+Tab to the composer", async () => {
+  it("hides Codex plan controls when legacy plan mode is disabled", async () => {
     __setClientSettingsForTests({
       ...DEFAULT_CLIENT_SETTINGS,
       planModeEnabled: false,
@@ -3869,6 +3869,54 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       await waitForServerConfigToApply();
+      expect(document.querySelector('button[aria-label="Interaction mode"]')).toBeNull();
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Tab",
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      await waitForLayout();
+
+      expect(composerDraftFor(THREAD_ID)?.interactionMode ?? "default").toBe("default");
+      expect(document.querySelector('button[aria-label="Interaction mode"]')).toBeNull();
+
+      await page.getByTestId("composer-editor").fill("/");
+      await waitForComposerMenuItem("slash:model");
+      expect(document.querySelector('[data-composer-item-id="slash:plan"]')).toBeNull();
+      expect(document.querySelector('[data-composer-item-id="slash:default"]')).toBeNull();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows enabled Codex plan controls and scopes Shift+Tab to the composer", async () => {
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      planModeEnabled: true,
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-enabled-plan-hotkey" as MessageId,
+        targetText: "enabled plan hotkey target",
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForComposerEditor();
+      await page.getByTestId("composer-editor").fill("/");
+      expect(await waitForComposerMenuItem("slash:plan")).toBeTruthy();
+      expect(await waitForComposerMenuItem("slash:default")).toBeTruthy();
+      await page.getByTestId("composer-editor").fill("");
+      await waitForLayout();
+
       const initialModeSelect = await waitForInteractionModeSelect("Build");
       expect(initialModeSelect.getAttribute("role")).toBe("combobox");
       initialModeSelect.click();
