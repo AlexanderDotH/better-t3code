@@ -1211,14 +1211,12 @@ const make = Effect.gen(function* () {
   ) => {
     // Dedicated lifecycle events may arrive without a companion task.updated.
     // Record both identities so a terminal state also clears any legacy task alias.
-    const livenessStatus = isActiveSubagentStatus(status) ? "running" : "completed";
+    const active = isActiveSubagentStatus(status);
     for (const taskId of new Set<string>([subagent.id, subagent.providerThreadId])) {
-      threadBackgroundLiveness.recordTaskLiveness({
+      threadBackgroundLiveness.recordAuthoritativeSubagentLiveness({
         threadId,
         taskId,
-        taskType: undefined,
-        status: livenessStatus,
-        kind: "updated",
+        active,
       });
     }
   };
