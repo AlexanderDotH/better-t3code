@@ -265,7 +265,7 @@
 }
 
 .workspace-card-drawer[data-workspace-card-drawer-sizing="content"] {
-  height: fit-content;
+  height: auto;
   max-height: var(--workspace-card-drawer-max-height);
 }
 

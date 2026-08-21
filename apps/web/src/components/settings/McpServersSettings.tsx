@@ -51,6 +51,7 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { McpProviderWorkspace } from "./McpProviderWorkspace";
+import { McpScopeFilterControls } from "./McpScopeFilterControls";
 import {
   type McpConfiguredServerView,
   type McpRuntimeDetailsTarget,
@@ -1106,6 +1107,7 @@ export function CursorExportDialog(props: {
 export function McpServersSettingsPanel(props: {
   readonly search?: McpSettingsSearch;
   readonly embedded?: boolean;
+  readonly showRuntimeSelector?: boolean;
   readonly onProviderChange?: (providerInstanceId: ProviderInstanceId) => void;
 }) {
   const runRuntimeDetailsQuery = useAtomQueryRunner(
@@ -1827,36 +1829,13 @@ export function McpServersSettingsPanel(props: {
         }
       >
         <div className="mb-3 px-1">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Select
-              value={scopeFilter}
-              onValueChange={(value) => setScopeFilter((value ?? "global") as ScopeFilter)}
-            >
-              <SelectTrigger>
-                <SelectValue>{scopeFilter === "global" ? "Global" : "Project"}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup>
-                <SelectItem value="global">Global</SelectItem>
-                <SelectItem value="project">Project</SelectItem>
-              </SelectPopup>
-            </Select>
-            <Select
-              value={selectedFilterProject?.key}
-              disabled={scopeFilter !== "project" || projectEntries.length === 0}
-              onValueChange={(value) => setProjectFilterKey(value ?? "")}
-            >
-              <SelectTrigger>
-                <SelectValue>{selectedFilterProject?.name ?? "No project"}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup>
-                {projectEntries.map((project) => (
-                  <SelectItem key={project.key} value={project.key}>
-                    {project.name}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          </div>
+          <McpScopeFilterControls
+            scope={scopeFilter}
+            projectKey={selectedFilterProject?.key ?? ""}
+            projects={projectEntries}
+            onScopeChange={setScopeFilter}
+            onProjectKeyChange={setProjectFilterKey}
+          />
         </div>
         <McpProviderWorkspace
           providers={providerTabs}
@@ -1867,6 +1846,7 @@ export function McpServersSettingsPanel(props: {
           runtimeServers={runtimeServerViews}
           runtimeSummary={managementSummary}
           runtimeSupported={runtimeApiSupported}
+          embedded={props.embedded === true}
           {...(runtimeState.contextError || runtimeState.runtimeError
             ? {
                 runtimeError:
@@ -1877,6 +1857,7 @@ export function McpServersSettingsPanel(props: {
             : {})}
           providerAssignmentsSupported={selectedProvider?.supportsUserMcp ?? false}
           showProviderTabs={!props.embedded}
+          showRuntimeSelector={props.showRuntimeSelector ?? !props.embedded}
           readOnly={readOnly}
           isLoadingRuntime={runtimeState.isLoading}
           {...(props.search?.server ? { focusedServerKey: props.search.server } : {})}
@@ -1884,6 +1865,14 @@ export function McpServersSettingsPanel(props: {
             setProviderEnabledMutation.isPending
               ? new Set([String(setProviderEnabledMutation.variables.serverId)])
               : new Set()
+          }
+          pendingRuntimeAction={
+            runtimeActionMutation.isPending
+              ? {
+                  serverKey: String(runtimeActionMutation.variables.target.providerKey),
+                  action: runtimeActionMutation.variables.action,
+                }
+              : null
           }
           onSelectProvider={(providerId) => {
             setSelectedProviderId(providerId);

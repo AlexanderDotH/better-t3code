@@ -2,9 +2,11 @@ import type {
   McpRuntimeSnapshot,
   McpServerDefinition,
   ProviderInstanceId,
+  ServerProvider,
 } from "@t3tools/contracts";
 
 import { deriveMcpManagementSummary } from "../mcp-management/mcpManagementSummary";
+import { deriveMcpProviderTabs } from "../settings/McpServersSettings.logic";
 
 export type McpWorkspaceState =
   | "live"
@@ -22,6 +24,22 @@ export interface McpWorkspaceSummary {
   readonly state: McpWorkspaceState;
   readonly statusLabel: string;
   readonly toolCount: number | null;
+}
+
+export interface McpWorkspaceProviderOption {
+  readonly id: string;
+  readonly label: string;
+  readonly accentColor?: string;
+}
+
+export function deriveMcpWorkspaceProviderOptions(
+  providers: readonly ServerProvider[],
+): readonly McpWorkspaceProviderOption[] {
+  return deriveMcpProviderTabs(providers).map((provider) => ({
+    id: provider.instanceId,
+    label: provider.label,
+    ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
+  }));
 }
 
 function enabledForProvider(

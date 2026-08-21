@@ -33,6 +33,7 @@ const COLLAPSE_FALLBACK_MS = 260;
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 const COMPACT_CONTENT_SELECTOR = '[data-workspace-card-compact-content="true"]';
 const COMPACT_SURFACE_SELECTOR = '[data-workspace-card-compact-surface="true"]';
+const EXPANDED_SURFACE_SELECTOR = '[data-workspace-card-expanded-surface="true"]';
 const CARD_CONTENT_SELECTOR = ".workspace-card-deck__card-content";
 
 const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
@@ -105,6 +106,10 @@ function findCompactSurface(intrinsic: HTMLElement, compactContent: HTMLElement)
   return surface;
 }
 
+function findExpandedSurface(intrinsic: HTMLElement): HTMLElement {
+  return intrinsic.querySelector<HTMLElement>(EXPANDED_SURFACE_SELECTOR) ?? intrinsic;
+}
+
 function readNaturalCompactBlockSize(intrinsic: HTMLElement): number {
   const compactContent = findCompactContent(intrinsic);
   if (!compactContent || compactContent.hidden) {
@@ -127,12 +132,16 @@ function observeIntrinsicElements(observer: ResizeObserver, intrinsic: HTMLEleme
   observer.observe(intrinsic);
   const compactContent = findCompactContent(intrinsic);
   if (compactContent) observer.observe(compactContent);
+  const expandedSurface = findExpandedSurface(intrinsic);
+  if (expandedSurface !== intrinsic) observer.observe(expandedSurface, { box: "border-box" });
 }
 
 function unobserveIntrinsicElements(observer: ResizeObserver, intrinsic: HTMLElement): void {
   observer.unobserve(intrinsic);
   const compactContent = findCompactContent(intrinsic);
   if (compactContent) observer.unobserve(compactContent);
+  const expandedSurface = findExpandedSurface(intrinsic);
+  if (expandedSurface !== intrinsic) observer.unobserve(expandedSurface);
 }
 
 function sameMeasurements(
@@ -425,7 +434,8 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
         const cardId = intrinsic.getAttribute("data-workspace-card-intrinsic") as CardId | null;
         if (cardId === null || !cardIdsRef.current.includes(cardId)) continue;
         const currentExpandedCard = expandedCardRef.current;
-        if (cardId === currentExpandedCard && entry.target === intrinsic) {
+        const expandedSurface = findExpandedSurface(intrinsic);
+        if (cardId === currentExpandedCard && entry.target === expandedSurface) {
           pendingExpandedMeasurementRef.current = {
             id: cardId,
             height: readObservedBlockSize(entry),
@@ -459,6 +469,31 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
       pendingExpandedMeasurementRef.current = null;
     };
   }, [props.resetKey]);
+
+  useIsomorphicLayoutEffect(() => {
+    const expandedCard = props.expandedCard;
+    if (expandedCard === null) return;
+    const intrinsic = intrinsicElementRefs.current.get(expandedCard);
+    if (!intrinsic) return;
+    const expandedSurface = findExpandedSurface(intrinsic);
+    const observer = observerRef.current;
+    if (observer && expandedSurface !== intrinsic) {
+      observer.observe(expandedSurface, { box: "border-box" });
+    }
+
+    const height = Math.ceil(expandedSurface.getBoundingClientRect().height);
+    if (height > 0) {
+      setExpandedMeasurement((currentMeasurement) =>
+        currentMeasurement?.id === expandedCard && currentMeasurement.height === height
+          ? currentMeasurement
+          : { id: expandedCard, height },
+      );
+    }
+
+    return () => {
+      if (observer && expandedSurface !== intrinsic) observer.unobserve(expandedSurface);
+    };
+  }, [props.expandedCard, props.resetKey]);
 
   useIsomorphicLayoutEffect(() => {
     if (compactHeightReferenceCard === props.expandedCard) return;

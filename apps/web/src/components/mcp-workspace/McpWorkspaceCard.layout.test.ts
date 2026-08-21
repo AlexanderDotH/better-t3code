@@ -50,4 +50,21 @@ describe("MCP workspace card layout", () => {
       );
     }),
   );
+
+  it.effect("keeps selectors fixed while panel content owns vertical scrolling", () =>
+    Effect.gen(function* () {
+      const css = yield* readCardCss;
+
+      expect(css).toMatch(/\.mcp-workspace-panel\s*\{[^}]*overflow:\s*hidden;/);
+      expect(css).toMatch(/\.mcp-workspace-panel__selectors\s*\{[^}]*flex:\s*none;/);
+      expect(css).toMatch(/\.mcp-workspace-panel__tabs\s*\{[^}]*flex:\s*none;/);
+      expect(css).toMatch(
+        /\.mcp-workspace-drawer\s*>\s*\.workspace-card-drawer__content\s*\{[^}]*overflow:\s*hidden;/,
+      );
+      expect(css).toMatch(
+        /\.mcp-workspace-panel__content\s*\{[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;/,
+      );
+      expect(css).not.toMatch(/\.mcp-workspace-runtime\s*\{[^}]*overflow-y:/);
+    }),
+  );
 });

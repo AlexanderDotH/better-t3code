@@ -193,8 +193,41 @@ describe("GitWorkbenchPanel", () => {
     expect(workbench).toContain("max-h-full");
     expect(workbench).toContain("overflow-hidden");
     expect(workbench).not.toContain("size-full");
-    expect(activeView).toContain("flex-auto");
+    expect(activeView).toContain('data-git-workbench-scroll-region="document"');
     expect(activeView).toContain("overflow-auto");
+  });
+
+  it("keeps refresh status fixed above the active view and reserves space below it", () => {
+    const props = baseProps();
+    props.loading = true;
+    const markup = renderToStaticMarkup(<GitWorkbenchPanel {...props} />);
+    const activeView = markup.match(/<div[^>]*data-git-workbench-view="overview"[^>]*>/)?.[0];
+    const overlay = markup.match(/<div[^>]*data-git-workbench-refresh-overlay="true"[^>]*>/)?.[0];
+
+    expect(activeView).toContain('data-git-workbench-refresh-inset="true"');
+    expect(activeView).toContain("mt-10");
+    expect(overlay).toContain("pointer-events-none");
+    expect(overlay).toContain("absolute");
+    expect(overlay).toContain("top-3");
+    expect(overlay).toContain("right-3");
+    expect(markup).toContain('role="status"');
+    expect(markup).toContain("Refreshing Git");
+    expect(markup).toContain("motion-reduce:animate-none");
+  });
+
+  it("leaves Changes and History outer views unscrollable for their bounded inner regions", () => {
+    for (const activeTab of ["changes", "history"] as const) {
+      const props = baseProps();
+      props.activeTab = activeTab;
+      const markup = renderToStaticMarkup(<GitWorkbenchPanel {...props} />);
+      const activeView = markup.match(
+        new RegExp(`<div[^>]*data-git-workbench-view="${activeTab}"[^>]*>`),
+      )?.[0];
+
+      expect(activeView).toContain('data-git-workbench-scroll-region="nested"');
+      expect(activeView).toContain("overflow-hidden");
+      expect(activeView).not.toContain("overflow-auto");
+    }
   });
 
   it("keeps loading and unavailable states naturally sized", () => {

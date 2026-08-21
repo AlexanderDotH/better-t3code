@@ -180,7 +180,6 @@ export interface GitWorkspaceDeckControllerProps {
   readonly onOpenFile: (relativePath: string) => void;
   readonly onNonChatActiveChange: (nonChatActive: boolean) => void;
   readonly onExpandedChange: (expanded: boolean) => void;
-  readonly onDrawerHeightChange?: (height: number) => void;
 }
 
 export interface GitWorkspaceDeckChatControls {
@@ -1718,7 +1717,6 @@ export function ChatWorkspaceDeckController(props: GitWorkspaceDeckControllerPro
             ? {}
             : { availableHeight: props.drawerAvailableHeight })}
           onActiveTabChange={setActiveTab}
-          {...(props.onDrawerHeightChange ? { onHeightChange: props.onDrawerHeightChange } : {})}
           onOpenChange={(open) => setExpandedCard(open ? "git" : null)}
           open={gitExpanded}
           repositoryLabel={snapshot?.worktreeRoot ?? props.cwd ?? "Repository"}

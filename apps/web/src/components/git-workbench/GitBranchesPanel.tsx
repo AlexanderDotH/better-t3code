@@ -44,7 +44,7 @@ export function GitBranchesPanel({
             </p>
           </div>
         </div>
-        <ul className="max-h-[min(32rem,60vh)] overflow-auto">
+        <ul>
           {branches.map((branch) => (
             <li
               className="flex flex-wrap items-center gap-2 border-b px-3 py-2 last:border-0"

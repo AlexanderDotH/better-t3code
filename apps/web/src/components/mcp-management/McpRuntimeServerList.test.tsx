@@ -41,7 +41,7 @@ describe("McpRuntimeServerList", () => {
             availableActions: [],
           }),
         ]}
-        actionPendingKey={null}
+        pendingAction={null}
         detailsByProviderKey={{}}
         detailsLoadingKeys={new Set()}
         detailsErrorByProviderKey={{}}
@@ -56,7 +56,7 @@ describe("McpRuntimeServerList", () => {
     expect(html).toContain("Authorization required");
     expect(html).toContain("12 tools");
     expect(html).toContain(">Authorize<");
-    expect(html).toContain(">Reconnect<");
+    expect(html).toContain('aria-label="Actions for Notion"');
     expect(html).toContain("T3 Code System Server");
     expect(html).toContain("T3-managed servers");
     expect(html).toContain("T3 Code system server");
@@ -69,7 +69,7 @@ describe("McpRuntimeServerList", () => {
         authorizationAvailable={false}
         providerDisplayName="Remote Codex"
         servers={[server()]}
-        actionPendingKey={null}
+        pendingAction={null}
         detailsByProviderKey={{}}
         detailsLoadingKeys={new Set()}
         detailsErrorByProviderKey={{}}
@@ -80,7 +80,8 @@ describe("McpRuntimeServerList", () => {
       />,
     );
 
-    expect(html).not.toContain(">Authorize<");
+    expect(html).toContain(">Authorize<");
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Authorize/s);
     expect(html).toContain("Complete authorization on the environment host");
   });
 
@@ -91,7 +92,7 @@ describe("McpRuntimeServerList", () => {
         readOnly
         providerDisplayName="Codex Personal"
         servers={[server()]}
-        actionPendingKey={null}
+        pendingAction={null}
         detailsByProviderKey={{}}
         detailsLoadingKeys={new Set()}
         detailsErrorByProviderKey={{}}
@@ -103,7 +104,35 @@ describe("McpRuntimeServerList", () => {
     );
 
     expect(html).toContain("Runtime actions require operate access");
-    expect(html.match(/disabled=""/g)?.length).toBe(3);
+    expect(html.match(/disabled=""/g)?.length).toBe(1);
+  });
+
+  it("only disables mutations on the exact pending server row", () => {
+    const html = renderToStaticMarkup(
+      <McpRuntimeServerList
+        authorizationAvailable
+        providerDisplayName="Codex Personal"
+        servers={[
+          server(),
+          server({
+            providerKey: McpRuntimeServerKey.make("slack"),
+            name: "Slack",
+          }),
+        ]}
+        pendingAction={{ serverKey: "notion", action: "authorize" }}
+        detailsByProviderKey={{}}
+        detailsLoadingKeys={new Set()}
+        detailsErrorByProviderKey={{}}
+        actionErrorByProviderKey={{}}
+        onToggleDetails={() => {}}
+        onAction={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    expect(html).toContain("Authorizing Notion");
+    expect(html).not.toContain("Authorizing Slack");
+    expect(html.match(/disabled=""/g)?.length).toBe(1);
   });
 
   it("renders lazy tools, resources, and resource templates", () => {

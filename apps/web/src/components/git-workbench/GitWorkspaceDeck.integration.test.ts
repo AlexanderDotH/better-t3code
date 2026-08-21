@@ -120,7 +120,8 @@ describe("Git workspace deck surface integration", () => {
     expect(drawerShellSource).not.toContain("DRAWER_HEIGHT_STORAGE_KEY");
     expect(drawerShellSource).not.toContain("DRAWER_DEFAULT_MAX_HEIGHT");
     expect(drawerShellSource).not.toContain('resizeLabel="Resize Git workbench vertically"');
-    expect(deckControllerSource).toContain("onHeightChange: props.onDrawerHeightChange");
+    expect(drawerShellSource).toContain('"data-workspace-card-expanded-surface": "true"');
+    expect(deckControllerSource).not.toContain("onDrawerHeightChange");
   });
 
   it("reserves the measured expanded card height without blocking the full chat width", () => {

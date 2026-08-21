@@ -1,9 +1,21 @@
+import { createContext, useContext, useMemo, useState } from "react";
 import { page } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { render } from "vitest-browser-react";
 
 import "../../index.css";
+import {
+  WorkspaceCardDeck,
+  type WorkspaceDeckCardDefinition,
+} from "../workspace-deck/WorkspaceCardDeck";
 import { GitCompactCard, type GitCompactStatus } from "./GitCompactCard";
+import { GitWorkbenchDrawerShell } from "./GitWorkbenchDrawerShell";
+import { GitWorkbenchPanel } from "./GitWorkbenchPanel";
+import type {
+  GitWorkbenchPanelProps,
+  GitWorkbenchSnapshot,
+  GitWorkbenchTabId,
+} from "./GitWorkbench.types";
 
 const crowdedStatus: GitCompactStatus = {
   additions: 7_358,
@@ -20,6 +32,172 @@ const crowdedStatus: GitCompactStatus = {
   untracked: 119,
   updatedAtLabel: "Updated just now",
 };
+
+const workbenchSnapshot: GitWorkbenchSnapshot = {
+  additions: 32,
+  ahead: 2,
+  behind: 0,
+  branch: "feature/git-workbench-layout",
+  changeCount: 4,
+  conflicts: 0,
+  deletions: 7,
+  generatedAt: "2026-08-22T00:00:00.000Z",
+  headOid: "0123456789abcdef0123456789abcdef01234567",
+  lastCommit: {
+    authoredAt: "2026-08-22T00:00:00.000Z",
+    oid: "0123456789abcdef0123456789abcdef01234567",
+    subject: "fix(web): keep the Git workbench content-sized",
+  },
+  repositoryState: "changed",
+  staged: 1,
+  stale: false,
+  stateToken: "browser-layout-state",
+  unstaged: 2,
+  untracked: 1,
+  upstream: "origin/feature/git-workbench-layout",
+  worktreeRoot: "/workspace/better-t3code",
+};
+
+const crowdedBranches = Array.from({ length: 48 }, (_, index) => ({
+  ahead: index % 4,
+  behind: index % 3,
+  current: index === 0,
+  name: index === 0 ? "feature/git-workbench-layout" : `feature/browser-regression-${index}`,
+  oid: `${String(index).padStart(2, "0")}23456789abcdef0123456789abcdef01234567`,
+  remote: false,
+  upstream: `origin/feature/browser-regression-${index}`,
+}));
+
+function gitPanelProps(
+  activeTab: GitWorkbenchTabId,
+  loading: boolean,
+  onChangeTab: (tab: GitWorkbenchTabId) => void,
+): GitWorkbenchPanelProps {
+  return {
+    activeTab,
+    branches: crowdedBranches,
+    changes: [],
+    currentFile: null,
+    history: {
+      commits: [],
+      hasMore: false,
+      loading: false,
+      snapshotOid: workbenchSnapshot.headOid,
+    },
+    insights: null,
+    loading,
+    onApplySelection: () => {},
+    onCancelQueue: () => {},
+    onChangeTab,
+    onCreateBranch: () => {},
+    onLoadCommit: () => {},
+    onLoadMoreHistory: () => {},
+    onOpenCurrentFile: () => {},
+    onQueueWorkflow: () => {},
+    onRestoreUndo: () => {},
+    onRunOperation: () => {},
+    onSaveCurrentFile: () => {},
+    onSelectChange: () => {},
+    onSelectCommit: () => {},
+    onSwitchBranch: () => {},
+    onUpdateRebasePlan: () => {},
+    operation: null,
+    queue: null,
+    readOnly: false,
+    selectedChangeId: null,
+    selectedCommit: null,
+    showTabs: false,
+    snapshot: workbenchSnapshot,
+    undoSnapshots: [],
+  };
+}
+
+interface GitWorkbenchBrowserContextValue {
+  readonly activeTab: GitWorkbenchTabId;
+  readonly availableHeight: number;
+  readonly loading: boolean;
+  readonly setActiveTab: (tab: GitWorkbenchTabId) => void;
+}
+
+const GitWorkbenchBrowserContext = createContext<GitWorkbenchBrowserContextValue | null>(null);
+
+function GitWorkbenchBrowserBody() {
+  const context = useContext(GitWorkbenchBrowserContext);
+  if (!context) throw new Error("GitWorkbenchBrowserBody requires its browser harness context.");
+  return (
+    <GitWorkbenchDrawerShell
+      activeTab={context.activeTab}
+      availableHeight={context.availableHeight}
+      open
+      repositoryLabel="better-t3code"
+      onActiveTabChange={context.setActiveTab}
+      onOpenChange={() => {}}
+    >
+      <GitWorkbenchPanel
+        {...gitPanelProps(context.activeTab, context.loading, context.setActiveTab)}
+      />
+    </GitWorkbenchDrawerShell>
+  );
+}
+
+const GIT_WORKBENCH_BROWSER_CARDS: readonly WorkspaceDeckCardDefinition<"git">[] = [
+  {
+    id: "git",
+    label: "Git",
+    renderBody: () => <GitWorkbenchBrowserBody />,
+    renderPeek: () => null,
+  },
+];
+
+function GitWorkbenchBrowserHarness({
+  availableHeight,
+  initialTab = "overview",
+  loading = false,
+}: {
+  readonly availableHeight: number;
+  readonly initialTab?: GitWorkbenchTabId;
+  readonly loading?: boolean;
+}) {
+  const [activeTab, setActiveTab] = useState<GitWorkbenchTabId>(initialTab);
+  const contextValue = useMemo(
+    () => ({ activeTab, availableHeight, loading, setActiveTab }),
+    [activeTab, availableHeight, loading],
+  );
+  return (
+    <main
+      className="mx-auto w-[calc(100vw-2rem)] max-w-[86rem] bg-background text-foreground"
+      data-git-browser-fixture="true"
+    >
+      <GitWorkbenchBrowserContext.Provider value={contextValue}>
+        <WorkspaceCardDeck
+          activeCard="git"
+          cards={GIT_WORKBENCH_BROWSER_CARDS}
+          compactHeightReferenceCard="git"
+          expandedCard="git"
+          resetKey="git-browser-layout"
+          selectionMode="immediate"
+          onRequestCard={() => {}}
+        />
+      </GitWorkbenchBrowserContext.Provider>
+    </main>
+  );
+}
+
+function verticalScrollOwners(root: HTMLElement): HTMLElement[] {
+  return [root, ...root.querySelectorAll<HTMLElement>("*")].filter((element) => {
+    const overflowY = getComputedStyle(element).overflowY;
+    return (
+      (overflowY === "auto" || overflowY === "scroll") &&
+      element.scrollHeight > element.clientHeight + 1
+    );
+  });
+}
+
+function activeGitView(): HTMLElement {
+  const view = document.querySelector<HTMLElement>("[data-git-workbench-view]");
+  if (!view) throw new Error("The active Git workbench view was not rendered.");
+  return view;
+}
 
 function dispatchPull(
   target: HTMLElement,
@@ -162,6 +340,130 @@ describe("GitCompactCard browser layout", () => {
       dispatchPull(handle, { endX: 100, endY: 50, pointerId: 4 });
       button.click();
       expect(onExpand).not.toHaveBeenCalled();
+    } finally {
+      await mounted.unmount();
+    }
+  });
+});
+
+describe("Git workbench expanded browser layout", () => {
+  it("shrinks a short Overview after a taller document view without retaining empty space", async () => {
+    await page.viewport(1_400, 1_100);
+    const mounted = await render(
+      <GitWorkbenchBrowserHarness availableHeight={1_000} initialTab="branches" />,
+    );
+
+    try {
+      await expect.element(page.getByRole("tab", { name: "Branches" })).toBeVisible();
+      await vi.waitFor(() => {
+        const view = activeGitView();
+        expect(view.dataset.gitWorkbenchView).toBe("branches");
+        expect(view.dataset.gitWorkbenchScrollRegion).toBe("document");
+        expect(view.scrollHeight).toBeGreaterThan(view.clientHeight + 1);
+      });
+      const tallDrawerHeight = document
+        .querySelector<HTMLElement>("[data-workspace-card-expanded-surface]")!
+        .getBoundingClientRect().height;
+
+      await page.getByRole("tab", { name: "Overview" }).click();
+
+      await vi.waitFor(() => {
+        const view = activeGitView();
+        const overview = view.firstElementChild as HTMLElement | null;
+        const drawer = document.querySelector<HTMLElement>(
+          "[data-workspace-card-expanded-surface]",
+        );
+        const viewport = document.querySelector<HTMLElement>(".workspace-card-deck__viewport");
+        expect(view.dataset.gitWorkbenchView).toBe("overview");
+        expect(overview).not.toBeNull();
+        expect(drawer).not.toBeNull();
+        expect(viewport).not.toBeNull();
+        if (!overview || !drawer || !viewport) return;
+
+        const drawerHeight = drawer.getBoundingClientRect().height;
+        expect(drawerHeight).toBeLessThan(tallDrawerHeight - 24);
+        expect(Math.max(0, view.clientHeight - overview.scrollHeight)).toBeLessThanOrEqual(2);
+        expect(
+          Math.abs(viewport.getBoundingClientRect().height - drawerHeight),
+        ).toBeLessThanOrEqual(1);
+      });
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  it.each([
+    [1_400, 1_100],
+    [960, 1_000],
+    [430, 932],
+  ])("caps a tall document to one vertical scroll owner at %ipx", async (width, height) => {
+    await page.viewport(width, height);
+    const mounted = await render(
+      <GitWorkbenchBrowserHarness availableHeight={520} initialTab="branches" />,
+    );
+
+    try {
+      await expect.element(page.getByRole("tab", { name: "Branches" })).toBeVisible();
+      await vi.waitFor(() => {
+        const drawer = document.querySelector<HTMLElement>("[data-git-workbench-drawer]");
+        const view = activeGitView();
+        expect(drawer).not.toBeNull();
+        if (!drawer) return;
+        expect(drawer.scrollWidth).toBeLessThanOrEqual(drawer.clientWidth + 1);
+        expect(view.dataset.gitWorkbenchScrollRegion).toBe("document");
+        expect(view.scrollHeight).toBeGreaterThan(view.clientHeight + 1);
+        expect(verticalScrollOwners(drawer)).toEqual([view]);
+      });
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  it.each([
+    [1_400, 1_100],
+    [960, 1_000],
+    [430, 932],
+  ])("pins the refresh overlay above scrolling Git content at %ipx", async (width, height) => {
+    await page.viewport(width, height);
+    const mounted = await render(
+      <GitWorkbenchBrowserHarness availableHeight={520} initialTab="branches" loading />,
+    );
+
+    try {
+      await expect.element(page.getByText("Refreshing Git", { exact: true })).toBeVisible();
+      const overlay = document.querySelector<HTMLElement>(
+        '[data-git-workbench-refresh-overlay="true"]',
+      );
+      const frame = document.querySelector<HTMLElement>('[data-git-workbench-view-frame="true"]');
+      const view = activeGitView();
+      expect(overlay).not.toBeNull();
+      expect(frame).not.toBeNull();
+      if (!overlay || !frame) return;
+
+      await vi.waitFor(() => expect(view.scrollHeight).toBeGreaterThan(view.clientHeight + 1));
+      const overlayBefore = overlay.getBoundingClientRect();
+      const frameRect = frame.getBoundingClientRect();
+      const content = view.firstElementChild as HTMLElement | null;
+      expect(overlay.getAttribute("role")).toBe("status");
+      expect(getComputedStyle(overlay).pointerEvents).toBe("none");
+      expect(overlayBefore.top).toBeGreaterThanOrEqual(frameRect.top);
+      expect(overlayBefore.top - frameRect.top).toBeLessThanOrEqual(20);
+      expect(frameRect.right - overlayBefore.right).toBeGreaterThanOrEqual(0);
+      expect(frameRect.right - overlayBefore.right).toBeLessThanOrEqual(20);
+      expect(content).not.toBeNull();
+      if (content) {
+        expect(content.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+          overlayBefore.bottom - 1,
+        );
+      }
+
+      view.scrollTop = Math.max(1, Math.floor((view.scrollHeight - view.clientHeight) / 2));
+      view.dispatchEvent(new Event("scroll"));
+      await vi.waitFor(() => expect(view.scrollTop).toBeGreaterThan(0));
+
+      const overlayAfter = overlay.getBoundingClientRect();
+      expect(Math.abs(overlayAfter.top - overlayBefore.top)).toBeLessThanOrEqual(1);
+      expect(Math.abs(overlayAfter.right - overlayBefore.right)).toBeLessThanOrEqual(1);
     } finally {
       await mounted.unmount();
     }

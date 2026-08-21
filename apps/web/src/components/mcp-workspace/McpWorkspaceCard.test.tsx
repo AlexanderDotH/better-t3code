@@ -117,4 +117,47 @@ describe("McpWorkspacePanel", () => {
     expect(html).toContain("Server configuration");
     expect(html).not.toContain("Exact runtime session");
   });
+
+  it.each(["servers", "runtime"] as const)(
+    "keeps one styled runtime session selector in the fixed header on the %s view",
+    (activeSection) => {
+      const html = renderToStaticMarkup(
+        <McpWorkspacePanel
+          activeSection={activeSection}
+          contexts={[{ id: "active-session", label: "Active · thread-1 · runtime-1" }]}
+          providers={[
+            { id: "claude_work", label: "Claude · claude_work" },
+            { id: "claude_personal", label: "Claude · claude_personal" },
+          ]}
+          selectedContextId="active-session"
+          selectedProviderId="claude_work"
+          servers={<div>Server configuration</div>}
+          runtime={<div>Exact runtime session</div>}
+          onActiveSectionChange={vi.fn()}
+        />,
+      );
+
+      expect(html.match(/data-mcp-runtime-session-selector="true"/g)).toHaveLength(1);
+      expect(html).toContain('data-slot="select-trigger"');
+      expect(html).toContain('aria-label="Runtime session"');
+      expect(html).toContain("Active · thread-1 · runtime-1");
+      expect(html).not.toContain("<select");
+    },
+  );
+
+  it("keeps an explicitly selected ended session inspectable", () => {
+    const html = renderToStaticMarkup(
+      <McpWorkspacePanel
+        activeSection="servers"
+        contexts={[{ id: "active-session", label: "Active · thread-1 · runtime-1" }]}
+        selectedContextId="ended-session"
+        servers={<div>Server configuration</div>}
+        runtime={<div>Exact runtime session</div>}
+        onActiveSectionChange={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("Ended or unavailable session");
+    expect(html).not.toContain('data-disabled=""');
+  });
 });

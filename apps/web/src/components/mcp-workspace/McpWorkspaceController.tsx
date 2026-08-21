@@ -33,6 +33,7 @@ import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import type { ChatComposerHandle } from "../chat/ChatComposer";
 import { McpServersSettingsPanel } from "../settings/McpServersSettings";
 import {
+  type McpRuntimeActionPending,
   McpRuntimeServerList,
   mcpRuntimeContextId,
   useMcpManagementRuntime,
@@ -41,7 +42,7 @@ import { WorkspaceCardDrawerShell } from "../workspace-deck/WorkspaceCardDrawerS
 import { McpWorkspaceCard } from "./McpWorkspaceCard";
 import { McpWorkspacePanel, type McpWorkspaceSection } from "./McpWorkspacePanel";
 import { McpWorkspacePeek } from "./McpWorkspacePeek";
-import { deriveMcpWorkspaceSummary } from "./mcpWorkspace.logic";
+import { deriveMcpWorkspaceProviderOptions, deriveMcpWorkspaceSummary } from "./mcpWorkspace.logic";
 
 const MCP_DRAWER_STORAGE_KEY = "t3code:mcp-workspace-drawer-height:v1";
 
@@ -237,14 +238,14 @@ function McpExactRuntimePanel(props: RuntimePanelProps) {
   const [actionErrorByProviderKey, setActionErrorByProviderKey] = useState<
     Readonly<Record<string, string | undefined>>
   >({});
-  const [actionPendingKey, setActionPendingKey] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<McpRuntimeActionPending | null>(null);
 
   useEffect(() => {
     setDetailsByProviderKey({});
     setDetailsLoadingKeys(new Set());
     setDetailsErrorByProviderKey({});
     setActionErrorByProviderKey({});
-    setActionPendingKey(null);
+    setPendingAction(null);
   }, [selectorKey]);
 
   const loadDetails = useCallback(
@@ -311,9 +312,9 @@ function McpExactRuntimePanel(props: RuntimePanelProps) {
         }));
         return;
       }
-      const pendingKey = `${server.providerKey}:${action}`;
       const requestSelectorKey = selectorKey;
-      setActionPendingKey(pendingKey);
+      const nextPendingAction = { serverKey: server.providerKey, action };
+      setPendingAction(nextPendingAction);
       setActionErrorByProviderKey((current) => ({
         ...current,
         [server.providerKey]: undefined,
@@ -339,7 +340,12 @@ function McpExactRuntimePanel(props: RuntimePanelProps) {
         }));
       } finally {
         if (selectorKeyRef.current === requestSelectorKey) {
-          setActionPendingKey((current) => (current === pendingKey ? null : current));
+          setPendingAction((current) =>
+            current?.serverKey === nextPendingAction.serverKey &&
+            current.action === nextPendingAction.action
+              ? null
+              : current,
+          );
         }
       }
     },
@@ -350,7 +356,7 @@ function McpExactRuntimePanel(props: RuntimePanelProps) {
     <div className="mcp-workspace-runtime" data-mcp-runtime-session={props.runtimeSessionId}>
       <McpRuntimeServerList
         actionErrorByProviderKey={actionErrorByProviderKey}
-        actionPendingKey={actionPendingKey}
+        pendingAction={pendingAction}
         authorizationAvailable={props.authorizationAvailable}
         readOnly={props.readOnly}
         detailsByProviderKey={detailsByProviderKey}
@@ -480,7 +486,10 @@ function McpWorkspaceControllerView(props: McpWorkspaceCardControllerProps) {
             ? {}
             : { availableHeight: props.drawerAvailableHeight })}
           className="mcp-workspace-drawer"
-          dataAttributes={{ "data-mcp-workspace-drawer": "true" }}
+          dataAttributes={{
+            "data-mcp-workspace-drawer": "true",
+            "data-workspace-card-expanded-surface": "true",
+          }}
           returnFocusRef={expandButtonRef}
           showTabs={false}
           onActiveTabChange={setActiveSection}
@@ -492,10 +501,7 @@ function McpWorkspaceControllerView(props: McpWorkspaceCardControllerProps) {
               id: mcpRuntimeContextId(context),
               label: `${context.state === "active" ? "Active" : "Ended"} · ${String(context.threadId).slice(0, 8)} · ${String(context.runtimeSessionId).slice(0, 8)}`,
             }))}
-            providers={props.providers.map((provider) => ({
-              id: String(provider.instanceId),
-              label: provider.displayName ?? String(provider.instanceId),
-            }))}
+            providers={deriveMcpWorkspaceProviderOptions(props.providers)}
             selectedContextId={
               runtime.selectedContextId ??
               (runtime.selectedContext ? mcpRuntimeContextId(runtime.selectedContext) : null)
@@ -506,6 +512,7 @@ function McpWorkspaceControllerView(props: McpWorkspaceCardControllerProps) {
                 {!props.workspaceSupported ? <UpgradeRequired /> : null}
                 <McpServersSettingsPanel
                   embedded
+                  showRuntimeSelector={false}
                   search={settingsSearch}
                   onProviderChange={runtime.selectProvider}
                 />

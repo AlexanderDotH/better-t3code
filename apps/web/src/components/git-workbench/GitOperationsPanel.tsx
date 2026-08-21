@@ -190,7 +190,7 @@ function RebasePlanEditor({
           </Button>
         ) : null}
       </div>
-      <ol className="max-h-[28rem] overflow-auto">
+      <ol>
         {nodes.map((node, index) => (
           <li className="flex items-center gap-2 border-b px-3 py-2 last:border-0" key={node.id}>
             <span className="w-7 shrink-0 text-right font-mono text-muted-foreground text-xs">

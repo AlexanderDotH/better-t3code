@@ -44,6 +44,7 @@ function renderWorkspace(
       providerAssignmentsSupported
       isLoadingRuntime={false}
       pendingProviderServerIds={new Set()}
+      pendingRuntimeAction={null}
       onSelectProvider={vi.fn()}
       onSelectContext={vi.fn()}
       onToggleProviderServer={vi.fn()}
@@ -69,9 +70,17 @@ describe("McpProviderWorkspace", () => {
   });
 
   it("lets an embedded controller provide the single provider-tab surface", () => {
-    const html = renderWorkspace({ showProviderTabs: false });
+    const html = renderWorkspace({
+      embedded: true,
+      showProviderTabs: false,
+      showRuntimeSelector: false,
+    });
 
     expect(html).not.toContain('aria-label="MCP provider accounts"');
+    expect(html).not.toContain('aria-label="Runtime session"');
+    expect(html).toContain('data-mcp-provider-workspace="embedded"');
+    expect(html).toContain("border-y border-border/60 bg-transparent");
+    expect(html).not.toContain("rounded-xl border border-[var(--mcp-provider-accent");
     expect(html).toContain("T3-managed servers");
   });
 
@@ -132,7 +141,76 @@ describe("McpProviderWorkspace", () => {
     expect(html).toContain("T3 Code System Server");
     expect(html).toContain("Authorization required");
     expect(html).toContain("5 tools");
-    expect(html).toContain("Authorize");
+    expect(html).toContain(">Authorize<");
+    expect(html).toContain('aria-label="Actions for Notion native"');
+  });
+
+  it("uses one shared primary action and a visibly labeled provider switch", () => {
+    const html = renderWorkspace({
+      contexts: [
+        {
+          id: "runtime-1",
+          runtimeSessionId: "runtime-1",
+          threadId: "thread-1",
+          label: "Website · MCP polish",
+          live: true,
+        },
+      ],
+      selectedContextId: "runtime-1",
+      configuredServers: [
+        {
+          id: "notion",
+          name: "Notion",
+          enabledForProvider: true,
+          globallyEnabled: true,
+          globalScope: true,
+          scopeLabel: "Global",
+          transport: "http",
+          summary: "https://mcp.notion.com/mcp",
+          secretCount: 0,
+        },
+      ],
+      runtimeServers: [
+        {
+          serverKey: "notion-runtime",
+          definitionId: "notion",
+          name: "Notion",
+          source: "t3-managed",
+          state: "failed",
+          capabilities: { reconnect: true, refresh: true },
+        },
+      ],
+    });
+
+    expect(html).toContain(">Reconnect<");
+    expect(html).toContain(">Enabled<");
+    expect(html).toContain('aria-label="Actions for Notion"');
+  });
+
+  it("only marks the exact pending runtime row as busy", () => {
+    const html = renderWorkspace({
+      pendingRuntimeAction: { serverKey: "native-notion", action: "reconnect" },
+      runtimeServers: [
+        {
+          serverKey: "native-notion",
+          name: "Notion native",
+          source: "provider-native",
+          state: "failed",
+          capabilities: { reconnect: true, refresh: true },
+        },
+        {
+          serverKey: "native-slack",
+          name: "Slack native",
+          source: "provider-native",
+          state: "failed",
+          capabilities: { reconnect: true, refresh: true },
+        },
+      ],
+    });
+
+    expect(html).toContain("Reconnecting Notion native");
+    expect(html).not.toContain("Reconnecting Slack native");
+    expect(html).toContain(">Reconnect<");
   });
 
   it("uses the canonical configured denominator for provider-tab health", () => {
@@ -254,7 +332,7 @@ describe("McpProviderWorkspace", () => {
 
     expect(html).toContain("read-only access");
     expect(html).toContain("Notion");
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Edit Notion"/);
+    expect(html).toContain('aria-label="Actions for Notion"');
     expect(html).toMatch(
       /<span[^>]*data-disabled=""[^>]*aria-label="Disable Notion for selected provider"/,
     );
