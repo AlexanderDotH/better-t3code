@@ -4527,6 +4527,26 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(shell?.backgroundLiveness).toBeNull();
     expect(thread?.session).toMatchObject({ status: "ready", activeTurnId: null });
+
+    // Codex can deliver a late compatibility activity after the authoritative
+    // child status has already settled. It must not resurrect only the shell
+    // liveness registry while the canonical agent remains completed.
+    harness.emit({
+      type: "task.updated",
+      eventId: asEventId("evt-background-child-late-legacy-running"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-07-30T10:01:07.000Z",
+      threadId: asThreadId("thread-1"),
+      payload: { taskId: "provider-background-child", status: "running" },
+    });
+
+    await harness.drain();
+    thread = (await harness.readModel()).threads.find((entry) => entry.id === "thread-1");
+    shell = (await harness.readShell()).threads.find((entry) => entry.id === "thread-1");
+    expect(thread?.subagents.find((subagent) => subagent.id === subagentId)?.status).toBe(
+      "completed",
+    );
+    expect(shell?.backgroundLiveness).toBeNull();
   });
 
   it("uses a child turn completion as authoritative lifecycle state", async () => {
