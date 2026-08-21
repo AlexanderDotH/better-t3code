@@ -7,6 +7,7 @@ import { expectTypeOf, vi } from "vite-plus/test";
 
 import mcpWorkspaceControllerSource from "../mcp-workspace/McpWorkspaceController.tsx?raw";
 import workspaceCardDrawerShellSource from "../workspace-deck/WorkspaceCardDrawerShell.tsx?raw";
+import workspaceCardDeckSource from "../workspace-deck/WorkspaceCardDeck.tsx?raw";
 import {
   WorkspaceCardDrawerShell,
   type WorkspaceCardDrawerShellProps,
@@ -129,20 +130,30 @@ describe("Git workbench content sizing", () => {
     expect(gitOverviewPanelSource).not.toMatch(/<div className="[^"]*size-full/);
     expect(gitBranchesPanelSource).not.toMatch(/<div className="[^"]*size-full/);
     expect(gitOperationsPanelSource).not.toMatch(/<div className="[^"]*size-full/);
+    expect(gitBranchesPanelSource).not.toContain("overflow-auto");
+    expect(gitOperationsPanelSource).not.toContain("overflow-auto");
   });
 
-  it("removes fill-height roots while retaining a capped Overview scroll owner", () => {
-    expect(gitWorkbenchPanelSource).toContain("data-git-workbench-view={props.activeTab}");
+  it("gives document tabs one capped scroll owner while nested views keep their own", () => {
+    expect(gitWorkbenchPanelSource).toContain("data-git-workbench-scroll-region={");
+    expect(gitWorkbenchPanelSource).toContain('documentSized ? "document" : "nested"');
     expect(gitWorkbenchPanelSource).not.toContain(
       'className="@container/git-panel flex size-full min-h-0 flex-col bg-background"',
     );
     expect(gitWorkbenchPanelSource).not.toContain(
       'className="grid size-full min-h-48 place-content-center',
     );
-    expect(gitWorkbenchPanelSource).toMatch(/className="relative min-h-0 flex-auto overflow-auto"/);
+    expect(gitWorkbenchPanelSource).toContain('documentSized ? "flex-[0_1_auto]" : "flex-1"');
+    expect(gitWorkbenchPanelSource).toContain(
+      'documentSized ? "overflow-auto" : "overflow-hidden"',
+    );
+    expect(gitWorkbenchPanelSource).toContain('data-git-workbench-view-frame="true"');
   });
 
-  it("reports content height changes from the drawer border box", () => {
+  it("marks and observes the actual drawer border box for shrinking expanded measurements", () => {
+    const html = renderGitDrawer(620);
+
+    expect(html).toContain('data-workspace-card-expanded-surface="true"');
     expect(workspaceCardDrawerShellSource).toContain(
       "const nextHeight = drawer.getBoundingClientRect().height",
     );
@@ -151,6 +162,18 @@ describe("Git workbench content sizing", () => {
       'observer.observe(drawer, { box: "border-box" })',
     );
     expect(workspaceCardDrawerShellSource).toContain("notifyHeightChange(nextHeight)");
+    expect(workspaceCardDeckSource).toContain('[data-workspace-card-expanded-surface="true"]');
+    expect(workspaceCardDeckSource).toMatch(/observe\(expandedSurface/);
+    expect(workspaceCardDeckSource).toMatch(/entry\.target === expandedSurface/);
+    expect(gitWorkbenchDrawerShellSource).not.toContain("onHeightChange");
+  });
+
+  it("keeps refresh status outside the scrolling document and reserves its top inset", () => {
+    expect(gitWorkbenchPanelSource).toContain('data-git-workbench-refresh-overlay="true"');
+    expect(gitWorkbenchPanelSource).toContain("data-git-workbench-refresh-inset={");
+    expect(gitWorkbenchPanelSource).toContain('"pointer-events-none absolute top-3 right-3');
+    expect(gitWorkbenchPanelSource).toContain('refreshing && "mt-10"');
+    expect(gitWorkbenchPanelSource).toContain("motion-reduce:animate-none");
   });
 
   it("preserves History virtualization and Changes scrolling within the capped view", () => {

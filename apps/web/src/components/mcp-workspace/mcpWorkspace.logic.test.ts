@@ -1,7 +1,12 @@
-import type { McpRuntimeServer, McpRuntimeSnapshot, McpServerDefinition } from "@t3tools/contracts";
+import type {
+  McpRuntimeServer,
+  McpRuntimeSnapshot,
+  McpServerDefinition,
+  ServerProvider,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { deriveMcpWorkspaceSummary } from "./mcpWorkspace.logic";
+import { deriveMcpWorkspaceProviderOptions, deriveMcpWorkspaceSummary } from "./mcpWorkspace.logic";
 
 const definitions = [
   {
@@ -161,5 +166,35 @@ describe("deriveMcpWorkspaceSummary", () => {
     expect(summary.state).toBe("configuration-only");
     expect(summary.statusLabel).toBe("1 configured · configuration only");
     expect(summary.freshnessLabel).toBe("Select a provider account for live status");
+  });
+});
+
+describe("deriveMcpWorkspaceProviderOptions", () => {
+  it("disambiguates provider accounts that share a display name", () => {
+    const providers = [
+      {
+        instanceId: "claude_work",
+        driver: "claude",
+        displayName: "Claude",
+        enabled: true,
+        installed: true,
+        availability: "available",
+        status: "ready",
+      },
+      {
+        instanceId: "claude_personal",
+        driver: "claude",
+        displayName: "Claude",
+        enabled: true,
+        installed: true,
+        availability: "available",
+        status: "ready",
+      },
+    ] as unknown as readonly ServerProvider[];
+
+    expect(deriveMcpWorkspaceProviderOptions(providers)).toEqual([
+      { id: "claude_work", label: "Claude · claude_work" },
+      { id: "claude_personal", label: "Claude · claude_personal" },
+    ]);
   });
 });

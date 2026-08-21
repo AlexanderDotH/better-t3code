@@ -9,10 +9,7 @@ import {
   ChevronDownIcon,
   ExternalLinkIcon,
   FileTextIcon,
-  KeyRoundIcon,
   LockKeyholeIcon,
-  RefreshCwIcon,
-  RotateCwIcon,
   WrenchIcon,
 } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
@@ -20,12 +17,14 @@ import { Fragment, useMemo, useState } from "react";
 import { cn } from "~/lib/utils";
 
 import { Button } from "../ui/button";
-import { ScrollArea } from "../ui/scroll-area";
+import { McpServerRowControls, type McpRuntimeActionPending } from "./McpServerRowControls";
 import {
   aggregateMcpRuntimeStatus,
   mcpRuntimeStateLabel,
   type McpAggregateTone,
 } from "./mcpRuntimePresentation";
+
+export type { McpRuntimeActionPending } from "./McpServerRowControls";
 
 type McpRuntimeDetailsView = Pick<
   McpRuntimeServerDetailsResult,
@@ -71,7 +70,7 @@ export interface McpRuntimeServerListProps {
   readonly authorizationAvailable: boolean;
   readonly readOnly?: boolean;
   readonly servers: ReadonlyArray<McpRuntimeServer>;
-  readonly actionPendingKey: string | null;
+  readonly pendingAction: McpRuntimeActionPending | null;
   readonly detailsByProviderKey: Readonly<Record<string, McpRuntimeDetailsView | undefined>>;
   readonly detailsLoadingKeys: ReadonlySet<string>;
   readonly detailsErrorByProviderKey: Readonly<Record<string, string | undefined>>;
@@ -87,7 +86,7 @@ export function McpRuntimeServerList({
   authorizationAvailable,
   readOnly = false,
   servers,
-  actionPendingKey,
+  pendingAction,
   detailsByProviderKey,
   detailsLoadingKeys,
   detailsErrorByProviderKey,
@@ -136,7 +135,7 @@ export function McpRuntimeServerList({
         />
       </div>
 
-      <ScrollArea aria-label="MCP servers" className="h-auto min-h-0" scrollFade scrollbarGutter>
+      <section aria-label="MCP servers" className="min-h-0">
         {orderedServers.length === 0 ? (
           <div className="px-3.5 py-5 text-center text-muted-foreground text-xs">
             {emptyMessage ?? "No runtime MCP status is available for this session."}
@@ -145,7 +144,6 @@ export function McpRuntimeServerList({
           <ul role="list" aria-label="MCP server status" className="divide-y divide-border/45">
             {orderedServers.map((server, index) => {
               const expanded = expandedKeys.has(server.providerKey);
-              const pendingAction = actionPendingKey?.startsWith(`${server.providerKey}:`) ?? false;
               const isBuiltIn = server.source === "t3-built-in";
               const details = detailsByProviderKey[server.providerKey];
               return (
@@ -216,35 +214,19 @@ export function McpRuntimeServerList({
                       />
                     </button>
 
-                    {!isBuiltIn && server.availableActions.length > 0 ? (
-                      <div className="mt-2 flex flex-wrap gap-1.5 pl-3.5">
-                        {authorizationAvailable && server.availableActions.includes("authorize") ? (
-                          <ServerActionButton
-                            icon={KeyRoundIcon}
-                            label="Authorize"
-                            pending={pendingAction}
-                            readOnly={readOnly}
-                            onClick={() => onAction(server, "authorize")}
-                          />
-                        ) : null}
-                        {server.availableActions.includes("reconnect") ? (
-                          <ServerActionButton
-                            icon={RotateCwIcon}
-                            label="Reconnect"
-                            pending={pendingAction}
-                            readOnly={readOnly}
-                            onClick={() => onAction(server, "reconnect")}
-                          />
-                        ) : null}
-                        {server.availableActions.includes("refresh") ? (
-                          <ServerActionButton
-                            icon={RefreshCwIcon}
-                            label="Refresh"
-                            pending={pendingAction}
-                            readOnly={readOnly}
-                            onClick={() => onAction(server, "refresh")}
-                          />
-                        ) : null}
+                    {!isBuiltIn ? (
+                      <div className="mt-2 pl-3.5">
+                        <McpServerRowControls
+                          serverKey={server.providerKey}
+                          serverName={server.name}
+                          state={server.state}
+                          availableRuntimeActions={server.availableActions}
+                          disabledRuntimeActions={authorizationAvailable ? [] : ["authorize"]}
+                          pendingAction={pendingAction}
+                          readOnly={readOnly}
+                          onRuntimeAction={(action) => onAction(server, action)}
+                          onEdit={() => onOpenSettings(server.providerKey)}
+                        />
                       </div>
                     ) : null}
                     {readOnly && !isBuiltIn && server.availableActions.length > 0 ? (
@@ -306,16 +288,6 @@ export function McpRuntimeServerList({
                         {server.issue?.message ? (
                           <p className="mt-2 text-destructive">{server.issue.message}</p>
                         ) : null}
-                        {!isBuiltIn ? (
-                          <button
-                            type="button"
-                            className="mt-2 inline-flex items-center gap-1 font-medium text-foreground underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            onClick={() => onOpenSettings(server.providerKey)}
-                          >
-                            Edit in Settings
-                            <ExternalLinkIcon aria-hidden="true" className="size-3" />
-                          </button>
-                        ) : null}
                       </div>
                     ) : null}
                     {actionErrorByProviderKey[server.providerKey] ? (
@@ -329,7 +301,7 @@ export function McpRuntimeServerList({
             })}
           </ul>
         )}
-      </ScrollArea>
+      </section>
 
       <div className="border-t border-border/55 p-2">
         <Button
@@ -500,34 +472,5 @@ function ToolAnnotations({ tool }: { readonly tool: McpRuntimeTool }) {
         </span>
       ))}
     </div>
-  );
-}
-
-function ServerActionButton({
-  icon: Icon,
-  label,
-  pending,
-  readOnly,
-  onClick,
-}: {
-  readonly icon: typeof RefreshCwIcon;
-  readonly label: string;
-  readonly pending: boolean;
-  readonly readOnly: boolean;
-  readonly onClick: () => void;
-}) {
-  return (
-    <Button
-      type="button"
-      variant="outline"
-      size="xs"
-      disabled={pending || readOnly}
-      title={readOnly ? "Runtime actions require operate access" : undefined}
-      onClick={onClick}
-      className="h-6 px-1.5 text-[11px]"
-    >
-      <Icon aria-hidden="true" className={cn("size-3", pending && "opacity-50")} />
-      {label}
-    </Button>
   );
 }

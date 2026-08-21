@@ -34,7 +34,6 @@ export interface GitWorkbenchDrawerShellProps {
   readonly showTabs?: boolean;
   readonly onActiveTabChange: (tab: GitWorkbenchDrawerTabId) => void;
   readonly onEscapeBeforeCollapse?: () => boolean;
-  readonly onHeightChange?: (height: number) => void;
   readonly onOpenChange: (open: boolean) => void;
   readonly onVisibilityChange?: (visible: boolean) => void;
 }
@@ -63,7 +62,10 @@ export function GitWorkbenchDrawerShell(props: GitWorkbenchDrawerShellProps) {
         root: "git-workbench-drawer",
         tabs: "git-workbench-drawer__tabs",
       }}
-      dataAttributes={{ "data-git-workbench-drawer": "true" }}
+      dataAttributes={{
+        "data-git-workbench-drawer": "true",
+        "data-workspace-card-expanded-surface": "true",
+      }}
       {...(props.headerActions === undefined ? {} : { headerActions: props.headerActions })}
       {...(props.repositoryLabel === undefined ? {} : { subtitle: props.repositoryLabel })}
       {...(props.returnFocusRef === undefined ? {} : { returnFocusRef: props.returnFocusRef })}
@@ -72,7 +74,6 @@ export function GitWorkbenchDrawerShell(props: GitWorkbenchDrawerShellProps) {
       {...(props.onEscapeBeforeCollapse === undefined
         ? {}
         : { onEscapeBeforeCollapse: props.onEscapeBeforeCollapse })}
-      {...(props.onHeightChange === undefined ? {} : { onHeightChange: props.onHeightChange })}
       onOpenChange={props.onOpenChange}
       {...(props.onVisibilityChange === undefined
         ? {}

@@ -1,5 +1,7 @@
 import { CircleOff, LoaderCircle } from "lucide-react";
 
+import { cn } from "~/lib/utils";
+
 import { GitBranchesPanel } from "./GitBranchesPanel";
 import { GitChangesPanel } from "./GitChangesPanel";
 import { GitHistoryPanel } from "./GitHistoryPanel";
@@ -11,6 +13,11 @@ import type { GitWorkbenchPanelProps } from "./GitWorkbench.types";
 export function GitWorkbenchPanel(props: GitWorkbenchPanelProps) {
   const operationAttention = (props.operation ? 1 : 0) + (props.queue ? 1 : 0);
   const showTabs = props.showTabs !== false;
+  const documentSized =
+    props.activeTab === "overview" ||
+    props.activeTab === "branches" ||
+    props.activeTab === "operations";
+  const refreshing = props.loading && props.snapshot !== null;
   return (
     <section
       aria-label="Git workbench"
@@ -40,22 +47,38 @@ export function GitWorkbenchPanel(props: GitWorkbenchPanelProps) {
         </div>
       ) : null}
       <div
-        aria-label={showTabs ? undefined : `${props.activeTab} Git view`}
-        aria-labelledby={showTabs ? `git-workbench-tab-${props.activeTab}` : undefined}
-        className="relative min-h-0 flex-auto overflow-auto"
-        data-git-workbench-view={props.activeTab}
-        id={`git-workbench-panel-${props.activeTab}`}
-        role={showTabs ? "tabpanel" : undefined}
-        tabIndex={showTabs ? 0 : undefined}
+        className={cn(
+          "relative flex min-h-0 flex-col overflow-hidden",
+          documentSized ? "flex-[0_1_auto]" : "flex-1",
+        )}
+        data-git-workbench-view-frame="true"
       >
-        {props.loading && !props.snapshot ? <LoadingWorkbench /> : null}
-        {!props.loading && !props.snapshot ? (
-          <UnavailableWorkbench upgradeRequired={props.upgradeRequired === true} />
-        ) : null}
-        {props.snapshot ? <ActivePanel {...props} snapshot={props.snapshot} /> : null}
-        {props.loading && props.snapshot ? (
+        <div
+          aria-label={showTabs ? undefined : `${props.activeTab} Git view`}
+          aria-labelledby={showTabs ? `git-workbench-tab-${props.activeTab}` : undefined}
+          className={cn(
+            "min-h-0",
+            documentSized ? "flex-[0_1_auto]" : "flex flex-1 flex-col",
+            documentSized ? "overflow-auto" : "overflow-hidden",
+            refreshing && "mt-10",
+          )}
+          data-git-workbench-refresh-inset={refreshing ? "true" : undefined}
+          data-git-workbench-scroll-region={documentSized ? "document" : "nested"}
+          data-git-workbench-view={props.activeTab}
+          id={`git-workbench-panel-${props.activeTab}`}
+          role={showTabs ? "tabpanel" : undefined}
+          tabIndex={showTabs ? 0 : undefined}
+        >
+          {props.loading && !props.snapshot ? <LoadingWorkbench /> : null}
+          {!props.loading && !props.snapshot ? (
+            <UnavailableWorkbench upgradeRequired={props.upgradeRequired === true} />
+          ) : null}
+          {props.snapshot ? <ActivePanel {...props} snapshot={props.snapshot} /> : null}
+        </div>
+        {refreshing ? (
           <div
-            className="pointer-events-none absolute right-3 bottom-3 flex items-center gap-1 rounded-md border bg-popover px-2 py-1 text-muted-foreground text-xs shadow-sm"
+            className="pointer-events-none absolute top-3 right-3 z-10 flex items-center gap-1 rounded-md border bg-popover px-2 py-1 text-muted-foreground text-xs shadow-sm"
+            data-git-workbench-refresh-overlay="true"
             role="status"
           >
             <LoaderCircle

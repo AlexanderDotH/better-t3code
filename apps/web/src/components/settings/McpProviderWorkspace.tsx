@@ -1,32 +1,28 @@
-import type { ProviderDriverKind } from "@t3tools/contracts";
+import type { McpRuntimeAction, ProviderDriverKind } from "@t3tools/contracts";
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
   ChevronDownIcon,
   BracesIcon,
-  CopyIcon,
-  Edit3Icon,
-  ExternalLinkIcon,
   FileTextIcon,
   Globe2Icon,
   LockKeyholeIcon,
-  RefreshCwIcon,
   ServerIcon,
-  Trash2Icon,
-  UnplugIcon,
   WrenchIcon,
 } from "lucide-react";
 
 import { cn } from "../../lib/utils";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import type { McpManagementSummary } from "../mcp-management/mcpManagementSummary";
+import {
+  McpServerRowControls,
+  type McpRuntimeActionPending,
+} from "../mcp-management/McpServerRowControls";
 import type {
   McpConfiguredServerView,
   McpRuntimeContextView,
@@ -45,8 +41,6 @@ export type {
   McpRuntimeToolView,
 };
 
-type McpRuntimeAction = "authorize" | "reconnect" | "refresh";
-
 export interface McpProviderWorkspaceProps {
   readonly providers: ReadonlyArray<McpProviderTab>;
   readonly selectedProviderId: string | null;
@@ -58,11 +52,14 @@ export interface McpProviderWorkspaceProps {
   readonly runtimeSupported: boolean;
   readonly runtimeError?: string;
   readonly providerAssignmentsSupported: boolean;
+  readonly embedded?: boolean;
   readonly showProviderTabs?: boolean;
+  readonly showRuntimeSelector?: boolean;
   readonly readOnly?: boolean;
   readonly isLoadingRuntime: boolean;
   readonly focusedServerKey?: string;
   readonly pendingProviderServerIds: ReadonlySet<string>;
+  readonly pendingRuntimeAction?: McpRuntimeActionPending | null;
   readonly onSelectProvider: (providerId: string) => void;
   readonly onSelectContext: (contextId: string) => void;
   readonly onToggleProviderServer: (serverId: string, enabled: boolean) => void;
@@ -95,48 +92,12 @@ function runtimeCountLabel(server: McpRuntimeServerView): string | null {
   return null;
 }
 
-function RuntimeActions(props: {
-  readonly server: McpRuntimeServerView;
-  readonly disabled?: boolean;
-  readonly onAction: (action: McpRuntimeAction) => void;
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {props.server.capabilities.authorize ? (
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={props.disabled}
-          onClick={() => props.onAction("authorize")}
-        >
-          <ExternalLinkIcon className="size-3.5" />
-          Authorize
-        </Button>
-      ) : null}
-      {props.server.capabilities.reconnect ? (
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={props.disabled}
-          onClick={() => props.onAction("reconnect")}
-        >
-          <UnplugIcon className="size-3.5" />
-          Reconnect
-        </Button>
-      ) : null}
-      {props.server.capabilities.refresh ? (
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          disabled={props.disabled}
-          aria-label={`Refresh ${props.server.name}`}
-          onClick={() => props.onAction("refresh")}
-        >
-          <RefreshCwIcon className="size-3.5" />
-        </Button>
-      ) : null}
-    </div>
-  );
+function availableRuntimeActions(server: McpRuntimeServerView): ReadonlyArray<McpRuntimeAction> {
+  return [
+    server.capabilities.authorize ? ("authorize" as const) : null,
+    server.capabilities.reconnect ? ("reconnect" as const) : null,
+    server.capabilities.refresh ? ("refresh" as const) : null,
+  ].filter((action): action is McpRuntimeAction => action !== null);
 }
 
 function RuntimeDetails({ server }: { readonly server: McpRuntimeServerView }) {
@@ -274,6 +235,7 @@ function RuntimeServerRow(props: {
   readonly initiallyOpen: boolean;
   readonly locked?: boolean;
   readonly readOnly?: boolean;
+  readonly pendingRuntimeAction: McpRuntimeActionPending | null;
   readonly onAction: (action: McpRuntimeAction) => void;
   readonly onLoadDetails: () => void;
 }) {
@@ -357,10 +319,14 @@ function RuntimeServerRow(props: {
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {!props.locked ? (
-            <RuntimeActions
-              server={props.server}
-              {...(props.readOnly === undefined ? {} : { disabled: props.readOnly })}
-              onAction={props.onAction}
+            <McpServerRowControls
+              serverKey={props.server.serverKey}
+              serverName={props.server.name}
+              state={props.server.state}
+              availableRuntimeActions={availableRuntimeActions(props.server)}
+              pendingAction={props.pendingRuntimeAction}
+              readOnly={props.readOnly === true}
+              onRuntimeAction={props.onAction}
             />
           ) : null}
           {hasDetails ? (
@@ -502,6 +468,7 @@ function ConfiguredServerRow(props: {
   readonly runtime?: McpRuntimeServerView;
   readonly hasLiveContext: boolean;
   readonly pending: boolean;
+  readonly pendingRuntimeAction: McpRuntimeActionPending | null;
   readonly providerAssignmentsSupported: boolean;
   readonly readOnly: boolean;
   readonly focused: boolean;
@@ -603,13 +570,24 @@ function ConfiguredServerRow(props: {
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          {props.runtime ? (
-            <RuntimeActions
-              server={props.runtime}
-              disabled={props.readOnly}
-              onAction={props.onRuntimeAction}
-            />
-          ) : null}
+          <McpServerRowControls
+            serverKey={props.runtime?.serverKey ?? props.server.id}
+            serverName={props.server.name}
+            state={props.runtime?.state ?? "disabled"}
+            availableRuntimeActions={props.runtime ? availableRuntimeActions(props.runtime) : []}
+            pendingAction={props.pendingRuntimeAction}
+            readOnly={props.readOnly}
+            providerAssignment={{
+              enabled: props.server.enabledForProvider,
+              disabled: !props.server.globallyEnabled || !props.providerAssignmentsSupported,
+              pending: props.pending,
+              onChange: props.onToggle,
+            }}
+            onRuntimeAction={props.onRuntimeAction}
+            onEdit={props.onEdit}
+            onDuplicate={props.onDuplicate}
+            onDelete={props.onDelete}
+          />
           {hasDetails ? (
             <CollapsibleTrigger
               className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -620,44 +598,6 @@ function ConfiguredServerRow(props: {
               />
             </CollapsibleTrigger>
           ) : null}
-          <Switch
-            checked={props.server.enabledForProvider}
-            disabled={
-              props.readOnly ||
-              props.pending ||
-              !props.server.globallyEnabled ||
-              !props.providerAssignmentsSupported
-            }
-            aria-label={`${props.server.enabledForProvider ? "Disable" : "Enable"} ${props.server.name} for selected provider`}
-            onCheckedChange={(enabled) => props.onToggle(Boolean(enabled))}
-          />
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            disabled={props.readOnly}
-            aria-label={`Duplicate ${props.server.name}`}
-            onClick={props.onDuplicate}
-          >
-            <CopyIcon className="size-4" />
-          </Button>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            disabled={props.readOnly}
-            aria-label={`Edit ${props.server.name}`}
-            onClick={props.onEdit}
-          >
-            <Edit3Icon className="size-4" />
-          </Button>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            disabled={props.readOnly}
-            aria-label={`Delete ${props.server.name}`}
-            onClick={props.onDelete}
-          >
-            <Trash2Icon className="size-4" />
-          </Button>
         </div>
       </div>
       {hasDetails && props.runtime ? (
@@ -712,7 +652,13 @@ export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
 
   return (
     <div
-      className="overflow-hidden rounded-xl border border-[var(--mcp-provider-accent,var(--border))] bg-card/35 shadow-sm"
+      data-mcp-provider-workspace={props.embedded ? "embedded" : "standalone"}
+      className={cn(
+        "overflow-hidden",
+        props.embedded
+          ? "border-y border-border/60 bg-transparent"
+          : "rounded-xl border border-[var(--mcp-provider-accent,var(--border))] bg-card/35 shadow-sm",
+      )}
       style={
         selectedProvider?.accentColor
           ? ({ "--mcp-provider-accent": selectedProvider.accentColor } as CSSProperties)
@@ -730,33 +676,38 @@ export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
 
       {selectedProvider ? (
         <>
-          <div className="grid gap-3 border-b border-border/60 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:p-5">
-            <div className="min-w-0 space-y-1">
-              <p className="text-sm font-medium">Runtime session</p>
-              <p className="text-muted-foreground text-xs">
-                Connection health is reported by this provider session, not by an independent probe.
-              </p>
+          {props.showRuntimeSelector !== false ? (
+            <div className="grid gap-3 border-b border-border/60 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:p-5">
+              <div className="min-w-0 space-y-1">
+                <p className="text-sm font-medium">Runtime session</p>
+                <p className="text-muted-foreground text-xs">
+                  Connection health is reported by this provider session, not by an independent
+                  probe.
+                </p>
+              </div>
+              <Select
+                value={selectedContext?.id}
+                disabled={props.contexts.length === 0}
+                onValueChange={(value) => {
+                  if (value) props.onSelectContext(value);
+                }}
+              >
+                <SelectTrigger className="min-w-56" aria-label="Runtime session">
+                  <SelectValue>
+                    {selectedContext?.label ?? "Configured for new sessions"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  {props.contexts.map((context) => (
+                    <SelectItem key={context.id} value={context.id}>
+                      {context.label}
+                      {context.live ? " · Live" : " · Last known"}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
             </div>
-            <Select
-              value={selectedContext?.id}
-              disabled={props.contexts.length === 0}
-              onValueChange={(value) => {
-                if (value) props.onSelectContext(value);
-              }}
-            >
-              <SelectTrigger className="min-w-56">
-                <SelectValue>{selectedContext?.label ?? "Configured for new sessions"}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup>
-                {props.contexts.map((context) => (
-                  <SelectItem key={context.id} value={context.id}>
-                    {context.label}
-                    {context.live ? " · Live" : " · Last known"}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          </div>
+          ) : null}
 
           {!props.runtimeSupported ? (
             <div className="border-b border-border/60 bg-muted/30 px-4 py-3 text-muted-foreground text-xs sm:px-5">
@@ -807,6 +758,7 @@ export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
                     {...(runtime ? { runtime } : {})}
                     hasLiveContext={Boolean(selectedContext)}
                     pending={props.pendingProviderServerIds.has(server.id)}
+                    pendingRuntimeAction={props.pendingRuntimeAction ?? null}
                     providerAssignmentsSupported={
                       props.providerAssignmentsSupported && selectedProvider.supportsUserMcp
                     }
@@ -834,6 +786,7 @@ export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
                 key={server.serverKey}
                 server={server}
                 initiallyOpen={props.focusedServerKey === server.serverKey}
+                pendingRuntimeAction={props.pendingRuntimeAction ?? null}
                 {...(props.readOnly === undefined ? {} : { readOnly: props.readOnly })}
                 onAction={(action) => props.onRuntimeAction(server.serverKey, action)}
                 onLoadDetails={() => props.onLoadServerDetails(server.serverKey)}
@@ -853,6 +806,7 @@ export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
                   key={server.serverKey}
                   server={server}
                   initiallyOpen={props.focusedServerKey === server.serverKey}
+                  pendingRuntimeAction={props.pendingRuntimeAction ?? null}
                   {...(props.readOnly === undefined ? {} : { readOnly: props.readOnly })}
                   onAction={(action) => props.onRuntimeAction(server.serverKey, action)}
                   onLoadDetails={() => props.onLoadServerDetails(server.serverKey)}
@@ -874,6 +828,7 @@ export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
                   server={server}
                   locked
                   initiallyOpen={props.focusedServerKey === server.serverKey}
+                  pendingRuntimeAction={null}
                   onAction={() => {}}
                   onLoadDetails={() => props.onLoadServerDetails(server.serverKey)}
                 />
