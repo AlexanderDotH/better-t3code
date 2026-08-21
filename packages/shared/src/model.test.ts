@@ -151,7 +151,7 @@ describe("descriptor helpers", () => {
 });
 
 describe("Codex context window", () => {
-  it("offers twenty stable ordered steps through 1.05M tokens", () => {
+  it("offers stable ordered steps through exactly one million tokens", () => {
     expect(CODEX_CONTEXT_WINDOW_CHOICES).toHaveLength(20);
     expect(CODEX_CONTEXT_WINDOW_CHOICES[10]).toEqual({
       id: "default",
@@ -160,12 +160,12 @@ describe("Codex context window", () => {
       isDefault: true,
     });
     expect(CODEX_CONTEXT_WINDOW_CHOICES.at(-1)).toEqual({
-      id: "1048576",
-      label: "1.05M",
+      id: "1000000",
+      label: "1M",
     });
   });
 
-  it("places the numeric model default in token order and caps choices at the model maximum", () => {
+  it("keeps one million selectable beyond the reported model maximum", () => {
     const descriptor = createCodexContextWindowDescriptor({
       defaultTokens: 272_000,
       maxTokens: 872_000,
@@ -180,7 +180,8 @@ describe("Codex context window", () => {
       isDefault: true,
     });
     expect(descriptor.options.map((choice) => choice.label)).toContain("872K");
-    expect(descriptor.options.map((choice) => Number(choice.id))).not.toContain(917_504);
+    expect(descriptor.options.map((choice) => choice.label)).toContain("896K");
+    expect(descriptor.options.at(-1)).toEqual({ id: "1000000", label: "1M" });
     expect(descriptor.options.map((choice) => choice.label)).toEqual(
       [...descriptor.options]
         .sort(
@@ -192,22 +193,23 @@ describe("Codex context window", () => {
     );
   });
 
-  it("uses a single numeric default tick when default and maximum are equal", () => {
+  it("uses a single numeric default tick when default and reported maximum are equal", () => {
     const descriptor = createCodexContextWindowDescriptor({
       defaultTokens: 128_000,
       maxTokens: 128_000,
     });
 
-    expect(descriptor.options.at(-1)).toEqual({
+    expect(descriptor.options.find((choice) => choice.id === "default")).toEqual({
       id: "default",
       label: "128K",
       description: "Model default",
       isDefault: true,
     });
     expect(descriptor.options.filter((choice) => choice.label === "128K")).toHaveLength(1);
+    expect(descriptor.options.at(-1)).toEqual({ id: "1000000", label: "1M" });
   });
 
-  it("resolves only advertised numeric selections to runtime token counts", () => {
+  it("resolves only bounded numeric selections to runtime token counts", () => {
     expect(
       resolveCodexContextWindowTokens(
         createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-sol", [
@@ -225,7 +227,14 @@ describe("Codex context window", () => {
     expect(
       resolveCodexContextWindowTokens(
         createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-sol", [
-          { id: "contextWindow", value: "999999999" },
+          { id: "contextWindow", value: "1000000" },
+        ]),
+      ),
+    ).toBe(1_000_000);
+    expect(
+      resolveCodexContextWindowTokens(
+        createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-sol", [
+          { id: "contextWindow", value: "1000001" },
         ]),
       ),
     ).toBeUndefined();

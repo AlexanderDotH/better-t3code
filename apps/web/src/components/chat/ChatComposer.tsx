@@ -1309,6 +1309,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     prompt,
     onPromptChange: setPromptFromTraits,
   });
+  const composerFooterHasContextWindowControl = Boolean(providerContextWindowPicker);
   const pendingPrimaryAction = useMemo(
     () =>
       activePendingProgress
@@ -1505,6 +1506,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const measureFooterCompactness = () => {
       const composerFormWidth = measureComposerFormWidth();
       const footerCompact = shouldUseCompactComposerFooter(composerFormWidth, {
+        hasContextWindowControl: composerFooterHasContextWindowControl,
         hasWideActions: composerFooterHasWideActions,
       });
       const primaryActionsCompact =
@@ -1539,7 +1541,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return () => {
       observer.disconnect();
     };
-  }, [activeThreadId, composerFooterActionLayoutKey, composerFooterHasWideActions]);
+  }, [
+    activeThreadId,
+    composerFooterActionLayoutKey,
+    composerFooterHasContextWindowControl,
+    composerFooterHasWideActions,
+  ]);
 
   // ------------------------------------------------------------------
   // Image persist effect
@@ -3359,7 +3366,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 (!isComposerFooterCompact && providerTraitsPicker) ? (
                   <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
                 ) : null}
-                {providerContextWindowPicker}
 
                 {isComposerFooterCompact ? (
                   <CompactComposerControlsMenu
@@ -3371,17 +3377,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onRuntimeModeChange={handleRuntimeModeChange}
                   />
                 ) : (
-                  <>
-                    {providerTraitsPicker ? providerTraitsPicker : null}
-                    <ComposerFooterModeControls
-                      showInteractionModeSelect={planModeUiEnabled}
-                      interactionMode={interactionMode}
-                      runtimeMode={runtimeMode}
-                      onInteractionModeChange={handleInteractionModeChange}
-                      onRuntimeModeChange={handleRuntimeModeChange}
-                    />
-                  </>
+                  providerTraitsPicker
                 )}
+
+                {providerContextWindowPicker}
+
+                {!isComposerFooterCompact ? (
+                  <ComposerFooterModeControls
+                    showInteractionModeSelect={planModeUiEnabled}
+                    interactionMode={interactionMode}
+                    runtimeMode={runtimeMode}
+                    onInteractionModeChange={handleInteractionModeChange}
+                    onRuntimeModeChange={handleRuntimeModeChange}
+                  />
+                ) : null}
               </div>
 
               {/* Right side: send / stop button */}

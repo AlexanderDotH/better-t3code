@@ -15,11 +15,12 @@ export function resolveComposerFooterGapClassName(input: {
 
 export function shouldUseCompactComposerFooter(
   width: number | null,
-  options?: { hasWideActions?: boolean },
+  options?: { hasContextWindowControl?: boolean; hasWideActions?: boolean },
 ): boolean {
-  const breakpoint = options?.hasWideActions
-    ? COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX
-    : COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX;
+  const breakpoint =
+    options?.hasWideActions || options?.hasContextWindowControl
+      ? COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX
+      : COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX;
   return width !== null && width < breakpoint;
 }
 

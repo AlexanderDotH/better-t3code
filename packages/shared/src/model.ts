@@ -82,9 +82,11 @@ export function getModelSelectionBooleanOptionValue(
 export const CODEX_CONTEXT_WINDOW_OPTION_ID = "contextWindow";
 export const CODEX_CONTEXT_WINDOW_DEFAULT_VALUE = "default";
 
+const CODEX_CONTEXT_WINDOW_MIN_TOKENS = 16_384;
+const CODEX_CONTEXT_WINDOW_CUSTOM_MAX_TOKENS = 1_000_000;
 const CODEX_CONTEXT_WINDOW_STABLE_TOKENS = [
   16_384, 32_768, 49_152, 65_536, 81_920, 98_304, 131_072, 163_840, 196_608, 262_144, 327_680,
-  393_216, 458_752, 524_288, 655_360, 786_432, 917_504, 1_000_000, 1_048_576,
+  393_216, 458_752, 524_288, 655_360, 786_432, 851_968, 917_504, 1_000_000,
 ] as const;
 
 export function formatModelContextWindowTokens(tokens: number): string {
@@ -101,12 +103,19 @@ export function formatModelContextWindowTokens(tokens: number): string {
 export function createCodexContextWindowDescriptor(
   metadata: NonNullable<ModelCapabilities["contextWindow"]>,
 ): Extract<ProviderOptionDescriptor, { type: "select" }> {
+  const defaultLabel = formatModelContextWindowTokens(metadata.defaultTokens);
   const numericTokens = new Set<number>(
     CODEX_CONTEXT_WINDOW_STABLE_TOKENS.filter(
-      (tokens) => tokens <= metadata.maxTokens && tokens !== metadata.defaultTokens,
+      (tokens) =>
+        tokens !== metadata.defaultTokens &&
+        formatModelContextWindowTokens(tokens) !== defaultLabel,
     ),
   );
-  if (metadata.maxTokens !== metadata.defaultTokens) {
+  if (
+    metadata.maxTokens >= CODEX_CONTEXT_WINDOW_MIN_TOKENS &&
+    metadata.maxTokens <= CODEX_CONTEXT_WINDOW_CUSTOM_MAX_TOKENS &&
+    metadata.maxTokens !== metadata.defaultTokens
+  ) {
     numericTokens.add(metadata.maxTokens);
   }
   const choices = [
@@ -118,7 +127,7 @@ export function createCodexContextWindowDescriptor(
       tokens: metadata.defaultTokens,
       choice: {
         id: CODEX_CONTEXT_WINDOW_DEFAULT_VALUE,
-        label: formatModelContextWindowTokens(metadata.defaultTokens),
+        label: defaultLabel,
         description: "Model default",
         isDefault: true,
       },
@@ -137,7 +146,7 @@ export function createCodexContextWindowDescriptor(
 
 export const CODEX_CONTEXT_WINDOW_DESCRIPTOR = createCodexContextWindowDescriptor({
   defaultTokens: 272_000,
-  maxTokens: 1_048_576,
+  maxTokens: CODEX_CONTEXT_WINDOW_CUSTOM_MAX_TOKENS,
   effectivePercent: 95,
 });
 
@@ -151,7 +160,9 @@ export function resolveCodexContextWindowTokens(
     return undefined;
   }
   const tokens = Number(value);
-  return Number.isSafeInteger(tokens) && tokens >= 16_384 && tokens <= 1_048_576
+  return Number.isSafeInteger(tokens) &&
+    tokens >= CODEX_CONTEXT_WINDOW_MIN_TOKENS &&
+    tokens <= CODEX_CONTEXT_WINDOW_CUSTOM_MAX_TOKENS
     ? tokens
     : undefined;
 }
