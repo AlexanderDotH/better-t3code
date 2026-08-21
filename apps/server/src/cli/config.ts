@@ -74,6 +74,13 @@ export const tailscaleServePortFlag = Flag.integer("tailscale-serve-port").pipe(
   Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale-serve is enabled."),
   Flag.optional,
 );
+export const advertisedUrlFlag = Flag.string("advertised-url").pipe(
+  Flag.withSchema(Schema.URLFromString),
+  Flag.withDescription(
+    "External HTTP(S) origin advertised in pairing links (for example an HTTPS reverse proxy).",
+  ),
+  Flag.optional,
+);
 
 const EnvServerConfig = Config.all({
   logLevel: Config.logLevel("T3CODE_LOG_LEVEL").pipe(Config.withDefault("Info")),
@@ -139,6 +146,14 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  deploymentKind: Config.schema(ServerConfig.DeploymentKind, "T3CODE_DEPLOYMENT").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  advertisedUrl: Config.url("T3CODE_ADVERTISED_URL").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 export interface CliServerFlags {
@@ -154,6 +169,7 @@ export interface CliServerFlags {
   readonly logWebSocketEvents: Option.Option<boolean>;
   readonly tailscaleServeEnabled: Option.Option<boolean>;
   readonly tailscaleServePort: Option.Option<number>;
+  readonly advertisedUrl?: Option.Option<URL>;
 }
 
 export interface CliAuthLocationFlags {
@@ -188,6 +204,7 @@ export const sharedServerCommandFlags = {
   logWebSocketEvents: logWebSocketEventsFlag,
   tailscaleServeEnabled: tailscaleServeFlag,
   tailscaleServePort: tailscaleServePortFlag,
+  advertisedUrl: advertisedUrlFlag,
 } as const;
 
 export const authLocationFlags = sharedServerLocationFlags;
@@ -233,6 +250,7 @@ export const resolveServerConfig = (
       logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
       tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
       tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
+      advertisedUrl: flags.advertisedUrl ?? Option.none(),
     } satisfies CliServerFlags;
     const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
     const bootstrapEnvelope =
@@ -338,6 +356,16 @@ export const resolveServerConfig = (
       ),
       () => 443,
     );
+    const deploymentKind = env.deploymentKind;
+    const rawAdvertisedUrl = Option.getOrUndefined(
+      resolveOptionPrecedence(
+        normalizedFlags.advertisedUrl ?? Option.none(),
+        Option.fromUndefinedOr(env.advertisedUrl),
+      ),
+    );
+    const advertisedUrl = rawAdvertisedUrl
+      ? new URL(`${rawAdvertisedUrl.protocol}//${rawAdvertisedUrl.host}/`)
+      : undefined;
     const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(
@@ -386,6 +414,8 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      ...(deploymentKind ? { deploymentKind } : {}),
+      ...(advertisedUrl ? { advertisedUrl } : {}),
     };
 
     return config;
@@ -409,6 +439,7 @@ export const resolveCliAuthConfig = (
       logWebSocketEvents: Option.none(),
       tailscaleServeEnabled: Option.none(),
       tailscaleServePort: Option.none(),
+      advertisedUrl: Option.none(),
     },
     cliLogLevel,
   );

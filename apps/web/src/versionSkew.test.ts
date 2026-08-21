@@ -105,6 +105,9 @@ describe("versionSkew", () => {
     expect(serverUpdateGuidance("desktop-managed", "Desktop server")).toBe(
       "The Desktop server is run by the T3 Code desktop app on its machine — update the desktop app there to sync them.",
     );
+    expect(serverUpdateGuidance("container-managed", "Container server")).toBe(
+      "Pull the updated image and recreate the Container server to sync them.",
+    );
     expect(serverUpdateGuidance(null, "Local server")).toBe(
       "Relaunch the Local server with the copied command to sync them.",
     );

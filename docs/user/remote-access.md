@@ -84,6 +84,9 @@ For `https://app.t3.codes`, prefer an HTTPS Tailnet or other HTTPS endpoint. A p
 
 Use this when you want to run the server without a GUI, for example on a remote machine over SSH.
 
+For a Docker or Compose deployment of the same native server, see
+[Running the server in a container](./container-server.md).
+
 Run the server with `t3 serve`.
 
 ```bash

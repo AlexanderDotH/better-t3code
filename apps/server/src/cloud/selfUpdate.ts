@@ -30,7 +30,9 @@ const PREFLIGHT_TIMEOUT = Duration.seconds(30);
 export function resolveServerSelfUpdateCapability(input: {
   readonly desktopManaged: boolean;
   readonly launcherManaged: boolean;
+  readonly containerManaged?: boolean;
 }): ServerSelfUpdateCapability | null {
+  if (input.containerManaged === true) return "container-managed" as const;
   if (input.desktopManaged) return "desktop-managed" as const;
   return input.launcherManaged ? ("boot-service" as const) : null;
 }
@@ -54,8 +56,11 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const execPath = yield* HostProcessExecutablePath;
   const inFlight = yield* Ref.make(false);
 
-  const capability: ServerSelfUpdateCapability | null =
-    serverConfig.mode === "desktop" ? "desktop-managed" : launcher.managed ? "boot-service" : null;
+  const capability = resolveServerSelfUpdateCapability({
+    containerManaged: serverConfig.deploymentKind === "container",
+    desktopManaged: serverConfig.mode === "desktop",
+    launcherManaged: launcher.managed,
+  });
   const failWith = (reason: string, cause?: unknown) =>
     cause === undefined
       ? new ServerSelfUpdateError({ reason })
@@ -67,6 +72,11 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     if (capability === "desktop-managed") {
       return yield* failWith(
         "This server is managed by the T3 Code desktop app on its machine; update the desktop app to update it.",
+      );
+    }
+    if (capability === "container-managed") {
+      return yield* failWith(
+        "This server is managed as a container; pull the target image and recreate the container to update it.",
       );
     }
     if (capability === null) {

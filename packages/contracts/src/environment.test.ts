@@ -1,12 +1,20 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ExecutionEnvironmentCapabilities, ExecutionEnvironmentDescriptor } from "./environment.ts";
+import {
+  ExecutionEnvironmentCapabilities,
+  ExecutionEnvironmentDescriptor,
+  ServerSelfUpdateCapability,
+} from "./environment.ts";
 
 const decodeCapabilities = Schema.decodeUnknownSync(ExecutionEnvironmentCapabilities);
 const decodeDescriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor);
+const decodeServerSelfUpdateCapability = Schema.decodeUnknownSync(ServerSelfUpdateCapability);
 
 describe("ExecutionEnvironmentCapabilities", () => {
+  it("accepts container-managed server updates without treating them as self-update RPCs", () => {
+    expect(decodeServerSelfUpdateCapability("container-managed")).toBe("container-managed");
+  });
   it("defaults mid-chat provider switching to false for legacy descriptors", () => {
     expect(decodeCapabilities({ repositoryIdentity: true })).toEqual({
       repositoryIdentity: true,

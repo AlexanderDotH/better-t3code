@@ -48,6 +48,7 @@ export const ServerSelfUpdateCapability = Schema.Literals([
   "boot-service",
   "respawn",
   "desktop-managed",
+  "container-managed",
 ]);
 export type ServerSelfUpdateCapability = typeof ServerSelfUpdateCapability.Type;
 

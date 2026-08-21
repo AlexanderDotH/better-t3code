@@ -24,6 +24,7 @@ import * as Stream from "effect/Stream";
 
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 import { subscribeBeforeSnapshotWithoutMutex } from "../utils/subscribeBeforeSnapshot.ts";
+import { constrainHostMemoryToCurrentCgroup } from "./ContainerMemoryBudget.ts";
 
 export const GIBIBYTE = 1024 ** 3;
 
@@ -1093,7 +1094,7 @@ export const layerLive = Layer.effect(
       Stream.runForEach(({ snapshot }) =>
         governor.observe({
           sampledAtMs: snapshot.sampledAtUnixMs,
-          memory: snapshot.memory,
+          memory: constrainHostMemoryToCurrentCgroup(snapshot.memory),
           processes: snapshot.processes,
         }),
       ),
