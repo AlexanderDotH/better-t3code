@@ -25,6 +25,7 @@ export type ThreadBackgroundLiveness = "working" | "monitoring" | null;
 interface ThreadLivenessState {
   readonly agents: Set<string>;
   readonly monitors: Set<string>;
+  readonly settledSubagentTaskIds: Set<string>;
 }
 
 // Classification sets are the shared contracts copies (MONITOR_TASK_TYPES:
@@ -61,6 +62,17 @@ export class ThreadBackgroundLivenessService extends Context.Service<
       readonly agentId?: string | undefined;
     }) => void;
 
+    /**
+     * Feed the dedicated subagent lifecycle. A terminal canonical state acts
+     * as a tombstone for late compatibility task ticks until an authoritative
+     * active state explicitly resumes the same child.
+     */
+    readonly recordAuthoritativeSubagentLiveness: (input: {
+      readonly threadId: string;
+      readonly taskId: string;
+      readonly active: boolean;
+    }) => void;
+
     /** Session death orphans all of a thread's background work. */
     readonly clearThreadLiveness: (threadId: string) => void;
 
@@ -80,7 +92,11 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
     if (existing) {
       return existing;
     }
-    const created: ThreadLivenessState = { agents: new Set(), monitors: new Set() };
+    const created: ThreadLivenessState = {
+      agents: new Set(),
+      monitors: new Set(),
+      settledSubagentTaskIds: new Set(),
+    };
     stateByThreadId.set(threadId, created);
     return created;
   };
@@ -96,7 +112,11 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
     }
     state.agents.delete(taskId);
     state.monitors.delete(taskId);
-    if (state.agents.size === 0 && state.monitors.size === 0) {
+    if (
+      state.agents.size === 0 &&
+      state.monitors.size === 0 &&
+      state.settledSubagentTaskIds.size === 0
+    ) {
       stateByThreadId.delete(threadId);
     }
   };
@@ -129,12 +149,28 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
         drop(input.threadId, input.taskId);
         return;
       }
+      if (stateByThreadId.get(input.threadId)?.settledSubagentTaskIds.has(input.taskId)) {
+        drop(input.threadId, input.taskId);
+        return;
+      }
 
       drop(input.threadId, input.taskId);
       const state = stateFor(input.threadId);
       const bucket =
         taskType !== undefined && MONITOR_TASK_TYPES.has(taskType) ? state.monitors : state.agents;
       bucket.add(input.taskId);
+    },
+
+    recordAuthoritativeSubagentLiveness: (input) => {
+      const state = stateFor(input.threadId);
+      state.agents.delete(input.taskId);
+      state.monitors.delete(input.taskId);
+      if (input.active) {
+        state.settledSubagentTaskIds.delete(input.taskId);
+        state.agents.add(input.taskId);
+        return;
+      }
+      state.settledSubagentTaskIds.add(input.taskId);
     },
 
     clearThreadLiveness: (threadId) => {

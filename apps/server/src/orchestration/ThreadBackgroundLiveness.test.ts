@@ -113,6 +113,36 @@ describe("ThreadBackgroundLiveness", () => {
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
   });
 
+  it("does not let late task activity revive an authoritatively settled subagent", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    const threadId = "t-live-settled-subagent";
+    const taskId = "provider-child";
+
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId,
+      taskType: undefined,
+      status: "running",
+      kind: "started",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+
+    liveness.recordAuthoritativeSubagentLiveness({ threadId, taskId, active: false });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId,
+      taskType: undefined,
+      status: "running",
+      kind: "updated",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+
+    liveness.recordAuthoritativeSubagentLiveness({ threadId, taskId, active: true });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+  });
+
   it("reclassification moves a task between buckets instead of duplicating it", () => {
     const liveness = ThreadBackgroundLiveness.make();
     const threadId = "t-live-reclass";
