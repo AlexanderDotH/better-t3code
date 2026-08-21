@@ -55,6 +55,19 @@ describe("shouldUseCompactComposerFooter", () => {
       }),
     ).toBe(false);
   });
+
+  it("uses the wider breakpoint when the Codex context selector is visible", () => {
+    expect(
+      shouldUseCompactComposerFooter(COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX - 1, {
+        hasContextWindowControl: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldUseCompactComposerFooter(COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX, {
+        hasContextWindowControl: true,
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("shouldUseCompactComposerPrimaryActions", () => {

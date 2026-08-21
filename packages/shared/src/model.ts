@@ -19,9 +19,11 @@ export interface SelectableModelOption {
 
 export function createModelCapabilities(input: {
   optionDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
+  contextWindow?: ModelCapabilities["contextWindow"];
 }): ModelCapabilities {
   return {
     optionDescriptors: input.optionDescriptors.map(cloneDescriptor),
+    ...(input.contextWindow ? { contextWindow: { ...input.contextWindow } } : {}),
   };
 }
 
@@ -80,55 +82,89 @@ export function getModelSelectionBooleanOptionValue(
 export const CODEX_CONTEXT_WINDOW_OPTION_ID = "contextWindow";
 export const CODEX_CONTEXT_WINDOW_DEFAULT_VALUE = "default";
 
-/**
- * Stable slider positions for the per-chat Codex context override. The first
- * position delegates to the model catalog; numeric positions use explicit
- * token counts accepted by Codex's `model_context_window` setting.
- */
-export const CODEX_CONTEXT_WINDOW_CHOICES = [
-  { id: CODEX_CONTEXT_WINDOW_DEFAULT_VALUE, label: "Model default" },
-  { id: "16384", label: "16K" },
-  { id: "32768", label: "32K" },
-  { id: "49152", label: "48K" },
-  { id: "65536", label: "64K" },
-  { id: "81920", label: "80K" },
-  { id: "98304", label: "96K" },
-  { id: "131072", label: "128K" },
-  { id: "163840", label: "160K" },
-  { id: "196608", label: "192K" },
-  { id: "262144", label: "256K" },
-  { id: "327680", label: "320K" },
-  { id: "393216", label: "384K" },
-  { id: "458752", label: "448K" },
-  { id: "524288", label: "512K" },
-  { id: "655360", label: "640K" },
-  { id: "786432", label: "768K" },
-  { id: "917504", label: "896K" },
-  { id: "1000000", label: "1M" },
-  { id: "1048576", label: "1.05M" },
+const CODEX_CONTEXT_WINDOW_MIN_TOKENS = 16_384;
+const CODEX_CONTEXT_WINDOW_CUSTOM_MAX_TOKENS = 1_000_000;
+const CODEX_CONTEXT_WINDOW_STABLE_TOKENS = [
+  16_384, 32_768, 49_152, 65_536, 81_920, 98_304, 131_072, 163_840, 196_608, 262_144, 327_680,
+  393_216, 458_752, 524_288, 655_360, 786_432, 851_968, 917_504, 1_000_000,
 ] as const;
 
-export const CODEX_CONTEXT_WINDOW_DESCRIPTOR = {
-  id: CODEX_CONTEXT_WINDOW_OPTION_ID,
-  label: "Context window",
-  description: "Override the active model context window for this chat.",
-  type: "select",
-  options: CODEX_CONTEXT_WINDOW_CHOICES,
-} as const satisfies ProviderOptionDescriptor;
+export function formatModelContextWindowTokens(tokens: number): string {
+  if (tokens >= 1_000_000) {
+    const millions = tokens / 1_000_000;
+    return `${Number.isInteger(millions) ? millions.toFixed(0) : millions.toFixed(2).replace(/0+$/u, "").replace(/\.$/u, "")}M`;
+  }
+  const thousands = (CODEX_CONTEXT_WINDOW_STABLE_TOKENS as readonly number[]).includes(tokens)
+    ? tokens / 1_024
+    : Math.round(tokens / 1_000);
+  return `${thousands}K`;
+}
 
-const CODEX_CONTEXT_WINDOW_TOKEN_VALUES = new Set<string>(
-  CODEX_CONTEXT_WINDOW_CHOICES.slice(1).map((choice) => choice.id),
-);
+export function createCodexContextWindowDescriptor(
+  metadata: NonNullable<ModelCapabilities["contextWindow"]>,
+): Extract<ProviderOptionDescriptor, { type: "select" }> {
+  const defaultLabel = formatModelContextWindowTokens(metadata.defaultTokens);
+  const numericTokens = new Set<number>(
+    CODEX_CONTEXT_WINDOW_STABLE_TOKENS.filter(
+      (tokens) =>
+        tokens !== metadata.defaultTokens &&
+        formatModelContextWindowTokens(tokens) !== defaultLabel,
+    ),
+  );
+  if (
+    metadata.maxTokens >= CODEX_CONTEXT_WINDOW_MIN_TOKENS &&
+    metadata.maxTokens <= CODEX_CONTEXT_WINDOW_CUSTOM_MAX_TOKENS &&
+    metadata.maxTokens !== metadata.defaultTokens
+  ) {
+    numericTokens.add(metadata.maxTokens);
+  }
+  const choices = [
+    ...Array.from(numericTokens, (tokens) => ({
+      tokens,
+      choice: { id: String(tokens), label: formatModelContextWindowTokens(tokens) },
+    })),
+    {
+      tokens: metadata.defaultTokens,
+      choice: {
+        id: CODEX_CONTEXT_WINDOW_DEFAULT_VALUE,
+        label: defaultLabel,
+        description: "Model default",
+        isDefault: true,
+      },
+    },
+  ].sort((left, right) => left.tokens - right.tokens);
+
+  return {
+    id: CODEX_CONTEXT_WINDOW_OPTION_ID,
+    label: "Context window",
+    description: "Override the active model context window for this chat.",
+    type: "select",
+    options: choices.map(({ choice }) => choice),
+    currentValue: CODEX_CONTEXT_WINDOW_DEFAULT_VALUE,
+  };
+}
+
+export const CODEX_CONTEXT_WINDOW_DESCRIPTOR = createCodexContextWindowDescriptor({
+  defaultTokens: 272_000,
+  maxTokens: CODEX_CONTEXT_WINDOW_CUSTOM_MAX_TOKENS,
+  effectivePercent: 95,
+});
+
+export const CODEX_CONTEXT_WINDOW_CHOICES = CODEX_CONTEXT_WINDOW_DESCRIPTOR.options;
 
 export function resolveCodexContextWindowTokens(
   modelSelection: ModelSelection | null | undefined,
 ): number | undefined {
   const value = getModelSelectionStringOptionValue(modelSelection, CODEX_CONTEXT_WINDOW_OPTION_ID);
-  if (!value || !CODEX_CONTEXT_WINDOW_TOKEN_VALUES.has(value)) {
+  if (!value || value === CODEX_CONTEXT_WINDOW_DEFAULT_VALUE) {
     return undefined;
   }
   const tokens = Number(value);
-  return Number.isSafeInteger(tokens) && tokens > 0 ? tokens : undefined;
+  return Number.isSafeInteger(tokens) &&
+    tokens >= CODEX_CONTEXT_WINDOW_MIN_TOKENS &&
+    tokens <= CODEX_CONTEXT_WINDOW_CUSTOM_MAX_TOKENS
+    ? tokens
+    : undefined;
 }
 
 function resolveDescriptorChoiceValue(

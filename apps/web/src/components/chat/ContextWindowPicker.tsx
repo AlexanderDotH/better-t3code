@@ -15,7 +15,8 @@ import {
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
-import { memo, type CSSProperties, useCallback, useMemo } from "react";
+import { GaugeIcon } from "lucide-react";
+import { memo, type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { type DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
@@ -73,13 +74,12 @@ export function buildContextWindowSliderState(descriptor: SelectDescriptor): {
   const currentIndex = selectedIndex >= 0 ? selectedIndex : 0;
   const maxIndex = Math.max(0, descriptor.options.length - 1);
   const currentLabel = descriptor.options[currentIndex]?.label ?? "Model default";
-  const compactLabel = currentLabel === "Model default" ? "Default" : currentLabel;
   return {
     currentIndex,
     currentLabel,
     maxIndex,
     progressPercent: maxIndex === 0 ? 0 : (currentIndex / maxIndex) * 100,
-    triggerLabel: `Context ${compactLabel}`,
+    triggerLabel: currentLabel,
   };
 }
 
@@ -103,12 +103,26 @@ export const ContextWindowPicker = memo(function ContextWindowPicker(
 ) {
   const selected = contextWindowDescriptor(props);
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
+  const externalValue = selected ? getProviderOptionCurrentValue(selected.descriptor) : undefined;
+  const [optimisticValue, setOptimisticValue] = useState<string | null>(null);
+  const lastNotifiedValueRef = useRef<string | null>(null);
+  useEffect(() => setOptimisticValue(null), [externalValue, props.model, props.provider]);
+  useEffect(() => {
+    lastNotifiedValueRef.current = null;
+  }, [props.draftId, props.model, props.provider, props.threadRef]);
+  const visibleDescriptor = useMemo(
+    () =>
+      selected && optimisticValue
+        ? { ...selected.descriptor, currentValue: optimisticValue }
+        : selected?.descriptor,
+    [optimisticValue, selected],
+  );
   const slider = useMemo(
-    () => (selected ? buildContextWindowSliderState(selected.descriptor) : null),
-    [selected],
+    () => (visibleDescriptor ? buildContextWindowSliderState(visibleDescriptor) : null),
+    [visibleDescriptor],
   );
   const selectIndex = useCallback(
-    (index: number) => {
+    (index: number, notifyThread: boolean) => {
       if (!selected) {
         return;
       }
@@ -125,12 +139,14 @@ export const ContextWindowPicker = memo(function ContextWindowPicker(
         return;
       }
 
+      setOptimisticValue(option.id);
       setProviderModelOptions(threadTarget, props.provider, nextOptions, {
         instanceId,
         model,
         persistSticky: false,
       });
-      if (props.threadRef) {
+      if (notifyThread && props.threadRef && lastNotifiedValueRef.current !== option.id) {
+        lastNotifiedValueRef.current = option.id;
         props.onThreadModelSelectionChange?.(
           props.threadRef,
           createModelSelection(instanceId, model, nextOptions),
@@ -156,7 +172,7 @@ export const ContextWindowPicker = memo(function ContextWindowPicker(
         render={
           <ComposerControl
             aria-label={`Context window: ${slider.currentLabel}`}
-            className="shrink-0 whitespace-nowrap"
+            className="min-w-16 shrink-0 justify-between whitespace-nowrap px-2.5"
             data-chat-context-window-picker="true"
             variant="ghost"
           />
@@ -168,40 +184,58 @@ export const ContextWindowPicker = memo(function ContextWindowPicker(
       <PopoverPopup
         align="start"
         side="top"
-        className="w-72 max-w-[calc(100vw-2rem)]"
+        collisionAvoidance={{ side: "shift", align: "shift", fallbackAxisSide: "none" }}
+        collisionPadding={12}
+        positionMethod="fixed"
+        className="w-80 max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-xl"
         viewportClassName="p-0"
       >
-        <div className="flex flex-col gap-3 p-4">
-          <div className="flex items-start justify-between gap-4">
-            <div>
+        <div className="flex flex-col gap-3.5 p-4">
+          <div className="flex items-start gap-3">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-muted/55 text-foreground">
+              <GaugeIcon aria-hidden="true" className="size-4" strokeWidth={2} />
+            </div>
+            <div className="min-w-0">
               <div className="font-medium text-sm text-foreground">Context window</div>
-              <div className="mt-0.5 text-pretty text-muted-foreground text-xs">
-                Applied only to this chat and synced with the thread.
+              <div className="mt-0.5 text-pretty text-muted-foreground text-xs leading-relaxed">
+                Saved for this chat and applied to the next Codex turn.
               </div>
             </div>
-            <output
-              className="shrink-0 rounded-md bg-muted px-2 py-1 font-mono font-medium text-xs tabular-nums text-foreground"
-              htmlFor="chat-context-window-slider"
-            >
-              {slider.currentLabel}
-            </output>
           </div>
-          <input
-            aria-label="Context window size"
-            aria-valuetext={slider.currentLabel}
-            className="settings-slider w-full"
-            id="chat-context-window-slider"
-            max={slider.maxIndex}
-            min={0}
-            onChange={(event) => selectIndex(Number(event.currentTarget.value))}
-            step={1}
-            style={sliderStyle}
-            type="range"
-            value={slider.currentIndex}
-          />
-          <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-            <span>{selected.descriptor.options[0]?.label}</span>
-            <span>{selected.descriptor.options.at(-1)?.label}</span>
+          <div className="rounded-xl border border-border/65 bg-muted/30 px-3.5 pb-3 pt-3">
+            <div className="mb-1 flex items-baseline justify-between gap-3">
+              <output
+                className="font-semibold text-2xl tabular-nums tracking-tight text-foreground"
+                htmlFor="chat-context-window-slider"
+              >
+                {slider.currentLabel}
+              </output>
+              <span className="rounded-md border border-border/60 bg-background/55 px-2 py-1 font-medium text-[10px] uppercase tracking-wide text-muted-foreground">
+                {visibleDescriptor?.options[slider.currentIndex]?.isDefault
+                  ? "Model default"
+                  : "Custom"}
+              </span>
+            </div>
+            <input
+              aria-label="Context window size"
+              aria-valuetext={slider.currentLabel}
+              className="settings-slider w-full"
+              id="chat-context-window-slider"
+              max={slider.maxIndex}
+              min={0}
+              onBlur={(event) => selectIndex(Number(event.currentTarget.value), true)}
+              onChange={(event) => selectIndex(Number(event.currentTarget.value), false)}
+              onKeyUp={(event) => selectIndex(Number(event.currentTarget.value), true)}
+              onPointerUp={(event) => selectIndex(Number(event.currentTarget.value), true)}
+              step={1}
+              style={sliderStyle}
+              type="range"
+              value={slider.currentIndex}
+            />
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+              <span>{selected.descriptor.options[0]?.label}</span>
+              <span>{selected.descriptor.options.at(-1)?.label}</span>
+            </div>
           </div>
         </div>
       </PopoverPopup>
