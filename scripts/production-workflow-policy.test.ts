@@ -95,12 +95,13 @@ function readTriggerPaths(
     `${filename} must define the ${triggerName} trigger`,
   );
   const paths = trigger.paths;
-  assert.isArray(paths, `${filename}:${triggerName} must define path filters`);
-  assert.ok(
-    paths.every((path) => typeof path === "string"),
-    `${filename}:${triggerName} path filters must be strings`,
-  );
-  return paths as Array<string>;
+  if (!Array.isArray(paths)) {
+    return assert.fail(`${filename}:${triggerName} must define path filters`);
+  }
+  if (!paths.every((path: unknown) => typeof path === "string")) {
+    return assert.fail(`${filename}:${triggerName} path filters must be strings`);
+  }
+  return paths;
 }
 
 it.layer(NodeServices.layer)("production workflow policy", (it) => {
