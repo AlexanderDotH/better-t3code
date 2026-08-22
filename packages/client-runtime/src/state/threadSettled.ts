@@ -240,9 +240,10 @@ export function effectiveSnoozed(
 ): boolean {
   if (shell.snoozedUntil == null) return false;
   const wakeAtMs = Date.parse(shell.snoozedUntil);
+  const nowMs = Date.parse(options.now);
   // Malformed data never hides a thread.
-  if (Number.isNaN(wakeAtMs)) return false;
-  if (wakeAtMs <= Date.parse(options.now)) return false;
+  if (Number.isNaN(wakeAtMs) || Number.isNaN(nowMs)) return false;
+  if (wakeAtMs <= nowMs) return false;
   return !threadRaisedHandWhileSnoozed(shell);
 }
 
@@ -280,7 +281,8 @@ export function threadWokeAt(
     return shell.session?.updatedAt ?? shell.snoozedAt ?? null;
   }
   // No raised hand: woke iff the timer elapsed (still-snoozed → null).
-  return wakeAtMs <= Date.parse(options.now) ? shell.snoozedUntil : null;
+  const nowMs = Date.parse(options.now);
+  return !Number.isNaN(nowMs) && wakeAtMs <= nowMs ? shell.snoozedUntil : null;
 }
 
 /**
