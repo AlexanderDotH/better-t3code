@@ -67,7 +67,7 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
   readonly hasTrailingShoulder?: boolean;
   readonly onDismiss: () => void;
   readonly onToggle: () => void;
-  readonly placement?: "inline" | "tab";
+  readonly placement?: "floating" | "inline" | "tab";
   readonly progress: ComposerTasksProgress;
   readonly steps: readonly ComposerTaskStep[];
 }) {
@@ -113,11 +113,14 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
     );
   }
 
+  const floating = placement === "floating";
   return (
     <div
       className={cn(
-        "chat-composer-shoulder-tab chat-composer-tasks-tab absolute -top-7 left-4 z-0 flex h-8 items-center gap-1 rounded-t-xl border border-b-0 px-2 pb-1 text-xs leading-none text-muted-foreground",
-        hasTrailingShoulder ? "right-28" : "right-4",
+        floating
+          ? "chat-composer-top-drawer chat-composer-top-drawer-floating flex h-8 items-center gap-1 px-2 text-xs leading-none text-muted-foreground"
+          : "chat-composer-shoulder-tab chat-composer-tasks-tab absolute -top-7 left-4 z-0 flex h-8 items-center gap-1 rounded-t-xl border border-b-0 px-2 pb-1 text-xs leading-none text-muted-foreground",
+        !floating && (hasTrailingShoulder ? "right-28" : "right-4"),
         allDone && "text-foreground",
       )}
       data-composer-tasks-badge="true"

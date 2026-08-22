@@ -1525,6 +1525,8 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const legendListRef = useRef<LegendListRef | null>(null);
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
+  const [composerFloatingDrawerHost, setComposerFloatingDrawerHost] =
+    useState<HTMLDivElement | null>(null);
   const [composerOverlayHeight, setComposerOverlayHeight] = useState(0);
   const composerOverlayResizeFrameRef = useRef<number | null>(null);
   const [chatColumnElement, setChatColumnElement] = useState<HTMLDivElement | null>(null);
@@ -7268,6 +7270,11 @@ function ChatViewContent(props: ChatViewProps) {
                     <ThreadSyncStatusPill phase={threadSyncPhase} />
                   ) : null}
                   <div
+                    ref={setComposerFloatingDrawerHost}
+                    className="chat-composer-floating-drawer-host pointer-events-auto relative z-30 mx-auto w-full max-w-3xl"
+                    data-chat-composer-floating-drawer-host="true"
+                  />
+                  <div
                     className="relative"
                     style={
                       forceExpandedMobileComposer
@@ -7374,6 +7381,7 @@ function ChatViewContent(props: ChatViewProps) {
                                   }
                                   isPreparingWorktree={isPreparingWorktree}
                                   externalDrawerAttached={externalComposerDrawerAttached}
+                                  floatingDrawerHost={composerFloatingDrawerHost}
                                   environmentUnavailable={activeEnvironmentUnavailableState}
                                   activePendingApproval={activePendingApproval}
                                   pendingApprovals={pendingApprovals}

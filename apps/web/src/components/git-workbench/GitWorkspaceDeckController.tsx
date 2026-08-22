@@ -27,6 +27,7 @@ import type {
   VcsStatusResult,
 } from "@t3tools/contracts";
 import { useBlocker } from "@tanstack/react-router";
+import { MessageSquareIcon } from "lucide-react";
 import {
   type ReactNode,
   type RefObject,
@@ -1776,10 +1777,11 @@ export function ChatWorkspaceDeckController(props: GitWorkspaceDeckControllerPro
           onActivate={requestActivation}
         >
           <span
-            className="flex h-full items-center px-3 text-xs font-medium text-muted-foreground"
+            className="flex h-full items-center gap-1.5 !px-7 text-xs font-medium text-muted-foreground"
             data-workspace-card-peek-id="chat"
           >
-            Chat
+            <MessageSquareIcon aria-hidden className="size-3.5 shrink-0" />
+            <span>Chat</span>
           </span>
         </WorkspaceCardPeek>
       ),

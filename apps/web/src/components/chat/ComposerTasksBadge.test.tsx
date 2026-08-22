@@ -85,6 +85,26 @@ describe("ComposerTasksBadge", () => {
     expect(markup).not.toContain("rounded-t-xl");
   });
 
+  it("renders compact progress as a detached floating island", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerTasksBadge
+        expanded={false}
+        onDismiss={() => undefined}
+        onToggle={() => undefined}
+        placement="floating"
+        progress={progress}
+        steps={steps}
+      />,
+    );
+
+    expect(markup).toContain("chat-composer-top-drawer-floating");
+    expect(markup).toContain('data-composer-task-current="true"');
+    expect(markup).not.toContain("chat-composer-shoulder-tab");
+    expect(markup).not.toContain("border-b-0");
+    const rootClassName = markup.match(/^<div class="([^"]+)"/)?.[1];
+    expect(rootClassName).not.toContain("absolute");
+  });
+
   it("expands into a read-only floating task list", () => {
     const markup = renderToStaticMarkup(
       <ComposerTasksDrawer

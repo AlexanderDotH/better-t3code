@@ -64,6 +64,15 @@ describe("ChatComposer top-drawer layout", () => {
       expect(chatComposerSource).toContain(
         'className="chat-composer-top-drawer chat-composer-top-drawer-floating"',
       );
+      expect(chatComposerSource).toContain("floatingDrawerHost: HTMLElement | null;");
+      expect(chatComposerSource).toContain(
+        "<ComposerDetachedDrawerPortal host={props.floatingDrawerHost}>",
+      );
+      expect(chatComposerSource).toContain("const showFloatingTasksBadge =");
+      expect(chatComposerSource).toContain('placement="floating"');
+      expect(chatComposerSource).toContain(
+        "return host ? createPortal(children, host) : children;",
+      );
       expect(chatComposerSource).toContain(
         "(!isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan !== null)",
       );
@@ -75,6 +84,9 @@ describe("ChatComposer top-drawer layout", () => {
       );
       expect(indexCssSource).toMatch(
         /\.chat-composer-drawer-surface\.chat-composer-drawer-floating[\s\S]*?::before\s*{[^}]*border:\s*1px solid var\(--chat-composer-attached-outline\);[^}]*border-radius:\s*16px;[^}]*mask-image:\s*none;/s,
+      );
+      expect(indexCssSource).toMatch(
+        /\.chat-composer-floating-drawer-host:not\(:empty\)\s*{[^}]*padding-bottom:\s*1rem;/s,
       );
     }),
   );
