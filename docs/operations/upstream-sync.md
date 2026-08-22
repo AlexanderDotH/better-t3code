@@ -608,3 +608,37 @@ device/emulator, no compatible Metro session, and no disposable T3 server. The o
 server is the developer's live instance and is deliberately untouched. The fork pull request must
 remain a draft until a separately started disposable environment or pairing URL is supplied and the
 fork CI is green. Upstream writes stay disabled throughout.
+
+### Post-integration hardening audit
+
+The follow-up audit closes the remaining concrete correctness and release-safety gaps without
+changing the fork feature contract:
+
+- Failed preview events now carry an optional authoritative session snapshot. New clients can
+  recover an event-only tab including navigation, history, and viewport state, while both legacy
+  snapshot-less events and older clients remain supported.
+- Browser OTLP input is schema-checked and decoded before any local recording or configured relay.
+  Malformed payloads receive HTTP 400, are neither recorded nor forwarded, and are not copied into
+  warning logs.
+- T3 Connect sign-in keeps the same Clerk redirect behavior but removes the permanently null prompt
+  node. Invalid client clock input now fails open for snoozed-thread visibility and cannot invent a
+  timer-wake timestamp.
+- The desktop smoke gate requires both backend and main-window readiness and fails on timeout,
+  early exit, or fatal output. Desktop test discovery can no longer pass with zero tests.
+- Mobile automation watches only the two repository scripts imported by `app.config.ts`, rather
+  than every unrelated helper script. With the supported iOS deployment target pinned at 18.0,
+  production config uses `NSAllowsLocalNetworking` instead of globally enabling arbitrary HTTP
+  loads; Android retains its scoped cleartext-network plugin.
+
+The regression matrix passes 115 focused tests across contracts, server, web, client-runtime,
+desktop, scripts, and mobile. The complete desktop suite passes 61 files and 588 tests. All seven
+scoped typechecks, changed-file lint, non-writing formatting, whitespace, conflict-marker, and
+mobile-native-static gates pass; SwiftLint, ktlint, and detekt remain unavailable locally and are
+left to fork CI. Generated production Expo config confirms bundle `com.t3tools.t3code`, iOS 18.0,
+and only `NSAllowsLocalNetworking` in the ATS dictionary.
+
+The immediately pre-packaging fetch and `ls-remote` check still pin upstream at
+`2274444e92275fda2033de6636e3143ac3599ffb`, already present in the integration ancestry. The
+follow-up AppImage and permitted user-local installed copy are byte-identical at 168,189,428 bytes
+and SHA-256 `df0aa056d463b7e37cb5e1e2dcdf299cf67a7ede330421ca60ecb6020738cd4c`.
+No T3 Code process or live T3 home state was started, stopped, restarted, or mutated.
