@@ -214,24 +214,34 @@ export function applyPreviewServerEvent(ref: ScopedThreadRef, event: PreviewEven
           };
         }
         case "failed": {
+          if (current.suppressedTabIds.has(event.tabId)) return current;
           const existing = current.sessions[event.tabId];
-          if (!existing) return current;
-          const failedSnapshot = {
-            ...existing,
-            navStatus: {
-              _tag: "LoadFailed" as const,
-              url: event.url,
-              title: event.title,
-              code: event.code,
-              description: event.description,
-            },
-            updatedAt: event.createdAt,
-          };
+          const failedSnapshot = event.snapshot
+            ? event.snapshot
+            : existing
+              ? ({
+                  ...existing,
+                  navStatus: {
+                    _tag: "LoadFailed" as const,
+                    url: event.url,
+                    title: event.title,
+                    code: event.code,
+                    description: event.description,
+                  },
+                  updatedAt: event.createdAt,
+                } satisfies PreviewSessionSnapshot)
+              : null;
+          if (failedSnapshot === null) return current;
           const sessions = { ...current.sessions, [event.tabId]: failedSnapshot };
+          const activeTabId = current.activeTabId ?? event.tabId;
+          const activeSnapshot = sessions[activeTabId] ?? failedSnapshot;
           return {
             ...current,
             sessions,
-            snapshot: current.activeTabId === event.tabId ? failedSnapshot : current.snapshot,
+            activeTabId,
+            snapshot: activeSnapshot,
+            desktopOverlay: current.desktopByTabId[activeSnapshot.tabId] ?? null,
+            recentlySeenUrls: rememberSnapshotUrl(current.recentlySeenUrls, failedSnapshot),
           };
         }
         case "closed": {

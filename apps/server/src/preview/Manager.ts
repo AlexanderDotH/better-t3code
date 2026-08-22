@@ -321,6 +321,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
                 title: input.navStatus.title,
                 code: input.navStatus.code,
                 description: input.navStatus.description,
+                snapshot,
               }
             : {
                 type: "navigated",

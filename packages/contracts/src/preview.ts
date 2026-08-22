@@ -272,6 +272,8 @@ const PreviewFailedEvent = Schema.Struct({
   title: Title,
   code: Schema.Int,
   description: Schema.String,
+  /** Added additively so older servers and clients remain wire-compatible. */
+  snapshot: Schema.optional(PreviewSessionSnapshot),
 });
 
 const PreviewClosedEvent = Schema.Struct({
