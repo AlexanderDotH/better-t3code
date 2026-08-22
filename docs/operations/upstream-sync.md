@@ -514,9 +514,17 @@ This cycle starts from clean fork `main` at
 `e587d6c312c605075983ed3ded75e0e22f4b6ee0`. The live fetch and `git ls-remote` check both pin
 `upstream/main` at `ce91284f832fc71bf46ff2a8ffc290e20db4e83d`, with merge base
 `97db94c9bf6fa5d83f94c8fff85566d7fc96276e`. The freeze contains 97 fork-only and 240
-upstream-only commits. The ordinary `git merge --no-ff --no-commit upstream/main` records the
-pinned upstream commit in `MERGE_HEAD`; the signed merge commit must retain that commit as its
-second parent.
+upstream-only commits. The initial signed ordinary merge is
+`0f8d1ca45f5af10dd493adba397465fb99be1473`; its second parent is the pinned upstream SHA.
+
+The first pre-packaging freeze found upstream's command-click folder-link fix at
+`f34b9d31b3ddbd53a553141fd769721fca4b8eb5`. It merged without conflicts as
+`af48d453c8777bad9be760433b3e57f6b3b53689`; its affected Markdown tests and web typecheck passed.
+Upstream's asset consolidation then exposed the fork installer's stale desktop-icon path. The
+test-driven repair `0690a31adf48bfe1f012389d646870737cea7e4f` installs the canonical 1024 px
+Linux asset and removes the obsolete 512 px local icon. The final freeze found the follow-up
+message-order fix at `2274444e92275fda2033de6636e3143ac3599ffb`; it merged without conflicts as
+`2c178af16fad20235a735abfbdad9e305e59b380`, whose second parent is the final pinned upstream SHA.
 
 Before opening the merge, all refs and repository-state evidence were captured under
 `/home/alex/.local/state/t3code-repo-rescue/20260822-upstream-ce91284f`. The rescue contains a
@@ -567,11 +575,33 @@ They are resolved semantically in dependency order with these invariants:
 - Outbound product analytics remain absent. Client-surface and client-app-version metadata stay
   local to auth/event handling, while existing local resource diagnostics remain available.
 
-### Final validation (must be completed before publication)
+### Pre-publication validation
 
-This subsection intentionally remains open while the merge is being resolved. Before the
-integration branch is published, replace this paragraph with the exact focused test counts,
-package typechecks, migration-matrix and disposable `VACUUM INTO` results, formatting/lint/build
-gates, live upstream recheck, AppImage build/install hashes, and any explicitly omitted browser or
-native-client verification. Publication remains fork-only, upstream writes stay disabled, and no
-running T3 Code process or live T3 home state may be managed or mutated.
+- Six parallel, non-overlapping integration workstreams completed and were staged only by the
+  primary integrator. The parent cross-slice matrix passed 53 files and 1,252 tests. Additional
+  provider, Fetch, lifecycle, web, mobile, desktop, contracts, packaging, and policy matrices also
+  passed, including the full 132-file/839-test mobile suite and 27-file/344-test desktop suite.
+- Scoped typechecks pass for contracts, shared, client-runtime, server, web, mobile, and desktop.
+  Targeted lint passed across all 735 changed JavaScript/TypeScript sources; non-writing formatting
+  passed across all 775 changed supported files. Conflict-marker, whitespace, privacy, generated
+  route-tree, regenerated lockfile, production web-build, and mobile-native-static gates pass. The
+  local host lacks SwiftLint, ktlint, and detekt, so fork CI remains authoritative for those tools.
+- Fresh, fork-51, native-upstream-41, historical-collision, repeated, and integrity migration tests
+  pass. A read-only `VACUUM INTO` snapshot of the 19,739,934,720-byte live database was migrated in
+  isolated state at
+  `/home/alex/.local/state/t3code-migration-validation/20260822-ce91284f8/userdata/state.sqlite`.
+  Exactly migration 52 executed, slot verification passed, and `PRAGMA integrity_check` returned
+  `ok`; the live database was never opened read-write.
+- Transfer-budget totals remain capped at 15,500 wire bytes. Bounded lifecycle summaries shift the
+  deterministic snapshot phase to 8,037/8,041 bytes, so only that phase allowance was rebalanced to
+  8,500; measured-turn and total caps remain unchanged and pass.
+- The final Linux AppImage built with all required feature markers and was installed only to the
+  permitted user-local target. Built and installed bytes match at SHA-256
+  `dca822811384dca07097b90a822d36d5a0f5d6a68e2a1cce0c05e51036c2cf95`; the canonical icon also
+  matches its installed 1024 px copy. No T3 Code process was started, stopped, or restarted.
+
+Real Web and Android interaction remain external promotion gates: this host has no attached Android
+device/emulator, no compatible Metro session, and no disposable T3 server. The only listening T3
+server is the developer's live instance and is deliberately untouched. The fork pull request must
+remain a draft until a separately started disposable environment or pairing URL is supplied and the
+fork CI is green. Upstream writes stay disabled throughout.
