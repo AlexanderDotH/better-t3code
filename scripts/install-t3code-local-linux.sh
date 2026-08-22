@@ -8,7 +8,7 @@ if [[ "${EUID}" -eq 0 ]]; then
 fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-ICON_PNG="$ROOT/apps/desktop/resources/icon.png"
+ICON_PNG="$ROOT/assets/prod/black-universal-1024.png"
 
 usage() {
   cat <<'EOF'
@@ -111,7 +111,7 @@ DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 APP_DIR="$DATA_HOME/t3code-local"
 BIN_DIR="$HOME/.local/bin"
 DESKTOP_DIR="$DATA_HOME/applications"
-ICON_DIR="$DATA_HOME/icons/hicolor/512x512/apps"
+ICON_DIR="$DATA_HOME/icons/hicolor/1024x1024/apps"
 
 APPIMAGE_TARGET="$APP_DIR/T3CodeLocal.AppImage"
 PREVIOUS_APPIMAGE="$APP_DIR/T3CodeLocal.previous.AppImage"
@@ -119,6 +119,7 @@ PROFILE_PATH="$APP_DIR/install-profile"
 WRAPPER_PATH="$BIN_DIR/t3code-local"
 DESKTOP_PATH="$DESKTOP_DIR/t3code-local.desktop"
 ICON_PATH="$ICON_DIR/t3code-local.png"
+LEGACY_ICON_PATH="$DATA_HOME/icons/hicolor/512x512/apps/t3code-local.png"
 SHARED_BACKUP_REQUIRED="$APP_DIR/shared-profile-backup-required"
 
 mkdir -p "$APP_DIR" "$BIN_DIR" "$DESKTOP_DIR" "$ICON_DIR"
@@ -150,6 +151,7 @@ declare -a INSTALL_TARGETS=(
   "$WRAPPER_PATH"
   "$DESKTOP_PATH"
   "$ICON_PATH"
+  "$LEGACY_ICON_PATH"
   "$SHARED_BACKUP_REQUIRED"
 )
 
@@ -194,6 +196,7 @@ cleanup() {
     restore_target "$WRAPPER_PATH" wrapper
     restore_target "$DESKTOP_PATH" desktop-entry
     restore_target "$ICON_PATH" icon
+    restore_target "$LEGACY_ICON_PATH" legacy-icon
     restore_target "$SHARED_BACKUP_REQUIRED" shared-backup-required
   fi
   rm -f "$APPIMAGE_TEMP" "$PROFILE_TEMP" "$WRAPPER_TEMP" "$DESKTOP_TEMP" "$ICON_TEMP"
@@ -208,6 +211,7 @@ backup_target "$PROFILE_PATH" profile
 backup_target "$WRAPPER_PATH" wrapper
 backup_target "$DESKTOP_PATH" desktop-entry
 backup_target "$ICON_PATH" icon
+backup_target "$LEGACY_ICON_PATH" legacy-icon
 backup_target "$SHARED_BACKUP_REQUIRED" shared-backup-required
 
 install -m 0755 "$APPIMAGE" "$APPIMAGE_TEMP"
@@ -238,6 +242,7 @@ fi
 
 install -m 0644 "$ICON_PNG" "$ICON_TEMP"
 mv -fT "$ICON_TEMP" "$ICON_PATH"
+rm -f -- "$LEGACY_ICON_PATH"
 
 cat >"$WRAPPER_TEMP" <<'EOF'
 #!/usr/bin/env bash
