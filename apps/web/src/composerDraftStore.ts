@@ -447,6 +447,7 @@ interface ComposerDraftStoreState {
   finalizePromotedDraftThread: (threadRef: ComposerThreadTarget) => void;
   clearDraftThread: (threadRef: ComposerThreadTarget) => void;
   setStickyModelSelection: (modelSelection: ModelSelection | null | undefined) => void;
+  setStickyActiveProvider: (instanceId: ProviderInstanceId) => void;
   setPrompt: (threadRef: ComposerThreadTarget, prompt: string) => void;
   setTerminalContexts: (threadRef: ComposerThreadTarget, contexts: TerminalContextDraft[]) => void;
   setModelSelection: (
@@ -2683,6 +2684,13 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               stickyActiveProvider: stickySelection.instanceId,
             };
           });
+        },
+        setStickyActiveProvider: (instanceId) => {
+          set((state) =>
+            state.stickyActiveProvider === instanceId
+              ? state
+              : { stickyActiveProvider: instanceId },
+          );
         },
         applyStickyState: (threadRef) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";

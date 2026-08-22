@@ -1775,6 +1775,20 @@ describe("composerDraftStore sticky composer settings", () => {
     expect(useComposerDraftStore.getState().stickyActiveProvider).toBe("codex");
   });
 
+  it("remembers a provider rail selection without overwriting sticky models", () => {
+    const store = useComposerDraftStore.getState();
+    store.setStickyModelSelection(modelSelection(CODEX_DRIVER, "gpt-5.4"));
+
+    store.setStickyActiveProvider(CLAUDE_AGENT_INSTANCE);
+
+    expect(useComposerDraftStore.getState()).toMatchObject({
+      stickyModelSelectionByProvider: {
+        codex: modelSelection(CODEX_DRIVER, "gpt-5.4"),
+      },
+      stickyActiveProvider: CLAUDE_AGENT_INSTANCE,
+    });
+  });
+
   it("drops empty cursor model options when normalizing sticky state", () => {
     const store = useComposerDraftStore.getState();
 
