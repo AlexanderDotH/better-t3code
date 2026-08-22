@@ -198,6 +198,9 @@ export const ClientSettingsSchema = Schema.Struct({
   // Legacy plan mode. The composer's Build/Plan controls are hidden by default;
   // this flag restores them for providers that advertise interaction-mode support.
   planModeEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Provider-supplied reasoning stays hidden by default.
+  // Users can opt into an expanded inline presentation on web and desktop.
+  showReasoning: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // Legacy sidebar (the original per-project tree). Deliberately a fresh key
   // (was `sidebarV2Enabled` + `sidebarV2ConfiguredByUser`): decoding drops the
   // old keys, so everyone, including prior beta opt-outs, resets to the new
@@ -1008,6 +1011,7 @@ export const ClientSettingsPatch = Schema.Struct({
     ),
   ),
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
+  showReasoning: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),

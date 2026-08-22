@@ -17,6 +17,15 @@ export const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
 export const TIMELINE_CONTENT_MAX_WIDTH = 768;
 export const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
 
+export function workEntryIsProviderReasoning(
+  entry: Pick<WorkLogEntry, "sourceActivityKind">,
+): boolean {
+  return (
+    entry.sourceActivityKind === "reasoning.text" ||
+    entry.sourceActivityKind === "reasoning.summary"
+  );
+}
+
 export interface TimelineEndState {
   readonly isAtEnd?: boolean;
   readonly contentLength?: number;
@@ -448,6 +457,7 @@ export function deriveMessagesTimelineRows(input: {
   runningTurnId?: TurnId | null;
   expandedTurnIds?: ReadonlySet<TurnId>;
   expandedWorkGroupIds?: ReadonlySet<string>;
+  showReasoning?: boolean;
   isWorking: boolean;
   activeTurnStartedAt: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
@@ -516,7 +526,9 @@ export function deriveMessagesTimelineRows(input: {
         cursor += 1;
       }
       const visibleGroupedEntries = groupedEntries.filter(
-        (entry) => !workEntryIndicatesToolNeutralStatus(entry),
+        (entry) =>
+          (input.showReasoning === true && workEntryIsProviderReasoning(entry)) ||
+          !workEntryIndicatesToolNeutralStatus(entry),
       );
       if (visibleGroupedEntries.length > 0) {
         if (visibleGroupedEntries.length <= MAX_VISIBLE_WORK_LOG_ENTRIES) {
@@ -529,14 +541,15 @@ export function deriveMessagesTimelineRows(input: {
         } else {
           const groupId = `work-group:${timelineEntry.id}`;
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
-          // Agent-spawn notifications are always visible: a running fleet must
-          // never hide behind a "+N tool calls" toggle. Selection is by
-          // membership (spawn OR recent-tail), preserving the group's
-          // chronological order in both collapsed and expanded states
-          // (review finding: concatenating two filtered lists moved a
-          // mid-group spawn row above earlier tool rows).
+          // Agent-spawn notifications and opted-in reasoning are always visible:
+          // neither a running fleet nor the requested reasoning transcript may
+          // hide behind a "+N tool calls" toggle. Selection is by membership
+          // (pinned OR recent-tail), preserving chronological order in both
+          // collapsed and expanded states.
           const overflowCandidates = visibleGroupedEntries.filter(
-            (entry) => entry.agentSpawn === undefined,
+            (entry) =>
+              entry.agentSpawn === undefined &&
+              !(input.showReasoning === true && workEntryIsProviderReasoning(entry)),
           );
           const hiddenEntries = overflowCandidates.slice(0, -MAX_VISIBLE_WORK_LOG_ENTRIES);
           const hiddenIds = new Set(hiddenEntries.map((entry) => entry.id));

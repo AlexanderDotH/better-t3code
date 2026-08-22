@@ -1046,6 +1046,28 @@ export function AppearanceSettingsPanel() {
           }
         />
 
+        <SettingsRow
+          {...searchableSetting("model-reasoning")}
+          description="Show provider-supplied reasoning updates directly in the chat. Availability depends on the selected provider and model."
+          resetAction={
+            settings.showReasoning !== DEFAULT_UNIFIED_SETTINGS.showReasoning ? (
+              <SettingResetButton
+                label="model reasoning"
+                onClick={() =>
+                  updateSettings({ showReasoning: DEFAULT_UNIFIED_SETTINGS.showReasoning })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.showReasoning}
+              onCheckedChange={(checked) => updateSettings({ showReasoning: Boolean(checked) })}
+              aria-label="Show model reasoning in chat"
+            />
+          }
+        />
+
         {showEnvironmentIdentification ? (
           <SettingsRow
             {...searchableSetting("environment-identification")}

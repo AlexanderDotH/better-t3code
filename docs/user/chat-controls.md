@@ -60,6 +60,16 @@ While enabled, the `/plan` and `/default` commands select the same modes. With t
 **Shift+Tab** switches between them. Turning the setting off hides these controls and runs every
 thread in Build mode.
 
+## Model reasoning
+
+On web and desktop, enable **Model reasoning** in **Settings > Appearance** to show reasoning
+updates supplied by the selected provider and model. Reasoning appears expanded beneath a small
+**Thinking** disclosure and can be collapsed per entry. The presentation is plain chat content,
+without a surrounding card, border, or background.
+
+The preference is off by default and stored on the current client. Providers and models that do not
+supply reasoning updates continue to show the normal conversation without an empty placeholder.
+
 ## Codex context window
 
 Codex chats on web and desktop show a separate **Context** chip beside the other composer controls.

@@ -79,6 +79,10 @@ describe("searchSettings", () => {
       id: "word-wrap",
       to: "/settings/appearance",
     });
+    expect(searchSettings("model reasoning")[0]).toMatchObject({
+      id: "model-reasoning",
+      to: "/settings/appearance",
+    });
     expect(searchSettings("environment identification")[0]).toMatchObject({
       id: "environment-identification",
       to: "/settings/appearance",

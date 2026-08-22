@@ -82,6 +82,7 @@ import {
   resolveTimelineMinimapIndexFromPointer,
   resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapTopPercent,
+  workEntryIsProviderReasoning,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
   TIMELINE_MINIMAP_MIN_ITEMS,
@@ -105,6 +106,7 @@ import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestampFormat";
+import { useClientSettings } from "../../hooks/useSettings";
 
 import {
   buildInlineTerminalContextText,
@@ -143,6 +145,7 @@ interface TimelineRowSharedState {
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   shouldAnimateInitialStreamChunk: (messageId: MessageId, isStreaming: boolean) => boolean;
   agentPanelModel: AgentPanelModel;
+  showReasoning: boolean;
 }
 
 interface TimelineRowActivityState {
@@ -297,6 +300,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   topFadeEnabled = false,
   loadEarlier = null,
 }: MessagesTimelineProps) {
+  const showReasoning = useClientSettings((settings) => settings.showReasoning);
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
@@ -417,6 +421,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         runningTurnId,
         expandedTurnIds,
         expandedWorkGroupIds,
+        showReasoning,
         isWorking,
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
@@ -428,6 +433,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       runningTurnId,
       expandedTurnIds,
       expandedWorkGroupIds,
+      showReasoning,
       isWorking,
       activeTurnStartedAt,
       turnDiffSummaryByAssistantMessageId,
@@ -537,6 +543,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       shouldAnimateInitialStreamChunk,
       agentPanelModel,
+      showReasoning,
     }),
     [
       timestampFormat,
@@ -553,6 +560,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       shouldAnimateInitialStreamChunk,
       agentPanelModel,
+      showReasoning,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -1369,29 +1377,40 @@ const WorkGroupSection = memo(function WorkGroupSection({
 }: {
   groupedEntries: Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"];
 }) {
-  const { workspaceRoot } = use(TimelineRowCtx);
+  const { showReasoning, workspaceRoot } = use(TimelineRowCtx);
   const nonEmptyEntries = useMemo(
-    () => groupedEntries.filter((entry) => !workEntryIndicatesToolNeutralStatus(entry)),
-    [groupedEntries],
+    () =>
+      groupedEntries.filter(
+        (entry) =>
+          (showReasoning && workEntryIsProviderReasoning(entry)) ||
+          !workEntryIndicatesToolNeutralStatus(entry),
+      ),
+    [groupedEntries, showReasoning],
   );
-  const onlyToolEntries = nonEmptyEntries.every((entry) => workLogEntryIsToolLike(entry));
-  const groupLabel = onlyToolEntries
-    ? nonEmptyEntries.length === 1
-      ? "1 tool call"
-      : `${nonEmptyEntries.length} tool calls`
-    : "Work Log";
+  const onlyReasoningEntries =
+    showReasoning && nonEmptyEntries.every((entry) => workEntryIsProviderReasoning(entry));
+  const onlyToolEntries =
+    !onlyReasoningEntries && nonEmptyEntries.every((entry) => workLogEntryIsToolLike(entry));
+  const groupLabel = onlyReasoningEntries
+    ? "Model reasoning"
+    : onlyToolEntries
+      ? nonEmptyEntries.length === 1
+        ? "1 tool call"
+        : `${nonEmptyEntries.length} tool calls`
+      : "Work Log";
 
   if (nonEmptyEntries.length === 0) return null;
 
   return (
     <section className="-mx-1 space-y-0.5 px-1 py-0.5" aria-label={groupLabel}>
-      {!onlyToolEntries && (
+      {!onlyToolEntries && !onlyReasoningEntries && (
         <p className="px-0.5 pb-0.5 font-medium text-secondary-label text-[11px]">{groupLabel}</p>
       )}
       <div className="space-y-px">
         {nonEmptyEntries.map((workEntry) => (
           <SimpleWorkEntryRow
             key={workEntry.id}
+            showReasoning={showReasoning}
             workEntry={workEntry}
             workspaceRoot={workspaceRoot}
           />
@@ -2265,15 +2284,65 @@ const AgentSpawnNotificationRow = memo(function AgentSpawnNotificationRow(props:
 });
 
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
+  showReasoning: boolean;
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
 }) {
-  const { workEntry, workspaceRoot } = props;
+  const { showReasoning, workEntry, workspaceRoot } = props;
   // Before any hooks: spawn notifications render their own component.
   if (workEntry.agentSpawn) {
     return <AgentSpawnNotificationRow workEntry={workEntry} />;
   }
+  if (showReasoning && workEntryIsProviderReasoning(workEntry) && workEntry.detail?.trim()) {
+    return <ReasoningWorkEntryRow workEntry={workEntry} />;
+  }
   return <PlainWorkEntryRow workEntry={workEntry} workspaceRoot={workspaceRoot} />;
+});
+
+const ReasoningWorkEntryRow = memo(function ReasoningWorkEntryRow({
+  workEntry,
+}: {
+  workEntry: TimelineWorkEntry;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const [expanded, setExpanded] = useState(true);
+  const reasoningText = workEntry.detail?.trim();
+  if (!reasoningText) {
+    return null;
+  }
+
+  return (
+    <div className="px-0.5 py-0.5" data-reasoning-output="true">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        aria-label={expanded ? "Collapse reasoning" : "Expand reasoning"}
+        className="flex cursor-pointer select-none items-center gap-1 text-left font-medium text-secondary-label text-[12px] leading-5 hover:text-foreground focus-visible:underline focus-visible:outline-none"
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <ChevronDownIcon
+          className={cn(
+            "size-3 shrink-0 opacity-70 transition-transform duration-200",
+            !expanded && "-rotate-90",
+          )}
+          aria-hidden
+        />
+        <span>{toolWorkEntryHeading(workEntry)}</span>
+      </button>
+      {expanded ? (
+        <div className="ms-4 mt-0.5 min-w-0 select-text text-secondary-label">
+          <ChatMarkdown
+            text={reasoningText}
+            cwd={ctx.markdownCwd}
+            threadRef={ctx.threadRef ?? undefined}
+            skills={ctx.skills}
+            className="text-secondary-label"
+            lineBreaks
+          />
+        </div>
+      ) : null}
+    </div>
+  );
 });
 
 const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
