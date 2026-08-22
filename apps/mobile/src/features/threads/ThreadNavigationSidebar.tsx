@@ -11,6 +11,7 @@ import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS } from "@t3tools/contracts/settings";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -51,6 +52,7 @@ import {
   DEFAULT_GROUP_DISPLAY_STATE,
   homeListItemsAreEqual,
   nextGroupDisplayState,
+  resolveGroupedProjectSettledThreadKeys,
   type HomeGroupDisplayAction,
   type HomeGroupDisplayState,
   type HomeListItem,
@@ -420,24 +422,6 @@ function ThreadNavigationSidebarPane(
     setDismissedAutoRevealProjectKey(null);
     savePreferences({ olderProjectsExpanded: true });
   }, [olderProjectsExpanded, savePreferences, selectedOlderProjectKey]);
-  const listLayout = useMemo(
-    () =>
-      buildHomeListLayout({
-        groups: projectActivity.recentGroups,
-        olderGroups: projectActivity.olderGroups,
-        olderProjectsExpanded,
-        projectThreadPreviewCount: appearance.projectThreadPreviewCount,
-        displayStates: groupDisplayStates,
-        showAllThreads: hasSearchQuery,
-      }),
-    [
-      appearance.projectThreadPreviewCount,
-      groupDisplayStates,
-      hasSearchQuery,
-      olderProjectsExpanded,
-      projectActivity,
-    ],
-  );
   const projectCwdByKey = useMemo(() => {
     const map = new Map<string, string>();
     for (const project of projects) {
@@ -503,14 +487,11 @@ function ThreadNavigationSidebarPane(
   // thread reappears immediately instead of on the next minute tick.
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
   useEffect(() => {
-    if (!threadListV2Enabled) return;
-    // Refresh immediately on enable: the mount-time value can be hours old
-    // by the time the beta is switched on, which would misclassify the
-    // inactivity auto-settle boundary until the first tick.
+    // Both grouped and flat lists classify inactivity against this clock.
     setNowMinute(new Date().toISOString().slice(0, 16));
     const id = setInterval(() => setNowMinute(new Date().toISOString().slice(0, 16)), 60_000);
     return () => clearInterval(id);
-  }, [threadListV2Enabled]);
+  }, []);
   // Threads on servers without the settlement capability never classify as
   // settled (the user could neither un-settle nor pin them).
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
@@ -559,6 +540,46 @@ function ThreadNavigationSidebarPane(
     }
     return supported;
   }, [serverConfigs]);
+  const groupedSettledThreadKeys = useMemo(
+    () =>
+      resolveGroupedProjectSettledThreadKeys({
+        threads: scopedThreads,
+        settlementEnvironmentIds,
+        snoozeEnvironmentIds,
+        changeRequestStateByKey,
+        now: `${nowMinute}:00.000Z`,
+        autoSettleAfterDays: DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+      }),
+    [
+      changeRequestStateByKey,
+      nowMinute,
+      scopedThreads,
+      settlementEnvironmentIds,
+      snoozeEnvironmentIds,
+    ],
+  );
+  const listLayout = useMemo(
+    () =>
+      buildHomeListLayout({
+        groups: projectActivity.recentGroups,
+        olderGroups: projectActivity.olderGroups,
+        olderProjectsExpanded,
+        projectThreadPreviewCount: appearance.projectThreadPreviewCount,
+        displayStates: groupDisplayStates,
+        settledThreadKeys: groupedSettledThreadKeys,
+        selectedThreadKey: props.selectedThreadKey,
+        showAllThreads: hasSearchQuery,
+      }),
+    [
+      appearance.projectThreadPreviewCount,
+      groupDisplayStates,
+      groupedSettledThreadKeys,
+      hasSearchQuery,
+      olderProjectsExpanded,
+      projectActivity,
+      props.selectedThreadKey,
+    ],
+  );
   // Canonical arranged pinned order for Move up/down flags — computed from
   // all shells so search/scope filtering never disables a valid move.
   const arrangedPinnedKeys = useMemo(() => {
@@ -1134,6 +1155,7 @@ function ThreadNavigationSidebarPane(
               onDeleteThread={confirmDeleteThread}
               onRegenerateThreadTitle={regenerateThreadTitle}
               titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
+              onChangeRequestState={handleChangeRequestState}
               onSelectThread={handleSelectThread}
               onSwipeableClose={handleSwipeableClose}
               onSwipeableWillOpen={handleSwipeableWillOpen}
@@ -1147,6 +1169,8 @@ function ThreadNavigationSidebarPane(
               variant="sidebar"
               hiddenCount={item.hiddenCount}
               canShowLess={item.canShowLess}
+              canToggleSettled={item.canToggleSettled}
+              settledVisible={item.settledVisible}
               groupKey={item.groupKey}
               onGroupAction={updateGroupDisplay}
             />

@@ -17,6 +17,7 @@ import type {
   SidebarProjectGroupingMode,
   SidebarThreadSortOrder,
 } from "@t3tools/contracts";
+import { DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS } from "@t3tools/contracts/settings";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -63,6 +64,7 @@ import {
   DEFAULT_GROUP_DISPLAY_STATE,
   homeListItemsAreEqual,
   nextGroupDisplayState,
+  resolveGroupedProjectSettledThreadKeys,
   type HomeGroupDisplayAction,
   type HomeGroupDisplayState,
   type HomeListItem,
@@ -421,25 +423,6 @@ export function HomeScreen(props: HomeScreenProps) {
     setDismissedAutoRevealProjectKey(null);
     savePreferences({ olderProjectsExpanded: true });
   }, [olderProjectsExpanded, savePreferences, selectedOlderProjectKey]);
-  const listLayout = useMemo(
-    () =>
-      buildHomeListLayout({
-        groups: projectActivity.recentGroups,
-        olderGroups: projectActivity.olderGroups,
-        olderProjectsExpanded,
-        projectThreadPreviewCount: appearance.projectThreadPreviewCount,
-        displayStates: effectiveGroupDisplayStates,
-        showAllThreads: hasSearchQuery,
-      }),
-    [
-      appearance.projectThreadPreviewCount,
-      effectiveGroupDisplayStates,
-      hasSearchQuery,
-      olderProjectsExpanded,
-      projectActivity,
-    ],
-  );
-
   const projectCwdByKey = useMemo(() => {
     const map = new Map<string, string>();
     for (const project of props.projects) {
@@ -612,14 +595,11 @@ export function HomeScreen(props: HomeScreenProps) {
   // thread reappears immediately instead of on the next minute tick.
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
   useEffect(() => {
-    if (!threadListV2Enabled) return;
-    // Refresh immediately on enable: the mount-time value can be hours old
-    // by the time the beta is switched on, which would misclassify the
-    // inactivity auto-settle boundary until the first tick.
+    // Both grouped and flat lists classify inactivity against this clock.
     setNowMinute(new Date().toISOString().slice(0, 16));
     const id = setInterval(() => setNowMinute(new Date().toISOString().slice(0, 16)), 60_000);
     return () => clearInterval(id);
-  }, [threadListV2Enabled]);
+  }, []);
   // Threads on servers without the settlement capability never classify as
   // settled (the user could neither un-settle nor pin them).
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
@@ -668,6 +648,44 @@ export function HomeScreen(props: HomeScreenProps) {
     }
     return supported;
   }, [serverConfigs]);
+  const groupedSettledThreadKeys = useMemo(
+    () =>
+      resolveGroupedProjectSettledThreadKeys({
+        threads: scopedThreads,
+        settlementEnvironmentIds,
+        snoozeEnvironmentIds,
+        changeRequestStateByKey,
+        now: `${nowMinute}:00.000Z`,
+        autoSettleAfterDays: DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+      }),
+    [
+      changeRequestStateByKey,
+      nowMinute,
+      scopedThreads,
+      settlementEnvironmentIds,
+      snoozeEnvironmentIds,
+    ],
+  );
+  const listLayout = useMemo(
+    () =>
+      buildHomeListLayout({
+        groups: projectActivity.recentGroups,
+        olderGroups: projectActivity.olderGroups,
+        olderProjectsExpanded,
+        projectThreadPreviewCount: appearance.projectThreadPreviewCount,
+        displayStates: effectiveGroupDisplayStates,
+        settledThreadKeys: groupedSettledThreadKeys,
+        showAllThreads: hasSearchQuery,
+      }),
+    [
+      appearance.projectThreadPreviewCount,
+      effectiveGroupDisplayStates,
+      groupedSettledThreadKeys,
+      hasSearchQuery,
+      olderProjectsExpanded,
+      projectActivity,
+    ],
+  );
   // Canonical arranged pinned order (reorder-capable threads only) for the
   // Move up/down position flags. Computed from all shells, not the rendered
   // list, so search/scope filtering never disables or misdirects a move.
@@ -1035,6 +1053,7 @@ export function HomeScreen(props: HomeScreenProps) {
               onDeleteThread={props.onDeleteThread}
               onRegenerateThreadTitle={handleRegenerateThreadTitle}
               titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
+              onChangeRequestState={handleChangeRequestState}
               onSelectThread={props.onSelectThread}
               onSwipeableClose={handleSwipeableClose}
               onSwipeableWillOpen={handleSwipeableWillOpen}
@@ -1047,6 +1066,8 @@ export function HomeScreen(props: HomeScreenProps) {
               variant="compact"
               hiddenCount={item.hiddenCount}
               canShowLess={item.canShowLess}
+              canToggleSettled={item.canToggleSettled}
+              settledVisible={item.settledVisible}
               groupKey={item.groupKey}
               onGroupAction={updateGroupDisplay}
             />
@@ -1056,6 +1077,7 @@ export function HomeScreen(props: HomeScreenProps) {
     [
       handleSwipeableClose,
       handleSwipeableWillOpen,
+      handleChangeRequestState,
       handleRegenerateThreadTitle,
       projectCwdByKey,
       props.onArchiveThread,

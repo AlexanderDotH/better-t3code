@@ -12,6 +12,7 @@ import {
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isThreadStatusAlwaysVisibleInProjectPreview,
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -36,6 +37,7 @@ import {
   sortScopedProjectsForSidebar,
   shouldCreateNewThreadInCurrentProject,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
+  type ThreadStatusPill,
 } from "./Sidebar.logic";
 import {
   EnvironmentId,
@@ -1136,6 +1138,21 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Working", pulse: true });
   });
 
+  it("shows connecting while the provider session is starting", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          session: {
+            ...baseThread.session,
+            status: "starting",
+            activeTurnId: null,
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Connecting", pulse: true });
+  });
+
   it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {
     expect(
       resolveThreadStatusPill({
@@ -1185,6 +1202,24 @@ describe("resolveThreadStatusPill", () => {
         },
       }),
     ).toMatchObject({ label: "Completed", pulse: false });
+  });
+});
+
+describe("isThreadStatusAlwaysVisibleInProjectPreview", () => {
+  const status = (label: ThreadStatusPill["label"] | null) =>
+    isThreadStatusAlwaysVisibleInProjectPreview(
+      label === null ? null : { label, colorClass: "", dotClass: "", pulse: false },
+    );
+
+  it("keeps only displayed working and connecting statuses outside the configured limit", () => {
+    expect(status("Working")).toBe(true);
+    expect(status("Connecting")).toBe(true);
+    expect(status("Monitoring")).toBe(false);
+    expect(status("Pending Approval")).toBe(false);
+    expect(status("Awaiting Input")).toBe(false);
+    expect(status("Plan Ready")).toBe(false);
+    expect(status("Completed")).toBe(false);
+    expect(status(null)).toBe(false);
   });
 });
 

@@ -146,6 +146,12 @@ export interface ThreadStatusPill {
   pulse: boolean;
 }
 
+export function isThreadStatusAlwaysVisibleInProjectPreview(
+  status: ThreadStatusPill | null,
+): boolean {
+  return status?.label === "Working" || status?.label === "Connecting";
+}
+
 // Rollup order mirrors the per-thread resolver exactly: attention states,
 // then active work, then the actionable plan prompt, then passive
 // monitoring. A Monitoring sibling must never hide a Plan Ready thread.

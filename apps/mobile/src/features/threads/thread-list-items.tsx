@@ -6,7 +6,7 @@ import type {
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "../../components/AppSymbol";
-import { memo, useCallback, useMemo, type ComponentProps } from "react";
+import { memo, useCallback, useEffect, useMemo, type ComponentProps } from "react";
 import { Pressable, useColorScheme, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import Svg, { Circle, Path } from "react-native-svg";
@@ -224,6 +224,8 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
   readonly variant: ThreadListVariant;
   readonly hiddenCount: number;
   readonly canShowLess: boolean;
+  readonly canToggleSettled: boolean;
+  readonly settledVisible: boolean;
   readonly groupKey: string;
   readonly onGroupAction: (key: string, action: HomeGroupDisplayAction) => void;
 }) {
@@ -239,11 +241,24 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
     () => onGroupAction(groupKey, "show-less"),
     [groupKey, onGroupAction],
   );
+  const handleShowSettled = useCallback(
+    () => onGroupAction(groupKey, "show-settled"),
+    [groupKey, onGroupAction],
+  );
+  const handleHideSettled = useCallback(
+    () => onGroupAction(groupKey, "hide-settled"),
+    [groupKey, onGroupAction],
+  );
 
-  const button = (label: string, icon: "chevron.down" | "chevron.up", onPress: () => void) => (
+  const button = (
+    label: string,
+    accessibilityLabel: string,
+    icon: "chevron.down" | "chevron.up" | "checkmark.circle",
+    onPress: () => void,
+  ) => (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={label === "Show more" ? "Show more threads" : "Show fewer threads"}
+      accessibilityLabel={accessibilityLabel}
       className="rounded-full bg-subtle"
       hitSlop={6}
       onPress={onPress}
@@ -278,7 +293,9 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
   return (
     <View
       className={
-        compact ? "flex-row items-center gap-2.5 bg-screen" : "flex-row items-center gap-2"
+        compact
+          ? "flex-row flex-wrap items-center gap-2.5 bg-screen"
+          : "flex-row flex-wrap items-center gap-2"
       }
       style={{
         paddingLeft: compact ? THREAD_LIST_COMPACT_INSET : 12,
@@ -286,8 +303,25 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
         paddingVertical: compact ? 12 : 8,
       }}
     >
-      {showsMore ? button("Show more", "chevron.down", handleShowMore) : null}
-      {props.canShowLess ? button("Show less", "chevron.up", handleShowLess) : null}
+      {showsMore ? button("Show more", "Show more threads", "chevron.down", handleShowMore) : null}
+      {props.canToggleSettled
+        ? props.settledVisible
+          ? button(
+              "Hide settled chats",
+              "Hide settled chats",
+              "checkmark.circle",
+              handleHideSettled,
+            )
+          : button(
+              "Show settled chats",
+              "Show settled chats",
+              "checkmark.circle",
+              handleShowSettled,
+            )
+        : null}
+      {props.canShowLess
+        ? button("Show less", "Show fewer threads", "chevron.up", handleShowLess)
+        : null}
     </View>
   );
 });
@@ -469,6 +503,10 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly onRegenerateThreadTitle: (thread: EnvironmentThreadShell) => void;
   readonly titleRegenerationSupported: boolean;
+  readonly onChangeRequestState?: (
+    threadKey: string,
+    state: "open" | "closed" | "merged" | null,
+  ) => void;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
   readonly simultaneousSwipeGesture?: ComponentProps<
@@ -494,6 +532,11 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     props;
   const status = resolveThreadStatus(thread);
   const pr = useThreadPr(thread, props.projectCwd);
+  const prState = pr?.state ?? null;
+  const threadKey = `${thread.environmentId}:${thread.id}`;
+  useEffect(() => {
+    props.onChangeRequestState?.(threadKey, prState);
+  }, [prState, props.onChangeRequestState, threadKey]);
   const timestamp = relativeTime(
     thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
   );
