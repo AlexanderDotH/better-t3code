@@ -395,7 +395,6 @@ function ProviderTabs(props: {
                     type="button"
                     role="tab"
                     aria-selected={selected}
-                    title={provider.tooltip}
                     style={accentStyle}
                     className={cn(
                       "relative flex h-9 max-w-64 items-center gap-2 rounded-lg border px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",

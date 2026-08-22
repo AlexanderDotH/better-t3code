@@ -10,6 +10,7 @@ import {
 
 import { cn } from "~/lib/utils";
 
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { shouldExpandGitCompactPull } from "./gitWorkspaceDeck.logic";
 
 import "./GitWorkspaceDeck.css";
@@ -220,17 +221,23 @@ export function GitCompactCard(props: GitCompactCardProps) {
             </div>
           </div>
           <div className="git-compact-card__header-actions">
-            <button
-              ref={props.expandButtonRef}
-              type="button"
-              className="git-compact-card__header-action"
-              aria-label="Expand Git workbench"
-              title="Expand Git workbench"
-              disabled={props.expansionBlocked}
-              onClick={props.onExpand}
-            >
-              <ArrowUpIcon aria-hidden />
-            </button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    ref={props.expandButtonRef}
+                    type="button"
+                    className="git-compact-card__header-action"
+                    aria-label="Expand Git workbench"
+                    disabled={props.expansionBlocked}
+                    onClick={props.onExpand}
+                  />
+                }
+              >
+                <ArrowUpIcon aria-hidden />
+              </TooltipTrigger>
+              <TooltipPopup side="top">Expand Git workbench</TooltipPopup>
+            </Tooltip>
           </div>
         </header>
 

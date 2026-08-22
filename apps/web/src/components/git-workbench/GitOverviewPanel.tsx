@@ -196,7 +196,6 @@ function ActivityPanel({ insights }: { insights: GitRepositoryInsights | null })
                 className="size-3 rounded-[3px] border border-foreground/5 bg-success"
                 key={day.date}
                 style={{ opacity: day.count === 0 ? 0.08 : 0.2 + (day.count / max) * 0.8 }}
-                title={`${day.count} commits on ${day.date}`}
               />
             ))}
           </div>
