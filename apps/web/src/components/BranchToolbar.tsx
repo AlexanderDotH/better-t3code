@@ -490,9 +490,11 @@ export const BranchToolbar = memo(function BranchToolbar({
         cardPeek
           ? "mx-0 w-full max-w-none px-0"
           : "mx-auto w-[calc(100%-2.75rem)] max-w-[calc(48rem-2.75rem)] ps-1 pe-2",
-        orientation === "previous"
-          ? "chat-composer-context-strip--previous -mb-4 pt-1 pb-5"
-          : "chat-composer-context-strip--next -mt-4 pt-5 pb-1",
+        cardPeek
+          ? "my-0 py-0"
+          : orientation === "previous"
+            ? "chat-composer-context-strip--previous -mb-4 pt-1 pb-5"
+            : "chat-composer-context-strip--next -mt-4 pt-5 pb-1",
       )}
       data-workspace-card-peek-position={orientation}
     >
