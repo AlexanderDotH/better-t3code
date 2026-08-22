@@ -12,6 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { cast } from "effect/Function";
 import {
   HttpBody,
@@ -146,8 +147,59 @@ export const serverEnvironmentHttpApiLayer = HttpApiBuilder.group(
 
 class DecodeOtlpTraceRecordsError extends Data.TaggedError("DecodeOtlpTraceRecordsError")<{
   readonly cause: unknown;
-  readonly bodyJson: OtlpTracer.TraceData;
 }> {}
+
+const OtlpTraceEnvelope = Schema.Struct({
+  resourceSpans: Schema.Array(Schema.Unknown),
+});
+const decodeOtlpTraceEnvelope = Schema.decodeUnknownEffect(OtlpTraceEnvelope);
+
+const decodeBrowserOtlpTracePayload = Effect.fn("decodeBrowserOtlpTracePayload")(function* (
+  body: unknown,
+) {
+  yield* decodeOtlpTraceEnvelope(body).pipe(
+    Effect.mapError((cause) => new DecodeOtlpTraceRecordsError({ cause })),
+  );
+  const bodyJson = cast<unknown, OtlpTracer.TraceData>(body);
+  const records = yield* Effect.try({
+    try: () => decodeOtlpTraceRecords(bodyJson),
+    catch: (cause) => new DecodeOtlpTraceRecordsError({ cause }),
+  });
+  return { bodyJson, records };
+});
+
+interface BrowserOtlpTracePayloadHandlers {
+  readonly record: BrowserTraceCollector.BrowserTraceCollector["Service"]["record"];
+  readonly export?: (body: OtlpTracer.TraceData) => Effect.Effect<boolean>;
+}
+
+export const handleBrowserOtlpTracePayload = Effect.fn("handleBrowserOtlpTracePayload")(function* (
+  body: unknown,
+  handlers: BrowserOtlpTracePayloadHandlers,
+) {
+  const decoded = yield* decodeBrowserOtlpTracePayload(body).pipe(
+    Effect.map((value) => ({ _tag: "Valid" as const, value })),
+    Effect.catch((cause) =>
+      Effect.logWarning("Rejected invalid browser OTLP traces", { cause }).pipe(
+        Effect.as({ _tag: "Invalid" as const }),
+      ),
+    ),
+  );
+
+  if (decoded._tag === "Invalid") {
+    return HttpServerResponse.text("Invalid trace payload.", { status: 400 });
+  }
+
+  yield* handlers.record(decoded.value.records);
+  if (handlers.export === undefined) {
+    return HttpServerResponse.empty({ status: 204 });
+  }
+
+  const exported = yield* handlers.export(decoded.value.bodyJson);
+  return exported
+    ? HttpServerResponse.empty({ status: 204 })
+    : HttpServerResponse.text("Trace export failed.", { status: 502 });
+});
 
 export const otlpTracesProxyRouteLayer = HttpRouter.add(
   "POST",
@@ -159,42 +211,31 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
     const otlpTracesUrl = config.otlpTracesUrl;
     const browserTraceCollector = yield* BrowserTraceCollector.BrowserTraceCollector;
     const httpClient = yield* HttpClient.HttpClient;
-    const bodyJson = cast<unknown, OtlpTracer.TraceData>(yield* request.json);
+    const body = yield* request.json;
 
-    yield* Effect.try({
-      try: () => decodeOtlpTraceRecords(bodyJson),
-      catch: (cause) => new DecodeOtlpTraceRecordsError({ cause, bodyJson }),
-    }).pipe(
-      Effect.flatMap((records) => browserTraceCollector.record(records)),
-      Effect.catch((cause) =>
-        Effect.logWarning("Failed to decode browser OTLP traces", {
-          cause,
-          bodyJson,
-        }),
-      ),
-    );
-
-    if (otlpTracesUrl === undefined) {
-      return HttpServerResponse.empty({ status: 204 });
-    }
-
-    return yield* httpClient
-      .post(otlpTracesUrl, {
-        body: HttpBody.jsonUnsafe(bodyJson),
-      })
-      .pipe(
-        Effect.flatMap(HttpClientResponse.filterStatusOk),
-        Effect.as(HttpServerResponse.empty({ status: 204 })),
-        Effect.tapError((cause) =>
-          Effect.logWarning("Failed to export browser OTLP traces", {
-            cause,
-            otlpTracesUrl,
+    return yield* handleBrowserOtlpTracePayload(body, {
+      record: browserTraceCollector.record,
+      ...(otlpTracesUrl === undefined
+        ? {}
+        : {
+            export: (bodyJson: OtlpTracer.TraceData) =>
+              httpClient
+                .post(otlpTracesUrl, {
+                  body: HttpBody.jsonUnsafe(bodyJson),
+                })
+                .pipe(
+                  Effect.flatMap(HttpClientResponse.filterStatusOk),
+                  Effect.as(true),
+                  Effect.tapError((cause) =>
+                    Effect.logWarning("Failed to export browser OTLP traces", {
+                      cause,
+                      otlpTracesUrl,
+                    }),
+                  ),
+                  Effect.orElseSucceed(() => false),
+                ),
           }),
-        ),
-        Effect.orElseSucceed(() =>
-          HttpServerResponse.text("Trace export failed.", { status: 502 }),
-        ),
-      );
+    });
   }).pipe(
     Effect.catchTags({
       EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,

@@ -1,7 +1,13 @@
 import { expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 import { describe } from "vite-plus/test";
 
-import { assetResponseHeaders, isLoopbackHostname, resolveDevRedirectUrl } from "./http.ts";
+import {
+  assetResponseHeaders,
+  handleBrowserOtlpTracePayload,
+  isLoopbackHostname,
+  resolveDevRedirectUrl,
+} from "./http.ts";
 
 describe("http dev routing", () => {
   it("treats localhost and loopback addresses as local", () => {
@@ -55,4 +61,56 @@ describe("assetResponseHeaders", () => {
       "text/html; charset=utf-8",
     );
   });
+});
+
+describe("browser OTLP trace ingestion", () => {
+  it.effect("rejects malformed payloads before recording or forwarding them", () =>
+    Effect.gen(function* () {
+      let recordCalls = 0;
+      let exportCalls = 0;
+
+      const response = yield* handleBrowserOtlpTracePayload(
+        { resourceSpans: [{}] },
+        {
+          record: () =>
+            Effect.sync(() => {
+              recordCalls += 1;
+            }),
+          export: () =>
+            Effect.sync(() => {
+              exportCalls += 1;
+              return true;
+            }),
+        },
+      );
+
+      expect(response.status).toBe(400);
+      expect(recordCalls).toBe(0);
+      expect(exportCalls).toBe(0);
+    }),
+  );
+
+  it.effect("records and forwards a valid empty OTLP envelope", () =>
+    Effect.gen(function* () {
+      const body = { resourceSpans: [] };
+      const recorded: Array<number> = [];
+      const forwarded: Array<unknown> = [];
+
+      const response = yield* handleBrowserOtlpTracePayload(body, {
+        record: (records) =>
+          Effect.sync(() => {
+            recorded.push(records.length);
+          }),
+        export: (payload) =>
+          Effect.sync(() => {
+            forwarded.push(payload);
+            return true;
+          }),
+      });
+
+      expect(response.status).toBe(204);
+      expect(recorded).toEqual([0]);
+      expect(forwarded).toEqual([body]);
+    }),
+  );
 });
