@@ -6946,7 +6946,7 @@ function ChatViewContent(props: ChatViewProps) {
             >
               <div
                 ref={attachDraftHeroTransitionGroupRef}
-                className="chat-composer-horizontal-inset w-full"
+                className="chat-composer-horizontal-inset min-w-0 w-full"
               >
                 <div
                   className={cn(
