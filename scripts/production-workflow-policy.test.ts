@@ -84,6 +84,25 @@ function readStepRun(job: Record<string, unknown>, jobName: string, stepName: st
   return command;
 }
 
+function readTriggerPaths(
+  workflow: Record<string, unknown>,
+  filename: string,
+  triggerName: string,
+): ReadonlyArray<string> {
+  const triggers = requireRecord(workflow.on, `${filename} must define triggers`);
+  const trigger = requireRecord(
+    triggers[triggerName],
+    `${filename} must define the ${triggerName} trigger`,
+  );
+  const paths = trigger.paths;
+  assert.isArray(paths, `${filename}:${triggerName} must define path filters`);
+  assert.ok(
+    paths.every((path) => typeof path === "string"),
+    `${filename}:${triggerName} path filters must be strings`,
+  );
+  return paths as Array<string>;
+}
+
 it.layer(NodeServices.layer)("production workflow policy", (it) => {
   it.effect("keeps every production job disabled unless upstream or explicitly opted in", () =>
     Effect.gen(function* () {
@@ -126,6 +145,23 @@ it.layer(NodeServices.layer)("production workflow policy", (it) => {
         "cargo fmt",
       );
       assert.include(readStepRun(rustJob, "rust", "Test resource monitor"), "cargo test");
+    }),
+  );
+
+  it.effect("limits mobile automation to scripts imported by the mobile config", () =>
+    Effect.gen(function* () {
+      const workflows = [
+        ["mobile-eas-production.yml", "push"],
+        ["mobile-fingerprint-check.yml", "pull_request"],
+      ] as const;
+
+      for (const [filename, triggerName] of workflows) {
+        const workflow = yield* readWorkflow(filename);
+        const paths = readTriggerPaths(workflow, filename, triggerName);
+        assert.notInclude(paths, "scripts/**");
+        assert.include(paths, "scripts/lib/brand-assets.ts");
+        assert.include(paths, "scripts/lib/public-config.ts");
+      }
     }),
   );
 });
