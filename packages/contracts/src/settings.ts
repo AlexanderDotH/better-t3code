@@ -13,7 +13,19 @@ import {
   ProviderOptionSelections,
 } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
-import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
+import {
+  DEFAULT_PREVIEW_APPEARANCE,
+  DEFAULT_PREVIEW_ZOOM_FACTOR,
+  FILL_PREVIEW_VIEWPORT,
+  PreviewAppearancePreference,
+  PreviewViewportSetting,
+  PreviewZoomFactor,
+} from "./preview.ts";
+import {
+  ProviderInstanceConfig,
+  ProviderInstanceId,
+  type ProviderDriverKind,
+} from "./providerInstance.ts";
 import { SkillSettings } from "./skills.ts";
 
 // ── Synchronized Project Thread Preview Settings ───────────────
@@ -134,7 +146,37 @@ export type VoiceInputOutputLanguage = typeof VoiceInputOutputLanguage.Type;
 export const FontFamilyPreference = Schema.String.check(Schema.isMaxLength(200));
 export type FontFamilyPreference = typeof FontFamilyPreference.Type;
 
+/**
+ * Defaults for the in-app preview browser, applied whenever a tab is opened
+ * without an explicit viewport/zoom/appearance — by the user opening a browser
+ * tab, or by an agent calling `preview_open` with no size. Client-local
+ * because the Chromium guest they configure is desktop-local.
+ */
+export const DEFAULT_BROWSER_VIEWPORT: PreviewViewportSetting = FILL_PREVIEW_VIEWPORT;
+export const DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW = true;
+
 export const ClientSettingsSchema = Schema.Struct({
+  browserDefaultViewport: PreviewViewportSetting.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_VIEWPORT)),
+  ),
+  browserDefaultZoomFactor: PreviewZoomFactor.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PREVIEW_ZOOM_FACTOR)),
+  ),
+  browserDefaultAppearance: PreviewAppearancePreference.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PREVIEW_APPEARANCE)),
+  ),
+  /**
+   * Whether an agent opening a preview pops the floating mini player into
+   * view. Only applies when the agent didn't ask either way — an explicit
+   * `open`/`show` on `preview_open` still wins, since that is the agent
+   * deliberately showing or hiding its work.
+   */
+  browserAutoShowFloatingPreview: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW)),
+  ),
+  // Desktop-only: require holding the quit shortcut (Cmd/Ctrl+Q) before the
+  // app quits; a quick tap only shows a hint. Browser clients ignore it.
+  confirmQuit: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   dismissedProviderUpdateNotificationKeys: Schema.Array(TrimmedNonEmptyString).pipe(
@@ -209,6 +251,7 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
+  sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -400,6 +443,7 @@ export type ClaudeSettings = typeof ClaudeSettings.Type;
 
 export const CursorSettings = makeProviderSettingsSchema(
   {
+    // Disabled by default in the fork; users opt in from Settings.
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -435,6 +479,7 @@ export type CursorSettings = typeof CursorSettings.Type;
 
 export const GrokSettings = makeProviderSettingsSchema(
   {
+    // Enabled by default in the fork alongside Codex and Claude Agent.
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(true)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -471,6 +516,7 @@ export type GeminiSettings = typeof GeminiSettings.Type;
 
 export const OpenCodeSettings = makeProviderSettingsSchema(
   {
+    // Enabled by default in the fork alongside Codex, Claude Agent, and Grok.
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(true)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -693,6 +739,18 @@ export const ServerSettings = Schema.Struct({
   /** @deprecated Read-only compatibility mirror for older clients. */
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * Whether agents may drive the in-app preview browser. Turning this off
+   * removes every `preview_*` tool and its prompt text from provider sessions.
+   * The `t3-code` credential remains attached so workspace context, skills,
+   * MCP configuration, and project-agent coordination continue to work. The
+   * user's own browser panel is unaffected — this gates agent access only.
+   *
+   * Server-authoritative rather than client-local: tool injection and prompt
+   * construction both happen on the server, and the answer must not differ
+   * between a desktop window and a phone attached to the same server.
+   */
+  enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,
   // Legacy flat fields retained for old settings files and old clients. New
   // consumers should resolve `backgroundActivity` instead.
@@ -779,6 +837,50 @@ export const ServerSettings = Schema.Struct({
 export type ServerSettings = typeof ServerSettings.Type;
 
 export const DEFAULT_SERVER_SETTINGS: ServerSettings = Schema.decodeSync(ServerSettings)({});
+
+/**
+ * Read the legacy `enabled` flag embedded in a provider instance config
+ * blob. The envelope-level `ProviderInstanceConfig.enabled` is the single
+ * flag going forward; this reader exists for legacy `providers.<kind>`
+ * blobs and old settings files that still carry the flag in-config.
+ */
+export const providerInstanceConfigEnabledFlag = (config: unknown): boolean | undefined => {
+  if (config === null || typeof config !== "object" || Array.isArray(config)) {
+    return undefined;
+  }
+  const enabled = (config as { readonly enabled?: unknown }).enabled;
+  return typeof enabled === "boolean" ? enabled : undefined;
+};
+
+/**
+ * Default enabled state for a built-in driver when neither the envelope nor
+ * the config blob carries a flag. Derived from the driver's settings schema
+ * through `DEFAULT_SERVER_SETTINGS`, so the schema's decoding default stays
+ * the single source of truth. Unknown (fork) drivers default to enabled.
+ */
+export const defaultEnabledForDriver = (driver: ProviderDriverKind): boolean => {
+  const legacyDefaults = DEFAULT_SERVER_SETTINGS.providers as Record<
+    string,
+    { readonly enabled?: boolean } | undefined
+  >;
+  return legacyDefaults[driver]?.enabled ?? true;
+};
+
+/**
+ * Resolve whether a configured provider instance is enabled. An explicit
+ * false on either the envelope or the in-config flag wins (most
+ * restrictive), so a user's disable is never silently undone by the other
+ * flag. Otherwise: envelope, then config, then the driver's default.
+ */
+export const resolveProviderInstanceEnabled = (
+  instance: Pick<ProviderInstanceConfig, "driver" | "enabled" | "config">,
+): boolean => {
+  const configEnabled = providerInstanceConfigEnabledFlag(instance.config);
+  if (instance.enabled === false || configEnabled === false) {
+    return false;
+  }
+  return instance.enabled ?? configEnabled ?? defaultEnabledForDriver(instance.driver);
+};
 
 export const ServerSettingsOperation = Schema.Literals([
   "normalize",
@@ -900,6 +1002,7 @@ export const ServerSettingsPatch = Schema.Struct({
   /** @deprecated Use `enableLegacyTokenStreaming`. Kept for mixed-version clients. */
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
+  enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),
@@ -973,6 +1076,11 @@ export const ServerSettingsPatch = Schema.Struct({
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
+  browserDefaultViewport: Schema.optionalKey(PreviewViewportSetting),
+  browserDefaultZoomFactor: Schema.optionalKey(PreviewZoomFactor),
+  browserDefaultAppearance: Schema.optionalKey(PreviewAppearancePreference),
+  browserAutoShowFloatingPreview: Schema.optionalKey(Schema.Boolean),
+  confirmQuit: Schema.optionalKey(Schema.Boolean),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
@@ -1014,6 +1122,7 @@ export const ClientSettingsPatch = Schema.Struct({
   showReasoning: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
+  sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),

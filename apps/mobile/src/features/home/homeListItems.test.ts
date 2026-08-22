@@ -700,7 +700,8 @@ describe("resolveGroupedProjectSettledThreadKeys", () => {
       threads: [explicitlySettled, pinnedSettled, runningSettled, snoozedSettled],
       settlementEnvironmentIds: new Set([environmentId]),
       snoozeEnvironmentIds: new Set([environmentId]),
-      changeRequestStateByKey: new Map(),
+      changeRequestByKey: new Map(),
+      autoSettleOnMerge: true,
       now: "2026-06-03T00:00:00.000Z",
       autoSettleAfterDays: 3,
     });
@@ -710,10 +711,34 @@ describe("resolveGroupedProjectSettledThreadKeys", () => {
       threads: [explicitlySettled],
       settlementEnvironmentIds: new Set(),
       snoozeEnvironmentIds: new Set(),
-      changeRequestStateByKey: new Map(),
+      changeRequestByKey: new Map(),
+      autoSettleOnMerge: true,
       now: "2026-06-03T00:00:00.000Z",
       autoSettleAfterDays: 3,
     });
     expect(unsupported.size).toBe(0);
+  });
+
+  it("only auto-settles merged chats when the mobile preference is enabled", () => {
+    const thread = makeGroup("alpha", 1).threads[0]!;
+    const threadKey = `${environmentId}:${thread.id}`;
+    const changeRequestByKey = new Map([
+      [threadKey, { state: "merged" as const, updatedAt: "2026-06-02T00:00:00.000Z" }],
+    ]);
+    const base = {
+      threads: [thread],
+      settlementEnvironmentIds: new Set([environmentId]),
+      snoozeEnvironmentIds: new Set([environmentId]),
+      changeRequestByKey,
+      now: "2026-06-03T00:00:00.000Z",
+      autoSettleAfterDays: null,
+    };
+
+    expect(resolveGroupedProjectSettledThreadKeys({ ...base, autoSettleOnMerge: true })).toEqual(
+      new Set([threadKey]),
+    );
+    expect(resolveGroupedProjectSettledThreadKeys({ ...base, autoSettleOnMerge: false })).toEqual(
+      new Set(),
+    );
   });
 });

@@ -12,6 +12,7 @@ import {
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
+import type { ChangeRequestSettleSource } from "@t3tools/client-runtime/state/thread-settled";
 import type {
   EnvironmentId,
   SidebarProjectGroupingMode,
@@ -213,6 +214,9 @@ export function HomeScreen(props: HomeScreenProps) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const threadListV2Enabled = useThreadListV2Enabled();
   const { appearance } = useAppearancePreferences();
+  const autoSettleOnMerge =
+    !AsyncResult.isSuccess(preferencesResult) ||
+    preferencesResult.value.autoSettleOnMerge !== false;
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const listRef = useRef<LegendListRef | null>(null);
@@ -503,20 +507,26 @@ export function HomeScreen(props: HomeScreenProps) {
   // Settled threads stay in the live shell stream (settled ≠ archived), so
   // the partition works directly off live shells — no snapshot merging or
   // optimistic holds.
-  // PR states stream in per-row (rows own the VCS subscriptions); a merged or
-  // closed PR auto-settles its thread on the next partition (mirrors web).
-  const [changeRequestStateByKey, setChangeRequestStateByKey] = useState<
-    ReadonlyMap<string, "open" | "closed" | "merged">
+  // PR states stream in per-row. The next partition applies the configured
+  // merge rule and the always-on close rule, matching web.
+  const [changeRequestByKey, setChangeRequestByKey] = useState<
+    ReadonlyMap<string, ChangeRequestSettleSource>
   >(() => new Map());
   const handleChangeRequestState = useCallback(
-    (threadKey: string, state: "open" | "closed" | "merged" | null) => {
-      setChangeRequestStateByKey((current) => {
-        if ((current.get(threadKey) ?? null) === state) return current;
+    (threadKey: string, changeRequest: ChangeRequestSettleSource | null) => {
+      setChangeRequestByKey((current) => {
+        const existing = current.get(threadKey) ?? null;
+        if (
+          (existing?.state ?? null) === (changeRequest?.state ?? null) &&
+          (existing?.updatedAt ?? null) === (changeRequest?.updatedAt ?? null)
+        ) {
+          return current;
+        }
         const next = new Map(current);
-        if (state === null) {
+        if (changeRequest === null) {
           next.delete(threadKey);
         } else {
-          next.set(threadKey, state);
+          next.set(threadKey, changeRequest);
         }
         return next;
       });
@@ -654,12 +664,14 @@ export function HomeScreen(props: HomeScreenProps) {
         threads: scopedThreads,
         settlementEnvironmentIds,
         snoozeEnvironmentIds,
-        changeRequestStateByKey,
+        changeRequestByKey,
+        autoSettleOnMerge,
         now: `${nowMinute}:00.000Z`,
         autoSettleAfterDays: DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
       }),
     [
-      changeRequestStateByKey,
+      changeRequestByKey,
+      autoSettleOnMerge,
       nowMinute,
       scopedThreads,
       settlementEnvironmentIds,
@@ -719,7 +731,8 @@ export function HomeScreen(props: HomeScreenProps) {
       projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
       searchQuery: props.searchQuery,
       matchedThreadKeys,
-      changeRequestStateByKey,
+      changeRequestByKey,
+      autoSettleOnMerge,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
       settledLimit: settledVisibleCount,
@@ -730,7 +743,8 @@ export function HomeScreen(props: HomeScreenProps) {
       selectedThreadKey: null,
     });
   }, [
-    changeRequestStateByKey,
+    changeRequestByKey,
+    autoSettleOnMerge,
     nowMinute,
     snoozeWakeTick,
     snoozedShelfExpanded,

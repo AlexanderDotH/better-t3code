@@ -40,6 +40,18 @@ const workspaceInvocation: McpInvocationContext.McpInvocationScope = {
   ...invocation,
   capabilities: new Set(["preview", "workspace", "coordination"]),
 };
+const workspaceWithoutPreviewInvocation: McpInvocationContext.McpInvocationScope = {
+  ...invocation,
+  capabilities: new Set(["workspace", "coordination"]),
+};
+const coordinationInvocation: McpInvocationContext.McpInvocationScope = {
+  ...invocation,
+  capabilities: new Set(["coordination"]),
+};
+const workspaceOnlyInvocation: McpInvocationContext.McpInvocationScope = {
+  ...invocation,
+  capabilities: new Set(["workspace"]),
+};
 const client = McpSchema.McpServerClient.of({
   clientId: 1,
   protocolVersion: "2025-06-18",
@@ -259,7 +271,13 @@ it.effect(
                 ? invocation
                 : token === "workspace-token"
                   ? workspaceInvocation
-                  : undefined,
+                  : token === "workspace-no-preview-token"
+                    ? workspaceWithoutPreviewInvocation
+                    : token === "coordination-token"
+                      ? coordinationInvocation
+                      : token === "workspace-only-token"
+                        ? workspaceOnlyInvocation
+                        : undefined,
             ),
           touch: () => Effect.void,
           revokeProviderSession: () => Effect.void,
@@ -382,6 +400,44 @@ it.effect(
           idempotentHint: true,
           openWorldHint: false,
         });
+
+        const workspaceWithoutPreview = yield* initialize(
+          "/mcp/workspace-no-preview",
+          "workspace-no-preview-token",
+        );
+        expect(workspaceWithoutPreview.status).toBe(200);
+        const workspaceWithoutPreviewTools = yield* listTools(
+          "/mcp/workspace-no-preview",
+          "workspace-no-preview-token",
+          workspaceWithoutPreview.headers["mcp-session-id"]!,
+        );
+        expect(workspaceWithoutPreviewTools.map(({ name }) => name)).toContain("workspace_context");
+        expect(workspaceWithoutPreviewTools.map(({ name }) => name)).toContain(
+          "project_agent_list",
+        );
+        expect(workspaceWithoutPreviewTools.map(({ name }) => name)).not.toContain(
+          "preview_status",
+        );
+
+        const coordination = yield* initialize("/mcp/coordination", "coordination-token");
+        expect(coordination.status).toBe(200);
+        const coordinationTools = yield* listTools(
+          "/mcp/coordination",
+          "coordination-token",
+          coordination.headers["mcp-session-id"]!,
+        );
+        expect(coordinationTools.map(({ name }) => name)).toContain("project_agent_list");
+        expect(coordinationTools.map(({ name }) => name)).not.toContain("workspace_context");
+        expect(coordinationTools.map(({ name }) => name)).not.toContain("preview_status");
+
+        const workspaceOnly = yield* initialize("/mcp/workspace-only", "workspace-only-token");
+        expect(workspaceOnly.status).toBe(200);
+        const workspaceOnlyTools = yield* listTools(
+          "/mcp/workspace-only",
+          "workspace-only-token",
+          workspaceOnly.headers["mcp-session-id"]!,
+        );
+        expect(workspaceOnlyTools.map(({ name }) => name)).toEqual(["workspace_context"]);
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
@@ -456,6 +512,11 @@ it.effect("registers annotated tools and preserves authenticated request context
       expect(clickTool?.tool.annotations?.readOnlyHint).toBe(false);
       expect(clickTool?.tool.annotations?.destructiveHint).toBe(true);
       expect(clickTool?.tool.annotations?.openWorldHint).toBe(true);
+      expect(clickTool?.tool.outputSchema).toEqual({
+        type: "object",
+        additionalProperties: false,
+        description: "The preview action completed successfully.",
+      });
 
       const navigateTool = server.tools.find(({ tool }) => tool.name === "preview_navigate");
       expect(navigateTool?.tool.annotations?.destructiveHint).toBe(false);
@@ -497,15 +558,24 @@ it.effect("registers annotated tools and preserves authenticated request context
         alternateTabId,
       );
 
-      const press = yield* server
-        .callTool({ name: "preview_press", arguments: { key: "Enter" } })
-        .pipe(
-          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
-          Effect.provideService(McpSchema.McpServerClient, client),
-        );
-      expect(press.isError).toBe(false);
-      expect(press.structuredContent).toBeNull();
-      expect(press.content).toEqual([{ type: "text", text: "null" }]);
+      const actionRequests = [
+        { name: "preview_click", arguments: { x: 10, y: 10 } },
+        { name: "preview_type", arguments: { text: "Hello" } },
+        { name: "preview_press", arguments: { key: "Enter" } },
+        { name: "preview_scroll", arguments: { deltaY: 100 } },
+        { name: "preview_wait_for", arguments: { text: "Example" } },
+      ];
+      for (const request of actionRequests) {
+        const result = yield* server
+          .callTool(request)
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+        expect(result.isError).toBe(false);
+        expect(result.structuredContent).toEqual({});
+        expect(result.content).toEqual([{ type: "text", text: "{}" }]);
+      }
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

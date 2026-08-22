@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   searchableSetting,
   searchSettings,
+  SETTINGS_SECTION_LABELS,
   SETTINGS_SEARCH_ITEMS,
   type SettingsSearchItem,
 } from "./settingsSearch";
@@ -58,6 +59,11 @@ describe("searchSettings", () => {
 
   it("returns no results for an empty query", () => {
     expect(searchSettings("   ", ITEMS)).toEqual([]);
+  });
+
+  it("hides desktop-only settings from browser search", () => {
+    expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "quit-confirmation")).toBe(true);
+    expect(searchSettings("quit confirmation")).toEqual([]);
   });
 
   it("keeps catalog result ids unique", () => {
@@ -126,5 +132,18 @@ describe("searchSettings", () => {
         to: "/settings/projects",
       },
     ]);
+  });
+
+  it("keeps Skills, MCP, and browser integrations as separate destinations", () => {
+    expect(SETTINGS_SECTION_LABELS["/settings/skills"]).toBe("Skills");
+    expect(SETTINGS_SECTION_LABELS["/settings/mcp"]).toBe("MCP Servers");
+    expect(SETTINGS_SECTION_LABELS["/settings/integrations"]).toBe("Integrations");
+
+    expect(searchSettings("skills")[0]).toMatchObject({ to: "/settings/skills" });
+    expect(searchSettings("MCP servers")[0]).toMatchObject({ to: "/settings/mcp" });
+    expect(searchSettings("agent browser access")[0]).toMatchObject({
+      to: "/settings/integrations",
+      targetId: "browser",
+    });
   });
 });

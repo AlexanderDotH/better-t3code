@@ -12,6 +12,7 @@ import {
 } from "react";
 
 import { cn } from "../../lib/utils";
+import { WorkspacePageContainer, type WorkspacePageWidth } from "../WorkspacePageContainer";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -88,14 +89,11 @@ export function PolicyTooltip({ children }: { readonly children: string }) {
   return (
     <Tooltip>
       <TooltipTrigger
+        delay={200}
         render={
-          <button
-            type="button"
-            className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
-            aria-label="Background policy details"
-          >
+          <Button size="icon-micro" variant="ghost-muted" aria-label="Background policy details">
             <InfoIcon className="size-3.5" />
-          </button>
+          </Button>
         }
       />
       <TooltipPopup side="top" className="max-w-72">
@@ -215,11 +213,10 @@ export function SettingResetButton({
       <TooltipTrigger
         render={
           <Button
-            size="icon-xs"
-            variant="ghost"
+            size="icon-micro"
+            variant="ghost-muted"
             aria-label={`Reset ${label} to default`}
             disabled={disabled}
-            className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
             onClick={(event) => {
               event.stopPropagation();
               onClick();
@@ -238,10 +235,12 @@ export function SettingsPageContainer({
   children,
   className,
   viewportClassName,
+  width = "readable",
 }: {
   children: ReactNode;
   className?: string;
   viewportClassName?: string;
+  width?: WorkspacePageWidth;
 }) {
   const navigate = useNavigate();
   const hash = useLocation({ select: (location) => location.hash });
@@ -254,13 +253,14 @@ export function SettingsPageContainer({
     <SettingsSearchTargetProvider targetId={targetId} onTargetHandled={clearTargetHash}>
       <div
         className={cn(
-          "settings-page-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto px-4 pt-10 pb-7 sm:px-8 sm:pt-12 sm:pb-10",
+          "topbar-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto [--topbar-scroll-fade-height:1.5rem] sm:[--topbar-scroll-fade-height:1.5rem]",
           viewportClassName,
         )}
+        data-settings-page-scroll
       >
-        <div className={cn("mx-auto flex w-full max-w-4xl flex-col gap-12", className)}>
+        <WorkspacePageContainer width={width} className={cn("gap-12", className)}>
           {children}
-        </div>
+        </WorkspacePageContainer>
       </div>
     </SettingsSearchTargetProvider>
   );

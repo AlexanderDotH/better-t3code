@@ -121,6 +121,8 @@ vp run dev
 The dev runner prints the real local URL and a one-time pairing URL. Open the pairing URL—the bare
 origin is just a very pretty locked door.
 
+Read [CONTRIBUTING.md](./CONTRIBUTING.md) before reporting a bug or opening a PR.
+
 ### Build a desktop artifact
 
 ```bash
@@ -139,6 +141,10 @@ Want stock T3 Code instead? This is the intentionally boring command:
 ```bash
 npx t3@latest
 ```
+
+Stock T3 Code is also available on Arch Linux as `t3code-bin` (stable) and
+`t3code-nightly-bin` (nightly). Those AUR packages follow `pingdotgg/t3code` releases and do not
+include this fork's extra features; their packaging sources remain in [`packaging/aur`](./packaging/aur).
 
 ### Run the native server with Docker
 

@@ -1,6 +1,6 @@
 import { ActivityIndicator, View } from "react-native";
 
-import { ComposerToolbarButton } from "../../components/ComposerToolbarTrigger";
+import { ComposerToolbarButton } from "../../components/ComposerToolbar";
 import { useThemeColor } from "../../lib/useThemeColor";
 import type { NativeVoiceDictationState } from "./use-native-assembly-ai-dictation";
 

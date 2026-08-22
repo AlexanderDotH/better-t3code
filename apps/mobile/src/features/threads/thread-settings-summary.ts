@@ -5,7 +5,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { providerOptionValueLabels } from "../../lib/providerOptions";
-import { RUNTIME_MODE_CHOICES } from "./thread-settings-menu";
+import { RUNTIME_MODE_CHOICES } from "./thread-settings-options";
 
 export function threadSettingsSummaryLabel(input: {
   readonly modelLabel: string;
@@ -18,7 +18,7 @@ export function threadSettingsSummaryLabel(input: {
   return [
     input.modelLabel,
     ...providerOptionValueLabels(input.optionDescriptors),
-    ...(runtime ? [runtime.shortLabel] : []),
+    ...(runtime ? [runtime.label] : []),
     ...(input.interactionMode === "plan" ? ["Plan"] : []),
     ...(input.fetchEnabled ? ["Fetch"] : []),
   ].join(" · ");

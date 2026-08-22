@@ -1011,10 +1011,13 @@ export function makeCursorAdapter(
               ),
             ),
           ).pipe(
-            // Keep the drain alive for the session, not the short-lived startSession
-            // caller fiber. Without this, a reactor fiber that finishes sendTurn can
-            // interrupt the drain before queued ACP content deltas are published.
-            Effect.forkIn(sessionScope),
+            // Fork into the session scope, not the calling fiber. `forkChild`
+            // makes this a child of `startSession`, and Effect interrupts a
+            // fiber's children when it completes, so the consumer died as soon
+            // as `startSession` returned and every later notification was
+            // dropped. The scope is created, stored on the context and closed
+            // on teardown already; only the fork target was wrong.
+            Effect.forkIn(ctx.scope),
           );
 
           ctx.notificationFiber = nf;

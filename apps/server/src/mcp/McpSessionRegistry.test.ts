@@ -81,7 +81,7 @@ it.effect("scopes transient workspace-only credentials to a durable parent threa
     const resolved = yield* registry.resolve(token);
 
     expect(issued.config.threadId).toBe(ownerThreadId);
-    expect(issued.config.endpoint).toBe("http://127.0.0.1:43123/mcp/workspace");
+    expect(issued.config.endpoint).toBe("http://127.0.0.1:43123/mcp/workspace-only");
     expect(resolved?.threadId).toBe(workspaceContextThreadId);
     expect(Array.from(resolved?.capabilities ?? [])).toEqual(["workspace"]);
 
@@ -197,5 +197,40 @@ it.effect("issues workspace credentials only to MCP-capable coding providers", (
       expect(resolved?.capabilities.has("preview")).toBe(true);
       expect(resolved?.capabilities.has("workspace")).toBe(expectedProfile === "workspace");
     }
+  }),
+);
+
+it.effect("withholds only preview tools while retaining workspace and coordination", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const codingThreadId = ThreadId.make("thread-preview-disabled-codex");
+    const codingCredential = yield* registry.issue({
+      threadId: codingThreadId,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      provider: CODEX_DRIVER_KIND,
+      previewEnabled: false,
+    });
+    const codingToken = codingCredential.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    const codingScope = yield* registry.resolve(codingToken);
+
+    expect(codingCredential.config.endpoint).toBe(
+      "http://127.0.0.1:43123/mcp/workspace-no-preview",
+    );
+    expect(Array.from(codingScope?.capabilities ?? [])).toEqual(["workspace", "coordination"]);
+
+    const nonWorkspaceCredential = yield* registry.issue({
+      threadId: ThreadId.make("thread-preview-disabled-grok"),
+      providerInstanceId: ProviderInstanceId.make("grok"),
+      provider: GROK_DRIVER_KIND,
+      previewEnabled: false,
+    });
+    const nonWorkspaceToken = nonWorkspaceCredential.config.authorizationHeader.replace(
+      /^Bearer\s+/,
+      "",
+    );
+    const nonWorkspaceScope = yield* registry.resolve(nonWorkspaceToken);
+
+    expect(nonWorkspaceCredential.config.endpoint).toBe("http://127.0.0.1:43123/mcp/coordination");
+    expect(Array.from(nonWorkspaceScope?.capabilities ?? [])).toEqual(["coordination"]);
   }),
 );

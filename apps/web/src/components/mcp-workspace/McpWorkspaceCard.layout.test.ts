@@ -4,9 +4,16 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
 const cardCssPath = decodeURIComponent(new URL("./McpWorkspaceCard.css", import.meta.url).pathname);
+const settingsPanelPath = decodeURIComponent(
+  new URL("../settings/McpServersSettings.tsx", import.meta.url).pathname,
+);
 const readCardCss = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.readFileString(cardCssPath);
+}).pipe(Effect.provide(NodeServices.layer));
+const readSettingsPanel = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* fileSystem.readFileString(settingsPanelPath);
 }).pipe(Effect.provide(NodeServices.layer));
 
 describe("MCP workspace card layout", () => {
@@ -65,6 +72,14 @@ describe("MCP workspace card layout", () => {
         /\.mcp-workspace-panel__content\s*\{[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;/,
       );
       expect(css).not.toMatch(/\.mcp-workspace-runtime\s*\{[^}]*overflow-y:/);
+    }),
+  );
+
+  it.effect("removes page padding when settings render inside the MCP drawer", () =>
+    Effect.gen(function* () {
+      const settingsPanel = yield* readSettingsPanel;
+
+      expect(settingsPanel).toContain('props.embedded && "max-w-none gap-3 p-0 sm:p-0"');
     }),
   );
 });

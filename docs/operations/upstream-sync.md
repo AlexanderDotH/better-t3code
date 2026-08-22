@@ -507,3 +507,71 @@ upstream SHA for this cycle. Its pull-request preview containment fix merged wit
 first parent is the previously validated fork tip. The affected pull-request surface passed 18
 focused files and 295 tests, the web typecheck, changed-file lint and formatting, and whitespace
 checks before the fork-only PR gate was restarted on the new exact head.
+
+## August 22, 2026 synchronization
+
+This cycle starts from clean fork `main` at
+`e587d6c312c605075983ed3ded75e0e22f4b6ee0`. The live fetch and `git ls-remote` check both pin
+`upstream/main` at `ce91284f832fc71bf46ff2a8ffc290e20db4e83d`, with merge base
+`97db94c9bf6fa5d83f94c8fff85566d7fc96276e`. The freeze contains 97 fork-only and 240
+upstream-only commits. The ordinary `git merge --no-ff --no-commit upstream/main` records the
+pinned upstream commit in `MERGE_HEAD`; the signed merge commit must retain that commit as its
+second parent.
+
+Before opening the merge, all refs and repository-state evidence were captured under
+`/home/alex/.local/state/t3code-repo-rescue/20260822-upstream-ce91284f`. The rescue contains a
+272,735,012-byte `all-refs.bundle`, status, ref, remote, worktree, safe-configuration, and pin
+manifests, plus `SHA256SUMS`. All seven recorded checksums pass. `git bundle verify` reports a
+complete history with 1,610 advertised refs; the companion `refs.tsv` contains 1,609 ref rows. The
+bundle SHA-256 is `e0a85b7b81942a67ec3f76c2e9591ecf2b79913279b5630cae533b29a57f1427`.
+A recovery ref at `refs/archive/pre-upstream-sync-20260822-ce91284f` retains the fork parent.
+
+The merge reports 92 conflicts: 89 content conflicts and three modify/delete conflicts, split across
+39 web, 24 server, 18 mobile, five contracts, and six other build, desktop, or documentation paths.
+They are resolved semantically in dependency order with these invariants:
+
+- Contracts keep the fork's Fetch, native-subagent, context-window, Git-workbench, and
+  project-agent interfaces while adding upstream client-surface, browser, auto-settle,
+  remote-editor, preview bridge, and pull-request fields with optional or decoding-defaulted wire
+  shapes.
+- Disabling agent browser access retains T3 MCP credentials but selects the no-preview
+  `/mcp/workspace-no-preview` or `/mcp/coordination` toolkit. Preview tools disappear while
+  `workspace_context` and project-agent coordination remain; Fetch keeps its constrained
+  `/mcp/workspace-only` endpoint.
+- Migration IDs 1 through 51 and their names remain immutable. Upstream's auth-session connection
+  schema is appended as the idempotent
+  `052_AuthSessionClientConnectionCompatibility`; convergence migration 45 continues to repair a
+  native upstream ledger whose ID 41 has a different meaning.
+- Provider and orchestration resolutions use upstream's current probes, skills, resume, update,
+  tool-identity, orphan-session, activity, and mixed-tool-run fixes while retaining Gemini,
+  provider/model transcript handoff, Fetch, project-agent coordination, the adaptive resource
+  governor, startup interaction reconciliation, and exact-runtime stop fencing.
+- Web and shared client state combine upstream unified navigation, composer drawers, grouped tool
+  activity, slash skills, file drop, remote editor, and source-control fixes with unboxed reasoning,
+  the workspace Git/MCP deck, reversible grouped settled chats, per-chat provider/model state, and
+  the exact seven-day Older Projects boundary. A mixed successful/failed tool run is not collapsed
+  into an all-failed presentation.
+- Mobile adopts the new settings bottom sheets and removes the obsolete `thread-settings-menu`
+  files only after carrying all fork provider, mode, Fetch, lifecycle, settled-chat, and force-stop
+  controls into the replacement surfaces. Desktop keeps the fork's local-install boundaries while
+  adopting upstream favicon, tab-mute, hold-to-quit, launch, and packaging fixes.
+- The GitHub CI graph adopts parallel non-server tests, three server shards, a separate Rust job,
+  and fail-open native-change detection, but every fork CI job uses GitHub-hosted `ubuntu-24.04` or
+  `macos-26`, never organization-scoped Blacksmith runners. Release, relay, production mobile, and
+  AUR publication remain disabled on a fork unless `T3_ENABLE_PRODUCTION_AUTOMATION` is explicitly
+  enabled.
+- Upstream's AUR, release, launchd, work-artifact, and self-contained desktop-sidecar improvements
+  are retained. Fork Vite+/pnpm command resolution and local AppImage build/install scripts remain
+  supported. `pnpm-lock.yaml` and the TanStack route tree are regenerated from resolved sources;
+  neither generated file is hand-merged.
+- Outbound product analytics remain absent. Client-surface and client-app-version metadata stay
+  local to auth/event handling, while existing local resource diagnostics remain available.
+
+### Final validation (must be completed before publication)
+
+This subsection intentionally remains open while the merge is being resolved. Before the
+integration branch is published, replace this paragraph with the exact focused test counts,
+package typechecks, migration-matrix and disposable `VACUUM INTO` results, formatting/lint/build
+gates, live upstream recheck, AppImage build/install hashes, and any explicitly omitted browser or
+native-client verification. Publication remains fork-only, upstream writes stay disabled, and no
+running T3 Code process or live T3 home state may be managed or mutated.

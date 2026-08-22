@@ -114,6 +114,7 @@ import * as GitManager from "./git/GitManager.ts";
 import * as GitWorkbenchService from "./git-workbench/GitWorkbenchService.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import { ThreadTranscriptExport } from "./orchestration/Services/ThreadTranscriptExport.ts";
 import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
@@ -696,10 +697,15 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
-        Layer.mock(ExternalLauncher.ExternalLauncher)({
-          resolveAvailableEditors: () => Effect.succeed([]),
-          ...options?.layers?.externalLauncher,
-        }),
+        Layer.mergeAll(
+          Layer.mock(ExternalLauncher.ExternalLauncher)({
+            resolveAvailableEditors: () => Effect.succeed([]),
+            ...options?.layers?.externalLauncher,
+          }),
+          Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
+            resolveTargets: () => Effect.succeed([]),
+          }),
+        ),
       ),
       Layer.provide(
         Layer.mock(ProcessDiagnostics.ProcessDiagnostics)({
@@ -5161,6 +5167,84 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("passes client origin to local orchestration metadata without analytics", () =>
+    Effect.gen(function* () {
+      const effects: string[] = [];
+      const origins: Array<Readonly<Record<string, unknown>> | undefined> = [];
+      const failedCommandId = CommandId.make("cmd-thread-create-failed");
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command, options) =>
+              Effect.sync(() => {
+                effects.push(`dispatch:${command.commandId}`);
+                origins.push(options?.origin);
+              }).pipe(
+                Effect.flatMap(() =>
+                  command.commandId === failedCommandId
+                    ? Effect.fail(
+                        new OrchestrationListenerCallbackError({
+                          listener: "domain-event",
+                          detail: "thread creation failed",
+                        }),
+                      )
+                    : Effect.succeed({ sequence: 1 }),
+                ),
+              ),
+          },
+        },
+      });
+
+      const createThreadCommand = (commandId: CommandId, threadId: ThreadId) =>
+        ({
+          type: "thread.create",
+          commandId,
+          threadId,
+          projectId: defaultProjectId,
+          title: "Analytics test",
+          modelSelection: defaultModelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        }) as const;
+
+      const wsUrl = yield* getWsServerUrl("/ws?clientSurface=mobile&clientAppVersion=1.2.3");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const failed = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand](
+              createThreadCommand(failedCommandId, ThreadId.make("thread-create-failed")),
+            ).pipe(Effect.result);
+
+            assert.equal(failed._tag, "Failure");
+            assert.deepEqual(effects, ["dispatch:cmd-thread-create-failed"]);
+
+            const succeeded = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand](
+              createThreadCommand(
+                CommandId.make("cmd-thread-create-succeeded"),
+                ThreadId.make("thread-create-succeeded"),
+              ),
+            );
+
+            assert.equal(succeeded.sequence, 1);
+          }),
+        ),
+      );
+
+      assert.deepEqual(effects, [
+        "dispatch:cmd-thread-create-failed",
+        "dispatch:cmd-thread-create-succeeded",
+      ]);
+      assert.deepEqual(origins, [
+        { surface: "mobile", appVersion: "1.2.3" },
+        { surface: "mobile", appVersion: "1.2.3" },
+      ]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc projects.writeFile errors", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -8131,6 +8215,89 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assertTrue(result._tag === "Failure");
       assertTrue(result.failure._tag === "OrchestrationDispatchCommandError");
       assert.include(result.failure.message, "worktree exploded");
+      assert.strictEqual(result.failure.bootstrapThreadDisposition, "deleted");
+      assert.deepEqual(
+        dispatchedCommands.map((command) => command.type),
+        ["thread.create", "thread.delete"],
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("does not report a deleted bootstrap thread when cleanup fails", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const createWorktree = vi.fn(
+        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
+          Effect.die(new Error("worktree exploded")),
+      );
+
+      yield* buildAppUnderTest({
+        layers: {
+          gitVcsDriver: {
+            createWorktree,
+          },
+          orchestrationEngine: {
+            dispatch: (command) => {
+              dispatchedCommands.push(command);
+              if (command.type === "thread.delete") {
+                return Effect.fail(
+                  new OrchestrationListenerCallbackError({
+                    listener: "domain-event",
+                    detail: "thread cleanup exploded",
+                  }),
+                );
+              }
+              return Effect.succeed({ sequence: dispatchedCommands.length });
+            },
+            readEvents: () => Stream.empty,
+          },
+        },
+      });
+
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.turn.start",
+            commandId: CommandId.make("cmd-bootstrap-turn-start-cleanup-defect"),
+            threadId: ThreadId.make("thread-bootstrap-cleanup-defect"),
+            message: {
+              messageId: MessageId.make("msg-bootstrap-cleanup-defect"),
+              role: "user",
+              text: "hello",
+              attachments: [],
+            },
+            modelSelection: defaultModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            bootstrap: {
+              createThread: {
+                projectId: defaultProjectId,
+                title: "Bootstrap Thread",
+                modelSelection: defaultModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: "main",
+                worktreePath: null,
+                createdAt,
+              },
+              prepareWorktree: {
+                projectCwd: "/tmp/project",
+                baseBranch: "main",
+                branch: "t3code/bootstrap-refName",
+              },
+              runSetupScript: false,
+            },
+            createdAt,
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "OrchestrationDispatchCommandError");
+      assert.include(result.failure.message, "worktree exploded");
+      assert.strictEqual(result.failure.bootstrapThreadDisposition, undefined);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
         ["thread.create", "thread.delete"],

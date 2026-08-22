@@ -1806,7 +1806,7 @@ export function McpServersSettingsPanel(props: {
 
   return (
     <SettingsPageContainer
-      className={cn("max-w-5xl", props.embedded && "max-w-none gap-3")}
+      className={cn("max-w-5xl", props.embedded && "max-w-none gap-3 p-0 sm:p-0")}
       {...(props.embedded ? { viewportClassName: "overflow-visible p-0 sm:p-0" } : {})}
     >
       <SettingsSection

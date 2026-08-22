@@ -99,6 +99,12 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       Missing on older servers, so clients keep project settings read-only. */
   projectSettingsVersion: Schema.optionalKey(PositiveInt),
   midChatProviderSwitching: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Agent-activity publishes (push notifications and Live Activities)
+      currently leave this environment: the publish opt-in is enabled and the
+      relay link credentials exist. Clients skip seeding a Live Activity when
+      this is false — no update would ever repaint it. Absent on older
+      servers, which may still publish, so only an explicit false skips. */
+  agentActivityPublishing: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

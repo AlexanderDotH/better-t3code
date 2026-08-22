@@ -3,7 +3,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import {
   effectiveSettled,
   effectiveSnoozed,
-  type ChangeRequestStateLike,
+  type ChangeRequestSettleSource,
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
   DEFAULT_PROJECT_THREAD_PREVIEW_COUNT,
@@ -175,7 +175,8 @@ export function resolveGroupedProjectSettledThreadKeys(input: {
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly settlementEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly snoozeEnvironmentIds: ReadonlySet<EnvironmentId>;
-  readonly changeRequestStateByKey: ReadonlyMap<string, ChangeRequestStateLike>;
+  readonly changeRequestByKey: ReadonlyMap<string, ChangeRequestSettleSource>;
+  readonly autoSettleOnMerge: boolean;
   readonly now: string;
   readonly autoSettleAfterDays: number | null;
 }): ReadonlySet<string> {
@@ -194,7 +195,8 @@ export function resolveGroupedProjectSettledThreadKeys(input: {
       effectiveSettled(thread, {
         now: input.now,
         autoSettleAfterDays: input.autoSettleAfterDays,
-        changeRequestState: input.changeRequestStateByKey.get(threadKey) ?? null,
+        changeRequest: input.changeRequestByKey.get(threadKey) ?? null,
+        autoSettleOnMerge: input.autoSettleOnMerge,
       })
     ) {
       settledThreadKeys.add(threadKey);

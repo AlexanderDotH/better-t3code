@@ -4,6 +4,10 @@
 
 This document covers the unified release workflow for stable and nightly desktop releases.
 
+On forks, every production-capable job is disabled unless the repository variable
+`T3_ENABLE_PRODUCTION_AUTOMATION` is explicitly set to `true`. Manual dispatch does not bypass that
+guard. The upstream repository identity remains enabled by default.
+
 ## What the workflow does
 
 - Workflow: `.github/workflows/release.yml`
@@ -23,6 +27,7 @@ This document covers the unified release workflow for stable and nightly desktop
   - Only plain stable `X.Y.Z` releases are marked as the repository's latest release.
   - Nightly runs are always GitHub prereleases and never marked latest.
   - Automatically generated release notes are pinned to the previous tag in the same channel, so stable compares to the previous stable tag and nightly compares to the previous nightly tag.
+- Publishes the matching stable or nightly AUR metadata after the GitHub Release succeeds.
 - Includes Electron auto-update metadata (for example `latest*.yml`, `nightly*.yml`, and `*.blockmap`) in release assets.
 - Publishes the CLI package (`apps/server`, npm package `t3`) with OIDC trusted publishing from the same workflow file:
   - stable releases publish npm dist-tag `latest`
@@ -39,6 +44,7 @@ credentials documented below:
 
 - `RELEASE_APP_ID`
 - `RELEASE_APP_PRIVATE_KEY`
+- `AUR_SSH_PRIVATE_KEY` when AUR publication is enabled
 
 The finalize job uses them to commit and push aligned package versions to `main` as the Release App.
 GitHub Release publication uses the repository-scoped workflow token so it has a rate-limit quota
@@ -213,6 +219,37 @@ desktop-managed guidance when those environments are available.
 - macOS metadata note:
   - `electron-updater` reads `latest-mac.yml` on stable and `nightly-mac.yml` on nightly, for both Intel and Apple Silicon.
   - The workflow merges the per-arch mac manifests into one channel-specific mac manifest before publishing the GitHub Release.
+
+### Windows payload topology and update validation
+
+Windows packages the bundled server and only its runtime-external/native
+dependency closure in `resources/server.asar`. Native modules and helper
+executables declared as unpacked by that archive must be present at the matching
+paths below `resources/server.asar.unpacked`. The Windows-native backend reads
+the archive in place through Electron. WSL cannot read ASAR files, so enabling
+the WSL backend extracts the server tree once into the desktop state directory
+under `wsl-server-tree/<version>` and reuses the completed version until the app
+is updated.
+
+The artifact builder rejects a Windows package when any of these invariants
+break:
+
+- `resources/server.asar` is absent or does not contain the server entry.
+- Any file marked unpacked in the ASAR header is absent from
+  `resources/server.asar.unpacked`.
+- On same-architecture Windows builds, the packaged primary cannot load the fff
+  native library from inside `server.asar` through its `.unpacked` sibling.
+- The isolated, extracted sidecar cannot load the server entry with plain Node.
+- The external Windows resource monitor is absent.
+- The unpacked Windows application contains more than 80 files.
+
+Cross-architecture Windows builds retain every structural and extracted-sidecar
+check, but skip executing the target Electron binary. A same-architecture build
+for each release target must exercise the primary native-load probe.
+
+NSIS differential packaging remains enabled. A sidecar layout transition can
+produce a larger one-time download; subsequent small releases retain their
+blockmaps, with a 60 MB maximum for a representative sidecar-to-sidecar update.
 
 ## 0) npm OIDC trusted publishing setup (CLI)
 
