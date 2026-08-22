@@ -917,6 +917,24 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     z-index: 0;
   }
 
+  .chat-composer-floating-drawer-host:empty {
+    display: none;
+  }
+
+  .chat-composer-floating-drawer-host:not(:empty) {
+    display: grid;
+    gap: 0.5rem;
+    padding-bottom: 1rem;
+  }
+
+  .chat-composer-floating-drawer-host
+    > :is(
+      .chat-composer-top-drawer-floating,
+      .chat-composer-drawer-slot.chat-composer-drawer-floating
+    ) {
+    margin-bottom: 0;
+  }
+
   /* Non-deck status and decision drawers float above the composer as complete islands. */
   .chat-composer-top-drawer-floating,
   .chat-composer-drawer-floating {
