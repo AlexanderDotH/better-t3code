@@ -64,6 +64,10 @@ import {
   FetchWorkerCoordinator,
 } from "../../fetch/FetchWorkerCoordinator.ts";
 import { applyProjectAgentInstructionsToProviderInput } from "../../projectAgent/ProjectAgentInstructions.ts";
+import {
+  findOpenPendingInteractions,
+  type OpenPendingInteraction,
+} from "../pendingInteractionLifecycle.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -117,6 +121,8 @@ const MAX_FIRST_USER_TITLE_CONTEXT_CHARS = 2_000;
 const THREAD_TITLE_CONTEXT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
 const FETCH_CONTEXT_TRUNCATION_MARKER = "\n[T3 Fetch context truncated]";
 const FIRST_USER_CONTEXT_TRUNCATION_MARKER = "\n[First user message truncated]";
+const STARTUP_PENDING_INTERACTION_ID_PREFIX = "startup-pending-interaction";
+const STARTUP_PENDING_INTERACTION_REASON = "provider-runtime-unavailable-after-startup";
 
 export function requiresProviderSessionRestartForModelSelectionChange(input: {
   readonly provider: ProviderDriverKind;
@@ -1248,6 +1254,79 @@ const make = Effect.gen(function* () {
       );
     },
   );
+  const appendStartupPendingInteractionResolution = Effect.fn(
+    "appendStartupPendingInteractionResolution",
+  )(function* (input: {
+    readonly threadId: ThreadId;
+    readonly interactionKind: "approval" | "user-input";
+    readonly interaction: OpenPendingInteraction;
+    readonly repairedAt: string;
+  }) {
+    // The request activity ID is a prefix so this resolution sorts after the
+    // request even when both intentionally preserve the same thread timestamp.
+    const repairId = `${input.interaction.requestActivityId}:${STARTUP_PENDING_INTERACTION_ID_PREFIX}:${input.interactionKind}`;
+    yield* orchestrationEngine.dispatch({
+      type: "thread.activity.append",
+      commandId: CommandId.make(`server:${repairId}`),
+      threadId: input.threadId,
+      activity: {
+        id: EventId.make(repairId),
+        tone: "approval",
+        kind: input.interactionKind === "approval" ? "approval.resolved" : "user-input.resolved",
+        summary:
+          input.interactionKind === "approval"
+            ? "Approval cancelled because the provider runtime was unavailable after startup."
+            : "Question cancelled because the provider runtime was unavailable after startup.",
+        payload:
+          input.interactionKind === "approval"
+            ? {
+                requestId: input.interaction.requestId,
+                decision: "cancel",
+                reason: STARTUP_PENDING_INTERACTION_REASON,
+              }
+            : {
+                requestId: input.interaction.requestId,
+                answers: {},
+                reason: STARTUP_PENDING_INTERACTION_REASON,
+              },
+        turnId: input.interaction.turnId,
+        createdAt: input.repairedAt,
+      },
+      createdAt: input.repairedAt,
+    });
+  });
+  const reconcileOrphanedPendingInteractionsAtStartup = Effect.fn(
+    "reconcileOrphanedPendingInteractionsAtStartup",
+  )(function* (threadId: ThreadId, inFlightRepairedAt?: string) {
+    const thread = yield* resolveThread(threadId);
+    if (!thread) {
+      return;
+    }
+    const repairedAt = inFlightRepairedAt ?? thread.updatedAt;
+    const pending = findOpenPendingInteractions({ activities: thread.activities });
+    yield* Effect.forEach(
+      pending.approvals,
+      (interaction) =>
+        appendStartupPendingInteractionResolution({
+          threadId,
+          interactionKind: "approval",
+          interaction,
+          repairedAt,
+        }),
+      { concurrency: 1, discard: true },
+    );
+    yield* Effect.forEach(
+      pending.userInputs,
+      (interaction) =>
+        appendStartupPendingInteractionResolution({
+          threadId,
+          interactionKind: "user-input",
+          interaction,
+          repairedAt,
+        }),
+      { concurrency: 1, discard: true },
+    );
+  });
   const reconcileOrphanedSessionsAtStartup = Effect.fn("reconcileOrphanedSessionsAtStartup")(
     function* (readModel: OrchestrationReadModel) {
       const projectedInFlightThreads = readModel.threads.filter(
@@ -1257,6 +1336,12 @@ const make = Effect.gen(function* () {
       );
       const liveSessions = yield* providerService.listSessions();
       const liveThreadIds = new Set(liveSessions.map((session) => session.threadId));
+      const shellSnapshot = yield* projectionSnapshotQuery.getShellSnapshot();
+      const pendingInteractionThreadIds = new Set(
+        shellSnapshot.threads
+          .filter((thread) => thread.hasPendingApprovals || thread.hasPendingUserInput)
+          .map((thread) => thread.id),
+      );
       const projectedInFlightThreadIds = new Set(
         projectedInFlightThreads.map((thread) => thread.id),
       );
@@ -1265,6 +1350,7 @@ const make = Effect.gen(function* () {
           thread.deletedAt === null &&
           !liveThreadIds.has(thread.id) &&
           (projectedInFlightThreadIds.has(thread.id) ||
+            pendingInteractionThreadIds.has(thread.id) ||
             thread.subagents.some((subagent) => isActiveSubagentStatus(subagent.status))),
       );
       const reconciledAt = DateTime.formatIso(yield* DateTime.now);
@@ -1274,6 +1360,13 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             if (projectedInFlightThreadIds.has(thread.id)) {
               yield* reconcileOrphanedSessionAtStartup(thread, reconciledAt);
+            }
+            if (pendingInteractionThreadIds.has(thread.id)) {
+              // Repairing an already-terminal thread must not make old work look recent.
+              yield* reconcileOrphanedPendingInteractionsAtStartup(
+                thread.id,
+                projectedInFlightThreadIds.has(thread.id) ? reconciledAt : undefined,
+              );
             }
             yield* settleActiveSubagents(
               thread,
@@ -1302,6 +1395,7 @@ const make = Effect.gen(function* () {
         projectedInFlightSessionCount: projectedInFlightThreads.length,
         liveProviderSessionCount: liveSessions.length,
         orphanedSessionCount: orphanedThreads.length,
+        pendingInteractionThreadCount: pendingInteractionThreadIds.size,
         reconciledSessionCount: outcomes.filter(Boolean).length,
       });
     },

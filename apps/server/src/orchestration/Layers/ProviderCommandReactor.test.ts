@@ -8,6 +8,7 @@ import {
   ModelSelection,
   type OrchestrationSession,
   type OrchestrationSubagentSummary,
+  type OrchestrationThreadActivity,
   ProviderRuntimeEvent,
   ProviderSession,
   ProviderDriverKind,
@@ -268,6 +269,7 @@ describe("ProviderCommandReactor", () => {
       };
     };
     readonly projectedSubagentsBeforeStart?: ReadonlyArray<OrchestrationSubagentSummary>;
+    readonly projectedActivitiesBeforeStart?: ReadonlyArray<OrchestrationThreadActivity>;
     readonly seedMatchingLiveProviderSession?: boolean;
     readonly startSessionEffect?: (
       session: ProviderSession,
@@ -842,6 +844,18 @@ describe("ProviderCommandReactor", () => {
       );
     }
 
+    for (const [index, activity] of (input?.projectedActivitiesBeforeStart ?? []).entries()) {
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make(`cmd-activity-before-reactor-start-${index}`),
+          threadId: ThreadId.make("thread-1"),
+          activity,
+          createdAt: activity.createdAt,
+        }),
+      );
+    }
+
     scope = await Effect.runPromise(Scope.make("sequential"));
     const startReactor = () => Effect.runPromise(reactor.start().pipe(Scope.provide(scope!)));
     await startReactor();
@@ -850,6 +864,7 @@ describe("ProviderCommandReactor", () => {
     return {
       engine,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
+      readShell: () => Effect.runPromise(snapshotQuery.getShellSnapshot()),
       startSession,
       sendTurn,
       runFetch,
@@ -903,6 +918,24 @@ describe("ProviderCommandReactor", () => {
       requestedAt: "2025-12-31T23:59:30.000Z",
       forceAt: "2025-12-31T23:59:35.000Z",
     };
+    const makeInteractionActivity = (input: {
+      readonly id: string;
+      readonly kind: string;
+      readonly requestId: string;
+      readonly turnId?: TurnId;
+      readonly payload?: Readonly<Record<string, unknown>>;
+    }): OrchestrationThreadActivity => ({
+      id: EventId.make(input.id),
+      tone: "approval",
+      kind: input.kind,
+      summary: input.kind,
+      payload: {
+        requestId: asApprovalRequestId(input.requestId),
+        ...input.payload,
+      },
+      turnId: input.turnId ?? activeTurnId,
+      createdAt: projectedAt,
+    });
     const makeProjectedSubagent = (input: {
       readonly id: string;
       readonly status: OrchestrationSubagentSummary["status"];
@@ -1033,6 +1066,177 @@ describe("ProviderCommandReactor", () => {
               event.payload.streaming === false,
           ),
       ).toBe(true);
+    });
+
+    it("interrupts an orphaned running turn and resolves its pending user input", async () => {
+      const harness = await createHarness({
+        projectedSessionBeforeStart: {
+          status: "running",
+          runtimeSessionId,
+          activeTurnId,
+          updatedAt: projectedAt,
+        },
+        projectedActivitiesBeforeStart: [
+          makeInteractionActivity({
+            id: "input-before-restart",
+            kind: "user-input.requested",
+            requestId: "input-before-restart",
+          }),
+        ],
+      });
+
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(thread?.session?.status).toBe("interrupted");
+      expect(thread?.activities.at(-1)).toMatchObject({
+        kind: "user-input.resolved",
+        turnId: activeTurnId,
+        payload: {
+          requestId: asApprovalRequestId("input-before-restart"),
+          answers: {},
+          reason: "provider-runtime-unavailable-after-startup",
+        },
+      });
+
+      const shell = await harness.readShell();
+      expect(shell.threads.find((entry) => entry.id === ThreadId.make("thread-1"))).toMatchObject({
+        hasPendingUserInput: false,
+      });
+    });
+
+    it("repairs pending input on an already interrupted thread without changing its sort time", async () => {
+      const harness = await createHarness({
+        projectedSessionBeforeStart: {
+          status: "interrupted",
+          runtimeSessionId: null,
+          updatedAt: projectedAt,
+        },
+        projectedActivitiesBeforeStart: [
+          makeInteractionActivity({
+            // Sorts after the old startup-prefixed repair ID when timestamps tie.
+            // The repair must still follow the request in projection ordering.
+            id: "zz-stale-input-on-interrupted-thread",
+            kind: "user-input.requested",
+            requestId: "stale-input-on-interrupted-thread",
+          }),
+        ],
+      });
+
+      const shell = await harness.readShell();
+      expect(shell.threads.find((entry) => entry.id === ThreadId.make("thread-1"))).toMatchObject({
+        updatedAt: projectedAt,
+        hasPendingUserInput: false,
+      });
+      const repairEvents = (await harness.readEvents()).filter(
+        (event) =>
+          event.type === "thread.activity-appended" &&
+          event.payload.activity.kind === "user-input.resolved",
+      );
+      expect(repairEvents).toHaveLength(1);
+      expect(repairEvents[0]?.payload.activity.id).toBe(
+        "zz-stale-input-on-interrupted-thread:startup-pending-interaction:user-input",
+      );
+
+      const eventCountAfterFirstReconciliation = (await harness.readEvents()).length;
+      await harness.startReactor();
+      expect((await harness.readEvents()).length).toBe(eventCountAfterFirstReconciliation);
+    });
+
+    it("repairs pending approvals with a canonical cancellation", async () => {
+      const harness = await createHarness({
+        projectedSessionBeforeStart: {
+          status: "ready",
+          runtimeSessionId: null,
+          updatedAt: projectedAt,
+        },
+        projectedActivitiesBeforeStart: [
+          makeInteractionActivity({
+            id: "approval-before-restart",
+            kind: "approval.requested",
+            requestId: "approval-before-restart",
+          }),
+        ],
+      });
+
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(thread?.activities.at(-1)).toMatchObject({
+        kind: "approval.resolved",
+        turnId: activeTurnId,
+        payload: {
+          requestId: asApprovalRequestId("approval-before-restart"),
+          decision: "cancel",
+          reason: "provider-runtime-unavailable-after-startup",
+        },
+      });
+      const shell = await harness.readShell();
+      expect(shell.threads.find((entry) => entry.id === ThreadId.make("thread-1"))).toMatchObject({
+        hasPendingApprovals: false,
+      });
+    });
+
+    it("does not duplicate an already resolved startup interaction", async () => {
+      const harness = await createHarness({
+        projectedSessionBeforeStart: {
+          status: "interrupted",
+          runtimeSessionId: null,
+          updatedAt: projectedAt,
+        },
+        projectedActivitiesBeforeStart: [
+          makeInteractionActivity({
+            id: "input-before-resolution",
+            kind: "user-input.requested",
+            requestId: "input-before-resolution",
+          }),
+          makeInteractionActivity({
+            id: "input-resolved-before-restart",
+            kind: "user-input.resolved",
+            requestId: "input-before-resolution",
+            payload: { answers: { answer: "done" } },
+          }),
+        ],
+      });
+      const eventCountAfterFirstReconciliation = (await harness.readEvents()).length;
+
+      await harness.startReactor();
+
+      expect((await harness.readEvents()).length).toBe(eventCountAfterFirstReconciliation);
+      const repairActivities = (await harness.readModel()).threads
+        .find((entry) => entry.id === ThreadId.make("thread-1"))
+        ?.activities.filter((activity) =>
+          String(activity.id).startsWith("startup-pending-interaction:"),
+        );
+      expect(repairActivities).toEqual([]);
+    });
+
+    it("leaves pending interactions untouched while the provider session is live", async () => {
+      const harness = await createHarness({
+        projectedSessionBeforeStart: {
+          status: "running",
+          runtimeSessionId,
+          activeTurnId,
+          updatedAt: projectedAt,
+        },
+        seedMatchingLiveProviderSession: true,
+        projectedActivitiesBeforeStart: [
+          makeInteractionActivity({
+            id: "live-input",
+            kind: "user-input.requested",
+            requestId: "live-input",
+          }),
+        ],
+      });
+
+      const shell = await harness.readShell();
+      expect(shell.threads.find((entry) => entry.id === ThreadId.make("thread-1"))).toMatchObject({
+        hasPendingUserInput: true,
+      });
+      const repairActivities = (await harness.readModel()).threads
+        .find((entry) => entry.id === ThreadId.make("thread-1"))
+        ?.activities.filter((activity) =>
+          String(activity.id).startsWith("startup-pending-interaction:"),
+        );
+      expect(repairActivities).toEqual([]);
     });
 
     it("interrupts an orphaned starting session and clears its runtime identifiers", async () => {

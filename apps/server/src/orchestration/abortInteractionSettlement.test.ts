@@ -86,4 +86,30 @@ describe("makeAbortInteractionResolutionActivities", () => {
       "event-abort:abort:user-input:input-open",
     ]);
   });
+
+  it("does not resolve a request already cleared by a stale provider callback", () => {
+    const result = makeAbortInteractionResolutionActivities({
+      settlementEventId: EventId.make("event-abort"),
+      settlementSequence: 42,
+      targetTurnId: turnId,
+      outcome: "force-terminated",
+      settledAt: "2026-07-30T00:00:05.000Z",
+      activities: [
+        activity({ id: "input-open", kind: "user-input.requested", requestId: "input-open" }),
+        {
+          ...activity({
+            id: "input-stale",
+            kind: "provider.user-input.respond.failed",
+            requestId: "input-open",
+          }),
+          payload: {
+            requestId: ApprovalRequestId.make("input-open"),
+            detail: "Unknown pending Codex user input request",
+          },
+        },
+      ],
+    });
+
+    expect(result).toEqual([]);
+  });
 });
