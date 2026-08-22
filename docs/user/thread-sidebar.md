@@ -21,8 +21,16 @@ device, so its layout can differ from web and desktop.
 The **Classic** layout initially shows up to three chats in each project. Choose **Chats per
 project** in **Settings → Appearance** to set any value from 1 through 15. Web and desktop also
 offer the same control from the Classic sidebar menu. Use **Show more** to reveal the rest of a
-project's chats and **Show less** to return to the configured limit. Searching continues to show
-every matching chat, regardless of the limit.
+project's non-settled chats. After those chats are visible, use **Show settled chats** to append the
+settled chats or **Hide settled chats** to conceal them again. If all non-settled chats already fit,
+**Show settled chats** appears immediately. **Show less** returns to the configured limit and hides
+the settled section. Searching continues to show every matching chat, regardless of the limit.
+Chats labeled **Working** or **Connecting** stay visible in addition to the configured number, so
+active work is never hidden behind **Show more**.
+
+The project-grouped Home list and tablet sidebar on mobile use the same ordering and controls.
+Settled chats do not count toward the per-project preview limit. The **Current** activity-based
+layout keeps its separate settled section and is not affected by these project controls.
 
 This preference is shared through every connected environment that supports synchronized
 appearance settings, while each device keeps an offline copy for immediate use. Changes made
@@ -32,7 +40,7 @@ compatible environments still synchronize normally.
 
 The first upgrade changes the former six-chat value to the new default of three when no
 synchronized choice exists. Other saved values are preserved, and choosing six afterward remains
-a normal preference. The **Current** activity-based layout is not affected by this setting.
+a normal preference.
 
 ## Recent and older projects
 

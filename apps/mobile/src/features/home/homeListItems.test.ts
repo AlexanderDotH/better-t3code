@@ -19,6 +19,7 @@ import {
   HOME_INITIAL_VISIBLE_THREADS,
   HOME_SHOW_MORE_STEP,
   nextGroupDisplayState,
+  resolveGroupedProjectSettledThreadKeys,
   type HomeGroupDisplayState,
   type HomeListItem,
 } from "./homeListItems";
@@ -66,6 +67,27 @@ function makeThread(id: string, projectId: ProjectId): EnvironmentThreadShell {
   };
 }
 
+function withSessionStatus(
+  thread: EnvironmentThreadShell,
+  status: "running" | "starting",
+): EnvironmentThreadShell {
+  return {
+    ...thread,
+    session: {
+      threadId: thread.id,
+      status,
+      providerName: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeSessionId: null,
+      runtimeMode: "full-access",
+      activeTurnId: null,
+      abortState: null,
+      lastError: null,
+      updatedAt: "2026-06-01T00:00:00.000Z",
+    },
+  };
+}
+
 function makeGroup(key: string, threadCount: number): HomeThreadGroup {
   const project = makeProject(key, key);
   const threads = Array.from({ length: threadCount }, (_, index) =>
@@ -110,6 +132,22 @@ function makePendingTask(projectId: ProjectId): PendingNewTask {
 
 function itemTypes(items: ReadonlyArray<HomeListItem>): string[] {
   return items.map((item) => item.type);
+}
+
+function visibleThreadIds(items: ReadonlyArray<HomeListItem>): string[] {
+  return items.flatMap((item) => (item.type === "thread" ? [item.thread.id] : []));
+}
+
+function settledThreadKeys(
+  group: HomeThreadGroup,
+  settledIndexes: ReadonlyArray<number>,
+): ReadonlySet<string> {
+  return new Set(
+    settledIndexes.flatMap((index) => {
+      const thread = group.threads[index];
+      return thread ? [`${thread.environmentId}:${thread.id}`] : [];
+    }),
+  );
 }
 
 function displayStates(
@@ -162,6 +200,108 @@ describe("buildHomeListLayout", () => {
     expect(threadItems.every((item) => item.type === "thread" && !item.isLast)).toBe(true);
   });
 
+  it("keeps an active thread visible outside the recent-activity window", () => {
+    const group = makeGroup("alpha", 7);
+    const threads = group.threads.map((thread, index) =>
+      index === 6 ? withSessionStatus(thread, "running") : thread,
+    );
+
+    const layout = buildHomeListLayout({
+      groups: [{ ...group, threads, recentThreads: threads.slice(0, 3) }],
+      projectThreadPreviewCount: 3,
+      displayStates: displayStates({}),
+    });
+
+    expect(visibleThreadIds(layout.items)).toEqual([
+      "alpha-thread-0",
+      "alpha-thread-1",
+      "alpha-thread-2",
+      "alpha-thread-6",
+    ]);
+    expect(layout.items.at(-1)).toMatchObject({
+      type: "show-more",
+      hiddenCount: 3,
+      canShowLess: false,
+    });
+  });
+
+  it("preserves source order while hiding only inactive threads beyond the quota", () => {
+    const group = makeGroup("alpha", 7);
+    const threads = group.threads.map((thread, index) => {
+      if (index === 3) return withSessionStatus(thread, "starting");
+      if (index === 5) return withSessionStatus(thread, "running");
+      return thread;
+    });
+
+    const layout = buildHomeListLayout({
+      groups: [{ ...group, threads }],
+      projectThreadPreviewCount: 2,
+      displayStates: displayStates({}),
+    });
+
+    expect(visibleThreadIds(layout.items)).toEqual([
+      "alpha-thread-0",
+      "alpha-thread-1",
+      "alpha-thread-3",
+      "alpha-thread-5",
+    ]);
+    expect(layout.items.at(-1)).toMatchObject({
+      type: "show-more",
+      hiddenCount: 3,
+      canShowLess: false,
+    });
+  });
+
+  it("omits show-more when every thread beyond the quota is active", () => {
+    const group = makeGroup("alpha", 5);
+    const threads = group.threads.map((thread, index) =>
+      index < 2 ? thread : withSessionStatus(thread, index === 2 ? "starting" : "running"),
+    );
+
+    const layout = buildHomeListLayout({
+      groups: [{ ...group, threads }],
+      projectThreadPreviewCount: 2,
+      displayStates: displayStates({}),
+    });
+
+    expect(visibleThreadIds(layout.items)).toEqual([
+      "alpha-thread-0",
+      "alpha-thread-1",
+      "alpha-thread-2",
+      "alpha-thread-3",
+      "alpha-thread-4",
+    ]);
+    expect(layout.items.some((item) => item.type === "show-more")).toBe(false);
+    expect(layout.items.at(-1)).toMatchObject({ type: "thread", isLast: true });
+  });
+
+  it("retains show-less for manual expansion after active extras exhaust hidden threads", () => {
+    const group = makeGroup("alpha", 4);
+    const threads = group.threads.map((thread, index) =>
+      index === 3 ? withSessionStatus(thread, "running") : thread,
+    );
+
+    const collapsedToQuota = buildHomeListLayout({
+      groups: [{ ...group, threads }],
+      projectThreadPreviewCount: 3,
+      displayStates: displayStates({}),
+    });
+    expect(collapsedToQuota.items.some((item) => item.type === "show-more")).toBe(false);
+
+    const manuallyExpanded = buildHomeListLayout({
+      groups: [{ ...group, threads }],
+      projectThreadPreviewCount: 3,
+      displayStates: displayStates({
+        alpha: nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "show-more"),
+      }),
+    });
+    expect(manuallyExpanded.items.at(-1)).toMatchObject({
+      type: "show-more",
+      hiddenCount: 0,
+      canShowLess: true,
+    });
+  });
+
   it("reveals more threads per show-more step and offers show-less when exhausted", () => {
     const group = makeGroup("alpha", 20);
 
@@ -206,6 +346,159 @@ describe("buildHomeListLayout", () => {
       "show-less",
     );
     expect(reset.additionalVisibleCount).toBe(0);
+  });
+
+  it("finishes non-settled pagination before offering the settled section", () => {
+    const group = makeGroup("alpha", 6);
+    const settledKeys = settledThreadKeys(group, [1, 3]);
+
+    const collapsed = buildHomeListLayout({
+      groups: [group],
+      projectThreadPreviewCount: 2,
+      displayStates: displayStates({}),
+      settledThreadKeys: settledKeys,
+    });
+    expect(visibleThreadIds(collapsed.items)).toEqual(["alpha-thread-0", "alpha-thread-2"]);
+    expect(collapsed.items.at(-1)).toMatchObject({
+      type: "show-more",
+      hiddenCount: 2,
+      canToggleSettled: false,
+      settledVisible: false,
+    });
+
+    const expanded = buildHomeListLayout({
+      groups: [group],
+      projectThreadPreviewCount: 2,
+      displayStates: displayStates({
+        alpha: nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "show-more"),
+      }),
+      settledThreadKeys: settledKeys,
+    });
+    expect(visibleThreadIds(expanded.items)).toEqual([
+      "alpha-thread-0",
+      "alpha-thread-2",
+      "alpha-thread-4",
+      "alpha-thread-5",
+    ]);
+    expect(expanded.items.at(-1)).toMatchObject({
+      type: "show-more",
+      hiddenCount: 0,
+      canShowLess: true,
+      canToggleSettled: true,
+      settledVisible: false,
+    });
+  });
+
+  it("offers settled chats directly when every non-settled chat fits", () => {
+    const group = makeGroup("alpha", 4);
+
+    const layout = buildHomeListLayout({
+      groups: [group],
+      projectThreadPreviewCount: 3,
+      displayStates: displayStates({}),
+      settledThreadKeys: settledThreadKeys(group, [1, 3]),
+    });
+
+    expect(visibleThreadIds(layout.items)).toEqual(["alpha-thread-0", "alpha-thread-2"]);
+    expect(layout.items.at(-1)).toMatchObject({
+      type: "show-more",
+      hiddenCount: 0,
+      canShowLess: false,
+      canToggleSettled: true,
+      settledVisible: false,
+    });
+  });
+
+  it("appends settled chats and resets them together with show-less", () => {
+    const group = makeGroup("alpha", 4);
+    const settledKeys = settledThreadKeys(group, [1, 3]);
+    const settledState = nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "show-settled");
+
+    const shown = buildHomeListLayout({
+      groups: [group],
+      projectThreadPreviewCount: 3,
+      displayStates: displayStates({ alpha: settledState }),
+      settledThreadKeys: settledKeys,
+    });
+    expect(visibleThreadIds(shown.items)).toEqual([
+      "alpha-thread-0",
+      "alpha-thread-2",
+      "alpha-thread-1",
+      "alpha-thread-3",
+    ]);
+    expect(shown.items.at(-1)).toMatchObject({
+      type: "show-more",
+      canShowLess: true,
+      canToggleSettled: true,
+      settledVisible: true,
+    });
+
+    const hidden = nextGroupDisplayState(settledState, "hide-settled");
+    expect(hidden.settledVisible).toBe(false);
+
+    const reset = nextGroupDisplayState(settledState, "show-less");
+    expect(reset).toMatchObject({ additionalVisibleCount: 0, settledVisible: false });
+  });
+
+  it("keeps a selected settled chat visible without opening the settled section", () => {
+    const group = makeGroup("alpha", 4);
+    const selected = group.threads[3]!;
+
+    const layout = buildHomeListLayout({
+      groups: [group],
+      projectThreadPreviewCount: 3,
+      displayStates: displayStates({}),
+      settledThreadKeys: settledThreadKeys(group, [1, 3]),
+      selectedThreadKey: `${selected.environmentId}:${selected.id}`,
+    });
+
+    expect(visibleThreadIds(layout.items)).toEqual([
+      "alpha-thread-0",
+      "alpha-thread-2",
+      "alpha-thread-3",
+    ]);
+  });
+
+  it("does not offer to reveal settled chats when the selected chat is the only settled one", () => {
+    const group = makeGroup("alpha", 3);
+    const selected = group.threads[2]!;
+
+    const layout = buildHomeListLayout({
+      groups: [group],
+      projectThreadPreviewCount: 3,
+      displayStates: displayStates({}),
+      settledThreadKeys: settledThreadKeys(group, [2]),
+      selectedThreadKey: `${selected.environmentId}:${selected.id}`,
+    });
+
+    expect(visibleThreadIds(layout.items)).toEqual([
+      "alpha-thread-0",
+      "alpha-thread-1",
+      "alpha-thread-2",
+    ]);
+    expect(layout.items.some((item) => item.type === "show-more")).toBe(false);
+  });
+
+  it("shows matching settled chats without controls while searching", () => {
+    const group = makeGroup("alpha", 4);
+
+    const layout = buildHomeListLayout({
+      groups: [group],
+      projectThreadPreviewCount: 1,
+      displayStates: displayStates({
+        alpha: nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "toggle-collapsed"),
+      }),
+      settledThreadKeys: settledThreadKeys(group, [1, 3]),
+      showAllThreads: true,
+    });
+
+    expect(visibleThreadIds(layout.items)).toEqual([
+      "alpha-thread-0",
+      "alpha-thread-2",
+      "alpha-thread-1",
+      "alpha-thread-3",
+    ]);
+    expect(layout.items.some((item) => item.type === "show-more")).toBe(false);
   });
 
   it("rebases the expanded amount when the configured preview count changes", () => {
@@ -370,5 +663,57 @@ describe("buildHomeListLayout", () => {
       "thread",
     ]);
     expect(expanded.stickyHeaderIndices).toEqual([0, 3]);
+  });
+});
+
+describe("resolveGroupedProjectSettledThreadKeys", () => {
+  it("uses capability and lifecycle precedence before hiding a settled chat", () => {
+    const group = makeGroup("alpha", 4);
+    const explicitlySettled = {
+      ...group.threads[0]!,
+      settledOverride: "settled" as const,
+      settledAt: "2026-06-02T00:00:00.000Z",
+    };
+    const pinnedSettled = {
+      ...group.threads[1]!,
+      settledOverride: "settled" as const,
+      settledAt: "2026-06-02T00:00:00.000Z",
+      pinnedAt: "2026-06-02T00:00:00.000Z",
+    };
+    const runningSettled = withSessionStatus(
+      {
+        ...group.threads[2]!,
+        settledOverride: "settled" as const,
+        settledAt: "2026-06-02T00:00:00.000Z",
+      },
+      "running",
+    );
+    const snoozedSettled = {
+      ...group.threads[3]!,
+      settledOverride: "settled" as const,
+      settledAt: "2026-06-02T00:00:00.000Z",
+      snoozedAt: "2026-06-02T00:00:00.000Z",
+      snoozedUntil: "2026-06-04T00:00:00.000Z",
+    };
+
+    const supported = resolveGroupedProjectSettledThreadKeys({
+      threads: [explicitlySettled, pinnedSettled, runningSettled, snoozedSettled],
+      settlementEnvironmentIds: new Set([environmentId]),
+      snoozeEnvironmentIds: new Set([environmentId]),
+      changeRequestStateByKey: new Map(),
+      now: "2026-06-03T00:00:00.000Z",
+      autoSettleAfterDays: 3,
+    });
+    expect([...supported]).toEqual([`${environmentId}:${explicitlySettled.id}`]);
+
+    const unsupported = resolveGroupedProjectSettledThreadKeys({
+      threads: [explicitlySettled],
+      settlementEnvironmentIds: new Set(),
+      snoozeEnvironmentIds: new Set(),
+      changeRequestStateByKey: new Map(),
+      now: "2026-06-03T00:00:00.000Z",
+      autoSettleAfterDays: 3,
+    });
+    expect(unsupported.size).toBe(0);
   });
 });

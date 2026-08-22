@@ -40,6 +40,10 @@ import {
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
+import {
+  resolveInitialModelPickerInstance,
+  type ModelPickerInstanceSelection,
+} from "./modelPickerInstanceSelection";
 
 type ModelPickerItem = {
   slug: string;
@@ -63,6 +67,7 @@ function ModelListSeparator() {
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
   /** The instance currently selected in the composer (combobox "value"). */
   activeInstanceId: ProviderInstanceId;
+  preferredInstanceId?: ProviderInstanceId | null | undefined;
   model: string;
   /**
    * When set, the picker is locked to the given driver kind — typically
@@ -90,6 +95,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   terminalOpen: boolean;
   onRequestClose?: () => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
+  onInstanceSelect?: (instanceId: ProviderInstanceId) => void;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
   const {
@@ -106,15 +112,16 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const modelListRef = useRef<LegendListRef | null>(null);
   const highlightedModelKeyRef = useRef<string | null>(null);
   const favorites = useClientSettings((s) => s.favorites ?? []);
-  const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | "favorites">(
-    () => {
-      if (props.lockedProvider !== null) {
-        // When locked, prime the sidebar to the currently-active instance
-        // so jumping into the picker keeps the focused instance visible.
-        return props.activeInstanceId;
-      }
-      return favorites.length > 0 ? "favorites" : props.activeInstanceId;
-    },
+  const [selectedInstanceId, setSelectedInstanceId] = useState<ModelPickerInstanceSelection>(() =>
+    resolveInitialModelPickerInstance({
+      activeInstanceId: props.activeInstanceId,
+      preferredInstanceId: props.preferredInstanceId,
+      selectableInstanceIds: new Set(
+        instanceEntries.filter(isProviderInstancePickerReady).map((entry) => entry.instanceId),
+      ),
+      isLocked: props.lockedProvider !== null,
+      hasFavorites: favorites.length > 0,
+    }),
   );
   const [expandedLegacyInstances, setExpandedLegacyInstances] = useState(
     () =>
@@ -137,13 +144,16 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   }, []);
 
   const handleSelectInstance = useCallback(
-    (instanceId: ProviderInstanceId | "favorites") => {
+    (instanceId: ModelPickerInstanceSelection) => {
       setSelectedInstanceId(instanceId);
+      if (instanceId !== "favorites") {
+        props.onInstanceSelect?.(instanceId);
+      }
       window.requestAnimationFrame(() => {
         focusSearchInput();
       });
     },
-    [focusSearchInput],
+    [focusSearchInput, props.onInstanceSelect],
   );
 
   useLayoutEffect(() => {
@@ -763,7 +773,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         isSelected={
                           modelKey === modelPickerModelKey(props.activeInstanceId, props.model)
                         }
-                        showProvider
+                        showProvider={isSearching || selectedInstanceId === "favorites"}
                         preferShortName={!isLocked}
                         useTriggerLabel={false}
                         showNewBadge={isModelPickerNewModel(model.driverKind, model.slug)}
@@ -773,7 +783,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       />
                     );
                   }}
-                  estimatedItemSize={52}
+                  estimatedItemSize={38}
                   drawDistance={480}
                   recycleItems
                   contentContainerClassName="pl-2 pr-px"

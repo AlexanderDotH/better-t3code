@@ -733,6 +733,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (store) => store.syncPersistedAttachments,
   );
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
+  const preferredModelPickerInstanceId = useComposerDraftStore(
+    (store) => store.stickyActiveProvider,
+  );
+  const setStickyActiveProvider = useComposerDraftStore((store) => store.setStickyActiveProvider);
 
   // ------------------------------------------------------------------
   // Model state
@@ -3339,6 +3343,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   <ProviderModelPicker
                     compact={isComposerFooterCompact}
                     activeInstanceId={selectedInstanceId}
+                    preferredInstanceId={preferredModelPickerInstanceId}
                     model={selectedModelForPickerWithCustomFallback}
                     lockedProvider={lockedProvider}
                     lockedContinuationGroupKey={lockedContinuationGroupKey}
@@ -3358,6 +3363,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       setIsComposerModelPickerOpen(open);
                     }}
                     getModelDisabledReason={getModelDisabledReason}
+                    onInstanceSelect={setStickyActiveProvider}
                     onInstanceModelChange={onProviderModelSelect}
                   />
                 )}

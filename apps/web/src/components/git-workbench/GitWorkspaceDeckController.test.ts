@@ -2,11 +2,23 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   resolveGitDeckCardIds,
+  resolveScopedWorkspaceDeckActiveCard,
   shouldLoadGitRepositoryInsights,
   shouldLoadGitWorkbenchData,
 } from "./GitWorkspaceDeckController";
 
 describe("workspace deck controller policy", () => {
+  it("does not render the previous chat's workspace card while the next chat loads", () => {
+    expect(
+      resolveScopedWorkspaceDeckActiveCard({
+        availableCardIds: ["chat", "git", "mcp"],
+        currentSelection: { card: "mcp", scopeKey: "environment:/repo:thread-a" },
+        rememberedCard: null,
+        scopeKey: "environment:/repo:thread-b",
+      }),
+    ).toBe("chat");
+  });
+
   it("registers Git between Chat and MCP only after repository capability is confirmed", () => {
     expect(
       resolveGitDeckCardIds({

@@ -47,6 +47,10 @@
       "types": "./src/projectThreadPreviewSync.ts",
       "default": "./src/projectThreadPreviewSync.ts"
     },
+    "./project-thread-preview": {
+      "types": "./src/projectThreadPreview.ts",
+      "default": "./src/projectThreadPreview.ts"
+    },
     "./resource-protection": {
       "types": "./src/resourceProtection.ts",
       "default": "./src/resourceProtection.ts"

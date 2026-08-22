@@ -17,4 +17,10 @@ describe("workspace card peek layout", () => {
       /\.workspace-card-deck__peek \.chat-composer-context-strip\s*\{[^}]*width:/,
     );
   });
+
+  it("keeps Git controls inside the fixed-height card peek", () => {
+    expect(branchToolbarSource).toMatch(
+      /cardPeek\s*\?\s*"my-0 py-0"\s*:\s*orientation === "previous"/,
+    );
+  });
 });

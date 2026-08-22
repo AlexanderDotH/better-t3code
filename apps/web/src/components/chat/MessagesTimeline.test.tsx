@@ -11,8 +11,28 @@ import {
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
+
+const clientSettingsState = vi.hoisted(() => ({ showReasoning: false }));
+
+vi.mock("../../hooks/useSettings", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../hooks/useSettings")>();
+  return {
+    ...actual,
+    useClientSettings: <T,>(
+      selector?: (
+        settings: ReturnType<typeof actual.getClientSettings> & { showReasoning: boolean },
+      ) => T,
+    ) => {
+      const settings = {
+        ...actual.getClientSettings(),
+        showReasoning: clientSettingsState.showReasoning,
+      };
+      return selector ? selector(settings) : settings;
+    },
+  };
+});
 
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
@@ -180,6 +200,10 @@ beforeAll(async () => {
 
   ({ MessagesTimeline, resolveInitialStreamAnimation } = await import("./MessagesTimeline"));
 }, 30_000);
+
+beforeEach(() => {
+  clientSettingsState.showReasoning = false;
+});
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const MESSAGE_CREATED_AT = "2026-03-17T19:12:28.000Z";
@@ -820,5 +844,39 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("lucide-x");
     expect(markup).toContain('aria-label="Tool call failed"');
+  });
+
+  it("renders opted-in provider reasoning as expanded, unboxed chat content", () => {
+    const timelineEntries = [
+      {
+        id: "reasoning-entry",
+        kind: "work" as const,
+        createdAt: MESSAGE_CREATED_AT,
+        entry: {
+          id: "reasoning-1",
+          createdAt: MESSAGE_CREATED_AT,
+          label: "Thinking",
+          tone: "thinking" as const,
+          sourceActivityKind: "reasoning.text",
+          detail: "Inspecting the repository before editing.",
+        },
+      },
+    ];
+
+    const defaultMarkup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} />,
+    );
+    clientSettingsState.showReasoning = true;
+    const optedInMarkup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} />,
+    );
+
+    expect(defaultMarkup).not.toContain('data-reasoning-output="true"');
+    expect(optedInMarkup).toContain('data-reasoning-output="true"');
+    expect(optedInMarkup).toContain('aria-expanded="true"');
+    expect(optedInMarkup).toContain('aria-label="Collapse reasoning"');
+    expect(optedInMarkup).toContain("Inspecting the repository before editing.");
+    expect(optedInMarkup).not.toContain("border-s");
+    expect(optedInMarkup).not.toContain("rounded-md");
   });
 });

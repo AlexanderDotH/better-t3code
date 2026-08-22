@@ -143,6 +143,11 @@ const bufferedFileEdits = new Map<string, BufferedFileEdit>();
 const deckSelectionByThread = new Map<string, ChatWorkspaceCardId>();
 const DECK_SELECTION_LIMIT = 200;
 
+interface ScopedWorkspaceDeckSelection {
+  readonly card: ChatWorkspaceCardId;
+  readonly scopeKey: string;
+}
+
 function rememberDeckSelection(scopeKey: string, card: ChatWorkspaceCardId): void {
   deckSelectionByThread.delete(scopeKey);
   deckSelectionByThread.set(scopeKey, card);
@@ -151,6 +156,25 @@ function rememberDeckSelection(scopeKey: string, card: ChatWorkspaceCardId): voi
     if (oldest === undefined) break;
     deckSelectionByThread.delete(oldest);
   }
+}
+
+export function resolveScopedWorkspaceDeckActiveCard(input: {
+  readonly availableCardIds: readonly ChatWorkspaceCardId[];
+  readonly currentSelection: ScopedWorkspaceDeckSelection;
+  readonly rememberedCard: ChatWorkspaceCardId | null;
+  readonly scopeKey: string;
+}): ChatWorkspaceCardId {
+  const scopedCard =
+    input.currentSelection.scopeKey === input.scopeKey
+      ? input.currentSelection.card
+      : input.rememberedCard;
+  return (
+    resolveWorkspaceDeckActiveCard({
+      activeCard: scopedCard,
+      cardIds: input.availableCardIds,
+      fallbackCard: "chat",
+    }) ?? "chat"
+  );
 }
 
 export interface GitWorkspaceDeckControllerProps {
@@ -660,13 +684,16 @@ export function ChatWorkspaceDeckController(props: GitWorkspaceDeckControllerPro
   );
   const gitAvailable = isDesktop && availableCardIds.includes("git");
   const deckResetKey = scopeKey;
-  const [activeCard, setActiveCard] = useState<ChatWorkspaceCardId>("chat");
-  const resolvedActiveCard =
-    resolveWorkspaceDeckActiveCard({
-      activeCard,
-      cardIds: availableCardIds,
-      fallbackCard: "chat",
-    }) ?? "chat";
+  const [currentSelection, setCurrentSelection] = useState<ScopedWorkspaceDeckSelection>(() => ({
+    card: deckSelectionByThread.get(scopeKey) ?? "chat",
+    scopeKey,
+  }));
+  const resolvedActiveCard = resolveScopedWorkspaceDeckActiveCard({
+    availableCardIds,
+    currentSelection,
+    rememberedCard: deckSelectionByThread.get(scopeKey) ?? null,
+    scopeKey,
+  });
   const [expandedCard, setExpandedCard] = useState<ChatWorkspaceCardId | null>(null);
   const gitExpanded = expandedCard === "git";
   const mcpExpanded = expandedCard === "mcp";
@@ -710,7 +737,7 @@ export function ChatWorkspaceDeckController(props: GitWorkspaceDeckControllerPro
   const selectCard = useCallback(
     (card: ChatWorkspaceCardId) => {
       rememberDeckSelection(scopeKey, card);
-      setActiveCard(card);
+      setCurrentSelection({ card, scopeKey });
     },
     [scopeKey],
   );
@@ -867,7 +894,7 @@ export function ChatWorkspaceDeckController(props: GitWorkspaceDeckControllerPro
 
   useEffect(() => {
     previousActiveTurnRef.current = props.activeTurn;
-    setActiveCard(deckSelectionByThread.get(scopeKey) ?? "chat");
+    setCurrentSelection({ card: deckSelectionByThread.get(scopeKey) ?? "chat", scopeKey });
     setExpandedCard(null);
     setActiveTab("overview");
     setSelectedChangeId(null);
@@ -902,7 +929,7 @@ export function ChatWorkspaceDeckController(props: GitWorkspaceDeckControllerPro
         fallbackCard: "chat",
       }) ?? "chat";
     if (nextCard !== rememberedCard) rememberDeckSelection(scopeKey, nextCard);
-    setActiveCard(nextCard);
+    setCurrentSelection({ card: nextCard, scopeKey });
     if (expandedCard !== null && !availableCardIds.includes(expandedCard)) {
       setExpandedCard(null);
     }

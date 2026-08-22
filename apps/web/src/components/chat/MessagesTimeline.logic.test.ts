@@ -1011,6 +1011,69 @@ describe("deriveMessagesTimelineRows", () => {
       expanded: true,
     });
   });
+
+  it("keeps opted-in provider reasoning visible while older tool rows stay collapsed", () => {
+    const timelineEntries = [
+      {
+        id: "reasoning-entry",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:01Z",
+        entry: {
+          id: "reasoning-1",
+          createdAt: "2026-01-01T00:00:01Z",
+          label: "Thinking",
+          detail: "Inspecting the repository before editing.",
+          tone: "thinking" as const,
+          sourceActivityKind: "reasoning.text",
+        },
+      },
+      {
+        id: "work-entry-2",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:02Z",
+        entry: {
+          id: "work-2",
+          createdAt: "2026-01-01T00:00:02Z",
+          label: "read",
+          detail: "Reading package.json",
+          tone: "tool" as const,
+        },
+      },
+      {
+        id: "work-entry-3",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:03Z",
+        entry: {
+          id: "work-3",
+          createdAt: "2026-01-01T00:00:03Z",
+          label: "test",
+          detail: "Running focused tests",
+          tone: "tool" as const,
+        },
+      },
+    ];
+    const baseInput = {
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    };
+
+    const defaultRows = deriveMessagesTimelineRows(baseInput);
+    const optedInRows = deriveMessagesTimelineRows({ ...baseInput, showReasoning: true });
+
+    expect(defaultRows.map((row) => row.id)).toEqual(["work-3", "work-toggle:reasoning-entry"]);
+    expect(optedInRows.map((row) => row.id)).toEqual([
+      "reasoning-1",
+      "work-3",
+      "work-toggle:reasoning-entry",
+    ]);
+    expect(optedInRows.find((row) => row.kind === "work-toggle")).toMatchObject({
+      hiddenCount: 1,
+      expanded: false,
+    });
+  });
 });
 
 describe("computeStableMessagesTimelineRows", () => {

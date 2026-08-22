@@ -1,10 +1,18 @@
+import { resolveProjectThreadSections } from "@t3tools/client-runtime/project-thread-preview";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
+  effectiveSettled,
+  effectiveSnoozed,
+  type ChangeRequestStateLike,
+} from "@t3tools/client-runtime/state/thread-settled";
+import {
   DEFAULT_PROJECT_THREAD_PREVIEW_COUNT,
+  type EnvironmentId,
   type ProjectThreadPreviewCount,
 } from "@t3tools/contracts";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
+import { resolveThreadStatus } from "../threads/threadPresentation";
 import type { HomeThreadGroup } from "./homeThreadList";
 
 /** Threads shown per project before the "Show more" affordance appears. */
@@ -16,11 +24,14 @@ export interface HomeGroupDisplayState {
   readonly collapsed: boolean;
   /** Threads revealed beyond the configured project preview count. */
   readonly additionalVisibleCount: number;
+  /** Whether the user explicitly revealed this project's settled chats. */
+  readonly settledVisible: boolean;
 }
 
 export const DEFAULT_GROUP_DISPLAY_STATE: HomeGroupDisplayState = {
   collapsed: false,
   additionalVisibleCount: 0,
+  settledVisible: false,
 };
 
 export interface HomeHeaderListItem {
@@ -53,6 +64,9 @@ export interface HomeShowMoreListItem {
   readonly hiddenCount: number;
   /** Whether more than the initial count is revealed, so "Show less" applies. */
   readonly canShowLess: boolean;
+  /** Settled controls appear only after every non-settled chat is visible. */
+  readonly canToggleSettled: boolean;
+  readonly settledVisible: boolean;
 }
 
 export interface HomeOlderProjectsListItem {
@@ -74,7 +88,12 @@ export interface HomeListLayout {
   readonly stickyHeaderIndices: ReadonlyArray<number>;
 }
 
-export type HomeGroupDisplayAction = "toggle-collapsed" | "show-more" | "show-less";
+export type HomeGroupDisplayAction =
+  | "toggle-collapsed"
+  | "show-more"
+  | "show-settled"
+  | "hide-settled"
+  | "show-less";
 
 export function nextGroupDisplayState(
   current: HomeGroupDisplayState,
@@ -88,8 +107,12 @@ export function nextGroupDisplayState(
         ...current,
         additionalVisibleCount: current.additionalVisibleCount + HOME_SHOW_MORE_STEP,
       };
+    case "show-settled":
+      return { ...current, settledVisible: true };
+    case "hide-settled":
+      return { ...current, settledVisible: false };
     case "show-less":
-      return { ...current, additionalVisibleCount: 0 };
+      return { ...current, additionalVisibleCount: 0, settledVisible: false };
   }
 }
 
@@ -126,7 +149,9 @@ export function homeListItemsAreEqual(previous: HomeListItem, item: HomeListItem
         previous.type === "show-more" &&
         previous.groupKey === item.groupKey &&
         previous.hiddenCount === item.hiddenCount &&
-        previous.canShowLess === item.canShowLess
+        previous.canShowLess === item.canShowLess &&
+        previous.canToggleSettled === item.canToggleSettled &&
+        previous.settledVisible === item.settledVisible
       );
     case "older-projects":
       return (
@@ -137,12 +162,55 @@ export function homeListItemsAreEqual(previous: HomeListItem, item: HomeListItem
   }
 }
 
+function threadStaysVisibleBeyondPreview(thread: EnvironmentThreadShell): boolean {
+  const statusKind = resolveThreadStatus(thread)?.kind;
+  return statusKind === "working" || statusKind === "connecting";
+}
+
+function projectThreadKey(thread: EnvironmentThreadShell): string {
+  return `${thread.environmentId}:${thread.id}`;
+}
+
+export function resolveGroupedProjectSettledThreadKeys(input: {
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly settlementEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly snoozeEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly changeRequestStateByKey: ReadonlyMap<string, ChangeRequestStateLike>;
+  readonly now: string;
+  readonly autoSettleAfterDays: number | null;
+}): ReadonlySet<string> {
+  const settledThreadKeys = new Set<string>();
+  for (const thread of input.threads) {
+    if (!input.settlementEnvironmentIds.has(thread.environmentId)) continue;
+    if (
+      input.snoozeEnvironmentIds.has(thread.environmentId) &&
+      effectiveSnoozed(thread, { now: input.now })
+    ) {
+      continue;
+    }
+    if (thread.pinnedAt != null) continue;
+    const threadKey = projectThreadKey(thread);
+    if (
+      effectiveSettled(thread, {
+        now: input.now,
+        autoSettleAfterDays: input.autoSettleAfterDays,
+        changeRequestState: input.changeRequestStateByKey.get(threadKey) ?? null,
+      })
+    ) {
+      settledThreadKeys.add(threadKey);
+    }
+  }
+  return settledThreadKeys;
+}
+
 export function buildHomeListLayout(input: {
   readonly groups: ReadonlyArray<HomeThreadGroup>;
   readonly olderGroups?: ReadonlyArray<HomeThreadGroup>;
   readonly olderProjectsExpanded?: boolean;
   readonly projectThreadPreviewCount: ProjectThreadPreviewCount;
   readonly displayStates: ReadonlyMap<string, HomeGroupDisplayState>;
+  readonly settledThreadKeys?: ReadonlySet<string>;
+  readonly selectedThreadKey?: string | null;
   /**
    * When searching, pagination is suspended so every match stays visible.
    */
@@ -167,23 +235,48 @@ export function buildHomeListLayout(input: {
 
       if (collapsed) continue;
 
-      const totalCount = group.threads.length;
+      const settledThreadKeys = input.settledThreadKeys ?? new Set<string>();
+      const nonSettledCount = group.threads.filter(
+        (thread) => !settledThreadKeys.has(projectThreadKey(thread)),
+      ).length;
+      const recentNonSettledCount = group.recentThreads.filter(
+        (thread) => !settledThreadKeys.has(projectThreadKey(thread)),
+      ).length;
       // Default to the group's recent-activity window (last few days, or a small
       // fallback for stale projects), capped at the configured preview size. Until the
       // user taps "Show more", older threads stay hidden to save vertical space;
       // revealed state is stored relative to this baseline so changing the
       // preference immediately rebases the group.
       const baselineCount = Math.min(
-        group.recentThreads.length,
+        recentNonSettledCount > 0 ? recentNonSettledCount : nonSettledCount,
         input.projectThreadPreviewCount,
-        totalCount,
+        nonSettledCount,
       );
-      const visibleCount = input.showAllThreads
-        ? totalCount
-        : Math.min(baselineCount + display.additionalVisibleCount, totalCount);
-      const visibleThreads = group.threads.slice(0, visibleCount);
-      const hiddenCount = totalCount - visibleCount;
-      const hasShowMoreRow = !input.showAllThreads && totalCount > baselineCount;
+      const sections = resolveProjectThreadSections({
+        items: group.threads,
+        count: baselineCount + display.additionalVisibleCount,
+        showAllNonSettled: input.showAllThreads === true,
+        showSettled: input.showAllThreads === true,
+        isSettled: (thread) => settledThreadKeys.has(projectThreadKey(thread)),
+        alwaysVisible: threadStaysVisibleBeyondPreview,
+        keepSettledVisible: (thread) =>
+          projectThreadKey(thread) === (input.selectedThreadKey ?? null),
+      });
+      const hiddenCount = sections.hiddenNonSettledItems.length;
+      const settledVisible = display.settledVisible && hiddenCount === 0;
+      const visibleSettledThreads =
+        input.showAllThreads === true || settledVisible
+          ? sections.settledItems
+          : sections.visibleSettledItems;
+      const visibleThreads = [...sections.visibleNonSettledItems, ...visibleSettledThreads];
+      const canShowLess = display.additionalVisibleCount > 0 || settledVisible;
+      const canToggleSettled =
+        hiddenCount === 0 &&
+        (settledVisible
+          ? sections.settledItems.length > 0
+          : sections.hiddenSettledItems.length > 0);
+      const hasShowMoreRow =
+        input.showAllThreads !== true && (hiddenCount > 0 || canShowLess || canToggleSettled);
 
       // Pending (unsent) tasks lead the group and are never paginated away.
       for (const [pendingIndex, pendingTask] of group.pendingTasks.entries()) {
@@ -213,9 +306,9 @@ export function buildHomeListLayout(input: {
           key: `show-more:${group.key}`,
           groupKey: group.key,
           hiddenCount,
-          // Stale projects can start below the configured preview count, so
-          // compare against the group's own baseline.
-          canShowLess: visibleCount > baselineCount,
+          canShowLess,
+          canToggleSettled,
+          settledVisible,
         });
       }
     }

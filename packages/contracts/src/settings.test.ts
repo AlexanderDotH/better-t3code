@@ -47,6 +47,18 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("ClientSettings model reasoning display", () => {
+  it("defaults the reasoning display off when existing preferences omit it", () => {
+    expect(decodeClientSettings({}).showReasoning).toBe(false);
+    expect(DEFAULT_CLIENT_SETTINGS.showReasoning).toBe(false);
+  });
+
+  it("accepts explicit enable and disable patches", () => {
+    expect(decodeClientSettingsPatch({ showReasoning: true }).showReasoning).toBe(true);
+    expect(decodeClientSettingsPatch({ showReasoning: false }).showReasoning).toBe(false);
+  });
+});
+
 describe("ClientSettings experimental parallel plan implementation", () => {
   it("defaults the experiment off when legacy settings omit it", () => {
     const decoded = decodeClientSettings({});

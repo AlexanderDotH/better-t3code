@@ -5,7 +5,6 @@ import {
   getDisplayModelName,
   getTriggerDisplayModelLabel,
   type ModelEsque,
-  PROVIDER_ICON_BY_PROVIDER,
 } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
@@ -13,6 +12,7 @@ import { Kbd } from "../ui/kbd";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { modelPickerModelKey } from "./modelPickerKeys";
+import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 
 export const ModelListRow = memo(function ModelListRow(props: {
   index: number;
@@ -38,7 +38,6 @@ export const ModelListRow = memo(function ModelListRow(props: {
   disabledReason?: string | null;
   onToggleFavorite: () => void;
 }) {
-  const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
   const providerLabel = props.model.subProvider
     ? `${props.providerDisplayName} · ${props.model.subProvider}`
     : props.providerDisplayName;
@@ -51,7 +50,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
       disabled={Boolean(props.disabledReason)}
       contentClassName="flex w-full items-center gap-3"
       className={cn(
-        "group relative w-full !min-w-0 max-w-full cursor-pointer rounded-md px-2 py-2 transition-[background-color,box-shadow,color]",
+        "group relative w-full !min-w-0 max-w-full cursor-pointer rounded-md px-2 py-1.5 transition-[background-color,box-shadow,color]",
         "hover:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))] data-highlighted:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))] data-selected:bg-foreground/[0.08] data-selected:text-foreground data-selected:ring-0 [&[data-highlighted][data-selected]]:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))]",
         props.disabledReason &&
           "data-disabled:pointer-events-auto data-disabled:cursor-not-allowed data-disabled:hover:bg-transparent",
@@ -59,31 +58,44 @@ export const ModelListRow = memo(function ModelListRow(props: {
     >
       <div className="min-w-0 flex-1 text-left">
         <div className="flex min-w-0 items-center gap-2">
-          <div className="min-w-0 truncate text-xs font-medium leading-snug">
-            {props.useTriggerLabel
-              ? getTriggerDisplayModelLabel(props.model)
-              : getDisplayModelName(
-                  props.model,
-                  props.preferShortName ? { preferShortName: true } : undefined,
-                )}
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="min-w-0 truncate text-xs font-medium leading-snug">
+              {props.useTriggerLabel
+                ? getTriggerDisplayModelLabel(props.model)
+                : getDisplayModelName(
+                    props.model,
+                    props.preferShortName ? { preferShortName: true } : undefined,
+                  )}
+            </span>
+            {props.showNewBadge ? (
+              <span
+                className="shrink-0 rounded border border-update/35 bg-update/15 px-0.5 py-px text-[10px] font-bold uppercase leading-none tracking-wide text-update-foreground"
+                aria-label="New model"
+              >
+                New
+              </span>
+            ) : null}
           </div>
-          {props.showNewBadge ? (
+          {props.showProvider ? (
             <span
-              className="shrink-0 rounded border border-update/35 bg-update/15 px-0.5 py-px text-[10px] font-bold uppercase leading-none tracking-wide text-update-foreground"
-              aria-label="New model"
+              className="flex min-w-0 max-w-[46%] shrink items-center gap-1.5 text-xs font-normal leading-snug text-muted-foreground/70"
+              data-model-picker-provider-label="inline"
             >
-              New
+              <ProviderInstanceIcon
+                driverKind={props.driverKind}
+                displayName={props.providerDisplayName}
+                accentColor={props.providerAccentColor}
+                showBadge={Boolean(props.providerAccentColor)}
+                badgeContent="none"
+                className="size-3"
+                iconClassName="size-3"
+                badgeClassName="-right-0.5 -bottom-0.5 size-1.5 min-w-1.5 border-0 p-0"
+                indicatorBackground="var(--popover)"
+              />
+              <span className="truncate">{providerLabel}</span>
             </span>
           ) : null}
         </div>
-        {props.showProvider && (
-          <div className="mt-1 flex items-center gap-1.5">
-            {ProviderIcon ? <ProviderIcon className="size-3 shrink-0" /> : null}
-            <span className="truncate text-xs font-normal leading-snug text-muted-foreground/70">
-              {providerLabel}
-            </span>
-          </div>
-        )}
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">

@@ -33,6 +33,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   keybindings?: ResolvedKeybindingsConfig;
   modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
   activeProviderIconClassName?: string;
+  preferredInstanceId?: ProviderInstanceId | null | undefined;
   compact?: boolean;
   disabled?: boolean;
   terminalOpen?: boolean;
@@ -42,6 +43,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   triggerAriaLabel?: string;
   onOpenChange?: (open: boolean) => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
+  onInstanceSelect?: (instanceId: ProviderInstanceId) => void;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
@@ -193,6 +195,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       >
         <ModelPickerContent
           activeInstanceId={activeInstanceId}
+          preferredInstanceId={props.preferredInstanceId}
           model={props.model}
           lockedProvider={props.lockedProvider}
           lockedContinuationGroupKey={props.lockedContinuationGroupKey ?? null}
@@ -204,6 +207,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           {...(props.getModelDisabledReason
             ? { getModelDisabledReason: props.getModelDisabledReason }
             : {})}
+          {...(props.onInstanceSelect ? { onInstanceSelect: props.onInstanceSelect } : {})}
           onInstanceModelChange={handleInstanceModelChange}
         />
       </PopoverPopup>
