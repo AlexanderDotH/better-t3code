@@ -9,7 +9,12 @@ import {
   type WorkLogEntry,
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
-import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
+import {
+  type ChatVisualMode,
+  type MessageId,
+  type OrchestrationLatestTurn,
+  type TurnId,
+} from "@t3tools/contracts";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
 export const TIMELINE_MINIMAP_ITEM_SPACING = 8;
@@ -662,6 +667,7 @@ function deriveTurnFolds(input: {
 }
 
 export function deriveMessagesTimelineRows(input: {
+  chatVisualMode: ChatVisualMode;
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestTurn?: TimelineLatestTurn | null;
   runningTurnId?: TurnId | null;
@@ -715,6 +721,7 @@ export function deriveMessagesTimelineRows(input: {
     index >= activeTurnHeaderIndex &&
     (unsettledTurnId === null || timelineEntryTurnId(entry) === unsettledTurnId);
   const workEntryIsInActiveRun = (entry: WorkLogEntry) =>
+    input.chatVisualMode === "current" &&
     input.isWorking &&
     unsettledTurnId !== null &&
     entry.toolLifecycleStatus === "inProgress" &&
@@ -740,18 +747,20 @@ export function deriveMessagesTimelineRows(input: {
   });
 
   const activeToolEntries: Array<Extract<TimelineEntry, { kind: "work" }>> = [];
-  for (let index = input.timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
-    const entry = input.timelineEntries[index]!;
-    if (
-      !entryBelongsToActiveTurn(entry, index) ||
-      entry.kind !== "work" ||
-      entry.entry.agentSpawn !== undefined ||
-      entry.entry.tone === "error" ||
-      !workLogEntryIsToolLike(entry.entry)
-    ) {
-      break;
+  if (input.chatVisualMode === "current") {
+    for (let index = input.timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
+      const entry = input.timelineEntries[index]!;
+      if (
+        !entryBelongsToActiveTurn(entry, index) ||
+        entry.kind !== "work" ||
+        entry.entry.agentSpawn !== undefined ||
+        entry.entry.tone === "error" ||
+        !workLogEntryIsToolLike(entry.entry)
+      ) {
+        break;
+      }
+      activeToolEntries.unshift(entry);
     }
-    activeToolEntries.unshift(entry);
   }
   const activeWorkEntryIds = new Set(activeToolEntries.map((entry) => entry.id));
   const visibleActiveToolEntries = omitSupersededLifecycleMarkers(
@@ -781,7 +790,10 @@ export function deriveMessagesTimelineRows(input: {
       kind: "working",
       id: "working-indicator-row",
       createdAt: input.activeTurnStartedAt,
-      showThinking: activeWorkRow === null && !activeTurnHasVisibleContent,
+      showThinking:
+        input.chatVisualMode === "current" &&
+        activeWorkRow === null &&
+        !activeTurnHasVisibleContent,
     });
   };
   const appendActiveWorkRows = () => {
@@ -868,7 +880,11 @@ export function deriveMessagesTimelineRows(input: {
             entry.tone !== "error",
         );
         const activeInProgressToolEntries = visibleGroupedEntries.filter(workEntryIsInActiveRun);
-        if (onlyToolEntries && activeInProgressToolEntries.length > 0) {
+        if (
+          input.chatVisualMode === "current" &&
+          onlyToolEntries &&
+          activeInProgressToolEntries.length > 0
+        ) {
           const groupId = workGroupId(timelineEntry.id, timelineEntry.entry);
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
           const latestActiveToolEntry = activeInProgressToolEntries.at(-1)!;
@@ -893,7 +909,7 @@ export function deriveMessagesTimelineRows(input: {
               });
             }
           }
-        } else if (onlyToolEntries) {
+        } else if (input.chatVisualMode === "current" && onlyToolEntries) {
           const groupId = workGroupId(timelineEntry.id, timelineEntry.entry);
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
           const summaryKind = toolGroupSummaryKind(visibleGroupedEntries);
@@ -933,7 +949,10 @@ export function deriveMessagesTimelineRows(input: {
             isLastExpandedToolGroupEntry: false,
           });
         } else {
-          const groupId = workGroupId(timelineEntry.id, timelineEntry.entry);
+          const groupId =
+            input.chatVisualMode === "classic"
+              ? `work-group:${timelineEntry.id}`
+              : workGroupId(timelineEntry.id, timelineEntry.entry);
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
           // Agent-spawn notifications and opted-in reasoning are always visible:
           // neither a running fleet nor the requested reasoning transcript may
@@ -974,7 +993,10 @@ export function deriveMessagesTimelineRows(input: {
               groupId,
               hiddenCount: hiddenEntries.length,
               expanded,
-              onlyToolEntries: hiddenEntries.every(workLogEntryIsToolLike),
+              onlyToolEntries:
+                input.chatVisualMode === "classic"
+                  ? visibleGroupedEntries.every(workLogEntryIsToolLike)
+                  : hiddenEntries.every(workLogEntryIsToolLike),
               summary: null,
               summaryKind: null,
               hasFailure: hiddenEntries.some((entry) =>

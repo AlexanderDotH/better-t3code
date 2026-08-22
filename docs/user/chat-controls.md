@@ -70,17 +70,43 @@ without a surrounding card, border, or background.
 The preference is off by default and stored on the current client. Providers and models that do not
 supply reasoning updates continue to show the normal conversation without an empty placeholder.
 
-## Codex context window
+## Chat visuals
 
-Codex chats on web and desktop show a separate **Context** chip beside the other composer controls.
-Open it to choose one of 20 stable slider positions, from **Model default** through **1.05M** tokens.
-The chip always shows the selected size. **Model default** leaves the context size to Codex and the
-active model instead of sending an override.
+Open **Settings > Appearance > Chat visuals** to choose the transcript presentation on web,
+desktop, and mobile. **Current** is the default and groups live or completed tool activity into
+concise summary rows. **Classic** restores the compact transcript: smaller work and fold rows, a
+three-dot working indicator, time-only timestamps, individual tool entries, and expandable
+**+N previous** history.
+
+The choice applies immediately without changing the conversation, provider, attachments, plans,
+reasoning, changed files, or scroll history. It synchronizes across connected T3 environments and
+is cached locally so the selected presentation still works offline. Disconnected environments are
+updated after they reconnect. The Appearance setting reports environments that are waiting,
+failed, or need a newer T3 server before they can synchronize this preference.
+
+## Composer controls
+
+On web and desktop, provider settings such as reasoning, service tier, interaction mode, and access
+mode are grouped under the ellipsis menu by default. The model picker, voice controls, and send
+actions remain directly available in the composer. To show the provider settings as separate
+controls instead, enable **Expanded chat controls** in **Settings > Appearance**. Expanded controls
+remain separate at ordinary desktop widths, including when the context selector is available.
+Genuinely narrow composers, or temporary wide action states, automatically return them to the
+ellipsis menu so the primary actions remain usable.
+
+### Codex context window
+
+For Codex chats, the ellipsis menu also shows the current context-window value and an inline slider
+over the available ladder, from **16K** through **1M** tokens. **Model default** appears at the active
+model's natural position and leaves the context size to Codex instead of sending an override. With
+expanded chat controls enabled on a wide composer, the same selection appears as a separate
+**Context** chip and opens its slider in a popover. A narrow composer uses the inline menu
+presentation instead.
 
 The selection belongs to the current chat, is stored with its thread, and synchronizes through the
 owning T3 environment to web, desktop, and mobile clients. It does not become the default for new
-chats. Mobile exposes the same selection in the chat's thread settings. A changed size is applied
-when the next Codex turn starts; an existing resumable Codex thread is reopened with that size.
+chats. Mobile keeps the same selection in the chat's thread settings. A changed size is applied when
+the next Codex turn starts; an existing resumable Codex thread is reopened with that size.
 
 ## Voice input
 

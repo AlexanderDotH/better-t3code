@@ -984,6 +984,74 @@ validationLayer("CodexAdapterLive validation", (it) => {
       Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
     );
   });
+
+  it.effect("gives general subagents the full MCP surface without nested delegation", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const configuredMcp = decodeMcpServerDefinition({
+      id: "configured",
+      name: "Configured",
+      enabled: true,
+      scope: "global",
+      transport: "http",
+      url: "https://example.com/mcp",
+      headers: {},
+    });
+    const resolveMcpServers = vi.fn(() => Effect.succeed([configuredMcp]));
+    const layer = Layer.effect(
+      CodexAdapter,
+      Effect.gen(function* () {
+        const codexConfig = decodeCodexSettings({});
+        return yield* makeCodexAdapter(codexConfig, {
+          makeRuntime: runtimeFactory.factory,
+          resolveMcpServers,
+        });
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    const threadId = asThreadId("general:thread:worker");
+    return Effect.gen(function* () {
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-general"),
+        threadId,
+        providerSessionId: "provider-session-general",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        endpoint: "http://127.0.0.1:43123/mcp/workspace",
+        authorizationHeader: "Bearer general-token",
+      });
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        purpose: "subagent-worker",
+        freshSession: true,
+        resumeCursor: { threadId: "must-not-resume" },
+        runtimeMode: "full-access",
+      });
+
+      NodeAssert.equal(resolveMcpServers.mock.calls.length, 1);
+      const runtimeInput = runtimeFactory.factory.mock.calls[0]?.[0];
+      NodeAssert.equal(runtimeInput?.runtimeMode, "full-access");
+      NodeAssert.deepStrictEqual(runtimeInput?.appServerArgs, [
+        "--disable",
+        "multi_agent",
+        "-c",
+        "mcp_servers.t3-code.url=http://127.0.0.1:43123/mcp/workspace",
+        "-c",
+        'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+      ]);
+      NodeAssert.equal(runtimeInput?.resumeCursor, undefined);
+      NodeAssert.deepStrictEqual(runtimeInput?.mcpServers, [configuredMcp]);
+      NodeAssert.equal(runtimeInput?.environment?.T3_MCP_BEARER_TOKEN, "general-token");
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+    );
+  });
 });
 
 describe("CodexAdapter resource protection", () => {

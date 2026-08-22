@@ -105,8 +105,8 @@ import { ComposerPendingReviewComments } from "./ComposerPendingReviewComments";
 import { ComposerPreviewAnnotationCards } from "./ComposerPreviewAnnotationCards";
 import {
   resolveComposerFooterGapClassName,
+  shouldUseCompactComposerControls,
   shouldUseCompactComposerPrimaryActions,
-  shouldUseCompactComposerFooter,
 } from "../composerFooterLayout";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
 import { ProviderModelPicker } from "./ProviderModelPicker";
@@ -124,6 +124,7 @@ import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
   getComposerPromptInjectionState,
   getComposerProviderState,
+  renderProviderContextWindowMenuContent,
   renderProviderContextWindowPicker,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
@@ -1047,7 +1048,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     null,
   );
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
-  const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
+  const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(
+    () => !settings.showExpandedComposerControls,
+  );
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
@@ -1327,7 +1330,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     modelOptions: composerModelOptions?.[selectedInstanceId],
     prompt,
     onPromptChange: setPromptFromTraits,
-    onThreadModelSelectionChange,
     planModeEnabled: settings.planModeEnabled,
   });
   const providerTraitsPicker = renderProviderTraitsPicker({
@@ -1342,6 +1344,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onPromptChange: setPromptFromTraits,
     planModeEnabled: settings.planModeEnabled,
   });
+  const providerContextWindowMenuContent = renderProviderContextWindowMenuContent({
+    provider: selectedProvider,
+    instanceId: selectedInstanceId,
+    ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
+    ...(routeKind === "draft" && draftId ? { draftId } : {}),
+    model: selectedModel,
+    models: selectedProviderModels,
+    modelOptions: composerModelOptions?.[selectedInstanceId],
+    prompt,
+    onPromptChange: setPromptFromTraits,
+    onThreadModelSelectionChange,
+    planModeEnabled: settings.planModeEnabled,
+  });
   const providerContextWindowPicker = renderProviderContextWindowPicker({
     provider: selectedProvider,
     instanceId: selectedInstanceId,
@@ -1352,6 +1367,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     modelOptions: composerModelOptions?.[selectedInstanceId],
     prompt,
     onPromptChange: setPromptFromTraits,
+    onThreadModelSelectionChange,
     planModeEnabled: settings.planModeEnabled,
   });
   const composerFooterHasContextWindowControl = Boolean(providerContextWindowPicker);
@@ -1572,7 +1588,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const measureComposerFormWidth = () => composerForm.clientWidth;
     const measureFooterCompactness = () => {
       const composerFormWidth = measureComposerFormWidth();
-      const footerCompact = shouldUseCompactComposerFooter(composerFormWidth, {
+      const footerCompact = shouldUseCompactComposerControls(composerFormWidth, {
+        showExpandedComposerControls: settings.showExpandedComposerControls,
         hasContextWindowControl: composerFooterHasContextWindowControl,
         hasWideActions: composerFooterHasWideActions,
       });
@@ -1613,6 +1630,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerFooterActionLayoutKey,
     composerFooterHasContextWindowControl,
     composerFooterHasWideActions,
+    settings.showExpandedComposerControls,
   ]);
 
   // ------------------------------------------------------------------
@@ -3036,7 +3054,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     >
       {showComposerTopDrawer && (!isTasksDrawerOpen || hasBlockingComposerTopDrawer) ? (
         <div
-          className="chat-composer-top-drawer"
+          className="chat-composer-top-drawer chat-composer-top-drawer-floating"
           data-chat-composer-top-drawer="true"
           data-variant={activePendingApproval ? "warning" : "info"}
         >
@@ -3543,8 +3561,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     />
                   )}
 
-                  {providerContextWindowPicker ||
-                  (!isComposerFooterCompact && providerTraitsPicker) ? (
+                  {!isComposerFooterCompact &&
+                  (providerContextWindowPicker || providerTraitsPicker) ? (
                     <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
                   ) : null}
 
@@ -3554,6 +3572,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       runtimeMode={runtimeMode}
                       showInteractionModeSelect={planModeUiEnabled}
                       traitsMenuContent={providerTraitsMenuContent}
+                      contextWindowMenuContent={providerContextWindowMenuContent}
                       onInteractionModeChange={handleInteractionModeChange}
                       onRuntimeModeChange={handleRuntimeModeChange}
                     />
@@ -3570,7 +3589,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       />
                     </>
                   )}
-                  {isComposerFooterCompact ? providerContextWindowPicker : null}
                 </div>
 
                 {/* Right side: send / stop button */}

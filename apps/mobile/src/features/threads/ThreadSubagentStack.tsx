@@ -32,6 +32,7 @@ import {
   mobileSubagentDisplayName,
   mobileSubagentHistoryIsVisible,
   mobileSubagentTranscriptEntryKey,
+  mobileSubagentTranscriptMetadata,
   nextRecentSubagentExpiryDelayMs,
   reduceMobileSubagentHistory,
   type MobileSubagentTranscriptEntry,
@@ -155,9 +156,7 @@ function SubagentTranscriptContent(props: {
               {mobileSubagentDisplayName(props.detail)}
             </Text>
             <Text className="mt-1 text-xs text-foreground-muted">
-              {[props.detail.status, props.detail.model, props.detail.reasoningEffort]
-                .filter(Boolean)
-                .join(" · ")}
+              {mobileSubagentTranscriptMetadata(props.detail).join(" · ")}
             </Text>
             {props.detail.latestProgress ? (
               <Text className="mt-2 text-sm text-foreground-secondary">

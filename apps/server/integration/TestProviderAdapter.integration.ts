@@ -2,6 +2,7 @@ import {
   ApprovalRequestId,
   EventId,
   ProviderApprovalDecision,
+  ProviderUserInputAnswers,
   ProviderRuntimeEvent,
   RuntimeSessionId,
   ProviderSession,
@@ -20,7 +21,11 @@ import {
   type ProviderAdapterError,
 } from "../src/provider/Errors.ts";
 import type {
+  ProviderAdapterCapabilities,
+  ProviderForceStopResult,
   ProviderAdapterShape,
+  ProviderMcpRuntimeAdapter,
+  ProviderMcpRuntimeTarget,
   ProviderThreadSnapshot,
   ProviderThreadTurnSnapshot,
 } from "../src/provider/Services/ProviderAdapter.ts";
@@ -196,10 +201,17 @@ export interface TestProviderAdapterHarness {
     readonly requestId: ApprovalRequestId;
     readonly decision: ProviderApprovalDecision;
   }>;
+  readonly getUserInputResponses: (threadId: ThreadId) => ReadonlyArray<{
+    readonly threadId: ThreadId;
+    readonly requestId: ApprovalRequestId;
+    readonly answers: ProviderUserInputAnswers;
+  }>;
 }
 
-interface MakeTestProviderAdapterHarnessOptions {
+export interface MakeTestProviderAdapterHarnessOptions {
   readonly provider?: ProviderDriverKind;
+  readonly capabilities?: ProviderAdapterCapabilities;
+  readonly forceStopResult?: ProviderForceStopResult;
 }
 
 function nowIso(): string {
@@ -226,6 +238,14 @@ function missingSessionEffect(
 export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapterHarnessOptions) =>
   Effect.gen(function* () {
     const provider = options?.provider ?? ProviderDriverKind.make("codex");
+    const capabilities: ProviderAdapterCapabilities = options?.capabilities ?? {
+      sessionModelSwitch: "in-session",
+      mcp: "unsupported",
+    };
+    const forceStopResult: ProviderForceStopResult = options?.forceStopResult ?? {
+      outcome: "terminated",
+      mechanism: "runtime-close",
+    };
     const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
     let sessionCount = 0;
     let eventCount = 0;
@@ -238,6 +258,14 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
         readonly threadId: ThreadId;
         readonly requestId: ApprovalRequestId;
         readonly decision: ProviderApprovalDecision;
+      }>
+    >();
+    const userInputResponsesBySession = new Map<
+      ThreadId,
+      Array<{
+        readonly threadId: ThreadId;
+        readonly requestId: ApprovalRequestId;
+        readonly answers: ProviderUserInputAnswers;
       }>
     >();
 
@@ -401,14 +429,38 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
     const interruptTurn: ProviderAdapterShape<ProviderAdapterError>["interruptTurn"] = (
       threadId,
       turnId,
-    ) =>
-      sessions.has(threadId)
-        ? Effect.sync(() => {
-            const existing = interruptCallsBySession.get(threadId) ?? [];
-            existing.push(turnId);
-            interruptCallsBySession.set(threadId, existing);
-          })
-        : missingSessionEffect(provider, threadId);
+      expectedRuntimeSessionId,
+    ) => {
+      const state = sessions.get(threadId);
+      if (!state) {
+        return missingSessionEffect(provider, threadId);
+      }
+      if (
+        expectedRuntimeSessionId !== undefined &&
+        state.runtimeSessionId !== expectedRuntimeSessionId
+      ) {
+        return Effect.void;
+      }
+      return Effect.sync(() => {
+        const existing = interruptCallsBySession.get(threadId) ?? [];
+        existing.push(turnId);
+        interruptCallsBySession.set(threadId, existing);
+      });
+    };
+
+    const forceStopSession: ProviderAdapterShape<ProviderAdapterError>["forceStopSession"] = (
+      threadId,
+      expectedRuntimeSessionId,
+    ) => {
+      const state = sessions.get(threadId);
+      if (!state || state.runtimeSessionId !== expectedRuntimeSessionId) {
+        return Effect.succeed({ outcome: "terminated", mechanism: "already-stopped" });
+      }
+      return Effect.sync(() => {
+        sessions.delete(threadId);
+        return forceStopResult;
+      });
+    };
 
     const respondToRequest: ProviderAdapterShape<ProviderAdapterError>["respondToRequest"] = (
       threadId,
@@ -429,9 +481,16 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
 
     const respondToUserInput: ProviderAdapterShape<ProviderAdapterError>["respondToUserInput"] = (
       threadId,
-      _requestId,
-      _answers,
-    ) => (sessions.has(threadId) ? Effect.void : missingSessionEffect(provider, threadId));
+      requestId,
+      answers,
+    ) =>
+      sessions.has(threadId)
+        ? Effect.sync(() => {
+            const existing = userInputResponsesBySession.get(threadId) ?? [];
+            existing.push({ threadId, requestId, answers });
+            userInputResponsesBySession.set(threadId, existing);
+          })
+        : missingSessionEffect(provider, threadId);
 
     const stopSession: ProviderAdapterShape<ProviderAdapterError>["stopSession"] = (threadId) =>
       Effect.sync(() => {
@@ -486,15 +545,36 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
         sessions.clear();
       });
 
+    const requireMcpRuntimeTarget = (
+      input: ProviderMcpRuntimeTarget,
+    ): Effect.Effect<SessionState, ProviderAdapterError> => {
+      const state = sessions.get(input.threadId);
+      if (
+        !state ||
+        state.runtimeSessionId !== input.runtimeSessionId ||
+        state.session.providerInstanceId !== input.providerInstanceId
+      ) {
+        return missingSessionEffect(provider, input.threadId);
+      }
+      return Effect.succeed(state);
+    };
+
+    const mcpRuntime: ProviderMcpRuntimeAdapter<ProviderAdapterError> | undefined =
+      capabilities.mcp === "unsupported"
+        ? undefined
+        : {
+            getSnapshot: (input) => requireMcpRuntimeTarget(input).pipe(Effect.as([])),
+            applyConfiguration: (input) => requireMcpRuntimeTarget(input).pipe(Effect.asVoid),
+          };
+
     const adapter: ProviderAdapterShape<ProviderAdapterError> = {
       provider,
-      capabilities: {
-        sessionModelSwitch: "in-session",
-        mcp: "unsupported",
-      },
+      capabilities,
+      ...(mcpRuntime === undefined ? {} : { mcpRuntime }),
       startSession,
       sendTurn,
       interruptTurn,
+      forceStopSession,
       respondToRequest,
       respondToUserInput,
       stopSession,
@@ -562,6 +642,20 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       return [...responses];
     };
 
+    const getUserInputResponses = (
+      threadId: ThreadId,
+    ): ReadonlyArray<{
+      readonly threadId: ThreadId;
+      readonly requestId: ApprovalRequestId;
+      readonly answers: ProviderUserInputAnswers;
+    }> => {
+      const responses = userInputResponsesBySession.get(threadId);
+      if (!responses) {
+        return [];
+      }
+      return [...responses];
+    };
+
     return {
       adapter,
       provider,
@@ -572,5 +666,6 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       getInterruptCalls,
       listActiveSessionIds,
       getApprovalResponses,
+      getUserInputResponses,
     } satisfies TestProviderAdapterHarness;
   });

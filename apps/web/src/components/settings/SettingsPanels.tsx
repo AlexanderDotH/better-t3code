@@ -121,6 +121,13 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThemeLibrary } from "./ThemeSettings";
 import { SidebarLayoutSelector } from "./SidebarLayoutSetting";
 import { ProjectThreadPreviewCountSetting } from "./ProjectThreadPreviewCountSetting";
+import { ChatVisualModeSetting } from "./ChatVisualModeSetting";
+import {
+  chatVisualModeSyncStatusText,
+  useChatVisualMode,
+  useChatVisualModeSyncStatus,
+  useSetChatVisualMode,
+} from "../../chatVisualModeSync";
 import {
   projectThreadPreviewSyncStatusText,
   useProjectThreadPreviewCount,
@@ -993,6 +1000,12 @@ export function AppearanceSettingsPanel() {
   const [isImportThemeOpen, setIsImportThemeOpen] = useState(false);
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
+  const chatVisualMode = useChatVisualMode();
+  const setChatVisualMode = useSetChatVisualMode();
+  const chatVisualModeSyncStatus = useChatVisualModeSyncStatus();
+  const chatVisualModeStatusText =
+    chatVisualModeSyncStatusText(chatVisualModeSyncStatus) ??
+    (chatVisualModeSyncStatus.isSyncing ? "Syncing with connected servers…" : null);
   const { count: projectThreadPreviewCount, setCount: setProjectThreadPreviewCount } =
     useProjectThreadPreviewCount();
   const projectThreadPreviewSyncStatus = useProjectThreadPreviewSyncStatus();
@@ -1092,6 +1105,40 @@ export function AppearanceSettingsPanel() {
               checked={settings.showReasoning}
               onCheckedChange={(checked) => updateSettings({ showReasoning: Boolean(checked) })}
               aria-label="Show model reasoning in chat"
+            />
+          }
+        />
+
+        <ChatVisualModeSetting
+          mode={chatVisualMode}
+          onChange={setChatVisualMode}
+          status={chatVisualModeStatusText}
+        />
+
+        <SettingsRow
+          {...searchableSetting("expanded-chat-controls")}
+          description="Show separate provider, context, mode, and access controls in the chat composer when space permits. Narrow chats continue to use the controls menu."
+          resetAction={
+            settings.showExpandedComposerControls !==
+            DEFAULT_UNIFIED_SETTINGS.showExpandedComposerControls ? (
+              <SettingResetButton
+                label="expanded chat controls"
+                onClick={() =>
+                  updateSettings({
+                    showExpandedComposerControls:
+                      DEFAULT_UNIFIED_SETTINGS.showExpandedComposerControls,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.showExpandedComposerControls}
+              onCheckedChange={(checked) =>
+                updateSettings({ showExpandedComposerControls: Boolean(checked) })
+              }
+              aria-label="Show expanded chat controls"
             />
           }
         />

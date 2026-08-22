@@ -28,7 +28,7 @@ import {
 } from "./providerInstance.ts";
 import { SkillSettings } from "./skills.ts";
 
-// ── Synchronized Project Thread Preview Settings ───────────────
+// ── Synchronized Client Preferences ────────────────────────────
 
 export const MIN_PROJECT_THREAD_PREVIEW_COUNT = 1;
 export const MAX_PROJECT_THREAD_PREVIEW_COUNT = 15;
@@ -47,6 +47,19 @@ export const ProjectThreadPreviewSyncRecord = Schema.Struct({
   updateId: TrimmedNonEmptyString,
 });
 export type ProjectThreadPreviewSyncRecord = typeof ProjectThreadPreviewSyncRecord.Type;
+
+// ── Synchronized Chat Visual Settings ──────────────────────────
+
+export const ChatVisualMode = Schema.Literals(["current", "classic"]);
+export type ChatVisualMode = typeof ChatVisualMode.Type;
+export const DEFAULT_CHAT_VISUAL_MODE: ChatVisualMode = "current";
+
+export const ChatVisualModeSyncRecord = Schema.Struct({
+  mode: ChatVisualMode,
+  updatedAt: NonNegativeInt,
+  updateId: TrimmedNonEmptyString,
+});
+export type ChatVisualModeSyncRecord = typeof ChatVisualModeSyncRecord.Type;
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -240,6 +253,11 @@ export const ClientSettingsSchema = Schema.Struct({
   // Legacy plan mode. The composer's Build/Plan controls are hidden by default;
   // this flag restores them for providers that advertise interaction-mode support.
   planModeEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Keep composer controls bundled by default; web and desktop users can opt
+  // into expanded controls when the available composer width supports them.
+  showExpandedComposerControls: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   // Provider-supplied reasoning stays hidden by default.
   // Users can opt into an expanded inline presentation on web and desktop.
   showReasoning: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -730,6 +748,7 @@ export const DEFAULT_PARALLEL_PLAN_REVIEW_MODEL_SELECTION: ModelSelection = {
 
 export const ServerSettings = Schema.Struct({
   projectThreadPreviewSyncRecord: Schema.optionalKey(ProjectThreadPreviewSyncRecord),
+  chatVisualModeSyncRecord: Schema.optionalKey(ChatVisualModeSyncRecord),
   // Legacy token-by-token assistant output. Persisted settings and patches
   // using the former `enableAssistantStreaming` key are normalized at the
   // server boundary; current clients only receive this canonical key.
@@ -998,6 +1017,7 @@ const SecretSettingValuePatch = Schema.Struct({
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   projectThreadPreviewSyncRecord: Schema.optionalKey(ProjectThreadPreviewSyncRecord),
+  chatVisualModeSyncRecord: Schema.optionalKey(ChatVisualModeSyncRecord),
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
   /** @deprecated Use `enableLegacyTokenStreaming`. Kept for mixed-version clients. */
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
@@ -1119,6 +1139,7 @@ export const ClientSettingsPatch = Schema.Struct({
     ),
   ),
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
+  showExpandedComposerControls: Schema.optionalKey(Schema.Boolean),
   showReasoning: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),

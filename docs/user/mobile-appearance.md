@@ -13,3 +13,14 @@ To change themes:
 
 **System** follows the device appearance automatically. Theme, text, code, and terminal appearance
 preferences are stored on the device.
+
+## Chat visuals
+
+In **Settings > Appearance > Chat visuals**, choose **Current** for concise live and completed tool
+summaries or **Classic** for the original compact activity rows, smaller fold controls, time-only
+timestamps, and expandable previous tool entries. Current is the default.
+
+The selected chat presentation is cached on the device and synchronizes through compatible
+connected T3 environments to web, desktop, and other mobile clients. It remains available while
+offline; environments that are disconnected are updated after reconnecting. The setting shows when
+an environment is waiting, failed to update, or requires a newer server version.

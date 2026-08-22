@@ -179,6 +179,15 @@ export function resolveSubagentTranscriptMetadata(
     ].filter((value): value is string => value !== null);
   }
 
+  if (agent.origin === "t3-managed") {
+    return [
+      "Subagent",
+      firstNonEmpty(agent.providerInstanceId, agent.providerDriver),
+      firstNonEmpty(agent.model),
+      firstNonEmpty(agent.reasoningEffort),
+    ].filter((value): value is string => value !== null);
+  }
+
   return [agent.role, agent.model, agent.reasoningEffort].filter(
     (value): value is string => firstNonEmpty(value) !== null,
   );

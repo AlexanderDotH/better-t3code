@@ -15,7 +15,7 @@ layer("052_AuthSessionClientConnectionCompatibility", (it) => {
       const sql = yield* SqlClient.SqlClient;
 
       yield* runMigrations({ toMigrationInclusive: 51 });
-      const executed = yield* runMigrations();
+      const executed = yield* runMigrations({ toMigrationInclusive: 52 });
       assert.deepStrictEqual(
         executed.map(([id, name]) => [id, name]),
         [[52, "AuthSessionClientConnectionCompatibility"]],

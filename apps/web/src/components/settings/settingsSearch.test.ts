@@ -89,6 +89,14 @@ describe("searchSettings", () => {
       id: "model-reasoning",
       to: "/settings/appearance",
     });
+    expect(searchSettings("chat visuals")[0]).toMatchObject({
+      id: "chat-visuals",
+      to: "/settings/appearance",
+    });
+    expect(searchSettings("expanded chat controls")[0]).toMatchObject({
+      id: "expanded-chat-controls",
+      to: "/settings/appearance",
+    });
     expect(searchSettings("environment identification")[0]).toMatchObject({
       id: "environment-identification",
       to: "/settings/appearance",

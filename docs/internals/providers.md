@@ -78,6 +78,29 @@ Its `workspace_context`, edit, and bounded command tools invoke T3 services dire
 giving the model an MCP transport. User MCP and project-agent coordination are therefore reported
 as unsupported by this adapter rather than silently pretending to be connected.
 
+## T3-managed general subagents
+
+General delegation is separate from both provider-native agents and Fetch. An interactive provider
+session can inspect the live provider/model catalog, then start a fresh transient worker through
+`GeneralSubagentCoordinator`. Omitted routing fields inherit the caller's provider, exact current
+model, and model options. The delegating model can instead choose another enabled, installed,
+authenticated provider instance, a model advertised by that instance, and one of the reasoning
+values advertised by that exact model. This permits task-aware choices such as a specialist security
+model without teaching orchestration a fixed mapping from task labels to models.
+
+The selected worker starts with `purpose: "subagent-worker"`, the parent worktree, the parent's
+runtime mode, normal interaction mode, and the full provider tool surface. Its provider binding is
+transient and generation-fenced; it is never written to provider-session persistence. Runtime events
+are projected into the durable parent transcript with `origin: "t3-managed"`, exact provider/model
+metadata, progress, and terminal state. On restart, normal orphan-subagent reconciliation settles any
+projected worker whose in-memory runtime no longer exists.
+
+Codex, Claude, Cursor, Grok, and OpenCode can initiate this flow through the authenticated internal
+MCP toolkit. Gemini's direct SDK harness does not expose that toolkit, so Gemini cannot initiate
+delegation in this slice; it remains eligible as a selected worker and performs the delegated coding
+task through its T3-owned direct tools. General workers cannot ask hidden user questions, do not
+spawn nested agents, and are cancelled if their parent turn completes first.
+
 Fetch eligibility is another provider-snapshot capability. Providers without `fetchWorkers` do not
 appear in the Fetch model picker. The capability owns the recommended planning budget and command
 policy for transient exploration workers:

@@ -98,9 +98,29 @@ export function shouldRenderContextWindowControl(input: ContextWindowPickerProps
   return contextWindowDescriptor(input) !== null;
 }
 
-export const ContextWindowPicker = memo(function ContextWindowPicker(
-  props: ContextWindowPickerProps,
-) {
+const CONTEXT_WINDOW_SLIDER_ADJUSTMENT_KEYS = new Set([
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "End",
+  "Home",
+  "PageDown",
+  "PageUp",
+]);
+
+export function shouldStopContextWindowSliderKeyPropagation(key: string): boolean {
+  return CONTEXT_WINDOW_SLIDER_ADJUSTMENT_KEYS.has(key);
+}
+
+type ContextWindowSelection = {
+  readonly descriptor: SelectDescriptor;
+  readonly visibleDescriptor: SelectDescriptor;
+  readonly slider: ReturnType<typeof buildContextWindowSliderState>;
+  readonly selectIndex: (index: number, notifyThread: boolean) => void;
+};
+
+function useContextWindowSelection(props: ContextWindowPickerProps): ContextWindowSelection | null {
   const selected = contextWindowDescriptor(props);
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
   const externalValue = selected ? getProviderOptionCurrentValue(selected.descriptor) : undefined;
@@ -156,10 +176,28 @@ export const ContextWindowPicker = memo(function ContextWindowPicker(
     [props, selected, setProviderModelOptions],
   );
 
-  if (!selected || !slider) {
+  if (!selected || !visibleDescriptor || !slider) {
     return null;
   }
 
+  return {
+    descriptor: selected.descriptor,
+    visibleDescriptor,
+    slider,
+    selectIndex,
+  };
+}
+
+function ContextWindowRangeSlider({
+  selection,
+  sliderId,
+  isolateFromMenu,
+}: {
+  readonly selection: ContextWindowSelection;
+  readonly sliderId: string;
+  readonly isolateFromMenu: boolean;
+}) {
+  const { slider } = selection;
   const ratio = slider.progressPercent / 100;
   const sliderStyle = {
     "--settings-slider-progress": `${slider.progressPercent}%`,
@@ -167,18 +205,118 @@ export const ContextWindowPicker = memo(function ContextWindowPicker(
   } as CSSProperties;
 
   return (
+    <input
+      aria-label="Context window size"
+      aria-valuetext={slider.currentLabel}
+      className="settings-slider w-full"
+      data-chat-context-window-slider={isolateFromMenu ? "menu" : "picker"}
+      id={sliderId}
+      max={slider.maxIndex}
+      min={0}
+      onBlur={(event) => selection.selectIndex(Number(event.currentTarget.value), true)}
+      onChange={(event) => {
+        if (isolateFromMenu) {
+          event.stopPropagation();
+        }
+        selection.selectIndex(Number(event.currentTarget.value), false);
+      }}
+      onClick={(event) => {
+        if (isolateFromMenu) {
+          event.stopPropagation();
+        }
+      }}
+      onKeyDown={(event) => {
+        if (isolateFromMenu && shouldStopContextWindowSliderKeyPropagation(event.key)) {
+          event.stopPropagation();
+        }
+      }}
+      onKeyUp={(event) => {
+        if (!shouldStopContextWindowSliderKeyPropagation(event.key)) {
+          return;
+        }
+        if (isolateFromMenu) {
+          event.stopPropagation();
+        }
+        selection.selectIndex(Number(event.currentTarget.value), true);
+      }}
+      onPointerDown={(event) => {
+        if (isolateFromMenu) {
+          event.stopPropagation();
+        }
+      }}
+      onPointerUp={(event) => {
+        if (isolateFromMenu) {
+          event.stopPropagation();
+        }
+        selection.selectIndex(Number(event.currentTarget.value), true);
+      }}
+      step={1}
+      style={sliderStyle}
+      type="range"
+      value={slider.currentIndex}
+    />
+  );
+}
+
+function ContextWindowRangeEndpoints({ descriptor }: { readonly descriptor: SelectDescriptor }) {
+  return (
+    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+      <span>{descriptor.options[0]?.label}</span>
+      <span>{descriptor.options.at(-1)?.label}</span>
+    </div>
+  );
+}
+
+export const ContextWindowMenuContent = memo(function ContextWindowMenuContent(
+  props: ContextWindowPickerProps,
+) {
+  const selection = useContextWindowSelection(props);
+  if (!selection) {
+    return null;
+  }
+
+  return (
+    <div className="w-full px-2 py-1.5" data-chat-context-window-menu-content="true">
+      <div className="mb-1 flex items-baseline justify-between gap-3">
+        <div className="font-medium text-muted-foreground text-xs">Context window</div>
+        <output
+          className="font-medium tabular-nums text-foreground text-xs"
+          htmlFor="chat-context-window-menu-slider"
+        >
+          {selection.slider.currentLabel}
+        </output>
+      </div>
+      <ContextWindowRangeSlider
+        isolateFromMenu
+        selection={selection}
+        sliderId="chat-context-window-menu-slider"
+      />
+      <ContextWindowRangeEndpoints descriptor={selection.descriptor} />
+    </div>
+  );
+});
+
+export const ContextWindowPicker = memo(function ContextWindowPicker(
+  props: ContextWindowPickerProps,
+) {
+  const selection = useContextWindowSelection(props);
+  if (!selection) {
+    return null;
+  }
+
+  return (
     <Popover>
       <PopoverTrigger
         render={
           <ComposerControl
-            aria-label={`Context window: ${slider.currentLabel}`}
+            aria-label={`Context window: ${selection.slider.currentLabel}`}
             className="min-w-16 shrink-0 justify-between whitespace-nowrap px-2.5"
             data-chat-context-window-picker="true"
             variant="ghost"
           />
         }
       >
-        <span className="tabular-nums">{slider.triggerLabel}</span>
+        <span className="tabular-nums">{selection.slider.triggerLabel}</span>
         <ComposerControlChevron />
       </PopoverTrigger>
       <PopoverPopup
@@ -208,34 +346,20 @@ export const ContextWindowPicker = memo(function ContextWindowPicker(
                 className="font-semibold text-2xl tabular-nums tracking-tight text-foreground"
                 htmlFor="chat-context-window-slider"
               >
-                {slider.currentLabel}
+                {selection.slider.currentLabel}
               </output>
               <span className="rounded-md border border-border/60 bg-background/55 px-2 py-1 font-medium text-[10px] uppercase tracking-wide text-muted-foreground">
-                {visibleDescriptor?.options[slider.currentIndex]?.isDefault
+                {selection.visibleDescriptor.options[selection.slider.currentIndex]?.isDefault
                   ? "Model default"
                   : "Custom"}
               </span>
             </div>
-            <input
-              aria-label="Context window size"
-              aria-valuetext={slider.currentLabel}
-              className="settings-slider w-full"
-              id="chat-context-window-slider"
-              max={slider.maxIndex}
-              min={0}
-              onBlur={(event) => selectIndex(Number(event.currentTarget.value), true)}
-              onChange={(event) => selectIndex(Number(event.currentTarget.value), false)}
-              onKeyUp={(event) => selectIndex(Number(event.currentTarget.value), true)}
-              onPointerUp={(event) => selectIndex(Number(event.currentTarget.value), true)}
-              step={1}
-              style={sliderStyle}
-              type="range"
-              value={slider.currentIndex}
+            <ContextWindowRangeSlider
+              isolateFromMenu={false}
+              selection={selection}
+              sliderId="chat-context-window-slider"
             />
-            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-              <span>{selected.descriptor.options[0]?.label}</span>
-              <span>{selected.descriptor.options.at(-1)?.label}</span>
-            </div>
+            <ContextWindowRangeEndpoints descriptor={selection.descriptor} />
           </div>
         </div>
       </PopoverPopup>

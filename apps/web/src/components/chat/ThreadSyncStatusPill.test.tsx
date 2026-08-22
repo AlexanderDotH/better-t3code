@@ -13,9 +13,10 @@ describe("ThreadSyncStatusPill", () => {
     expect(markup).toContain('role="status"');
     expect(markup).toContain('data-thread-sync-drawer="true"');
     expect(markup).toContain("chat-composer-drawer-surface");
-    expect(markup).toContain("chat-composer-drawer-attached");
+    expect(markup).toContain("chat-composer-drawer-floating");
+    expect(markup).not.toContain("chat-composer-drawer-attached");
     expect(markup).toContain("chat-composer-drawer-slot");
-    expect(markup).toContain("pb-[calc(var(--chat-composer-attachment-overlap)_+_0.375rem)]");
+    expect(markup).toContain("py-2");
     expect(markup).toContain(label);
     expect(markup).not.toContain("animate-");
   });

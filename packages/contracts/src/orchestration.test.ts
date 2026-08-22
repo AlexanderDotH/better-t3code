@@ -1117,6 +1117,21 @@ it.effect("decodes T3 Fetch subagent provider metadata", () =>
   }),
 );
 
+it.effect("decodes T3-managed general subagent provider metadata", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationSubagentSummary({
+      ...orchestrationSubagentSummaryFixture,
+      origin: "t3-managed",
+      providerInstanceId: "codex",
+      providerDriver: "codex",
+    });
+
+    assert.strictEqual(parsed.origin, "t3-managed");
+    assert.strictEqual(parsed.providerInstanceId, "codex");
+    assert.strictEqual(parsed.providerDriver, "codex");
+  }),
+);
+
 it.effect("decodes a subagent detail using the existing transcript schemas", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeOrchestrationSubagentDetail({

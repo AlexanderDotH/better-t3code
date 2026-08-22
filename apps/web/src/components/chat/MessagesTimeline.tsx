@@ -1,4 +1,5 @@
 import {
+  type ChatVisualMode,
   type EnvironmentId,
   type MessageId,
   type ScopedThreadRef,
@@ -34,6 +35,8 @@ import { FileDiff } from "@pierre/diffs/react";
 import {
   deriveTimelineEntries,
   workEntryDisplayIndicatesToolFailure,
+  workEntryIndicatesToolNeutralStatus,
+  workEntryIndicatesToolSuccess,
   workLogEntryIsToolLike,
 } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
@@ -53,6 +56,7 @@ import {
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
+  MinusIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
   SearchIcon,
@@ -108,8 +112,13 @@ import {
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
-import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
+import {
+  formatChatTimestampTooltip,
+  formatDayAwareTimestamp,
+  formatShortTimestamp,
+} from "../../timestampFormat";
 import { useClientSettings } from "../../hooks/useSettings";
+import { useChatVisualMode } from "../../chatVisualModeSync";
 
 import {
   buildInlineTerminalContextText,
@@ -133,6 +142,7 @@ import {
 // ---------------------------------------------------------------------------
 
 interface TimelineRowSharedState {
+  chatVisualMode: ChatVisualMode;
   timestampFormat: TimestampFormat;
   routeThreadKey: string;
   threadRef: ScopedThreadRef | null;
@@ -152,6 +162,7 @@ interface TimelineRowSharedState {
 }
 
 interface TimelineRowActivityState {
+  activeTurnInProgress: boolean;
   isWorking: boolean;
   isRevertingCheckpoint: boolean;
   latestTurnId: TurnId | null;
@@ -193,6 +204,7 @@ function TimelineLoadEarlierHeader({
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const EMPTY_COMMITTED_MESSAGE_IDS: ReadonlySet<string> = new Set();
+const EMPTY_EXPANDED_WORK_GROUP_IDS: ReadonlySet<string> = new Set();
 
 interface InitialStreamAnimationInput {
   readonly committedScopeId: string | null;
@@ -301,6 +313,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   loadEarlier = null,
 }: MessagesTimelineProps) {
   const showReasoning = useClientSettings((settings) => settings.showReasoning);
+  const chatVisualMode = useChatVisualMode();
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
@@ -309,6 +322,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
   const previousContentInsetEndAdjustmentRef = useRef(contentInsetEndAdjustment);
+  const previousChatVisualModeRef = useRef(chatVisualMode);
+  const effectiveExpandedWorkGroupIds =
+    previousChatVisualModeRef.current === chatVisualMode
+      ? expandedWorkGroupIds
+      : EMPTY_EXPANDED_WORK_GROUP_IDS;
+
+  useEffect(() => {
+    if (previousChatVisualModeRef.current === chatVisualMode) {
+      return;
+    }
+    previousChatVisualModeRef.current = chatVisualMode;
+    setExpandedWorkGroupIds(new Set());
+  }, [chatVisualMode]);
 
   useLayoutEffect(() => {
     keepTimelineEndVisibleAfterOverlayGrowth({
@@ -427,11 +453,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const rawRows = useMemo(
     () =>
       deriveMessagesTimelineRows({
+        chatVisualMode,
         timelineEntries,
         latestTurn,
         runningTurnId,
         expandedTurnIds,
-        expandedWorkGroupIds,
+        expandedWorkGroupIds: effectiveExpandedWorkGroupIds,
         showReasoning,
         isWorking,
         activeTurnStartedAt,
@@ -439,11 +466,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         revertTurnCountByUserMessageId,
       }),
     [
+      chatVisualMode,
       timelineEntries,
       latestTurn,
       runningTurnId,
       expandedTurnIds,
-      expandedWorkGroupIds,
+      effectiveExpandedWorkGroupIds,
       showReasoning,
       isWorking,
       activeTurnStartedAt,
@@ -539,6 +567,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
+      chatVisualMode,
       timestampFormat,
       routeThreadKey,
       threadRef: parseScopedThreadKey(routeThreadKey),
@@ -557,6 +586,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       showReasoning,
     }),
     [
+      chatVisualMode,
       timestampFormat,
       routeThreadKey,
       markdownCwd,
@@ -576,12 +606,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
   const activityState = useMemo<TimelineRowActivityState>(
     () => ({
+      activeTurnInProgress: isWorking || latestTurn?.state === "running",
       isWorking,
       isRevertingCheckpoint,
       latestTurnId: latestTurn?.turnId ?? null,
       workingStepLabel,
     }),
-    [isRevertingCheckpoint, isWorking, latestTurn?.turnId, workingStepLabel],
+    [isRevertingCheckpoint, isWorking, latestTurn?.state, latestTurn?.turnId, workingStepLabel],
   );
 
   // Stable renderItem — no closure deps. Row components read shared state
@@ -958,6 +989,7 @@ type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["grouped
 type TimelineRow = MessagesTimelineRow;
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
+  const { chatVisualMode } = use(TimelineRowCtx);
   const isExpandedToolGroupEntry = row.kind === "work" && row.isExpandedToolGroupEntry;
   const isLastExpandedToolGroupEntry = row.kind === "work" && row.isLastExpandedToolGroupEntry;
   const isExpandedToolGroupHeader =
@@ -969,23 +1001,33 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       className={cn(
         // Commentary (non-terminal assistant) rows carry no metadata row, so
         // they sit closer to the work that follows them.
-        isExpandedToolGroupEntry
-          ? isLastExpandedToolGroupEntry
-            ? "pb-1"
-            : "pb-0"
-          : isExpandedToolGroupHeader
-            ? "pb-0"
-            : row.kind === "turn-fold" || row.kind === "working"
-              ? "pb-1.5"
-              : (row.kind === "message" &&
-                    row.message.role === "assistant" &&
-                    !row.showAssistantMeta) ||
-                  row.kind === "work" ||
-                  row.kind === "work-live" ||
-                  row.kind === "work-toggle" ||
-                  row.kind === "turn-plan"
-                ? "pb-2"
-                : "pb-4",
+        chatVisualMode === "classic"
+          ? (row.kind === "message" &&
+              row.message.role === "assistant" &&
+              !row.showAssistantMeta) ||
+            row.kind === "work" ||
+            row.kind === "work-live" ||
+            row.kind === "work-toggle" ||
+            row.kind === "turn-plan"
+            ? "pb-2"
+            : "pb-4"
+          : isExpandedToolGroupEntry
+            ? isLastExpandedToolGroupEntry
+              ? "pb-1"
+              : "pb-0"
+            : isExpandedToolGroupHeader
+              ? "pb-0"
+              : row.kind === "turn-fold" || row.kind === "working"
+                ? "pb-1.5"
+                : (row.kind === "message" &&
+                      row.message.role === "assistant" &&
+                      !row.showAssistantMeta) ||
+                    row.kind === "work" ||
+                    row.kind === "work-live" ||
+                    row.kind === "work-toggle" ||
+                    row.kind === "turn-plan"
+                  ? "pb-2"
+                  : "pb-4",
         row.kind === "message" && row.message.role === "assistant" ? "group/assistant" : null,
       )}
       data-timeline-row-id={row.id}
@@ -999,7 +1041,13 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
           isExpandedToolGroupEntry={row.isExpandedToolGroupEntry}
         />
       ) : null}
-      {row.kind === "work-live" ? <LiveWorkEntryTimelineRow row={row} /> : null}
+      {row.kind === "work-live" ? (
+        chatVisualMode === "classic" ? (
+          <WorkGroupSection groupedEntries={row.groupedEntries} isExpandedToolGroupEntry={false} />
+        ) : (
+          <LiveWorkEntryTimelineRow row={row} />
+        )
+      ) : null}
       {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
@@ -1099,7 +1147,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         <div className="flex shrink-0 items-center gap-2">
           <Tooltip>
             <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-              {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
+              {ctx.chatVisualMode === "classic"
+                ? formatShortTimestamp(row.message.createdAt, ctx.timestampFormat)
+                : formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
             </TooltipTrigger>
             <TooltipPopup>
               {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
@@ -1153,7 +1203,11 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         aria-expanded={row.expanded}
         data-scroll-anchor-ignore
         onClick={() => ctx.onToggleTurnFold(row.turnId)}
-        className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        className={
+          ctx.chatVisualMode === "classic"
+            ? "flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-xs text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+            : "flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        }
       >
         <span>{row.label}</span>
         <Icon className="size-3.5" />
@@ -1197,7 +1251,9 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
                 <TooltipTrigger
                   render={<p className="text-muted-foreground text-xs tabular-nums" />}
                 >
-                  {formatDayAwareTimestamp(row.message.updatedAt, ctx.timestampFormat)}
+                  {ctx.chatVisualMode === "classic"
+                    ? formatShortTimestamp(row.message.updatedAt, ctx.timestampFormat)
+                    : formatDayAwareTimestamp(row.message.updatedAt, ctx.timestampFormat)}
                 </TooltipTrigger>
                 <TooltipPopup>
                   {formatChatTimestampTooltip(row.message.updatedAt, ctx.timestampFormat)}
@@ -1347,6 +1403,32 @@ const TurnPlanTimelineRow = memo(function TurnPlanTimelineRow({
 
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
   const { workingStepLabel } = use(TimelineRowActivityCtx);
+  const { chatVisualMode } = use(TimelineRowCtx);
+  if (chatVisualMode === "classic") {
+    return (
+      <div className="py-0.5 pl-1.5">
+        <div className="flex min-w-0 items-center gap-2 pt-1 text-secondary-label text-[11px] tabular-nums">
+          <span className="inline-flex items-center gap-[3px]">
+            <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse" />
+            <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse [animation-delay:200ms]" />
+            <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse [animation-delay:400ms]" />
+          </span>
+          <span className="shrink-0">
+            {row.createdAt ? (
+              <>
+                Working for <WorkingTimer createdAt={row.createdAt} />
+              </>
+            ) : (
+              "Working..."
+            )}
+          </span>
+          {workingStepLabel ? (
+            <span className="min-w-0 truncate text-muted-foreground/55">· {workingStepLabel}</span>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
   return (
     <div>
       <div className="border-b border-border/60 pb-2 pt-1">
@@ -1413,15 +1495,18 @@ const WorkGroupSection = memo(function WorkGroupSection({
   groupedEntries: Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"];
   isExpandedToolGroupEntry: boolean;
 }) {
-  const { showReasoning, workspaceRoot } = use(TimelineRowCtx);
+  const { chatVisualMode, showReasoning, workspaceRoot } = use(TimelineRowCtx);
+  const classic = chatVisualMode === "classic";
   const nonEmptyEntries = useMemo(
     () =>
       groupedEntries.filter(
         (entry) =>
           (showReasoning && workEntryIsProviderReasoning(entry)) ||
-          workEntryIsVisibleInGroup(entry, isExpandedToolGroupEntry),
+          (classic
+            ? !workEntryIndicatesToolNeutralStatus(entry)
+            : workEntryIsVisibleInGroup(entry, isExpandedToolGroupEntry)),
       ),
-    [groupedEntries, isExpandedToolGroupEntry, showReasoning],
+    [classic, groupedEntries, isExpandedToolGroupEntry, showReasoning],
   );
   const onlyReasoningEntries =
     showReasoning && nonEmptyEntries.every((entry) => workEntryIsProviderReasoning(entry));
@@ -1434,14 +1519,15 @@ const WorkGroupSection = memo(function WorkGroupSection({
         ? "1 tool call"
         : `${nonEmptyEntries.length} tool calls`
       : "Work Log";
-  const GroupContainer = isExpandedToolGroupEntry ? "div" : "section";
+  const useExpandedCurrentLayout = !classic && isExpandedToolGroupEntry;
+  const GroupContainer = useExpandedCurrentLayout ? "div" : "section";
 
   if (nonEmptyEntries.length === 0) return null;
 
   return (
     <GroupContainer
-      className={cn("-mx-1 px-1", isExpandedToolGroupEntry ? "py-0" : "space-y-0.5 py-0.5")}
-      aria-label={isExpandedToolGroupEntry ? undefined : groupLabel}
+      className={cn("-mx-1 px-1", useExpandedCurrentLayout ? "py-0" : "space-y-0.5 py-0.5")}
+      aria-label={useExpandedCurrentLayout ? undefined : groupLabel}
     >
       {!onlyToolEntries && !onlyReasoningEntries && (
         <p className="px-0.5 pb-0.5 font-medium text-secondary-label text-[11px]">{groupLabel}</p>
@@ -1453,7 +1539,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
             showReasoning={showReasoning}
             workEntry={workEntry}
             workspaceRoot={workspaceRoot}
-            isExpandedToolGroupEntry={isExpandedToolGroupEntry}
+            isExpandedToolGroupEntry={useExpandedCurrentLayout}
           />
         ))}
       </div>
@@ -1591,6 +1677,9 @@ function WorkGroupToggleTimelineRow({
   row: Extract<TimelineRow, { kind: "work-toggle" }>;
 }) {
   const ctx = use(TimelineRowCtx);
+  if (ctx.chatVisualMode === "classic") {
+    return <ClassicWorkGroupToggleTimelineRow row={row} />;
+  }
   if (row.onlyToolEntries && row.summary) {
     return (
       <button
@@ -1651,6 +1740,48 @@ function WorkGroupToggleTimelineRow({
             )}
           />
         )}
+      </span>
+      {row.expanded ? (
+        <span className="font-medium text-foreground">
+          Show fewer {row.onlyToolEntries ? "tool calls" : "log entries"}
+        </span>
+      ) : (
+        <span className="font-medium text-foreground">
+          +{row.hiddenCount} previous {labelNoun}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function ClassicWorkGroupToggleTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "work-toggle" }>;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const labelNoun = row.onlyToolEntries
+    ? row.hiddenCount === 1
+      ? "tool call"
+      : "tool calls"
+    : row.hiddenCount === 1
+      ? "log entry"
+      : "log entries";
+
+  return (
+    <button
+      type="button"
+      className="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-[12px] leading-5 transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      aria-expanded={row.expanded}
+      onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
+    >
+      <span className="flex size-5 shrink-0 items-center justify-center text-icon-muted">
+        <ChevronDownIcon
+          className={cn(
+            "size-3.5 shrink-0 opacity-70 transition-transform duration-200",
+            row.expanded && "rotate-180",
+          )}
+        />
       </span>
       {row.expanded ? (
         <span className="font-medium text-foreground">
@@ -2679,12 +2810,16 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   isExpandedToolGroupEntry: boolean;
 }) {
   const { showReasoning, workEntry, workspaceRoot, isExpandedToolGroupEntry } = props;
-  // Before any hooks: spawn CTA rows render their own component.
+  const { chatVisualMode } = use(TimelineRowCtx);
+  // Spawn CTA rows render their own component.
   if (workEntry.agentSpawn) {
     return <AgentSpawnNotificationRow workEntry={workEntry} />;
   }
   if (showReasoning && workEntryIsProviderReasoning(workEntry) && workEntry.detail?.trim()) {
     return <ReasoningWorkEntryRow workEntry={workEntry} />;
+  }
+  if (chatVisualMode === "classic") {
+    return <ClassicPlainWorkEntryRow workEntry={workEntry} workspaceRoot={workspaceRoot} />;
   }
   return (
     <PlainWorkEntryRow
@@ -2838,6 +2973,164 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
               )}
             />
           </span>
+        </div>
+      </div>
+      {expanded && canExpand && expandedBody ? (
+        <div
+          className="mt-1 ms-7 cursor-default border-s border-border/45 ps-3 pt-0.5"
+          onClick={stopRowToggle}
+          onPointerDown={stopRowToggle}
+        >
+          <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
+        </div>
+      ) : null}
+    </div>
+  );
+});
+
+const ClassicPlainWorkEntryRow = memo(function ClassicPlainWorkEntryRow(props: {
+  workEntry: TimelineWorkEntry;
+  workspaceRoot: string | undefined;
+}) {
+  const { workEntry, workspaceRoot } = props;
+  const activity = use(TimelineRowActivityCtx);
+  const [expanded, setExpanded] = useState(false);
+  const iconConfig = workToneIcon(workEntry.tone);
+  const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
+  const entryIconName = showWarningIndicator ? "x" : workEntryIconName(workEntry);
+  const heading = toolWorkEntryHeading(workEntry);
+  const rawPreview = workEntryPreview(workEntry, workspaceRoot);
+  const preview =
+    rawPreview &&
+    normalizeCompactToolLabel(rawPreview).toLowerCase() ===
+      normalizeCompactToolLabel(heading).toLowerCase()
+      ? null
+      : rawPreview;
+  const displayText = preview ? `${heading} - ${preview}` : heading;
+  const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
+  const canExpand = expandedBody !== null;
+  const showFailedIndicator = workEntryDisplayIndicatesToolFailure(workEntry);
+  const showDestructiveRowStyle =
+    showFailedIndicator &&
+    (workEntry.sourceActivityKind === "runtime.error" || !workLogEntryIsToolLike(workEntry));
+  const iconWrapperClass = cn(
+    "flex size-5 shrink-0 items-center justify-center",
+    showWarningIndicator
+      ? "text-destructive"
+      : showDestructiveRowStyle
+        ? "text-destructive"
+        : workEntry.tone === "tool" || showFailedIndicator
+          ? "text-icon-muted"
+          : iconConfig.className,
+  );
+  const headingClass = showWarningIndicator
+    ? "font-medium text-warning"
+    : showDestructiveRowStyle
+      ? "font-medium text-destructive"
+      : "font-medium text-foreground";
+  const turnSettled = !activity.activeTurnInProgress;
+  const showNeutralIndicator = !turnSettled && workEntryIndicatesToolNeutralStatus(workEntry);
+  const showSuccessIndicator =
+    workEntryIndicatesToolSuccess(workEntry) ||
+    (turnSettled && workEntryIndicatesToolNeutralStatus(workEntry));
+  const rowToggleProps = canExpand
+    ? {
+        role: "button" as const,
+        tabIndex: 0 as const,
+        "aria-label": displayText,
+        "aria-expanded": expanded,
+        onClick: () => setExpanded((value) => !value),
+        onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            setExpanded((value) => !value);
+          }
+        },
+      }
+    : {};
+
+  return (
+    <div
+      className={cn(
+        "flex flex-col rounded-md px-0.5 py-0.5 transition-colors",
+        canExpand &&
+          "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+      )}
+      {...rowToggleProps}
+    >
+      <div className="flex select-none items-center gap-1.5 transition-[opacity,translate] duration-200">
+        <span className={iconWrapperClass}>
+          <WorkEntryIconSvg
+            name={entryIconName}
+            className="block size-3.5 shrink-0 stroke-[1.8] opacity-80"
+          />
+        </span>
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <div className="min-w-0 flex-1 overflow-hidden">
+            <p className="flex min-w-0 w-full items-baseline gap-1.5 text-[12px] leading-5">
+              <span className={cn("min-w-0 shrink truncate", headingClass)}>{heading}</span>
+              {preview ? (
+                <span className="min-w-0 flex-1 truncate text-secondary-label">{preview}</span>
+              ) : null}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-px text-icon-muted">
+            <span
+              className="flex size-4 shrink-0 items-center justify-center"
+              aria-hidden={!canExpand}
+            >
+              {canExpand ? (
+                <ChevronDownIcon
+                  className={cn(
+                    "size-3 shrink-0 opacity-70 transition-transform duration-200",
+                    expanded && "rotate-180",
+                  )}
+                  aria-hidden
+                />
+              ) : null}
+            </span>
+            <span className="flex size-4 shrink-0 items-center justify-center">
+              {showFailedIndicator ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span
+                        className="flex size-4 items-center justify-center"
+                        aria-label="Tool call failed"
+                      />
+                    }
+                  >
+                    <XIcon className="block size-3 shrink-0 text-destructive" aria-hidden />
+                  </TooltipTrigger>
+                  <TooltipPopup>Failed</TooltipPopup>
+                </Tooltip>
+              ) : showSuccessIndicator ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={<span className="flex size-4 items-center justify-center" />}
+                  >
+                    <span className="inline-flex size-4 items-center justify-center">
+                      <CheckIcon
+                        className="block size-3 shrink-0 stroke-current"
+                        stroke="currentColor"
+                        aria-hidden
+                      />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipPopup>Completed</TooltipPopup>
+                </Tooltip>
+              ) : showNeutralIndicator ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={<span className="flex size-4 items-center justify-center" />}
+                  >
+                    <MinusIcon className="block size-3 shrink-0 opacity-70" aria-hidden />
+                  </TooltipTrigger>
+                  <TooltipPopup>Empty</TooltipPopup>
+                </Tooltip>
+              ) : null}
+            </span>
+          </div>
         </div>
       </div>
       {expanded && canExpand && expandedBody ? (

@@ -37,6 +37,7 @@ const clientSettings: ClientSettings = {
   fontSmoothing: true,
   glassOpacity: 80,
   planModeEnabled: false,
+  showExpandedComposerControls: true,
   showReasoning: false,
   providerModelPreferences: {},
   sidebarAutoSettleAfterDays: 3,
@@ -239,6 +240,7 @@ describe("DesktopClientSettings", () => {
         assert.isTrue(Option.isSome(persisted));
         if (Option.isSome(persisted)) {
           assert.isFalse(persisted.value.legacySidebarEnabled);
+          assert.isFalse(persisted.value.showExpandedComposerControls);
         }
       }),
     ),

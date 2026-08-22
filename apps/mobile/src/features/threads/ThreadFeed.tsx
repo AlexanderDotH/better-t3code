@@ -2,6 +2,7 @@ import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
 import type {
+  ChatVisualMode,
   EnvironmentId,
   MessageId,
   OrchestrationProposedPlan,
@@ -102,6 +103,8 @@ import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons
 import { resolveMarkdownLinkPresentation } from "@t3tools/mobile-markdown-text/links";
 import {
   deriveThreadFeedPresentation,
+  formatThreadFeedTimestamp,
+  resolveThreadFeedChromeRowHeight,
   type ThreadFeedEntry,
   type ThreadFeedLatestTurn,
 } from "../../lib/threadActivity";
@@ -114,7 +117,7 @@ import {
   collapsedWorkLogHeight,
   ThreadWorkGroupToggle,
   ThreadWorkLog,
-  WORK_GROUP_TOGGLE_HEIGHT,
+  ThreadWorkSummary,
 } from "./thread-work-log";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { useAssetUrl } from "../../state/assets";
@@ -124,27 +127,10 @@ const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
 } as const;
 
-const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
-  hour: "numeric",
-  minute: "2-digit",
-});
-function formatMessageTime(input: string): string {
-  const timestamp = Date.parse(input);
-  if (Number.isNaN(timestamp)) {
-    return "";
-  }
-  return MESSAGE_TIME_FORMATTER.format(timestamp);
-}
-
-// Pre-measurement heights for getFixedItemSize, mirroring renderFeedEntry's
-// classNames. The fold row's min-h-11 (44px) stays taller than its single
-// text-sm line at every supported base font size (26px at the 22pt maximum),
-// so its height is a constant; a drifted value costs one correction on
-// measure, not a persistent offset.
-const TURN_FOLD_HEIGHT = 56; // min-h-11 (44) + mb-3 (12)
 // The working row has no min-height clamp — its height follows the scaled
 // text-xs line height (see workingRowHeight in ThreadFeed).
-const WORKING_ROW_VERTICAL_EXTRAS = 24; // py-1 (8) + mb-4 (16)
+const CLASSIC_WORKING_ROW_VERTICAL_EXTRAS = 24; // py-1 (8) + mb-4 (16)
+const CURRENT_WORKING_ROW_HEIGHT = 64; // min-h-14 (56) + mb-2 (8)
 
 // Entering animations must only play for rows born just now — LegendList
 // remounts rows when they scroll back into view, and replaying an entrance for
@@ -827,11 +813,12 @@ function renderFeedEntry(
     | "reviewedPlanSubagentCounts"
   > & {
     readonly copiedRowId: string | null;
+    readonly chatVisualMode: ChatVisualMode;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
     readonly unsettledTurnId: TurnId | null;
     readonly onCopyWorkRow: (rowId: string, value: string) => void;
-    readonly onToggleWorkGroup: (groupId: string) => void;
+    readonly onToggleWorkGroup: (groupId: string, anchorId: string) => void;
     readonly onToggleWorkRow: (rowId: string) => void;
     readonly onToggleTurnFold: (turnId: TurnId) => void;
     readonly onPressImage: (uri: string, headers?: Record<string, string>) => void;
@@ -854,10 +841,31 @@ function renderFeedEntry(
   const { markdownStyles, iconSubtleColor, userBubbleColor } = props;
 
   if (entry.type === "working") {
-    return <WorkingTimelineRow startedAt={entry.createdAt} />;
+    return <WorkingTimelineRow chatVisualMode={props.chatVisualMode} startedAt={entry.createdAt} />;
   }
 
   if (entry.type === "turn-fold") {
+    if (props.chatVisualMode === "current") {
+      return (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded: entry.expanded }}
+          onPress={() => props.onToggleTurnFold(entry.turnId)}
+          hitSlop={4}
+          className="mb-2 min-h-14 flex-row items-center gap-2 border-b border-neutral-200/80 px-2 dark:border-white/[0.08]"
+        >
+          <Text className="min-w-0 flex-1 font-t3-medium text-sm tabular-nums text-foreground-muted">
+            {entry.label}
+          </Text>
+          <SymbolView
+            name={entry.expanded ? "chevron.down" : "chevron.right"}
+            size={16}
+            tintColor={iconSubtleColor}
+            type="monochrome"
+          />
+        </Pressable>
+      );
+    }
     return (
       <Pressable
         accessibilityRole="button"
@@ -886,7 +894,26 @@ function renderFeedEntry(
         hiddenCount={entry.hiddenCount}
         iconSubtleColor={iconSubtleColor}
         onlyToolActivities={entry.onlyToolActivities}
-        onToggle={() => props.onToggleWorkGroup(entry.groupId)}
+        onToggle={() => props.onToggleWorkGroup(entry.groupId, entry.id)}
+      />
+    );
+  }
+
+  if (entry.type === "work-summary") {
+    return (
+      <ThreadWorkSummary
+        activities={entry.activities}
+        copiedRowId={props.copiedRowId}
+        expanded={entry.expanded}
+        expandedRows={props.expandedWorkRows}
+        hasFailure={entry.hasFailure}
+        icon={entry.icon}
+        iconSubtleColor={iconSubtleColor}
+        live={entry.live}
+        summary={entry.summary}
+        onCopyRow={props.onCopyWorkRow}
+        onToggle={() => props.onToggleWorkGroup(entry.groupId, entry.id)}
+        onToggleRow={props.onToggleWorkRow}
       />
     );
   }
@@ -919,7 +946,10 @@ function renderFeedEntry(
     const { message } = entry;
     const isUser = message.role === "user";
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
-    const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
+    const timestampLabel = formatThreadFeedTimestamp(
+      isUser ? message.createdAt : message.updatedAt,
+      props.chatVisualMode,
+    );
     const attachments = message.attachments ?? [];
     const hasReviewCommentContext = message.text.includes("<review_comment");
     // A bubble that sizes itself from its content cannot lay out a block whose
@@ -1059,6 +1089,7 @@ function renderFeedEntry(
   return (
     <ThreadWorkLog
       activities={entry.activities}
+      chatVisualMode={props.chatVisualMode}
       copiedRowId={props.copiedRowId}
       expandedRows={props.expandedWorkRows}
       iconSubtleColor={iconSubtleColor}
@@ -1167,7 +1198,10 @@ const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
   );
 });
 
-const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly startedAt: string }) {
+const WorkingTimelineRow = memo(function WorkingTimelineRow(props: {
+  readonly chatVisualMode: ChatVisualMode;
+  readonly startedAt: string;
+}) {
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
@@ -1178,6 +1212,16 @@ const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly st
   }, [props.startedAt]);
 
   const durationLabel = formatElapsed(props.startedAt, new Date(nowMs).toISOString()) ?? "0s";
+
+  if (props.chatVisualMode === "current") {
+    return (
+      <View className="mb-2 min-h-14 justify-center border-b border-neutral-200/80 px-2 dark:border-white/[0.08]">
+        <Text className="font-t3-medium text-sm tabular-nums text-foreground-muted">
+          Working for {durationLabel}
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View className="mb-4 flex-row items-center gap-2 px-1.5 py-1">
@@ -1469,7 +1513,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const previousLatestTurnRef = useRef(props.latestTurn);
   const userScrollSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { width: windowWidth } = useWindowDimensions();
-  const { appearance } = useAppearancePreferences();
+  const { appearance, chatVisualMode } = useAppearancePreferences();
+  const previousChatVisualModeRef = useRef(chatVisualMode);
   const [viewportWidth, setViewportWidth] = useState(() =>
     props.layoutVariant === "split" ? 0 : windowWidth,
   );
@@ -1582,6 +1627,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // Keep row-local interaction props in extraData so disclosures and copy feedback repaint.
   const listAppearanceData = useMemo(
     () => ({
+      chatVisualMode,
       copiedRowId,
       expandedWorkRows,
       iconSubtleColor,
@@ -1591,6 +1637,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       viewportWidth,
     }),
     [
+      chatVisualMode,
       copiedRowId,
       expandedWorkRows,
       iconSubtleColor,
@@ -1731,10 +1778,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         props.feed,
         props.latestTurn,
         expandedTurnIds,
+        chatVisualMode,
         expandedWorkGroupIds,
         props.activeWorkStartedAt,
       ),
     [
+      chatVisualMode,
       expandedTurnIds,
       expandedWorkGroupIds,
       props.activeWorkStartedAt,
@@ -1782,6 +1831,17 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     (props.latestTurn.completedAt === null || props.latestTurn.state === "running")
       ? props.latestTurn.turnId
       : null;
+
+  useEffect(() => {
+    if (previousChatVisualModeRef.current === chatVisualMode) return;
+    previousChatVisualModeRef.current = chatVisualMode;
+    setInteractionState((current) => ({
+      copiedRowId: current.copiedRowId,
+      expandedWorkGroups: {},
+      expandedWorkRows: {},
+      expandedTurnIds: current.expandedTurnIds,
+    }));
+  }, [chatVisualMode]);
 
   useEffect(() => {
     const previous = previousLatestTurnRef.current;
@@ -1874,8 +1934,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   }, []);
 
   const onToggleWorkGroup = useCallback(
-    (groupId: string) => {
-      suspendEndScrollMaintenanceForDisclosure(`work-toggle:${groupId}`);
+    (groupId: string, anchorId: string) => {
+      suspendEndScrollMaintenanceForDisclosure(anchorId);
       setInteractionState((current) => ({
         ...current,
         expandedWorkGroups: {
@@ -1945,35 +2005,34 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // exact; message rows stay undefined and use LegendList's per-type running
   // average once one of their type has been measured. Text-driven heights
   // follow the configurable base font size via scaledTypographyLineHeight.
-  const workingRowHeight =
-    WORKING_ROW_VERTICAL_EXTRAS +
+  const classicWorkingRowHeight =
+    CLASSIC_WORKING_ROW_VERTICAL_EXTRAS +
     scaledTypographyLineHeight(MOBILE_TYPOGRAPHY.label, appearance.baseFontSize);
   const getFixedItemSize = useCallback(
     (entry: ThreadFeedEntry) => {
-      switch (entry.type) {
-        case "turn-fold":
-          return TURN_FOLD_HEIGHT;
-        case "work-toggle":
-          return WORK_GROUP_TOGGLE_HEIGHT;
-        case "working":
-          return workingRowHeight;
-        case "activity-group":
-          // Expanded rows append a variable detail block — fall back to
-          // measurement for those groups.
-          return entry.activities.some((activity) => expandedWorkRows[activity.id])
-            ? undefined
-            : collapsedWorkLogHeight(entry.activities, appearance.baseFontSize);
-        default:
-          return undefined;
-      }
+      const chromeHeight = resolveThreadFeedChromeRowHeight(
+        entry,
+        chatVisualMode,
+        classicWorkingRowHeight,
+        CURRENT_WORKING_ROW_HEIGHT,
+      );
+      if (chromeHeight !== undefined) return chromeHeight;
+      if (entry.type !== "activity-group") return undefined;
+
+      // Expanded rows append a variable detail block — fall back to
+      // measurement for those groups.
+      return entry.activities.some((activity) => expandedWorkRows[activity.id])
+        ? undefined
+        : collapsedWorkLogHeight(entry.activities, appearance.baseFontSize, chatVisualMode);
     },
-    [expandedWorkRows, workingRowHeight, appearance.baseFontSize],
+    [appearance.baseFontSize, chatVisualMode, classicWorkingRowHeight, expandedWorkRows],
   );
 
   const renderItem = useCallback(
     (info: { item: ThreadFeedEntry; index: number }) =>
       renderFeedEntry(info, {
         environmentId: props.environmentId,
+        chatVisualMode,
         copiedRowId,
         expandedWorkRows,
         terminalAssistantMessageIds,
@@ -1999,6 +2058,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         skills: props.skills,
       }),
     [
+      chatVisualMode,
       copiedRowId,
       expandedWorkRows,
       terminalAssistantMessageIds,

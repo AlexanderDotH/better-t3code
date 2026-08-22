@@ -84,6 +84,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "chat-visuals",
+    title: "Chat visuals",
+    to: "/settings/appearance",
+  },
+  {
+    id: "expanded-chat-controls",
+    title: "Expanded chat controls",
+    to: "/settings/appearance",
+  },
+  {
     id: "environment-identification",
     title: "Environment identification",
     to: "/settings/appearance",

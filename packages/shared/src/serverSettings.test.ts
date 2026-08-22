@@ -61,6 +61,33 @@ describe("serverSettings helpers", () => {
     expect(afterUnrelatedPatch.addProjectBaseDirectory).toBe("~/Development");
   });
 
+  it("replaces the chat visual mode sync record atomically and preserves it when omitted", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      chatVisualModeSyncRecord: {
+        mode: "current" as const,
+        updatedAt: 1_777_000_000_000,
+        updateId: "device-a:current",
+      },
+    };
+    const replacement = {
+      mode: "classic" as const,
+      updatedAt: 1_777_000_001_000,
+      updateId: "device-b:classic",
+    };
+
+    const replaced = applyServerSettingsPatch(current, {
+      chatVisualModeSyncRecord: replacement,
+    });
+    const afterUnrelatedPatch = applyServerSettingsPatch(replaced, {
+      addProjectBaseDirectory: "~/Development",
+    });
+
+    expect(replaced.chatVisualModeSyncRecord).toEqual(replacement);
+    expect(afterUnrelatedPatch.chatVisualModeSyncRecord).toEqual(replacement);
+    expect(afterUnrelatedPatch.addProjectBaseDirectory).toBe("~/Development");
+  });
+
   it("normalizes optional persisted strings", () => {
     expect(normalizePersistedServerSettingString(undefined)).toBeUndefined();
     expect(normalizePersistedServerSettingString("   ")).toBeUndefined();
