@@ -597,8 +597,11 @@ They are resolved semantically in dependency order with these invariants:
   8,500; measured-turn and total caps remain unchanged and pass.
 - The final Linux AppImage built with all required feature markers and was installed only to the
   permitted user-local target. Built and installed bytes match at SHA-256
-  `dca822811384dca07097b90a822d36d5a0f5d6a68e2a1cce0c05e51036c2cf95`; the canonical icon also
+  `5f52f66aacffdc54d2487171d39472f621507ec1ec1ec8df800226968d2cb274`; the canonical icon also
   matches its installed 1024 px copy. No T3 Code process was started, stopped, or restarted.
+- Fork pull request #13 passed all 14 executed CI checks at source head `cb5ebc6f0`; three
+  production-preview jobs were skipped by the fork safety policy. This documentation-only evidence
+  update reruns the same required gates before promotion.
 
 Real Web and Android interaction remain external promotion gates: this host has no attached Android
 device/emulator, no compatible Metro session, and no disposable T3 server. The only listening T3
