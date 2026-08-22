@@ -935,6 +935,126 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     margin-bottom: 0;
   }
 
+  .chat-composer-floating-island-region {
+    padding-bottom: 1rem;
+  }
+
+  .chat-composer-floating-island-region:not(
+    :has(
+      > .chat-composer-floating-island > .chat-composer-floating-island-section,
+      > .chat-composer-floating-island > .chat-composer-floating-drawer-host:not(:empty)
+    )
+  ) {
+    display: none;
+  }
+
+  .chat-composer-floating-island {
+    --chat-composer-floating-island-surface: var(--chat-composer-glass-surface, var(--card));
+    --chat-composer-floating-island-outline: var(
+      --chat-composer-outline,
+      color-mix(in srgb, var(--foreground) 8%, transparent)
+    );
+    position: relative;
+    isolation: isolate;
+    display: grid;
+    overflow: clip;
+    width: calc(100% - 2.75rem);
+    max-width: calc(48rem - 2.75rem);
+    margin-inline: auto;
+    border: 1px solid var(--chat-composer-floating-island-outline);
+    border-radius: 16px;
+    background: color-mix(
+      in srgb,
+      var(--chat-composer-floating-island-surface) var(--glass-opacity),
+      transparent
+    );
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+
+    @variant dark {
+      --chat-composer-floating-island-surface: var(
+        --chat-composer-glass-surface,
+        color-mix(in srgb, var(--background) 96%, var(--color-white))
+      );
+      --chat-composer-floating-island-outline: var(
+        --chat-composer-outline,
+        color-mix(in srgb, var(--color-white) 5%, transparent)
+      );
+      box-shadow: 0 14px 32px -18px rgb(0 0 0 / 75%);
+    }
+
+    @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+      background: var(--chat-composer-floating-island-surface);
+    }
+  }
+
+  .chat-composer-floating-island:has([data-variant="info"]) {
+    --chat-composer-floating-island-outline: color-mix(in srgb, var(--info) 32%, transparent);
+  }
+
+  .chat-composer-floating-island:has([data-variant="success"]) {
+    --chat-composer-floating-island-outline: color-mix(in srgb, var(--success) 32%, transparent);
+  }
+
+  .chat-composer-floating-island:has([data-variant="warning"]) {
+    --chat-composer-floating-island-outline: color-mix(in srgb, var(--warning) 28%, transparent);
+  }
+
+  .chat-composer-floating-island:has([data-variant="error"]) {
+    --chat-composer-floating-island-outline: color-mix(in srgb, var(--error) 32%, transparent);
+  }
+
+  .chat-composer-floating-island-section {
+    position: relative;
+    z-index: 0;
+    min-width: 0;
+  }
+
+  .chat-composer-floating-island-section:has(> .chat-composer-banner-stack-has-stack) {
+    padding-top: 0.75rem;
+  }
+
+  .chat-composer-floating-island-section + .chat-composer-floating-island-section,
+  .chat-composer-floating-island-section + .chat-composer-floating-drawer-host:not(:empty) {
+    border-top: 1px solid var(--chat-composer-floating-island-outline);
+  }
+
+  .chat-composer-floating-island .chat-composer-floating-drawer-host:not(:empty) {
+    gap: 1px;
+    padding-bottom: 0;
+    background: var(--chat-composer-floating-island-outline);
+  }
+
+  .chat-composer-floating-island-section
+    > :is(.chat-composer-drawer-slot, .chat-composer-drawer-surface),
+  .chat-composer-floating-island
+    .chat-composer-floating-drawer-host
+    > :is(
+      .chat-composer-top-drawer-floating,
+      .chat-composer-drawer-slot.chat-composer-drawer-floating
+    ) {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+  }
+
+  .chat-composer-floating-island
+    :is(
+      .chat-composer-top-drawer-floating,
+      .chat-composer-drawer-surface.chat-composer-drawer-floating
+    )::before {
+    border: 0;
+    border-radius: 0;
+    background: linear-gradient(
+      var(--chat-composer-attached-tint),
+      var(--chat-composer-attached-tint)
+    );
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    box-shadow: none;
+  }
+
   /* Non-deck status and decision drawers float above the composer as complete islands. */
   .chat-composer-top-drawer-floating,
   .chat-composer-drawer-floating {

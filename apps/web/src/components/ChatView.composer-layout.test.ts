@@ -9,15 +9,22 @@ describe("ChatView composer overlay layout", () => {
     );
   });
 
-  it("hosts detached composer drawers before the three-card workspace deck", () => {
-    const hostIndex = chatViewSource.indexOf('data-chat-composer-floating-drawer-host="true"');
+  it("composes every above-deck status source into one floating island", () => {
+    const islandIndex = chatViewSource.indexOf("<ComposerFloatingIsland");
+    const islandEndIndex = chatViewSource.indexOf("</ComposerFloatingIsland>", islandIndex);
+    const bannerIndex = chatViewSource.indexOf("<ComposerBannerStack", islandIndex);
+    const syncIndex = chatViewSource.indexOf("<ThreadSyncStatusPill", islandIndex);
     const deckIndex = chatViewSource.indexOf("<ChatWorkspaceDeckController");
 
     expect(chatViewSource).toContain(
       "const [composerFloatingDrawerHost, setComposerFloatingDrawerHost] =",
     );
-    expect(hostIndex).toBeGreaterThanOrEqual(0);
-    expect(deckIndex).toBeGreaterThan(hostIndex);
+    expect(islandIndex).toBeGreaterThanOrEqual(0);
+    expect(bannerIndex).toBeGreaterThan(islandIndex);
+    expect(syncIndex).toBeGreaterThan(bannerIndex);
+    expect(islandEndIndex).toBeGreaterThan(syncIndex);
+    expect(deckIndex).toBeGreaterThan(islandEndIndex);
+    expect(chatViewSource).toContain("portalHostRef={setComposerFloatingDrawerHost}");
     expect(chatViewSource).toContain("floatingDrawerHost={composerFloatingDrawerHost}");
   });
 });

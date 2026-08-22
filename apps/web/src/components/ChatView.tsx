@@ -327,6 +327,10 @@ import {
   threadChangeRequestSnapshotsAtom,
 } from "./ThreadStatusIndicators";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import {
+  ComposerFloatingIsland,
+  ComposerFloatingIslandSection,
+} from "./chat/ComposerFloatingIsland";
 import { buildReasoningRecommendationBannerItem } from "./chat/ReasoningRecommendationBanner";
 import { ThreadSyncStatusPill } from "./chat/ThreadSyncStatusPill";
 import {
@@ -7057,6 +7061,20 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const externalComposerDrawerAttached =
     composerBannerItems.length > 0 || Boolean(threadSyncPhase && !activeEnvironmentUnavailable);
+  const composerFloatingIsland = (
+    <ComposerFloatingIsland portalHostRef={setComposerFloatingDrawerHost}>
+      {!workspaceCardExpanded && composerBannerItems.length > 0 ? (
+        <ComposerFloatingIslandSection>
+          <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+        </ComposerFloatingIslandSection>
+      ) : null}
+      {!workspaceCardExpanded && threadSyncPhase && !activeEnvironmentUnavailable ? (
+        <ComposerFloatingIslandSection>
+          <ThreadSyncStatusPill phase={threadSyncPhase} />
+        </ComposerFloatingIslandSection>
+      ) : null}
+    </ComposerFloatingIsland>
+  );
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
@@ -7242,38 +7260,28 @@ function ChatViewContent(props: ChatViewProps) {
                     workspaceCardExpanded ? "pointer-events-none" : "pointer-events-auto",
                   )}
                 >
-                  {!workspaceCardExpanded ? (
-                    isDraftHeroState ? (
-                      <div className="absolute inset-x-0 bottom-full z-0">
-                        <div
-                          className="pb-8"
-                          style={
-                            forceExpandedMobileComposer
-                              ? {
-                                  viewTransitionName: MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME,
-                                }
-                              : undefined
-                          }
-                        >
-                          <DraftHeroHeadline
-                            activeProjectRef={activeProjectRef}
-                            activeProjectTitle={activeProject?.title ?? null}
-                          />
-                        </div>
-                        <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+                  {isDraftHeroState && !workspaceCardExpanded ? (
+                    <div className="absolute inset-x-0 bottom-full z-0">
+                      <div
+                        className="pb-8"
+                        style={
+                          forceExpandedMobileComposer
+                            ? {
+                                viewTransitionName: MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME,
+                              }
+                            : undefined
+                        }
+                      >
+                        <DraftHeroHeadline
+                          activeProjectRef={activeProjectRef}
+                          activeProjectTitle={activeProject?.title ?? null}
+                        />
                       </div>
-                    ) : (
-                      <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
-                    )
-                  ) : null}
-                  {!workspaceCardExpanded && threadSyncPhase && !activeEnvironmentUnavailable ? (
-                    <ThreadSyncStatusPill phase={threadSyncPhase} />
-                  ) : null}
-                  <div
-                    ref={setComposerFloatingDrawerHost}
-                    className="chat-composer-floating-drawer-host pointer-events-auto relative z-30 mx-auto w-full max-w-3xl"
-                    data-chat-composer-floating-drawer-host="true"
-                  />
+                      {composerFloatingIsland}
+                    </div>
+                  ) : (
+                    composerFloatingIsland
+                  )}
                   <div
                     className="relative"
                     style={

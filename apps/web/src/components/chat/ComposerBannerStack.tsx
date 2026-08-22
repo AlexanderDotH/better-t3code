@@ -101,6 +101,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
     <div
       className={cn(
         "group/banner-stack chat-composer-drawer-slot chat-composer-drawer-floating",
+        hasStack && "chat-composer-banner-stack-has-stack",
         className,
       )}
       data-composer-banner-drawer="true"
