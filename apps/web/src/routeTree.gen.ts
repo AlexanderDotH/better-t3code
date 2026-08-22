@@ -21,6 +21,7 @@ import { Route as SettingsProvidersRouteImport } from './routes/settings.provide
 import { Route as SettingsProjectsRouteImport } from './routes/settings.projects'
 import { Route as SettingsMcpRouteImport } from './routes/settings.mcp'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
+import { Route as SettingsIntegrationsRouteImport } from './routes/settings.integrations'
 import { Route as SettingsImportChatsRouteImport } from './routes/settings.import-chats'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsExperimentalRouteImport } from './routes/settings.experimental'
@@ -91,6 +92,11 @@ const SettingsMcpRoute = SettingsMcpRouteImport.update({
 const SettingsKeybindingsRoute = SettingsKeybindingsRouteImport.update({
   id: '/keybindings',
   path: '/keybindings',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsIntegrationsRoute = SettingsIntegrationsRouteImport.update({
+  id: '/integrations',
+  path: '/integrations',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsImportChatsRoute = SettingsImportChatsRouteImport.update({
@@ -171,6 +177,7 @@ export interface FileRoutesByFullPath {
   '/settings/experimental': typeof SettingsExperimentalRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/import-chats': typeof SettingsImportChatsRoute
+  '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/mcp': typeof SettingsMcpRoute
   '/settings/projects': typeof SettingsProjectsRoute
@@ -195,6 +202,7 @@ export interface FileRoutesByTo {
   '/settings/experimental': typeof SettingsExperimentalRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/import-chats': typeof SettingsImportChatsRoute
+  '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/mcp': typeof SettingsMcpRoute
   '/settings/projects': typeof SettingsProjectsRoute
@@ -222,6 +230,7 @@ export interface FileRoutesById {
   '/settings/experimental': typeof SettingsExperimentalRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/import-chats': typeof SettingsImportChatsRoute
+  '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/mcp': typeof SettingsMcpRoute
   '/settings/projects': typeof SettingsProjectsRoute
@@ -250,6 +259,7 @@ export interface FileRouteTypes {
     | '/settings/experimental'
     | '/settings/general'
     | '/settings/import-chats'
+    | '/settings/integrations'
     | '/settings/keybindings'
     | '/settings/mcp'
     | '/settings/projects'
@@ -274,6 +284,7 @@ export interface FileRouteTypes {
     | '/settings/experimental'
     | '/settings/general'
     | '/settings/import-chats'
+    | '/settings/integrations'
     | '/settings/keybindings'
     | '/settings/mcp'
     | '/settings/projects'
@@ -300,6 +311,7 @@ export interface FileRouteTypes {
     | '/settings/experimental'
     | '/settings/general'
     | '/settings/import-chats'
+    | '/settings/integrations'
     | '/settings/keybindings'
     | '/settings/mcp'
     | '/settings/projects'
@@ -405,6 +417,13 @@ declare module '@tanstack/react-router' {
       path: '/keybindings'
       fullPath: '/settings/keybindings'
       preLoaderRoute: typeof SettingsKeybindingsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/integrations': {
+      id: '/settings/integrations'
+      path: '/integrations'
+      fullPath: '/settings/integrations'
+      preLoaderRoute: typeof SettingsIntegrationsRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/import-chats': {
@@ -518,6 +537,7 @@ interface SettingsRouteChildren {
   SettingsExperimentalRoute: typeof SettingsExperimentalRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsImportChatsRoute: typeof SettingsImportChatsRoute
+  SettingsIntegrationsRoute: typeof SettingsIntegrationsRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
   SettingsMcpRoute: typeof SettingsMcpRoute
   SettingsProjectsRoute: typeof SettingsProjectsRoute
@@ -534,6 +554,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsExperimentalRoute: SettingsExperimentalRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsImportChatsRoute: SettingsImportChatsRoute,
+  SettingsIntegrationsRoute: SettingsIntegrationsRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
   SettingsMcpRoute: SettingsMcpRoute,
   SettingsProjectsRoute: SettingsProjectsRoute,

@@ -73,7 +73,7 @@ export function serverUpdateGuidance(
     case "respawn":
       return `Update the ${serverLabel} so they stay in sync.`;
     case "desktop-managed":
-      return `The ${serverLabel} is run by the T3 Code desktop app on its machine — update the desktop app there to sync them.`;
+      return `Update the desktop app that runs the ${serverLabel}.`;
     case "container-managed":
       return `Pull the updated image and recreate the ${serverLabel} to sync them.`;
     default:

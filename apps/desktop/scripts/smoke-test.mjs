@@ -2,6 +2,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { resolveElectronLaunchCommand } from "./electron-launcher.mjs";
+import { desktopSmokeIsReady, evaluateDesktopSmokeResult } from "./smoke-test-logic.mjs";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const desktopDir = NodePath.resolve(__dirname, "..");
@@ -20,33 +21,41 @@ const child = NodeChildProcess.spawn(electronCommand.electronPath, electronComma
 });
 
 let output = "";
-child.stdout.on("data", (chunk) => {
+let timedOut = false;
+let initiatedShutdown = false;
+
+const appendOutput = (chunk) => {
   output += chunk.toString();
-});
-child.stderr.on("data", (chunk) => {
-  output += chunk.toString();
+  if (!initiatedShutdown && desktopSmokeIsReady(output)) {
+    initiatedShutdown = true;
+    child.kill();
+  }
+};
+
+child.stdout.on("data", appendOutput);
+child.stderr.on("data", appendOutput);
+child.on("error", (error) => {
+  output += `\nElectron spawn error: ${error.stack ?? error.message}\n`;
 });
 
 const timeout = setTimeout(() => {
+  timedOut = true;
   child.kill();
 }, 8_000);
 
-child.on("exit", () => {
+child.on("close", (exitCode, signal) => {
   clearTimeout(timeout);
+  const result = evaluateDesktopSmokeResult({
+    output,
+    timedOut,
+    initiatedShutdown,
+    exitCode,
+    signal,
+  });
 
-  const fatalPatterns = [
-    "Cannot find module",
-    "MODULE_NOT_FOUND",
-    "Refused to execute",
-    "Uncaught Error",
-    "Uncaught TypeError",
-    "Uncaught ReferenceError",
-  ];
-  const failures = fatalPatterns.filter((pattern) => output.includes(pattern));
-
-  if (failures.length > 0) {
+  if (!result.ok) {
     console.error("\nDesktop smoke test failed:");
-    for (const failure of failures) {
+    for (const failure of result.failures) {
       console.error(` - ${failure}`);
     }
     console.error("\nFull output:\n" + output);

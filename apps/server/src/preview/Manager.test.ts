@@ -259,6 +259,17 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
       if (failed?.type === "failed") {
         expect(failed.code).toBe(-105);
         expect(failed.description).toBe("ERR_NAME_NOT_RESOLVED");
+        expect(failed.snapshot).toMatchObject({
+          threadId,
+          tabId: opened.tabId,
+          navStatus: {
+            _tag: "LoadFailed",
+            code: -105,
+            description: "ERR_NAME_NOT_RESOLVED",
+          },
+          canGoBack: false,
+          canGoForward: false,
+        });
       }
     }),
   );

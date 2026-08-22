@@ -62,7 +62,11 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { resolveProjectThreadSections } from "@t3tools/client-runtime/project-thread-preview";
-import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  effectiveSettled,
+  effectiveSnoozed,
+  type ChangeRequestSettleSource,
+} from "@t3tools/client-runtime/state/thread-settled";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -77,6 +81,7 @@ import {
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { isElectron } from "../env";
+import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isMacPlatform } from "../lib/utils";
@@ -300,6 +305,11 @@ function buildThreadJumpLabelMap(input: {
   return mapping.size > 0 ? mapping : EMPTY_THREAD_JUMP_LABELS;
 }
 
+type SidebarChangeRequestHandler = (
+  threadKey: string,
+  changeRequest: ChangeRequestSettleSource | null,
+) => void;
+
 interface SidebarThreadRowProps {
   thread: SidebarThreadSummary;
   projectCwd: string | null;
@@ -341,7 +351,7 @@ interface SidebarThreadRowProps {
     prUrl: string,
     threadRef?: ScopedThreadRef,
   ) => boolean;
-  onChangeRequestState: (threadKey: string, state: "open" | "closed" | "merged" | null) => void;
+  onChangeRequest: SidebarChangeRequestHandler;
 }
 
 export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
@@ -369,7 +379,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     cancelRename,
     attemptArchiveThread,
     openPrLink,
-    onChangeRequestState,
+    onChangeRequest,
     thread,
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
@@ -461,9 +471,13 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     gitStatus: gitStatus.data,
   });
   const prState = pr?.state ?? null;
+  const prUpdatedAt = pr?.updatedAt ?? null;
   useEffect(() => {
-    onChangeRequestState(threadKey, prState);
-  }, [onChangeRequestState, prState, threadKey]);
+    onChangeRequest(
+      threadKey,
+      prState === null ? null : { state: prState, updatedAt: prUpdatedAt },
+    );
+  }, [onChangeRequest, prState, prUpdatedAt, threadKey]);
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
@@ -946,7 +960,7 @@ interface SidebarProjectThreadListProps {
     prUrl: string,
     threadRef?: ScopedThreadRef,
   ) => boolean;
-  onChangeRequestState: (threadKey: string, state: "open" | "closed" | "merged" | null) => void;
+  onChangeRequest: SidebarChangeRequestHandler;
   expandThreadListForProject: (projectKey: string) => void;
   showSettledThreadsForProject: (projectKey: string) => void;
   hideSettledThreadsForProject: (projectKey: string) => void;
@@ -992,7 +1006,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     cancelRename,
     attemptArchiveThread,
     openPrLink,
-    onChangeRequestState,
+    onChangeRequest,
     expandThreadListForProject,
     showSettledThreadsForProject,
     hideSettledThreadsForProject,
@@ -1048,7 +1062,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
               cancelRename={cancelRename}
               attemptArchiveThread={attemptArchiveThread}
               openPrLink={openPrLink}
-              onChangeRequestState={onChangeRequestState}
+              onChangeRequest={onChangeRequest}
             />
           );
         })}
@@ -1129,7 +1143,7 @@ interface SidebarProjectItemProps {
   threadJumpLabelByKey: ReadonlyMap<string, string>;
   attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
   isProjectThreadSettled: (thread: SidebarThreadSummary) => boolean;
-  onChangeRequestState: (threadKey: string, state: "open" | "closed" | "merged" | null) => void;
+  onChangeRequest: SidebarChangeRequestHandler;
   expandThreadListForProject: (projectKey: string) => void;
   showSettledThreadsForProject: (projectKey: string) => void;
   hideSettledThreadsForProject: (projectKey: string) => void;
@@ -1155,7 +1169,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     threadJumpLabelByKey,
     attachThreadListAutoAnimateRef,
     isProjectThreadSettled,
-    onChangeRequestState,
+    onChangeRequest,
     expandThreadListForProject,
     showSettledThreadsForProject,
     hideSettledThreadsForProject,
@@ -2488,7 +2502,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         cancelRename={cancelRename}
         attemptArchiveThread={attemptArchiveThread}
         openPrLink={openPrLink}
-        onChangeRequestState={onChangeRequestState}
+        onChangeRequest={onChangeRequest}
         expandThreadListForProject={expandThreadListForProject}
         showSettledThreadsForProject={showSettledThreadsForProject}
         hideSettledThreadsForProject={hideSettledThreadsForProject}
@@ -2860,7 +2874,7 @@ interface SidebarProjectsContentProps {
   threadJumpLabelByKey: ReadonlyMap<string, string>;
   attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
   isProjectThreadSettled: (thread: SidebarThreadSummary) => boolean;
-  onChangeRequestState: (threadKey: string, state: "open" | "closed" | "merged" | null) => void;
+  onChangeRequest: SidebarChangeRequestHandler;
   expandThreadListForProject: (projectKey: string) => void;
   showSettledThreadsForProject: (projectKey: string) => void;
   hideSettledThreadsForProject: (projectKey: string) => void;
@@ -2892,7 +2906,7 @@ interface SidebarProjectListProps {
   threadJumpLabelByKey: ReadonlyMap<string, string>;
   attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
   isProjectThreadSettled: (thread: SidebarThreadSummary) => boolean;
-  onChangeRequestState: (threadKey: string, state: "open" | "closed" | "merged" | null) => void;
+  onChangeRequest: SidebarChangeRequestHandler;
   expandThreadListForProject: (projectKey: string) => void;
   showSettledThreadsForProject: (projectKey: string) => void;
   hideSettledThreadsForProject: (projectKey: string) => void;
@@ -2924,7 +2938,7 @@ const SidebarProjectList = memo(function SidebarProjectList(props: SidebarProjec
     threadJumpLabelByKey,
     attachThreadListAutoAnimateRef,
     isProjectThreadSettled,
-    onChangeRequestState,
+    onChangeRequest,
     expandThreadListForProject,
     showSettledThreadsForProject,
     hideSettledThreadsForProject,
@@ -2972,7 +2986,7 @@ const SidebarProjectList = memo(function SidebarProjectList(props: SidebarProjec
                     threadJumpLabelByKey={threadJumpLabelByKey}
                     attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
                     isProjectThreadSettled={isProjectThreadSettled}
-                    onChangeRequestState={onChangeRequestState}
+                    onChangeRequest={onChangeRequest}
                     expandThreadListForProject={expandThreadListForProject}
                     showSettledThreadsForProject={showSettledThreadsForProject}
                     hideSettledThreadsForProject={hideSettledThreadsForProject}
@@ -3011,7 +3025,7 @@ const SidebarProjectList = memo(function SidebarProjectList(props: SidebarProjec
           threadJumpLabelByKey={threadJumpLabelByKey}
           attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
           isProjectThreadSettled={isProjectThreadSettled}
-          onChangeRequestState={onChangeRequestState}
+          onChangeRequest={onChangeRequest}
           expandThreadListForProject={expandThreadListForProject}
           showSettledThreadsForProject={showSettledThreadsForProject}
           hideSettledThreadsForProject={hideSettledThreadsForProject}
@@ -3066,7 +3080,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     threadJumpLabelByKey,
     attachThreadListAutoAnimateRef,
     isProjectThreadSettled,
-    onChangeRequestState,
+    onChangeRequest,
     expandThreadListForProject,
     showSettledThreadsForProject,
     hideSettledThreadsForProject,
@@ -3115,7 +3129,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     threadJumpLabelByKey,
     attachThreadListAutoAnimateRef,
     isProjectThreadSettled,
-    onChangeRequestState,
+    onChangeRequest,
     expandThreadListForProject,
     showSettledThreadsForProject,
     hideSettledThreadsForProject,
@@ -3195,11 +3209,12 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <button
-                    type="button"
+                  <Button
+                    size="icon-xs"
+                    variant="ghost-muted"
                     aria-label="Add project"
                     data-testid="sidebar-add-project-trigger"
-                    className="inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-icon-muted transition-colors hover:bg-accent hover:text-foreground"
+                    className="size-6 [--control-icon-color:currentColor] text-icon-muted"
                     onClick={openAddProject}
                   />
                 }
@@ -3247,6 +3262,7 @@ export default function LegacySidebar() {
   const navigate = useNavigate();
   const sidebarThreadSortOrder = useClientSettings((s) => s.sidebarThreadSortOrder);
   const sidebarAutoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
+  const sidebarAutoSettleOnMerge = useClientSettings((s) => s.sidebarAutoSettleOnMerge);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const { count: sidebarThreadPreviewCount, setCount: setSidebarThreadPreviewCount } =
@@ -3283,18 +3299,24 @@ export default function LegacySidebar() {
   const [settledThreadListsByProject, setSettledThreadListsByProject] = useState<
     ReadonlySet<string>
   >(() => new Set());
-  const [changeRequestStateByKey, setChangeRequestStateByKey] = useState<
-    ReadonlyMap<string, "open" | "closed" | "merged">
+  const [changeRequestByKey, setChangeRequestByKey] = useState<
+    ReadonlyMap<string, ChangeRequestSettleSource>
   >(() => new Map());
-  const handleChangeRequestState = useCallback(
-    (threadKey: string, state: "open" | "closed" | "merged" | null) => {
-      setChangeRequestStateByKey((current) => {
-        if ((current.get(threadKey) ?? null) === state) return current;
+  const handleChangeRequest = useCallback(
+    (threadKey: string, changeRequest: ChangeRequestSettleSource | null) => {
+      setChangeRequestByKey((current) => {
+        const previous = current.get(threadKey) ?? null;
+        if (
+          previous?.state === changeRequest?.state &&
+          (previous?.updatedAt ?? null) === (changeRequest?.updatedAt ?? null)
+        ) {
+          return current;
+        }
         const next = new Map(current);
-        if (state === null) {
+        if (changeRequest === null) {
           next.delete(threadKey);
         } else {
-          next.set(threadKey, state);
+          next.set(threadKey, changeRequest);
         }
         return next;
       });
@@ -3317,13 +3339,21 @@ export default function LegacySidebar() {
         return false;
       }
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+      const changeRequest = changeRequestByKey.get(threadKey) ?? null;
       return effectiveSettled(thread, {
         now,
         autoSettleAfterDays: sidebarAutoSettleAfterDays,
-        changeRequestState: changeRequestStateByKey.get(threadKey) ?? null,
+        autoSettleOnMerge: sidebarAutoSettleOnMerge,
+        changeRequest,
       });
     },
-    [changeRequestStateByKey, nowMinute, serverConfigs, sidebarAutoSettleAfterDays],
+    [
+      changeRequestByKey,
+      nowMinute,
+      serverConfigs,
+      sidebarAutoSettleAfterDays,
+      sidebarAutoSettleOnMerge,
+    ],
   );
   const { showThreadJumpHints, updateThreadJumpHintsVisibility } = useThreadJumpHintVisibility();
   const dragInProgressRef = useRef(false);
@@ -3335,6 +3365,7 @@ export default function LegacySidebar() {
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
   const platform = navigator.platform;
   const shortcutModifiers = useShortcutModifierState();
+  const terminalFocused = useTerminalFocus();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const environmentLabelById = useMemo(
@@ -3734,7 +3765,7 @@ export default function LegacySidebar() {
     [threadJumpCommandByKey],
   );
   const sidebarShortcutContext = {
-    terminalFocus: false,
+    terminalFocus: terminalFocused,
     terminalOpen: routeTerminalOpen,
     modelPickerOpen: isModelPickerOpen(),
   };
@@ -3922,7 +3953,7 @@ export default function LegacySidebar() {
       let confirmed = false;
       try {
         confirmed = await ensureLocalApi().dialogs.confirm(
-          getDesktopUpdateInstallConfirmationMessage(desktopUpdateState, navigator.platform),
+          getDesktopUpdateInstallConfirmationMessage(desktopUpdateState),
         );
       } catch (error) {
         setDesktopUpdateActionPending(false);
@@ -4056,7 +4087,7 @@ export default function LegacySidebar() {
         threadJumpLabelByKey={visibleThreadJumpLabelByKey}
         attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
         isProjectThreadSettled={isProjectThreadSettled}
-        onChangeRequestState={handleChangeRequestState}
+        onChangeRequest={handleChangeRequest}
         expandThreadListForProject={expandThreadListForProject}
         showSettledThreadsForProject={showSettledThreadsForProject}
         hideSettledThreadsForProject={hideSettledThreadsForProject}

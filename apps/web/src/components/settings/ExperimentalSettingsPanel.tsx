@@ -308,6 +308,7 @@ export function ExperimentalSettingsPanel() {
               prompt=""
               onPromptChange={() => {}}
               modelOptions={fetchSelection.options}
+              planModeEnabled={settings.planModeEnabled}
               allowPromptInjectedEffort={false}
               triggerVariant="outline"
               triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
@@ -358,6 +359,7 @@ export function ExperimentalSettingsPanel() {
             prompt=""
             onPromptChange={() => {}}
             modelOptions={reviewSelection.options}
+            planModeEnabled={settings.planModeEnabled}
             allowPromptInjectedEffort={false}
             triggerVariant="outline"
             triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"

@@ -246,6 +246,13 @@ export const CoordinationToolkitRegistrationLive = McpServer.toolkit(Coordinatio
   Layer.provide(CoordinationToolkitHandlersLive),
 );
 
+export const WorkspaceOnlyToolkitRegistrationLive = WorkspaceToolkitRegistrationLive;
+
+export const WorkspaceWithoutPreviewToolkitRegistrationLive = Layer.mergeAll(
+  CoordinationToolkitRegistrationLive,
+  WorkspaceToolkitRegistrationLive,
+);
+
 export const CoordinationEnabledToolkitRegistrationLive = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   CoordinationToolkitRegistrationLive,
@@ -257,7 +264,12 @@ export const WorkspaceEnabledToolkitRegistrationLive = Layer.mergeAll(
 );
 
 const makeMcpTransportLive = (
-  path: "/mcp" | "/mcp/workspace",
+  path:
+    | "/mcp"
+    | "/mcp/coordination"
+    | "/mcp/workspace"
+    | "/mcp/workspace-no-preview"
+    | "/mcp/workspace-only",
   requiredCapability?: McpInvocationContext.McpCapability,
 ) =>
   McpServer.layerHttp({
@@ -274,6 +286,24 @@ const PreviewMcpEndpointLive = Layer.fresh(
 const WorkspaceMcpEndpointLive = Layer.fresh(
   WorkspaceEnabledToolkitRegistrationLive.pipe(
     Layer.provideMerge(makeMcpTransportLive("/mcp/workspace", "workspace")),
+  ),
+);
+
+const CoordinationMcpEndpointLive = Layer.fresh(
+  CoordinationToolkitRegistrationLive.pipe(
+    Layer.provideMerge(makeMcpTransportLive("/mcp/coordination", "coordination")),
+  ),
+);
+
+const WorkspaceWithoutPreviewMcpEndpointLive = Layer.fresh(
+  WorkspaceWithoutPreviewToolkitRegistrationLive.pipe(
+    Layer.provideMerge(makeMcpTransportLive("/mcp/workspace-no-preview", "workspace")),
+  ),
+);
+
+const WorkspaceOnlyMcpEndpointLive = Layer.fresh(
+  WorkspaceOnlyToolkitRegistrationLive.pipe(
+    Layer.provideMerge(makeMcpTransportLive("/mcp/workspace-only", "workspace")),
   ),
 );
 
@@ -385,5 +415,8 @@ export const CodexResourceAdmissionRouteLive = HttpRouter.add(
 export const layer = Layer.mergeAll(
   PreviewMcpEndpointLive,
   WorkspaceMcpEndpointLive,
+  CoordinationMcpEndpointLive,
+  WorkspaceWithoutPreviewMcpEndpointLive,
+  WorkspaceOnlyMcpEndpointLive,
   CodexResourceAdmissionRouteLive,
 );

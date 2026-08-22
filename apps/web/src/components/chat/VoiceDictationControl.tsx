@@ -3,6 +3,7 @@ import { memo } from "react";
 
 import type { AssemblyAiDictationState } from "../../hooks/useAssemblyAiDictation";
 import { cn } from "../../lib/utils";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const WAVEFORM_BAR_KEYS = [
   "wave-01",
@@ -41,16 +42,22 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
 }) {
   if (state === "idle") {
     return (
-      <button
-        type="button"
-        className="flex h-9 w-9 enabled:cursor-pointer items-center justify-center rounded-full border border-border/70 bg-background text-muted-foreground transition-all duration-150 hover:scale-105 hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30 sm:h-8 sm:w-8"
-        disabled={disabled}
-        onClick={() => void onStart()}
-        aria-label="Start voice input"
-        title="Start voice input"
-      >
-        <MicIcon className="size-4" />
-      </button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              className="flex h-9 w-9 enabled:cursor-pointer items-center justify-center rounded-full border border-border/70 bg-background text-muted-foreground transition-all duration-150 hover:scale-105 hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30 sm:h-8 sm:w-8"
+              disabled={disabled}
+              onClick={() => void onStart()}
+              aria-label="Start voice input"
+            />
+          }
+        >
+          <MicIcon className="size-4" />
+        </TooltipTrigger>
+        <TooltipPopup side="top">Start voice input</TooltipPopup>
+      </Tooltip>
     );
   }
 
@@ -61,6 +68,10 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
       : state === "stopping"
         ? "Stopping voice input"
         : "Stop voice input";
+  const buttonTooltip =
+    state === "starting"
+      ? "Connecting to AssemblyAI · Select to cancel"
+      : "Stop voice input · Press Escape to cancel and restore the draft";
   const peakLevel = audioWaveform.reduce((peak, level) => Math.max(peak, level), 0);
   return (
     <div
@@ -91,26 +102,28 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
           />
         ))}
       </div>
-      <button
-        type="button"
-        className={cn(
-          "flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all disabled:opacity-60 sm:h-8 sm:w-8",
-          canSpeak
-            ? "bg-rose-500 text-white shadow-[0_0_0_3px_rgb(244_63_94/0.15)] hover:bg-rose-600"
-            : "border border-border/70 bg-muted text-muted-foreground hover:bg-muted/80",
-        )}
-        disabled={state === "stopping"}
-        onClick={() => void onStop()}
-        aria-busy={state === "stopping" || undefined}
-        aria-label={buttonLabel}
-        title={
-          state === "starting"
-            ? "Connecting to AssemblyAI · Select to cancel"
-            : "Stop voice input · Press Escape to cancel and restore the draft"
-        }
-      >
-        <SquareIcon className="size-2.5 fill-current" />
-      </button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              className={cn(
+                "flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all disabled:opacity-60 sm:h-8 sm:w-8",
+                canSpeak
+                  ? "bg-rose-500 text-white shadow-[0_0_0_3px_rgb(244_63_94/0.15)] hover:bg-rose-600"
+                  : "border border-border/70 bg-muted text-muted-foreground hover:bg-muted/80",
+              )}
+              disabled={state === "stopping"}
+              onClick={() => void onStop()}
+              aria-busy={state === "stopping" || undefined}
+              aria-label={buttonLabel}
+            />
+          }
+        >
+          <SquareIcon className="size-2.5 fill-current" />
+        </TooltipTrigger>
+        <TooltipPopup side="top">{buttonTooltip}</TooltipPopup>
+      </Tooltip>
     </div>
   );
 });

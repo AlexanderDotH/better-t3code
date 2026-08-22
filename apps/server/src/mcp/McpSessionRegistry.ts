@@ -23,6 +23,7 @@ export interface McpCredentialRequest {
   readonly threadId: ThreadId;
   readonly workspaceContextThreadId?: ThreadId;
   readonly workspaceOnly?: boolean;
+  readonly previewEnabled?: boolean;
   readonly providerInstanceId: ProviderInstanceId;
   readonly provider: ProviderDriverKind;
 }
@@ -144,6 +145,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     function* (request) {
       const issuedAt = yield* currentTimeMillis;
       const workspaceContextEnabled = supportsWorkspaceContext(request.provider);
+      const previewEnabled = request.previewEnabled !== false;
       const providerSessionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
@@ -153,8 +155,22 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
             ? new Set(["workspace"])
             : new Set()
           : workspaceContextEnabled
-            ? new Set(["preview", "workspace", "coordination"])
-            : new Set(["preview", "coordination"]);
+            ? previewEnabled
+              ? new Set(["preview", "workspace", "coordination"])
+              : new Set(["workspace", "coordination"])
+            : previewEnabled
+              ? new Set(["preview", "coordination"])
+              : new Set(["coordination"]);
+      const endpointPath =
+        request.workspaceOnly === true
+          ? "/mcp/workspace-only"
+          : workspaceContextEnabled
+            ? previewEnabled
+              ? "/mcp/workspace"
+              : "/mcp/workspace-no-preview"
+            : previewEnabled
+              ? "/mcp"
+              : "/mcp/coordination";
       const scope: McpInvocationContext.McpInvocationScope = {
         environmentId,
         threadId: ThreadId.make(request.workspaceContextThreadId ?? request.threadId),
@@ -179,7 +195,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           threadId: request.threadId,
           providerSessionId,
           providerInstanceId: scope.providerInstanceId,
-          endpoint: `${endpointBase}${workspaceContextEnabled ? "/mcp/workspace" : "/mcp"}`,
+          endpoint: `${endpointBase}${endpointPath}`,
           authorizationHeader: `Bearer ${rawToken}`,
         },
       };

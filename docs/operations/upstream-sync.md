@@ -507,3 +507,138 @@ upstream SHA for this cycle. Its pull-request preview containment fix merged wit
 first parent is the previously validated fork tip. The affected pull-request surface passed 18
 focused files and 295 tests, the web typecheck, changed-file lint and formatting, and whitespace
 checks before the fork-only PR gate was restarted on the new exact head.
+
+## August 22, 2026 synchronization
+
+This cycle starts from clean fork `main` at
+`e587d6c312c605075983ed3ded75e0e22f4b6ee0`. The live fetch and `git ls-remote` check both pin
+`upstream/main` at `ce91284f832fc71bf46ff2a8ffc290e20db4e83d`, with merge base
+`97db94c9bf6fa5d83f94c8fff85566d7fc96276e`. The freeze contains 97 fork-only and 240
+upstream-only commits. The initial signed ordinary merge is
+`0f8d1ca45f5af10dd493adba397465fb99be1473`; its second parent is the pinned upstream SHA.
+
+The first pre-packaging freeze found upstream's command-click folder-link fix at
+`f34b9d31b3ddbd53a553141fd769721fca4b8eb5`. It merged without conflicts as
+`af48d453c8777bad9be760433b3e57f6b3b53689`; its affected Markdown tests and web typecheck passed.
+Upstream's asset consolidation then exposed the fork installer's stale desktop-icon path. The
+test-driven repair `0690a31adf48bfe1f012389d646870737cea7e4f` installs the canonical 1024 px
+Linux asset and removes the obsolete 512 px local icon. The final freeze found the follow-up
+message-order fix at `2274444e92275fda2033de6636e3143ac3599ffb`; it merged without conflicts as
+`2c178af16fad20235a735abfbdad9e305e59b380`, whose second parent is the final pinned upstream SHA.
+
+Before opening the merge, all refs and repository-state evidence were captured under
+`/home/alex/.local/state/t3code-repo-rescue/20260822-upstream-ce91284f`. The rescue contains a
+272,735,012-byte `all-refs.bundle`, status, ref, remote, worktree, safe-configuration, and pin
+manifests, plus `SHA256SUMS`. All seven recorded checksums pass. `git bundle verify` reports a
+complete history with 1,610 advertised refs; the companion `refs.tsv` contains 1,609 ref rows. The
+bundle SHA-256 is `e0a85b7b81942a67ec3f76c2e9591ecf2b79913279b5630cae533b29a57f1427`.
+A recovery ref at `refs/archive/pre-upstream-sync-20260822-ce91284f` retains the fork parent.
+
+The merge reports 92 conflicts: 89 content conflicts and three modify/delete conflicts, split across
+39 web, 24 server, 18 mobile, five contracts, and six other build, desktop, or documentation paths.
+They are resolved semantically in dependency order with these invariants:
+
+- Contracts keep the fork's Fetch, native-subagent, context-window, Git-workbench, and
+  project-agent interfaces while adding upstream client-surface, browser, auto-settle,
+  remote-editor, preview bridge, and pull-request fields with optional or decoding-defaulted wire
+  shapes.
+- Disabling agent browser access retains T3 MCP credentials but selects the no-preview
+  `/mcp/workspace-no-preview` or `/mcp/coordination` toolkit. Preview tools disappear while
+  `workspace_context` and project-agent coordination remain; Fetch keeps its constrained
+  `/mcp/workspace-only` endpoint.
+- Migration IDs 1 through 51 and their names remain immutable. Upstream's auth-session connection
+  schema is appended as the idempotent
+  `052_AuthSessionClientConnectionCompatibility`; convergence migration 45 continues to repair a
+  native upstream ledger whose ID 41 has a different meaning.
+- Provider and orchestration resolutions use upstream's current probes, skills, resume, update,
+  tool-identity, orphan-session, activity, and mixed-tool-run fixes while retaining Gemini,
+  provider/model transcript handoff, Fetch, project-agent coordination, the adaptive resource
+  governor, startup interaction reconciliation, and exact-runtime stop fencing.
+- Web and shared client state combine upstream unified navigation, composer drawers, grouped tool
+  activity, slash skills, file drop, remote editor, and source-control fixes with unboxed reasoning,
+  the workspace Git/MCP deck, reversible grouped settled chats, per-chat provider/model state, and
+  the exact seven-day Older Projects boundary. A mixed successful/failed tool run is not collapsed
+  into an all-failed presentation.
+- Mobile adopts the new settings bottom sheets and removes the obsolete `thread-settings-menu`
+  files only after carrying all fork provider, mode, Fetch, lifecycle, settled-chat, and force-stop
+  controls into the replacement surfaces. Desktop keeps the fork's local-install boundaries while
+  adopting upstream favicon, tab-mute, hold-to-quit, launch, and packaging fixes.
+- The GitHub CI graph adopts parallel non-server tests, three server shards, a separate Rust job,
+  and fail-open native-change detection, but every fork CI job uses GitHub-hosted `ubuntu-24.04` or
+  `macos-26`, never organization-scoped Blacksmith runners. Release, relay, production mobile, and
+  AUR publication remain disabled on a fork unless `T3_ENABLE_PRODUCTION_AUTOMATION` is explicitly
+  enabled.
+- Upstream's AUR, release, launchd, work-artifact, and self-contained desktop-sidecar improvements
+  are retained. Fork Vite+/pnpm command resolution and local AppImage build/install scripts remain
+  supported. `pnpm-lock.yaml` and the TanStack route tree are regenerated from resolved sources;
+  neither generated file is hand-merged.
+- Outbound product analytics remain absent. Client-surface and client-app-version metadata stay
+  local to auth/event handling, while existing local resource diagnostics remain available.
+
+### Pre-publication validation
+
+- Six parallel, non-overlapping integration workstreams completed and were staged only by the
+  primary integrator. The parent cross-slice matrix passed 53 files and 1,252 tests. Additional
+  provider, Fetch, lifecycle, web, mobile, desktop, contracts, packaging, and policy matrices also
+  passed, including the full 132-file/839-test mobile suite and 27-file/344-test desktop suite.
+- Scoped typechecks pass for contracts, shared, client-runtime, server, web, mobile, and desktop.
+  Targeted lint passed across all 735 changed JavaScript/TypeScript sources; non-writing formatting
+  passed across all 775 changed supported files. Conflict-marker, whitespace, privacy, generated
+  route-tree, regenerated lockfile, production web-build, and mobile-native-static gates pass. The
+  local host lacks SwiftLint, ktlint, and detekt, so fork CI remains authoritative for those tools.
+- Fresh, fork-51, native-upstream-41, historical-collision, repeated, and integrity migration tests
+  pass. A read-only `VACUUM INTO` snapshot of the 19,739,934,720-byte live database was migrated in
+  isolated state at
+  `/home/alex/.local/state/t3code-migration-validation/20260822-ce91284f8/userdata/state.sqlite`.
+  Exactly migration 52 executed, slot verification passed, and `PRAGMA integrity_check` returned
+  `ok`; the live database was never opened read-write.
+- Transfer-budget totals remain capped at 15,500 wire bytes. Bounded lifecycle summaries shift the
+  deterministic snapshot phase to 8,037/8,041 bytes, so only that phase allowance was rebalanced to
+  8,500; measured-turn and total caps remain unchanged and pass.
+- The final Linux AppImage built with all required feature markers and was installed only to the
+  permitted user-local target. Built and installed bytes match at SHA-256
+  `5f52f66aacffdc54d2487171d39472f621507ec1ec1ec8df800226968d2cb274`; the canonical icon also
+  matches its installed 1024 px copy. No T3 Code process was started, stopped, or restarted.
+- Fork pull request #13 passed all 14 executed CI checks at source head `cb5ebc6f0`; three
+  production-preview jobs were skipped by the fork safety policy. This documentation-only evidence
+  update reruns the same required gates before promotion.
+
+Real Web and Android interaction remain external promotion gates: this host has no attached Android
+device/emulator, no compatible Metro session, and no disposable T3 server. The only listening T3
+server is the developer's live instance and is deliberately untouched. The fork pull request must
+remain a draft until a separately started disposable environment or pairing URL is supplied and the
+fork CI is green. Upstream writes stay disabled throughout.
+
+### Post-integration hardening audit
+
+The follow-up audit closes the remaining concrete correctness and release-safety gaps without
+changing the fork feature contract:
+
+- Failed preview events now carry an optional authoritative session snapshot. New clients can
+  recover an event-only tab including navigation, history, and viewport state, while both legacy
+  snapshot-less events and older clients remain supported.
+- Browser OTLP input is schema-checked and decoded before any local recording or configured relay.
+  Malformed payloads receive HTTP 400, are neither recorded nor forwarded, and are not copied into
+  warning logs.
+- T3 Connect sign-in keeps the same Clerk redirect behavior but removes the permanently null prompt
+  node. Invalid client clock input now fails open for snoozed-thread visibility and cannot invent a
+  timer-wake timestamp.
+- The desktop smoke gate requires both backend and main-window readiness and fails on timeout,
+  early exit, or fatal output. Desktop test discovery can no longer pass with zero tests.
+- Mobile automation watches only the two repository scripts imported by `app.config.ts`, rather
+  than every unrelated helper script. With the supported iOS deployment target pinned at 18.0,
+  production config uses `NSAllowsLocalNetworking` instead of globally enabling arbitrary HTTP
+  loads; Android retains its scoped cleartext-network plugin.
+
+The regression matrix passes 115 focused tests across contracts, server, web, client-runtime,
+desktop, scripts, and mobile. The complete desktop suite passes 61 files and 588 tests. All seven
+scoped typechecks, changed-file lint, non-writing formatting, whitespace, conflict-marker, and
+mobile-native-static gates pass; SwiftLint, ktlint, and detekt remain unavailable locally and are
+left to fork CI. Generated production Expo config confirms bundle `com.t3tools.t3code`, iOS 18.0,
+and only `NSAllowsLocalNetworking` in the ATS dictionary.
+
+The immediately pre-packaging fetch and `ls-remote` check still pin upstream at
+`2274444e92275fda2033de6636e3143ac3599ffb`, already present in the integration ancestry. The
+follow-up AppImage and permitted user-local installed copy are byte-identical at 168,189,428 bytes
+and SHA-256 `df0aa056d463b7e37cb5e1e2dcdf299cf67a7ede330421ca60ecb6020738cd4c`.
+No T3 Code process or live T3 home state was started, stopped, restarted, or mutated.

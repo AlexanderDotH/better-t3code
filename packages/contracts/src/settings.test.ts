@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsSchema,
   ClientSettingsPatch,
@@ -12,6 +12,8 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProjectThreadPreviewCount,
   ProjectThreadPreviewSyncRecord,
+  defaultEnabledForDriver,
+  resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
   SidebarThreadPreviewCount,
@@ -209,10 +211,11 @@ describe("ProjectThreadPreviewSyncRecord", () => {
 });
 
 describe("ClientSettings sidebar", () => {
-  it("defaults to the current sidebar with a three-day auto-settle threshold", () => {
+  it("defaults to the current sidebar with automatic merge and inactivity settling", () => {
     const settings = decodeClientSettings({});
     expect(settings.legacySidebarEnabled).toBe(false);
     expect(settings.sidebarAutoSettleAfterDays).toBe(3);
+    expect(settings.sidebarAutoSettleOnMerge).toBe(true);
   });
 
   it("drops the retired sidebar v2 beta keys, resetting everyone to the default", () => {
@@ -249,6 +252,15 @@ describe("ClientSettings sidebar", () => {
     expect(
       decodeClientSettings({ sidebarAutoSettleAfterDays: null }).sidebarAutoSettleAfterDays,
     ).toBeNull();
+  });
+
+  it("allows auto-settle on merge to be disabled", () => {
+    expect(decodeClientSettings({ sidebarAutoSettleOnMerge: false }).sidebarAutoSettleOnMerge).toBe(
+      false,
+    );
+    expect(
+      decodeClientSettingsPatch({ sidebarAutoSettleOnMerge: false }).sidebarAutoSettleOnMerge,
+    ).toBe(false);
   });
 
   it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {
@@ -430,6 +442,67 @@ describe("AgentEnhancementSettings", () => {
         agentEnhancement: { deepThinking: { stepCount: 1 } },
       }),
     ).toThrow();
+  });
+});
+
+describe("provider enabled defaults", () => {
+  it("preserves the fork provider defaults", () => {
+    const decoded = decodeServerSettings({});
+    expect(decoded.providers.codex.enabled).toBe(true);
+    expect(decoded.providers.claudeAgent.enabled).toBe(true);
+    expect(decoded.providers.cursor.enabled).toBe(false);
+    expect(decoded.providers.grok.enabled).toBe(true);
+    expect(decoded.providers.opencode.enabled).toBe(true);
+    expect(decoded.providers.gemini.enabled).toBe(false);
+  });
+
+  it("derives per-driver defaults from the settings schemas", () => {
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("codex"))).toBe(true);
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("cursor"))).toBe(false);
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("grok"))).toBe(true);
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("opencode"))).toBe(true);
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("gemini"))).toBe(false);
+    // Unknown fork drivers stay enabled; their own build decides otherwise.
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("ollama"))).toBe(true);
+  });
+
+  it("resolves instance enabled state with explicit false winning", () => {
+    const grok = ProviderDriverKind.make("grok");
+    const codex = ProviderDriverKind.make("codex");
+    // No flags anywhere: the fork driver default applies.
+    expect(resolveProviderInstanceEnabled({ driver: grok, config: {} })).toBe(true);
+    expect(resolveProviderInstanceEnabled({ driver: codex, config: {} })).toBe(true);
+    // Envelope flags can explicitly enable or disable a driver.
+    expect(resolveProviderInstanceEnabled({ driver: grok, enabled: true, config: {} })).toBe(true);
+    expect(resolveProviderInstanceEnabled({ driver: codex, enabled: false, config: {} })).toBe(
+      false,
+    );
+    // Legacy in-config flag fills in when the envelope is silent.
+    expect(resolveProviderInstanceEnabled({ driver: grok, config: { enabled: false } })).toBe(
+      false,
+    );
+    // Conflicting flags: the explicit false wins, whichever side it is on.
+    expect(
+      resolveProviderInstanceEnabled({ driver: grok, enabled: false, config: { enabled: true } }),
+    ).toBe(false);
+    expect(
+      resolveProviderInstanceEnabled({ driver: codex, enabled: false, config: { enabled: true } }),
+    ).toBe(false);
+  });
+});
+
+describe("ServerSettings agent browser access", () => {
+  it("defaults preview automation access on for legacy settings", () => {
+    expect(decodeServerSettings({}).enableAgentBrowserAccess).toBe(true);
+  });
+
+  it("preserves an explicit false in full settings and mixed-version patches", () => {
+    expect(decodeServerSettings({ enableAgentBrowserAccess: false }).enableAgentBrowserAccess).toBe(
+      false,
+    );
+    expect(
+      decodeServerSettingsPatch({ enableAgentBrowserAccess: false }).enableAgentBrowserAccess,
+    ).toBe(false);
   });
 });
 

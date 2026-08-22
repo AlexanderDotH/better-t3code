@@ -9,6 +9,7 @@
 - [Organizing threads](./user/thread-sidebar.md)
 - [Review usage](./user/usage.md)
 - [Customize a project icon](./user/project-settings.md)
+- [Mobile appearance](./user/mobile-appearance.md)
 - [Remote access](./user/remote-access.md)
 - [Container server](./user/container-server.md)
 - [Keeping app and server in sync](./user/updating.md)
@@ -44,6 +45,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Environment auth](./internals/environment-auth.md)
 - [T3 Connect](./internals/t3-connect.md)
 - [CI gates](./internals/ci.md)
+- [Engineering work artifacts](./internals/work-artifacts.md)
 
 ### Runbooks
 

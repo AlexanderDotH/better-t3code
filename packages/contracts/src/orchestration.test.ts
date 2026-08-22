@@ -8,6 +8,7 @@ import {
   ClientOrchestrationCommand,
   ModelSelection,
   OrchestrationCommand,
+  OrchestrationDispatchCommandError,
   OrchestrationEvent,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffInput,
@@ -27,6 +28,7 @@ import {
   ThreadCreatedPayload,
   ThreadTurnDiff,
   ThreadTurnStartRequestedPayload,
+  isProviderSendTurnSupportedImageMimeType,
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import { RuntimeSessionId, TurnId } from "./baseSchemas.ts";
@@ -62,6 +64,19 @@ const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationComma
 const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+const decodeDispatchCommandError = Schema.decodeUnknownEffect(OrchestrationDispatchCommandError);
+
+it.effect("decodes a dispatch error after its bootstrap thread was deleted", () =>
+  Effect.gen(function* () {
+    const error = yield* decodeDispatchCommandError({
+      _tag: "OrchestrationDispatchCommandError",
+      message: "Failed to create worktree.",
+      bootstrapThreadDisposition: "deleted",
+    });
+
+    assert.strictEqual(error.bootstrapThreadDisposition, "deleted");
+  }),
+);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
@@ -1369,3 +1384,9 @@ it.effect("project favicon overrides accept only supported image files", () =>
     assert.strictEqual(invalid._tag, "Failure");
   }),
 );
+
+it("isProviderSendTurnSupportedImageMimeType accepts raster formats and rejects svg", () => {
+  assert.strictEqual(isProviderSendTurnSupportedImageMimeType("image/png"), true);
+  assert.strictEqual(isProviderSendTurnSupportedImageMimeType("IMAGE/JPEG"), true);
+  assert.strictEqual(isProviderSendTurnSupportedImageMimeType("image/svg+xml"), false);
+});

@@ -70,6 +70,7 @@ import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { McpRuntimeRegistry } from "../../mcp/McpRuntimeRegistry.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 const isModelSelection = Schema.is(ModelSelection);
 
 /**
@@ -79,6 +80,12 @@ const isModelSelection = Schema.is(ModelSelection);
  */
 export interface ProviderServiceLiveOptions {
   readonly canonicalEventLogger?: EventNdjsonLogger;
+  /**
+   * Overrides MCP credential issuance so tests can observe the requested MCP
+   * capability profile. Browser access changes `previewEnabled`; it never
+   * suppresses the credential needed for workspace and coordination tools.
+   */
+  readonly issueMcpCredential?: typeof McpSessionRegistry.issueActiveMcpCredential;
 }
 
 type ProviderServiceMethod<Name extends keyof ProviderService.ProviderService["Service"]> =
@@ -252,6 +259,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const issueMcpCredential =
+    options?.issueMcpCredential ?? McpSessionRegistry.issueActiveMcpCredential;
   const mcpRuntimeRegistry = Option.getOrUndefined(yield* Effect.serviceOption(McpRuntimeRegistry));
   const runtimeEventBroadcast = yield* makeBoundedProviderEventBroadcast<ProviderRuntimeEvent>({
     capacity: PROVIDER_RUNTIME_EVENT_QUEUE_CAPACITY,
@@ -441,18 +451,28 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       readonly workspaceOnly?: boolean;
     },
   ) =>
-    McpSessionRegistry.issueActiveMcpCredential({
-      threadId,
-      providerInstanceId,
-      provider,
-      ...options,
-    }).pipe(
-      Effect.tap((credential) =>
-        credential
-          ? Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config))
-          : Effect.void,
-      ),
-    );
+    Effect.gen(function* () {
+      const previewEnabled = yield* serverSettings.getSettings.pipe(
+        Effect.map((settings) => settings.enableAgentBrowserAccess),
+        Effect.catch((cause) =>
+          Effect.logWarning(
+            "Could not read server settings; withholding agent browser tools for this session.",
+            { cause },
+          ).pipe(Effect.as(false)),
+        ),
+      );
+      const credential = yield* issueMcpCredential({
+        threadId,
+        providerInstanceId,
+        provider,
+        previewEnabled,
+        ...options,
+      });
+      if (credential) {
+        yield* Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config));
+      }
+      return credential;
+    });
   const clearMcpSession = (threadId: ThreadId) =>
     McpSessionRegistry.revokeActiveMcpThread(threadId).pipe(
       Effect.tap(() => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),

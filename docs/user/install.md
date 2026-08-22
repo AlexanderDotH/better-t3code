@@ -37,8 +37,16 @@ brew install --cask t3-code
 
 Arch Linux:
 
+Stable:
+
 ```bash
 yay -S t3code-bin
+```
+
+Nightly:
+
+```bash
+yay -S t3code-nightly-bin
 ```
 
 ## Providers
@@ -54,6 +62,10 @@ Google SDK directly and needs an API key instead of a separate CLI.
 | Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`         | `grok login`          |
 | OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode`     | `opencode auth login` |
 | Gemini     | [Gemini API](https://ai.google.dev/gemini-api/docs)   | None           | Add an API key in T3  |
+
+Codex, Claude, Grok Build, and OpenCode are on by default. Cursor and Gemini are off by default;
+turn them on in **Settings** → the provider's card when you want to use them. An explicit saved
+disable always wins over these defaults.
 
 Cursor is the one to watch: install Cursor CLI, which provides the `cursor-agent` binary that
 T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`.

@@ -3,9 +3,10 @@ import * as NodeAssert from "node:assert/strict";
 import { describe, it } from "vite-plus/test";
 
 import {
+  parseAgentListCliOutput,
   parseModelsCliOutput,
   parseOpenCodeModelSlug,
-  parseAgentListCliOutput,
+  parseSkillsCliOutput,
 } from "./opencodeRuntime.ts";
 
 describe("parseModelsCliOutput", () => {
@@ -315,5 +316,33 @@ describe("parseOpenCodeModelSlug", () => {
     NodeAssert.equal(parseOpenCodeModelSlug("google gemini-2.5"), null);
     NodeAssert.equal(parseOpenCodeModelSlug(""), null);
     NodeAssert.equal(parseOpenCodeModelSlug(undefined), null);
+  });
+});
+
+describe("parseSkillsCliOutput", () => {
+  it("parses skill metadata from the CLI JSON output", () => {
+    const result = parseSkillsCliOutput(
+      JSON.stringify([
+        {
+          name: "review-pr",
+          description: "Review a pull request.",
+          location: "/tmp/review-pr/SKILL.md",
+          content: "---\nname: review-pr\n---\n",
+        },
+      ]),
+    );
+
+    NodeAssert.deepEqual(result, [
+      {
+        name: "review-pr",
+        description: "Review a pull request.",
+        location: "/tmp/review-pr/SKILL.md",
+        content: "---\nname: review-pr\n---\n",
+      },
+    ]);
+  });
+
+  it("degrades malformed output to an empty skill list", () => {
+    NodeAssert.deepEqual(parseSkillsCliOutput("not json"), []);
   });
 });

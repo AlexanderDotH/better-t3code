@@ -15,10 +15,14 @@ describe("ChatComposer footer layout", () => {
   it("renders Codex reasoning before the context-window selector", () => {
     const footerStart = chatComposerSource.indexOf('data-chat-composer-footer="true"');
     const footerSource = chatComposerSource.slice(footerStart);
+    const traitsPickerIndex = footerSource.indexOf("{providerTraitsPicker}");
+    const contextWindowPickerIndex = footerSource.indexOf("{providerContextWindowPicker}");
 
     expect(footerStart).toBeGreaterThanOrEqual(0);
-    expect(footerSource).toMatch(
-      /\{isComposerFooterCompact \? \([\s\S]*?<CompactComposerControlsMenu[\s\S]*?\) : \(\s*providerTraitsPicker\s*\)\}\s*\{providerContextWindowPicker\}/,
+    expect(traitsPickerIndex).toBeGreaterThanOrEqual(0);
+    expect(contextWindowPickerIndex).toBeGreaterThan(traitsPickerIndex);
+    expect(footerSource).toContain(
+      "{isComposerFooterCompact ? providerContextWindowPicker : null}",
     );
   });
 });

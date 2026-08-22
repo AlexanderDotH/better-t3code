@@ -15,6 +15,7 @@ import {
 
 import { cn } from "~/lib/utils";
 
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   nextWorkspaceCardDrawerHeightFromPointer,
   parsePersistedWorkspaceCardDrawerHeight,
@@ -427,17 +428,23 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
           className={cn("workspace-card-drawer__header-actions", props.classNames?.headerActions)}
         >
           {props.headerActions}
-          <button
-            type="button"
-            className={cn("workspace-card-drawer__collapse", props.classNames?.collapse)}
-            aria-label={props.collapseLabel}
-            title={props.collapseLabel}
-            data-workspace-card-drawer-initial-focus
-            data-git-workbench-initial-focus
-            onClick={closeDrawer}
-          >
-            <ChevronDownIcon aria-hidden />
-          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  className={cn("workspace-card-drawer__collapse", props.classNames?.collapse)}
+                  aria-label={props.collapseLabel}
+                  data-workspace-card-drawer-initial-focus
+                  data-git-workbench-initial-focus
+                  onClick={closeDrawer}
+                />
+              }
+            >
+              <ChevronDownIcon aria-hidden />
+            </TooltipTrigger>
+            <TooltipPopup side="top">{props.collapseLabel}</TooltipPopup>
+          </Tooltip>
         </div>
       </header>
       {showTabs ? (

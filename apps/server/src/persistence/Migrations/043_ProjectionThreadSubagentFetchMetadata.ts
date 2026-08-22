@@ -1,9 +1,16 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import Migration0041 from "./041_ProjectionThreadSubagents.ts";
+
 // Shared fork databases can re-run repair migrations directly. Check every
 // column so the migration is safe both through the ledger and on direct use.
 export default Effect.gen(function* () {
+  // A native-upstream database may have already recorded migration ID 41 for
+  // auth connection metadata. Recreate the fork's idempotent subagent table
+  // before adding fetch metadata so the ledger can reach convergence at 45.
+  yield* Migration0041;
+
   const sql = yield* SqlClient.SqlClient;
   const columns = yield* sql<{ readonly name: string }>`
     PRAGMA table_info(projection_thread_subagents)

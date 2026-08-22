@@ -5,6 +5,12 @@ import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 
 type AppVariant = "development" | "preview" | "production";
 
+export const IOS_APP_TRANSPORT_SECURITY = {
+  NSAllowsLocalNetworking: true,
+} as const;
+
+export const MOBILE_IOS_DEPLOYMENT_TARGET = "18.0";
+
 const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
 
@@ -161,7 +167,7 @@ const config: ExpoConfig = {
   slug: "t3-code",
   platforms: ["ios", "android"],
   scheme: variant.scheme,
-  version: "1.0.3",
+  version: "1.0.4",
   runtimeVersion: {
     // Fingerprint (not appVersion) so an OTA only reaches binaries whose native
     // project — native deps, config plugins, AND patches/ — matches the update.
@@ -195,7 +201,7 @@ const config: ExpoConfig = {
     ],
     infoPlist: {
       NSAppTransportSecurity: {
-        NSAllowsArbitraryLoads: true,
+        ...IOS_APP_TRANSPORT_SECURITY,
       },
       NSLocalNetworkUsageDescription:
         "Allow T3 Code to connect to T3 Code servers on your local network or tailnet.",
@@ -325,7 +331,7 @@ const config: ExpoConfig = {
       "expo-build-properties",
       {
         ios: {
-          deploymentTarget: "18.0",
+          deploymentTarget: MOBILE_IOS_DEPLOYMENT_TARGET,
           // AppCheckCore 11.3+ includes Swift and needs module maps for these Objective-C dependencies.
           extraPods: [
             { name: "GoogleUtilities", modular_headers: true },

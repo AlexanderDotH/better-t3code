@@ -5,6 +5,7 @@ import type { ReactNode, RefObject } from "react";
 import { cn } from "~/lib/utils";
 
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { McpWorkspaceSummary } from "./mcpWorkspace.logic";
 
 import "./McpWorkspaceCard.css";
@@ -64,17 +65,23 @@ export function McpWorkspaceCard(props: McpWorkspaceCardProps) {
               </span>
             </div>
           </div>
-          <button
-            ref={props.expandButtonRef}
-            type="button"
-            className="mcp-workspace-card__expand"
-            aria-label="Expand MCP workspace"
-            title="Expand MCP workspace"
-            disabled={props.expansionBlocked}
-            onClick={props.onExpand}
-          >
-            <ArrowUpIcon aria-hidden />
-          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  ref={props.expandButtonRef}
+                  type="button"
+                  className="mcp-workspace-card__expand"
+                  aria-label="Expand MCP workspace"
+                  disabled={props.expansionBlocked}
+                  onClick={props.onExpand}
+                />
+              }
+            >
+              <ArrowUpIcon aria-hidden />
+            </TooltipTrigger>
+            <TooltipPopup side="top">Expand MCP workspace</TooltipPopup>
+          </Tooltip>
         </header>
 
         <section className="mcp-workspace-card__status" aria-label="MCP server status">

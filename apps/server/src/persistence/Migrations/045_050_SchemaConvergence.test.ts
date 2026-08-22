@@ -13,6 +13,7 @@ import Migration048 from "./048_ProjectionThreadsPinOrderKeyCompatibility.ts";
 import Migration049 from "./049_ProjectionProjectsDefaultThreadEnvModeCompatibility.ts";
 import Migration050 from "./050_ProjectionProjectFaviconPathCompatibility.ts";
 import Migration051 from "./051_ProjectionProjectCheckpointsEnabled.ts";
+import Migration052 from "./052_AuthSessionClientConnectionCompatibility.ts";
 
 const expectedTail = [
   [33, "ProjectionThreadsSettled"],
@@ -34,6 +35,7 @@ const expectedTail = [
   [49, "ProjectionProjectsDefaultThreadEnvModeCompatibility"],
   [50, "ProjectionProjectFaviconPathCompatibility"],
   [51, "ProjectionProjectCheckpointsEnabled"],
+  [52, "AuthSessionClientConnectionCompatibility"],
 ] as const;
 
 const applyUpstreamSchema = Effect.gen(function* () {
@@ -48,6 +50,7 @@ const applyCompatibilityTail = Effect.gen(function* () {
   yield* Migration045;
   yield* applyUpstreamSchema;
   yield* Migration051;
+  yield* Migration052;
 });
 
 interface SchemaEntry {
@@ -115,15 +118,16 @@ const captureScenario = (setup: Effect.Effect<void, unknown, SqlClient.SqlClient
 
 const freshScenario = Effect.asVoid(runMigrations());
 
-const fork44Scenario = Effect.gen(function* () {
-  yield* runMigrations({ toMigrationInclusive: 44 });
+const fork51Scenario = Effect.gen(function* () {
+  yield* runMigrations({ toMigrationInclusive: 51 });
   yield* runMigrations();
 });
 
-const upstream40Scenario = Effect.gen(function* () {
+const upstream41Scenario = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* runMigrations({ toMigrationInclusive: 35 });
   yield* applyUpstreamSchema;
+  yield* Migration052;
   yield* sql`
     INSERT INTO effect_sql_migrations (migration_id, name)
     VALUES
@@ -131,7 +135,8 @@ const upstream40Scenario = Effect.gen(function* () {
       (37, 'ProjectionTurnsKeysetIndex'),
       (38, 'ProjectionThreadsPinOrderKey'),
       (39, 'ProjectionProjectsDefaultThreadEnvMode'),
-      (40, 'ProjectionProjectFaviconPath')
+      (40, 'ProjectionProjectFaviconPath'),
+      (41, 'AuthSessionClientConnection')
   `;
   yield* runMigrations();
 });
@@ -157,7 +162,7 @@ const repeatedScenario = Effect.gen(function* () {
   assert.deepStrictEqual(yield* runMigrations(), []);
 });
 
-it("preserves immutable migration IDs 1-44 and appends convergence migrations 45-51", () => {
+it("preserves immutable migration IDs 1-51 and appends auth compatibility as migration 52", () => {
   assert.deepStrictEqual(
     migrationEntries.slice(-expectedTail.length).map(([id, name]) => [id, name] as const),
     Array.from(expectedTail),
@@ -215,8 +220,8 @@ it.effect("converges fresh, fork, upstream, and historical-collision ledgers", (
   Effect.gen(function* () {
     const fresh = yield* captureScenario(freshScenario);
     const scenarios = yield* Effect.all([
-      captureScenario(fork44Scenario),
-      captureScenario(upstream40Scenario),
+      captureScenario(fork51Scenario),
+      captureScenario(upstream41Scenario),
       captureScenario(historicalForkCollisionScenario),
       captureScenario(repeatedScenario),
     ]);

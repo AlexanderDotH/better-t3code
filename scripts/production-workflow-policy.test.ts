@@ -13,6 +13,7 @@ const PRODUCTION_AUTOMATION_GUARD_PARTS = [
 const guardedJobsByWorkflow = {
   "deploy-relay.yml": ["deploy_relay"],
   "mobile-eas-production.yml": ["production"],
+  "publish-aur.yml": ["publish"],
   "release.yml": [
     "check_changes",
     "preflight",
@@ -21,10 +22,21 @@ const guardedJobsByWorkflow = {
     "build",
     "publish_cli",
     "release",
+    "publish_aur",
     "deploy_web",
     "finalize",
     "announce_discord",
   ],
+} as const;
+
+const hostedCiRunners = {
+  check: "ubuntu-24.04",
+  test: "ubuntu-24.04",
+  test_server: "ubuntu-24.04",
+  rust: "ubuntu-24.04",
+  mobile_native_changes: "ubuntu-24.04",
+  mobile_native_static_analysis: "macos-26",
+  release_smoke: "ubuntu-24.04",
 } as const;
 
 function requireRecord(value: unknown, message: string): Record<string, unknown> {
@@ -51,6 +63,47 @@ function readJobIf(workflow: Record<string, unknown>, filename: string, jobName:
   return condition;
 }
 
+function readStepRun(job: Record<string, unknown>, jobName: string, stepName: string): string {
+  const steps = job.steps;
+  if (!Array.isArray(steps)) {
+    return assert.fail(`ci.yml:${jobName} must define steps`);
+  }
+  const step = steps.find(
+    (candidate: unknown) =>
+      typeof candidate === "object" &&
+      candidate !== null &&
+      "name" in candidate &&
+      candidate.name === stepName,
+  );
+  assert.ok(step, `ci.yml:${jobName} must define the ${stepName} step`);
+  const stepRecord = requireRecord(step, `ci.yml:${jobName}:${stepName} must be a step object`);
+  const command = stepRecord.run;
+  if (typeof command !== "string") {
+    return assert.fail(`ci.yml:${jobName}:${stepName} must define a run command`);
+  }
+  return command;
+}
+
+function readTriggerPaths(
+  workflow: Record<string, unknown>,
+  filename: string,
+  triggerName: string,
+): ReadonlyArray<string> {
+  const triggers = requireRecord(workflow.on, `${filename} must define triggers`);
+  const trigger = requireRecord(
+    triggers[triggerName],
+    `${filename} must define the ${triggerName} trigger`,
+  );
+  const paths = trigger.paths;
+  if (!Array.isArray(paths)) {
+    return assert.fail(`${filename}:${triggerName} must define path filters`);
+  }
+  if (!paths.every((path: unknown) => typeof path === "string")) {
+    return assert.fail(`${filename}:${triggerName} path filters must be strings`);
+  }
+  return paths;
+}
+
 it.layer(NodeServices.layer)("production workflow policy", (it) => {
   it.effect("keeps every production job disabled unless upstream or explicitly opted in", () =>
     Effect.gen(function* () {
@@ -62,6 +115,53 @@ it.layer(NodeServices.layer)("production workflow policy", (it) => {
             assert.include(condition, guardPart, `${filename}:${jobName} is missing ${guardPart}`);
           }
         }
+      }
+    }),
+  );
+
+  it.effect("keeps parallel CI on fork-accessible hosted runners", () =>
+    Effect.gen(function* () {
+      const workflow = yield* readWorkflow("ci.yml");
+      const jobs = requireRecord(workflow.jobs, "ci.yml must define jobs");
+
+      for (const [jobName, runner] of Object.entries(hostedCiRunners)) {
+        const job = requireRecord(jobs[jobName], `ci.yml must define ${jobName}`);
+        assert.equal(job["runs-on"], runner, `ci.yml:${jobName} must use ${runner}`);
+      }
+
+      const testJob = requireRecord(jobs.test, "ci.yml must define test");
+      const testCommand = readStepRun(testJob, "test", "Test");
+      assert.include(testCommand, "--parallel --concurrency-limit 4");
+      assert.include(testCommand, "--filter '!t3'");
+
+      const serverJob = requireRecord(jobs.test_server, "ci.yml must define test_server");
+      const strategy = requireRecord(serverJob.strategy, "ci.yml:test_server must define strategy");
+      const matrix = requireRecord(strategy.matrix, "ci.yml:test_server must define a matrix");
+      assert.deepEqual(matrix.shard, [1, 2, 3]);
+      assert.include(readStepRun(serverJob, "test_server", "Test"), "--shard");
+
+      const rustJob = requireRecord(jobs.rust, "ci.yml must define rust");
+      assert.include(
+        readStepRun(rustJob, "rust", "Check resource monitor formatting"),
+        "cargo fmt",
+      );
+      assert.include(readStepRun(rustJob, "rust", "Test resource monitor"), "cargo test");
+    }),
+  );
+
+  it.effect("limits mobile automation to scripts imported by the mobile config", () =>
+    Effect.gen(function* () {
+      const workflows = [
+        ["mobile-eas-production.yml", "push"],
+        ["mobile-fingerprint-check.yml", "pull_request"],
+      ] as const;
+
+      for (const [filename, triggerName] of workflows) {
+        const workflow = yield* readWorkflow(filename);
+        const paths = readTriggerPaths(workflow, filename, triggerName);
+        assert.notInclude(paths, "scripts/**");
+        assert.include(paths, "scripts/lib/brand-assets.ts");
+        assert.include(paths, "scripts/lib/public-config.ts");
       }
     }),
   );

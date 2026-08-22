@@ -19,7 +19,8 @@ on:
       - packages/contracts/**
       - packages/shared/**
       - assets/**
-      - scripts/**
+      - scripts/lib/brand-assets.ts
+      - scripts/lib/public-config.ts
       - patches/**
       - pnpm-lock.yaml
       - pnpm-workspace.yaml

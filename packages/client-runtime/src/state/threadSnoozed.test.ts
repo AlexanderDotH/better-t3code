@@ -80,6 +80,12 @@ describe("effectiveSnoozed", () => {
     expect(effectiveSnoozed(makeShell({ snoozedUntil: "not-a-date" }), { now: NOW })).toBe(false);
   });
 
+  it("never hides when the client clock is malformed", () => {
+    expect(effectiveSnoozed(makeShell({ snoozedUntil: FUTURE_WAKE }), { now: "not-a-date" })).toBe(
+      false,
+    );
+  });
+
   it("wakes early when the agent is blocked on the user", () => {
     expect(
       effectiveSnoozed(makeShell({ snoozedUntil: FUTURE_WAKE, pending: "approval" }), {
@@ -212,6 +218,10 @@ describe("threadWokeAt", () => {
 
   it("reports the wake time for a timer wake", () => {
     expect(threadWokeAt(makeShell({ snoozedUntil: PAST_WAKE }), { now: NOW })).toBe(PAST_WAKE);
+  });
+
+  it("does not invent a timer wake when the client clock is malformed", () => {
+    expect(threadWokeAt(makeShell({ snoozedUntil: PAST_WAKE }), { now: "not-a-date" })).toBeNull();
   });
 
   it("reports the completion time for an early run-completed wake", () => {
