@@ -33,7 +33,11 @@ const ProviderSessionStatus = Schema.Literals([
   "closed",
 ]);
 
-export const ProviderSessionPurpose = Schema.Literals(["interactive", "fetch-worker"]);
+export const ProviderSessionPurpose = Schema.Literals([
+  "interactive",
+  "fetch-worker",
+  "subagent-worker",
+]);
 export type ProviderSessionPurpose = typeof ProviderSessionPurpose.Type;
 export const DEFAULT_PROVIDER_SESSION_PURPOSE: ProviderSessionPurpose = "interactive";
 

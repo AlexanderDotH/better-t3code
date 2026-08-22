@@ -1277,6 +1277,14 @@ describe("ProviderCommandReactor", () => {
         providerInstanceId: ProviderInstanceId.make("claude_fetch"),
         providerDriver: ProviderDriverKind.make("claudeAgent"),
       });
+      const runningManagedChild = makeProjectedSubagent({
+        id: "general:thread-1:worker-before-restart",
+        status: "running",
+        latestTurnState: "running",
+        origin: "t3-managed",
+        providerInstanceId: ProviderInstanceId.make("codex_security"),
+        providerDriver: ProviderDriverKind.make("codex"),
+      });
       const terminalChildWithStaleStatus = makeProjectedSubagent({
         id: "codex:completed-child-before-restart",
         status: "running",
@@ -1295,6 +1303,7 @@ describe("ProviderCommandReactor", () => {
         },
         projectedSubagentsBeforeStart: [
           runningChild,
+          runningManagedChild,
           terminalChildWithStaleStatus,
           completedSibling,
         ],
@@ -1325,6 +1334,14 @@ describe("ProviderCommandReactor", () => {
         completedAt: repairedAt,
       });
       expect(
+        thread?.subagents.find((subagent) => subagent.id === runningManagedChild.id),
+      ).toMatchObject({
+        status: "interrupted",
+        origin: "t3-managed",
+        providerInstanceId: ProviderInstanceId.make("codex_security"),
+        providerDriver: ProviderDriverKind.make("codex"),
+      });
+      expect(
         thread?.subagents.find((subagent) => subagent.id === terminalChildWithStaleStatus.id),
       ).toMatchObject({
         status: "completed",
@@ -1349,6 +1366,7 @@ describe("ProviderCommandReactor", () => {
         .filter((event) => event.type === "thread.subagent-upserted")
         .map((event) => event.payload.subagent.id);
       expect(repairedIds.filter((id) => id === runningChild.id)).toHaveLength(2);
+      expect(repairedIds.filter((id) => id === runningManagedChild.id)).toHaveLength(2);
       expect(repairedIds.filter((id) => id === terminalChildWithStaleStatus.id)).toHaveLength(2);
       expect(repairedIds.filter((id) => id === completedSibling.id)).toHaveLength(1);
 

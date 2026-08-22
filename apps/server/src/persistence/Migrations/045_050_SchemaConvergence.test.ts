@@ -14,6 +14,7 @@ import Migration049 from "./049_ProjectionProjectsDefaultThreadEnvModeCompatibil
 import Migration050 from "./050_ProjectionProjectFaviconPathCompatibility.ts";
 import Migration051 from "./051_ProjectionProjectCheckpointsEnabled.ts";
 import Migration052 from "./052_AuthSessionClientConnectionCompatibility.ts";
+import Migration053 from "./053_ProjectionThreadSubagentManagedOrigin.ts";
 
 const expectedTail = [
   [33, "ProjectionThreadsSettled"],
@@ -36,6 +37,7 @@ const expectedTail = [
   [50, "ProjectionProjectFaviconPathCompatibility"],
   [51, "ProjectionProjectCheckpointsEnabled"],
   [52, "AuthSessionClientConnectionCompatibility"],
+  [53, "ProjectionThreadSubagentManagedOrigin"],
 ] as const;
 
 const applyUpstreamSchema = Effect.gen(function* () {
@@ -51,6 +53,7 @@ const applyCompatibilityTail = Effect.gen(function* () {
   yield* applyUpstreamSchema;
   yield* Migration051;
   yield* Migration052;
+  yield* Migration053;
 });
 
 interface SchemaEntry {
@@ -162,7 +165,7 @@ const repeatedScenario = Effect.gen(function* () {
   assert.deepStrictEqual(yield* runMigrations(), []);
 });
 
-it("preserves immutable migration IDs 1-51 and appends auth compatibility as migration 52", () => {
+it("preserves immutable migration IDs 1-52 and appends managed subagents as migration 53", () => {
   assert.deepStrictEqual(
     migrationEntries.slice(-expectedTail.length).map(([id, name]) => [id, name] as const),
     Array.from(expectedTail),

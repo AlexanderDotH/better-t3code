@@ -11,12 +11,15 @@ T3 server, scoped to one provider session, and passed directly to the provider a
 
 ## Endpoints and toolsets
 
-The HTTP server exposes two endpoints:
+The HTTP server exposes five profiles:
 
-| Endpoint         | Tools                                                                      |
-| ---------------- | -------------------------------------------------------------------------- |
-| `/mcp`           | Collaborative preview and project-agent coordination tools                 |
-| `/mcp/workspace` | Preview and coordination tools plus the read-only `workspace_context` tool |
+| Endpoint                    | Tools                                                                      |
+| --------------------------- | -------------------------------------------------------------------------- |
+| `/mcp`                      | Preview, project-agent coordination, and general-subagent tools            |
+| `/mcp/coordination`         | Project-agent coordination and general-subagent tools                      |
+| `/mcp/workspace`            | `/mcp` plus the read-only `workspace_context` tool                         |
+| `/mcp/workspace-no-preview` | Workspace context, project-agent coordination, and general-subagent tools  |
+| `/mcp/workspace-only`       | Only `workspace_context`; reserved for constrained transient Fetch workers |
 
 The endpoint in a provider's generated MCP configuration determines its maximum toolset. A
 credential issued for the preview endpoint cannot be used to obtain workspace tools from
@@ -34,9 +37,11 @@ Provider support follows the adapter's MCP transport capability:
 | Gemini              | Direct T3 function-tool bridge | None             |
 | Unregistered driver | No adapter transport           | None             |
 
-MCP-capable built-in drivers receive project-agent coordination tools. Gemini instead uses a direct
+MCP-capable built-in drivers receive project-agent coordination and general-subagent tools. Gemini instead uses a direct
 T3-owned function-tool bridge for bounded workspace reads and mutations, so no MCP credential is
-issued to its SDK client. The distinction also keeps `workspace_context` out of the advertised MCP
+issued to its SDK client and Gemini cannot initiate T3-managed delegation. It can still run as a
+selected general subagent because its direct harness supports normal coding work. The distinction
+also keeps `workspace_context` out of the advertised MCP
 tool list for Grok and unsupported drivers instead of allowing a tool call that can only fail. An
 explicit instance for an unregistered driver remains visible as unavailable, but no adapter exists
 to receive an internal MCP credential.
@@ -76,7 +81,9 @@ in that project. A lone root thread is never told to call coordination tools.
 
 The authenticated root thread is always the caller identity. Tool inputs cannot impersonate another
 thread or select another project. Provider-native subagents coordinate under their root thread's
-lease; transient Fetch workers do not receive internal MCP credentials and never appear as peers.
+lease. Transient Fetch workers receive only workspace-scoped credentials and never receive
+coordination or delegation tools. T3-managed general subagents receive the parent's full profile,
+work under the parent's existing claims, and are instructed not to create nested agents.
 
 Claims are advisory conflict detection rather than filesystem locks. A claim may identify a
 project-relative path or a normalized topic. Paths conflict on exact or ancestor/descendant segment
@@ -93,6 +100,32 @@ thread. Broadcast never wakes every inactive chat. Agents check the inbox at saf
 Inbox acknowledgement is separate from reading: the response supplies `nextAcknowledgeThrough`,
 which the agent can submit only after it has processed that page. Retention is bounded and responses
 flag truncated history.
+
+## General-purpose subagents
+
+Interactive MCP profiles expose four T3-managed delegation tools:
+
+- `subagent_models` lists runnable provider instances and models, including each model's advertised
+  reasoning-effort values. It marks the calling provider and current model so the common default is
+  unambiguous.
+- `subagent_spawn` starts one asynchronous worker. Provider, model, and reasoning effort are
+  optional; omission inherits the caller's provider and current model traits. Explicit values are
+  validated against the live provider catalog rather than a hard-coded effort list.
+- `subagent_wait` waits for one or more owned workers for at most 60 seconds and returns their latest
+  status and bounded result. Callers repeat it while work remains active.
+- `subagent_cancel` interrupts one exact owned worker and preserves its terminal projection.
+
+These workers use fresh `purpose: "subagent-worker"` provider sessions. Unlike Fetch, they inherit
+the parent runtime mode, run in normal interaction mode, and can inspect, edit, execute, and verify
+when those actions are permitted. The selected adapter receives the normal internal and
+user-configured MCP surfaces. Codex disables its provider-native nested-agent feature inside this
+transient runtime so T3 remains the lifecycle owner.
+
+`GeneralSubagentCoordinator` generation-fences each synthetic runtime, projects its transcript and
+activities into the parent as `origin: "t3-managed"`, bounds captured output, and cancels unfinished
+work when the owning parent turn ends. Hidden questions fail the worker; file-read approvals can be
+accepted locally, while mutation or command approvals that still require user interaction are
+declined. A general worker therefore never creates an invisible approval prompt on its parent.
 
 ## Trusted workspace resolution
 

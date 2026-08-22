@@ -43,6 +43,17 @@ describe("ProviderSessionStartInput", () => {
     expect(parsed.purpose).toBe("fetch-worker");
   });
 
+  it("accepts the T3-managed general subagent purpose", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "general:parent:worker",
+      providerInstanceId: "codex",
+      runtimeMode: "full-access",
+      purpose: "subagent-worker",
+    });
+
+    expect(parsed.purpose).toBe("subagent-worker");
+  });
+
   it("rejects unknown session purposes", () => {
     expect(() =>
       decodeProviderSessionStartInput({

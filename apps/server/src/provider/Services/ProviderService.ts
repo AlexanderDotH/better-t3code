@@ -50,11 +50,17 @@ export interface ProviderTransientSessionTarget {
 
 export interface ProviderTransientSessionOptions {
   /**
-   * Durable parent thread whose authenticated workspace may be exposed to a
-   * transient read-only worker. The provider runtime itself remains keyed by
-   * the synthetic transient thread id.
+   * Durable parent thread whose authenticated workspace may be exposed to the
+   * transient worker. The provider runtime itself remains keyed by the
+   * synthetic transient thread id.
    */
   readonly workspaceContextThreadId?: ThreadId;
+  /**
+   * MCP surface mounted into the transient runtime. Existing callers that
+   * provide workspaceContextThreadId without this option retain the constrained
+   * workspace-only Fetch profile.
+   */
+  readonly mcpMode?: "none" | "workspace-only" | "full";
 }
 
 /**

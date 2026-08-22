@@ -85,7 +85,7 @@ describe("ComposerTasksBadge", () => {
     expect(markup).not.toContain("rounded-t-xl");
   });
 
-  it("expands into a read-only attached task list", () => {
+  it("expands into a read-only floating task list", () => {
     const markup = renderToStaticMarkup(
       <ComposerTasksDrawer
         onCollapse={() => undefined}
@@ -96,6 +96,7 @@ describe("ComposerTasksBadge", () => {
     );
 
     expect(markup).toContain('data-chat-composer-tasks-drawer="true"');
+    expect(markup).toContain("chat-composer-top-drawer-floating");
     expect(markup).not.toContain("data-variant");
     expect(markup).toContain('aria-expanded="true"');
     expect(markup).toContain('role="list"');

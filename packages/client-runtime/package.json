@@ -47,6 +47,10 @@
       "types": "./src/projectThreadPreviewSync.ts",
       "default": "./src/projectThreadPreviewSync.ts"
     },
+    "./chat-visual-mode-sync": {
+      "types": "./src/chatVisualModeSync.ts",
+      "default": "./src/chatVisualModeSync.ts"
+    },
     "./project-thread-preview": {
       "types": "./src/projectThreadPreview.ts",
       "default": "./src/projectThreadPreview.ts"

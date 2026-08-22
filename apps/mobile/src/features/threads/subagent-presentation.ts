@@ -18,6 +18,21 @@ export function mobileSubagentDisplayName(
   return agent.nickname?.trim() || agent.name.trim() || String(agent.id);
 }
 
+export function mobileSubagentTranscriptMetadata(
+  agent: Pick<
+    OrchestrationSubagentSummary,
+    "origin" | "providerInstanceId" | "providerDriver" | "status" | "model" | "reasoningEffort"
+  >,
+): string[] {
+  const provider =
+    agent.origin === "provider-native"
+      ? null
+      : (agent.providerInstanceId ?? agent.providerDriver ?? null);
+  return [agent.status, provider, agent.model, agent.reasoningEffort].filter(
+    (value): value is string => typeof value === "string" && value.trim().length > 0,
+  );
+}
+
 export function mobileSubagentIsActive(status: OrchestrationSubagentStatus): boolean {
   return ACTIVE_STATUSES.has(status);
 }

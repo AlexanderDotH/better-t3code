@@ -89,4 +89,35 @@ describe("sanitizeMobilePreferences", () => {
       } as never),
     ).toEqual({});
   });
+
+  it("keeps a valid chat visual mode sync record", () => {
+    expect(
+      sanitizeMobilePreferences({
+        chatVisualModeSyncRecord: {
+          mode: "classic",
+          updatedAt: 1_787_178_400_000,
+          updateId: "mobile-device:chat-visuals-classic",
+        },
+      }),
+    ).toEqual({
+      chatVisualModeSyncRecord: {
+        mode: "classic",
+        updatedAt: 1_787_178_400_000,
+        updateId: "mobile-device:chat-visuals-classic",
+      },
+    });
+  });
+
+  it.each([
+    { mode: "legacy", updatedAt: 1_787_178_400_000, updateId: "invalid-mode" },
+    { mode: "current", updatedAt: -1, updateId: "negative-time" },
+    { mode: "classic", updatedAt: 1.5, updateId: "fractional-time" },
+    { mode: "current", updatedAt: 1_787_178_400_000, updateId: "   " },
+  ])("drops an invalid cached chat visual mode record: %o", (record) => {
+    expect(
+      sanitizeMobilePreferences({
+        chatVisualModeSyncRecord: record,
+      } as never),
+    ).toEqual({});
+  });
 });

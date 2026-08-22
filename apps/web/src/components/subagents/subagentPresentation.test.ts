@@ -178,6 +178,21 @@ describe("subagent presentation", () => {
       ),
     ).toEqual(["reviewer", "gpt-5.6", "ultra"]);
   });
+
+  it("labels T3-managed subagents with the exact provider instance and selected traits", () => {
+    expect(
+      resolveSubagentTranscriptMetadata(
+        makeSubagent("managed-security-review", "running", {
+          origin: "t3-managed",
+          providerInstanceId: ProviderInstanceId.make("codex-security"),
+          providerDriver: ProviderDriverKind.make("codex"),
+          role: "General",
+          model: "gpt-daybreak-blue-latest",
+          reasoningEffort: "max",
+        }),
+      ),
+    ).toEqual(["Subagent", "codex-security", "gpt-daybreak-blue-latest", "max"]);
+  });
 });
 
 describe("deriveSubagentTranscriptEntries", () => {

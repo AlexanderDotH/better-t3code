@@ -917,6 +917,30 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     z-index: 0;
   }
 
+  /* Non-deck status and decision drawers float above the composer as complete islands. */
+  .chat-composer-top-drawer-floating,
+  .chat-composer-drawer-floating {
+    --chat-composer-attachment-overlap: 0px;
+  }
+
+  .chat-composer-top-drawer-floating,
+  .chat-composer-drawer-slot.chat-composer-drawer-floating {
+    margin-bottom: 0.5rem;
+  }
+
+  :is(
+    .chat-composer-top-drawer-floating,
+    .chat-composer-drawer-surface.chat-composer-drawer-floating
+  )::before {
+    border: 1px solid var(--chat-composer-attached-outline);
+    border-radius: 16px;
+    background:
+      linear-gradient(var(--chat-composer-attached-tint), var(--chat-composer-attached-tint)),
+      color-mix(in srgb, var(--chat-composer-attached-surface) var(--glass-opacity), transparent);
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
   :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)[data-variant="error"] {
     --chat-composer-attached-outline: color-mix(in srgb, var(--error) 32%, transparent);
     --chat-composer-attached-tint: color-mix(in srgb, var(--error) 8%, transparent);

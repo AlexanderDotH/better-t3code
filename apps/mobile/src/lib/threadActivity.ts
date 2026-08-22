@@ -1,5 +1,6 @@
 import { ApprovalRequestId, isToolLifecycleItemType } from "@t3tools/contracts";
 import type {
+  ChatVisualMode,
   OrchestrationLatestTurn,
   OrchestrationProposedPlan,
   OrchestrationThread,
@@ -55,11 +56,17 @@ export interface ThreadFeedActivity {
     | "zap";
   readonly toolLike: boolean;
   readonly status: "success" | "failure" | "neutral" | null;
+  readonly toolLifecycleStatus?: ThreadFeedToolLifecycleStatus;
 }
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
 
-type WorkLogToolLifecycleStatus = "inProgress" | "completed" | "failed" | "declined" | "stopped";
+export type ThreadFeedToolLifecycleStatus =
+  | "inProgress"
+  | "completed"
+  | "failed"
+  | "declined"
+  | "stopped";
 
 interface WorkLogEntry {
   id: string;
@@ -74,7 +81,7 @@ interface WorkLogEntry {
   toolTitle?: string;
   itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
-  toolLifecycleStatus?: WorkLogToolLifecycleStatus;
+  toolLifecycleStatus?: ThreadFeedToolLifecycleStatus;
   toolData?: unknown;
 }
 
@@ -132,6 +139,19 @@ export type ThreadFeedEntry =
       readonly onlyToolActivities: boolean;
     }
   | {
+      readonly type: "work-summary";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly turnId: TurnId | null;
+      readonly groupId: string;
+      readonly summary: string;
+      readonly icon: ThreadFeedActivity["icon"];
+      readonly activities: ReadonlyArray<ThreadFeedActivity>;
+      readonly expanded: boolean;
+      readonly live: boolean;
+      readonly hasFailure: boolean;
+    }
+  | {
       readonly type: "turn-fold";
       readonly id: string;
       readonly createdAt: string;
@@ -144,6 +164,91 @@ export type ThreadFeedLatestTurn = Pick<
   OrchestrationLatestTurn,
   "turnId" | "state" | "startedAt" | "completedAt"
 >;
+
+const timeFormatters = new Map<string, Intl.DateTimeFormat>();
+const dateFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function formatterKey(locale: string | undefined, includeYear: boolean): string {
+  return `${locale ?? "default"}:${includeYear ? "year" : "day"}`;
+}
+
+function messageTimeFormatter(locale?: string): Intl.DateTimeFormat {
+  const key = locale ?? "default";
+  const cached = timeFormatters.get(key);
+  if (cached) return cached;
+
+  const formatter = new Intl.DateTimeFormat(locale, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  timeFormatters.set(key, formatter);
+  return formatter;
+}
+
+function messageDateFormatter(
+  locale: string | undefined,
+  includeYear: boolean,
+): Intl.DateTimeFormat {
+  const key = formatterKey(locale, includeYear);
+  const cached = dateFormatters.get(key);
+  if (cached) return cached;
+
+  const formatter = new Intl.DateTimeFormat(locale, {
+    month: "short",
+    day: "numeric",
+    ...(includeYear ? { year: "numeric" } : {}),
+  });
+  dateFormatters.set(key, formatter);
+  return formatter;
+}
+
+function occursOnSameLocalDay(left: Date, right: Date): boolean {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
+}
+
+export function formatThreadFeedTimestamp(
+  input: string,
+  chatVisualMode: ChatVisualMode,
+  now = new Date(),
+  locale?: string,
+): string {
+  const timestamp = new Date(input);
+  if (Number.isNaN(timestamp.getTime())) return "";
+
+  const time = messageTimeFormatter(locale).format(timestamp);
+  if (chatVisualMode === "classic" || occursOnSameLocalDay(timestamp, now)) return time;
+
+  const date = messageDateFormatter(locale, timestamp.getFullYear() !== now.getFullYear()).format(
+    timestamp,
+  );
+  return `${date}, ${time}`;
+}
+
+const CLASSIC_TURN_FOLD_HEIGHT = 56;
+const CURRENT_TURN_FOLD_HEIGHT = 64;
+const WORK_GROUP_TOGGLE_HEIGHT = 36;
+const CURRENT_WORK_SUMMARY_HEIGHT = 40;
+
+export function resolveThreadFeedChromeRowHeight(
+  entry: ThreadFeedEntry,
+  chatVisualMode: ChatVisualMode,
+  classicWorkingRowHeight: number,
+  currentWorkingRowHeight: number,
+): number | undefined {
+  if (entry.type === "turn-fold") {
+    return chatVisualMode === "current" ? CURRENT_TURN_FOLD_HEIGHT : CLASSIC_TURN_FOLD_HEIGHT;
+  }
+  if (entry.type === "work-toggle") return WORK_GROUP_TOGGLE_HEIGHT;
+  if (entry.type === "working") {
+    return chatVisualMode === "current" ? currentWorkingRowHeight : classicWorkingRowHeight;
+  }
+  if (entry.type === "work-summary" && !entry.expanded) return CURRENT_WORK_SUMMARY_HEIGHT;
+  return undefined;
+}
 
 function requestKindFromRequestType(requestType: unknown): PendingApproval["requestKind"] | null {
   switch (requestType) {
@@ -927,7 +1032,7 @@ function extractToolTitle(payload: Record<string, unknown> | null): string | nul
 
 function extractWorkLogToolLifecycleStatus(
   payload: Record<string, unknown> | null,
-): WorkLogToolLifecycleStatus | undefined {
+): ThreadFeedToolLifecycleStatus | undefined {
   const status = payload?.status;
   if (
     status === "inProgress" ||
@@ -1257,12 +1362,16 @@ export function deriveThreadFeedPresentation(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestTurn: ThreadFeedLatestTurn | null,
   expandedTurnIds: ReadonlySet<TurnId>,
+  chatVisualMode: ChatVisualMode,
   expandedWorkGroupIds: ReadonlySet<string> = new Set(),
   activeWorkStartedAt: string | null = null,
 ): ThreadFeedEntry[] {
   const sourceFeed = feed.filter(
     (entry) =>
-      entry.type !== "turn-fold" && entry.type !== "work-toggle" && entry.type !== "working",
+      entry.type !== "turn-fold" &&
+      entry.type !== "work-toggle" &&
+      entry.type !== "work-summary" &&
+      entry.type !== "working",
   );
   const foldsByAnchorId = deriveThreadFeedTurnFolds(sourceFeed, latestTurn);
   const collapsedEntryIds = new Set<string>();
@@ -1288,7 +1397,7 @@ export function deriveThreadFeedPresentation(
       });
     }
     if (!collapsedEntryIds.has(entry.id)) {
-      appendPresentedFeedEntry(result, entry, expandedWorkGroupIds);
+      appendPresentedFeedEntry(result, entry, expandedWorkGroupIds, chatVisualMode);
     }
   }
   if (activeWorkStartedAt !== null) {
@@ -1303,20 +1412,128 @@ export function deriveThreadFeedPresentation(
 
 function appendPresentedFeedEntry(
   result: ThreadFeedEntry[],
-  entry: Exclude<ThreadFeedEntry, { readonly type: "turn-fold" | "work-toggle" | "working" }>,
+  entry: Exclude<
+    ThreadFeedEntry,
+    { readonly type: "turn-fold" | "work-toggle" | "work-summary" | "working" }
+  >,
   expandedWorkGroupIds: ReadonlySet<string>,
+  chatVisualMode: ChatVisualMode,
 ): void {
   if (entry.type !== "activity-group") {
     result.push(entry);
     return;
   }
 
-  const activities = entry.activities.filter(
-    (activity) => !(activity.toolLike && activity.status === "neutral"),
-  );
+  const activities = visibleActivitiesForMode(entry.activities, chatVisualMode);
   if (activities.length === 0) {
     return;
   }
+  if (chatVisualMode === "current" && activities.every((activity) => activity.toolLike)) {
+    appendCurrentToolSummary(result, entry, activities, expandedWorkGroupIds);
+    return;
+  }
+  appendClassicActivityOverflow(result, entry, activities, expandedWorkGroupIds);
+}
+
+function visibleActivitiesForMode(
+  activities: ReadonlyArray<ThreadFeedActivity>,
+  chatVisualMode: ChatVisualMode,
+): ReadonlyArray<ThreadFeedActivity> {
+  return activities.filter((activity) => {
+    if (!activity.toolLike || activity.status !== "neutral") return true;
+    return chatVisualMode === "current" && activity.toolLifecycleStatus !== undefined;
+  });
+}
+
+type CurrentToolAction = "read" | "edit" | "command" | "search" | "other";
+
+function currentToolAction(activity: ThreadFeedActivity): CurrentToolAction {
+  switch (activity.icon) {
+    case "eye":
+      return "read";
+    case "edit":
+      return "edit";
+    case "command":
+      return "command";
+    case "globe":
+      return "search";
+    default:
+      return "other";
+  }
+}
+
+function currentToolActionLabel(action: CurrentToolAction, count: number): string {
+  switch (action) {
+    case "read":
+      return `Read ${count} ${count === 1 ? "file" : "files"}`;
+    case "edit":
+      return `Changed ${count} ${count === 1 ? "file" : "files"}`;
+    case "command":
+      return `Ran ${count} ${count === 1 ? "command" : "commands"}`;
+    case "search":
+      return `Searched the web ${count} ${count === 1 ? "time" : "times"}`;
+    case "other":
+      return `Used ${count} ${count === 1 ? "tool" : "tools"}`;
+  }
+}
+
+function lowercaseSentenceStart(value: string): string {
+  return value.length === 0 ? value : value.charAt(0).toLowerCase() + value.slice(1);
+}
+
+function summarizeCurrentToolActivities(activities: ReadonlyArray<ThreadFeedActivity>): string {
+  const counts = new Map<CurrentToolAction, number>();
+  for (const activity of activities) {
+    const action = currentToolAction(activity);
+    counts.set(action, (counts.get(action) ?? 0) + 1);
+  }
+  const labels = [...counts].map(([action, count]) => currentToolActionLabel(action, count));
+  if (labels.length < 2) return labels[0] ?? "Used tools";
+
+  const sentenceLabels = labels.map((label, index) =>
+    index === 0 ? label : lowercaseSentenceStart(label),
+  );
+  if (sentenceLabels.length === 2) return sentenceLabels.join(" and ");
+  return `${sentenceLabels.slice(0, -1).join(", ")}, and ${sentenceLabels.at(-1)}`;
+}
+
+function appendCurrentToolSummary(
+  result: ThreadFeedEntry[],
+  entry: Extract<ThreadFeedEntry, { readonly type: "activity-group" }>,
+  activities: ReadonlyArray<ThreadFeedActivity>,
+  expandedWorkGroupIds: ReadonlySet<string>,
+): void {
+  let liveActivity: ThreadFeedActivity | undefined;
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const activity = activities[index];
+    if (activity?.toolLifecycleStatus === "inProgress") {
+      liveActivity = activity;
+      break;
+    }
+  }
+  const groupId = entry.id;
+  const distinctIcons = new Set(activities.map((activity) => activity.icon));
+  result.push({
+    type: "work-summary",
+    id: `work-summary:${groupId}`,
+    createdAt: entry.createdAt,
+    turnId: entry.turnId,
+    groupId,
+    summary: liveActivity?.summary ?? summarizeCurrentToolActivities(activities),
+    icon: liveActivity?.icon ?? (distinctIcons.size === 1 ? activities[0]!.icon : "hammer"),
+    activities,
+    expanded: expandedWorkGroupIds.has(groupId),
+    live: liveActivity !== undefined,
+    hasFailure: activities.every((activity) => activity.status === "failure"),
+  });
+}
+
+function appendClassicActivityOverflow(
+  result: ThreadFeedEntry[],
+  entry: Extract<ThreadFeedEntry, { readonly type: "activity-group" }>,
+  activities: ReadonlyArray<ThreadFeedActivity>,
+  expandedWorkGroupIds: ReadonlySet<string>,
+): void {
   if (activities.length <= MAX_VISIBLE_WORK_LOG_ENTRIES) {
     result.push({
       ...entry,
@@ -1588,6 +1805,9 @@ export function buildThreadFeed(
               icon: workEntryIcon(entry),
               toolLike: workLogEntryIsToolLike(entry),
               status: workEntryStatus(entry),
+              ...(entry.toolLifecycleStatus
+                ? { toolLifecycleStatus: entry.toolLifecycleStatus }
+                : {}),
             },
           };
         }),

@@ -3,9 +3,12 @@ import * as Schema from "effect/Schema";
 
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
+  ChatVisualMode,
+  ChatVisualModeSyncRecord,
   ClientSettingsSchema,
   ClientSettingsPatch,
   DEFAULT_AGENT_ENHANCEMENT_SETTINGS,
+  DEFAULT_CHAT_VISUAL_MODE,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_PARALLEL_PLAN_REVIEW_MODEL_SELECTION,
   DEFAULT_PROJECT_THREAD_PREVIEW_COUNT,
@@ -28,9 +31,12 @@ const decodeSidebarThreadPreviewCount = Schema.decodeUnknownSync(SidebarThreadPr
 const decodeProjectThreadPreviewSyncRecord = Schema.decodeUnknownSync(
   ProjectThreadPreviewSyncRecord,
 );
+const decodeChatVisualMode = Schema.decodeUnknownSync(ChatVisualMode);
+const decodeChatVisualModeSyncRecord = Schema.decodeUnknownSync(ChatVisualModeSyncRecord);
 const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodeProjectThreadPreviewSyncRecord = Schema.encodeSync(ProjectThreadPreviewSyncRecord);
+const encodeChatVisualModeSyncRecord = Schema.encodeSync(ChatVisualModeSyncRecord);
 
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
@@ -58,6 +64,24 @@ describe("ClientSettings model reasoning display", () => {
   it("accepts explicit enable and disable patches", () => {
     expect(decodeClientSettingsPatch({ showReasoning: true }).showReasoning).toBe(true);
     expect(decodeClientSettingsPatch({ showReasoning: false }).showReasoning).toBe(false);
+  });
+});
+
+describe("ClientSettings expanded composer controls", () => {
+  it("defaults expanded composer controls off when legacy settings omit it", () => {
+    expect(decodeClientSettings({}).showExpandedComposerControls).toBe(false);
+    expect(DEFAULT_CLIENT_SETTINGS.showExpandedComposerControls).toBe(false);
+  });
+
+  it("accepts explicit enable and disable patches", () => {
+    expect(
+      decodeClientSettingsPatch({ showExpandedComposerControls: true })
+        .showExpandedComposerControls,
+    ).toBe(true);
+    expect(
+      decodeClientSettingsPatch({ showExpandedComposerControls: false })
+        .showExpandedComposerControls,
+    ).toBe(false);
   });
 });
 
@@ -207,6 +231,50 @@ describe("ProjectThreadPreviewSyncRecord", () => {
     expect(() =>
       decodeServerSettingsPatch({ projectThreadPreviewSyncRecord: invalidRecord }),
     ).toThrow();
+  });
+});
+
+describe("ChatVisualModeSyncRecord", () => {
+  const record = {
+    mode: "classic",
+    updatedAt: 1_787_178_400_000,
+    updateId: "device-a:classic",
+  } as const;
+
+  it("defaults to Current and accepts both supported chat visual modes", () => {
+    expect(DEFAULT_CHAT_VISUAL_MODE).toBe("current");
+    expect(decodeChatVisualMode("current")).toBe("current");
+    expect(decodeChatVisualMode("classic")).toBe("classic");
+    expect(() => decodeChatVisualMode("legacy")).toThrow();
+  });
+
+  it("round-trips a synchronized Classic selection", () => {
+    const decoded = decodeChatVisualModeSyncRecord(record);
+    const encoded = encodeChatVisualModeSyncRecord(decoded);
+
+    expect(encoded).toEqual(record);
+    expect(decodeChatVisualModeSyncRecord(encoded)).toEqual(record);
+  });
+
+  it("is optional in legacy server settings and accepted by settings patches", () => {
+    expect(decodeServerSettings({}).chatVisualModeSyncRecord).toBeUndefined();
+    expect(decodeServerSettingsPatch({})).not.toHaveProperty("chatVisualModeSyncRecord");
+
+    const decodedSettings = decodeServerSettings({ chatVisualModeSyncRecord: record });
+    expect(encodeServerSettings(decodedSettings).chatVisualModeSyncRecord).toEqual(record);
+    expect(
+      decodeServerSettingsPatch({ chatVisualModeSyncRecord: record }).chatVisualModeSyncRecord,
+    ).toEqual(record);
+  });
+
+  it.each([
+    { ...record, mode: "legacy" },
+    { ...record, updatedAt: -1 },
+    { ...record, updatedAt: 1.5 },
+    { ...record, updateId: "   " },
+  ])("rejects an invalid synchronized chat visual record: $record", (invalidRecord) => {
+    expect(() => decodeChatVisualModeSyncRecord(invalidRecord)).toThrow();
+    expect(() => decodeServerSettingsPatch({ chatVisualModeSyncRecord: invalidRecord })).toThrow();
   });
 });
 

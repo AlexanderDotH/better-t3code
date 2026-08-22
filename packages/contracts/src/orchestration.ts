@@ -431,7 +431,11 @@ export const OrchestrationSubagentProgress = Schema.Struct({
 });
 export type OrchestrationSubagentProgress = typeof OrchestrationSubagentProgress.Type;
 
-export const OrchestrationSubagentOrigin = Schema.Literals(["provider-native", "t3-fetch"]);
+export const OrchestrationSubagentOrigin = Schema.Literals([
+  "provider-native",
+  "t3-fetch",
+  "t3-managed",
+]);
 export type OrchestrationSubagentOrigin = typeof OrchestrationSubagentOrigin.Type;
 
 export const OrchestrationSubagentSummary = Schema.Struct({

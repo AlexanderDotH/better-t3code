@@ -3,7 +3,7 @@ import { useColorScheme } from "react-native";
 
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
-import type { ProjectThreadPreviewCount } from "@t3tools/contracts";
+import type { ChatVisualMode, ProjectThreadPreviewCount } from "@t3tools/contracts";
 
 import { Uniwind } from "uniwind";
 
@@ -14,6 +14,7 @@ import {
   type ResolvedAppearance,
 } from "../../../lib/appearancePreferences";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
+import { useChatVisualModeSync } from "../../../state/use-chat-visual-mode-sync";
 import { useProjectThreadPreviewSync } from "../../../state/use-project-thread-preview-sync";
 import type { Preferences } from "../../../persistence/mobile-preferences";
 import {
@@ -52,6 +53,14 @@ interface AppearancePreferencesContextValue {
   readonly setCodeFontSize: (value: number | null) => void;
   readonly setCodeWordBreak: (value: boolean) => void;
   readonly setProjectThreadPreviewCount: (value: ProjectThreadPreviewCount) => void;
+  readonly chatVisualMode: ChatVisualMode;
+  readonly setChatVisualMode: (value: ChatVisualMode) => void;
+  readonly chatVisualModeSyncStatus: {
+    readonly isSyncing: boolean;
+    readonly failedEnvironmentLabels: readonly string[];
+    readonly deferredEnvironmentLabels: readonly string[];
+    readonly unsupportedEnvironmentLabels: readonly string[];
+  };
   readonly projectThreadPreviewSyncStatus: {
     readonly isSyncing: boolean;
     readonly failedEnvironmentLabels: readonly string[];
@@ -89,6 +98,7 @@ function applyAppearanceVariables(baseFontSize: number, themeIds: MobileThemeIds
 export function AppearancePreferencesProvider(props: { readonly children: ReactNode }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const chatVisualModeSync = useChatVisualModeSync();
   const projectThreadPreviewSync = useProjectThreadPreviewSync();
   const systemColorScheme = useColorScheme() === "dark" ? "dark" : "light";
   const storedPreferences = AsyncResult.isSuccess(preferencesResult)
@@ -189,6 +199,14 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       setTerminalFontSize,
       setCodeFontSize,
       setCodeWordBreak,
+      chatVisualMode: chatVisualModeSync.mode,
+      setChatVisualMode: chatVisualModeSync.setMode,
+      chatVisualModeSyncStatus: {
+        isSyncing: chatVisualModeSync.isSyncing,
+        failedEnvironmentLabels: chatVisualModeSync.failedEnvironmentLabels,
+        deferredEnvironmentLabels: chatVisualModeSync.deferredEnvironmentLabels,
+        unsupportedEnvironmentLabels: chatVisualModeSync.unsupportedEnvironmentLabels,
+      },
       setProjectThreadPreviewCount: projectThreadPreviewSync.setCount,
       projectThreadPreviewSyncStatus: {
         isSyncing: projectThreadPreviewSync.isSyncing,
@@ -199,6 +217,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     }),
     [
       preferences,
+      chatVisualModeSync,
       projectThreadPreviewSync,
       themeId,
       themeIds,

@@ -2,11 +2,22 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
-  deriveMessagesTimelineRows,
+  deriveMessagesTimelineRows as deriveMessagesTimelineRowsForMode,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   shouldPreserveAssistantLineBreaks,
 } from "./MessagesTimeline.logic";
+
+type DeriveMessagesTimelineRowsInput = Parameters<typeof deriveMessagesTimelineRowsForMode>[0];
+
+function deriveMessagesTimelineRows(
+  input: Omit<DeriveMessagesTimelineRowsInput, "chatVisualMode">,
+) {
+  return deriveMessagesTimelineRowsForMode({
+    ...input,
+    chatVisualMode: "current",
+  });
+}
 
 describe("shouldPreserveAssistantLineBreaks", () => {
   it("preserves Claude insight formatting without changing regular markdown", () => {
@@ -1521,6 +1532,366 @@ describe("deriveMessagesTimelineRows", () => {
       summary: null,
       hasFailure: true,
     });
+  });
+
+  it("restores individual compact work rows and one-row overflow in Classic mode", () => {
+    const timelineEntries = [
+      {
+        id: "work-entry-1",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:01Z",
+        entry: {
+          id: "work-1",
+          createdAt: "2026-01-01T00:00:01Z",
+          label: "Read package.json",
+          tone: "tool" as const,
+          toolLifecycleStatus: "completed" as const,
+        },
+      },
+      {
+        id: "work-entry-2",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:02Z",
+        entry: {
+          id: "work-2",
+          createdAt: "2026-01-01T00:00:02Z",
+          label: "Changed MessagesTimeline.logic.ts",
+          tone: "tool" as const,
+          toolLifecycleStatus: "completed" as const,
+        },
+      },
+      {
+        id: "work-entry-3",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:03Z",
+        entry: {
+          id: "work-3",
+          createdAt: "2026-01-01T00:00:03Z",
+          label: "Ran focused tests",
+          tone: "tool" as const,
+          toolLifecycleStatus: "completed" as const,
+        },
+      },
+    ];
+    const input = {
+      chatVisualMode: "classic" as const,
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    };
+
+    const collapsedRows = deriveMessagesTimelineRowsForMode(input);
+    const expandedRows = deriveMessagesTimelineRowsForMode({
+      ...input,
+      expandedWorkGroupIds: new Set(["work-group:work-entry-1"]),
+    });
+
+    expect(collapsedRows.map((row) => row.id)).toEqual(["work-3", "work-toggle:work-entry-1"]);
+    expect(collapsedRows.some((row) => row.kind === "work-live")).toBe(false);
+    expect(collapsedRows.find((row) => row.kind === "work-toggle")).toMatchObject({
+      groupId: "work-group:work-entry-1",
+      hiddenCount: 2,
+      expanded: false,
+      onlyToolEntries: true,
+      summary: null,
+      summaryKind: null,
+      hasFailure: false,
+    });
+    expect(expandedRows.map((row) => row.id)).toEqual([
+      "work-1",
+      "work-2",
+      "work-3",
+      "work-toggle:work-entry-1",
+    ]);
+  });
+
+  it("uses the compact working row and neutral-tool filter in Classic mode", () => {
+    const rows = deriveMessagesTimelineRowsForMode({
+      chatVisualMode: "classic",
+      timelineEntries: [
+        {
+          id: "user-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user",
+            text: "Run the tests",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "running-work-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:01Z",
+          entry: {
+            id: "running-work",
+            createdAt: "2026-01-01T00:00:01Z",
+            turnId: "turn-1" as never,
+            label: "Running tests",
+            tone: "tool",
+            toolLifecycleStatus: "inProgress",
+          },
+        },
+      ],
+      latestTurn: {
+        turnId: "turn-1" as never,
+        state: "running",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.id)).toEqual(["user-entry", "working-indicator-row"]);
+    expect(rows.find((row) => row.kind === "working")).toMatchObject({
+      showThinking: false,
+    });
+    expect(rows.some((row) => row.kind === "work-live")).toBe(false);
+  });
+
+  it("keeps Classic reasoning, agent spawns, and failures visible around overflow", () => {
+    const rows = deriveMessagesTimelineRowsForMode({
+      chatVisualMode: "classic",
+      showReasoning: true,
+      timelineEntries: [
+        {
+          id: "reasoning-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:01Z",
+          entry: {
+            id: "reasoning",
+            createdAt: "2026-01-01T00:00:01Z",
+            label: "Thinking",
+            tone: "thinking",
+            sourceActivityKind: "reasoning.text",
+          },
+        },
+        {
+          id: "completed-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:02Z",
+          entry: {
+            id: "completed",
+            createdAt: "2026-01-01T00:00:02Z",
+            label: "Read files",
+            tone: "tool",
+            toolLifecycleStatus: "completed",
+          },
+        },
+        {
+          id: "spawn-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:03Z",
+          entry: {
+            id: "spawn",
+            createdAt: "2026-01-01T00:00:03Z",
+            label: "Kicked off a subagent",
+            tone: "thinking",
+            sourceActivityKind: "task.progress",
+            agentSpawn: { workflowId: null, agentTaskIds: ["child-1"] },
+          },
+        },
+        {
+          id: "failed-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:04Z",
+          entry: {
+            id: "failed",
+            createdAt: "2026-01-01T00:00:04Z",
+            label: "Test command failed",
+            tone: "error",
+            toolLifecycleStatus: "failed",
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.id)).toEqual([
+      "reasoning",
+      "spawn",
+      "failed",
+      "work-toggle:reasoning-entry",
+    ]);
+    expect(rows.find((row) => row.kind === "work-toggle")).toMatchObject({
+      hiddenCount: 1,
+      hasFailure: false,
+    });
+  });
+
+  it("keeps the follow-up anchor ahead of Classic active work", () => {
+    const rows = deriveMessagesTimelineRowsForMode({
+      chatVisualMode: "classic",
+      timelineEntries: [
+        {
+          id: "previous-assistant-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:10Z",
+          message: {
+            id: "previous-assistant" as never,
+            role: "assistant",
+            text: "First response",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:10Z",
+            updatedAt: "2026-01-01T00:00:11Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "follow-up-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:01:00Z",
+          message: {
+            id: "follow-up" as never,
+            role: "user",
+            text: "Continue",
+            turnId: null,
+            createdAt: "2026-01-01T00:01:00Z",
+            updatedAt: "2026-01-01T00:01:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "active-work-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:01:01Z",
+          entry: {
+            id: "active-work",
+            createdAt: "2026-01-01T00:01:01Z",
+            turnId: "turn-2" as never,
+            label: "Read files",
+            tone: "tool",
+            toolLifecycleStatus: "completed",
+          },
+        },
+      ],
+      latestTurn: {
+        turnId: "turn-2" as never,
+        state: "running",
+        startedAt: "2026-01-01T00:01:00Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:01:00Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.id)).toEqual([
+      "previous-assistant-entry",
+      "follow-up-entry",
+      "working-indicator-row",
+      "active-work-entry",
+    ]);
+  });
+
+  it("preserves expanded folds and terminal-message row identity across mode changes", () => {
+    const timelineEntries = [
+      {
+        id: "user-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:00Z",
+        message: {
+          id: "user" as never,
+          role: "user" as const,
+          text: "Inspect the repository",
+          turnId: null,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "thought-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:01Z",
+        message: {
+          id: "thought" as never,
+          role: "assistant" as const,
+          text: "Checking first.",
+          turnId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:01Z",
+          updatedAt: "2026-01-01T00:00:01Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "work-entry",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:02Z",
+        entry: {
+          id: "work",
+          createdAt: "2026-01-01T00:00:02Z",
+          turnId: "turn-1" as never,
+          label: "Read files",
+          tone: "tool" as const,
+          toolLifecycleStatus: "completed" as const,
+        },
+      },
+      {
+        id: "final-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:03Z",
+        message: {
+          id: "final" as never,
+          role: "assistant" as const,
+          text: "Done.",
+          turnId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:03Z",
+          updatedAt: "2026-01-01T00:00:04Z",
+          streaming: false,
+        },
+      },
+    ];
+    const input = {
+      timelineEntries,
+      latestTurn: {
+        turnId: "turn-1" as never,
+        state: "completed" as const,
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: "2026-01-01T00:00:04Z",
+      },
+      expandedTurnIds: new Set(["turn-1" as never]),
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    };
+    const currentRows = deriveMessagesTimelineRowsForMode({
+      ...input,
+      chatVisualMode: "current",
+    });
+    const currentState = computeStableMessagesTimelineRows(currentRows, {
+      byId: new Map(),
+      result: [],
+    });
+    const classicRows = deriveMessagesTimelineRowsForMode({
+      ...input,
+      chatVisualMode: "classic",
+    });
+
+    const switchedState = computeStableMessagesTimelineRows(classicRows, currentState);
+    const currentFold = currentState.byId.get("turn-fold:turn-1");
+    const switchedFold = switchedState.byId.get("turn-fold:turn-1");
+    const currentFinal = currentState.byId.get("final-entry");
+    const switchedFinal = switchedState.byId.get("final-entry");
+
+    expect(switchedFold).toBe(currentFold);
+    expect(switchedFold).toMatchObject({ kind: "turn-fold", expanded: true });
+    expect(switchedFinal).toBe(currentFinal);
+    expect(switchedFinal).toMatchObject({ kind: "message", showAssistantMeta: true });
   });
 });
 

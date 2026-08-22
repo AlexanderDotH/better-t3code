@@ -8,6 +8,7 @@ import {
 import {
   getComposerPromptInjectionState,
   getComposerProviderState,
+  renderProviderContextWindowMenuContent,
   renderProviderContextWindowPicker,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
@@ -479,6 +480,27 @@ describe("provider traits render guards", () => {
     };
 
     expect(renderProviderContextWindowPicker(args)).not.toBeNull();
+    expect(renderProviderContextWindowMenuContent(args)).not.toBeNull();
     expect(renderProviderTraitsPicker(args)).toBeNull();
+  });
+
+  it("applies the same target guard to both context-window presentations", () => {
+    const args = {
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("contextWindow", [
+          { id: "default", label: "Model default", isDefault: true },
+          { id: "262144", label: "256K" },
+        ]),
+      ]),
+      modelOptions: undefined,
+      prompt: "",
+      onPromptChange: () => {},
+      planModeEnabled: true,
+    };
+
+    expect(renderProviderContextWindowPicker(args)).toBeNull();
+    expect(renderProviderContextWindowMenuContent(args)).toBeNull();
   });
 });

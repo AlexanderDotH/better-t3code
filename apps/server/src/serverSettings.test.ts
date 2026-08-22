@@ -848,6 +848,47 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("persists, replaces, and exposes the chat visual mode sync record", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const initial = {
+        mode: "current" as const,
+        updatedAt: 1_777_000_000_000,
+        updateId: "device-a:current",
+      };
+      const replacement = {
+        mode: "classic" as const,
+        updatedAt: 1_777_000_001_000,
+        updateId: "device-b:classic",
+      };
+
+      const saved = yield* serverSettings.updateSettings({ chatVisualModeSyncRecord: initial });
+      const afterUnrelatedPatch = yield* serverSettings.updateSettings({
+        addProjectBaseDirectory: "~/Development",
+      });
+      const replaced = yield* serverSettings.updateSettings({
+        chatVisualModeSyncRecord: replacement,
+      });
+
+      assert.deepEqual(saved.chatVisualModeSyncRecord, initial);
+      assert.deepEqual(redactServerSettingsForClient(saved).chatVisualModeSyncRecord, initial);
+      assert.deepEqual(afterUnrelatedPatch.chatVisualModeSyncRecord, initial);
+      assert.deepEqual(replaced.chatVisualModeSyncRecord, replacement);
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const persisted = JSON.parse(raw);
+      assert.deepEqual(persisted.chatVisualModeSyncRecord, replacement);
+      assert.deepEqual(
+        (yield* decodeServerSettings(persisted)).chatVisualModeSyncRecord,
+        replacement,
+      );
+      assert.equal(persisted.addProjectBaseDirectory, "~/Development");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;

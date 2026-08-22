@@ -126,8 +126,37 @@ layer("ProjectionThreadSubagent repositories", (it) => {
       );
       assert.equal(Option.getOrThrow(persisted).latestTurn?.state, "completed");
 
+      const managedSubagentId = SubagentId.make("agent-managed-security");
+      yield* repository.upsert({
+        threadId,
+        id: managedSubagentId,
+        origin: "t3-managed",
+        providerInstanceId: ProviderInstanceId.make("codex-security"),
+        providerDriver: "codex",
+        providerThreadId: "provider-agent-managed-security",
+        parentId: null,
+        path: "/root/managed-security",
+        name: "security-review",
+        nickname: null,
+        role: "General",
+        task: "Review the implementation",
+        model: "gpt-daybreak-blue-latest",
+        reasoningEffort: "max",
+        depth: 1,
+        status: "completed",
+        statusMessage: null,
+        latestProgress: null,
+        latestTurn: null,
+        startedAt,
+        updatedAt: "2026-07-30T12:03:00.000Z",
+        completedAt: "2026-07-30T12:03:00.000Z",
+      });
+      const managed = yield* repository.getById({ threadId, subagentId: managedSubagentId });
+      assert.equal(Option.getOrThrow(managed).origin, "t3-managed");
+      assert.equal(Option.getOrThrow(managed).providerInstanceId, "codex-security");
+
       const summaries = yield* repository.listByThreadId({ threadId });
-      assert.equal(summaries.length, 1);
+      assert.equal(summaries.length, 2);
 
       const otherThreadSummaries = yield* repository.listByThreadId({
         threadId: otherThreadId,

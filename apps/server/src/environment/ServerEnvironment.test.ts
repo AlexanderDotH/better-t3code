@@ -99,7 +99,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(second.capabilities.threadTitleRegeneration).toBe(true);
       expect(second.capabilities.mcpWorkspaceVersion).toBe(1);
       expect(second.capabilities.agentWorkflowVersion).toBe(1);
-      expect(second.capabilities.environmentSettingsVersion).toBe(2);
+      expect(second.capabilities.environmentSettingsVersion).toBe(3);
       expect(second.capabilities.projectSettingsVersion).toBe(1);
       expect(second.capabilities.midChatProviderSwitching).toBe(true);
       expect(second.capabilities.agentActivityPublishing).toBe(false);

@@ -99,7 +99,10 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
 
   return (
     <div
-      className={cn("group/banner-stack chat-composer-drawer-slot", className)}
+      className={cn(
+        "group/banner-stack chat-composer-drawer-slot chat-composer-drawer-floating",
+        className,
+      )}
       data-composer-banner-drawer="true"
     >
       <div
@@ -133,7 +136,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
         >
           <ComposerBannerStackAlert
             item={frontItem}
-            attached
+            front
             exiting={exitingItemId === frontItem.id}
             onDismissRequest={() => requestDismiss(frontItem)}
           />
@@ -166,7 +169,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
                   >
                     <ComposerBannerStackAlert
                       item={item}
-                      attached={false}
+                      front={false}
                       exiting={exitingItemId === item.id}
                       onDismissRequest={() => requestDismiss(item)}
                     />
@@ -183,12 +186,12 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
 
 function ComposerBannerStackAlert({
   item,
-  attached,
+  front,
   exiting,
   onDismissRequest,
 }: {
   readonly item: ComposerBannerStackItem;
-  readonly attached: boolean;
+  readonly front: boolean;
   readonly exiting: boolean;
   readonly onDismissRequest: () => void;
 }) {
@@ -199,8 +202,8 @@ function ComposerBannerStackAlert({
       variant={item.variant}
       controlAlignment={dismissOnly ? "first-line" : "center"}
       className={cn(
-        attached
-          ? "chat-composer-drawer-surface chat-composer-drawer-attached px-3 pt-2 pb-[calc(var(--chat-composer-attachment-overlap)_+_0.375rem)] text-xs sm:px-4"
+        front
+          ? "chat-composer-drawer-surface chat-composer-drawer-floating px-3 py-2 text-xs sm:px-4"
           : "alert-glass rounded-[22px]",
         item.className,
       )}

@@ -22,6 +22,7 @@ import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import * as ResourceProtection from "../resourceProtection/SubagentResourceGovernor.ts";
+import * as GeneralSubagents from "../subagents/GeneralSubagentCoordinator.ts";
 import * as WorkspaceContext from "../workspace/WorkspaceContext.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
@@ -300,10 +301,20 @@ it.effect(
         const workspaceLayer = Layer.succeed(WorkspaceContext.WorkspaceContext, {
           execute: () => Effect.succeed(emptyWorkspaceResult),
         });
+        const generalSubagentLayer = Layer.succeed(
+          GeneralSubagents.GeneralSubagentCoordinator,
+          GeneralSubagents.GeneralSubagentCoordinator.of({
+            listModels: () => Effect.die("unused"),
+            spawn: () => Effect.die("unused"),
+            wait: () => Effect.die("unused"),
+            cancel: () => Effect.die("unused"),
+          }),
+        );
         const routes = McpHttpServer.layer.pipe(
           Layer.provide(registryLayer),
           Layer.provide(projectionLayer),
           Layer.provide(workspaceLayer),
+          Layer.provide(generalSubagentLayer),
           Layer.provide(PreviewAutomationBroker.layer.pipe(Layer.provide(NodeServices.layer))),
         );
         yield* HttpRouter.serve(routes, {
@@ -371,6 +382,10 @@ it.effect(
         expect(previewTools.map(({ name }) => name)).toContain("project_agent_claim");
         expect(previewTools.map(({ name }) => name)).toContain("project_agent_send");
         expect(previewTools.map(({ name }) => name)).toContain("project_agent_inbox");
+        expect(previewTools.map(({ name }) => name)).toContain("subagent_models");
+        expect(previewTools.map(({ name }) => name)).toContain("subagent_spawn");
+        expect(previewTools.map(({ name }) => name)).toContain("subagent_wait");
+        expect(previewTools.map(({ name }) => name)).toContain("subagent_cancel");
         expect(previewTools.map(({ name }) => name)).not.toContain("workspace_context");
         expect(previewTools.find(({ name }) => name === "project_agent_send")?.annotations).toEqual(
           {
@@ -381,6 +396,13 @@ it.effect(
             openWorldHint: false,
           },
         );
+        expect(previewTools.find(({ name }) => name === "subagent_spawn")?.annotations).toEqual({
+          title: "Spawn general subagent",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: true,
+        });
 
         const workspace = yield* initialize("/mcp/workspace", "workspace-token");
         expect(workspace.status).toBe(200);
@@ -391,6 +413,7 @@ it.effect(
         );
         expect(workspaceTools.map(({ name }) => name)).toContain("preview_status");
         expect(workspaceTools.map(({ name }) => name)).toContain("project_agent_list");
+        expect(workspaceTools.map(({ name }) => name)).toContain("subagent_spawn");
         expect(
           workspaceTools.find(({ name }) => name === "workspace_context")?.annotations,
         ).toEqual({
@@ -415,6 +438,7 @@ it.effect(
         expect(workspaceWithoutPreviewTools.map(({ name }) => name)).toContain(
           "project_agent_list",
         );
+        expect(workspaceWithoutPreviewTools.map(({ name }) => name)).toContain("subagent_spawn");
         expect(workspaceWithoutPreviewTools.map(({ name }) => name)).not.toContain(
           "preview_status",
         );
@@ -427,6 +451,7 @@ it.effect(
           coordination.headers["mcp-session-id"]!,
         );
         expect(coordinationTools.map(({ name }) => name)).toContain("project_agent_list");
+        expect(coordinationTools.map(({ name }) => name)).toContain("subagent_spawn");
         expect(coordinationTools.map(({ name }) => name)).not.toContain("workspace_context");
         expect(coordinationTools.map(({ name }) => name)).not.toContain("preview_status");
 

@@ -29,6 +29,8 @@ import { WorkspaceToolkitHandlersLive } from "./toolkits/workspace/handlers.ts";
 import { WorkspaceToolkit } from "./toolkits/workspace/tools.ts";
 import { CoordinationToolkitHandlersLive } from "./toolkits/coordination/handlers.ts";
 import { CoordinationToolkit } from "./toolkits/coordination/tools.ts";
+import { GeneralSubagentToolkitHandlersLive } from "./toolkits/subagents/handlers.ts";
+import { GeneralSubagentToolkit } from "./toolkits/subagents/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -242,8 +244,17 @@ export const WorkspaceToolkitRegistrationLive = McpServer.toolkit(WorkspaceToolk
   Layer.provide(WorkspaceToolkitHandlersLive),
 );
 
-export const CoordinationToolkitRegistrationLive = McpServer.toolkit(CoordinationToolkit).pipe(
+const ProjectCoordinationToolkitRegistrationLive = McpServer.toolkit(CoordinationToolkit).pipe(
   Layer.provide(CoordinationToolkitHandlersLive),
+);
+
+export const GeneralSubagentToolkitRegistrationLive = McpServer.toolkit(
+  GeneralSubagentToolkit,
+).pipe(Layer.provide(GeneralSubagentToolkitHandlersLive));
+
+export const CoordinationToolkitRegistrationLive = Layer.mergeAll(
+  ProjectCoordinationToolkitRegistrationLive,
+  GeneralSubagentToolkitRegistrationLive,
 );
 
 export const WorkspaceOnlyToolkitRegistrationLive = WorkspaceToolkitRegistrationLive;

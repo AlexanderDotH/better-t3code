@@ -16,7 +16,9 @@ import {
   buildPendingUserInputAnswers,
   buildThreadFeed,
   deriveThreadFeedPresentation,
+  formatThreadFeedTimestamp,
   isPendingUserInputOptionSelected,
+  resolveThreadFeedChromeRowHeight,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
   type ThreadFeedActivity,
@@ -303,6 +305,7 @@ describe("buildThreadFeed", () => {
       icon: "command",
       toolLike: true,
       status: "success",
+      toolLifecycleStatus: "completed",
     });
     expect(group.activities[0]?.getFullDetail()).toBe("/bin/zsh -lc 'bun run test'");
     expect(group.activities[0]?.getCopyText()).toBe(
@@ -488,7 +491,7 @@ describe("buildThreadFeed", () => {
     });
 
     const feed = buildThreadFeed(thread);
-    const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
+    const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set(), "classic");
     expect(collapsed.map((entry) => entry.id)).toEqual(["turn-fold:turn-1", "assistant-final"]);
     expect(collapsed[0]).toMatchObject({
       type: "turn-fold",
@@ -496,7 +499,12 @@ describe("buildThreadFeed", () => {
       expanded: false,
     });
 
-    const expanded = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set([turnId]));
+    const expanded = deriveThreadFeedPresentation(
+      feed,
+      thread.latestTurn,
+      new Set([turnId]),
+      "classic",
+    );
     expect(expanded.map((entry) => entry.id)).toEqual([
       "turn-fold:turn-1",
       "assistant-commentary",
@@ -576,7 +584,7 @@ describe("buildThreadFeed", () => {
     });
 
     const feed = buildThreadFeed(thread);
-    const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
+    const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set(), "classic");
     expect(collapsed.find((entry) => entry.type === "turn-fold")).toMatchObject({
       turnId: firstTurnId,
       label: "Worked for 12s",
@@ -616,7 +624,9 @@ describe("buildThreadFeed", () => {
     });
 
     const feed = buildThreadFeed(thread);
-    expect(deriveThreadFeedPresentation(feed, thread.latestTurn, new Set())).toEqual(feed);
+    expect(deriveThreadFeedPresentation(feed, thread.latestTurn, new Set(), "classic")).toEqual(
+      feed,
+    );
     expect(feed[0]).toMatchObject({
       type: "activity-group",
       activities: [{ status: "failure" }],
@@ -625,7 +635,14 @@ describe("buildThreadFeed", () => {
 
   it("appends active work as a normal timeline row", () => {
     const startedAt = "2026-04-01T00:00:01.000Z";
-    const presented = deriveThreadFeedPresentation([], null, new Set(), new Set(), startedAt);
+    const presented = deriveThreadFeedPresentation(
+      [],
+      null,
+      new Set(),
+      "classic",
+      new Set(),
+      startedAt,
+    );
 
     expect(presented).toEqual([
       {
@@ -634,7 +651,7 @@ describe("buildThreadFeed", () => {
         createdAt: startedAt,
       },
     ]);
-    expect(deriveThreadFeedPresentation(presented, null, new Set())).toEqual([]);
+    expect(deriveThreadFeedPresentation(presented, null, new Set(), "classic")).toEqual([]);
   });
 
   it("models work-log overflow as list rows", () => {
@@ -670,7 +687,7 @@ describe("buildThreadFeed", () => {
       },
     ];
 
-    const collapsed = deriveThreadFeedPresentation(feed, null, new Set());
+    const collapsed = deriveThreadFeedPresentation(feed, null, new Set(), "classic");
     expect(collapsed.map((entry) => entry.id)).toEqual(["activity-3", "work-toggle:work-group-1"]);
     expect(collapsed[1]).toMatchObject({
       type: "work-toggle",
@@ -679,7 +696,13 @@ describe("buildThreadFeed", () => {
       expanded: false,
     });
 
-    const expanded = deriveThreadFeedPresentation(feed, null, new Set(), new Set(["work-group-1"]));
+    const expanded = deriveThreadFeedPresentation(
+      feed,
+      null,
+      new Set(),
+      "classic",
+      new Set(["work-group-1"]),
+    );
     expect(expanded.map((entry) => entry.id)).toEqual([
       "activity-1",
       "activity-2",
@@ -690,6 +713,188 @@ describe("buildThreadFeed", () => {
       type: "work-toggle",
       expanded: true,
     });
+  });
+
+  it("keeps the compact overflow rows in Classic and summarizes completed tools in Current", () => {
+    const activity = (
+      id: string,
+      icon: ThreadFeedActivity["icon"],
+      status: ThreadFeedActivity["status"],
+    ): ThreadFeedActivity => ({
+      id,
+      createdAt: `2026-04-01T00:00:0${id.at(-1)}.000Z`,
+      turnId: null,
+      summary: `Tool ${id}`,
+      detail: null,
+      canExpand: false,
+      getFullDetail: () => null,
+      getCopyText: () => id,
+      icon,
+      toolLike: true,
+      status,
+    });
+    const feed: ThreadFeedEntry[] = [
+      {
+        type: "activity-group",
+        id: "work-group-current",
+        createdAt: "2026-04-01T00:00:01.000Z",
+        turnId: null,
+        activities: [
+          activity("command-1", "command", "success"),
+          activity("command-2", "command", "success"),
+          activity("read-3", "eye", "success"),
+        ],
+      },
+    ];
+
+    const classic = deriveThreadFeedPresentation(feed, null, new Set(), "classic", new Set(), null);
+    expect(classic.map((entry) => entry.id)).toEqual(["read-3", "work-toggle:work-group-current"]);
+
+    const current = deriveThreadFeedPresentation(feed, null, new Set(), "current", new Set(), null);
+    expect(current).toEqual([
+      expect.objectContaining({
+        type: "work-summary",
+        id: "work-summary:work-group-current",
+        groupId: "work-group-current",
+        summary: "Ran 2 commands and read 1 file",
+        expanded: false,
+        live: false,
+        hasFailure: false,
+      }),
+    ]);
+
+    const expanded = deriveThreadFeedPresentation(
+      feed,
+      null,
+      new Set(),
+      "current",
+      new Set(["work-group-current"]),
+      null,
+    );
+    expect(expanded[0]).toMatchObject({
+      type: "work-summary",
+      expanded: true,
+      activities: [{ id: "command-1" }, { id: "command-2" }, { id: "read-3" }],
+    });
+  });
+
+  it("keeps an in-progress Current tool summary visible and announces failures explicitly", () => {
+    const activity = (
+      id: string,
+      summary: string,
+      status: ThreadFeedActivity["status"],
+      toolLifecycleStatus: ThreadFeedActivity["toolLifecycleStatus"],
+    ): ThreadFeedActivity => ({
+      id,
+      createdAt: `2026-04-01T00:00:0${id.at(-1)}.000Z`,
+      turnId: null,
+      summary,
+      detail: null,
+      canExpand: false,
+      getFullDetail: () => null,
+      getCopyText: () => id,
+      icon: "command",
+      toolLike: true,
+      status,
+      toolLifecycleStatus,
+    });
+    const feed: ThreadFeedEntry[] = [
+      {
+        type: "activity-group",
+        id: "work-group-live",
+        createdAt: "2026-04-01T00:00:01.000Z",
+        turnId: null,
+        activities: [
+          activity("tool-1", "Ran setup", "success", "completed"),
+          activity("tool-2", "Running tests", "neutral", "inProgress"),
+        ],
+      },
+      {
+        type: "activity-group",
+        id: "work-group-failed",
+        createdAt: "2026-04-01T00:00:03.000Z",
+        turnId: null,
+        activities: [activity("tool-3", "Ran checks", "failure", "failed")],
+      },
+      {
+        type: "activity-group",
+        id: "work-group-mixed",
+        createdAt: "2026-04-01T00:00:04.000Z",
+        turnId: null,
+        activities: [
+          activity("tool-4", "Ran passing check", "success", "completed"),
+          activity("tool-5", "Ran failing check", "failure", "failed"),
+        ],
+      },
+    ];
+
+    const current = deriveThreadFeedPresentation(feed, null, new Set(), "current", new Set(), null);
+
+    expect(current).toEqual([
+      expect.objectContaining({
+        type: "work-summary",
+        summary: "Running tests",
+        live: true,
+        hasFailure: false,
+      }),
+      expect.objectContaining({
+        type: "work-summary",
+        summary: "Ran 1 command",
+        live: false,
+        hasFailure: true,
+      }),
+      expect.objectContaining({
+        type: "work-summary",
+        summary: "Ran 2 commands",
+        live: false,
+        hasFailure: false,
+      }),
+    ]);
+  });
+
+  it("uses day-aware Current timestamps while Classic remains time-only", () => {
+    const sameDay = new Date(2026, 3, 2, 14, 30);
+    const previousDay = new Date(2026, 3, 1, 14, 30);
+
+    const classic = formatThreadFeedTimestamp(
+      previousDay.toISOString(),
+      "classic",
+      sameDay,
+      "en-US",
+    );
+    expect(formatThreadFeedTimestamp(sameDay.toISOString(), "current", sameDay, "en-US")).toBe(
+      formatThreadFeedTimestamp(sameDay.toISOString(), "classic", sameDay, "en-US"),
+    );
+    expect(formatThreadFeedTimestamp(previousDay.toISOString(), "current", sameDay, "en-US")).toBe(
+      `Apr 1, ${classic}`,
+    );
+    expect(formatThreadFeedTimestamp("not-a-date", "current", sameDay, "en-US")).toBe("");
+  });
+
+  it("fixes only collapsed chrome row heights for each visual mode", () => {
+    const currentSummary = {
+      type: "work-summary",
+      expanded: false,
+    } as ThreadFeedEntry;
+    const expandedSummary = {
+      type: "work-summary",
+      expanded: true,
+    } as ThreadFeedEntry;
+
+    expect(
+      resolveThreadFeedChromeRowHeight({ type: "turn-fold" } as ThreadFeedEntry, "classic", 41, 49),
+    ).toBe(56);
+    expect(
+      resolveThreadFeedChromeRowHeight({ type: "turn-fold" } as ThreadFeedEntry, "current", 41, 49),
+    ).toBe(64);
+    expect(
+      resolveThreadFeedChromeRowHeight({ type: "working" } as ThreadFeedEntry, "classic", 41, 49),
+    ).toBe(41);
+    expect(
+      resolveThreadFeedChromeRowHeight({ type: "working" } as ThreadFeedEntry, "current", 41, 49),
+    ).toBe(49);
+    expect(resolveThreadFeedChromeRowHeight(currentSummary, "current", 41, 49)).toBe(40);
+    expect(resolveThreadFeedChromeRowHeight(expandedSummary, "current", 41, 49)).toBeUndefined();
   });
 });
 

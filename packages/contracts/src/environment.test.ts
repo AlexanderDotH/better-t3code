@@ -63,15 +63,21 @@ describe("ExecutionEnvironmentCapabilities", () => {
 
   it("keeps environment and project settings optional under version skew", () => {
     const legacy = decodeCapabilities({ repositoryIdentity: true });
+    const previewSyncServer = decodeCapabilities({
+      repositoryIdentity: true,
+      environmentSettingsVersion: 2,
+      projectSettingsVersion: 1,
+    });
     const current = decodeCapabilities({
       repositoryIdentity: true,
-      environmentSettingsVersion: 1,
+      environmentSettingsVersion: 3,
       projectSettingsVersion: 1,
     });
 
     expect(legacy.environmentSettingsVersion).toBeUndefined();
     expect(legacy.projectSettingsVersion).toBeUndefined();
-    expect(current.environmentSettingsVersion).toBe(1);
+    expect(previewSyncServer.environmentSettingsVersion).toBe(2);
+    expect(current.environmentSettingsVersion).toBe(3);
     expect(current.projectSettingsVersion).toBe(1);
   });
 });

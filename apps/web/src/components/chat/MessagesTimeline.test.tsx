@@ -13,8 +13,14 @@ import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
+import { formatDayAwareTimestamp, formatShortTimestamp } from "../../timestampFormat";
 
 const clientSettingsState = vi.hoisted(() => ({ showReasoning: false }));
+const chatVisualModeState = vi.hoisted(() => ({ mode: "current" as "current" | "classic" }));
+
+vi.mock("../../chatVisualModeSync", () => ({
+  useChatVisualMode: () => chatVisualModeState.mode,
+}));
 
 vi.mock("../../hooks/useSettings", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../hooks/useSettings")>();
@@ -203,6 +209,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   clientSettingsState.showReasoning = false;
+  chatVisualModeState.mode = "current";
 });
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
@@ -360,6 +367,92 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Worked for 8.0s");
     expect(markup).toContain("px-1 text-sm leading-relaxed text-muted-foreground");
+  });
+
+  it("renders the Classic worked-for row at the compact legacy text size", () => {
+    chatVisualModeState.mode = "classic";
+    const turnId = TurnId.make("turn-with-classic-fold");
+    const assistantEntry = buildAssistantTimelineEntry("Done.");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        latestTurn={{
+          turnId,
+          state: "completed",
+          startedAt: "2026-03-17T19:12:20.000Z",
+          completedAt: "2026-03-17T19:12:28.000Z",
+        }}
+        timelineEntries={[
+          {
+            id: "classic-work-entry-with-fold",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:22.000Z",
+            entry: {
+              id: "classic-work-with-fold",
+              createdAt: "2026-03-17T19:12:22.000Z",
+              turnId,
+              label: "Ran command",
+              tone: "tool",
+              toolLifecycleStatus: "completed",
+            },
+          },
+          {
+            ...assistantEntry,
+            message: { ...assistantEntry.message, turnId },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Worked for 8.0s");
+    expect(markup).toContain("px-1 text-xs text-muted-foreground");
+    expect(markup).not.toContain("px-1 text-sm leading-relaxed text-muted-foreground");
+  });
+
+  it("uses time-only message timestamps in Classic mode", () => {
+    const timelineEntries = [buildUserTimelineEntry("Hello")];
+    const shortTimestamp = formatShortTimestamp(MESSAGE_CREATED_AT, "12-hour");
+    const dayAwareTimestamp = formatDayAwareTimestamp(MESSAGE_CREATED_AT, "12-hour");
+
+    const currentMarkup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timestampFormat="12-hour"
+        timelineEntries={timelineEntries}
+      />,
+    );
+    chatVisualModeState.mode = "classic";
+    const classicMarkup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timestampFormat="12-hour"
+        timelineEntries={timelineEntries}
+      />,
+    );
+
+    expect(currentMarkup).toContain(`>${dayAwareTimestamp}</p>`);
+    expect(classicMarkup).toContain(`>${shortTimestamp}</p>`);
+    expect(classicMarkup).not.toContain(`>${dayAwareTimestamp}</p>`);
+  });
+
+  it("keeps visible-content anchoring and end-follow behavior enabled in Classic mode", () => {
+    chatVisualModeState.mode = "classic";
+    const firstEntry = buildUserTimelineEntry("First prompt.");
+    const anchoredMarkup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        anchorMessageId={firstEntry.message.id}
+        timelineEntries={[firstEntry]}
+      />,
+    );
+    const followingMarkup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[firstEntry]} />,
+    );
+
+    expect(anchoredMarkup).toContain('data-anchor-index="0"');
+    expect(anchoredMarkup).toContain('data-maintain-visible-content-position-data="true"');
+    expect(anchoredMarkup).toContain('data-maintain-visible-content-position-size="true"');
+    expect(followingMarkup).toContain('data-maintain-scroll-at-end="enabled"');
   });
 
   it("uses the larger leading inset only when the top fade is enabled", () => {
@@ -1037,6 +1130,99 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('aria-label="Tool call failed"');
   });
 
+  it("renders completed Classic tool activity as compact heading-and-detail rows", () => {
+    chatVisualModeState.mode = "classic";
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "classic-command-entry",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "classic-command",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Run tests complete",
+              toolTitle: "Run tests",
+              tone: "tool",
+              itemType: "command_execution",
+              command: "pnpm test",
+              toolLifecycleStatus: "completed",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Run tests");
+    expect(markup).toContain("pnpm test");
+    expect(markup).toContain("text-[12px] leading-5");
+    expect(markup).toContain("lucide-chevron-down");
+    expect(markup).toContain("lucide-check");
+    expect(markup).not.toContain("Ran 1 command");
+    expect(markup).not.toContain("live-activity-focus");
+  });
+
+  it("keeps Classic activity individual and uses the legacy previous-entry overflow toggle", () => {
+    chatVisualModeState.mode = "classic";
+    const timelineEntries = ["First", "Second", "Third"].map((ordinal, index) => ({
+      id: `classic-overflow-entry-${index}`,
+      kind: "work" as const,
+      createdAt: `2026-03-17T19:12:${String(28 + index).padStart(2, "0")}.000Z`,
+      entry: {
+        id: `classic-overflow-work-${index}`,
+        createdAt: `2026-03-17T19:12:${String(28 + index).padStart(2, "0")}.000Z`,
+        label: `${ordinal} command complete`,
+        toolTitle: `${ordinal} command`,
+        tone: "tool" as const,
+        itemType: "command_execution" as const,
+        command: `command-${index + 1}`,
+        toolLifecycleStatus: "completed" as const,
+      },
+    }));
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} />,
+    );
+
+    expect(markup).toContain("Third command");
+    expect(markup).toContain("+2 previous tool calls");
+    expect(markup).not.toContain("First command");
+    expect(markup).not.toContain("Second command");
+    expect(markup).not.toContain("Ran 3 commands");
+  });
+
+  it("renders Classic tool failures with the compact failure status affordance", () => {
+    chatVisualModeState.mode = "classic";
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "classic-failed-entry",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "classic-failed-work",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Run lint",
+              tone: "tool",
+              itemType: "command_execution",
+              command: "pnpm lint",
+              detail: "Exited with exit code 1",
+              toolLifecycleStatus: "failed",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Run lint");
+    expect(markup).toContain("lucide-x");
+    expect(markup).toContain('aria-label="Tool call failed"');
+  });
+
   it("shows the animated one-line label for a live tool group", () => {
     const turnId = TurnId.make("turn-live");
     const markup = renderToStaticMarkup(
@@ -1186,6 +1372,72 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("gap-1.5 py-0.5 px-1");
   });
 
+  it("renders the Classic three-dot working row without Thinking or a live sweep", () => {
+    chatVisualModeState.mode = "classic";
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnStartedAt={MESSAGE_CREATED_AT}
+        workingStepLabel="Run focused tests"
+        timelineEntries={[]}
+      />,
+    );
+
+    expect(markup).toContain("Working for");
+    expect(markup).toContain("Run focused tests");
+    expect(markup).toContain("text-[11px]");
+    expect(markup.match(/animate-status-pulse/g)).toHaveLength(3);
+    expect(markup).not.toContain("Thinking");
+    expect(markup).not.toContain("live-activity-focus");
+  });
+
+  it("keeps active Classic tools behind the compact working indicator", () => {
+    chatVisualModeState.mode = "classic";
+    const turnId = TurnId.make("classic-active-turn");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnStartedAt={MESSAGE_CREATED_AT}
+        latestTurn={{
+          turnId,
+          state: "running",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: null,
+        }}
+        runningTurnId={turnId}
+        timelineEntries={[
+          {
+            id: "classic-active-entry",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "classic-active-work",
+              createdAt: MESSAGE_CREATED_AT,
+              turnId,
+              toolCallId: "classic-active-call",
+              label: "Run focused tests",
+              toolTitle: "Run focused tests",
+              tone: "tool",
+              itemType: "command_execution",
+              command: "pnpm test MessagesTimeline",
+              toolLifecycleStatus: "inProgress",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Working for");
+    expect(markup.match(/animate-status-pulse/g)).toHaveLength(3);
+    expect(markup).not.toContain("Run focused tests");
+    expect(markup).not.toContain("pnpm test MessagesTimeline");
+    expect(markup).not.toContain("Running pnpm");
+    expect(markup).not.toContain("Thinking");
+    expect(markup).not.toContain("live-activity-focus");
+  });
+
   it("renders review comment contexts as structured cards instead of raw tags", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1313,6 +1565,10 @@ describe("MessagesTimeline", () => {
     const optedInMarkup = renderToStaticMarkup(
       <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} />,
     );
+    chatVisualModeState.mode = "classic";
+    const classicMarkup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} />,
+    );
 
     expect(defaultMarkup).not.toContain('data-reasoning-output="true"');
     expect(optedInMarkup).toContain('data-reasoning-output="true"');
@@ -1321,5 +1577,7 @@ describe("MessagesTimeline", () => {
     expect(optedInMarkup).toContain("Inspecting the repository before editing.");
     expect(optedInMarkup).not.toContain("border-s");
     expect(optedInMarkup).not.toContain("rounded-md");
+    expect(classicMarkup).toContain('data-reasoning-output="true"');
+    expect(classicMarkup).toContain("Inspecting the repository before editing.");
   });
 });

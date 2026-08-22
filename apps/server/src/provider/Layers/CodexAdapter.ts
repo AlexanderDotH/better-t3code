@@ -2601,6 +2601,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? resolveCodexContextWindowTokens(input.modelSelection)
             : undefined;
         const fetchWorker = input.purpose === "fetch-worker";
+        const transientWorker = fetchWorker || input.purpose === "subagent-worker";
         const runtimeMode = fetchWorker ? "approval-required" : input.runtimeMode;
         const cwd = input.cwd ?? process.cwd();
         const resolvedMcpServers =
@@ -2609,7 +2610,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             : [];
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
         const resourceHook =
-          !fetchWorker && resourceGovernor && mcpSession
+          !transientWorker && resourceGovernor && mcpSession
             ? codexResourceGovernorHookLaunchConfiguration({})
             : undefined;
         const resourceConfigurationKey = ResourceProtection.resourceConfigurationKey([
@@ -2620,7 +2621,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           mcpSession ? "t3-code" : "",
         ]);
         const appServerArgs = [
-          ...(fetchWorker ? ["--disable", "multi_agent"] : []),
+          ...(transientWorker ? ["--disable", "multi_agent"] : []),
           ...(fetchWorker && mcpSession === undefined ? ["-c", "mcp_servers={}"] : []),
           ...(mcpSession
             ? [
@@ -2640,7 +2641,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
           ...(options?.environment ? { environment: options.environment } : {}),
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
-          ...(!fetchWorker && isCodexResumeCursorSchema(input.resumeCursor)
+          ...(!transientWorker &&
+          !input.freshSession &&
+          isCodexResumeCursorSchema(input.resumeCursor)
             ? { resumeCursor: input.resumeCursor }
             : {}),
           runtimeMode,

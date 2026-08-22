@@ -6,6 +6,8 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import {
+  ChatVisualModeSyncRecord,
+  type ChatVisualModeSyncRecord as ChatVisualModeSyncRecordType,
   ProjectThreadPreviewSyncRecord,
   type ProjectThreadPreviewSyncRecord as ProjectThreadPreviewSyncRecordType,
   type SidebarProjectGroupingMode,
@@ -21,6 +23,7 @@ const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
 const decodeProjectThreadPreviewSyncRecord = Schema.decodeUnknownOption(
   ProjectThreadPreviewSyncRecord,
 );
+const decodeChatVisualModeSyncRecord = Schema.decodeUnknownOption(ChatVisualModeSyncRecord);
 
 export interface Preferences {
   readonly liveActivitiesEnabled?: boolean;
@@ -42,6 +45,8 @@ export interface Preferences {
   readonly olderProjectsExpanded?: boolean;
   /** Offline mirror of the newest synchronized per-project Classic preview limit. */
   readonly projectThreadPreviewSyncRecord?: ProjectThreadPreviewSyncRecordType;
+  /** Offline mirror of the newest synchronized chat transcript presentation. */
+  readonly chatVisualModeSyncRecord?: ChatVisualModeSyncRecordType;
   /** Records that Mobile transitioned from its former fixed six-row preview to default three. */
   readonly projectThreadPreviewMigrationVersion?: 1;
   /** @deprecated Kept temporarily so older OTA bundles retain the selected mode. */
@@ -117,6 +122,7 @@ export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
     collapsedProjectGroups?: readonly string[];
     olderProjectsExpanded?: boolean;
     projectThreadPreviewSyncRecord?: ProjectThreadPreviewSyncRecordType;
+    chatVisualModeSyncRecord?: ChatVisualModeSyncRecordType;
     projectThreadPreviewMigrationVersion?: 1;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
@@ -198,6 +204,10 @@ export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
   );
   if (Option.isSome(projectThreadPreviewSyncRecord)) {
     preferences.projectThreadPreviewSyncRecord = projectThreadPreviewSyncRecord.value;
+  }
+  const chatVisualModeSyncRecord = decodeChatVisualModeSyncRecord(parsed.chatVisualModeSyncRecord);
+  if (Option.isSome(chatVisualModeSyncRecord)) {
+    preferences.chatVisualModeSyncRecord = chatVisualModeSyncRecord.value;
   }
   if (parsed.projectThreadPreviewMigrationVersion === 1) {
     preferences.projectThreadPreviewMigrationVersion = 1;

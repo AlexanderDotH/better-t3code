@@ -1,5 +1,5 @@
 import { ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
-import { memo, type ReactNode } from "react";
+import { memo, type KeyboardEvent, type ReactNode, type SyntheticEvent } from "react";
 import { EllipsisIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import {
@@ -11,11 +11,32 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 
+const INLINE_CONTROL_NAVIGATION_KEYS = new Set([
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "End",
+  "Home",
+  "PageDown",
+  "PageUp",
+]);
+
+function stopMenuInteractionPropagation(event: SyntheticEvent): void {
+  event.stopPropagation();
+}
+
+function stopMenuNavigationKeyPropagation(event: KeyboardEvent): void {
+  if (!INLINE_CONTROL_NAVIGATION_KEYS.has(event.key)) return;
+  event.stopPropagation();
+}
+
 export const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
   showInteractionModeSelect: boolean;
   traitsMenuContent?: ReactNode;
+  contextWindowMenuContent?: ReactNode;
   onInteractionModeChange: (mode: ProviderInteractionMode) => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
@@ -33,10 +54,25 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
       >
         <EllipsisIcon aria-hidden="true" className="size-4" />
       </MenuTrigger>
-      <MenuPopup align="start">
+      <MenuPopup
+        align="start"
+        className={props.contextWindowMenuContent ? "w-80 max-w-[calc(100vw-1.5rem)]" : undefined}
+      >
         {props.traitsMenuContent ? (
           <>
             {props.traitsMenuContent}
+            <MenuDivider />
+          </>
+        ) : null}
+        {props.contextWindowMenuContent ? (
+          <>
+            <div
+              onPointerDown={stopMenuInteractionPropagation}
+              onClick={stopMenuInteractionPropagation}
+              onKeyDown={stopMenuNavigationKeyPropagation}
+            >
+              {props.contextWindowMenuContent}
+            </div>
             <MenuDivider />
           </>
         ) : null}

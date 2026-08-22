@@ -544,12 +544,11 @@ They are resolved semantically in dependency order with these invariants:
   shapes.
 - Disabling agent browser access retains T3 MCP credentials but selects the no-preview
   `/mcp/workspace-no-preview` or `/mcp/coordination` toolkit. Preview tools disappear while
-  `workspace_context` and project-agent coordination remain; Fetch keeps its constrained
-  `/mcp/workspace-only` endpoint.
-- Migration IDs 1 through 51 and their names remain immutable. Upstream's auth-session connection
-  schema is appended as the idempotent
-  `052_AuthSessionClientConnectionCompatibility`; convergence migration 45 continues to repair a
-  native upstream ledger whose ID 41 has a different meaning.
+  `workspace_context`, project-agent coordination, and general-subagent tools remain; Fetch keeps
+  its constrained `/mcp/workspace-only` endpoint.
+- Migration IDs 1 through 52 and their names remain immutable. General-subagent projection support
+  is appended as the idempotent `053_ProjectionThreadSubagentManagedOrigin`; convergence migration
+  45 continues to repair a native upstream ledger whose ID 41 has a different meaning.
 - Provider and orchestration resolutions use upstream's current probes, skills, resume, update,
   tool-identity, orphan-session, activity, and mixed-tool-run fixes while retaining Gemini,
   provider/model transcript handoff, Fetch, project-agent coordination, the adaptive resource

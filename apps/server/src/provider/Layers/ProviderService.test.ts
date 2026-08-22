@@ -1054,6 +1054,84 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect(
+    "routes general subagents as fresh transient sessions with their selected runtime",
+    () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+        const threadId = asThreadId("general:parent-thread:worker-1");
+        const parentThreadId = asThreadId("parent-thread");
+        const runtimeSessionId = RuntimeSessionId.make("general-runtime-worker-1");
+        const modelSelection = createModelSelection(codexInstanceId, "gpt-daybreak-blue-latest", [
+          { id: "reasoningEffort", value: "max" },
+        ]);
+
+        routing.codex.startSession.mockClear();
+
+        const session = yield* provider.startTransientSession(
+          threadId,
+          {
+            threadId,
+            runtimeSessionId,
+            provider: CODEX_DRIVER,
+            providerInstanceId: codexInstanceId,
+            purpose: "subagent-worker",
+            cwd: "/tmp/general-project",
+            modelSelection,
+            runtimeMode: "full-access",
+          },
+          { workspaceContextThreadId: parentThreadId, mcpMode: "full" },
+        );
+
+        assert.equal(session.runtimeSessionId, runtimeSessionId);
+        assert.deepInclude(routing.codex.startSession.mock.calls[0]?.[0], {
+          threadId,
+          runtimeSessionId,
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          purpose: "subagent-worker",
+          modelSelection,
+          freshSession: true,
+          runtimeMode: "full-access",
+        });
+        assert.equal(routing.codex.startSession.mock.calls[0]?.[0]?.resumeCursor, undefined);
+        assert.equal(Option.isNone(yield* runtimeRepository.getByThreadId({ threadId })), true);
+
+        yield* provider.stopTransientSession({
+          threadId,
+          runtimeSessionId,
+          providerInstanceId: codexInstanceId,
+        });
+        routing.codex.startSession.mockClear();
+      }),
+  );
+
+  it.effect("rejects mounting the full MCP profile into a Fetch worker", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("fetch:parent-thread:full-mcp");
+      const failure = yield* Effect.flip(
+        provider.startTransientSession(
+          threadId,
+          {
+            threadId,
+            runtimeSessionId: RuntimeSessionId.make("fetch-runtime-full-mcp"),
+            provider: CODEX_DRIVER,
+            providerInstanceId: codexInstanceId,
+            purpose: "fetch-worker",
+            modelSelection: createModelSelection(codexInstanceId, "gpt-5.6-sol"),
+            runtimeMode: "approval-required",
+          },
+          { workspaceContextThreadId: asThreadId("parent-thread"), mcpMode: "full" },
+        ),
+      );
+
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.issue, "cannot mount the full MCP profile");
+    }),
+  );
+
   it.effect("generation-fences transient Fetch cleanup", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;

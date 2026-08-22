@@ -51,8 +51,12 @@ describe("ComposerBannerStack", () => {
     const markup = renderToStaticMarkup(<ComposerBannerStack items={[banner("front")]} />);
 
     expect(markup).not.toContain("data-composer-banner-stack-expanded-items");
+    expect(markup).toContain(
+      "group/banner-stack chat-composer-drawer-slot chat-composer-drawer-floating",
+    );
     expect(markup).toContain("chat-composer-drawer-surface");
-    expect(markup).toContain("chat-composer-drawer-attached");
+    expect(markup).toContain("chat-composer-drawer-floating");
+    expect(markup).not.toContain("chat-composer-drawer-attached");
     expect(markup).toContain("text-xs");
     expect(markup).toContain('data-composer-banner-drawer="true"');
     expect(markup).toContain('data-variant="warning"');

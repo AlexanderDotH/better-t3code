@@ -1,4 +1,5 @@
 import * as Haptics from "expo-haptics";
+import type { ChatVisualMode } from "@t3tools/contracts";
 import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
 import { LayoutAnimation, Pressable, ScrollView, View } from "react-native";
 
@@ -83,8 +84,12 @@ function isFreshRow(createdAt: string): boolean {
 // Tool-like activities with a neutral status carry no signal worth a row.
 export function visibleWorkLogActivities(
   activities: ReadonlyArray<ThreadFeedActivity>,
+  chatVisualMode: ChatVisualMode,
 ): ReadonlyArray<ThreadFeedActivity> {
-  return activities.filter((activity) => !(activity.toolLike && activity.status === "neutral"));
+  return activities.filter((activity) => {
+    if (!activity.toolLike || activity.status !== "neutral") return true;
+    return chatVisualMode === "current" && activity.toolLifecycleStatus !== undefined;
+  });
 }
 
 // Pre-measurement heights for the feed's getFixedItemSize. Collapsed work-log
@@ -104,8 +109,9 @@ export const WORK_GROUP_TOGGLE_HEIGHT = 36; // min-h-8 (32) + mb-1 (4)
 export function collapsedWorkLogHeight(
   activities: ReadonlyArray<ThreadFeedActivity>,
   baseFontSize: number,
+  chatVisualMode: ChatVisualMode,
 ): number {
-  const rows = visibleWorkLogActivities(activities);
+  const rows = visibleWorkLogActivities(activities, chatVisualMode);
   if (rows.length === 0) {
     return 0;
   }
@@ -122,6 +128,7 @@ export function collapsedWorkLogHeight(
 
 export function ThreadWorkLog(props: {
   readonly activities: ReadonlyArray<ThreadFeedActivity>;
+  readonly chatVisualMode: ChatVisualMode;
   readonly copiedRowId: string | null;
   readonly expandedRows: Readonly<Record<string, boolean>>;
   readonly iconSubtleColor: import("react-native").ColorValue;
@@ -129,7 +136,7 @@ export function ThreadWorkLog(props: {
   readonly onToggleRow: (rowId: string) => void;
 }) {
   const pressedBackground = useThemeColor("--color-subtle");
-  const rows = visibleWorkLogActivities(props.activities).map((activity) => ({
+  const rows = visibleWorkLogActivities(props.activities, props.chatVisualMode).map((activity) => ({
     ...activity,
     detail: compactActivityDetail(activity.detail),
   }));
@@ -270,6 +277,98 @@ export function ThreadWorkLog(props: {
           );
         })}
       </View>
+    </View>
+  );
+}
+
+export function ThreadWorkSummary(props: {
+  readonly activities: ReadonlyArray<ThreadFeedActivity>;
+  readonly copiedRowId: string | null;
+  readonly expanded: boolean;
+  readonly expandedRows: Readonly<Record<string, boolean>>;
+  readonly hasFailure: boolean;
+  readonly icon: ThreadFeedActivity["icon"];
+  readonly iconSubtleColor: import("react-native").ColorValue;
+  readonly live: boolean;
+  readonly summary: string;
+  readonly onCopyRow: (rowId: string, value: string) => void;
+  readonly onToggle: () => void;
+  readonly onToggleRow: (rowId: string) => void;
+}) {
+  const pressedBackground = useThemeColor("--color-subtle");
+  const statusLabel = props.hasFailure
+    ? `${props.summary}, tool call failed`
+    : props.live
+      ? `${props.summary}, in progress`
+      : props.summary;
+
+  return (
+    <View className="-mx-1 mb-1 px-1 py-0">
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={statusLabel}
+        accessibilityHint="Double tap to show tool call details."
+        accessibilityState={{ expanded: props.expanded }}
+        hitSlop={4}
+        onPress={() => {
+          triggerDisclosureFeedback();
+          props.onToggle();
+        }}
+        style={({ pressed }) => ({
+          backgroundColor: pressed ? pressedBackground : "transparent",
+        })}
+        className="min-h-9 flex-row items-center gap-1.5 rounded-md px-0.5 py-0"
+      >
+        <View className="h-6 w-6 shrink-0 items-center justify-center">
+          <SymbolView
+            name={
+              props.hasFailure ? { ios: "xmark", android: "close" } : workRowSymbolName(props.icon)
+            }
+            size={15}
+            weight="medium"
+            tintColor={props.hasFailure ? "#e11d48" : props.iconSubtleColor}
+            type="monochrome"
+          />
+        </View>
+
+        <Text
+          className={cn(
+            "min-w-0 flex-1 text-sm text-foreground-muted",
+            props.hasFailure && "text-rose-600 dark:text-rose-400",
+            props.live && "text-foreground",
+          )}
+          numberOfLines={1}
+        >
+          {props.summary}
+        </Text>
+
+        <View className="h-5 w-5 shrink-0 items-center justify-center">
+          <SymbolView
+            name={
+              props.expanded
+                ? { ios: "chevron.up", android: "keyboard_arrow_up" }
+                : { ios: "chevron.down", android: "keyboard_arrow_down" }
+            }
+            size={12}
+            tintColor={props.iconSubtleColor}
+            type="monochrome"
+          />
+        </View>
+      </Pressable>
+
+      {props.expanded ? (
+        <View className="pl-1 pt-0.5">
+          <ThreadWorkLog
+            activities={props.activities}
+            chatVisualMode="current"
+            copiedRowId={props.copiedRowId}
+            expandedRows={props.expandedRows}
+            iconSubtleColor={props.iconSubtleColor}
+            onCopyRow={props.onCopyRow}
+            onToggleRow={props.onToggleRow}
+          />
+        </View>
+      ) : null}
     </View>
   );
 }

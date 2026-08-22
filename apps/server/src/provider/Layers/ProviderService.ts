@@ -949,7 +949,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       if (resolveProviderSessionPurpose(parsed.purpose) !== "interactive") {
         return yield* toValidationError(
           "ProviderService.startSession",
-          "Fetch worker sessions must use startTransientSession.",
+          "Transient worker sessions must use startTransientSession.",
         );
       }
 
@@ -1072,28 +1072,39 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       schema: ProviderSessionStartInput,
       payload: rawInput,
     });
-    if (resolveProviderSessionPurpose(parsed.purpose) !== "fetch-worker") {
+    const purpose = resolveProviderSessionPurpose(parsed.purpose);
+    if (purpose !== "fetch-worker" && purpose !== "subagent-worker") {
       return yield* toValidationError(
         "ProviderService.startTransientSession",
-        "Transient sessions are reserved for the fetch-worker purpose.",
+        "Transient sessions require a fetch-worker or subagent-worker purpose.",
       );
     }
+    const fetchWorker = purpose === "fetch-worker";
+    const mcpMode =
+      options?.mcpMode ??
+      (options?.workspaceContextThreadId !== undefined ? "workspace-only" : "none");
     if (parsed.runtimeSessionId === undefined) {
       return yield* toValidationError(
         "ProviderService.startTransientSession",
         "A pre-registered runtimeSessionId is required for transient sessions.",
       );
     }
-    if (parsed.runtimeMode !== "approval-required") {
+    if (fetchWorker && parsed.runtimeMode !== "approval-required") {
       return yield* toValidationError(
         "ProviderService.startTransientSession",
         "Fetch worker sessions require approval-required runtime mode.",
       );
     }
+    if (fetchWorker && mcpMode === "full") {
+      return yield* toValidationError(
+        "ProviderService.startTransientSession",
+        "Fetch worker sessions cannot mount the full MCP profile.",
+      );
+    }
     if (parsed.modelSelection === undefined) {
       return yield* toValidationError(
         "ProviderService.startTransientSession",
-        "Fetch worker sessions require an exact model selection.",
+        "Transient worker sessions require an exact model selection.",
       );
     }
 
@@ -1104,7 +1115,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     if (parsed.modelSelection.instanceId !== resolvedInstanceId) {
       return yield* toValidationError(
         "ProviderService.startTransientSession",
-        "Fetch worker model selection must belong to the selected provider instance.",
+        "Transient worker model selection must belong to the selected provider instance.",
       );
     }
     if ((yield* Ref.get(transientBindings)).has(threadId)) {
@@ -1141,21 +1152,23 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       providerInstanceId: resolvedInstanceId,
       runtimeSessionId: parsed.runtimeSessionId,
       persistence: "transient",
-      ...(options?.workspaceContextThreadId !== undefined
-        ? {
-            workspaceContextThreadId: options.workspaceContextThreadId,
-            workspaceOnlyMcp: true,
-          }
-        : { mountMcp: false }),
+      ...(mcpMode === "none"
+        ? { mountMcp: false }
+        : {
+            ...(options?.workspaceContextThreadId !== undefined
+              ? { workspaceContextThreadId: options.workspaceContextThreadId }
+              : {}),
+            workspaceOnlyMcp: mcpMode === "workspace-only",
+          }),
       sessionInput: {
         ...safeInput,
         threadId,
         runtimeSessionId: parsed.runtimeSessionId,
         provider: instanceInfo.driverKind,
         providerInstanceId: resolvedInstanceId,
-        purpose: "fetch-worker",
+        purpose,
         freshSession: true,
-        runtimeMode: "approval-required",
+        runtimeMode: parsed.runtimeMode,
       },
     });
     if (session.provider !== adapter.provider) {

@@ -13,6 +13,7 @@ import {
   mobileSubagentHistoryIsVisible,
   mobileSubagentTranscriptEntryKey,
   mobileSubagentDisplayName,
+  mobileSubagentTranscriptMetadata,
   nextRecentSubagentExpiryDelayMs,
   reduceMobileSubagentHistory,
 } from "./subagent-presentation";
@@ -105,6 +106,26 @@ describe("mobile subagent presentation", () => {
     });
     expect(mobileSubagentDisplayName(base)).toBe("Contracts");
     expect(mobileSubagentDisplayName({ ...base, nickname: "Idefix" })).toBe("Idefix");
+  });
+
+  it("shows the selected provider and model traits for T3-managed agents", () => {
+    const managed = agent({
+      id: SubagentId.make("general:security-review"),
+      origin: "t3-managed",
+      providerInstanceId: ProviderInstanceId.make("codex-security"),
+      providerDriver: ProviderDriverKind.make("codex"),
+      status: "running",
+      model: "gpt-daybreak-blue-latest",
+      reasoningEffort: "max",
+      updatedAt: "2026-08-22T12:00:00.000Z",
+    });
+
+    expect(mobileSubagentTranscriptMetadata(managed)).toEqual([
+      "running",
+      "codex-security",
+      "gpt-daybreak-blue-latest",
+      "max",
+    ]);
   });
 
   it("releases the selected transcript whenever history closes", () => {

@@ -218,6 +218,7 @@ describe("mobile populated-thread smoke", () => {
           feed,
           thread.latestTurn,
           new Set([TURN_ID]),
+          "current",
           new Set(),
           STARTED_AT,
         ),
@@ -239,6 +240,13 @@ describe("mobile populated-thread smoke", () => {
     expect(projected.presentedFeed[projected.presentedFeed.length - 1]).toMatchObject({
       type: "working",
     });
+    expect(projected.presentedFeed.map(({ type }) => type)).toEqual([
+      "message",
+      "proposed-plan",
+      "work-summary",
+      "message",
+      "working",
+    ]);
     expect(projected.groups.active.map(({ id }) => id)).toEqual([running.id]);
     expect(projected.groups.recent.map(({ id }) => id)).toEqual([completed.id]);
     expect(projected.transcript.map(({ type }) => type)).toEqual([
