@@ -11,7 +11,9 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeGrokTextGeneration } from "../../textGeneration/GrokTextGeneration.ts";
+import { buildGrokAcpSpawnInput, resolveGrokAuthMethodId } from "../acp/GrokAcpSupport.ts";
 import { ProviderDriverError } from "../Errors.ts";
+import { makeAcpHistorySync } from "../history/AcpHistorySync.ts";
 import { makeGrokAdapter } from "../Layers/GrokAdapter.ts";
 import {
   buildInitialGrokProviderSnapshot,
@@ -25,6 +27,7 @@ import {
   type ProviderDriver,
   type ProviderInstance,
 } from "../ProviderDriver.ts";
+import { makeInstanceHistorySyncSource } from "../Services/ProviderHistorySync.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
@@ -87,6 +90,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
       const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const httpClient = yield* HttpClient.HttpClient;
+      const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
@@ -101,6 +105,20 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies GrokSettings;
+      const historySyncSource = makeInstanceHistorySyncSource({
+        driverKind: DRIVER_KIND,
+        instanceId,
+        continuationKey: continuationIdentity.continuationKey,
+        displayName: displayName ?? "Grok",
+        capabilities: { search: true, archived: false, resume: true, activity: false },
+      });
+      const historySync = makeAcpHistorySync({
+        source: historySyncSource,
+        defaultCwd: serverConfig.cwd,
+        spawn: buildGrokAcpSpawnInput(effectiveConfig, serverConfig.cwd, processEnv),
+        childProcessSpawner: spawner,
+        authMethodId: resolveGrokAuthMethodId(processEnv),
+      });
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
@@ -157,6 +175,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         enabled,
         snapshot,
         adapter,
+        historySync,
         textGeneration,
       } satisfies ProviderInstance;
     }),

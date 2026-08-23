@@ -19,6 +19,7 @@ import {
   parseNodeVersion,
   parseResolvedPath,
   parseToolchainReport,
+  prepareWslResourceMonitor,
   probeWslDistros,
 } from "./DesktopWslEnvironment.ts";
 
@@ -86,6 +87,62 @@ describe("probeWslDistros", () => {
       expect(error.message).toContain("timed out");
     }).pipe(Effect.provide(layer));
   });
+});
+
+describe("prepareWslResourceMonitor", () => {
+  it.effect("checks x64 glibc and makes the selected Linux binary executable", () => {
+    const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
+    const spawner = ChildProcessSpawner.make((command) => {
+      const childProcess = command as unknown as {
+        readonly command: string;
+        readonly args: ReadonlyArray<string>;
+      };
+      commands.push(childProcess);
+      return Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.empty,
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        }),
+      );
+    });
+
+    return Effect.gen(function* () {
+      const ready = yield* prepareWslResourceMonitor(
+        "Ubuntu",
+        "/mnt/c/T3 Code/resource-monitor/linux-x64-gnu/t3-resource-monitor",
+      );
+
+      expect(ready).toBe(true);
+      expect(commands).toHaveLength(1);
+      expect(commands[0]?.command).toBe("wsl.exe");
+      expect(commands[0]?.args.slice(0, 5)).toEqual(["-d", "Ubuntu", "--exec", "sh", "-c"]);
+      expect(commands[0]?.args[5]).toContain('"$(uname -m)" = "x86_64"');
+      expect(commands[0]?.args[5]).toContain("getconf GNU_LIBC_VERSION");
+      expect(commands[0]?.args[5]).toContain('chmod 755 "$1"');
+      expect(commands[0]?.args.at(-1)).toBe(
+        "/mnt/c/T3 Code/resource-monitor/linux-x64-gnu/t3-resource-monitor",
+      );
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner), Effect.scoped);
+  });
+
+  it.effect("returns false when the distro rejects the binary", () =>
+    prepareWslResourceMonitor("Ubuntu", "/mnt/c/t3-resource-monitor").pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        makeDistroListSpawner({ exitCode: 1 }),
+      ),
+      Effect.tap((ready) => Effect.sync(() => expect(ready).toBe(false))),
+    ),
+  );
 });
 
 describe("formatNodePtyProbeFailureReason", () => {

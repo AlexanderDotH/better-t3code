@@ -146,6 +146,18 @@ function resourceMonitorBinaryName(platform: NodeJS.Platform): string {
   return platform === "win32" ? "t3-resource-monitor.exe" : "t3-resource-monitor";
 }
 
+export const WSL_RESOURCE_MONITOR_DIRECTORY = "resource-monitor/linux-x64-gnu";
+export const WSL_RESOURCE_MONITOR_MARKER_NAME = "t3code-wsl-resource-monitor.json";
+
+const WslResourceMonitorMarker = Schema.Struct({
+  arch: Schema.Literal("x64"),
+  libc: Schema.Literal("glibc"),
+  version: Schema.String,
+});
+const decodeWslResourceMonitorMarker = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(WslResourceMonitorMarker),
+);
+
 const resolveResourceMonitorPath = Effect.fn(
   "desktop.backendConfiguration.resolveResourceMonitorPath",
 )(function* () {
@@ -178,6 +190,102 @@ const resolveResourceMonitorPath = Effect.fn(
   }
 
   return Option.none<string>();
+});
+
+const isRegularFile = Effect.fn("desktop.backendConfiguration.isRegularFile")(function* (
+  filePath: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* fileSystem.stat(filePath).pipe(
+    Effect.map((stat) => stat.type === "File"),
+    Effect.orElseSucceed(() => false),
+  );
+});
+
+const resolveWslResourceMonitorWindowsPath = Effect.fn(
+  "desktop.backendConfiguration.resolveWslResourceMonitorWindowsPath",
+)(function* (wslAppRoot: string) {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const fileSystem = yield* FileSystem.FileSystem;
+  if (environment.processArch !== "x64") {
+    return Option.none<string>();
+  }
+
+  if (!environment.isPackaged) {
+    const developmentCandidates = [
+      environment.path.join(
+        environment.rootDir,
+        "native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor",
+      ),
+      environment.path.join(
+        environment.rootDir,
+        "native/resource-monitor/target/x86_64-unknown-linux-gnu/debug/t3-resource-monitor",
+      ),
+    ];
+    for (const candidate of developmentCandidates) {
+      if (
+        yield* isRegularFile(candidate).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+        )
+      ) {
+        return Option.some(candidate);
+      }
+    }
+    return Option.none<string>();
+  }
+
+  const monitorDirectory = environment.path.join(wslAppRoot, WSL_RESOURCE_MONITOR_DIRECTORY);
+  const monitorPath = environment.path.join(monitorDirectory, "t3-resource-monitor");
+  if (
+    !(yield* isRegularFile(monitorPath).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+    ))
+  ) {
+    return Option.none<string>();
+  }
+
+  const markerPath = environment.path.join(monitorDirectory, WSL_RESOURCE_MONITOR_MARKER_NAME);
+  const marker = yield* fileSystem.readFileString(markerPath).pipe(
+    Effect.flatMap(decodeWslResourceMonitorMarker),
+    Effect.map(Option.some),
+    Effect.orElseSucceed(() => Option.none<typeof WslResourceMonitorMarker.Type>()),
+  );
+  if (Option.isNone(marker) || marker.value.version !== environment.appVersion) {
+    yield* Effect.logWarning(
+      `[desktop-backend-configuration] Ignoring incompatible WSL resource monitor at ${monitorPath}.`,
+    );
+    return Option.none<string>();
+  }
+
+  return Option.some(monitorPath);
+});
+
+const resolveWslResourceMonitorLinuxPath = Effect.fn(
+  "desktop.backendConfiguration.resolveWslResourceMonitorLinuxPath",
+)(function* (input: { readonly distro: string; readonly wslAppRoot: string }) {
+  const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
+  const windowsPath = yield* resolveWslResourceMonitorWindowsPath(input.wslAppRoot);
+  if (Option.isNone(windowsPath)) {
+    return Option.none<string>();
+  }
+
+  const linuxPath = yield* wslEnvironment.windowsToWslPath(input.distro, windowsPath.value);
+  if (Option.isNone(linuxPath)) {
+    yield* Effect.logWarning(
+      `[desktop-backend-configuration] Could not convert WSL resource monitor path ${windowsPath.value}.`,
+    );
+    return Option.none<string>();
+  }
+
+  const ready = yield* wslEnvironment.prepareResourceMonitor(input.distro, linuxPath.value);
+  if (!ready) {
+    yield* Effect.logWarning(
+      `[desktop-backend-configuration] WSL resource monitor is unavailable or incompatible in ${input.distro}; continuing without WSL process telemetry.`,
+    );
+    return Option.none<string>();
+  }
+
+  return linuxPath;
 });
 
 const readPersistedBackendObservabilitySettings = Effect.gen(function* () {
@@ -429,6 +537,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   | FileSystem.FileSystem
 > {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const fileSystem = yield* FileSystem.FileSystem;
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const wslServerTree = yield* DesktopWslServerTree.DesktopWslServerTree;
 
@@ -444,28 +553,6 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   // the network it exposes on is the WSL-vEthernet network, not the
   // LAN; the primary owns LAN exposure when the user opts in.
   const wslBindHost = "0.0.0.0";
-
-  const bootstrap = {
-    mode: "desktop" as const,
-    noBrowser: true,
-    port: input.port,
-    // Omit t3Home so the Linux backend uses its own home dir instead of
-    // the Windows-side baseDir (which would be a /mnt/c path and share
-    // the SQLite file with the primary).
-    host: wslBindHost,
-    desktopBootstrapToken: input.bootstrapToken,
-    // PortSchema rejects 0, so when tailscale serve is disabled we still
-    // need a valid number in this slot. The backend reads tailscaleServePort
-    // only when tailscaleServeEnabled is true, so the actual value here is
-    // inert.
-    tailscaleServeEnabled: false,
-    tailscaleServePort: 443,
-    // The packaged sidecar is a Windows executable and cannot run inside the
-    // Linux WSL backend. Keep the field absent instead of passing an unusable
-    // `/mnt/.../*.exe` path; WSL resource telemetry is reported unavailable.
-    // See docs/architecture/resource-telemetry.md.
-    ...buildObservabilityFragment(input.observabilitySettings),
-  };
 
   // In packaged builds the server tree ships inside resources/server.asar —
   // an archive FILE the Windows primary reads through ELECTRON_RUN_AS_NODE
@@ -498,6 +585,39 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   // changes between probing and spawning the backend.
   const runningDistro = preflight._tag === "Ready" ? preflight.runningDistro : null;
   const distroForConfig = runningDistro ?? input.distro;
+  const wslResourceMonitorPath =
+    runningDistro === null
+      ? Option.none<string>()
+      : yield* resolveWslResourceMonitorLinuxPath({
+          distro: runningDistro,
+          wslAppRoot,
+        }).pipe(
+          Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+          Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+        );
+
+  const bootstrap = {
+    mode: "desktop" as const,
+    noBrowser: true,
+    port: input.port,
+    // Omit t3Home so the Linux backend uses its own home dir instead of
+    // the Windows-side baseDir (which would be a /mnt/c path and share
+    // the SQLite file with the primary).
+    host: wslBindHost,
+    desktopBootstrapToken: input.bootstrapToken,
+    // PortSchema rejects 0, so when tailscale serve is disabled we still
+    // need a valid number in this slot. The backend reads tailscaleServePort
+    // only when tailscaleServeEnabled is true, so the actual value here is
+    // inert.
+    tailscaleServeEnabled: false,
+    tailscaleServePort: 443,
+    ...Option.match(wslResourceMonitorPath, {
+      onNone: () => ({}),
+      onSome: (resourceMonitorPath) => ({ resourceMonitorPath }),
+    }),
+    ...buildObservabilityFragment(input.observabilitySettings),
+  };
 
   // Resolve the selected distro's IPv4 address. In mirrored mode the distro
   // reports a host interface, so use loopback instead; a failed probe also

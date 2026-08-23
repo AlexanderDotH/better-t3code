@@ -2793,7 +2793,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       ),
     );
     return {
-      type: "image" as const,
+      type: attachment.type,
       url: `data:${attachment.mimeType};base64,${Buffer.from(bytes).toString("base64")}`,
     };
   });

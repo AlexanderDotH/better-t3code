@@ -1,6 +1,6 @@
 # Running T3 Code in the Background
 
-On Linux and macOS, T3 Code can run as a background service for your user, so it is ready without
+On Linux, macOS, and Windows, T3 Code can run as a background service for your user, so it is ready without
 keeping a terminal open.
 
 ## Manage the Service
@@ -62,7 +62,20 @@ A few more macOS notes:
   or disabled with `launchctl disable`, macOS will not start it at login until you switch it back
   on.
 
-**Windows** is not supported yet.
+**Windows** uses a hidden per-user Task Scheduler task. It starts after that user signs in, runs at
+normal user privilege without an administrator prompt, keeps running on battery power, and restarts
+after an unexpected launcher failure. It does not run before login.
+
+The task uses explicit Node.js and launcher paths captured during installation, so later `PATH`
+changes do not silently select a different runtime. `service update` repairs those paths and briefly
+restarts the service. Repair and uninstall first request a graceful launcher shutdown; a forced task
+end is only a timeout fallback.
+
+On a default Windows installation, diagnostics are written below
+`%USERPROFILE%\.t3\userdata\logs`, including `boot-service.log`. Run
+`npx t3@latest service status` from PowerShell to see the active version and resolved log path. If
+the service does not start after login, check that status, confirm Node.js still exists at the
+reported path, and review the Task Scheduler history plus `boot-service.log`.
 
 ## Using It with T3 Connect
 

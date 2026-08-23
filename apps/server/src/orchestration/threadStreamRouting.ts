@@ -20,6 +20,8 @@ function isRootThreadDetailEvent(event: OrchestrationEvent): boolean {
     case "thread.turn-diff-completed":
     case "thread.reverted":
     case "thread.session-set":
+    case "thread.harness-sync-linked":
+    case "thread.harness-sync-message-imported":
     case "thread.subagent-upserted":
     case "thread.subagent-state-set":
     case "thread.subagent-progress-set":

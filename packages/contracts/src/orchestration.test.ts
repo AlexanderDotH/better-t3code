@@ -24,6 +24,8 @@ import {
   OrchestrationThreadShell,
   ProjectCreateCommand,
   ThreadMetaUpdatedPayload,
+  ThreadHarnessSyncLinkCommand,
+  ThreadHarnessSyncMessageImportCommand,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
@@ -64,6 +66,10 @@ const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationComma
 const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+const decodeThreadHarnessSyncLinkCommand = Schema.decodeUnknownEffect(ThreadHarnessSyncLinkCommand);
+const decodeThreadHarnessSyncMessageImportCommand = Schema.decodeUnknownEffect(
+  ThreadHarnessSyncMessageImportCommand,
+);
 const decodeDispatchCommandError = Schema.decodeUnknownEffect(OrchestrationDispatchCommandError);
 
 it.effect("decodes a dispatch error after its bootstrap thread was deleted", () =>
@@ -75,6 +81,45 @@ it.effect("decodes a dispatch error after its bootstrap thread was deleted", () 
     });
 
     assert.strictEqual(error.bootstrapThreadDisposition, "deleted");
+  }),
+);
+
+it.effect("decodes harness history link and native message import commands", () =>
+  Effect.gen(function* () {
+    const linked = yield* decodeThreadHarnessSyncLinkCommand({
+      type: "thread.harness-sync.link",
+      commandId: "sync-link-1",
+      threadId: "thread-1",
+      sourceId: "codex-home",
+      continuationKey: "codex:/tmp/codex-home",
+      nativeSessionId: "native-session-1",
+      providerInstanceId: "codex-work",
+      providerLabel: "Codex Work",
+      activity: "active",
+      sourceUpdatedAt: "2026-08-23T10:00:00.000Z",
+      lastSyncedAt: "2026-08-23T10:01:00.000Z",
+    });
+    const imported = yield* decodeThreadHarnessSyncMessageImportCommand({
+      type: "thread.harness-sync.message.import",
+      commandId: "sync-message-1",
+      threadId: "thread-1",
+      nativeMessageId: "native-message-1",
+      message: {
+        id: "message-1",
+        role: "assistant",
+        text: "Imported answer",
+        turnId: null,
+        streaming: false,
+        createdAt: "2026-08-23T09:59:00.000Z",
+        updatedAt: "2026-08-23T09:59:00.000Z",
+      },
+      linkedAt: "2026-08-23T10:01:00.000Z",
+    });
+
+    assert.strictEqual(linked.providerInstanceId, "codex-work");
+    assert.strictEqual(linked.activity, "active");
+    assert.strictEqual(imported.nativeMessageId, "native-message-1");
+    assert.strictEqual(imported.message.id, "message-1");
   }),
 );
 

@@ -1348,6 +1348,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (targetThread.harnessSync?.activity === "active") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' is active in another harness and cannot start a turn.`,
+        });
+      }
       const sourceProposedPlan = command.sourceProposedPlan;
       const sourceThread = sourceProposedPlan
         ? yield* requireThread({
@@ -1762,6 +1768,72 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           streaming: false,
           createdAt: command.message.createdAt,
           updatedAt: command.message.updatedAt,
+        },
+      };
+    }
+
+    case "thread.harness-sync.link": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.lastSyncedAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.harness-sync-linked",
+        payload: {
+          threadId: command.threadId,
+          projectId: thread.projectId,
+          sourceId: command.sourceId,
+          continuationKey: command.continuationKey,
+          nativeSessionId: command.nativeSessionId,
+          providerInstanceId: thread.harnessSync?.providerInstanceId ?? command.providerInstanceId,
+          providerLabel:
+            thread.harnessSync !== undefined &&
+            thread.harnessSync !== null &&
+            thread.harnessSync.providerInstanceId !== command.providerInstanceId
+              ? thread.harnessSync.providerLabel
+              : command.providerLabel,
+          activity: command.activity,
+          sourceUpdatedAt: command.sourceUpdatedAt,
+          lastSyncedAt: command.lastSyncedAt,
+        },
+      };
+    }
+
+    case "thread.harness-sync.message.import": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.message.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.harness-sync-message-imported",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.message.id,
+          role: command.message.role,
+          text: command.message.text,
+          ...(command.message.attachments !== undefined
+            ? { attachments: command.message.attachments }
+            : {}),
+          turnId: command.message.turnId,
+          streaming: false,
+          createdAt: command.message.createdAt,
+          updatedAt: command.message.updatedAt,
+          nativeMessageId: command.nativeMessageId,
+          linkedAt: command.linkedAt,
         },
       };
     }

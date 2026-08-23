@@ -3595,6 +3595,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   ) : (
                     <>
                       {providerTraitsPicker}
+                      {providerTraitsPicker && providerContextWindowPicker ? (
+                        <Separator
+                          orientation="vertical"
+                          className="mx-0.5 hidden h-4 sm:block"
+                          data-chat-composer-traits-context-separator="true"
+                        />
+                      ) : null}
                       {providerContextWindowPicker}
                       <ComposerFooterModeControls
                         showInteractionModeSelect={planModeUiEnabled}

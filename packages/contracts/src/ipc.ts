@@ -217,6 +217,16 @@ import type {
   T3ChatImportRunInput,
   T3ChatImportRunResult,
 } from "./t3ChatImport.ts";
+import type {
+  HarnessChatSyncListInput,
+  HarnessChatSyncListResult,
+  HarnessChatSyncRunInput,
+  HarnessChatSyncRunResult,
+  HarnessChatSyncSourcesInput,
+  HarnessChatSyncSourcesResult,
+  HarnessChatSyncStatusInput,
+  HarnessChatSyncStatusResult,
+} from "./harnessChatSync.ts";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -1468,6 +1478,12 @@ export interface EnvironmentApi {
   chatImport: {
     discover: (input?: T3ChatImportDiscoverInput) => Promise<T3ChatImportDiscoverResult>;
     run: (input: T3ChatImportRunInput) => Promise<T3ChatImportRunResult>;
+  };
+  harnessChatSync: {
+    sources: (input?: HarnessChatSyncSourcesInput) => Promise<HarnessChatSyncSourcesResult>;
+    list: (input: HarnessChatSyncListInput) => Promise<HarnessChatSyncListResult>;
+    run: (input: HarnessChatSyncRunInput) => Promise<HarnessChatSyncRunResult>;
+    status: (input: HarnessChatSyncStatusInput) => Promise<HarnessChatSyncStatusResult>;
   };
   skills: {
     list: (input: SkillListInput) => Promise<SkillListResult>;

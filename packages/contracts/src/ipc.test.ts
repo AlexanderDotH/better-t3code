@@ -5,6 +5,16 @@ import type {
   PlanParallelismReviewInput,
   PlanParallelismReviewResult,
 } from "./planParallelismReview.ts";
+import type {
+  HarnessChatSyncListInput,
+  HarnessChatSyncListResult,
+  HarnessChatSyncRunInput,
+  HarnessChatSyncRunResult,
+  HarnessChatSyncSourcesInput,
+  HarnessChatSyncSourcesResult,
+  HarnessChatSyncStatusInput,
+  HarnessChatSyncStatusResult,
+} from "./harnessChatSync.ts";
 import { DesktopEnvironmentBootstrapSchema, type EnvironmentApi } from "./ipc.ts";
 
 describe("DesktopEnvironmentBootstrapSchema", () => {
@@ -45,6 +55,23 @@ describe("EnvironmentApi plan reviews", () => {
   it("exposes the typed plan parallelism review operation", () => {
     expectTypeOf<EnvironmentApi["plan"]["reviewParallelism"]>().toEqualTypeOf<
       (input: PlanParallelismReviewInput) => Promise<PlanParallelismReviewResult>
+    >();
+  });
+});
+
+describe("EnvironmentApi harness chat sync", () => {
+  it("exposes every environment-scoped sync operation", () => {
+    expectTypeOf<EnvironmentApi["harnessChatSync"]["sources"]>().toEqualTypeOf<
+      (input?: HarnessChatSyncSourcesInput) => Promise<HarnessChatSyncSourcesResult>
+    >();
+    expectTypeOf<EnvironmentApi["harnessChatSync"]["list"]>().toEqualTypeOf<
+      (input: HarnessChatSyncListInput) => Promise<HarnessChatSyncListResult>
+    >();
+    expectTypeOf<EnvironmentApi["harnessChatSync"]["run"]>().toEqualTypeOf<
+      (input: HarnessChatSyncRunInput) => Promise<HarnessChatSyncRunResult>
+    >();
+    expectTypeOf<EnvironmentApi["harnessChatSync"]["status"]>().toEqualTypeOf<
+      (input: HarnessChatSyncStatusInput) => Promise<HarnessChatSyncStatusResult>
     >();
   });
 });

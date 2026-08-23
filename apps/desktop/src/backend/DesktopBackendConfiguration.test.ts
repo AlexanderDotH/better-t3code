@@ -269,6 +269,322 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("resolveWsl passes a validated packaged Linux monitor path into the distro", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-wsl-monitor-test-",
+      });
+      const serverTreeRoot = path.join(baseDir, "extracted-server");
+      const entryPath = path.join(serverTreeRoot, "apps/server/dist/bin.mjs");
+      const monitorDirectory = path.join(
+        serverTreeRoot,
+        DesktopBackendConfiguration.WSL_RESOURCE_MONITOR_DIRECTORY,
+      );
+      const monitorPath = path.join(monitorDirectory, "t3-resource-monitor");
+      const markerPath = path.join(
+        monitorDirectory,
+        DesktopBackendConfiguration.WSL_RESOURCE_MONITOR_MARKER_NAME,
+      );
+      yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fileSystem.makeDirectory(monitorDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(entryPath, "");
+      yield* fileSystem.writeFileString(monitorPath, "linux-monitor");
+      yield* fileSystem.writeFileString(
+        markerPath,
+        '{"arch":"x64","libc":"glibc","version":"1.2.3"}',
+      );
+
+      const convertedPaths: string[] = [];
+      const preparedPaths: string[] = [];
+      const config = yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        return yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(
+              DesktopWslServerTree.layerTest({
+                result: { ok: true, root: serverTreeRoot },
+              }),
+            ),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                windowsToWslPath: (_distro, windowsPath) => {
+                  convertedPaths.push(windowsPath);
+                  if (windowsPath === entryPath)
+                    return Option.some("/mnt/c/t3/apps/server/bin.mjs");
+                  if (windowsPath === monitorPath) {
+                    return Option.some(
+                      "/mnt/c/t3/resource-monitor/linux-x64-gnu/t3-resource-monitor",
+                    );
+                  }
+                  return Option.none();
+                },
+                prepareResourceMonitor: (_distro, linuxPath) => {
+                  preparedPaths.push(linuxPath);
+                  return true;
+                },
+                ensureNodePty: () => ({
+                  ok: true,
+                  nodePath: "/usr/bin/node",
+                  resolvedPath: "/usr/bin:/bin",
+                }),
+                getDistroIp: () => Option.some("172.27.0.99"),
+              }),
+            ),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                appPath: baseDir,
+                isPackaged: true,
+                platform: "win32",
+                resourcesPath: baseDir,
+              }),
+            ),
+          ),
+        ),
+      );
+
+      assert.equal(
+        config.bootstrap.resourceMonitorPath,
+        "/mnt/c/t3/resource-monitor/linux-x64-gnu/t3-resource-monitor",
+      );
+      assert.deepStrictEqual(convertedPaths, [entryPath, monitorPath]);
+      assert.deepStrictEqual(preparedPaths, [
+        "/mnt/c/t3/resource-monitor/linux-x64-gnu/t3-resource-monitor",
+      ]);
+      assert.isTrue(Option.isNone(config.preflightFailure));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("resolveWsl uses an unpackaged Linux cross-build without requiring a marker", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const repoRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-wsl-monitor-dev-test-",
+      });
+      const entryPath = path.join(repoRoot, "apps/server/dist/bin.mjs");
+      const monitorPath = path.join(
+        repoRoot,
+        "native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor",
+      );
+      yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fileSystem.makeDirectory(path.dirname(monitorPath), { recursive: true });
+      yield* fileSystem.writeFileString(entryPath, "");
+      yield* fileSystem.writeFileString(monitorPath, "linux-monitor");
+
+      const config = yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        return yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(DesktopWslServerTree.layerTest()),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                windowsToWslPath: (_distro, windowsPath) =>
+                  windowsPath === monitorPath
+                    ? Option.some("/mnt/c/repo/native/resource-monitor/t3-resource-monitor")
+                    : Option.some("/mnt/c/repo/apps/server/dist/bin.mjs"),
+                prepareResourceMonitor: () => true,
+                ensureNodePty: () => ({
+                  ok: true,
+                  nodePath: "/usr/bin/node",
+                  resolvedPath: "/usr/bin:/bin",
+                }),
+                getDistroIp: () => Option.some("172.27.0.99"),
+              }),
+            ),
+            Layer.provideMerge(
+              makeEnvironmentLayer(repoRoot, {
+                appPath: repoRoot,
+                dirname: path.join(repoRoot, "apps/desktop/src"),
+                isPackaged: false,
+                platform: "win32",
+                resourcesPath: repoRoot,
+              }),
+            ),
+          ),
+        ),
+      );
+
+      assert.equal(
+        config.bootstrap.resourceMonitorPath,
+        "/mnt/c/repo/native/resource-monitor/t3-resource-monitor",
+      );
+      assert.isTrue(Option.isNone(config.preflightFailure));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("resolveWsl omits telemetry for a missing Linux sidecar without leaking the exe", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-wsl-monitor-missing-test-",
+      });
+      const serverTreeRoot = path.join(baseDir, "extracted-server");
+      const entryPath = path.join(serverTreeRoot, "apps/server/dist/bin.mjs");
+      const windowsMonitorPath = path.join(
+        serverTreeRoot,
+        "resource-monitor/t3-resource-monitor.exe",
+      );
+      yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fileSystem.makeDirectory(path.dirname(windowsMonitorPath), { recursive: true });
+      yield* fileSystem.writeFileString(entryPath, "");
+      yield* fileSystem.writeFileString(windowsMonitorPath, "windows-monitor");
+
+      let prepareCalls = 0;
+      const config = yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        return yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(
+              DesktopWslServerTree.layerTest({ result: { ok: true, root: serverTreeRoot } }),
+            ),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                windowsToWslPath: () => Option.some("/mnt/c/t3/apps/server/bin.mjs"),
+                prepareResourceMonitor: () => {
+                  prepareCalls += 1;
+                  return true;
+                },
+                ensureNodePty: () => ({
+                  ok: true,
+                  nodePath: "/usr/bin/node",
+                  resolvedPath: "/usr/bin:/bin",
+                }),
+                getDistroIp: () => Option.some("172.27.0.99"),
+              }),
+            ),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                appPath: baseDir,
+                isPackaged: true,
+                platform: "win32",
+                resourcesPath: baseDir,
+              }),
+            ),
+          ),
+        ),
+      );
+
+      assert.notProperty(config.bootstrap, "resourceMonitorPath");
+      assert.equal(prepareCalls, 0);
+      assert.isTrue(Option.isNone(config.preflightFailure));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("resolveWsl treats marker and distro incompatibility as telemetry-only failures", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-wsl-monitor-invalid-test-",
+      });
+      const serverTreeRoot = path.join(baseDir, "extracted-server");
+      const entryPath = path.join(serverTreeRoot, "apps/server/dist/bin.mjs");
+      const monitorDirectory = path.join(
+        serverTreeRoot,
+        DesktopBackendConfiguration.WSL_RESOURCE_MONITOR_DIRECTORY,
+      );
+      yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fileSystem.makeDirectory(monitorDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(entryPath, "");
+      yield* fileSystem.writeFileString(
+        path.join(monitorDirectory, "t3-resource-monitor"),
+        "linux-monitor",
+      );
+      yield* fileSystem.writeFileString(
+        path.join(monitorDirectory, DesktopBackendConfiguration.WSL_RESOURCE_MONITOR_MARKER_NAME),
+        '{"arch":"arm64","libc":"musl","version":"0.0.1"}',
+      );
+
+      let prepareCalls = 0;
+      let resourceMonitorReady = true;
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const invalidMarkerConfig = yield* configuration.resolveWsl({
+          port: 5000,
+          distro: "Ubuntu",
+        });
+        assert.notProperty(invalidMarkerConfig.bootstrap, "resourceMonitorPath");
+        assert.equal(prepareCalls, 0);
+        assert.isTrue(Option.isNone(invalidMarkerConfig.preflightFailure));
+
+        yield* fileSystem.writeFileString(
+          path.join(monitorDirectory, DesktopBackendConfiguration.WSL_RESOURCE_MONITOR_MARKER_NAME),
+          '{"arch":"x64","libc":"glibc","version":"1.2.3"}',
+        );
+        resourceMonitorReady = false;
+
+        const incompatibleDistroConfig = yield* configuration.resolveWsl({
+          port: 5000,
+          distro: "Ubuntu",
+        });
+        assert.notProperty(incompatibleDistroConfig.bootstrap, "resourceMonitorPath");
+        assert.equal(prepareCalls, 1);
+        assert.isTrue(Option.isNone(incompatibleDistroConfig.preflightFailure));
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(
+              DesktopWslServerTree.layerTest({ result: { ok: true, root: serverTreeRoot } }),
+            ),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                windowsToWslPath: (_distro, windowsPath) =>
+                  Option.some(
+                    windowsPath.endsWith("t3-resource-monitor")
+                      ? "/mnt/c/t3/resource-monitor/linux-x64-gnu/t3-resource-monitor"
+                      : "/mnt/c/t3/apps/server/bin.mjs",
+                  ),
+                prepareResourceMonitor: () => {
+                  prepareCalls += 1;
+                  return resourceMonitorReady;
+                },
+                ensureNodePty: () => ({
+                  ok: true,
+                  nodePath: "/usr/bin/node",
+                  resolvedPath: "/usr/bin:/bin",
+                }),
+                getDistroIp: () => Option.some("172.27.0.99"),
+              }),
+            ),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                appPath: baseDir,
+                isPackaged: true,
+                platform: "win32",
+                resourcesPath: baseDir,
+              }),
+            ),
+          ),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect(
     "resolveWsl preserves inherited PATH with quote-sensitive values as separate args",
     () =>

@@ -51,6 +51,11 @@ import * as WorkspaceContext from "../../workspace/WorkspaceContext.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import { readProviderStatusCache, resolveProviderStatusCachePath } from "../providerStatusCache.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
+import {
+  makeInstanceHistorySyncSource,
+  makeUnsupportedProviderHistorySync,
+  NO_PROVIDER_HISTORY_SYNC_CAPABILITIES,
+} from "../Services/ProviderHistorySync.ts";
 import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
@@ -71,6 +76,23 @@ process.env.T3CODE_CURSOR_ENABLED = "1";
 
 const encoder = new TextEncoder();
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
+
+function makeTestHistorySync(
+  instanceId: ProviderInstanceId,
+  driverKind: ProviderDriverKind,
+): ProviderInstance["historySync"] {
+  const continuationKey = `${driverKind}:instance:${instanceId}`;
+  return makeUnsupportedProviderHistorySync({
+    source: makeInstanceHistorySyncSource({
+      instanceId,
+      driverKind,
+      continuationKey,
+      displayName: driverKind,
+      capabilities: NO_PROVIDER_HISTORY_SYNC_CAPABILITIES,
+    }),
+    reason: "History sync is outside this provider registry test.",
+  });
+}
 
 const TestHttpClientLive = Layer.succeed(
   HttpClient.HttpClient,
@@ -912,6 +934,7 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
               streamChanges: Stream.empty,
             },
             adapter: {} as ProviderInstance["adapter"],
+            historySync: makeTestHistorySync(codexInstanceId, codexDriver),
             textGeneration: {} as ProviderInstance["textGeneration"],
           } satisfies ProviderInstance;
           const instanceRegistryLayer = Layer.succeed(
@@ -1001,6 +1024,7 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
               streamChanges: Stream.fromPubSub(changes),
             },
             adapter: {} as ProviderInstance["adapter"],
+            historySync: makeTestHistorySync(cursorInstanceId, cursorDriver),
             textGeneration: {} as ProviderInstance["textGeneration"],
           } satisfies ProviderInstance;
           const instanceRegistryLayer = Layer.succeed(
@@ -1130,6 +1154,7 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
                 streamChanges: Stream.fromPubSub(changes),
               },
               adapter: {} as ProviderInstance["adapter"],
+              historySync: makeTestHistorySync(openCodeInstanceId, openCodeDriver),
               textGeneration: {} as ProviderInstance["textGeneration"],
             } satisfies ProviderInstance;
             const instanceRegistryLayer = Layer.succeed(
@@ -1237,6 +1262,7 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
               streamChanges: Stream.empty,
             },
             adapter: {} as ProviderInstance["adapter"],
+            historySync: makeTestHistorySync(codexInstanceId, codexDriver),
             textGeneration: {} as ProviderInstance["textGeneration"],
           } satisfies ProviderInstance;
           const instanceRegistryLayer = Layer.succeed(
@@ -1330,6 +1356,7 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
               streamChanges: Stream.empty,
             },
             adapter: {} as ProviderInstance["adapter"],
+            historySync: makeTestHistorySync(provider.instanceId, provider.driver),
             textGeneration: {} as ProviderInstance["textGeneration"],
           });
           const codexInstance = makeInstance(codexProvider);

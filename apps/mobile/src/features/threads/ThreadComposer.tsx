@@ -8,6 +8,10 @@ import type {
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import { resolveThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import {
@@ -87,6 +91,8 @@ import {
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
+import { agentSettingsEnvironment } from "../../state/agent-settings";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { NativeVoiceDictationControl } from "./NativeVoiceDictationControl";
 import { resolveMobileResourceProtectionStatus } from "./resource-protection-status";
 import { useNativeAssemblyAiDictation } from "./use-native-assembly-ai-dictation";
@@ -317,6 +323,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const settingsRoutePresentedRef = useRef(false);
   const wasExpandedBeforePreviewRef = useRef(false);
   const inFlightThreadIdsRef = useRef(new Set<string>());
+  const refreshHarnessStatus = useAtomCommand(agentSettingsEnvironment.harnessChatSync.status, {
+    reportFailure: false,
+  });
+  const [refreshingHarnessStatus, setRefreshingHarnessStatus] = useState(false);
   const { onExpandedChange } = props;
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
@@ -352,8 +362,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const isExpanded = isFocused || settingsSheetPresentation.isActive || voiceDictation.active;
   const stopAction = resolveThreadAbortPresentation(props.selectedThread.session);
   const isForceStopping = stopAction.phase === "force-stopping";
+  const harnessSessionActive = props.selectedThread.harnessSync?.activity === "active";
   const canSend =
-    hasContent && stopAction.phase === null && !props.isImprovingPrompt && !voiceDictation.active;
+    hasContent &&
+    stopAction.phase === null &&
+    !props.isImprovingPrompt &&
+    !voiceDictation.active &&
+    !harnessSessionActive;
 
   // Notify the parent from the derived value, not focus events: the parent
   // sizes the feed inset from this, and blur-during-sheet would otherwise
@@ -399,11 +414,41 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     environmentLabel: props.environmentLabel,
     threadSyncPhase: props.threadSyncPhase,
   });
+  const handleRefreshHarnessStatus = useCallback(async () => {
+    if (!harnessSessionActive || refreshingHarnessStatus) return;
+    setRefreshingHarnessStatus(true);
+    const result = await refreshHarnessStatus({
+      environmentId: props.environmentId,
+      input: { threadId: props.selectedThread.id },
+    });
+    setRefreshingHarnessStatus(false);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      Alert.alert(
+        "Could not refresh harness status",
+        error instanceof Error ? error.message : "Try again when the original harness is idle.",
+      );
+    }
+  }, [
+    harnessSessionActive,
+    props.environmentId,
+    props.selectedThread.id,
+    refreshHarnessStatus,
+    refreshingHarnessStatus,
+  ]);
+  const harnessStatus: ComposerStatusPillState | null = harnessSessionActive
+    ? {
+        kind: "waiting",
+        label: refreshingHarnessStatus
+          ? "Checking original harness..."
+          : "Active in another harness",
+      }
+    : null;
   const resourceProtectionStatus = resolveMobileResourceProtectionStatus(
     resourceProtectionQuery.data,
     props.selectedThread.id,
   );
-  const composerStatus = connectionStatus ?? resourceProtectionStatus;
+  const composerStatus = connectionStatus ?? harnessStatus ?? resourceProtectionStatus;
   const toolbarSurface = String(useThemeColor("--color-card"));
   const backdropSurface = String(useThemeColor("--color-screen"));
   const toolbarFadeOpaque = themeColorWithAlpha(toolbarSurface, 0.95);
@@ -827,7 +872,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         {composerStatus ? (
           <ComposerConnectionStatusPill
             status={composerStatus}
-            onPress={connectionStatus ? props.onReconnectEnvironment : undefined}
+            onPress={
+              connectionStatus
+                ? props.onReconnectEnvironment
+                : harnessStatus
+                  ? () => void handleRefreshHarnessStatus()
+                  : undefined
+            }
           />
         ) : null}
 

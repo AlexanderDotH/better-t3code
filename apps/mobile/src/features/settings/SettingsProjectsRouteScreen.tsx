@@ -17,7 +17,9 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useWorkspaceState } from "../../state/workspace";
 import { ModelSelectionModal, modelSelectionLabel } from "./SettingsAgentEnvironmentsRouteScreen";
+import { HarnessChatSyncEnvironment } from "./HarnessChatSyncSettings";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 
@@ -178,6 +180,7 @@ export function SettingsProjectsRouteScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const projects = useProjects();
+  const { environments } = useWorkspaceState();
   const sortedProjects = useMemo(
     () => [...projects].sort((left, right) => left.title.localeCompare(right.title)),
     [projects],
@@ -198,6 +201,18 @@ export function SettingsProjectsRouteScreen() {
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
+        {environments
+          .filter((environment) => environment.connectionState === "connected")
+          .map((environment) => (
+            <HarnessChatSyncEnvironment
+              key={environment.environmentId}
+              environmentId={environment.environmentId}
+              environmentLabel={environment.environmentLabel}
+              projects={projects.filter(
+                (project) => project.environmentId === environment.environmentId,
+              )}
+            />
+          ))}
         {sortedProjects.length === 0 ? (
           <SettingsSection title="Projects">
             <Text className="p-4 text-sm text-foreground-muted">

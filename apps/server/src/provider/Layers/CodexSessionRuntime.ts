@@ -204,7 +204,7 @@ export interface CodexInternalMcpServerConfig {
 export interface CodexSessionRuntimeSendTurnInput {
   readonly input?: string;
   readonly attachments?: ReadonlyArray<{
-    readonly type: "image";
+    readonly type: "image" | "audio";
     readonly url: string;
   }>;
   readonly model?: string;
@@ -530,7 +530,7 @@ export function buildTurnStartParams(input: {
   readonly runtimeMode: RuntimeMode;
   readonly prompt?: string;
   readonly attachments?: ReadonlyArray<{
-    readonly type: "image";
+    readonly type: "image" | "audio";
     readonly url: string;
   }>;
   readonly model?: string;

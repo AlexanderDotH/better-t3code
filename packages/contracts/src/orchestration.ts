@@ -6,6 +6,12 @@ import * as Struct from "effect/Struct";
 import { ProviderOptionSelections } from "./model.ts";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import {
+  HarnessChatActivity,
+  HarnessChatContinuationKey,
+  HarnessChatSessionId,
+  HarnessChatSyncSourceId,
+} from "./harnessChatSync.ts";
+import {
   ApprovalRequestId,
   CheckpointRef,
   ClientSurface,
@@ -159,6 +165,8 @@ export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
 export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
 export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 8;
 export const PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+/** Persisted provider-history audio is display-only; composer uploads remain image-only. */
+export const CHAT_ATTACHMENT_MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 export const PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES = [
   "image/gif",
   "image/jpeg",
@@ -194,6 +202,15 @@ export const ChatImageAttachment = Schema.Struct({
 });
 export type ChatImageAttachment = typeof ChatImageAttachment.Type;
 
+export const ChatAudioAttachment = Schema.Struct({
+  type: Schema.Literal("audio"),
+  id: ChatAttachmentId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100), Schema.isPattern(/^audio\//i)),
+  sizeBytes: NonNegativeInt.check(Schema.isLessThanOrEqualTo(CHAT_ATTACHMENT_MAX_AUDIO_BYTES)),
+});
+export type ChatAudioAttachment = typeof ChatAudioAttachment.Type;
+
 const UploadChatImageAttachment = Schema.Struct({
   type: Schema.Literal("image"),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
@@ -205,7 +222,7 @@ const UploadChatImageAttachment = Schema.Struct({
 });
 export type UploadChatImageAttachment = typeof UploadChatImageAttachment.Type;
 
-export const ChatAttachment = Schema.Union([ChatImageAttachment]);
+export const ChatAttachment = Schema.Union([ChatImageAttachment, ChatAudioAttachment]);
 export type ChatAttachment = typeof ChatAttachment.Type;
 const UploadChatAttachment = Schema.Union([UploadChatImageAttachment]);
 export type UploadChatAttachment = typeof UploadChatAttachment.Type;
@@ -477,6 +494,20 @@ export const OrchestrationSubagentDetail = Schema.Struct({
 });
 export type OrchestrationSubagentDetail = typeof OrchestrationSubagentDetail.Type;
 
+/**
+ * Compact public state for a thread linked to provider-native harness history.
+ * Stable source/session identifiers stay in the server projection; clients only
+ * need enough state to explain sync freshness and guard concurrent continuation.
+ */
+export const OrchestrationHarnessSyncState = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  providerLabel: TrimmedNonEmptyString,
+  activity: HarnessChatActivity,
+  sourceUpdatedAt: Schema.NullOr(IsoDateTime),
+  lastSyncedAt: IsoDateTime,
+});
+export type OrchestrationHarnessSyncState = typeof OrchestrationHarnessSyncState.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -524,6 +555,7 @@ export const OrchestrationThread = Schema.Struct({
   ),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
   session: Schema.NullOr(OrchestrationSession),
+  harnessSync: Schema.optional(Schema.NullOr(OrchestrationHarnessSyncState)),
 });
 export type OrchestrationThread = typeof OrchestrationThread.Type;
 
@@ -600,6 +632,7 @@ export const OrchestrationThreadShell = Schema.Struct({
       }),
     ),
   ),
+  harnessSync: Schema.optional(Schema.NullOr(OrchestrationHarnessSyncState)),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 
@@ -1171,6 +1204,32 @@ const ThreadMessageImportCommand = Schema.Struct({
   message: OrchestrationMessage,
 });
 
+export const ThreadHarnessSyncLinkCommand = Schema.Struct({
+  type: Schema.Literal("thread.harness-sync.link"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sourceId: HarnessChatSyncSourceId,
+  continuationKey: HarnessChatContinuationKey,
+  nativeSessionId: HarnessChatSessionId,
+  providerInstanceId: ProviderInstanceId,
+  providerLabel: TrimmedNonEmptyString,
+  activity: HarnessChatActivity,
+  sourceUpdatedAt: Schema.NullOr(IsoDateTime),
+  lastSyncedAt: IsoDateTime,
+});
+export type ThreadHarnessSyncLinkCommand = typeof ThreadHarnessSyncLinkCommand.Type;
+
+export const ThreadHarnessSyncMessageImportCommand = Schema.Struct({
+  type: Schema.Literal("thread.harness-sync.message.import"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  nativeMessageId: TrimmedNonEmptyString,
+  message: OrchestrationMessage,
+  linkedAt: IsoDateTime,
+});
+export type ThreadHarnessSyncMessageImportCommand =
+  typeof ThreadHarnessSyncMessageImportCommand.Type;
+
 const ThreadProposedPlanUpsertCommand = Schema.Struct({
   type: Schema.Literal("thread.proposed-plan.upsert"),
   commandId: CommandId,
@@ -1323,6 +1382,8 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
   ThreadMessageImportCommand,
+  ThreadHarnessSyncLinkCommand,
+  ThreadHarnessSyncMessageImportCommand,
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
@@ -1364,6 +1425,8 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.runtime-mode-set",
   "thread.interaction-mode-set",
   "thread.message-sent",
+  "thread.harness-sync-linked",
+  "thread.harness-sync-message-imported",
   "thread.turn-start-requested",
   "thread.turn-interrupt-requested",
   "thread.turn-abort-settled",
@@ -1578,6 +1641,28 @@ export const ThreadMessageSentPayload = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
+
+export const ThreadHarnessSyncLinkedPayload = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  sourceId: HarnessChatSyncSourceId,
+  continuationKey: HarnessChatContinuationKey,
+  nativeSessionId: HarnessChatSessionId,
+  providerInstanceId: ProviderInstanceId,
+  providerLabel: TrimmedNonEmptyString,
+  activity: HarnessChatActivity,
+  sourceUpdatedAt: Schema.NullOr(IsoDateTime),
+  lastSyncedAt: IsoDateTime,
+});
+export type ThreadHarnessSyncLinkedPayload = typeof ThreadHarnessSyncLinkedPayload.Type;
+
+export const ThreadHarnessSyncMessageImportedPayload = Schema.Struct({
+  ...ThreadMessageSentPayload.fields,
+  nativeMessageId: TrimmedNonEmptyString,
+  linkedAt: IsoDateTime,
+});
+export type ThreadHarnessSyncMessageImportedPayload =
+  typeof ThreadHarnessSyncMessageImportedPayload.Type;
 
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
@@ -1831,6 +1916,16 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.message-sent"),
     payload: ThreadMessageSentPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.harness-sync-linked"),
+    payload: ThreadHarnessSyncLinkedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.harness-sync-message-imported"),
+    payload: ThreadHarnessSyncMessageImportedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

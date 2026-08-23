@@ -227,6 +227,14 @@ export interface WsRpcClient {
     ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.chatImportDiscover>>;
     readonly run: RpcUnaryMethod<typeof WS_METHODS.chatImportRun>;
   };
+  readonly harnessChatSync: {
+    readonly sources: (
+      input?: RpcInput<typeof WS_METHODS.harnessChatSyncSources>,
+    ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.harnessChatSyncSources>>;
+    readonly list: RpcUnaryMethod<typeof WS_METHODS.harnessChatSyncList>;
+    readonly run: RpcUnaryMethod<typeof WS_METHODS.harnessChatSyncRun>;
+    readonly status: RpcUnaryMethod<typeof WS_METHODS.harnessChatSyncStatus>;
+  };
   readonly mcp: {
     readonly list: (
       input?: RpcInput<typeof WS_METHODS.mcpList>,
@@ -529,6 +537,14 @@ export function createWsRpcClient(
       discover: (input) =>
         transport.request((client) => client[WS_METHODS.chatImportDiscover](input ?? {})),
       run: (input) => transport.request((client) => client[WS_METHODS.chatImportRun](input)),
+    },
+    harnessChatSync: {
+      sources: (input) =>
+        transport.request((client) => client[WS_METHODS.harnessChatSyncSources](input ?? {})),
+      list: (input) => transport.request((client) => client[WS_METHODS.harnessChatSyncList](input)),
+      run: (input) => transport.request((client) => client[WS_METHODS.harnessChatSyncRun](input)),
+      status: (input) =>
+        transport.request((client) => client[WS_METHODS.harnessChatSyncStatus](input)),
     },
     mcp: {
       list: (input) => transport.request((client) => client[WS_METHODS.mcpList](input ?? {})),

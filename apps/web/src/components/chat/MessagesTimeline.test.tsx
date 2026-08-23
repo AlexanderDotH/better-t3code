@@ -658,6 +658,33 @@ describe("MessagesTimeline", () => {
     expect(onAnchorReady).toHaveBeenCalledWith(firstEntry.message.id, 0);
   });
 
+  it("renders synchronized audio attachments with native playback controls", () => {
+    const entry = {
+      ...buildUserTimelineEntry("Imported voice note."),
+      message: {
+        ...buildUserTimelineEntry("Imported voice note.").message,
+        attachments: [
+          {
+            type: "audio" as const,
+            id: "audio-attachment-1",
+            name: "voice-note.ogg",
+            mimeType: "audio/ogg",
+            sizeBytes: 5,
+            previewUrl: "https://example.test/assets/voice-note.ogg",
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+
+    expect(markup).toContain("<audio");
+    expect(markup).toContain('src="https://example.test/assets/voice-note.ogg"');
+    expect(markup).toContain("voice-note.ogg");
+  });
+
   it("does not reserve end space for a follow-up user message", () => {
     const onAnchorReady = vi.fn();
     const firstEntry = buildUserTimelineEntry("First prompt.");

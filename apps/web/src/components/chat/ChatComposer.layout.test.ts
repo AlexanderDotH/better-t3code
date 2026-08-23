@@ -31,11 +31,15 @@ describe("ChatComposer footer layout", () => {
     const footerStart = chatComposerSource.indexOf('data-chat-composer-footer="true"');
     const footerSource = chatComposerSource.slice(footerStart);
     const traitsPickerIndex = footerSource.indexOf("{providerTraitsPicker}");
+    const traitsContextSeparatorIndex = footerSource.indexOf(
+      'data-chat-composer-traits-context-separator="true"',
+    );
     const contextWindowPickerIndex = footerSource.indexOf("{providerContextWindowPicker}");
 
     expect(footerStart).toBeGreaterThanOrEqual(0);
     expect(traitsPickerIndex).toBeGreaterThanOrEqual(0);
-    expect(contextWindowPickerIndex).toBeGreaterThan(traitsPickerIndex);
+    expect(traitsContextSeparatorIndex).toBeGreaterThan(traitsPickerIndex);
+    expect(contextWindowPickerIndex).toBeGreaterThan(traitsContextSeparatorIndex);
     expect(footerSource).toContain("contextWindowMenuContent={providerContextWindowMenuContent}");
     expect(footerSource).not.toContain(
       "{isComposerFooterCompact ? providerContextWindowPicker : null}",

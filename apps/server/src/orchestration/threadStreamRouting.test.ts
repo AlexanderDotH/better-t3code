@@ -128,6 +128,40 @@ describe("thread stream routing", () => {
     });
   });
 
+  it("delivers harness link and imported message events to the root thread", () => {
+    const linked = event(5, "thread.harness-sync-linked", {
+      threadId,
+      projectId: "project-1",
+      sourceId: "codex-home",
+      continuationKey: "codex:/tmp/home",
+      nativeSessionId: "native-session-1",
+      providerInstanceId: "codex-work",
+      providerLabel: "Codex Work",
+      activity: "idle",
+      sourceUpdatedAt: occurredAt,
+      lastSyncedAt: occurredAt,
+    });
+    const imported = event(6, "thread.harness-sync-message-imported", {
+      threadId,
+      nativeMessageId: "native-message-1",
+      messageId: "message-imported",
+      role: "assistant",
+      text: "Imported answer",
+      turnId: null,
+      streaming: false,
+      createdAt: occurredAt,
+      updatedAt: occurredAt,
+      linkedAt: occurredAt,
+    });
+
+    expect(toRootThreadStreamItem(linked)).toEqual({ kind: "event", event: linked });
+    expect(toRootThreadStreamItem(imported)).toEqual({ kind: "event", event: imported });
+    expect(toSubagentStreamItem(imported, selectedSubagentId)).toEqual({
+      kind: "cursor",
+      sequence: 6,
+    });
+  });
+
   it("sends only the selected subagent transcript and summary updates", () => {
     const selectedMessage = messageEvent(1, selectedSubagentId);
     expect(toSubagentStreamItem(selectedMessage, selectedSubagentId)).toEqual({

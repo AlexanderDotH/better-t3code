@@ -20,6 +20,7 @@ const guardedJobsByWorkflow = {
     "relay_public_config",
     "build_wsl_node_pty",
     "build",
+    "windows_update_smoke",
     "publish_cli",
     "release",
     "publish_aur",
@@ -34,6 +35,7 @@ const hostedCiRunners = {
   test: "ubuntu-24.04",
   test_server: "ubuntu-24.04",
   rust: "ubuntu-24.04",
+  windows_x64: "windows-2025",
   mobile_native_changes: "ubuntu-24.04",
   mobile_native_static_analysis: "macos-26",
   release_smoke: "ubuntu-24.04",
@@ -119,6 +121,71 @@ it.layer(NodeServices.layer)("production workflow policy", (it) => {
     }),
   );
 
+  it.effect("blocks publication on signed installed Windows startup and update gates", () =>
+    Effect.gen(function* () {
+      const workflow = yield* readWorkflow("release.yml");
+      const jobs = requireRecord(workflow.jobs, "release.yml must define jobs");
+      const build = requireRecord(jobs.build, "release.yml must define build");
+      const updateSmoke = requireRecord(
+        jobs.windows_update_smoke,
+        "release.yml must define windows_update_smoke",
+      );
+      const publishCli = requireRecord(jobs.publish_cli, "release.yml must define publish_cli");
+
+      assert.include(
+        readStepRun(build, "build", "Prepare Azure Trusted Signing"),
+        "windows-prepare-trusted-signing.ps1",
+      );
+      const buildCommand = readStepRun(build, "build", "Build desktop artifact");
+      assert.include(buildCommand, "args+=(--signed)");
+      assert.include(buildCommand, "--wsl-resource-monitor-prebuild");
+      assert.include(
+        readStepRun(build, "build", "Smoke test signed installed Windows desktop"),
+        "windows-desktop-release-smoke.ps1",
+      );
+
+      assert.equal(updateSmoke["runs-on"], "blacksmith-32vcpu-windows-2025");
+      assert.include(
+        readStepRun(updateSmoke, "windows_update_smoke", "Build signed mock-update base installer"),
+        "--mock-updates",
+      );
+      assert.include(
+        readStepRun(updateSmoke, "windows_update_smoke", "Exercise native Windows parity probes"),
+        "windows-native-runtime-smoke.mjs",
+      );
+      assert.include(
+        readStepRun(
+          updateSmoke,
+          "windows_update_smoke",
+          "Exercise installed per-user Task Scheduler service",
+        ),
+        "windows-task-scheduler-service-smoke.ps1",
+      );
+      assert.include(
+        readStepRun(
+          updateSmoke,
+          "windows_update_smoke",
+          "Exercise real x64 glibc WSL terminal and telemetry",
+        ),
+        "windows-wsl-runtime-smoke.ps1",
+      );
+      assert.include(
+        readStepRun(
+          updateSmoke,
+          "windows_update_smoke",
+          "Exercise signed N to N+1 update with preserved database",
+        ),
+        "-Mode update",
+      );
+      assert.deepEqual(publishCli.needs, [
+        "preflight",
+        "relay_public_config",
+        "build",
+        "windows_update_smoke",
+      ]);
+    }),
+  );
+
   it.effect("keeps parallel CI on fork-accessible hosted runners", () =>
     Effect.gen(function* () {
       const workflow = yield* readWorkflow("ci.yml");
@@ -146,6 +213,28 @@ it.layer(NodeServices.layer)("production workflow policy", (it) => {
         "cargo fmt",
       );
       assert.include(readStepRun(rustJob, "rust", "Test resource monitor"), "cargo test");
+
+      const windowsJob = requireRecord(jobs.windows_x64, "ci.yml must define windows_x64");
+      assert.include(
+        readStepRun(
+          windowsJob,
+          "windows_x64",
+          "Exercise real command shims, PowerShell, ConPTY, Git, and cleanup",
+        ),
+        "windows-native-runtime-smoke.mjs",
+      );
+      assert.include(
+        readStepRun(windowsJob, "windows_x64", "Test native Windows resource monitor"),
+        "cargo test",
+      );
+      assert.include(
+        readStepRun(
+          windowsJob,
+          "windows_x64",
+          "Exercise installed per-user Task Scheduler service",
+        ),
+        "windows-task-scheduler-service-smoke.ps1",
+      );
     }),
   );
 

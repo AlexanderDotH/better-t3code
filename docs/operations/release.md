@@ -29,13 +29,26 @@ guard. The upstream repository identity remains enabled by default.
   - Automatically generated release notes are pinned to the previous tag in the same channel, so stable compares to the previous stable tag and nightly compares to the previous nightly tag.
 - Publishes the matching stable or nightly AUR metadata after the GitHub Release succeeds.
 - Includes Electron auto-update metadata (for example `latest*.yml`, `nightly*.yml`, and `*.blockmap`) in release assets.
+- Builds the Linux x64 `node-pty` and resource-monitor inputs used by the optional WSL backend and
+  verifies they are staged into the Windows package.
+- Imports an isolated Ubuntu x64/glibc rootfs on the Windows release runner and exercises both WSL
+  terminal creation and resource-monitor snapshots with those exact Linux prebuilds.
+- Installs the signed Windows x64 NSIS package in isolated state, waits for backend and main-window
+  readiness, verifies the installer and installed executable publisher, then uninstalls without
+  orphan processes.
+- Re-runs the native Windows provider/ConPTY/Git/process-control probes and the real per-user Task
+  Scheduler crash/recovery/repair smoke in the release workflow itself, so a tag cannot rely only
+  on an earlier branch-CI run.
+- Builds a lower signed Windows version against the mock update server, updates it to the release
+  candidate, and requires the candidate to restart with its SQLite sentinel preserved.
 - Publishes the CLI package (`apps/server`, npm package `t3`) with OIDC trusted publishing from the same workflow file:
   - stable releases publish npm dist-tag `latest`
   - nightly releases publish npm dist-tag `nightly`
 - Deploys the hosted web app to Vercel only after a release is published:
   - stable releases are aliased to the `latest` hosted app channel
   - nightly releases are aliased to the `nightly` hosted app channel
-- Signing is optional and auto-detected per platform from secrets.
+- macOS signing is auto-detected from secrets. Azure Trusted Signing is mandatory for every
+  production-enabled stable or nightly Windows build; missing inputs stop the release.
 
 ## Required release credentials
 
@@ -272,7 +285,7 @@ Checklist:
    - invoke the CLI publish script with npm dist-tag `latest`
 5. Nightly runs invoke the same publish script with npm dist-tag `nightly`.
 
-## 1) Release validation and unsigned builds
+## 1) Release validation and local unsigned builds
 
 There is no dry-run tag path. Pushing any accepted non-nightly tag, including
 `v0.0.0-test.1`, classifies the run as the stable channel. It publishes `t3` with npm dist-tag
@@ -286,8 +299,9 @@ risk, manually dispatch `channel=nightly`; this still publishes a real nightly n
 prerelease, desktop updater release, and hosted nightly alias, but it does not update stable aliases or
 commit a version bump to `main`. Only run it when a real nightly release is acceptable.
 
-Manual `channel=stable` with a version input is also a real stable-channel release. Omitting signing
-secrets only makes platform artifacts unsigned; it does not prevent publication.
+Manual `channel=stable` with a version input is also a real stable-channel release. Missing Windows
+Trusted Signing inputs stop both stable and nightly publication. Unsigned Windows builds remain
+available only through local/fork packaging commands outside production-enabled release automation.
 
 ## 2) Apple signing + notarization setup (macOS)
 
@@ -361,7 +375,14 @@ Checklist:
 4. Grant service principal permissions required by Trusted Signing.
 5. Create a client secret for the service principal.
 6. Add Azure secrets listed above in GitHub Actions secrets.
-7. Re-run a tag release and confirm Windows installer is signed.
+7. Re-run a release and confirm both Windows gates pass:
+   - the installer and installed executable report `Valid` Authenticode status and a signer subject
+     containing `AZURE_TRUSTED_SIGNING_PUBLISHER_NAME`;
+   - the installed startup and N→N+1 update smokes reach backend and main-window readiness, preserve
+     their isolated state database, uninstall, and leave no application process behind.
+
+The Windows gate is intentionally x64-only. Native ARM64 packaging, multi-architecture updater
+metadata, and PowerShell-native contributor wrappers remain separate follow-up work.
 
 ## 4) Ongoing release checklist
 
@@ -372,6 +393,8 @@ Checklist:
 5. Verify workflow steps:
    - preflight passes
    - all matrix builds pass
+   - the signed installed Windows startup smoke passes
+   - `windows_update_smoke` installs N, updates it to N+1, and preserves its SQLite sentinel
    - `publish_cli` publishes the exact release version before the release job
    - release job uploads expected files
 6. Smoke test downloaded artifacts.
@@ -383,7 +406,18 @@ Checklist:
   - Confirm the provisioning profile belongs to `APPLE_TEAM_ID.com.t3tools.t3code` and includes
     Associated Domains.
 - Windows build unsigned when expected signed:
-  - Check all Azure ATS and auth secrets are populated and non-empty.
+  - Check all seven Azure ATS and auth secrets are populated and non-empty. Official automation no
+    longer has an unsigned fallback.
+  - Confirm the certificate subject contains the exact configured publisher name.
+- Windows installed startup smoke fails:
+  - Download the diagnostics artifact and inspect `desktop.trace.ndjson` plus `server-child.log`.
+  - Check `%LOCALAPPDATA%\Programs` for a stale installation from an interrupted runner, then rerun
+    on a fresh Windows image.
+- Windows N→N+1 smoke fails:
+  - Inspect the mock-update-server stdout/stderr logs and confirm the channel manifest and matching
+    `.exe.blockmap` were downloaded with the target artifact.
+  - A missing SQLite sentinel indicates state was replaced instead of carried through the update.
 - Build fails with signing error:
-  - Retry with secrets removed to confirm unsigned path still works.
   - Re-check certificate/profile names and tenant/client credentials.
+  - Reproduce only the packaging command locally without `--signed` if you need to separate a
+    packaging defect from the production signing failure; never publish that artifact as official.

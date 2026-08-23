@@ -162,6 +162,7 @@ interface BuildCliInput {
   readonly mockUpdates: Option.Option<boolean>;
   readonly mockUpdateServerPort: Option.Option<number>;
   readonly wslPrebuild: Option.Option<string>;
+  readonly wslResourceMonitorPrebuild: Option.Option<string>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -529,6 +530,17 @@ export class WslNodePtyPrebuildMissingError extends Schema.TaggedErrorClass<WslN
   }
 }
 
+export class WslResourceMonitorPrebuildMissingError extends Schema.TaggedErrorClass<WslResourceMonitorPrebuildMissingError>()(
+  "WslResourceMonitorPrebuildMissingError",
+  {
+    prebuildPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `WSL resource-monitor prebuild not found at ${this.prebuildPath}.`;
+  }
+}
+
 export class WindowsServerSidecarPackError extends Schema.TaggedErrorClass<WindowsServerSidecarPackError>()(
   "WindowsServerSidecarPackError",
   {
@@ -764,6 +776,7 @@ interface ResolvedBuildOptions {
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
   readonly wslPrebuild: string | undefined;
+  readonly wslResourceMonitorPrebuild: string | undefined;
 }
 
 interface StagePackageJson {
@@ -808,7 +821,7 @@ export const WINDOWS_SERVER_ASAR_RESOURCE = "server.asar";
 // helper executables live in the server.asar.unpacked sibling (the standard
 // asar redirect convention). Everything else stays packed.
 export const WINDOWS_SERVER_ASAR_UNPACK_GLOB =
-  "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib}";
+  "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib,**/resource-monitor/**/t3-resource-monitor}";
 // Mirrors DESKTOP_FILE_EXCLUSIONS for the hand-packed sidecar: the Claude SDK
 // platform packages are dead weight (see above), and node_modules/.bin shims
 // are never spawned at runtime (and are symlinks on POSIX build hosts, which
@@ -838,6 +851,8 @@ export const DESKTOP_EXTRA_RESOURCES = [
     to: "resource-monitor",
   },
 ] as const;
+export const WSL_RESOURCE_MONITOR_DIRECTORY = "resource-monitor/linux-x64-gnu";
+export const WSL_RESOURCE_MONITOR_MARKER_NAME = "t3code-wsl-resource-monitor.json";
 
 export interface MacPasskeySigningConfiguration {
   readonly appId: string;
@@ -1239,6 +1254,12 @@ const BuildEnvConfig = Config.all({
   // into the staged node-pty so the WSL backend ships a ready binary and never
   // compiles on the user's machine.
   wslPrebuild: Config.string("T3CODE_DESKTOP_WSL_PREBUILD").pipe(Config.option),
+  // Raw Linux x64/glibc resource-monitor executable built on Linux CI. This is
+  // deliberately separate from the Windows resource monitor built in this job:
+  // WSL launches the extracted server tree with the distro's Linux runtime.
+  wslResourceMonitorPrebuild: Config.string("T3CODE_DESKTOP_WSL_RESOURCE_MONITOR_PREBUILD").pipe(
+    Config.option,
+  ),
 });
 
 const MockUpdateServerPortSchema = Schema.NumberFromString.check(
@@ -1332,6 +1353,9 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
 
   const wslPrebuild =
     Option.getOrUndefined(input.wslPrebuild) ?? Option.getOrUndefined(env.wslPrebuild);
+  const wslResourceMonitorPrebuild =
+    Option.getOrUndefined(input.wslResourceMonitorPrebuild) ??
+    Option.getOrUndefined(env.wslResourceMonitorPrebuild);
 
   return {
     platform,
@@ -1346,6 +1370,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     mockUpdates,
     mockUpdateServerPort,
     wslPrebuild,
+    wslResourceMonitorPrebuild,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -2290,6 +2315,66 @@ const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (
   );
 });
 
+// The Windows host monitor is an .exe and cannot serve the Linux WSL backend.
+// Place the separately built x64/glibc executable in the server sidecar so the
+// normal version-keyed WSL extraction publishes both the server and its monitor
+// atomically. The runtime marker rejects stale or wrong-platform payloads before
+// their path reaches the Linux backend.
+export const stageWslResourceMonitorPrebuild = Effect.fn("stageWslResourceMonitorPrebuild")(
+  function* (input: {
+    readonly serverStageDir: string;
+    readonly arch: typeof BuildArch.Type;
+    readonly appVersion: string;
+    readonly prebuildPath: string | undefined;
+  }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+
+    if (input.prebuildPath === undefined) {
+      yield* Effect.logWarning(
+        "[desktop-artifact] No WSL resource-monitor prebuild provided (--wsl-resource-monitor-prebuild / T3CODE_DESKTOP_WSL_RESOURCE_MONITOR_PREBUILD); WSL process telemetry will be unavailable without affecting the backend.",
+      );
+      return;
+    }
+
+    if (input.arch !== "x64") {
+      yield* Effect.logWarning(
+        `[desktop-artifact] WSL resource-monitor prebuilds currently support x64 only; skipping arch "${input.arch}".`,
+      );
+      return;
+    }
+
+    const prebuildExists = yield* fs
+      .exists(input.prebuildPath)
+      .pipe(Effect.orElseSucceed(() => false));
+    if (!prebuildExists) {
+      return yield* new WslResourceMonitorPrebuildMissingError({
+        prebuildPath: input.prebuildPath,
+      });
+    }
+
+    const destinationDirectory = path.join(input.serverStageDir, WSL_RESOURCE_MONITOR_DIRECTORY);
+    const destinationPath = path.join(destinationDirectory, "t3-resource-monitor");
+    yield* fs.makeDirectory(destinationDirectory, { recursive: true });
+    yield* fs.copyFile(input.prebuildPath, destinationPath);
+    yield* fs.chmod(destinationPath, 0o755);
+
+    const markerJson = yield* encodeJsonString({
+      arch: "x64",
+      libc: "glibc",
+      version: input.appVersion,
+    });
+    yield* fs.writeFileString(
+      path.join(destinationDirectory, WSL_RESOURCE_MONITOR_MARKER_NAME),
+      `${markerJson}\n`,
+    );
+
+    yield* Effect.log(
+      `[desktop-artifact] Staged WSL resource monitor (linux-x64-gnu, version ${input.appVersion}).`,
+    );
+  },
+);
+
 // Stage and pack the Windows server sidecar: the bundled server plus a hoisted
 // install of only its runtime-external/native dependency closure for win32 and
 // WSL Linux. The Windows primary runs from the archive through the asar-aware
@@ -2331,6 +2416,7 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   readonly patchedDependencies: Record<string, string>;
   readonly overrides: Record<string, string>;
   readonly wslPrebuildPath: string | undefined;
+  readonly wslResourceMonitorPrebuildPath: string | undefined;
   readonly asarPath: string;
   readonly verbose: boolean;
 }) {
@@ -2402,6 +2488,12 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
     stageAppDir: serverStageDir,
     arch: input.arch,
     prebuildPath: input.wslPrebuildPath,
+  });
+  yield* stageWslResourceMonitorPrebuild({
+    serverStageDir,
+    arch: input.arch,
+    appVersion: input.appVersion,
+    prebuildPath: input.wslResourceMonitorPrebuildPath,
   });
 
   yield* Effect.log("[desktop-artifact] Packing server.asar...");
@@ -3028,6 +3120,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       patchedDependencies: workspacePatchedDependencies,
       overrides: resolvedOverrides,
       wslPrebuildPath: options.wslPrebuild,
+      wslResourceMonitorPrebuildPath: options.wslResourceMonitorPrebuild,
       asarPath: windowsServerAsarPath,
       verbose: options.verbose,
     });
@@ -3211,6 +3304,12 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   wslPrebuild: Flag.string("wsl-prebuild").pipe(
     Flag.withDescription(
       "Path to a prebuilt Linux node-pty (pty.node) for the target arch, staged for the WSL backend (env: T3CODE_DESKTOP_WSL_PREBUILD).",
+    ),
+    Flag.optional,
+  ),
+  wslResourceMonitorPrebuild: Flag.string("wsl-resource-monitor-prebuild").pipe(
+    Flag.withDescription(
+      "Path to a prebuilt Linux x64/glibc resource monitor, staged for WSL telemetry (env: T3CODE_DESKTOP_WSL_RESOURCE_MONITOR_PREBUILD).",
     ),
     Flag.optional,
   ),

@@ -1,4 +1,5 @@
 import { EnvironmentHttpApi } from "@t3tools/contracts";
+import * as NodeProcess from "node:process";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -27,6 +28,7 @@ import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
+import { ProjectionHarnessChatSyncRepositoryLive } from "./persistence/Layers/ProjectionHarnessChatSync.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory.ts";
 import * as ProviderSessionRuntime from "./persistence/ProviderSessionRuntime.ts";
@@ -322,9 +324,14 @@ const ProjectSpeechProfileStoreLayerLive = ProjectSpeechProfileStore.layer.pipe(
   Layer.provide(SqlitePersistenceLayerLive),
 );
 
+const ProjectionHarnessChatSyncRepositoryLayerLive = ProjectionHarnessChatSyncRepositoryLive.pipe(
+  Layer.provide(SqlitePersistenceLayerLive),
+);
+
 const PersistenceLayerLive = Layer.mergeAll(
   SqlitePersistenceLayerLive,
   ProjectSpeechProfileStoreLayerLive,
+  ProjectionHarnessChatSyncRepositoryLayerLive,
 );
 
 const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
@@ -797,6 +804,28 @@ export const makeServerLayer = Layer.unwrap(
       }),
     );
 
+    const launcherShutdownLayer = Layer.effectDiscard(
+      Effect.gen(function* () {
+        const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
+        if (!launcher.managed) return;
+        yield* launcher.awaitShutdownRequest.pipe(
+          Effect.tap((requestId) =>
+            Effect.logInfo("Service launcher requested an orderly shutdown", { requestId }),
+          ),
+          Effect.catch((error) =>
+            Effect.logWarning(
+              "Service launcher disconnected; shutting down so the service manager can recover",
+              { error },
+            ),
+          ),
+        );
+        // NodeRuntime owns the root-scope signal handler. Emitting the same
+        // event as an OS SIGTERM preserves every existing shutdown finalizer on
+        // Windows, where ChildProcess.kill('SIGTERM') is not a graceful signal.
+        NodeProcess.emit("SIGTERM", "SIGTERM");
+      }).pipe(Effect.forkScoped),
+    ).pipe(Layer.provide(launcherLayer));
+
     const runtimeServicesLive = ServerRuntimeStartup.layerWithOptions({
       activate: Deferred.succeed(activation, undefined).pipe(Effect.asVoid),
       abort: (error) => Deferred.die(activation, error).pipe(Effect.asVoid),
@@ -820,6 +849,7 @@ export const makeServerLayer = Layer.unwrap(
       runtimeStateLayer,
       tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
+      launcherShutdownLayer,
     );
 
     return serverApplicationLayer.pipe(

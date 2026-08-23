@@ -1066,7 +1066,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       ),
                     );
                     return {
-                      type: "image",
+                      type: attachment.type,
                       data: Buffer.from(bytes).toString("base64"),
                       mimeType: attachment.mimeType,
                     } satisfies EffectAcpSchema.ContentBlock;

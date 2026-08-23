@@ -162,6 +162,7 @@ export const make = Effect.gen(function* () {
       agentWorkflowVersion: 1,
       environmentSettingsVersion: 3,
       projectSettingsVersion: 1,
+      harnessChatSyncVersion: 1,
       midChatProviderSwitching: true,
     },
   };

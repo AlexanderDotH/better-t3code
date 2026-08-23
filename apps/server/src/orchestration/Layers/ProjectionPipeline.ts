@@ -57,6 +57,11 @@ import { ProjectionThreadSubagentMessageRepository } from "../../persistence/Ser
 import { ProjectionThreadSubagentProposedPlanRepository } from "../../persistence/Services/ProjectionThreadSubagentProposedPlans.ts";
 import { ProjectionThreadSubagentRepository } from "../../persistence/Services/ProjectionThreadSubagents.ts";
 import { ProjectionProjectAgentCoordinationRepository } from "../../persistence/Services/ProjectionProjectAgentCoordination.ts";
+import {
+  HarnessChatNativeMessageId,
+  ProjectionHarnessChatSyncRepository,
+} from "../../persistence/Services/ProjectionHarnessChatSync.ts";
+import { ProjectionHarnessChatSyncRepositoryLive } from "../../persistence/Layers/ProjectionHarnessChatSync.ts";
 import { ServerConfig } from "../../config.ts";
 import {
   OrchestrationProjectionPipeline,
@@ -73,6 +78,7 @@ import { makeAbortInteractionResolutionActivities } from "../abortInteractionSet
 export const ORCHESTRATION_PROJECTOR_NAMES = {
   projects: "projection.projects",
   projectAgentCoordination: "projection.project-agent-coordination",
+  harnessChatSync: "projection.harness-chat-sync",
   threads: "projection.threads",
   threadMessages: "projection.thread-messages",
   threadProposedPlans: "projection.thread-proposed-plans",
@@ -424,9 +430,6 @@ function collectThreadAttachmentRelativePaths(
   const relativePaths = new Set<string>();
   for (const message of messages) {
     for (const attachment of message.attachments ?? []) {
-      if (attachment.type !== "image") {
-        continue;
-      }
       const attachmentThreadSegment = parseThreadSegmentFromAttachmentId(attachment.id);
       if (!attachmentThreadSegment || attachmentThreadSegment !== threadSegment) {
         continue;
@@ -575,6 +578,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
     const projectionProjectAgentCoordinationRepository =
       yield* ProjectionProjectAgentCoordinationRepository;
+    const projectionHarnessChatSyncRepository = yield* ProjectionHarnessChatSyncRepository;
 
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -699,6 +703,28 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           yield* projectionProjectAgentCoordinationRepository.releaseClaimsByProjectId(
             event.payload.projectId,
           );
+          return;
+
+        default:
+          return;
+      }
+    });
+
+    const applyHarnessChatSyncProjection: ProjectorDefinition["apply"] = Effect.fn(
+      "applyHarnessChatSyncProjection",
+    )(function* (event, _attachmentSideEffects) {
+      switch (event.type) {
+        case "thread.harness-sync-linked":
+          yield* projectionHarnessChatSyncRepository.upsertLink(event.payload);
+          return;
+
+        case "thread.harness-sync-message-imported":
+          yield* projectionHarnessChatSyncRepository.upsertMessageLink({
+            threadId: event.payload.threadId,
+            nativeMessageId: HarnessChatNativeMessageId.make(event.payload.nativeMessageId),
+            messageId: event.payload.messageId,
+            linkedAt: event.payload.linkedAt,
+          });
           return;
 
         default:
@@ -1005,6 +1031,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         }
 
         case "thread.message-sent":
+        case "thread.harness-sync-message-imported":
         case "thread.proposed-plan-upserted":
         case "thread.activity-appended": {
           if (event.payload.subagentId !== undefined) {
@@ -1021,6 +1048,20 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             updatedAt: event.occurredAt,
           });
           yield* refreshThreadShellSummary(event.payload.threadId);
+          return;
+        }
+
+        case "thread.harness-sync-linked": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            updatedAt: event.payload.lastSyncedAt,
+          });
           return;
         }
 
@@ -1158,6 +1199,40 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadMessagesProjection",
     )(function* (event, attachmentSideEffects) {
       switch (event.type) {
+        case "thread.harness-sync-message-imported": {
+          const nativeLink = yield* projectionHarnessChatSyncRepository.getMessageLink({
+            threadId: event.payload.threadId,
+            nativeMessageId: HarnessChatNativeMessageId.make(event.payload.nativeMessageId),
+          });
+          if (Option.isNone(nativeLink)) {
+            return;
+          }
+          const existingMessage = yield* projectionThreadMessageRepository.getByMessageId({
+            messageId: nativeLink.value.messageId,
+          });
+          if (Option.isSome(existingMessage)) {
+            return;
+          }
+          const attachments =
+            event.payload.attachments !== undefined
+              ? yield* materializeAttachmentsForProjection({
+                  attachments: event.payload.attachments,
+                })
+              : undefined;
+          yield* projectionThreadMessageRepository.upsert({
+            messageId: nativeLink.value.messageId,
+            threadId: event.payload.threadId,
+            turnId: event.payload.turnId,
+            role: event.payload.role,
+            text: event.payload.text,
+            ...(attachments !== undefined ? { attachments: [...attachments] } : {}),
+            isStreaming: false,
+            createdAt: event.payload.createdAt,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
         case "thread.message-sent": {
           if (event.payload.subagentId !== undefined) {
             return;
@@ -2130,6 +2205,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         apply: applyProjectAgentCoordinationProjection,
       },
       {
+        name: ORCHESTRATION_PROJECTOR_NAMES.harnessChatSync,
+        apply: applyHarnessChatSyncProjection,
+      },
+      {
         name: ORCHESTRATION_PROJECTOR_NAMES.threadMessages,
         apply: applyThreadMessagesProjection,
       },
@@ -2261,6 +2340,7 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
 ).pipe(
   Layer.provideMerge(ProjectionProjectRepositoryLive),
   Layer.provideMerge(ProjectionProjectAgentCoordinationRepositoryLive),
+  Layer.provideMerge(ProjectionHarnessChatSyncRepositoryLive),
   Layer.provideMerge(ProjectionThreadRepositoryLive),
   Layer.provideMerge(ProjectionThreadMessageRepositoryLive),
   Layer.provideMerge(ProjectionThreadProposedPlanRepositoryLive),

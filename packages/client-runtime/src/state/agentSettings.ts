@@ -20,6 +20,24 @@ export function createAgentSettingsEnvironmentAtoms<R, E>(
         tag: WS_METHODS.chatImportRun,
       }),
     },
+    harnessChatSync: {
+      sources: createEnvironmentRpcCommand(runtime, {
+        label: "environment-data:harness-chat-sync:sources",
+        tag: WS_METHODS.harnessChatSyncSources,
+      }),
+      list: createEnvironmentRpcCommand(runtime, {
+        label: "environment-data:harness-chat-sync:list",
+        tag: WS_METHODS.harnessChatSyncList,
+      }),
+      run: createEnvironmentRpcCommand(runtime, {
+        label: "environment-data:harness-chat-sync:run",
+        tag: WS_METHODS.harnessChatSyncRun,
+      }),
+      status: createEnvironmentRpcCommand(runtime, {
+        label: "environment-data:harness-chat-sync:status",
+        tag: WS_METHODS.harnessChatSyncStatus,
+      }),
+    },
     skills: {
       list: createEnvironmentRpcCommand(runtime, {
         label: "environment-data:skills:list",

@@ -3,10 +3,16 @@ import * as Schema from "effect/Schema";
 
 import {
   RESOURCE_MONITOR_PROTOCOL_VERSION,
+  ResourceMonitorCommand,
+  ResourceMonitorEvent,
+  ResourceMonitorHelloEvent,
   ResourceMonitorSnapshotEvent,
   ResourceProtectionSnapshot,
 } from "./resourceTelemetry.ts";
 
+const decodeResourceMonitorCommand = Schema.decodeUnknownSync(ResourceMonitorCommand);
+const decodeResourceMonitorEvent = Schema.decodeUnknownSync(ResourceMonitorEvent);
+const decodeResourceMonitorHelloEvent = Schema.decodeUnknownSync(ResourceMonitorHelloEvent);
 const decodeResourceMonitorSnapshotEvent = Schema.decodeUnknownSync(ResourceMonitorSnapshotEvent);
 const decodeResourceProtectionSnapshot = Schema.decodeUnknownSync(ResourceProtectionSnapshot);
 
@@ -48,5 +54,86 @@ describe("resource protection contracts", () => {
     expect(decoded.state).toBe("waiting");
     expect(decoded.waitingStarts).toBe(2);
     expect(decoded.affectedThreadIds).toEqual(["thread-a", "thread-b"]);
+  });
+
+  it("advertises process suspend and resume support in the protocol 4 handshake", () => {
+    expect(RESOURCE_MONITOR_PROTOCOL_VERSION).toBe(4);
+
+    const decoded = decodeResourceMonitorHelloEvent({
+      version: 4,
+      type: "hello",
+      sidecarVersion: "0.2.0",
+      sidecarPid: 9_001,
+      platform: "windows",
+      arch: "x86_64",
+      capabilities: {
+        cumulativeCpuTime: true,
+        currentCpuPercent: true,
+        residentMemory: true,
+        virtualMemory: true,
+        ioBytes: true,
+        processStartTime: true,
+        processTree: true,
+        processSuspendResume: true,
+      },
+    });
+
+    expect(decoded.capabilities.processSuspendResume).toBe(true);
+  });
+
+  it.each(["suspendProcessTree", "resumeProcessTree"] as const)(
+    "decodes %s commands with exact process identities",
+    (type) => {
+      const decoded = decodeResourceMonitorCommand({
+        version: 4,
+        type,
+        requestId: "request-1",
+        leaseId: "lease-1",
+        processes: [{ pid: 42, startTimeMs: 1_725_000_000_000 }],
+      });
+
+      expect(decoded).toMatchObject({
+        type,
+        requestId: "request-1",
+        leaseId: "lease-1",
+        processes: [{ pid: 42, startTimeMs: 1_725_000_000_000 }],
+      });
+    },
+  );
+
+  it("rejects process-control commands without an exact process identity", () => {
+    expect(() =>
+      decodeResourceMonitorCommand({
+        version: 4,
+        type: "suspendProcessTree",
+        requestId: "request-empty",
+        leaseId: "lease-empty",
+        processes: [],
+      }),
+    ).toThrow();
+  });
+
+  it("decodes correlated process-control failures without weakening existing events", () => {
+    const decoded = decodeResourceMonitorEvent({
+      version: 4,
+      type: "processControlResult",
+      requestId: "request-2",
+      leaseId: "lease-2",
+      operation: "resume",
+      success: false,
+      resumeRequired: true,
+      error: "process identity changed",
+    });
+
+    expect(decoded).toEqual({
+      version: 4,
+      type: "processControlResult",
+      requestId: "request-2",
+      leaseId: "lease-2",
+      operation: "resume",
+      success: false,
+      resumeRequired: true,
+      error: "process identity changed",
+    });
   });
 });

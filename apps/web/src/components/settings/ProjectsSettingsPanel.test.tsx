@@ -90,4 +90,18 @@ describe("ProjectsSettingsPanelView", () => {
     expect(markup).toContain('href="/projects/large%20repo"');
     expect(markup).toContain('aria-label="Configure checkpoints for Large repo"');
   });
+
+  it("places harness chat sync before the existing project list", () => {
+    const markup = renderToStaticMarkup(
+      <ProjectsSettingsPanelView
+        groups={[]}
+        syncSettings={<section>Harness chat sync controls</section>}
+      />,
+    );
+
+    expect(markup).toContain("Harness chat sync controls");
+    expect(markup.indexOf("Harness chat sync controls")).toBeLessThan(
+      markup.indexOf("Checkpoints"),
+    );
+  });
 });

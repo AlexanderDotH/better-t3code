@@ -130,6 +130,7 @@ import { McpConfigEngine } from "./mcp/McpConfigEngine.ts";
 import { McpConfigurationReconciler } from "./mcp/McpConfigurationReconciler.ts";
 import { McpRuntimeRegistry } from "./mcp/McpRuntimeRegistry.ts";
 import { SkillEngine } from "./skills/Services/SkillEngine.ts";
+import { makeHarnessChatSync } from "./harnessChatSync.ts";
 import { makeT3ChatImport } from "./t3ChatImport.ts";
 import { AssemblyAiStreamingToken } from "./speech/Layers/AssemblyAiStreamingToken.ts";
 import * as ProjectSpeechProfiles from "./speech/ProjectSpeechProfiles.ts";
@@ -493,6 +494,7 @@ const makeWsRpcLayer = (
         );
       const skillEngine = yield* SkillEngine;
       const t3ChatImport = yield* makeT3ChatImport();
+      const harnessChatSync = yield* makeHarnessChatSync();
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map(
           (settings) => resolveServerBackgroundActivitySettings(settings).automaticGitFetchInterval,
@@ -1893,6 +1895,22 @@ const makeWsRpcLayer = (
         [WS_METHODS.chatImportRun]: (input) =>
           observeRpcEffect(WS_METHODS.chatImportRun, t3ChatImport.importSource(input), {
             "rpc.aggregate": "chatImport",
+          }),
+        [WS_METHODS.harnessChatSyncSources]: (_input) =>
+          observeRpcEffect(WS_METHODS.harnessChatSyncSources, harnessChatSync.sources, {
+            "rpc.aggregate": "harnessChatSync",
+          }),
+        [WS_METHODS.harnessChatSyncList]: (input) =>
+          observeRpcEffect(WS_METHODS.harnessChatSyncList, harnessChatSync.list(input), {
+            "rpc.aggregate": "harnessChatSync",
+          }),
+        [WS_METHODS.harnessChatSyncRun]: (input) =>
+          observeRpcEffect(WS_METHODS.harnessChatSyncRun, harnessChatSync.run(input), {
+            "rpc.aggregate": "harnessChatSync",
+          }),
+        [WS_METHODS.harnessChatSyncStatus]: (input) =>
+          observeRpcEffect(WS_METHODS.harnessChatSyncStatus, harnessChatSync.status(input), {
+            "rpc.aggregate": "harnessChatSync",
           }),
         [WS_METHODS.skillsList]: (input) =>
           observeRpcEffect(WS_METHODS.skillsList, skillEngine.list(input), {

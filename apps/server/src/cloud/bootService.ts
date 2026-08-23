@@ -1,8 +1,10 @@
 import {
+  HostProcessEnvironment,
   HostProcessExecutablePath,
   HostProcessPlatform,
   HostProcessUserId,
 } from "@t3tools/shared/hostProcess";
+import * as NodeCrypto from "node:crypto";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -13,6 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 
 import * as ProcessRunner from "../processRunner.ts";
 import {
@@ -24,6 +27,11 @@ import {
   SERVICE_LAUNCHER_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
+  SERVICE_STOP_ACK_FILE,
+  SERVICE_STOP_PROTOCOL,
+  SERVICE_STOP_REQUEST_FILE,
+  SERVICE_WINDOWS_TASK_NAME,
+  parseServiceStopAcknowledgement,
   parseServiceState,
   serviceStateHasPendingUpdate,
   type ServiceState,
@@ -35,7 +43,41 @@ export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 // (com.t3tools.t3code), so launchd and TCC records never collide.
 export const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
 export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
+export const BOOT_SERVICE_WINDOWS_TASK_NAME = SERVICE_WINDOWS_TASK_NAME;
+export const BOOT_SERVICE_TASK_XML_FILE = "t3code-task.xml";
 export const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
+
+const trimEnvironmentValue = (value: string | undefined): string | undefined => {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed === "" ? undefined : trimmed;
+};
+
+export function resolveBootServiceHomeDirectory(input: {
+  readonly platform: NodeJS.Platform;
+  readonly configuredHome: string;
+  readonly environment: NodeJS.ProcessEnv;
+}): string {
+  const configuredHome = input.configuredHome.trim();
+  if (input.platform !== "win32") return configuredHome;
+  const userProfile = trimEnvironmentValue(input.environment.USERPROFILE);
+  if (userProfile !== undefined) return userProfile;
+  const homeDrive = trimEnvironmentValue(input.environment.HOMEDRIVE);
+  const homePath = trimEnvironmentValue(input.environment.HOMEPATH);
+  if (homeDrive !== undefined && homePath !== undefined) return `${homeDrive}${homePath}`;
+  return configuredHome;
+}
+
+export function resolveWindowsTaskUserId(environment: NodeJS.ProcessEnv): string | undefined {
+  const userName = trimEnvironmentValue(environment.USERNAME);
+  if (userName === undefined) return undefined;
+  const userDomain = trimEnvironmentValue(environment.USERDOMAIN);
+  return userDomain === undefined ? userName : `${userDomain}\\${userName}`;
+}
+
+export function parseWhoamiUserSid(output: string): string | undefined {
+  const match = /^\s*"(?:[^"]|"")*"\s*,\s*"(S-\d+(?:-\d+)+)"\s*$/i.exec(output.trim());
+  return match?.[1];
+}
 
 /** systemd expands `%` specifiers, including in unquoted append-log paths. */
 export function escapeSystemdSpecifiers(value: string): string {
@@ -71,7 +113,7 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "WorkingDirectory=%h",
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
-    `ExecStart=${quoteSystemdValue(plan.nodePath)} ${quoteSystemdValue(plan.launcherPath)}`,
+    `ExecStart=${quoteSystemdValue(plan.nodePath)} ${quoteSystemdValue(plan.launcherPath)} --base-dir ${quoteSystemdValue(plan.baseDir)} --log-path ${quoteSystemdValue(plan.logPath)}`,
     // Let the launcher mark an explicit stop before it signals the server.
     // systemd still SIGKILLs the whole cgroup if graceful shutdown times out.
     "KillMode=mixed",
@@ -124,6 +166,10 @@ export function renderBootServicePlist(
     `  <array>`,
     `    <string>${escapeXmlText(plan.nodePath)}</string>`,
     `    <string>${escapeXmlText(plan.launcherPath)}</string>`,
+    `    <string>--base-dir</string>`,
+    `    <string>${escapeXmlText(plan.baseDir)}</string>`,
+    `    <string>--log-path</string>`,
+    `    <string>${escapeXmlText(plan.logPath)}</string>`,
     `  </array>`,
     `  <key>EnvironmentVariables</key>`,
     `  <dict>`,
@@ -150,6 +196,75 @@ export function renderBootServicePlist(
     `  <string>${escapeXmlText(plan.logPath)}</string>`,
     `</dict>`,
     `</plist>`,
+    ``,
+  ].join("\n");
+}
+
+/** Quotes one argv value according to the CommandLineToArgvW/CreateProcess rules. */
+export function quoteWindowsCommandLineArgument(value: string): string {
+  const escaped = value
+    .replace(/(\\*)"/g, (_match, slashes: string) => `${slashes}${slashes}\\"`)
+    .replace(/(\\+)$/g, "$1$1");
+  return `"${escaped}"`;
+}
+
+/** Pure renderer: Task Scheduler receives explicit executable and launcher paths. */
+export function renderBootServiceTaskXml(
+  plan: BootServicePlan,
+  options: { readonly homeDir: string; readonly userId: string },
+): string {
+  const argumentsText = [
+    quoteWindowsCommandLineArgument(plan.launcherPath),
+    "--base-dir",
+    quoteWindowsCommandLineArgument(plan.baseDir),
+    "--log-path",
+    quoteWindowsCommandLineArgument(plan.logPath),
+  ].join(" ");
+  return [
+    `<?xml version="1.0" encoding="UTF-8"?>`,
+    `<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">`,
+    `  <RegistrationInfo>`,
+    `    <Description>T3 Code server</Description>`,
+    `  </RegistrationInfo>`,
+    `  <Triggers>`,
+    `    <LogonTrigger>`,
+    `      <Enabled>true</Enabled>`,
+    `      <UserId>${escapeXmlText(options.userId)}</UserId>`,
+    `    </LogonTrigger>`,
+    `  </Triggers>`,
+    `  <Principals>`,
+    `    <Principal id="Author">`,
+    `      <UserId>${escapeXmlText(options.userId)}</UserId>`,
+    `      <LogonType>InteractiveToken</LogonType>`,
+    `      <RunLevel>LeastPrivilege</RunLevel>`,
+    `    </Principal>`,
+    `  </Principals>`,
+    `  <Settings>`,
+    `    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>`,
+    `    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>`,
+    `    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>`,
+    `    <AllowHardTerminate>true</AllowHardTerminate>`,
+    `    <StartWhenAvailable>true</StartWhenAvailable>`,
+    `    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>`,
+    `    <AllowStartOnDemand>true</AllowStartOnDemand>`,
+    `    <Enabled>true</Enabled>`,
+    `    <Hidden>true</Hidden>`,
+    `    <RunOnlyIfIdle>false</RunOnlyIfIdle>`,
+    `    <WakeToRun>false</WakeToRun>`,
+    `    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>`,
+    `    <RestartOnFailure>`,
+    `      <Interval>PT1M</Interval>`,
+    `      <Count>255</Count>`,
+    `    </RestartOnFailure>`,
+    `  </Settings>`,
+    `  <Actions Context="Author">`,
+    `    <Exec>`,
+    `      <Command>${escapeXmlText(plan.nodePath)}</Command>`,
+    `      <Arguments>${escapeXmlText(argumentsText)}</Arguments>`,
+    `      <WorkingDirectory>${escapeXmlText(options.homeDir)}</WorkingDirectory>`,
+    `    </Exec>`,
+    `  </Actions>`,
+    `</Task>`,
     ``,
   ].join("\n");
 }
@@ -182,7 +297,7 @@ const STOP_STEP_TIMEOUT = Duration.seconds(120);
  * never branch on platform.
  */
 export interface BootServiceManager {
-  readonly kind: "systemd" | "launchd";
+  readonly kind: "systemd" | "launchd" | "task-scheduler";
   readonly unitPath: string;
   readonly render: (plan: BootServicePlan) => string;
   /** Before rewriting files, when a unit is already installed. */
@@ -195,6 +310,12 @@ export interface BootServiceManager {
   readonly deactivate: ReadonlyArray<BootServiceStep>;
   /** Uninstall, after the unit file is removed. */
   readonly finalize: ReadonlyArray<BootServiceStep>;
+  /** Windows only: status must confirm Task Scheduler registration as well as files. */
+  readonly registrationProbe?: BootServiceStep;
+  /** Windows only: used after the bounded stop-request/ack handshake times out. */
+  readonly gracefulStopFallback?: BootServiceStep;
+  /** Windows only: exact launcher PID cleanup after `/End`; never invoked by pattern. */
+  readonly forceKillCommand?: string;
 }
 
 export function systemdManager(input: {
@@ -340,11 +461,70 @@ export function launchdManager(input: {
   };
 }
 
+export function windowsTaskSchedulerManager(input: {
+  readonly path: Path.Path;
+  readonly baseDir: string;
+  readonly homeDir: string;
+  readonly userId: string;
+}): BootServiceManager {
+  const unitPath = input.path.join(input.baseDir, "runtime", BOOT_SERVICE_TASK_XML_FILE);
+  const taskArgs = ["/TN", BOOT_SERVICE_WINDOWS_TASK_NAME] as const;
+  return {
+    kind: "task-scheduler",
+    unitPath,
+    render: (plan) =>
+      renderBootServiceTaskXml(plan, { homeDir: input.homeDir, userId: input.userId }),
+    stop: [],
+    activate: [
+      {
+        step: "registering the per-user scheduled task",
+        command: "schtasks.exe",
+        args: ["/Create", ...taskArgs, "/XML", unitPath, "/F"],
+      },
+      {
+        step: "starting the per-user scheduled task",
+        command: "schtasks.exe",
+        args: ["/Run", ...taskArgs],
+      },
+    ],
+    restart: [
+      {
+        step: "restarting the scheduled task after a failed update",
+        command: "schtasks.exe",
+        args: ["/Run", ...taskArgs],
+      },
+    ],
+    deactivate: [
+      {
+        step: "deleting the per-user scheduled task",
+        command: "schtasks.exe",
+        args: ["/Delete", ...taskArgs, "/F"],
+      },
+    ],
+    finalize: [],
+    registrationProbe: {
+      step: "querying the per-user scheduled task",
+      command: "schtasks.exe",
+      args: ["/Query", ...taskArgs, "/XML"],
+    },
+    gracefulStopFallback: {
+      step: "ending the scheduled task after graceful shutdown timed out",
+      command: "schtasks.exe",
+      args: ["/End", ...taskArgs],
+      optional: true,
+      timeout: STOP_STEP_TIMEOUT,
+    },
+    forceKillCommand: "taskkill.exe",
+  };
+}
+
 /** Undefined means this host cannot run the background service. */
 export function selectBootServiceManager(input: {
   readonly platform: NodeJS.Platform;
+  readonly baseDir: string;
   readonly homeDir: string;
   readonly uid: number | undefined;
+  readonly windowsUserId?: string;
   readonly path: Path.Path;
 }): BootServiceManager | undefined {
   if (input.homeDir === "") {
@@ -356,6 +536,14 @@ export function selectBootServiceManager(input: {
   if (input.platform === "darwin" && input.uid !== undefined) {
     return launchdManager({ path: input.path, homeDir: input.homeDir, uid: input.uid });
   }
+  if (input.platform === "win32" && input.windowsUserId !== undefined) {
+    return windowsTaskSchedulerManager({
+      path: input.path,
+      baseDir: input.baseDir,
+      homeDir: input.homeDir,
+      userId: input.windowsUserId,
+    });
+  }
   return undefined;
 }
 
@@ -364,7 +552,10 @@ export class BootServiceUnsupportedError extends Schema.TaggedErrorClass<BootSer
   { platform: Schema.String },
 ) {
   override get message(): string {
-    return `Background setup supports Linux with systemd and macOS with launchd; this machine reports '${this.platform}'.`;
+    if (this.platform === "win32") {
+      return "Background setup could not determine the current Windows user for Task Scheduler.";
+    }
+    return `Background setup supports Linux with systemd, macOS with launchd, and Windows with Task Scheduler; this machine reports '${this.platform}'.`;
   }
 }
 
@@ -429,6 +620,13 @@ export class BootService extends Context.Service<
 export interface BootServiceHost {
   readonly execPath: string;
   readonly launcherSourcePath?: string;
+  /** Test seam for the bounded Windows stop-request acknowledgement wait. */
+  readonly stopAcknowledgementTimeout?: Duration.Input;
+  /** Test seam invoked after the durable request exists and before acknowledgement wait. */
+  readonly onStopRequestWritten?: (input: {
+    readonly requestId: string;
+    readonly acknowledgementPath: string;
+  }) => void;
 }
 
 export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
@@ -439,18 +637,49 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 }) {
   const hostExecPath = yield* HostProcessExecutablePath;
   const platform = yield* HostProcessPlatform;
+  const hostEnvironment = yield* HostProcessEnvironment;
   const uid = yield* HostProcessUserId;
-  const homeDir = yield* Config.string("HOME").pipe(Config.withDefault(""));
+  const configuredHome = yield* Config.string("HOME").pipe(Config.withDefault(""));
+  const homeDir = resolveBootServiceHomeDirectory({
+    platform,
+    configuredHome,
+    environment: hostEnvironment,
+  });
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
   const host = input.host ?? { execPath: hostExecPath };
+  const windowsUserSid =
+    platform === "win32"
+      ? yield* runner
+          .run({
+            command: "whoami.exe",
+            args: ["/user", "/fo", "csv", "/nh"],
+            timeout: Duration.seconds(5),
+          })
+          .pipe(
+            Effect.map((result) =>
+              result.code === 0 ? parseWhoamiUserSid(result.stdout) : undefined,
+            ),
+            Effect.orElseSucceed(() => undefined),
+          )
+      : undefined;
+  const windowsUserId = windowsUserSid ?? resolveWindowsTaskUserId(hostEnvironment);
 
-  const detectedManager = selectBootServiceManager({ platform, homeDir, uid, path });
+  const detectedManager = selectBootServiceManager({
+    platform,
+    baseDir: input.baseDir,
+    homeDir,
+    uid,
+    ...(windowsUserId === undefined ? {} : { windowsUserId }),
+    path,
+  });
   const unitPath = detectedManager?.unitPath ?? "";
   const logPath = path.join(input.logsDir, "boot-service.log");
   const launcherPath = path.join(input.baseDir, "runtime", SERVICE_LAUNCHER_FILE);
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
+  const stopRequestPath = path.join(input.baseDir, "runtime", SERVICE_STOP_REQUEST_FILE);
+  const stopAcknowledgementPath = path.join(input.baseDir, "runtime", SERVICE_STOP_ACK_FILE);
   const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion);
   const launcherSourcePath =
     host.launcherSourcePath ??
@@ -464,7 +693,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         yield* fs.writeFileString(tempPath, contents, { mode: 0o600 });
         yield* (yield* fs.open(tempPath, { flag: "r" })).sync;
         yield* fs.rename(tempPath, filePath);
-        yield* (yield* fs.open(directory, { flag: "r" })).sync;
+        if (platform !== "win32") {
+          yield* (yield* fs.open(directory, { flag: "r" })).sync;
+        }
       }),
     ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
   const plan: BootServicePlan = {
@@ -529,6 +760,98 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       { discard: true },
     );
 
+  const registrationExists = Effect.fn("cloud.boot_service.registration_exists")(function* (
+    manager: BootServiceManager,
+  ) {
+    if (manager.registrationProbe === undefined) {
+      return yield* fs
+        .exists(unitPath)
+        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+    }
+    const probe = manager.registrationProbe;
+    const result = yield* runner
+      .run({ command: probe.command, args: probe.args })
+      .pipe(Effect.mapError((cause) => new BootServiceCommandError({ step: probe.step, cause })));
+    return result.code === 0;
+  });
+
+  const removeStopControlFiles = Effect.all(
+    [
+      fs.remove(stopRequestPath).pipe(Effect.ignore),
+      fs.remove(stopAcknowledgementPath).pipe(Effect.ignore),
+    ],
+    { discard: true },
+  );
+  const readStopAcknowledgement = fs.readFileString(stopAcknowledgementPath).pipe(
+    Effect.option,
+    Effect.map((value) =>
+      Option.isSome(value) ? parseServiceStopAcknowledgement(value.value) : undefined,
+    ),
+  );
+
+  const stopManager = Effect.fn("cloud.boot_service.stop_manager")(function* (
+    manager: BootServiceManager,
+  ) {
+    if (manager.gracefulStopFallback === undefined) {
+      return yield* runSteps(manager.stop);
+    }
+
+    const requestId = yield* Effect.sync(() => NodeCrypto.randomUUID());
+    yield* removeStopControlFiles;
+    yield* writeDurably(
+      stopRequestPath,
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed launcher stop document.
+      `${JSON.stringify({ protocol: SERVICE_STOP_PROTOCOL, id: requestId }, null, 2)}\n`,
+    );
+    if (host.onStopRequestWritten !== undefined) {
+      yield* Effect.try({
+        try: () =>
+          host.onStopRequestWritten?.({
+            requestId,
+            acknowledgementPath: stopAcknowledgementPath,
+          }),
+        catch: (cause) => new BootServiceInstallError({ cause }),
+      });
+    }
+    const stopped = yield* readStopAcknowledgement.pipe(
+      Effect.repeat({
+        schedule: Schedule.spaced(Duration.millis(100)),
+        until: (acknowledgement) =>
+          acknowledgement?.id === requestId && acknowledgement.status === "stopped",
+      }),
+      Effect.timeoutOption(host.stopAcknowledgementTimeout ?? Duration.seconds(15)),
+    );
+    if (Option.isSome(stopped)) {
+      yield* removeStopControlFiles;
+      return;
+    }
+
+    const acknowledgement = yield* readStopAcknowledgement;
+    if (acknowledgement?.id === requestId && acknowledgement.status === "stopped") {
+      yield* removeStopControlFiles;
+      return;
+    }
+    yield* DateTime.now.pipe(
+      Effect.flatMap((now) =>
+        fs.writeFileString(
+          logPath,
+          `${DateTime.formatIso(now)} Graceful Windows service shutdown timed out; using Task Scheduler fallback.\n`,
+          { flag: "a" },
+        ),
+      ),
+      Effect.ignore,
+    );
+    yield* runSteps([manager.gracefulStopFallback]);
+    if (acknowledgement?.id === requestId && manager.forceKillCommand !== undefined) {
+      yield* runStep(
+        "force-stopping the acknowledged launcher process tree",
+        manager.forceKillCommand,
+        ["/PID", String(acknowledgement.pid), "/T", "/F"],
+      ).pipe(Effect.ignore);
+    }
+    yield* removeStopControlFiles;
+  });
+
   const install: BootService["Service"]["install"] = Effect.gen(function* () {
     const manager = yield* requireManager;
     yield* fs
@@ -588,15 +911,17 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       .readFileString(launcherSourcePath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
 
-    const installed = yield* fs
+    const unitExists = yield* fs
       .exists(unitPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-    if (installed) {
-      yield* runSteps(manager.stop);
+    const registered = yield* registrationExists(manager);
+    const previousInstallationPresent = unitExists || registered;
+    if (registered) {
+      yield* stopManager(manager);
     }
 
     yield* Effect.gen(function* () {
-      if (installed) {
+      if (previousInstallationPresent) {
         const previousStateText = yield* fs.readFileString(statePath).pipe(Effect.option);
         if (
           Option.isSome(previousStateText) &&
@@ -623,10 +948,13 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       );
       yield* writeDurably(unitPath, manager.render(plan));
 
+      yield* removeStopControlFiles;
       yield* runSteps(manager.activate);
     }).pipe(
       Effect.tapError(() =>
-        installed ? runSteps(manager.restart).pipe(Effect.ignore) : Effect.void,
+        registered
+          ? removeStopControlFiles.pipe(Effect.andThen(runSteps(manager.restart)), Effect.ignore)
+          : Effect.void,
       ),
     );
     return plan;
@@ -634,16 +962,21 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
   const uninstall: BootService["Service"]["uninstall"] = Effect.gen(function* () {
     const manager = yield* requireManager;
-    if (
-      !(yield* fs
-        .exists(unitPath)
-        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause }))))
-    )
-      return false;
-    yield* runSteps(manager.deactivate);
-    yield* fs
-      .remove(unitPath)
+    const unitExists = yield* fs
+      .exists(unitPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+    const registered = yield* registrationExists(manager);
+    if (!unitExists && !registered) return false;
+    if (registered) {
+      yield* stopManager(manager);
+      yield* runSteps(manager.deactivate);
+    }
+    if (unitExists) {
+      yield* fs
+        .remove(unitPath)
+        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+    }
+    yield* removeStopControlFiles;
     yield* runSteps(manager.finalize);
     return true;
   }).pipe(Effect.withSpan("cloud.boot_service.uninstall"));
@@ -652,7 +985,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (detectedManager === undefined) {
       return { supported: false, installed: false, current: false, unitPath, logPath };
     }
-    if (!(yield* fs.exists(unitPath))) {
+    const unitExists = yield* fs.exists(unitPath);
+    const registered = yield* registrationExists(detectedManager);
+    if (!unitExists || !registered) {
       return { supported: true, installed: false, current: false, unitPath, logPath };
     }
     const [unit, launcherExists, runtimeEntryExists, runtimeSentinel, stateText] =

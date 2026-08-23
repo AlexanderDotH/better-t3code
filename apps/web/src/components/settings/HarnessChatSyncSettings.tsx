@@ -1,0 +1,839 @@
+import type {
+  EnvironmentId,
+  HarnessChatSessionId,
+  HarnessChatSummary,
+  HarnessChatSyncRunResult,
+  HarnessChatSyncSource,
+  HarnessChatSyncStatus,
+  ProjectId,
+  ProviderInstanceId,
+  ServerConfig,
+} from "@t3tools/contracts";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  ArchiveIcon,
+  CloudDownloadIcon,
+  LinkIcon,
+  LoaderCircleIcon,
+  RefreshCwIcon,
+  SearchIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
+import { type ChangeEvent, type ReactNode, useDeferredValue, useMemo, useState } from "react";
+
+import { ensureEnvironmentApi } from "../../environmentApi";
+import { cn } from "../../lib/utils";
+import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
+import { useProjects, useServerConfigs } from "../../state/entities";
+import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
+import {
+  Dialog,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
+import { Input } from "../ui/input";
+import { Switch } from "../ui/switch";
+import {
+  clearHarnessChatSelection,
+  createDefaultHarnessChatSelection,
+  getHarnessChatSelectionState,
+  getSelectedUnresolvedHarnessChats,
+  type HarnessChatSelectionState,
+  isHarnessChatSelected,
+  selectAllHarnessChats,
+  setHarnessChatSelected,
+  toHarnessChatSelection,
+} from "./HarnessChatSyncSettings.logic";
+import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
+
+const CHAT_PAGE_SIZE = 25;
+
+interface ProjectOption {
+  readonly id: ProjectId;
+  readonly title: string;
+  readonly workspaceRoot: string;
+}
+
+function formatChatDate(value: string | null): string {
+  if (value === null) return "No dated chats";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function sourceCountLabel(source: HarnessChatSyncSource): string {
+  const chatLabel = source.chatCount === 1 ? "chat" : "chats";
+  const changedLabel = source.changedCount === 1 ? "1 update" : `${source.changedCount} updates`;
+  return `${source.chatCount} ${chatLabel} · ${changedLabel}`;
+}
+
+function syncResultSummary(result: HarnessChatSyncRunResult): string {
+  const chatLabel = result.selectedCount === 1 ? "chat" : "chats";
+  return `Synced ${result.syncedCount} of ${result.selectedCount} ${chatLabel} · ${result.messagesImported} messages imported`;
+}
+
+function sourceStatusBadge(source: HarnessChatSyncSource): ReactNode {
+  if (source.status.kind === "unsupported") {
+    return <Badge variant="warning">Unavailable</Badge>;
+  }
+  if (source.status.kind === "already-local") {
+    return <Badge variant="success">Already in T3 Code</Badge>;
+  }
+  if (source.changedCount > 0) {
+    return <Badge variant="info">{source.changedCount} changed</Badge>;
+  }
+  return <Badge variant="outline">Up to date</Badge>;
+}
+
+function chatStatusBadges(chat: HarnessChatSummary) {
+  return (
+    <span className="flex flex-wrap items-center gap-1.5">
+      {chat.activity === "active" ? <Badge variant="warning">Active elsewhere</Badge> : null}
+      {chat.link ? (
+        <Badge variant="outline" title={`T3 thread ${chat.link.threadId}`}>
+          <LinkIcon />
+          Linked
+        </Badge>
+      ) : null}
+      {chat.hasChanges ? <Badge variant="info">Updates available</Badge> : null}
+      {chat.archived ? <Badge variant="secondary">Archived</Badge> : null}
+    </span>
+  );
+}
+
+function SourceUnavailable({ source }: { readonly source: HarnessChatSyncSource }) {
+  const title = source.status.kind === "already-local" ? "Already in T3 Code" : "Unavailable";
+  const reason = source.status.kind === "supported" ? "" : source.status.reason;
+  return (
+    <div className="px-4 pb-4">
+      <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-3">
+        <p className="text-sm font-medium">{title}</p>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{reason}</p>
+      </div>
+    </div>
+  );
+}
+
+export interface HarnessChatSyncSourceViewProps {
+  readonly source: HarnessChatSyncSource;
+  readonly chats: ReadonlyArray<HarnessChatSummary>;
+  readonly selection: HarnessChatSelectionState;
+  readonly searchQuery: string;
+  readonly includeArchived: boolean;
+  readonly totalMatching: number;
+  readonly changedMatching: number;
+  readonly hasNextPage: boolean;
+  readonly isLoading: boolean;
+  readonly isFetching: boolean;
+  readonly isSyncing: boolean;
+  readonly result: HarnessChatSyncRunResult | null;
+  readonly errorMessage: string | null;
+  readonly selectedProviderInstanceId?: ProviderInstanceId | null;
+  readonly onProviderInstanceChange?: (instanceId: ProviderInstanceId) => void;
+  readonly onSearchChange: (value: string) => void;
+  readonly onArchiveChange: (value: boolean) => void;
+  readonly onSelectionChange: (sessionId: HarnessChatSessionId, selected: boolean) => void;
+  readonly onSelectAll: () => void;
+  readonly onClearAll: () => void;
+  readonly onLoadMore: () => void;
+  readonly onRefresh: () => void;
+  readonly onSync: () => void;
+}
+
+function ProviderInstancePicker({
+  source,
+  value,
+  onChange,
+}: {
+  readonly source: HarnessChatSyncSource;
+  readonly value: ProviderInstanceId | null;
+  readonly onChange?: (instanceId: ProviderInstanceId) => void;
+}) {
+  if (source.instanceIds.length < 2 || !onChange) return null;
+  return (
+    <label className="flex items-center gap-2 text-xs text-muted-foreground">
+      Account
+      <select
+        aria-label={`Provider account for ${source.label}`}
+        className="h-7 max-w-48 rounded-md border border-input bg-background px-2 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        value={value ?? ""}
+        onChange={(event) => {
+          const instanceId = source.instanceIds.find(
+            (candidate) => candidate === event.currentTarget.value,
+          );
+          if (instanceId) onChange(instanceId);
+        }}
+      >
+        {source.instanceIds.map((instanceId) => (
+          <option key={instanceId} value={instanceId}>
+            {instanceId}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function ChatRow({
+  chat,
+  selected,
+  onSelectedChange,
+}: {
+  readonly chat: HarnessChatSummary;
+  readonly selected: boolean;
+  readonly onSelectedChange: (selected: boolean) => void;
+}) {
+  const targetDescription =
+    chat.targetProject.kind === "unresolved"
+      ? "Project target required"
+      : chat.targetProject.kind === "create"
+        ? `Will create ${chat.targetProject.suggestedName}`
+        : "Project matched";
+  return (
+    <label className="flex cursor-pointer gap-3 border-t border-border/50 px-4 py-3 first:border-t-0">
+      <Checkbox
+        aria-label={`Select ${chat.title}`}
+        checked={selected}
+        onCheckedChange={(checked) => onSelectedChange(Boolean(checked))}
+      />
+      <span className="min-w-0 flex-1 space-y-1.5">
+        <span className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{chat.title}</span>
+          {chatStatusBadges(chat)}
+        </span>
+        {chat.preview ? (
+          <span className="block truncate text-xs text-muted-foreground">{chat.preview}</span>
+        ) : null}
+        <span className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground/75">
+          <span className="max-w-full truncate font-mono">
+            {chat.cwd ?? "No working directory"}
+          </span>
+          <span>{chat.messageCount} messages</span>
+          {chat.link ? <span className="font-mono">T3 thread {chat.link.threadId}</span> : null}
+          <span>{formatChatDate(chat.updatedAt)}</span>
+          <span
+            className={cn(chat.targetProject.kind === "unresolved" && "text-warning-foreground")}
+          >
+            {targetDescription}
+          </span>
+        </span>
+      </span>
+    </label>
+  );
+}
+
+export function HarnessChatSyncSourceView({
+  source,
+  chats,
+  selection,
+  searchQuery,
+  includeArchived,
+  totalMatching,
+  changedMatching,
+  hasNextPage,
+  isLoading,
+  isFetching,
+  isSyncing,
+  result,
+  errorMessage,
+  selectedProviderInstanceId = source.preferredInstanceId,
+  onProviderInstanceChange,
+  onSearchChange,
+  onArchiveChange,
+  onSelectionChange,
+  onSelectAll,
+  onClearAll,
+  onLoadMore,
+  onRefresh,
+  onSync,
+}: HarnessChatSyncSourceViewProps) {
+  const visibleSessionIds = chats.map((chat) => chat.sessionId);
+  const selectionState = getHarnessChatSelectionState(selection, visibleSessionIds);
+  const selectionEmpty = selection.mode === "only" && selection.sessionIds.length === 0;
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-border/70 bg-background/40">
+      <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="truncate text-sm font-semibold">{source.label}</h4>
+            <Badge variant="secondary">{source.driver}</Badge>
+            {sourceStatusBadge(source)}
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {sourceCountLabel(source)} · Last activity {formatChatDate(source.latestUpdatedAt)}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <ProviderInstancePicker
+            source={source}
+            value={selectedProviderInstanceId}
+            {...(onProviderInstanceChange ? { onChange: onProviderInstanceChange } : {})}
+          />
+          {source.status.kind === "supported" ? (
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label={`Refresh ${source.label} chats`}
+              disabled={isFetching || isSyncing}
+              onClick={onRefresh}
+            >
+              <RefreshCwIcon className={cn("size-3.5", isFetching && "animate-spin")} />
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      {source.status.kind !== "supported" ? (
+        <SourceUnavailable source={source} />
+      ) : (
+        <>
+          <div className="grid gap-2 border-t border-border/50 bg-muted/15 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+            <label className="relative min-w-0">
+              <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="search"
+                size="compact"
+                className="w-full [&_input]:pl-8"
+                inputMode="search"
+                placeholder="Search provider chats"
+                value={searchQuery}
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                  onSearchChange(event.currentTarget.value)
+                }
+              />
+            </label>
+            <label className="flex min-h-7 items-center gap-2 text-xs text-muted-foreground">
+              <Switch
+                checked={includeArchived}
+                onCheckedChange={(checked) => onArchiveChange(Boolean(checked))}
+              />
+              <ArchiveIcon className="size-3.5" />
+              Include archived
+            </label>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/50 px-4 py-2.5">
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Checkbox
+                checked={selectionState === true}
+                indeterminate={selectionState === "indeterminate"}
+                onCheckedChange={(checked) => (checked ? onSelectAll() : onClearAll())}
+              />
+              {totalMatching} matching · {changedMatching} changed
+            </label>
+            <div className="flex items-center gap-1">
+              <Button size="xs" variant="ghost-muted" onClick={onSelectAll}>
+                Select all
+              </Button>
+              <Button size="xs" variant="ghost-muted" onClick={onClearAll}>
+                Clear all
+              </Button>
+            </div>
+          </div>
+
+          <div className="border-t border-border/50">
+            {isLoading ? (
+              <div className="px-4 py-8 text-center text-xs text-muted-foreground">
+                Reading provider chats…
+              </div>
+            ) : chats.length === 0 ? (
+              <div className="px-4 py-8 text-center text-xs text-muted-foreground">
+                No matching provider chats
+              </div>
+            ) : (
+              chats.map((chat) => (
+                <ChatRow
+                  key={chat.sessionId}
+                  chat={chat}
+                  selected={isHarnessChatSelected(selection, chat.sessionId)}
+                  onSelectedChange={(selected) => onSelectionChange(chat.sessionId, selected)}
+                />
+              ))
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/50 bg-muted/10 px-4 py-3">
+            <div>
+              {hasNextPage ? (
+                <Button size="sm" variant="outline" disabled={isFetching} onClick={onLoadMore}>
+                  {isFetching ? <LoaderCircleIcon className="animate-spin" /> : null}
+                  Load more
+                </Button>
+              ) : (
+                <span className="text-xs text-muted-foreground">All matching chats loaded</span>
+              )}
+            </div>
+            <Button
+              size="sm"
+              disabled={selectionEmpty || source.chatCount === 0 || isSyncing}
+              onClick={onSync}
+            >
+              {isSyncing ? <LoaderCircleIcon className="animate-spin" /> : <CloudDownloadIcon />}
+              {isSyncing ? "Syncing…" : "Sync selected"}
+            </Button>
+          </div>
+
+          {result ? (
+            <div
+              className={cn(
+                "border-t px-4 py-3 text-xs",
+                result.failedCount > 0
+                  ? "border-warning/25 bg-warning/8 text-warning-foreground"
+                  : "border-success/25 bg-success/8 text-success-foreground",
+              )}
+            >
+              <p className="font-medium">{syncResultSummary(result)}</p>
+              {result.failures.length > 0 ? (
+                <ul className="mt-2 space-y-1">
+                  {result.failures.map((failure) => (
+                    <li key={`${failure.sessionId}:${failure.code}`} className="flex gap-1.5">
+                      <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+                      <span>{failure.message}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+          {errorMessage ? (
+            <div className="border-t border-destructive/25 bg-destructive/8 px-4 py-3 text-xs text-destructive">
+              {errorMessage}
+            </div>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
+function MissingProjectResolver({
+  open,
+  unresolvedCount,
+  projects,
+  selectedProjectId,
+  isSyncing,
+  onOpenChange,
+  onProjectChange,
+  onConfirm,
+}: {
+  readonly open: boolean;
+  readonly unresolvedCount: number;
+  readonly projects: ReadonlyArray<ProjectOption>;
+  readonly selectedProjectId: ProjectId | null;
+  readonly isSyncing: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly onProjectChange: (projectId: ProjectId) => void;
+  readonly onConfirm: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogPopup aria-describedby="missing-project-resolver-description">
+        <DialogHeader>
+          <DialogTitle>Choose a project</DialogTitle>
+        </DialogHeader>
+        <DialogPanel>
+          <MissingProjectResolverContent
+            unresolvedCount={unresolvedCount}
+            projects={projects}
+            selectedProjectId={selectedProjectId}
+            onProjectChange={onProjectChange}
+          />
+        </DialogPanel>
+        <DialogFooter>
+          <Button variant="outline" disabled={isSyncing} onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button disabled={selectedProjectId === null || isSyncing} onClick={onConfirm}>
+            {isSyncing ? <LoaderCircleIcon className="animate-spin" /> : null}
+            Sync to project
+          </Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
+export function MissingProjectResolverContent({
+  unresolvedCount,
+  projects,
+  selectedProjectId,
+  onProjectChange,
+}: {
+  readonly unresolvedCount: number;
+  readonly projects: ReadonlyArray<ProjectOption>;
+  readonly selectedProjectId: ProjectId | null;
+  readonly onProjectChange: (projectId: ProjectId) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <p
+        id="missing-project-resolver-description"
+        className="text-sm leading-relaxed text-muted-foreground"
+      >
+        {unresolvedCount} selected {unresolvedCount === 1 ? "chat has" : "chats have"} no usable
+        working directory. Use one T3 Code project for all unresolved chats.
+      </p>
+      {projects.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Add a project in this environment before syncing these chats.
+        </p>
+      ) : (
+        <label className="grid gap-2 text-sm font-medium">
+          Target project
+          <select
+            aria-label="Target project for unresolved chats"
+            className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm font-normal outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            value={selectedProjectId ?? ""}
+            onChange={(event) => {
+              const projectId = projects.find(
+                (project) => project.id === event.currentTarget.value,
+              )?.id;
+              if (projectId) onProjectChange(projectId);
+            }}
+          >
+            <option value="" disabled>
+              Select a project
+            </option>
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.title} — {project.workspaceRoot}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+    </div>
+  );
+}
+
+function uniqueChats(pages: ReadonlyArray<{ readonly chats: ReadonlyArray<HarnessChatSummary> }>) {
+  const chats = new Map<HarnessChatSessionId, HarnessChatSummary>();
+  for (const page of pages) {
+    for (const chat of page.chats) chats.set(chat.sessionId, chat);
+  }
+  return [...chats.values()];
+}
+
+function applyStatusOverrides(
+  chats: ReadonlyArray<HarnessChatSummary>,
+  statusBySessionId: ReadonlyMap<HarnessChatSessionId, HarnessChatSyncStatus>,
+) {
+  return chats.map((chat) => {
+    const status = statusBySessionId.get(chat.sessionId);
+    if (!status) return chat;
+    return {
+      ...chat,
+      activity: status.activity,
+      hasChanges: status.hasChanges,
+      link: status.link,
+    };
+  });
+}
+
+function HarnessChatSyncSourceController({
+  environmentId,
+  source,
+  projects,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly source: HarnessChatSyncSource;
+  readonly projects: ReadonlyArray<ProjectOption>;
+}) {
+  const api = useMemo(() => ensureEnvironmentApi(environmentId), [environmentId]);
+  const queryClient = useQueryClient();
+  const [searchQuery, setSearchQuery] = useState("");
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const [includeArchived, setIncludeArchived] = useState(false);
+  const [selection, setSelection] = useState(createDefaultHarnessChatSelection);
+  const [selectedProviderInstanceId, setSelectedProviderInstanceId] =
+    useState<ProviderInstanceId | null>(
+      source.preferredInstanceId ?? source.instanceIds[0] ?? null,
+    );
+  const effectiveProviderInstanceId =
+    selectedProviderInstanceId !== null && source.instanceIds.includes(selectedProviderInstanceId)
+      ? selectedProviderInstanceId
+      : (source.preferredInstanceId ?? source.instanceIds[0] ?? null);
+  const [lastResult, setLastResult] = useState<HarnessChatSyncRunResult | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [statusBySessionId, setStatusBySessionId] = useState<
+    ReadonlyMap<HarnessChatSessionId, HarnessChatSyncStatus>
+  >(() => new Map());
+  const [resolverOpen, setResolverOpen] = useState(false);
+  const [resolverTargetProjectId, setResolverTargetProjectId] = useState<ProjectId | null>(null);
+
+  const listQuery = useInfiniteQuery({
+    queryKey: [
+      "harnessChatSync",
+      environmentId,
+      source.id,
+      "list",
+      deferredSearchQuery,
+      includeArchived,
+    ],
+    queryFn: ({ pageParam }) =>
+      api.harnessChatSync.list({
+        sourceId: source.id,
+        query: deferredSearchQuery,
+        includeArchived,
+        ...(pageParam ? { cursor: pageParam } : {}),
+        limit: CHAT_PAGE_SIZE,
+      }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    enabled: source.status.kind === "supported",
+  });
+  const chats = useMemo(() => uniqueChats(listQuery.data?.pages ?? []), [listQuery.data?.pages]);
+  const displayedChats = useMemo(
+    () => applyStatusOverrides(chats, statusBySessionId),
+    [chats, statusBySessionId],
+  );
+  const firstPage = listQuery.data?.pages[0];
+  const unresolvedSelectedChats = getSelectedUnresolvedHarnessChats(displayedChats, selection);
+  const unresolvedFailureCount =
+    lastResult?.failures.filter((failure) => failure.code === "target-unresolved").length ?? 0;
+
+  const runMutation = useMutation({
+    mutationFn: (unresolvedTargetProjectId?: ProjectId) =>
+      api.harnessChatSync.run({
+        sourceId: source.id,
+        selection: toHarnessChatSelection(selection, { includeArchived }),
+        ...(effectiveProviderInstanceId ? { providerInstanceId: effectiveProviderInstanceId } : {}),
+        targetResolutions: [],
+        ...(unresolvedTargetProjectId ? { unresolvedTargetProjectId } : {}),
+      }),
+    onMutate: () => {
+      setErrorMessage(null);
+      setLastResult(null);
+    },
+    onSuccess: (result) => {
+      setLastResult(result);
+      if (result.failures.some((failure) => failure.code === "target-unresolved")) {
+        setResolverOpen(true);
+      } else {
+        setResolverOpen(false);
+      }
+      void queryClient.invalidateQueries({ queryKey: ["harnessChatSync", environmentId] });
+    },
+    onError: (error) => {
+      setErrorMessage(error instanceof Error ? error.message : "Could not sync provider chats.");
+    },
+  });
+  const statusMutation = useMutation({
+    mutationFn: () =>
+      api.harnessChatSync.status({
+        sourceId: source.id,
+        sessionIds: displayedChats.map((chat) => chat.sessionId),
+      }),
+    onMutate: () => setErrorMessage(null),
+    onSuccess: (result) =>
+      setStatusBySessionId(
+        new Map(result.statuses.map((status) => [status.sessionId, status] as const)),
+      ),
+    onError: (error) =>
+      setErrorMessage(
+        error instanceof Error ? error.message : "Could not refresh provider chat status.",
+      ),
+    onSettled: () => void listQuery.refetch(),
+  });
+
+  const beginSync = () => {
+    if (unresolvedSelectedChats.length > 0) {
+      setResolverOpen(true);
+      return;
+    }
+    runMutation.mutate(undefined);
+  };
+  const confirmResolvedSync = () => {
+    if (!resolverTargetProjectId) return;
+    runMutation.mutate(resolverTargetProjectId);
+  };
+
+  return (
+    <>
+      <HarnessChatSyncSourceView
+        source={source}
+        chats={displayedChats}
+        selection={selection}
+        searchQuery={searchQuery}
+        includeArchived={includeArchived}
+        totalMatching={firstPage?.totalMatching ?? source.chatCount}
+        changedMatching={firstPage?.changedMatching ?? source.changedCount}
+        hasNextPage={listQuery.hasNextPage}
+        isLoading={listQuery.isLoading}
+        isFetching={
+          listQuery.isFetching || listQuery.isFetchingNextPage || statusMutation.isPending
+        }
+        isSyncing={runMutation.isPending}
+        result={lastResult}
+        errorMessage={
+          errorMessage ??
+          (listQuery.isError
+            ? listQuery.error instanceof Error
+              ? listQuery.error.message
+              : "Could not read provider chats."
+            : null)
+        }
+        selectedProviderInstanceId={effectiveProviderInstanceId}
+        onProviderInstanceChange={setSelectedProviderInstanceId}
+        onSearchChange={setSearchQuery}
+        onArchiveChange={setIncludeArchived}
+        onSelectionChange={(sessionId, selected) =>
+          setSelection((current) => setHarnessChatSelected(current, sessionId, selected))
+        }
+        onSelectAll={() => setSelection(selectAllHarnessChats())}
+        onClearAll={() => setSelection(clearHarnessChatSelection())}
+        onLoadMore={() => void listQuery.fetchNextPage()}
+        onRefresh={() => {
+          if (displayedChats.length === 0) {
+            void listQuery.refetch();
+            return;
+          }
+          statusMutation.mutate();
+        }}
+        onSync={beginSync}
+      />
+      <MissingProjectResolver
+        open={resolverOpen}
+        unresolvedCount={Math.max(unresolvedSelectedChats.length, unresolvedFailureCount, 1)}
+        projects={projects}
+        selectedProjectId={resolverTargetProjectId}
+        isSyncing={runMutation.isPending}
+        onOpenChange={setResolverOpen}
+        onProjectChange={setResolverTargetProjectId}
+        onConfirm={confirmResolvedSync}
+      />
+    </>
+  );
+}
+
+function HarnessChatSyncEnvironment({
+  environment,
+  projects,
+}: {
+  readonly environment: EnvironmentPresentation;
+  readonly projects: ReadonlyArray<ProjectOption>;
+}) {
+  const api = useMemo(
+    () => ensureEnvironmentApi(environment.environmentId),
+    [environment.environmentId],
+  );
+  const sourcesQuery = useQuery({
+    queryKey: ["harnessChatSync", environment.environmentId, "sources"],
+    queryFn: () => api.harnessChatSync.sources({}),
+  });
+  const sources = sourcesQuery.data?.sources ?? [];
+
+  return (
+    <HarnessChatSyncEnvironmentView
+      label={environment.label}
+      detail={environment.displayUrl ?? "Primary environment"}
+      isRefreshing={sourcesQuery.isFetching}
+      onRefresh={() => void sourcesQuery.refetch()}
+    >
+      {sourcesQuery.isLoading ? (
+        <div className="rounded-xl border border-border/50 px-4 py-8 text-center text-xs text-muted-foreground">
+          Discovering provider chat history…
+        </div>
+      ) : sourcesQuery.isError ? (
+        <div className="rounded-xl border border-destructive/25 bg-destructive/8 px-4 py-3 text-xs text-destructive">
+          {sourcesQuery.error instanceof Error
+            ? sourcesQuery.error.message
+            : "Could not discover provider chat history."}
+        </div>
+      ) : sources.length === 0 ? (
+        <div className="rounded-xl border border-border/50 px-4 py-8 text-center text-xs text-muted-foreground">
+          No harness chat sources are configured in this environment.
+        </div>
+      ) : (
+        sources.map((source) => (
+          <HarnessChatSyncSourceController
+            key={source.id}
+            environmentId={environment.environmentId}
+            source={source}
+            projects={projects}
+          />
+        ))
+      )}
+    </HarnessChatSyncEnvironmentView>
+  );
+}
+
+export function HarnessChatSyncEnvironmentView({
+  label,
+  detail,
+  isRefreshing,
+  onRefresh,
+  children,
+}: {
+  readonly label: string;
+  readonly detail: string;
+  readonly isRefreshing: boolean;
+  readonly onRefresh: () => void;
+  readonly children: ReactNode;
+}) {
+  return (
+    <div className="space-y-3 rounded-2xl border border-border/70 bg-muted/10 p-3 sm:p-4">
+      <div className="flex items-center justify-between gap-3 px-1">
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-semibold">{label}</h3>
+          <p className="truncate text-xs text-muted-foreground">{detail}</p>
+        </div>
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          aria-label={`Refresh chat sources for ${label}`}
+          disabled={isRefreshing}
+          onClick={onRefresh}
+        >
+          <RefreshCwIcon className={cn("size-3.5", isRefreshing && "animate-spin")} />
+        </Button>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+export function supportsHarnessChatSync(config: ServerConfig | undefined): boolean {
+  return (config?.environment.capabilities.harnessChatSyncVersion ?? 0) >= 1;
+}
+
+export function HarnessChatSyncSettings() {
+  const { environments } = useEnvironments();
+  const serverConfigs = useServerConfigs();
+  const projects = useProjects();
+  const capableEnvironments = environments.filter(
+    (environment) =>
+      environment.connection.phase === "connected" &&
+      supportsHarnessChatSync(serverConfigs.get(environment.environmentId)),
+  );
+  if (capableEnvironments.length === 0) return null;
+
+  return (
+    <SettingsSection
+      {...searchableSetting("harness-chat-sync")}
+      icon={<CloudDownloadIcon className="size-4" />}
+    >
+      <SettingsRow
+        title="Sync provider chat history"
+        description="Review Codex, Claude Code, OpenCode, and other harness sessions before adding or updating T3 Code chats. Nothing syncs until you choose Sync selected."
+      />
+      <div className="space-y-4">
+        {capableEnvironments.map((environment) => (
+          <HarnessChatSyncEnvironment
+            key={environment.environmentId}
+            environment={environment}
+            projects={projects
+              .filter((project) => project.environmentId === environment.environmentId)
+              .map(({ id, title, workspaceRoot }) => ({ id, title, workspaceRoot }))}
+          />
+        ))}
+      </div>
+    </SettingsSection>
+  );
+}

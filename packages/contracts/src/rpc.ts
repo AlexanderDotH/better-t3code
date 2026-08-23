@@ -303,6 +303,17 @@ import {
   T3ChatImportRunInput,
   T3ChatImportRunResult,
 } from "./t3ChatImport.ts";
+import {
+  HarnessChatSyncError,
+  HarnessChatSyncListInput,
+  HarnessChatSyncListResult,
+  HarnessChatSyncRunInput,
+  HarnessChatSyncRunResult,
+  HarnessChatSyncSourcesInput,
+  HarnessChatSyncSourcesResult,
+  HarnessChatSyncStatusInput,
+  HarnessChatSyncStatusResult,
+} from "./harnessChatSync.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -414,6 +425,12 @@ export const WS_METHODS = {
   // Local T3 instance chat import
   chatImportDiscover: "chatImport.discover",
   chatImportRun: "chatImport.run",
+
+  // Provider harness chat history sync
+  harnessChatSyncSources: "harnessChatSync.sources",
+  harnessChatSyncList: "harnessChatSync.list",
+  harnessChatSyncRun: "harnessChatSync.run",
+  harnessChatSyncStatus: "harnessChatSync.status",
 
   // Skills
   skillsList: "skills.list",
@@ -709,6 +726,30 @@ export const WsChatImportRunRpc = Rpc.make(WS_METHODS.chatImportRun, {
   payload: T3ChatImportRunInput,
   success: T3ChatImportRunResult,
   error: Schema.Union([T3ChatImportError, EnvironmentAuthorizationError]),
+});
+
+export const WsHarnessChatSyncSourcesRpc = Rpc.make(WS_METHODS.harnessChatSyncSources, {
+  payload: HarnessChatSyncSourcesInput,
+  success: HarnessChatSyncSourcesResult,
+  error: Schema.Union([HarnessChatSyncError, EnvironmentAuthorizationError]),
+});
+
+export const WsHarnessChatSyncListRpc = Rpc.make(WS_METHODS.harnessChatSyncList, {
+  payload: HarnessChatSyncListInput,
+  success: HarnessChatSyncListResult,
+  error: Schema.Union([HarnessChatSyncError, EnvironmentAuthorizationError]),
+});
+
+export const WsHarnessChatSyncRunRpc = Rpc.make(WS_METHODS.harnessChatSyncRun, {
+  payload: HarnessChatSyncRunInput,
+  success: HarnessChatSyncRunResult,
+  error: Schema.Union([HarnessChatSyncError, EnvironmentAuthorizationError]),
+});
+
+export const WsHarnessChatSyncStatusRpc = Rpc.make(WS_METHODS.harnessChatSyncStatus, {
+  payload: HarnessChatSyncStatusInput,
+  success: HarnessChatSyncStatusResult,
+  error: Schema.Union([HarnessChatSyncError, EnvironmentAuthorizationError]),
 });
 
 export const WsSkillsListRpc = Rpc.make(WS_METHODS.skillsList, {
@@ -1534,6 +1575,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsCloudInstallRelayClientRpc,
   WsChatImportDiscoverRpc,
   WsChatImportRunRpc,
+  WsHarnessChatSyncSourcesRpc,
+  WsHarnessChatSyncListRpc,
+  WsHarnessChatSyncRunRpc,
+  WsHarnessChatSyncStatusRpc,
   WsSkillsListRpc,
   WsSkillsDiscoverImportSourcesRpc,
   WsSkillsImportSourcesRpc,

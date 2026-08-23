@@ -1063,7 +1063,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
 
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  const userImages = row.message.attachments ?? [];
+  const userAttachments = row.message.attachments ?? [];
   const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
   const terminalContexts = displayedUserMessage.contexts;
   const previewAnnotations: ParsedPreviewAnnotation[] = [];
@@ -1079,6 +1079,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     ...displayedUserMessage.elementContexts,
     ...elementContextState.contexts,
   ];
+  const userImages = userAttachments.filter((attachment) => attachment.type === "image");
+  const userAudio = userAttachments.filter((attachment) => attachment.type === "audio");
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
@@ -1119,6 +1121,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ))}
           </div>
         )}
+        <MessageAudioAttachments attachments={userAudio} className="mb-2" />
         {previewAnnotations.map((annotation, index) => (
           <UserMessagePreviewAnnotationCard
             key={annotation.id}
@@ -1220,6 +1223,9 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
   const isStreaming = Boolean(row.message.streaming);
+  const audioAttachments = (row.message.attachments ?? []).filter(
+    (attachment) => attachment.type === "audio",
+  );
 
   return (
     <>
@@ -1237,6 +1243,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
           skills={ctx.skills}
         />
+        <MessageAudioAttachments attachments={audioAttachments} className="mt-2" />
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
           routeThreadKey={ctx.routeThreadKey}
@@ -2041,6 +2048,37 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
     </div>
   );
 });
+
+function MessageAudioAttachments(props: {
+  readonly attachments: ReadonlyArray<
+    Extract<NonNullable<TimelineMessage["attachments"]>[number], { readonly type: "audio" }>
+  >;
+  readonly className?: string;
+}) {
+  if (props.attachments.length === 0) return null;
+  return (
+    <div className={cn("flex min-w-64 flex-col gap-2", props.className)}>
+      {props.attachments.map((attachment) => (
+        <div
+          key={attachment.id}
+          className="rounded-lg border border-border/80 bg-background/70 px-3 py-2"
+        >
+          <div className="mb-1 truncate text-secondary-label text-xs">{attachment.name}</div>
+          {attachment.previewUrl ? (
+            <audio
+              controls
+              preload="metadata"
+              src={attachment.previewUrl}
+              className="h-9 w-full max-w-[420px]"
+            />
+          ) : (
+            <div className="text-secondary-label text-xs">Audio unavailable</div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;

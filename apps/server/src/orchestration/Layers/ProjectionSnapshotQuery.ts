@@ -19,6 +19,7 @@ import {
   ProjectScript,
   TurnId,
   type OrchestrationCheckpointSummary,
+  type OrchestrationHarnessSyncState,
   type OrchestrationMessage,
   type OrchestrationProjectShell,
   type OrchestrationProposedPlan,
@@ -75,6 +76,11 @@ import {
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionProjectAgentCoordinationRepository } from "../../persistence/Services/ProjectionProjectAgentCoordination.ts";
 import { ProjectionProjectAgentCoordinationRepositoryLive } from "../../persistence/Layers/ProjectionProjectAgentCoordination.ts";
+import { ProjectionHarnessChatSyncRepositoryLive } from "../../persistence/Layers/ProjectionHarnessChatSync.ts";
+import {
+  ProjectionHarnessChatSyncLink,
+  ProjectionHarnessChatSyncRepository,
+} from "../../persistence/Services/ProjectionHarnessChatSync.ts";
 import {
   decodeThreadDetailPageCursor,
   encodeThreadDetailPageCursor,
@@ -238,6 +244,7 @@ const ProjectionFullThreadDiffContextRowSchema = Schema.Struct({
 
 const REQUIRED_SNAPSHOT_PROJECTORS = [
   ORCHESTRATION_PROJECTOR_NAMES.projects,
+  ORCHESTRATION_PROJECTOR_NAMES.harnessChatSync,
   ORCHESTRATION_PROJECTOR_NAMES.threads,
   ORCHESTRATION_PROJECTOR_NAMES.threadMessages,
   ORCHESTRATION_PROJECTOR_NAMES.threadProposedPlans,
@@ -355,6 +362,22 @@ function mapSessionRow(
     lastError: row.lastError,
     updatedAt: row.updatedAt,
   };
+}
+
+function mapHarnessSyncLink(row: ProjectionHarnessChatSyncLink): OrchestrationHarnessSyncState {
+  return {
+    providerInstanceId: row.providerInstanceId,
+    providerLabel: row.providerLabel,
+    activity: row.activity,
+    sourceUpdatedAt: row.sourceUpdatedAt,
+    lastSyncedAt: row.lastSyncedAt,
+  };
+}
+
+function optionalHarnessSyncState(state: OrchestrationHarnessSyncState | undefined): {
+  readonly harnessSync?: OrchestrationHarnessSyncState;
+} {
+  return state === undefined ? {} : { harnessSync: state };
 }
 
 function mapProjectShellRow(
@@ -500,6 +523,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     yield* ProjectionThreadSubagentActivityRepository;
   const projectionProjectAgentCoordinationRepository =
     yield* ProjectionProjectAgentCoordinationRepository;
+  const projectionHarnessChatSyncRepository = yield* ProjectionHarnessChatSyncRepository;
   const repositoryIdentityResolutionConcurrency = 4;
   const resolveRepositoryIdentitiesForProjects = Effect.fn(
     "ProjectionSnapshotQuery.resolveRepositoryIdentitiesForProjects",
@@ -818,6 +842,70 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         FROM projection_thread_sessions
         ORDER BY thread_id ASC
       `,
+  });
+
+  const listHarnessSyncLinkRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionHarnessChatSyncLink,
+    execute: () => sql`
+      SELECT
+        links.thread_id AS "threadId",
+        links.project_id AS "projectId",
+        links.source_id AS "sourceId",
+        links.continuation_key AS "continuationKey",
+        links.native_session_id AS "nativeSessionId",
+        links.provider_instance_id AS "providerInstanceId",
+        links.provider_label AS "providerLabel",
+        links.activity,
+        links.source_updated_at AS "sourceUpdatedAt",
+        links.last_synced_at AS "lastSyncedAt"
+      FROM projection_harness_chat_sync_links AS links
+      ORDER BY links.thread_id ASC
+    `,
+  });
+
+  const listActiveHarnessSyncLinkRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionHarnessChatSyncLink,
+    execute: () => sql`
+      SELECT
+        links.thread_id AS "threadId",
+        links.project_id AS "projectId",
+        links.source_id AS "sourceId",
+        links.continuation_key AS "continuationKey",
+        links.native_session_id AS "nativeSessionId",
+        links.provider_instance_id AS "providerInstanceId",
+        links.provider_label AS "providerLabel",
+        links.activity,
+        links.source_updated_at AS "sourceUpdatedAt",
+        links.last_synced_at AS "lastSyncedAt"
+      FROM projection_harness_chat_sync_links AS links
+      INNER JOIN projection_threads AS threads ON threads.thread_id = links.thread_id
+      WHERE threads.deleted_at IS NULL AND threads.archived_at IS NULL
+      ORDER BY links.thread_id ASC
+    `,
+  });
+
+  const listArchivedHarnessSyncLinkRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionHarnessChatSyncLink,
+    execute: () => sql`
+      SELECT
+        links.thread_id AS "threadId",
+        links.project_id AS "projectId",
+        links.source_id AS "sourceId",
+        links.continuation_key AS "continuationKey",
+        links.native_session_id AS "nativeSessionId",
+        links.provider_instance_id AS "providerInstanceId",
+        links.provider_label AS "providerLabel",
+        links.activity,
+        links.source_updated_at AS "sourceUpdatedAt",
+        links.last_synced_at AS "lastSyncedAt"
+      FROM projection_harness_chat_sync_links AS links
+      INNER JOIN projection_threads AS threads ON threads.thread_id = links.thread_id
+      WHERE threads.deleted_at IS NULL AND threads.archived_at IS NOT NULL
+      ORDER BY links.thread_id ASC
+    `,
   });
 
   const listActiveThreadSessionRows = SqlSchema.findAll({
@@ -1795,6 +1883,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listHarnessSyncLinkRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSnapshot:listHarnessSyncLinks:query",
+                "ProjectionSnapshotQuery.getSnapshot:listHarnessSyncLinks:decodeRows",
+              ),
+            ),
+          ),
           listCheckpointRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -1832,6 +1928,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             subagentRows,
             activityRows,
             sessionRows,
+            harnessSyncLinkRows,
             checkpointRows,
             latestTurnRows,
             stateRows,
@@ -1844,6 +1941,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               const activitiesByThread = new Map<string, Array<OrchestrationThreadActivity>>();
               const checkpointsByThread = new Map<string, Array<OrchestrationCheckpointSummary>>();
               const sessionsByThread = new Map<string, OrchestrationSession>();
+              const harnessSyncByThread = new Map<string, OrchestrationHarnessSyncState>();
               const latestTurnByThread = new Map<string, OrchestrationLatestTurn>();
               let updatedAt: string | null = null;
 
@@ -1986,6 +2084,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 });
               }
 
+              for (const row of harnessSyncLinkRows) {
+                updatedAt = maxIso(updatedAt, row.lastSyncedAt);
+                if (row.sourceUpdatedAt !== null) {
+                  updatedAt = maxIso(updatedAt, row.sourceUpdatedAt);
+                }
+                harnessSyncByThread.set(row.threadId, mapHarnessSyncLink(row));
+              }
+
               const repositoryIdentities = yield* resolveRepositoryIdentitiesForProjects(
                 projectRows,
                 { includeDeleted: true },
@@ -2040,6 +2146,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 subagents: subagentsByThread.get(row.threadId) ?? [],
                 checkpoints: checkpointsByThread.get(row.threadId) ?? [],
                 session: sessionsByThread.get(row.threadId) ?? null,
+                ...optionalHarnessSyncState(harnessSyncByThread.get(row.threadId)),
               }));
 
               const snapshot = {
@@ -2108,6 +2215,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listHarnessSyncLinkRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getCommandReadModel:listHarnessSyncLinks:query",
+                "ProjectionSnapshotQuery.getCommandReadModel:listHarnessSyncLinks:decodeRows",
+              ),
+            ),
+          ),
           listLatestTurnRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -2135,6 +2250,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             proposedPlanRows,
             subagentRows,
             sessionRows,
+            harnessSyncLinkRows,
             latestTurnRows,
             stateRows,
             coordinationClaimRows,
@@ -2199,6 +2315,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 }
                 updatedAt = maxIso(updatedAt, row.updatedAt);
               }
+              for (let index = 0; index < harnessSyncLinkRows.length; index += 1) {
+                const row = harnessSyncLinkRows[index];
+                if (!row) {
+                  continue;
+                }
+                updatedAt = maxIso(updatedAt, row.lastSyncedAt);
+                if (row.sourceUpdatedAt !== null) {
+                  updatedAt = maxIso(updatedAt, row.sourceUpdatedAt);
+                }
+              }
               for (let index = 0; index < latestTurnRows.length; index += 1) {
                 const row = latestTurnRows[index];
                 if (!row) {
@@ -2231,6 +2357,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               const proposedPlansByThread = new Map<string, Array<OrchestrationProposedPlan>>();
               const subagentsByThread = new Map<string, Array<OrchestrationSubagentSummary>>();
               const sessionByThread = new Map<string, OrchestrationSession>();
+              const harnessSyncByThread = new Map<string, OrchestrationHarnessSyncState>();
 
               for (let index = 0; index < sessionRows.length; index += 1) {
                 const row = sessionRows[index];
@@ -2238,6 +2365,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   continue;
                 }
                 sessionByThread.set(row.threadId, mapSessionRow(row));
+              }
+              for (let index = 0; index < harnessSyncLinkRows.length; index += 1) {
+                const row = harnessSyncLinkRows[index];
+                if (!row) {
+                  continue;
+                }
+                harnessSyncByThread.set(row.threadId, mapHarnessSyncLink(row));
               }
 
               for (let index = 0; index < proposedPlanRows.length; index += 1) {
@@ -2292,6 +2426,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   subagents: subagentsByThread.get(row.threadId) ?? [],
                   checkpoints: [],
                   session: sessionByThread.get(row.threadId) ?? null,
+                  ...optionalHarnessSyncState(harnessSyncByThread.get(row.threadId)),
                 });
               }
 
@@ -2360,6 +2495,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       .pipe(
         Effect.flatMap(([projectRows, threadRows, sessionRows, latestTurnRows, stateRows]) =>
           Effect.gen(function* () {
+            const harnessSyncLinkRows = yield* listActiveHarnessSyncLinkRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getShellSnapshot:listHarnessSyncLinks:query",
+                  "ProjectionSnapshotQuery.getShellSnapshot:listHarnessSyncLinks:decodeRows",
+                ),
+              ),
+            );
             let updatedAt: string | null = null;
             for (const row of projectRows) {
               updatedAt = maxIso(updatedAt, row.updatedAt);
@@ -2369,6 +2512,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             }
             for (const row of sessionRows) {
               updatedAt = maxIso(updatedAt, row.updatedAt);
+            }
+            for (const row of harnessSyncLinkRows) {
+              updatedAt = maxIso(updatedAt, row.lastSyncedAt);
+              if (row.sourceUpdatedAt !== null) {
+                updatedAt = maxIso(updatedAt, row.sourceUpdatedAt);
+              }
             }
             for (const row of latestTurnRows) {
               updatedAt = maxIso(updatedAt, row.requestedAt);
@@ -2389,6 +2538,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             );
             const sessionByThread = new Map(
               sessionRows.map((row) => [row.threadId, mapSessionRow(row)] as const),
+            );
+            const harnessSyncByThread = new Map(
+              harnessSyncLinkRows.map((row) => [row.threadId, mapHarnessSyncLink(row)] as const),
             );
 
             const snapshot = {
@@ -2423,6 +2575,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                       pinOrderKey: row.pinOrderKey ?? null,
                       titleRegeneration: mapTitleRegeneration(row),
                       session: sessionByThread.get(row.threadId) ?? null,
+                      ...optionalHarnessSyncState(harnessSyncByThread.get(row.threadId)),
                       latestUserMessageAt: row.latestUserMessageAt,
                       hasPendingApprovals: row.pendingApprovalCount > 0,
                       hasPendingUserInput: row.pendingUserInputCount > 0,
@@ -2503,6 +2656,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       .pipe(
         Effect.flatMap(([projectRows, threadRows, sessionRows, latestTurnRows, stateRows]) =>
           Effect.gen(function* () {
+            const harnessSyncLinkRows = yield* listArchivedHarnessSyncLinkRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getArchivedShellSnapshot:listHarnessSyncLinks:query",
+                  "ProjectionSnapshotQuery.getArchivedShellSnapshot:listHarnessSyncLinks:decodeRows",
+                ),
+              ),
+            );
             let updatedAt: string | null = null;
             for (const row of projectRows) {
               updatedAt = maxIso(updatedAt, row.updatedAt);
@@ -2512,6 +2673,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             }
             for (const row of sessionRows) {
               updatedAt = maxIso(updatedAt, row.updatedAt);
+            }
+            for (const row of harnessSyncLinkRows) {
+              updatedAt = maxIso(updatedAt, row.lastSyncedAt);
+              if (row.sourceUpdatedAt !== null) {
+                updatedAt = maxIso(updatedAt, row.sourceUpdatedAt);
+              }
             }
             for (const row of latestTurnRows) {
               updatedAt = maxIso(updatedAt, row.requestedAt);
@@ -2535,6 +2702,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             );
             const sessionByThread = new Map(
               sessionRows.map((row) => [row.threadId, mapSessionRow(row)] as const),
+            );
+            const harnessSyncByThread = new Map(
+              harnessSyncLinkRows.map((row) => [row.threadId, mapHarnessSyncLink(row)] as const),
             );
 
             const snapshot = {
@@ -2568,6 +2738,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   pinOrderKey: row.pinOrderKey ?? null,
                   titleRegeneration: mapTitleRegeneration(row),
                   session: sessionByThread.get(row.threadId) ?? null,
+                  ...optionalHarnessSyncState(harnessSyncByThread.get(row.threadId)),
                   latestUserMessageAt: row.latestUserMessageAt,
                   hasPendingApprovals: row.pendingApprovalCount > 0,
                   hasPendingUserInput: row.pendingUserInputCount > 0,
@@ -2811,7 +2982,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
   const getThreadShellById: ProjectionSnapshotQueryShape["getThreadShellById"] = (threadId) =>
     Effect.gen(function* () {
-      const [threadRow, latestTurnRow, sessionRow] = yield* Effect.all([
+      const [threadRow, latestTurnRow, sessionRow, harnessSyncLink] = yield* Effect.all([
         getActiveThreadRowById({ threadId }).pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
@@ -2836,6 +3007,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             ),
           ),
         ),
+        projectionHarnessChatSyncRepository.getLinkByThreadId({ threadId }),
       ]);
 
       if (Option.isNone(threadRow)) {
@@ -2863,6 +3035,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         pinOrderKey: threadRow.value.pinOrderKey ?? null,
         titleRegeneration: mapTitleRegeneration(threadRow.value),
         session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
+        ...(Option.isSome(harnessSyncLink)
+          ? { harnessSync: mapHarnessSyncLink(harnessSyncLink.value) }
+          : {}),
         latestUserMessageAt: threadRow.value.latestUserMessageAt,
         hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
         hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
@@ -2896,6 +3071,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         checkpointRows,
         latestTurnRow,
         sessionRow,
+        harnessSyncLink,
       ] = yield* Effect.all([
         getRetainedThreadRowById({ threadId }).pipe(
           Effect.mapError(
@@ -2968,6 +3144,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             ),
           ),
         ),
+        projectionHarnessChatSyncRepository.getLinkByThreadId({ threadId }),
       ]);
 
       if (Option.isNone(threadRow)) {
@@ -3051,6 +3228,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           completedAt: row.completedAt,
         })),
         session,
+        ...(Option.isSome(harnessSyncLink)
+          ? { harnessSync: mapHarnessSyncLink(harnessSyncLink.value) }
+          : {}),
       };
 
       return Option.some(
@@ -3437,4 +3617,5 @@ export const OrchestrationProjectionSnapshotQueryLive = Layer.effect(
   Layer.provideMerge(ProjectionThreadSubagentProposedPlanRepositoryLive),
   Layer.provideMerge(ProjectionThreadSubagentActivityRepositoryLive),
   Layer.provideMerge(ProjectionProjectAgentCoordinationRepositoryLive),
+  Layer.provideMerge(ProjectionHarnessChatSyncRepositoryLive),
 );

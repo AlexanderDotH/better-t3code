@@ -315,7 +315,24 @@ export function applyThreadDetailEvent(
       };
     }
 
+    case "thread.harness-sync-linked":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          harnessSync: {
+            providerInstanceId: event.payload.providerInstanceId,
+            providerLabel: event.payload.providerLabel,
+            activity: event.payload.activity,
+            sourceUpdatedAt: event.payload.sourceUpdatedAt,
+            lastSyncedAt: event.payload.lastSyncedAt,
+          },
+          updatedAt: event.occurredAt,
+        },
+      };
+
     // ── Messages ────────────────────────────────────────────────────
+    case "thread.harness-sync-message-imported":
     case "thread.message-sent": {
       if (event.payload.subagentId !== undefined) {
         return { kind: "unchanged" };

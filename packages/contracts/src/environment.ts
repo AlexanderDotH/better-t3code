@@ -98,6 +98,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Versioned project metadata and agent-coordination administration surface.
       Missing on older servers, so clients keep project settings read-only. */
   projectSettingsVersion: Schema.optionalKey(PositiveInt),
+  /** Provider-native historical chat discovery, import, and resume linkage.
+      Missing on older servers, so clients hide harness sync controls. */
+  harnessChatSyncVersion: Schema.optionalKey(PositiveInt),
   midChatProviderSwitching: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Agent-activity publishes (push notifications and Live Activities)
       currently leave this environment: the publish opt-in is enabled and the

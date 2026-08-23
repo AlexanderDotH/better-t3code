@@ -78,6 +78,52 @@ Its `workspace_context`, edit, and bounded command tools invoke T3 services dire
 giving the model an MCP transport. User MCP and project-agent coordination are therefore reported
 as unsupported by this adapter rather than silently pretending to be connected.
 
+## Harness history synchronization
+
+Historical discovery is an optional provider-instance capability separate from the live
+`ProviderAdapter`. [`ProviderHistorySync.ts`][history-sync] defines `ProviderHistorySyncFacet`,
+`ProviderHistorySyncAdapter`, `ProviderHistorySyncSource`, `ProviderHistorySyncCapabilities`, and
+`ProviderHistorySyncError`. Each `ProviderInstance` provides a `historySync` facet that reports
+`supported`, `unsupported` with a reason, or `already-local`. Supported adapters implement `list`,
+`read`, and `resumeCursor`, plus optional `checkActivity`. The generic sync service enumerates these
+capabilities and never branches on a driver slug. New harness drivers therefore participate by
+implementing the SPI rather than changing orchestration or client code.
+
+| Driver        | History source                                   | Continuation behavior                         |
+| ------------- | ------------------------------------------------ | --------------------------------------------- |
+| Codex         | App-server `thread/list` and `thread/read`       | Resumes the original Codex thread             |
+| Claude Code   | SDK history in the instance's configured home    | Resumes the original SDK session/cursor       |
+| OpenCode      | SDK `session.list` and `session.messages`        | Resumes the original OpenCode session         |
+| Cursor / Grok | ACP session listing and loading, when negotiated | Resumes only when the ACP agent supports both |
+| Gemini        | T3-owned history                                 | Reported as already local                     |
+
+Codex excludes ephemeral and child threads. Claude Code has no archive or activity API. OpenCode
+excludes sessions with a parent, preserves archive metadata, and maps `busy`/`retry` to `active`.
+The shared ACP implementation requires both the advertised session-list capability and top-level
+session loading; without either it returns a typed unsupported reason. ACP currently has no session
+activity API.
+
+Sources sharing a `continuationKey` are merged so two configured instances that see the same
+provider home do not produce duplicate rows. Existing links retain their provider instance. A new
+link uses the requested compatible instance or the source's preferred active instance.
+
+The adapter maps only user-visible user/assistant text, plans, and supported image/audio
+attachments into the canonical orchestration model. System and developer prompts, hidden reasoning,
+tool output, child-agent sessions, and transient execution sessions are not imported. Provider-native
+IDs remain server-side metadata and are used to make repeated syncs idempotent.
+
+Synchronization writes projects, threads, and messages through orchestration commands. Link and
+native-message projections make it additive: new source messages may be appended, but source edits,
+rollbacks, or deletion never remove or rewrite durable T3 history. The provider session directory
+stores the native resume cursor as a stopped binding, so importing history does not start a provider
+process or a turn.
+
+An adapter may report a source session as `active`, `idle`, or `unknown`. `active` links remain
+readable but cannot start a T3 turn until a later explicit status request reports `idle`; `unknown`
+is not treated as active. Discovery and status are request-driven—there is no background poller.
+All reads happen on the environment that owns the provider configuration and history, including
+when the request originates from a remote web or mobile client.
+
 ## T3-managed general subagents
 
 General delegation is separate from both provider-native agents and Fetch. An interactive provider
@@ -215,6 +261,7 @@ when a request opens (approval) or user input is requested, via
 [instances]: ../../apps/server/src/provider/Services/ProviderInstanceRegistry.ts
 [registry]: ../../apps/server/src/provider/Services/ProviderAdapterRegistry.ts
 [service]: ../../apps/server/src/provider/Layers/ProviderService.ts
+[history-sync]: ../../apps/server/src/provider/Services/ProviderHistorySync.ts
 [contracts]: ../../packages/contracts/src/orchestration.ts
 [worker]: ../../packages/shared/src/DrainableWorker.ts
 [ingest]: ../../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts

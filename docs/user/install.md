@@ -29,6 +29,45 @@ Windows:
 winget install T3Tools.T3Code
 ```
 
+The supported Windows desktop target is Windows 11 x64. The desktop app runs its local server and
+coding agents directly on Windows; WSL is optional. There is no native Windows ARM64 installer in
+this release line.
+
+Provider CLIs must be available to PowerShell and to desktop apps started after login. Check them
+from a new PowerShell window with `Get-Command codex`, `Get-Command claude`,
+`Get-Command cursor-agent`, `Get-Command grok`, or `Get-Command opencode`. If an installer changed
+`PATH`, close and reopen T3 Code before testing the provider again. Gemini uses its API key and does
+not require a CLI.
+
+Use normal `C:\...` project folders for the native Windows backend. If you enable the optional WSL
+backend, use a current x64/glibc WSL 2 distribution with Node.js installed. Projects inside that
+distribution appear through `\\wsl.localhost\<distro>\...`; a missing or unhealthy WSL setup does
+not prevent the native Windows backend from starting.
+
+Official Windows installers and installed executables are Authenticode-signed. Windows may still
+show a first-download reputation prompt, but Properties → Digital Signatures must show the
+publisher named on the release. Do not continue if the signature is missing or invalid.
+
+### Windows updates and troubleshooting
+
+Desktop updates stay on the selected Latest or Nightly channel. An update downloads in the
+background, then fully restarts the desktop app when you choose to install it; let active agent and
+terminal work finish first. Projects, conversations, and settings remain in the same T3 data
+directory across the update.
+
+If Windows startup or an update fails:
+
+- Check `%USERPROFILE%\.t3\userdata\logs\desktop.trace.ndjson` and `server-child.log` for the
+  native desktop and local-server startup records.
+- Confirm the installed executable still has a valid Digital Signatures entry. Reinstall from the
+  official release if it does not.
+- Test provider discovery again from a new PowerShell window, then reopen T3 Code so it inherits the
+  updated environment.
+- Disable the optional WSL backend while diagnosing its distribution, Linux Node.js, or UNC-path
+  access. A WSL failure should not block native Windows projects.
+- Keep loopback access allowed for T3 Code. Remote and T3 Connect access may additionally need the
+  Windows Firewall prompt accepted for the selected network profile.
+
 macOS:
 
 ```bash
@@ -98,4 +137,4 @@ For multi-account setups, see [Codex](./providers-codex.md) and [Claude](./provi
 - [Permission modes](./permission-modes.md): how much T3 Code asks before acting
 - [Remote access](./remote-access.md): connect from a phone, tablet, or another desktop
 - [Keeping T3 Code in sync](./updating.md): client and server version skew
-- [Running in the background](./background-service.md): Linux background service
+- [Running in the background](./background-service.md): Linux, macOS, and Windows background service

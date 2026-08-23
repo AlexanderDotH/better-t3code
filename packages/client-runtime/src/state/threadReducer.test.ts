@@ -626,6 +626,82 @@ describe("applyThreadDetailEvent", () => {
     });
   });
 
+  describe("thread.harness-sync-message-imported", () => {
+    it("appends an imported native message through the live thread stream", () => {
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 9,
+        occurredAt: "2026-04-01T07:30:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.harness-sync-message-imported",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("imported-message-1"),
+          role: "assistant",
+          text: "Imported from the native harness.",
+          attachments: [],
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-04-01T07:29:00.000Z",
+          updatedAt: "2026-04-01T07:29:00.000Z",
+          nativeMessageId: "native-message-1",
+          linkedAt: "2026-04-01T07:30:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.messages).toContainEqual(
+          expect.objectContaining({
+            id: MessageId.make("imported-message-1"),
+            text: "Imported from the native harness.",
+          }),
+        );
+      }
+    });
+  });
+
+  describe("thread.harness-sync-linked", () => {
+    it("updates the compact harness sync state used by composer guards", () => {
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 10,
+        occurredAt: "2026-04-01T07:31:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.harness-sync-linked",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          projectId: ProjectId.make("project-1"),
+          sourceId: "codex:home:/tmp/codex" as never,
+          continuationKey: "codex:home:/tmp/codex" as never,
+          nativeSessionId: "native-session-1" as never,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerLabel: "Codex",
+          activity: "active",
+          sourceUpdatedAt: "2026-04-01T07:30:00.000Z",
+          lastSyncedAt: "2026-04-01T07:31:00.000Z",
+        },
+      });
+
+      expect(result).toEqual({
+        kind: "updated",
+        thread: {
+          ...baseThread,
+          harnessSync: {
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            providerLabel: "Codex",
+            activity: "active",
+            sourceUpdatedAt: "2026-04-01T07:30:00.000Z",
+            lastSyncedAt: "2026-04-01T07:31:00.000Z",
+          },
+          updatedAt: "2026-04-01T07:31:00.000Z",
+        },
+      });
+    });
+  });
+
   describe("thread.session-set", () => {
     it("settles a running latestTurn when the session leaves the running status", () => {
       const threadWithRunningTurn: OrchestrationThread = {

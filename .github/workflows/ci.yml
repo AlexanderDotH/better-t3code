@@ -183,6 +183,106 @@ jobs:
       - name: Test resource monitor
         run: cargo test --locked --manifest-path native/resource-monitor/Cargo.toml
 
+  windows_x64:
+    name: Windows 2025 x64 Parity
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+ and Node 24
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Confirm native Windows x64 runtime
+        shell: pwsh
+        run: |
+          if ($env:RUNNER_OS -ne "Windows" -or (node -p "process.arch") -ne "x64") {
+            throw "Windows parity requires a native Windows x64 runner."
+          }
+          $major = [int](node -p "process.versions.node.split('.')[0]")
+          if ($major -ne 24) {
+            throw "Windows parity requires Node 24, received $(node --version)."
+          }
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Exercise real command shims, PowerShell, ConPTY, Git, and cleanup
+        run: node scripts/windows-native-runtime-smoke.mjs
+
+      - name: Test native Windows resource monitor
+        run: cargo test --locked --manifest-path native/resource-monitor/Cargo.toml
+
+      - name: Test Windows platform contracts
+        shell: pwsh
+        run: |
+          vp test run `
+            scripts/windows-smoke-logic.test.mjs `
+            packages/shared/src/shell.test.ts `
+            packages/shared/src/path.test.ts `
+            apps/server/src/processRunner.test.ts `
+            apps/server/src/process/OwnedChildProcess.test.ts `
+            apps/server/src/cloud/bootService.test.ts `
+            apps/server/src/cloud/serviceLauncherClient.test.ts `
+            apps/server/src/serviceLauncher.test.ts `
+            apps/server/src/resourceTelemetry/NativeTelemetryClient.test.ts `
+            apps/server/src/resourceTelemetry/ResourceMonitorBinary.test.ts `
+            apps/server/src/resourceProtection/SubagentResourceGovernor.test.ts `
+            apps/server/src/terminal/NodePtyAdapter.test.ts `
+            apps/server/src/terminal/Manager.test.ts `
+            apps/server/src/provider/CodexProcessArgs.test.ts `
+            apps/server/src/provider/Drivers/ClaudeExecutable.test.ts `
+            apps/server/src/provider/Layers/ProviderRegistry.test.ts `
+            apps/server/src/provider/Layers/ProviderAdapterRegistry.test.ts `
+            apps/server/src/cli/connect.test.ts `
+            apps/server/src/checkpointing/CheckpointStore.test.ts `
+            apps/server/src/vcs/GitVcsDriverCore.test.ts `
+            apps/desktop/src/app/DesktopConnectionCatalogStore.test.ts `
+            apps/desktop/src/backend/DesktopBackendConfiguration.test.ts `
+            apps/desktop/src/wsl/DesktopWslEnvironment.test.ts
+
+      - name: Typecheck Windows desktop and server
+        shell: pwsh
+        run: |
+          vp run --filter t3 typecheck
+          vp run --filter @t3tools/desktop typecheck
+
+      - name: Build Windows desktop and server pipeline
+        run: vp run build:desktop
+
+      - name: Verify Windows preload bundle output
+        shell: pwsh
+        run: |
+          $preload = "apps/desktop/dist-electron/preload.cjs"
+          if (-not (Test-Path -LiteralPath $preload -PathType Leaf)) {
+            throw "Missing desktop preload bundle: $preload"
+          }
+          $required = @("desktopBridge", "getLocalEnvironmentBootstrap", "PICK_FOLDER_CHANNEL", "wsUrl")
+          foreach ($marker in $required) {
+            if (-not (Select-String -LiteralPath $preload -SimpleMatch $marker -Quiet)) {
+              throw "Desktop preload bundle is missing '$marker'."
+            }
+          }
+
+      - name: Exercise installed per-user Task Scheduler service
+        shell: pwsh
+        run: |
+          ./scripts/windows-task-scheduler-service-smoke.ps1 `
+            -WorkRoot (Join-Path $env:RUNNER_TEMP "t3-task-scheduler-service-smoke")
+
   # The static analysis below needs a macOS runner, which bills ~6.7x a Linux
   # minute, so gate it on the native sources it actually lints instead of paying
   # for it on every push. Detection is API-only (no checkout) and fails open: if

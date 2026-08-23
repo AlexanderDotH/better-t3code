@@ -194,6 +194,7 @@ import {
   ChevronDownIcon,
   GitBranchIcon,
   PaperclipIcon,
+  RefreshCwIcon,
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
@@ -264,6 +265,7 @@ import { environmentCatalog } from "../connection/catalog";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { projectEnvironment } from "../state/projects";
+import { agentSettingsEnvironment } from "../state/agentSettings";
 import { useEnvironmentQuery } from "../state/query";
 import {
   primaryServerAvailableEditorsAtom,
@@ -1317,6 +1319,9 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
+  const refreshHarnessChatStatus = useAtomCommand(agentSettingsEnvironment.harnessChatSync.status, {
+    reportFailure: false,
+  });
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
     reportFailure: false,
   });
@@ -4971,6 +4976,56 @@ function ChatViewContent(props: ChatViewProps) {
     switchGitRef,
     updateThreadMetadata,
   ]);
+  const activeHarnessSync = activeThread?.harnessSync ?? activeThreadShell?.harnessSync ?? null;
+  const isHarnessSessionActive = activeHarnessSync?.activity === "active";
+  const [isRefreshingHarnessStatus, setIsRefreshingHarnessStatus] = useState(false);
+  useEffect(() => {
+    setIsRefreshingHarnessStatus(false);
+  }, [activeThreadId]);
+  const handleRefreshHarnessStatus = useCallback(async () => {
+    if (!activeThread || isRefreshingHarnessStatus) return;
+    setIsRefreshingHarnessStatus(true);
+    const result = await refreshHarnessChatStatus({
+      environmentId: activeThread.environmentId,
+      input: { threadId: activeThread.id },
+    });
+    setIsRefreshingHarnessStatus(false);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      setThreadError(
+        activeThread.id,
+        error instanceof Error ? error.message : "Could not refresh harness session status.",
+      );
+    }
+  }, [activeThread, isRefreshingHarnessStatus, refreshHarnessChatStatus, setThreadError]);
+  const harnessActiveBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (!activeThread || !isHarnessSessionActive || activeHarnessSync === null) return null;
+    return {
+      id: `harness-active:${activeThread.id}`,
+      variant: "warning",
+      urgent: true,
+      icon: <RefreshCwIcon className={cn(isRefreshingHarnessStatus && "animate-spin")} />,
+      title: `${activeHarnessSync.providerLabel} chat is active elsewhere`,
+      description:
+        "The synchronized history is available, but sending is paused until the original harness session becomes idle.",
+      actions: (
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={isRefreshingHarnessStatus}
+          onClick={() => void handleRefreshHarnessStatus()}
+        >
+          {isRefreshingHarnessStatus ? "Checking..." : "Check again"}
+        </Button>
+      ),
+    };
+  }, [
+    activeHarnessSync,
+    activeThread,
+    handleRefreshHarnessStatus,
+    isHarnessSessionActive,
+    isRefreshingHarnessStatus,
+  ]);
   // Background work (subagent fleets, workflow runs, watch loops) can outlive
   // the turn; once it settles, the composer stop button is gone, so this
   // banner is the only visible stop affordance. Stop routes through the
@@ -5128,6 +5183,7 @@ function ChatViewContent(props: ChatViewProps) {
       item.urgent === true || item.variant === "error" || item.variant === "warning";
     const urgentSystemItems = systemComposerBannerItems.filter(isUrgentSystemItem);
     const calmSystemItems = systemComposerBannerItems.filter((item) => !isUrgentSystemItem(item));
+    const harnessActiveItems = harnessActiveBannerItem === null ? [] : [harnessActiveBannerItem];
     const backgroundLivenessItems =
       backgroundLivenessBannerItem === null ? [] : [backgroundLivenessBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
@@ -5137,6 +5193,7 @@ function ChatViewContent(props: ChatViewProps) {
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...urgentSystemItems,
+        ...harnessActiveItems,
         ...backgroundLivenessItems,
         ...calmSystemItems,
         ...wokeThreadItems,
@@ -5146,6 +5203,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return [
       ...urgentSystemItems,
+      ...harnessActiveItems,
       ...backgroundLivenessItems,
       ...calmSystemItems,
       ...wokeThreadItems,
@@ -5194,6 +5252,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, [
     activeBranchMismatchKey,
     backgroundLivenessBannerItem,
+    harnessActiveBannerItem,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
     localCheckoutBranchMismatch,
@@ -7385,7 +7444,11 @@ function ChatViewContent(props: ChatViewProps) {
                                   isConnecting={isConnecting}
                                   isSendBusy={isSendBusy || isImprovingPrompt}
                                   sendDisabledReason={
-                                    threadDetailLoading ? "Messages loading" : null
+                                    threadDetailLoading
+                                      ? "Messages loading"
+                                      : isHarnessSessionActive
+                                        ? "Native harness session active elsewhere"
+                                        : null
                                   }
                                   isPreparingWorktree={isPreparingWorktree}
                                   externalDrawerAttached={externalComposerDrawerAttached}

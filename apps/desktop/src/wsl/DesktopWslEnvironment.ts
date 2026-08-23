@@ -69,6 +69,13 @@ export class DesktopWslEnvironment extends Context.Service<
       distro: string | null,
       windowsPath: string,
     ) => Effect.Effect<Option.Option<string>>;
+    // Best-effort compatibility and executable-bit preparation for the
+    // packaged Linux x64/glibc resource monitor. A false result disables only
+    // WSL process telemetry; it must never make the WSL backend unavailable.
+    readonly prepareResourceMonitor: (
+      distro: string | null,
+      linuxPath: string,
+    ) => Effect.Effect<boolean>;
     // Resolves the user's Linux home dir inside the chosen distro (e.g.
     // "/home/josh"). Used by the folder picker to expand `~` correctly.
     readonly getUserHome: (distro: string | null) => Effect.Effect<Option.Option<string>>;
@@ -650,6 +657,45 @@ const preWarmImpl = (
     Effect.catch(() => Effect.void),
   );
 
+const WSL_RESOURCE_MONITOR_PREPARE_SCRIPT =
+  'test "$(uname -m)" = "x86_64" && getconf GNU_LIBC_VERSION >/dev/null 2>&1 && test -f "$1" && chmod 755 "$1" && test -x "$1"';
+
+export const prepareWslResourceMonitor = (
+  distro: string | null,
+  linuxPath: string,
+): Effect.Effect<boolean, never, ChildProcessSpawner.ChildProcessSpawner> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const command = ChildProcess.make(
+        "wsl.exe",
+        [
+          ...buildDistroArgs(distro),
+          "--exec",
+          "sh",
+          "-c",
+          WSL_RESOURCE_MONITOR_PREPARE_SCRIPT,
+          "t3-resource-monitor",
+          linuxPath,
+        ],
+        {
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "ignore",
+          killSignal: "SIGTERM",
+          forceKillAfter: PROCESS_TERMINATE_GRACE,
+        },
+      );
+      const handle = yield* spawner.spawn(command);
+      const exitCode = yield* handle.exitCode;
+      return (exitCode as unknown as number) === 0;
+    }),
+  ).pipe(
+    Effect.timeoutOption(PROBE_TIMEOUT),
+    Effect.map(Option.getOrElse(() => false)),
+    Effect.orElseSucceed(() => false),
+  );
+
 const windowsToWslPathImpl = (
   distro: string | null,
   windowsPath: string,
@@ -776,6 +822,7 @@ export interface DesktopWslEnvironmentTestStub {
   readonly distros?: ReadonlyArray<WslDistro>;
   readonly distroListError?: DesktopWslDistroListError;
   readonly windowsToWslPath?: (distro: string | null, windowsPath: string) => Option.Option<string>;
+  readonly prepareResourceMonitor?: (distro: string | null, linuxPath: string) => boolean;
   readonly getUserHome?: (distro: string | null) => Option.Option<string>;
   readonly getDistroIp?: (distro: string | null) => Option.Option<string>;
   readonly ensureNodePty?: (
@@ -798,6 +845,8 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
       preWarm: () => Effect.void,
       windowsToWslPath: (distro, windowsPath) =>
         Effect.succeed(stub.windowsToWslPath?.(distro, windowsPath) ?? Option.none()),
+      prepareResourceMonitor: (distro, linuxPath) =>
+        Effect.succeed(stub.prepareResourceMonitor?.(distro, linuxPath) ?? false),
       getUserHome: (distro) => Effect.succeed(stub.getUserHome?.(distro) ?? Option.none<string>()),
       getDistroIp: (distro) => Effect.succeed(stub.getDistroIp?.(distro) ?? Option.none<string>()),
       ensureNodePty: (distro, windowsRepoRoot, options) =>
@@ -880,6 +929,10 @@ export const layer = Layer.effect(
       preWarm: (distro) =>
         provideSpawner(preWarmImpl(distro)).pipe(Effect.withSpan("desktop.wsl.preWarm")),
       windowsToWslPath,
+      prepareResourceMonitor: (distro, linuxPath) =>
+        provideSpawner(prepareWslResourceMonitor(distro, linuxPath)).pipe(
+          Effect.withSpan("desktop.wsl.prepareResourceMonitor"),
+        ),
       getUserHome,
       getDistroIp,
       ensureNodePty: (distro, windowsRepoRoot, options) =>

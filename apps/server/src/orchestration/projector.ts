@@ -28,6 +28,8 @@ import {
   ThreadCreatedPayload,
   ThreadDeletedPayload,
   ThreadInteractionModeSetPayload,
+  ThreadHarnessSyncLinkedPayload,
+  ThreadHarnessSyncMessageImportedPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
@@ -701,9 +703,12 @@ export function projectEvent(
       );
 
     case "thread.message-sent":
+    case "thread.harness-sync-message-imported":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
-          MessageSentPayloadSchema,
+          event.type === "thread.message-sent"
+            ? MessageSentPayloadSchema
+            : ThreadHarnessSyncMessageImportedPayload,
           event.payload,
           event.type,
           "payload",
@@ -763,6 +768,38 @@ export function projectEvent(
           }),
         };
       });
+
+    case "thread.harness-sync-linked":
+      return decodeForEvent(
+        ThreadHarnessSyncLinkedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (
+            thread?.harnessSync !== undefined &&
+            thread.harnessSync !== null &&
+            thread.harnessSync.lastSyncedAt.localeCompare(payload.lastSyncedAt) > 0
+          ) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              harnessSync: {
+                providerInstanceId: payload.providerInstanceId,
+                providerLabel: payload.providerLabel,
+                activity: payload.activity,
+                sourceUpdatedAt: payload.sourceUpdatedAt,
+                lastSyncedAt: payload.lastSyncedAt,
+              },
+              updatedAt: maxIsoDate(event.occurredAt, payload.lastSyncedAt),
+            }),
+          };
+        }),
+      );
 
     case "thread.session-set":
       return Effect.gen(function* () {

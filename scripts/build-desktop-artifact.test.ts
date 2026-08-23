@@ -45,6 +45,7 @@ import {
   resolveMockUpdateServerPort,
   resolveMockUpdateServerUrl,
   resolvePackageManagerUserAgent,
+  stageWslResourceMonitorPrebuild,
   stageLinuxIconSize,
   stageDesktopDmgBackground,
   STAGE_INSTALL_ARGS,
@@ -59,6 +60,8 @@ import {
   WINDOWS_SERVER_ASAR_RESOURCE,
   WINDOWS_SERVER_ASAR_UNPACK_GLOB,
   WINDOWS_SERVER_RESOURCE_SOURCE_DIR,
+  WSL_RESOURCE_MONITOR_DIRECTORY,
+  WSL_RESOURCE_MONITOR_MARKER_NAME,
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -457,7 +460,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       // and .bin shims never ship.
       assert.equal(
         WINDOWS_SERVER_ASAR_UNPACK_GLOB,
-        "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib}",
+        "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib,**/resource-monitor/**/t3-resource-monitor}",
       );
       assert.deepStrictEqual(WINDOWS_SERVER_ASAR_IGNORE_GLOBS, [
         "**/node_modules/@anthropic-ai/claude-agent-sdk-*",
@@ -1058,6 +1061,48 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resourceMonitorExecutableName("mac"), "t3-resource-monitor");
     assert.equal(resourceMonitorExecutableName("win"), "t3-resource-monitor.exe");
   });
+
+  it.effect("stages the x64 glibc WSL resource monitor with a version marker", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-wsl-resource-monitor-stage-test-",
+      });
+      const prebuildPath = path.join(tempDir, "prebuild", "t3-resource-monitor");
+      const serverStageDir = path.join(tempDir, "server");
+      yield* fs.makeDirectory(path.dirname(prebuildPath), { recursive: true });
+      yield* fs.writeFileString(prebuildPath, "linux-monitor");
+
+      yield* stageWslResourceMonitorPrebuild({
+        serverStageDir,
+        arch: "x64",
+        appVersion: "1.2.3",
+        prebuildPath,
+      });
+
+      const stagedDirectory = path.join(serverStageDir, WSL_RESOURCE_MONITOR_DIRECTORY);
+      assert.equal(
+        yield* fs.readFileString(path.join(stagedDirectory, "t3-resource-monitor")),
+        "linux-monitor",
+      );
+      assert.equal(
+        yield* fs.readFileString(path.join(stagedDirectory, WSL_RESOURCE_MONITOR_MARKER_NAME)),
+        '{"arch":"x64","libc":"glibc","version":"1.2.3"}\n',
+      );
+      const stat = yield* fs.stat(path.join(stagedDirectory, "t3-resource-monitor"));
+      assert.notEqual(stat.mode & 0o111, 0);
+
+      const asarPath = path.join(tempDir, "server.asar");
+      yield* packWindowsServerAsar({ sourceDir: serverStageDir, asarPath });
+      assert.equal(
+        yield* fs.readFileString(
+          path.join(`${asarPath}.unpacked`, WSL_RESOURCE_MONITOR_DIRECTORY, "t3-resource-monitor"),
+        ),
+        "linux-monitor",
+      );
+    }),
+  );
   it("promotes target fff binaries to direct staged dependencies", () => {
     assert.deepStrictEqual(resolveFffNativeDependencies("mac", "arm64", "0.9.4"), {
       "@ff-labs/fff-bin-darwin-arm64": "0.9.4",
@@ -1165,6 +1210,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         mockUpdates: Option.none(),
         mockUpdateServerPort: Option.none(),
         wslPrebuild: Option.none(),
+        wslResourceMonitorPrebuild: Option.none(),
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -1188,6 +1234,39 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  it.effect("resolves the WSL monitor prebuild independently from node-pty", () =>
+    Effect.gen(function* () {
+      const resolved = yield* resolveBuildOptions({
+        platform: Option.some("win"),
+        target: Option.none(),
+        arch: Option.some("x64"),
+        buildVersion: Option.none(),
+        outputDir: Option.none(),
+        skipBuild: Option.none(),
+        keepStage: Option.none(),
+        signed: Option.none(),
+        verbose: Option.none(),
+        mockUpdates: Option.none(),
+        mockUpdateServerPort: Option.none(),
+        wslPrebuild: Option.some("/artifacts/pty.node"),
+        wslResourceMonitorPrebuild: Option.none(),
+      }).pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: {
+                T3CODE_DESKTOP_WSL_RESOURCE_MONITOR_PREBUILD: "/artifacts/t3-resource-monitor",
+              },
+            }),
+          ),
+        ),
+      );
+
+      assert.equal(resolved.wslPrebuild, "/artifacts/pty.node");
+      assert.equal(resolved.wslResourceMonitorPrebuild, "/artifacts/t3-resource-monitor");
+    }),
+  );
+
   it.effect("rejects universal builds on Linux and Windows before staging binaries", () =>
     Effect.gen(function* () {
       for (const platform of ["linux", "win"] as const) {
@@ -1205,6 +1284,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             mockUpdates: Option.none(),
             mockUpdateServerPort: Option.none(),
             wslPrebuild: Option.none(),
+            wslResourceMonitorPrebuild: Option.none(),
           }),
         );
 
@@ -1229,6 +1309,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         mockUpdates: Option.some(false),
         mockUpdateServerPort: Option.none(),
         wslPrebuild: Option.none(),
+        wslResourceMonitorPrebuild: Option.none(),
       }).pipe(
         Effect.provide(
           ConfigProvider.layer(

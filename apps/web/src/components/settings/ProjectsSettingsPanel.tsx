@@ -1,7 +1,9 @@
 import { Link } from "@tanstack/react-router";
 import { ChevronRightIcon } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { Button } from "../ui/button";
+import { HarnessChatSyncSettings } from "./HarnessChatSyncSettings";
 import { useSettingsProjectGroups } from "./ProjectSettingsPanel";
 import { resolveProjectCheckpointSetting } from "./projectCheckpointSettings";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
@@ -25,11 +27,14 @@ function checkoutCountLabel(group: ProjectCheckpointSettingsGroup): string {
 
 export function ProjectsSettingsPanelView({
   groups,
+  syncSettings,
 }: {
   readonly groups: ReadonlyArray<ProjectCheckpointSettingsGroup>;
+  readonly syncSettings?: ReactNode;
 }) {
   return (
     <SettingsPageContainer>
+      {syncSettings}
       <SettingsSection {...searchableSetting("checkpoints")}>
         {groups.length === 0 ? (
           <SettingsRow
@@ -65,5 +70,5 @@ export function ProjectsSettingsPanelView({
 
 export function ProjectsSettingsPanel() {
   const groups = useSettingsProjectGroups();
-  return <ProjectsSettingsPanelView groups={groups} />;
+  return <ProjectsSettingsPanelView groups={groups} syncSettings={<HarnessChatSyncSettings />} />;
 }

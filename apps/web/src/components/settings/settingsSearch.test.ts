@@ -142,6 +142,16 @@ describe("searchSettings", () => {
     ]);
   });
 
+  it("routes harness chat sync searches to project settings", () => {
+    expect(searchSettings("harness chat sync")).toEqual([
+      {
+        id: "harness-chat-sync",
+        title: "Harness chat sync",
+        to: "/settings/projects",
+      },
+    ]);
+  });
+
   it("keeps Skills, MCP, and browser integrations as separate destinations", () => {
     expect(SETTINGS_SECTION_LABELS["/settings/skills"]).toBe("Skills");
     expect(SETTINGS_SECTION_LABELS["/settings/mcp"]).toBe("MCP Servers");

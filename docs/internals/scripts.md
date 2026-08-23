@@ -99,6 +99,21 @@ authenticated.
   `AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME`, and `AZURE_TRUSTED_SIGNING_PUBLISHER_NAME`.
 - Azure authentication env vars are also required (for example service principal with secret):
   `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`.
+- `node scripts/windows-native-runtime-smoke.mjs` runs only on Windows x64 and exercises real
+  provider `.cmd` shims, PowerShell argument passing, ConPTY, Git checkpoint refs, and process-tree
+  cleanup.
+- `scripts/windows-task-scheduler-service-smoke.ps1` installs the real per-user task against an
+  isolated runtime, proves launcher-crash restart and repair, then gracefully uninstalls without
+  leaving the task or its Node process tree behind.
+- `scripts/windows-wsl-runtime-smoke.ps1` imports an isolated Ubuntu x64 rootfs, then uses
+  `wsl-runtime-probe.cjs` to prove the shipped Linux node-pty binary and resource-monitor telemetry
+  work under glibc. It unregisters only its uniquely named smoke-test distro.
+- `scripts/windows-desktop-release-smoke.ps1` installs a signed NSIS artifact into isolated T3 and
+  Electron state, verifies the configured Authenticode publisher, delegates startup/update driving
+  to `windows-desktop-smoke-driver.mjs`, then uninstalls and rejects orphan processes.
+- `scripts/windows-prepare-trusted-signing.ps1` is release-only setup: it fails when any Azure
+  Trusted Signing input is missing. Direct local packaging remains unsigned unless `--signed` is
+  explicitly supplied.
 
 ## Browser development
 

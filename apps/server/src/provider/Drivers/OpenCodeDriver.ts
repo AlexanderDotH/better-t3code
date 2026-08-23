@@ -35,11 +35,13 @@ import {
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { OpenCodeRuntime } from "../opencodeRuntime.ts";
+import { makeOpenCodeHistorySync } from "../history/OpenCodeHistorySync.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
   type ProviderInstance,
 } from "../ProviderDriver.ts";
+import { makeInstanceHistorySyncSource } from "../Services/ProviderHistorySync.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
@@ -148,6 +150,20 @@ export const makeOpenCodeBackedDriver = ({
           continuationGroupKey: continuationIdentity.continuationKey,
         });
         const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
+        const historySyncSource = makeInstanceHistorySyncSource({
+          driverKind,
+          instanceId,
+          continuationKey: continuationIdentity.continuationKey,
+          displayName: displayName ?? driverDisplayName,
+          capabilities: { search: true, archived: true, resume: true, activity: true },
+        });
+        const historySync = makeOpenCodeHistorySync({
+          source: historySyncSource,
+          runtime: openCodeRuntime,
+          settings: effectiveConfig,
+          environment: processEnv,
+          defaultCwd: serverConfig.cwd,
+        });
         const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           update,
           {
@@ -221,6 +237,7 @@ export const makeOpenCodeBackedDriver = ({
           enabled,
           snapshot,
           adapter,
+          historySync,
           textGeneration,
         } satisfies ProviderInstance;
       }),

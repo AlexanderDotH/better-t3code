@@ -17,6 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
@@ -25,6 +26,13 @@ import * as Stream from "effect/Stream";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 import { subscribeBeforeSnapshotWithoutMutex } from "../utils/subscribeBeforeSnapshot.ts";
 import { constrainHostMemoryToCurrentCgroup } from "./ContainerMemoryBudget.ts";
+import {
+  makeDelegatingProviderProcessTreeController,
+  makePosixProviderProcessTreeController,
+  type ProviderProcessIdentity,
+  type ProviderProcessTreeController,
+  type ProviderProcessTreeLease,
+} from "./ProviderProcessTreeController.ts";
 
 export const GIBIBYTE = 1024 ** 3;
 
@@ -90,11 +98,6 @@ interface RegisteredProviderProcess extends Omit<ProviderProcessRegistration, "s
   readonly processIdentities: ReadonlyArray<ProviderProcessIdentity>;
 }
 
-interface ProviderProcessIdentity {
-  readonly pid: number;
-  readonly startTimeMs: number;
-}
-
 interface WaitingAdmission extends SubagentAdmissionRequest {
   readonly id: number;
   readonly deferred: Deferred.Deferred<boolean>;
@@ -110,6 +113,13 @@ interface ActiveMeasurement extends SubagentAdmissionRequest {
   readonly agentId: string | undefined;
 }
 
+interface SuspendedProviderProcessTree extends ProviderProcessTreeLease {
+  readonly registrationKey: string;
+  readonly threadId: ThreadId;
+  readonly suspendConfirmed: boolean;
+  readonly resumeRequired: boolean;
+}
+
 interface GovernorState {
   readonly nextAdmissionId: number;
   readonly sample: ResourceGovernorSample | undefined;
@@ -118,13 +128,14 @@ interface GovernorState {
   readonly growthByConfiguration: ReadonlyMap<string, ReadonlyArray<number>>;
   readonly unknownConfigurationsInFlight: ReadonlySet<string>;
   readonly registrations: ReadonlyMap<string, RegisteredProviderProcess>;
-  readonly pausedRegistrationKey: string | undefined;
-  readonly pausedProcessIdentities: ReadonlyArray<ProviderProcessIdentity>;
+  readonly suspendedProcessTree: SuspendedProviderProcessTree | undefined;
   readonly criticalSamples: number;
   readonly healthySamples: number;
 }
 
 export interface SubagentResourceGovernorOptions {
+  readonly processTreeController?: ProviderProcessTreeController;
+  readonly createProcessTreeLeaseId?: () => string;
   readonly signalProcess?: (
     identity: { readonly pid: number; readonly startTimeMs: number },
     signal: "SIGSTOP" | "SIGCONT",
@@ -311,28 +322,27 @@ function monitoringRequired(state: GovernorState): boolean {
     state.waiting.length > 0 ||
     state.active.size > 0 ||
     state.registrations.size > 0 ||
-    state.pausedProcessIdentities.length > 0
+    state.suspendedProcessTree !== undefined
   );
 }
 
 function affectedThreadIds(state: GovernorState): ReadonlyArray<ThreadId> {
   const affected = new Set<ThreadId>(state.waiting.map((waiter) => waiter.threadId));
-  if (state.pausedRegistrationKey) {
-    const paused = state.registrations.get(state.pausedRegistrationKey);
-    if (paused) affected.add(paused.threadId);
-  }
+  if (state.suspendedProcessTree) affected.add(state.suspendedProcessTree.threadId);
   return [...affected];
 }
 
 function protectionSnapshot(state: GovernorState): ResourceProtectionSnapshot {
   const memory = state.sample?.memory;
-  const recovering = state.pausedRegistrationKey !== undefined && state.healthySamples > 0;
+  const suspension = state.suspendedProcessTree;
+  const recovering =
+    suspension !== undefined && (!suspension.suspendConfirmed || state.healthySamples > 0);
   return {
     state: !memory
       ? "unavailable"
       : recovering
         ? "recovering"
-        : state.pausedRegistrationKey
+        : suspension?.suspendConfirmed
           ? "throttled"
           : state.waiting.length > 0
             ? "waiting"
@@ -352,7 +362,7 @@ function drainAdmissions(state: GovernorState): {
 } {
   if (
     !state.sample ||
-    state.pausedRegistrationKey ||
+    state.suspendedProcessTree ||
     state.criticalSamples >= CRITICAL_SAMPLE_COUNT
   ) {
     return { state, granted: [] };
@@ -553,42 +563,14 @@ function removeMatchingAdmissions(
   return { state: next, cancelledWaiters };
 }
 
-/*
- * `signalProcess` is injected in tests, but its production implementation
- * performs a second PID/start-time comparison immediately before every signal.
- */
-function signalProcessTree(
-  signalProcess: NonNullable<SubagentResourceGovernorOptions["signalProcess"]>,
-  identities: ReadonlyArray<ProviderProcessIdentity>,
-  signal: "SIGSTOP" | "SIGCONT",
-): Effect.Effect<boolean> {
-  const ordered = signal === "SIGSTOP" ? identities : identities.toReversed();
-  return Effect.gen(function* () {
-    const signalled: Array<ProviderProcessIdentity> = [];
-    for (const identity of ordered) {
-      const succeeded = yield* signalProcess(identity, signal).pipe(
-        Effect.match({ onFailure: () => false, onSuccess: () => true }),
-      );
-      if (!succeeded && signal === "SIGSTOP") {
-        yield* Effect.forEach(
-          signalled.toReversed(),
-          (paused) => signalProcess(paused, "SIGCONT").pipe(Effect.ignore),
-          { discard: true },
-        );
-        return false;
-      }
-      if (!succeeded) return false;
-      signalled.push(identity);
-    }
-    return identities.length > 0 || signal === "SIGCONT";
-  });
-}
-
 export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
   options: SubagentResourceGovernorOptions = {},
 ) {
   const hostPlatform = yield* HostProcessPlatform;
   const signalProcess = options.signalProcess ?? makeExactProcessSignaler({ hostPlatform });
+  const processTreeController =
+    options.processTreeController ?? makePosixProviderProcessTreeController(signalProcess);
+  const createProcessTreeLeaseId = options.createProcessTreeLeaseId ?? NodeCrypto.randomUUID;
   const stateRef = yield* Ref.make<GovernorState>({
     nextAdmissionId: 1,
     sample: undefined,
@@ -597,8 +579,7 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
     growthByConfiguration: new Map(),
     unknownConfigurationsInFlight: new Set(),
     registrations: new Map(),
-    pausedRegistrationKey: undefined,
-    pausedProcessIdentities: [],
+    suspendedProcessTree: undefined,
     criticalSamples: 0,
     healthySamples: 0,
   });
@@ -616,6 +597,36 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
       Effect.andThen(PubSub.publish(monitoringDemandChanges, monitoringRequired(state))),
     );
   };
+
+  const resumeSuspendedProcessTree = Effect.fnUntraced(function* (state: GovernorState) {
+    const suspended = state.suspendedProcessTree;
+    if (!suspended) return { state, resumed: true } as const;
+
+    const resumed = yield* processTreeController
+      .resume(suspended)
+      .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
+    if (!resumed) {
+      return {
+        state: {
+          ...state,
+          suspendedProcessTree: { ...suspended, resumeRequired: true },
+          criticalSamples: 0,
+          healthySamples: 0,
+        },
+        resumed: false,
+      } as const;
+    }
+
+    return {
+      state: {
+        ...state,
+        suspendedProcessTree: undefined,
+        criticalSamples: 0,
+        healthySamples: 0,
+      },
+      resumed: true,
+    } as const;
+  });
 
   const commitAdmissions = Effect.fnUntraced(function* (state: GovernorState) {
     const drained = drainAdmissions(state);
@@ -763,7 +774,15 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
   const observe = (sample: ResourceGovernorSample) =>
     mutex.withPermits(1)(
       Effect.gen(function* () {
-        const current = yield* Ref.get(stateRef);
+        let current = yield* Ref.get(stateRef);
+        if (current.suspendedProcessTree?.resumeRequired) {
+          const pendingResume = yield* resumeSuspendedProcessTree(current);
+          if (!pendingResume.resumed) {
+            yield* commitAdmissions({ ...pendingResume.state, sample: undefined });
+            return;
+          }
+          current = pendingResume.state;
+        }
         const registrations = new Map<string, RegisteredProviderProcess>();
         for (const [key, registration] of current.registrations) {
           const tree = providerTreeRss(registration, sample.processes);
@@ -806,42 +825,24 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
           sample.memory.availableBytes - projectedGrowthBytes * PROJECTION_WINDOW_SECONDS;
         const critical = projectedAvailableBytes < coreReserveBytes(sample.memory.totalBytes);
 
-        if (next.pausedRegistrationKey) {
-          const paused = registrations.get(next.pausedRegistrationKey);
+        if (next.suspendedProcessTree) {
+          const paused = registrations.get(next.suspendedProcessTree.registrationKey);
           if (!paused?.exact || paused.startTimeMs === undefined) {
-            const resumed = yield* signalProcessTree(
-              signalProcess,
-              next.pausedProcessIdentities,
-              "SIGCONT",
-            );
-            next = resumed
-              ? {
-                  ...next,
-                  pausedRegistrationKey: undefined,
-                  pausedProcessIdentities: [],
-                  criticalSamples: 0,
-                  healthySamples: 0,
-                }
-              : { ...next, criticalSamples: 0, healthySamples: 0 };
+            const resumed = yield* resumeSuspendedProcessTree({
+              ...next,
+              suspendedProcessTree: { ...next.suspendedProcessTree, resumeRequired: true },
+            });
+            next = resumed.state;
           } else if (critical) {
             next = { ...next, criticalSamples: 0, healthySamples: 0 };
           } else {
             const healthySamples = next.healthySamples + 1;
             if (healthySamples >= HEALTHY_SAMPLE_COUNT) {
-              const resumed = yield* signalProcessTree(
-                signalProcess,
-                next.pausedProcessIdentities,
-                "SIGCONT",
-              );
-              next = resumed
-                ? {
-                    ...next,
-                    pausedRegistrationKey: undefined,
-                    pausedProcessIdentities: [],
-                    criticalSamples: 0,
-                    healthySamples: 0,
-                  }
-                : { ...next, healthySamples: 0 };
+              const resumed = yield* resumeSuspendedProcessTree({
+                ...next,
+                suspendedProcessTree: { ...next.suspendedProcessTree, resumeRequired: true },
+              });
+              next = resumed.state;
             } else {
               next = { ...next, healthySamples };
             }
@@ -853,21 +854,46 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
             criticalSamples >= CRITICAL_SAMPLE_COUNT &&
             fastest &&
             fastest.startTimeMs !== undefined &&
-            fastest.growthBytesPerSecond > 0
+            fastest.growthBytesPerSecond > 0 &&
+            fastest.processIdentities[0] !== undefined
           ) {
-            const paused = yield* signalProcessTree(
-              signalProcess,
-              fastest.processIdentities,
-              "SIGSTOP",
-            );
-            if (paused) {
+            const [rootIdentity, ...descendantIdentities] = fastest.processIdentities;
+            const lease: ProviderProcessTreeLease = {
+              leaseId: createProcessTreeLeaseId(),
+              processIdentities: [rootIdentity, ...descendantIdentities],
+            };
+            const suspension = yield* processTreeController.suspend(lease).pipe(Effect.result);
+            if (Result.isSuccess(suspension)) {
               next = {
                 ...next,
-                pausedRegistrationKey: fastest.key,
-                pausedProcessIdentities: fastest.processIdentities,
+                suspendedProcessTree: {
+                  ...lease,
+                  registrationKey: fastest.key,
+                  threadId: fastest.threadId,
+                  suspendConfirmed: true,
+                  resumeRequired: false,
+                },
                 criticalSamples: 0,
                 healthySamples: 0,
               };
+            } else if (suspension.failure.resumeRequired) {
+              const compensated = yield* processTreeController
+                .resume(lease)
+                .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
+              if (!compensated) {
+                next = {
+                  ...next,
+                  suspendedProcessTree: {
+                    ...lease,
+                    registrationKey: fastest.key,
+                    threadId: fastest.threadId,
+                    suspendConfirmed: false,
+                    resumeRequired: true,
+                  },
+                  criticalSamples: 0,
+                  healthySamples: 0,
+                };
+              }
             }
           }
         } else {
@@ -881,8 +907,14 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
   const telemetryUnavailable = mutex.withPermits(1)(
     Effect.gen(function* () {
       const current = yield* Ref.get(stateRef);
+      const pendingResume = current.suspendedProcessTree
+        ? yield* resumeSuspendedProcessTree({
+            ...current,
+            suspendedProcessTree: { ...current.suspendedProcessTree, resumeRequired: true },
+          })
+        : { state: current, resumed: true as const };
       const next = {
-        ...current,
+        ...pendingResume.state,
         sample: undefined,
         criticalSamples: 0,
         healthySamples: 0,
@@ -929,20 +961,24 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
             : registrationKey(identity);
         if (!key) return;
         const registration = current.registrations.get(key);
-        const removingPausedTree = current.pausedRegistrationKey === key;
-        const resumed = removingPausedTree
-          ? yield* signalProcessTree(signalProcess, current.pausedProcessIdentities, "SIGCONT")
-          : true;
-        const registrations = new Map(current.registrations);
+        const suspendedProcessTree = current.suspendedProcessTree;
+        const removingSuspendedTree = suspendedProcessTree?.registrationKey === key;
+        const pendingResume =
+          removingSuspendedTree && suspendedProcessTree
+            ? yield* resumeSuspendedProcessTree({
+                ...current,
+                suspendedProcessTree: {
+                  ...suspendedProcessTree,
+                  resumeRequired: true,
+                },
+              })
+            : { state: current, resumed: true as const };
+        const registrations = new Map(pendingResume.state.registrations);
         registrations.delete(key);
         let next: GovernorState = {
-          ...current,
+          ...pendingResume.state,
           registrations,
-          pausedRegistrationKey:
-            removingPausedTree && resumed ? undefined : current.pausedRegistrationKey,
-          pausedProcessIdentities:
-            removingPausedTree && resumed ? [] : current.pausedProcessIdentities,
-          healthySamples: removingPausedTree ? 0 : current.healthySamples,
+          healthySamples: removingSuspendedTree ? 0 : current.healthySamples,
         };
         let cancelledWaiters: ReadonlyArray<WaitingAdmission> = [];
         if (
@@ -980,24 +1016,28 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
         const registrationEntries = [...current.registrations].filter(
           ([, registration]) => registration.threadId === threadId,
         );
-        const removingPausedTree = registrationEntries.some(
-          ([key]) => key === current.pausedRegistrationKey,
+        const suspendedProcessTree = current.suspendedProcessTree;
+        const removingSuspendedTree = registrationEntries.some(
+          ([key]) => key === suspendedProcessTree?.registrationKey,
         );
-        const resumed = removingPausedTree
-          ? yield* signalProcessTree(signalProcess, current.pausedProcessIdentities, "SIGCONT")
-          : true;
-        const registrations = new Map(current.registrations);
+        const pendingResume =
+          removingSuspendedTree && suspendedProcessTree
+            ? yield* resumeSuspendedProcessTree({
+                ...current,
+                suspendedProcessTree: {
+                  ...suspendedProcessTree,
+                  resumeRequired: true,
+                },
+              })
+            : { state: current, resumed: true as const };
+        const registrations = new Map(pendingResume.state.registrations);
         for (const [key] of registrationEntries) registrations.delete(key);
         const removed = removeMatchingAdmissions(
-          { ...current, registrations },
+          { ...pendingResume.state, registrations },
           (admission) => admission.threadId === threadId,
         );
         yield* commitAdmissions({
           ...removed.state,
-          pausedRegistrationKey:
-            removingPausedTree && resumed ? undefined : current.pausedRegistrationKey,
-          pausedProcessIdentities:
-            removingPausedTree && resumed ? [] : current.pausedProcessIdentities,
           healthySamples: 0,
         });
         yield* Effect.forEach(
@@ -1011,27 +1051,24 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
   const shutdown = mutex.withPermits(1)(
     Effect.gen(function* () {
       const current = yield* Ref.get(stateRef);
-      if (current.pausedProcessIdentities.length > 0) {
-        const resumed = yield* signalProcessTree(
-          signalProcess,
-          current.pausedProcessIdentities,
-          "SIGCONT",
-        );
-        if (!resumed) {
-          yield* signalProcessTree(signalProcess, current.pausedProcessIdentities, "SIGCONT").pipe(
-            Effect.ignore,
-          );
+      let resumedState = current;
+      if (current.suspendedProcessTree) {
+        const firstResume = yield* resumeSuspendedProcessTree({
+          ...current,
+          suspendedProcessTree: { ...current.suspendedProcessTree, resumeRequired: true },
+        });
+        resumedState = firstResume.state;
+        if (!firstResume.resumed) {
+          resumedState = (yield* resumeSuspendedProcessTree(firstResume.state)).state;
         }
       }
       const stopped: GovernorState = {
-        ...current,
+        ...resumedState,
         sample: undefined,
         waiting: [],
         active: new Map(),
         unknownConfigurationsInFlight: new Set(),
         registrations: new Map(),
-        pausedRegistrationKey: undefined,
-        pausedProcessIdentities: [],
         criticalSamples: 0,
         healthySamples: 0,
       };
@@ -1066,18 +1103,26 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
   });
 });
 
-const makeScopedSubagentResourceGovernor = Effect.acquireRelease(
-  makeSubagentResourceGovernor(),
-  (governor) => governor.shutdown,
-);
+const makeScopedSubagentResourceGovernor = (options: SubagentResourceGovernorOptions = {}) =>
+  Effect.acquireRelease(makeSubagentResourceGovernor(options), (governor) => governor.shutdown);
 
-export const layer = Layer.effect(SubagentResourceGovernor, makeScopedSubagentResourceGovernor);
+export const layer = Layer.effect(SubagentResourceGovernor, makeScopedSubagentResourceGovernor());
 
 export const layerLive = Layer.effect(
   SubagentResourceGovernor,
   Effect.gen(function* () {
     const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
-    const governor = yield* makeScopedSubagentResourceGovernor;
+    const hostPlatform = yield* HostProcessPlatform;
+    const governor = yield* makeScopedSubagentResourceGovernor(
+      hostPlatform === "win32"
+        ? {
+            processTreeController: makeDelegatingProviderProcessTreeController({
+              suspendProcessTree: nativeTelemetry.suspendProcessTree,
+              resumeProcessTree: nativeTelemetry.resumeProcessTree,
+            }),
+          }
+        : {},
+    );
     yield* Stream.unwrap(
       Effect.map(nativeTelemetry.subscribeHealth, ({ latest, changes }) =>
         Stream.concat(Stream.make(latest), changes),

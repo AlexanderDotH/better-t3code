@@ -1,13 +1,19 @@
 import { ProviderDriverKind, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 
 import {
+  ProviderProcessTreeControlError,
+  type ProviderProcessTreeLease,
+} from "./ProviderProcessTreeController.ts";
+import {
   GIBIBYTE,
   ProviderProcessSignalError,
+  SubagentResourceGovernor,
   coreReserveBytes,
   makeExactProcessSignaler,
   makeSubagentResourceGovernor,
@@ -44,6 +50,57 @@ function sample(input: {
     processes: input.processes ?? [],
   };
 }
+
+function growingProviderTree(rootPid: number, startTimeMs: number, rssGiB: number) {
+  return [
+    {
+      pid: rootPid,
+      ppid: 1,
+      startTimeMs,
+      residentBytes: rssGiB * GIBIBYTE,
+    },
+    {
+      pid: rootPid + 1,
+      ppid: rootPid,
+      startTimeMs: startTimeMs + 100,
+      residentBytes: rssGiB * GIBIBYTE,
+    },
+  ];
+}
+
+const driveToProviderTreeThrottle = Effect.fnUntraced(function* (
+  governor: SubagentResourceGovernor["Service"],
+  input: { readonly threadId: ThreadId; readonly rootPid: number; readonly startTimeMs: number },
+) {
+  yield* governor.registerProviderProcess({
+    threadId: input.threadId,
+    provider: codex,
+    providerInstanceId: instanceId,
+    pid: input.rootPid,
+    startTimeMs: input.startTimeMs,
+  });
+  yield* governor.observe(
+    sample({
+      availableGiB: 7,
+      sampledAtMs: 0,
+      processes: growingProviderTree(input.rootPid, input.startTimeMs, 0.5),
+    }),
+  );
+  yield* governor.observe(
+    sample({
+      availableGiB: 3.5,
+      sampledAtMs: 1_000,
+      processes: growingProviderTree(input.rootPid, input.startTimeMs, 1.5),
+    }),
+  );
+  yield* governor.observe(
+    sample({
+      availableGiB: 3,
+      sampledAtMs: 2_000,
+      processes: growingProviderTree(input.rootPid, input.startTimeMs, 2.5),
+    }),
+  );
+});
 
 describe("SubagentResourceGovernor", () => {
   it("clamps the core reserve to 20 percent with 2-6 GiB bounds", () => {
@@ -331,6 +388,394 @@ describe("SubagentResourceGovernor", () => {
         ]);
         expect((yield* governor.latest).state).toBe("normal");
       }),
+  );
+
+  it.effect("publishes throttled only after the full process-tree lease is confirmed", () =>
+    Effect.gen(function* () {
+      const suspensionConfirmed = yield* Deferred.make<void>();
+      const suspended: Array<ProviderProcessTreeLease> = [];
+      const governor = yield* makeSubagentResourceGovernor({
+        createProcessTreeLeaseId: () => "lease-pending-suspend",
+        processTreeController: {
+          suspend: (lease) =>
+            Effect.sync(() => suspended.push(lease)).pipe(
+              Effect.andThen(Deferred.await(suspensionConfirmed)),
+            ),
+          resume: () => Effect.void,
+        },
+      });
+      const threadId = ThreadId.make("thread-confirmed-suspend");
+      const rootPid = 901;
+      const startTimeMs = 90_000;
+      yield* governor.registerProviderProcess({
+        threadId,
+        provider: codex,
+        providerInstanceId: instanceId,
+        pid: rootPid,
+        startTimeMs,
+      });
+      yield* governor.observe(
+        sample({
+          availableGiB: 7,
+          sampledAtMs: 0,
+          processes: growingProviderTree(rootPid, startTimeMs, 0.5),
+        }),
+      );
+      yield* governor.observe(
+        sample({
+          availableGiB: 3.5,
+          sampledAtMs: 1_000,
+          processes: growingProviderTree(rootPid, startTimeMs, 1.5),
+        }),
+      );
+
+      const criticalObservation = yield* governor
+        .observe(
+          sample({
+            availableGiB: 3,
+            sampledAtMs: 2_000,
+            processes: growingProviderTree(rootPid, startTimeMs, 2.5),
+          }),
+        )
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      expect((yield* governor.latest).state).toBe("normal");
+      expect(suspended).toEqual([
+        {
+          leaseId: "lease-pending-suspend",
+          processIdentities: [
+            { pid: rootPid, startTimeMs },
+            { pid: rootPid + 1, startTimeMs: startTimeMs + 100 },
+          ],
+        },
+      ]);
+
+      yield* Deferred.succeed(suspensionConfirmed, undefined);
+      yield* Fiber.join(criticalObservation);
+      expect((yield* governor.latest).state).toBe("throttled");
+    }),
+  );
+
+  it.effect("keeps recovery visible until the same lease is confirmed resumed", () =>
+    Effect.gen(function* () {
+      const resumeConfirmed = yield* Deferred.make<void>();
+      const resumed: Array<ProviderProcessTreeLease> = [];
+      const governor = yield* makeSubagentResourceGovernor({
+        createProcessTreeLeaseId: () => "lease-pending-resume",
+        processTreeController: {
+          suspend: () => Effect.void,
+          resume: (lease) =>
+            Effect.sync(() => resumed.push(lease)).pipe(
+              Effect.andThen(Deferred.await(resumeConfirmed)),
+            ),
+        },
+      });
+      const rootPid = 906;
+      const startTimeMs = 90_600;
+      yield* driveToProviderTreeThrottle(governor, {
+        threadId: ThreadId.make("thread-confirmed-resume"),
+        rootPid,
+        startTimeMs,
+      });
+      for (let index = 3; index <= 6; index += 1) {
+        yield* governor.observe(
+          sample({
+            availableGiB: 8,
+            sampledAtMs: index * 1_000,
+            processes: growingProviderTree(rootPid, startTimeMs, 2.5),
+          }),
+        );
+      }
+      expect((yield* governor.latest).state).toBe("recovering");
+
+      const recoveryObservation = yield* governor
+        .observe(
+          sample({
+            availableGiB: 8,
+            sampledAtMs: 7_000,
+            processes: growingProviderTree(rootPid, startTimeMs, 2.5),
+          }),
+        )
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      expect((yield* governor.latest).state).toBe("recovering");
+      expect(resumed[0]?.leaseId).toBe("lease-pending-resume");
+
+      yield* Deferred.succeed(resumeConfirmed, undefined);
+      yield* Fiber.join(recoveryObservation);
+      expect((yield* governor.latest).state).toBe("normal");
+    }),
+  );
+
+  it.effect("does not retain or resume a lease when process control rejects the suspend", () =>
+    Effect.gen(function* () {
+      const operations: Array<string> = [];
+      const governor = yield* makeSubagentResourceGovernor({
+        createProcessTreeLeaseId: () => "lease-reused-before-control",
+        processTreeController: {
+          suspend: (lease) => {
+            operations.push(`suspend:${lease.leaseId}`);
+            return Effect.fail(
+              new ProviderProcessTreeControlError({
+                operation: "suspend",
+                leaseId: lease.leaseId,
+                resumeRequired: false,
+                cause: new Error("PID creation time changed"),
+              }),
+            );
+          },
+          resume: (lease) => Effect.sync(() => operations.push(`resume:${lease.leaseId}`)),
+        },
+      });
+      const threadId = ThreadId.make("thread-reused-during-control");
+
+      yield* driveToProviderTreeThrottle(governor, {
+        threadId,
+        rootPid: 911,
+        startTimeMs: 91_000,
+      });
+      expect((yield* governor.latest).state).not.toBe("throttled");
+
+      yield* governor.unregisterProviderProcess({ pid: 911, startTimeMs: 91_000 });
+      yield* governor.shutdown;
+      expect(operations).toEqual(["suspend:lease-reused-before-control"]);
+    }),
+  );
+
+  it.effect("compensates and retains an unconfirmed partial suspend until resume succeeds", () =>
+    Effect.gen(function* () {
+      const operations: Array<string> = [];
+      let resumeAttempts = 0;
+      const governor = yield* makeSubagentResourceGovernor({
+        createProcessTreeLeaseId: () => "lease-partial-suspend",
+        processTreeController: {
+          suspend: (lease) => {
+            operations.push(`suspend:${lease.leaseId}`);
+            return Effect.fail(
+              new ProviderProcessTreeControlError({
+                operation: "suspend",
+                leaseId: lease.leaseId,
+                resumeRequired: true,
+                cause: new Error("rollback left one owned suspend increment"),
+              }),
+            );
+          },
+          resume: (lease) => {
+            operations.push(`resume:${lease.leaseId}`);
+            resumeAttempts += 1;
+            return resumeAttempts === 1
+              ? Effect.fail(
+                  new ProviderProcessTreeControlError({
+                    operation: "resume",
+                    leaseId: lease.leaseId,
+                    resumeRequired: true,
+                    cause: new Error("first compensation failed"),
+                  }),
+                )
+              : Effect.void;
+          },
+        },
+      });
+      const threadId = ThreadId.make("thread-partial-suspend");
+
+      yield* driveToProviderTreeThrottle(governor, {
+        threadId,
+        rootPid: 916,
+        startTimeMs: 91_600,
+      });
+
+      const pending = yield* governor.latest;
+      expect(pending.state).toBe("recovering");
+      expect(pending.state).not.toBe("throttled");
+      expect(pending.affectedThreadIds).toContain(threadId);
+      expect(operations).toEqual(["suspend:lease-partial-suspend", "resume:lease-partial-suspend"]);
+
+      yield* governor.observe(sample({ availableGiB: 12, sampledAtMs: 3_000 }));
+
+      expect(operations).toEqual([
+        "suspend:lease-partial-suspend",
+        "resume:lease-partial-suspend",
+        "resume:lease-partial-suspend",
+      ]);
+      expect((yield* governor.latest).state).toBe("normal");
+    }),
+  );
+
+  it.effect(
+    "retries the same outstanding lease before admitting work after telemetry reconnect",
+    () =>
+      Effect.gen(function* () {
+        const operations: Array<string> = [];
+        let resumeAttempts = 0;
+        const governor = yield* makeSubagentResourceGovernor({
+          createProcessTreeLeaseId: () => "lease-telemetry-reconnect",
+          processTreeController: {
+            suspend: (lease) => Effect.sync(() => operations.push(`suspend:${lease.leaseId}`)),
+            resume: (lease) => {
+              operations.push(`resume:${lease.leaseId}`);
+              resumeAttempts += 1;
+              return resumeAttempts === 1
+                ? Effect.fail(
+                    new ProviderProcessTreeControlError({
+                      operation: "resume",
+                      leaseId: lease.leaseId,
+                      resumeRequired: true,
+                      cause: new Error("sidecar disconnected"),
+                    }),
+                  )
+                : Effect.void;
+            },
+          },
+        });
+        const threadId = ThreadId.make("thread-telemetry-reconnect");
+        const rootPid = 921;
+        const startTimeMs = 92_000;
+        yield* driveToProviderTreeThrottle(governor, { threadId, rootPid, startTimeMs });
+
+        yield* governor.telemetryUnavailable;
+        expect((yield* governor.latest).state).toBe("unavailable");
+        const waiter = yield* governor
+          .awaitAdmission(request("thread-after-reconnect", "config-after-reconnect"))
+          .pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        expect(waiter.pollUnsafe()).toBeUndefined();
+
+        yield* governor.observe(
+          sample({
+            availableGiB: 12,
+            sampledAtMs: 3_000,
+            processes: growingProviderTree(rootPid, startTimeMs, 2.5),
+          }),
+        );
+
+        expect(yield* Fiber.join(waiter)).toBe(true);
+        expect(operations).toEqual([
+          "suspend:lease-telemetry-reconnect",
+          "resume:lease-telemetry-reconnect",
+          "resume:lease-telemetry-reconnect",
+        ]);
+        expect((yield* governor.latest).state).not.toBe("throttled");
+      }),
+  );
+
+  it.effect("keeps an unregistering lease until a later resume is confirmed", () =>
+    Effect.gen(function* () {
+      const resumed: Array<ProviderProcessTreeLease> = [];
+      let resumeAttempts = 0;
+      const governor = yield* makeSubagentResourceGovernor({
+        createProcessTreeLeaseId: () => "lease-unregister-retry",
+        processTreeController: {
+          suspend: () => Effect.void,
+          resume: (lease) => {
+            resumed.push(lease);
+            resumeAttempts += 1;
+            return resumeAttempts === 1
+              ? Effect.fail(
+                  new ProviderProcessTreeControlError({
+                    operation: "resume",
+                    leaseId: lease.leaseId,
+                    resumeRequired: true,
+                    cause: new Error("transient control failure"),
+                  }),
+                )
+              : Effect.void;
+          },
+        },
+      });
+      const threadId = ThreadId.make("thread-unregister-retry");
+      const rootPid = 931;
+      const startTimeMs = 93_000;
+      yield* driveToProviderTreeThrottle(governor, { threadId, rootPid, startTimeMs });
+
+      yield* governor.unregisterProviderProcess({ pid: rootPid, startTimeMs });
+      const pending = yield* governor.latest;
+      expect(pending.state).toBe("throttled");
+      expect(pending.affectedThreadIds).toContain(threadId);
+
+      yield* governor.observe(sample({ availableGiB: 12, sampledAtMs: 3_000 }));
+
+      expect(resumed).toHaveLength(2);
+      expect(resumed[0]).toEqual(resumed[1]);
+      expect(resumed[0]?.leaseId).toBe("lease-unregister-retry");
+      expect((yield* governor.latest).state).toBe("normal");
+    }),
+  );
+
+  it.effect("retries the same lease during shutdown before clearing governor state", () =>
+    Effect.gen(function* () {
+      const resumed: Array<ProviderProcessTreeLease> = [];
+      let resumeAttempts = 0;
+      const governor = yield* makeSubagentResourceGovernor({
+        createProcessTreeLeaseId: () => "lease-shutdown-retry",
+        processTreeController: {
+          suspend: () => Effect.void,
+          resume: (lease) => {
+            resumed.push(lease);
+            resumeAttempts += 1;
+            return resumeAttempts === 1
+              ? Effect.fail(
+                  new ProviderProcessTreeControlError({
+                    operation: "resume",
+                    leaseId: lease.leaseId,
+                    resumeRequired: true,
+                    cause: new Error("first shutdown resume failed"),
+                  }),
+                )
+              : Effect.void;
+          },
+        },
+      });
+      yield* driveToProviderTreeThrottle(governor, {
+        threadId: ThreadId.make("thread-shutdown-retry"),
+        rootPid: 941,
+        startTimeMs: 94_000,
+      });
+
+      yield* governor.shutdown;
+
+      expect(resumed).toHaveLength(2);
+      expect(resumed[0]).toEqual(resumed[1]);
+      expect(resumed[0]?.leaseId).toBe("lease-shutdown-retry");
+      expect((yield* governor.latest).state).toBe("unavailable");
+    }),
+  );
+
+  it.effect("retains an outstanding lease when shutdown cannot confirm a resume", () =>
+    Effect.gen(function* () {
+      const resumed: Array<string> = [];
+      const threadId = ThreadId.make("thread-shutdown-resume-failed");
+      const governor = yield* makeSubagentResourceGovernor({
+        createProcessTreeLeaseId: () => "lease-shutdown-unresolved",
+        processTreeController: {
+          suspend: () => Effect.void,
+          resume: (lease) => {
+            resumed.push(lease.leaseId);
+            return Effect.fail(
+              new ProviderProcessTreeControlError({
+                operation: "resume",
+                leaseId: lease.leaseId,
+                resumeRequired: true,
+                cause: new Error("sidecar unavailable during shutdown"),
+              }),
+            );
+          },
+        },
+      });
+      yield* driveToProviderTreeThrottle(governor, {
+        threadId,
+        rootPid: 951,
+        startTimeMs: 95_000,
+      });
+
+      yield* governor.shutdown;
+
+      expect(resumed).toEqual(["lease-shutdown-unresolved", "lease-shutdown-unresolved"]);
+      const stopped = yield* governor.latest;
+      expect(stopped.state).toBe("unavailable");
+      expect(stopped.affectedThreadIds).toContain(threadId);
+    }),
   );
 
   it.effect("projects the combined growth of all exact provider trees", () =>

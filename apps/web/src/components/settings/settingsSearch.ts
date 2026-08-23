@@ -53,6 +53,11 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
  */
 export const SETTINGS_SEARCH_ITEMS = [
   {
+    id: "harness-chat-sync",
+    title: "Harness chat sync",
+    to: "/settings/projects",
+  },
+  {
     id: "checkpoints",
     title: "Checkpoints",
     to: "/settings/projects",

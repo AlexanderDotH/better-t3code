@@ -16,6 +16,14 @@ default when no choice has been saved.
 On mobile, the equivalent **Settings → Appearance → Thread list layout** choice is stored on that
 device, so its layout can differ from web and desktop.
 
+## Return to unsent drafts
+
+Leaving a new-thread composer with a prompt or attachment keeps that draft available in the
+sidebar. **Current** shows draft cards above the activity lists, while **Classic** shows each draft
+with the chats under its matching project. Select the amber draft row to return to the composer, or
+use its discard button to remove it. Drafts keep their selected model, access mode, branch, and
+worktree until they are sent or discarded.
+
 ## Limit chats shown per project
 
 The **Classic** layout initially shows up to three chats in each project. Choose **Chats per

@@ -315,9 +315,16 @@ function ThreadRouteContent(
             modelSelection: composer.modelSelection ?? selectedThread.modelSelection,
             runtimeMode: composer.runtimeMode ?? selectedThread.runtimeMode,
             interactionMode: composer.interactionMode ?? selectedThread.interactionMode,
+            harnessSync: selectedThreadDetail?.harnessSync ?? selectedThread.harnessSync,
           }
         : null,
-    [composer.interactionMode, composer.modelSelection, composer.runtimeMode, selectedThread],
+    [
+      composer.interactionMode,
+      composer.modelSelection,
+      composer.runtimeMode,
+      selectedThread,
+      selectedThreadDetail?.harnessSync,
+    ],
   );
   const reasoningRecommendationSelection = selectedThreadWithDraftSettings?.modelSelection ?? null;
   const reasoningRecommendationCapabilities = useMemo(() => {

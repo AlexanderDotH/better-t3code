@@ -203,6 +203,42 @@ function MessageAttachmentImage(props: {
   );
 }
 
+function MessageAttachmentAudio(props: {
+  readonly environmentId: EnvironmentId;
+  readonly attachmentId: string;
+  readonly name: string;
+}) {
+  const uri = useAssetUrl(props.environmentId, {
+    _tag: "attachment",
+    attachmentId: props.attachmentId,
+  });
+  const iconColor = useThemeColor("--color-icon");
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Open audio attachment ${props.name}`}
+      disabled={uri === null}
+      onPress={() => {
+        if (uri !== null) void tryOpenExternalUrl(uri, "file-preview");
+      }}
+      className="mt-1.5 flex-row items-center gap-3 rounded-[14px] bg-black/5 px-3 py-2.5 disabled:opacity-60 dark:bg-white/10"
+    >
+      {uri === null ? (
+        <ActivityIndicator size="small" />
+      ) : (
+        <SymbolView name="waveform" size={20} tintColor={iconColor} type="monochrome" />
+      )}
+      <View className="min-w-0 flex-1">
+        <Text className="font-t3-medium text-sm text-foreground" numberOfLines={1}>
+          {props.name}
+        </Text>
+        <Text className="text-xs text-foreground-muted">Open audio</Text>
+      </View>
+    </Pressable>
+  );
+}
+
 const MARKDOWN_MONO_FONT = Platform.select({
   ios: "ui-monospace",
   android: "monospace",
@@ -996,17 +1032,29 @@ function renderFeedEntry(
                 onLinkPress={props.onMarkdownLinkPress}
               />
             ) : null}
-            {attachments.map((attachment) => {
-              return (
-                <MessageAttachmentImage
+            {attachments
+              .filter((attachment) => attachment.type === "image")
+              .map((attachment) => {
+                return (
+                  <MessageAttachmentImage
+                    key={attachment.id}
+                    environmentId={props.environmentId}
+                    attachmentId={attachment.id}
+                    className="aspect-[1.3] w-full rounded-[14px] bg-white/15"
+                    onPressImage={props.onPressImage}
+                  />
+                );
+              })}
+            {attachments
+              .filter((attachment) => attachment.type === "audio")
+              .map((attachment) => (
+                <MessageAttachmentAudio
                   key={attachment.id}
                   environmentId={props.environmentId}
                   attachmentId={attachment.id}
-                  className="aspect-[1.3] w-full rounded-[14px] bg-white/15"
-                  onPressImage={props.onPressImage}
+                  name={attachment.name}
                 />
-              );
-            })}
+              ))}
           </View>
           <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
             <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
@@ -1057,17 +1105,29 @@ function renderFeedEntry(
             </Markdown>
           )
         ) : null}
-        {attachments.map((attachment) => {
-          return (
-            <MessageAttachmentImage
+        {attachments
+          .filter((attachment) => attachment.type === "image")
+          .map((attachment) => {
+            return (
+              <MessageAttachmentImage
+                key={attachment.id}
+                environmentId={props.environmentId}
+                attachmentId={attachment.id}
+                className="mt-1.5 aspect-[1.3] w-full rounded-[18px] bg-neutral-200 dark:bg-neutral-800"
+                onPressImage={props.onPressImage}
+              />
+            );
+          })}
+        {attachments
+          .filter((attachment) => attachment.type === "audio")
+          .map((attachment) => (
+            <MessageAttachmentAudio
               key={attachment.id}
               environmentId={props.environmentId}
               attachmentId={attachment.id}
-              className="mt-1.5 aspect-[1.3] w-full rounded-[18px] bg-neutral-200 dark:bg-neutral-800"
-              onPressImage={props.onPressImage}
+              name={attachment.name}
             />
-          );
-        })}
+          ))}
         {showAssistantMeta ? (
           <View className="mt-1 flex-row items-center gap-1">
             <CopyTextButton

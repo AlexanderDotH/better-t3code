@@ -7,6 +7,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import type {
@@ -14,23 +15,33 @@ import type {
   ServiceLauncherChildMessage,
   ServiceLauncherContext,
   ServiceLauncherParentMessage,
+  ServiceStopAcknowledgement,
+  ServiceStopRequest,
   ServiceState,
   ServiceUpdateRecord,
 } from "./cloud/serviceProtocol.ts";
 import {
   compareExactServiceVersions,
   decodeServiceLauncherChildMessage,
+  decodeServiceStopRequest,
   isExactServiceVersion,
   parseServiceState,
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
+  SERVICE_STOP_ACK_FILE,
   SERVICE_STOP_MARKER_FILE,
+  SERVICE_STOP_PROTOCOL,
+  SERVICE_STOP_REQUEST_FILE,
+  SERVICE_WINDOWS_TASK_NAME,
 } from "./cloud/serviceProtocol.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
 const PREPARED_TIMEOUT_MS = 120_000;
 const TERMINATE_GRACE_MS = 5_000;
+const STOP_REQUEST_CHECK_MS = 250;
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher bundle has no Effect runtime.
+const HOST_PLATFORM = NodeOS.platform();
 
 type TerminalStatus = "committed" | "rolled-back" | "failed";
 type ChildRole = "active" | "trial";
@@ -39,6 +50,12 @@ interface ManagedChild {
   readonly version: string;
   role: ChildRole;
   readonly process: NodeChildProcess.ChildProcess;
+}
+
+export interface LauncherOptions {
+  readonly logPath?: string;
+  readonly serviceUnit?: string;
+  readonly stopRequestCheckMs?: number;
 }
 
 const runtimePaths = (baseDir: string, version: string) => {
@@ -79,12 +96,40 @@ async function syncFile(filePath: string): Promise<void> {
   }
 }
 
+export function shouldSyncServiceDirectory(platform: NodeJS.Platform): boolean {
+  return platform !== "win32";
+}
+
 async function syncDirectory(directory: string): Promise<void> {
+  if (!shouldSyncServiceDirectory(HOST_PLATFORM)) return;
   const handle = await NodeFSP.open(directory, "r");
   try {
     await handle.sync();
   } finally {
     await handle.close();
+  }
+}
+
+/** Durable same-directory replacement for launcher-owned control documents. */
+async function writeDurableText(filePath: string, contents: string): Promise<void> {
+  const directory = NodePath.dirname(filePath);
+  await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
+  const tempPath = NodePath.join(
+    directory,
+    `.${NodePath.basename(filePath)}.${process.pid}.${NodeCrypto.randomUUID()}`,
+  );
+  let handle: NodeFSP.FileHandle | undefined;
+  try {
+    handle = await NodeFSP.open(tempPath, "wx", 0o600);
+    await handle.writeFile(contents, "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+    await NodeFSP.rename(tempPath, filePath);
+    await syncDirectory(directory);
+  } finally {
+    await handle?.close().catch(() => undefined);
+    await NodeFSP.rm(tempPath, { force: true }).catch(() => undefined);
   }
 }
 
@@ -174,30 +219,7 @@ export async function readServiceState(filePath: string): Promise<ServiceState> 
 
 /** Durable same-directory replacement used for every runtime state transition. */
 export async function writeServiceState(filePath: string, state: ServiceState): Promise<void> {
-  const directory = NodePath.dirname(filePath);
-  await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
-  const tempPath = NodePath.join(
-    directory,
-    `.${NodePath.basename(filePath)}.${process.pid}.${NodeCrypto.randomUUID()}`,
-  );
-  let handle: NodeFSP.FileHandle | undefined;
-  try {
-    handle = await NodeFSP.open(tempPath, "wx", 0o600);
-    await handle.writeFile(`${JSON.stringify(state, null, 2)}\n`, "utf8");
-    await handle.sync();
-    await handle.close();
-    handle = undefined;
-    await NodeFSP.rename(tempPath, filePath);
-    const directoryHandle = await NodeFSP.open(directory, "r");
-    try {
-      await directoryHandle.sync();
-    } finally {
-      await directoryHandle.close();
-    }
-  } finally {
-    await handle?.close().catch(() => undefined);
-    await NodeFSP.rm(tempPath, { force: true }).catch(() => undefined);
-  }
+  await writeDurableText(filePath, `${JSON.stringify(state, null, 2)}\n`);
 }
 
 async function runtimeExists(baseDir: string, version: string): Promise<boolean> {
@@ -245,11 +267,37 @@ function waitForExit(child: NodeChildProcess.ChildProcess): Promise<void> {
   return new Promise((resolve) => child.once("exit", () => resolve()));
 }
 
+function waitForExitWithin(
+  child: NodeChildProcess.ChildProcess,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const onExit = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    const timer = setTimeout(() => {
+      child.off("exit", onExit);
+      resolve(false);
+    }, timeoutMs);
+    child.once("exit", onExit);
+  });
+}
+
 async function terminateChild(
   child: NodeChildProcess.ChildProcess,
   signal: NodeJS.Signals = "SIGTERM",
+  requestId?: string,
 ): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
+  if (HOST_PLATFORM === "win32") {
+    await sendMessage(child, {
+      type: "shutdown",
+      requestId: requestId ?? NodeCrypto.randomUUID(),
+    }).catch(() => undefined);
+    if (await waitForExitWithin(child, TERMINATE_GRACE_MS)) return;
+  }
   child.kill(signal);
   const force = setTimeout(() => child.kill("SIGKILL"), TERMINATE_GRACE_MS);
   try {
@@ -261,23 +309,54 @@ async function terminateChild(
 
 const stopMarkerPath = (baseDir: string) =>
   NodePath.join(baseDir, "runtime", SERVICE_STOP_MARKER_FILE);
+const stopRequestPath = (baseDir: string) =>
+  NodePath.join(baseDir, "runtime", SERVICE_STOP_REQUEST_FILE);
+const stopAcknowledgementPath = (baseDir: string) =>
+  NodePath.join(baseDir, "runtime", SERVICE_STOP_ACK_FILE);
+
+async function readStopRequest(baseDir: string): Promise<ServiceStopRequest | undefined> {
+  try {
+    const value: unknown = JSON.parse(await NodeFSP.readFile(stopRequestPath(baseDir), "utf8"));
+    return decodeServiceStopRequest(value);
+  } catch (cause) {
+    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return undefined;
+    if (cause instanceof SyntaxError) return undefined;
+    throw cause;
+  }
+}
+
+async function writeStopAcknowledgement(
+  baseDir: string,
+  acknowledgement: ServiceStopAcknowledgement,
+): Promise<void> {
+  await writeDurableText(
+    stopAcknowledgementPath(baseDir),
+    `${JSON.stringify(acknowledgement, null, 2)}\n`,
+  );
+}
 
 export class Launcher {
   readonly #baseDir: string;
   readonly #statePath: string;
+  readonly #options: LauncherOptions;
   #state: ServiceState;
   #child: ManagedChild | null = null;
   #timer: NodeJS.Timeout | undefined;
+  #stopRequestTimer: NodeJS.Timeout | undefined;
+  #stopRequestReadPending = false;
+  #handledStopRequestId: string | undefined;
+  #logDescriptor: number | undefined;
   #transitions: Promise<void> = Promise.resolve();
   #stopRequested = false;
   #stopping = false;
   #done = false;
   readonly #completion = Promise.withResolvers<void>();
 
-  constructor(baseDir: string, state: ServiceState) {
+  constructor(baseDir: string, state: ServiceState, options: LauncherOptions = {}) {
     this.#baseDir = baseDir;
     this.#statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
     this.#state = state;
+    this.#options = options;
   }
 
   async run(): Promise<void> {
@@ -286,12 +365,79 @@ export class Launcher {
     process.once("SIGTERM", onSigterm);
     process.once("SIGINT", onSigint);
     try {
-      this.#enqueue(() => this.#recover());
+      await this.#openLog();
+      this.#log(`started (pid ${process.pid})`);
+      const initialStopRequest = await readStopRequest(this.#baseDir);
+      if (initialStopRequest === undefined) {
+        this.#enqueue(() => this.#recover());
+        this.#startStopRequestWatcher();
+      } else {
+        await this.#handleStopRequest(initialStopRequest);
+      }
       await this.#completion.promise;
     } finally {
+      this.#clearStopRequestWatcher();
       process.off("SIGTERM", onSigterm);
       process.off("SIGINT", onSigint);
+      if (this.#logDescriptor !== undefined) {
+        NodeFS.closeSync(this.#logDescriptor);
+        this.#logDescriptor = undefined;
+      }
     }
+  }
+
+  async #openLog(): Promise<void> {
+    const logPath = this.#options.logPath;
+    if (logPath === undefined) return;
+    await NodeFSP.mkdir(NodePath.dirname(logPath), { recursive: true, mode: 0o700 });
+    this.#logDescriptor = NodeFS.openSync(logPath, "a", 0o600);
+  }
+
+  #log(message: string): void {
+    if (this.#logDescriptor === undefined) return;
+    try {
+      NodeFS.writeSync(this.#logDescriptor, `[service-launcher] ${message}\n`);
+    } catch {
+      // The service manager still observes the non-zero launcher exit.
+    }
+  }
+
+  #startStopRequestWatcher(): void {
+    const interval = this.#options.stopRequestCheckMs ?? STOP_REQUEST_CHECK_MS;
+    this.#stopRequestTimer = setInterval(() => void this.#pollStopRequest(), interval);
+  }
+
+  #clearStopRequestWatcher(): void {
+    clearInterval(this.#stopRequestTimer);
+    this.#stopRequestTimer = undefined;
+  }
+
+  async #pollStopRequest(): Promise<void> {
+    if (this.#stopRequestReadPending || this.#done || this.#stopping) return;
+    this.#stopRequestReadPending = true;
+    try {
+      const request = await readStopRequest(this.#baseDir);
+      if (request !== undefined && request.id !== this.#handledStopRequestId) {
+        await this.#handleStopRequest(request);
+      }
+    } catch (cause) {
+      this.#enqueue(() =>
+        Promise.reject(cause instanceof Error ? cause : new Error(String(cause))),
+      );
+    } finally {
+      this.#stopRequestReadPending = false;
+    }
+  }
+
+  async #handleStopRequest(request: ServiceStopRequest): Promise<void> {
+    this.#handledStopRequestId = request.id;
+    this.#log(`received graceful stop request ${request.id}`);
+    await writeStopAcknowledgement(this.#baseDir, {
+      ...request,
+      pid: process.pid,
+      status: "received",
+    });
+    await this.stop("SIGTERM", request.id);
   }
 
   #enqueue(transition: () => Promise<void>): void {
@@ -307,13 +453,15 @@ export class Launcher {
     this.#done = true;
     this.#stopping = true;
     this.#clearTimer();
+    this.#clearStopRequestWatcher();
+    this.#log(error.message);
     const child = this.#child?.process;
     this.#child = null;
     if (child !== undefined) await terminateChild(child);
     this.#completion.reject(error);
   }
 
-  async stop(signal: NodeJS.Signals): Promise<void> {
+  async stop(signal: NodeJS.Signals, requestId?: string): Promise<void> {
     // This must happen synchronously at signal receipt. A queued update
     // transition may already be terminating the active child, and that child
     // needs to see the marker in its shutdown finalizer. KillMode=mixed also
@@ -327,10 +475,19 @@ export class Launcher {
     }
     if (this.#stopRequested || this.#stopping) {
       await this.#completion.promise.catch(() => undefined);
+      if (requestId !== undefined) {
+        await writeStopAcknowledgement(this.#baseDir, {
+          protocol: SERVICE_STOP_PROTOCOL,
+          id: requestId,
+          pid: process.pid,
+          status: "stopped",
+        });
+      }
       return;
     }
     this.#stopRequested = true;
     this.#clearTimer();
+    this.#clearStopRequestWatcher();
     this.#enqueue(async () => {
       // Let an update transition already in progress start its replacement
       // before this queued stop tears it down. That replacement owns the
@@ -338,7 +495,15 @@ export class Launcher {
       this.#stopping = true;
       const child = this.#child?.process;
       this.#child = null;
-      if (child !== undefined) await terminateChild(child, signal);
+      if (child !== undefined) await terminateChild(child, signal, requestId);
+      if (requestId !== undefined) {
+        await writeStopAcknowledgement(this.#baseDir, {
+          protocol: SERVICE_STOP_PROTOCOL,
+          id: requestId,
+          pid: process.pid,
+          status: "stopped",
+        });
+      }
       this.#done = true;
       this.#completion.resolve();
     });
@@ -402,8 +567,16 @@ export class Launcher {
       ...(update === undefined ? {} : { update }),
     };
     const child = NodeChildProcess.spawn(process.execPath, [paths.entryPath, "serve"], {
-      env: { ...process.env, [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context) },
-      stdio: ["inherit", "inherit", "inherit", "ipc"],
+      env: {
+        ...process.env,
+        T3CODE_HOME: this.#baseDir,
+        T3_BOOT_SERVICE_UNIT:
+          this.#options.serviceUnit ??
+          process.env.T3_BOOT_SERVICE_UNIT ??
+          (HOST_PLATFORM === "win32" ? SERVICE_WINDOWS_TASK_NAME : undefined),
+        [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context),
+      },
+      stdio: ["ignore", this.#logDescriptor ?? "inherit", this.#logDescriptor ?? "inherit", "ipc"],
     });
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => reject(error);
@@ -424,6 +597,7 @@ export class Launcher {
       role,
       process: child,
     };
+    this.#log(`started ${role} t3@${version} (pid ${String(child.pid)})`);
     this.#child = managed;
     child.on("message", (value) => {
       const message = decodeServiceLauncherChildMessage(value);
@@ -554,6 +728,7 @@ export class Launcher {
   ): Promise<void> {
     if (this.#child !== child || this.#stopping) return;
     this.#child = null;
+    this.#log(`${child.role} t3@${child.version} exited (${String(code ?? signal ?? "unknown")})`);
     if (child.role === "trial") {
       this.#clearTimer();
       const pending = this.#state.update;
@@ -601,14 +776,48 @@ export class Launcher {
   }
 }
 
-async function main(): Promise<void> {
-  const baseDir = process.env.T3CODE_HOME?.trim();
+export interface ServiceLauncherArguments {
+  readonly baseDir: string;
+  readonly logPath?: string;
+}
+
+export function parseServiceLauncherArguments(
+  args: ReadonlyArray<string>,
+  environment: NodeJS.ProcessEnv,
+): ServiceLauncherArguments {
+  let baseDir: string | undefined;
+  let logPath: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const option = args[index];
+    if (option !== "--base-dir" && option !== "--log-path") {
+      throw new Error(`Unknown service launcher argument '${String(option)}'.`);
+    }
+    const value = args[index + 1]?.trim();
+    if (value === undefined || value === "") {
+      throw new Error(`Service launcher argument '${option}' requires a value.`);
+    }
+    if (option === "--base-dir") baseDir = value;
+    if (option === "--log-path") logPath = value;
+    index += 1;
+  }
+  baseDir ??= environment.T3CODE_HOME?.trim();
   if (baseDir === undefined || baseDir === "") {
     throw new Error("T3CODE_HOME is required by the T3 Code service launcher.");
   }
+  return { baseDir, ...(logPath === undefined ? {} : { logPath }) };
+}
+
+async function main(): Promise<void> {
+  const options = parseServiceLauncherArguments(process.argv.slice(2), process.env);
+  const { baseDir } = options;
   const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
   const state = await readServiceState(statePath);
-  await new Launcher(baseDir, state).run();
+  await new Launcher(baseDir, state, {
+    ...(options.logPath === undefined ? {} : { logPath: options.logPath }),
+    ...(process.env.T3_BOOT_SERVICE_UNIT === undefined
+      ? {}
+      : { serviceUnit: process.env.T3_BOOT_SERVICE_UNIT }),
+  }).run();
 }
 
 if (import.meta.main) {

@@ -2,6 +2,7 @@ export * from "./baseSchemas.ts";
 export * from "./background.ts";
 export * from "./agentImport.ts";
 export * from "./t3ChatImport.ts";
+export * from "./harnessChatSync.ts";
 export * from "./auth.ts";
 export * from "./environment.ts";
 export * from "./environmentHttp.ts";

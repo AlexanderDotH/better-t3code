@@ -48,6 +48,7 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   type ContextMenuItem,
   ProjectId,
+  type ScopedProjectRef,
   type ScopedThreadRef,
   type ResolvedKeybindingsConfig,
   type SidebarProjectGroupingMode,
@@ -115,7 +116,7 @@ import {
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import { ensureLocalApi, readLocalApi } from "../localApi";
-import { useComposerDraftStore } from "../composerDraftStore";
+import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
 
@@ -212,6 +213,10 @@ import {
 } from "../sidebarProjectGrouping";
 import { partitionSidebarProjectsByActivity } from "../sidebarProjectActivity";
 import { SidebarOlderProjectsSection } from "./sidebar/SidebarOlderProjectsSection";
+import {
+  LegacySidebarDraftRows,
+  useProjectHasDraftContent,
+} from "./sidebar/LegacySidebarDraftRows";
 import { ProjectThreadPreviewCountControl } from "./ProjectThreadPreviewCountControl";
 import { useProjectThreadPreviewCount } from "../projectThreadPreviewSync";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -911,6 +916,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
 
 interface SidebarProjectThreadListProps {
   projectKey: string;
+  projectRefs: readonly ScopedProjectRef[];
   projectExpanded: boolean;
   hasOverflowingThreads: boolean;
   canToggleSettledThreads: boolean;
@@ -923,6 +929,7 @@ interface SidebarProjectThreadListProps {
   shouldShowThreadPanel: boolean;
   projectCwd: string;
   activeRouteThreadKey: string | null;
+  activeRouteDraftId: string | null;
   openPullRequestsInRightPanel: boolean;
   threadJumpLabelByKey: ReadonlyMap<string, string>;
   appSettingsConfirmThreadArchive: boolean;
@@ -942,6 +949,7 @@ interface SidebarProjectThreadListProps {
     orderedProjectThreadKeys: readonly string[],
   ) => void;
   navigateToThread: (threadRef: ScopedThreadRef) => void;
+  navigateToDraft: (draftId: DraftId) => void;
   handleMultiSelectContextMenu: (position: { x: number; y: number }) => Promise<void>;
   handleThreadContextMenu: (
     threadRef: ScopedThreadRef,
@@ -972,6 +980,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
 ) {
   const {
     projectKey,
+    projectRefs,
     projectExpanded,
     hasOverflowingThreads,
     canToggleSettledThreads,
@@ -984,6 +993,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     shouldShowThreadPanel,
     projectCwd,
     activeRouteThreadKey,
+    activeRouteDraftId,
     openPullRequestsInRightPanel,
     threadJumpLabelByKey,
     appSettingsConfirmThreadArchive,
@@ -999,6 +1009,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     attachThreadListAutoAnimateRef,
     handleThreadClick,
     navigateToThread,
+    navigateToDraft,
     handleMultiSelectContextMenu,
     handleThreadContextMenu,
     clearSelection,
@@ -1021,6 +1032,12 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
       ref={attachThreadListAutoAnimateRef}
       className="mx-0.5 my-0 w-full translate-x-0 gap-0.5 overflow-hidden border-l-0 px-1 py-0 sm:mx-1 sm:px-1.5"
     >
+      <LegacySidebarDraftRows
+        projectRefs={projectRefs}
+        activeDraftId={activeRouteDraftId}
+        visible={shouldShowThreadPanel}
+        onNavigate={navigateToDraft}
+      />
       {shouldShowThreadPanel && showEmptyThreadState ? (
         <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
           <div
@@ -1135,6 +1152,7 @@ interface SidebarProjectItemProps {
   isThreadListExpanded: boolean;
   settledThreadsVisible: boolean;
   activeRouteThreadKey: string | null;
+  activeRouteDraftId: string | null;
   openPullRequestsInRightPanel: boolean;
   newThreadShortcutLabel: string | null;
   handleNewThread: ReturnType<typeof useNewThreadHandler>;
@@ -1161,6 +1179,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     isThreadListExpanded,
     settledThreadsVisible,
     activeRouteThreadKey,
+    activeRouteDraftId,
     openPullRequestsInRightPanel,
     newThreadShortcutLabel,
     handleNewThread,
@@ -1270,6 +1289,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const sidebarThreadByKeyRef = useRef(sidebarThreadByKey);
   sidebarThreadByKeyRef.current = sidebarThreadByKey;
   const projectThreads = sidebarThreads;
+  const hasProjectDraftContent = useProjectHasDraftContent(project.memberProjectRefs);
   const projectPreferenceKeys = useMemo(() => projectExpansionPreferenceKeys(project), [project]);
   const projectExpanded = useUiStateStore((state) =>
     resolveProjectExpanded(state.projectExpandedById, projectPreferenceKeys),
@@ -1440,12 +1460,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         sections.hiddenNonSettledItems.map((thread) => resolveProjectThreadStatus(thread)),
       ),
       renderedThreads,
-      showEmptyThreadState: projectExpanded && visibleProjectThreads.length === 0,
-      shouldShowThreadPanel: projectExpanded || pinnedCollapsedThread !== null,
+      showEmptyThreadState:
+        projectExpanded && visibleProjectThreads.length === 0 && !hasProjectDraftContent,
+      shouldShowThreadPanel:
+        projectExpanded || pinnedCollapsedThread !== null || activeRouteDraftId !== null,
     };
   }, [
     isThreadListExpanded,
     isProjectThreadSettled,
+    activeRouteDraftId,
+    hasProjectDraftContent,
     pinnedCollapsedThread,
     projectExpanded,
     projectThreads,
@@ -1488,6 +1512,17 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       suppressProjectClickAfterDragRef,
       suppressProjectClickForContextMenuRef,
     ],
+  );
+
+  const navigateToDraft = useCallback(
+    (draftId: DraftId) => {
+      clearSelection();
+      if (isMobile) {
+        setOpenMobile(false);
+      }
+      void router.navigate({ to: "/draft/$draftId", params: { draftId } });
+    },
+    [clearSelection, isMobile, router, setOpenMobile],
   );
 
   const handleProjectButtonKeyDown = useCallback(
@@ -2468,6 +2503,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
       <SidebarProjectThreadList
         projectKey={project.projectKey}
+        projectRefs={project.memberProjectRefs}
         projectExpanded={projectExpanded}
         hasOverflowingThreads={hasOverflowingThreads}
         canToggleSettledThreads={canToggleSettledThreads}
@@ -2480,6 +2516,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         shouldShowThreadPanel={shouldShowThreadPanel}
         projectCwd={project.workspaceRoot}
         activeRouteThreadKey={activeRouteThreadKey}
+        activeRouteDraftId={activeRouteDraftId}
         openPullRequestsInRightPanel={openPullRequestsInRightPanel}
         threadJumpLabelByKey={threadJumpLabelByKey}
         appSettingsConfirmThreadArchive={appSettingsConfirmThreadArchive}
@@ -2495,6 +2532,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
         handleThreadClick={handleThreadClick}
         navigateToThread={navigateToThread}
+        navigateToDraft={navigateToDraft}
         handleMultiSelectContextMenu={handleMultiSelectContextMenu}
         handleThreadContextMenu={handleThreadContextMenu}
         clearSelection={clearSelection}
@@ -2868,6 +2906,7 @@ interface SidebarProjectsContentProps {
   settledThreadListsByProject: ReadonlySet<string>;
   activeRouteProjectKey: string | null;
   routeThreadKey: string | null;
+  routeDraftId: string | null;
   openPullRequestsInRightPanel: boolean;
   newThreadShortcutLabel: string | null;
   commandPaletteShortcutLabel: string | null;
@@ -2901,6 +2940,7 @@ interface SidebarProjectListProps {
   settledThreadListsByProject: ReadonlySet<string>;
   activeRouteProjectKey: string | null;
   routeThreadKey: string | null;
+  routeDraftId: string | null;
   openPullRequestsInRightPanel: boolean;
   newThreadShortcutLabel: string | null;
   threadJumpLabelByKey: ReadonlyMap<string, string>;
@@ -2933,6 +2973,7 @@ const SidebarProjectList = memo(function SidebarProjectList(props: SidebarProjec
     settledThreadListsByProject,
     activeRouteProjectKey,
     routeThreadKey,
+    routeDraftId,
     openPullRequestsInRightPanel,
     newThreadShortcutLabel,
     threadJumpLabelByKey,
@@ -2978,6 +3019,9 @@ const SidebarProjectList = memo(function SidebarProjectList(props: SidebarProjec
                     activeRouteThreadKey={
                       activeRouteProjectKey === project.projectKey ? routeThreadKey : null
                     }
+                    activeRouteDraftId={
+                      activeRouteProjectKey === project.projectKey ? routeDraftId : null
+                    }
                     openPullRequestsInRightPanel={openPullRequestsInRightPanel}
                     newThreadShortcutLabel={newThreadShortcutLabel}
                     handleNewThread={handleNewThread}
@@ -3017,6 +3061,7 @@ const SidebarProjectList = memo(function SidebarProjectList(props: SidebarProjec
           activeRouteThreadKey={
             activeRouteProjectKey === project.projectKey ? routeThreadKey : null
           }
+          activeRouteDraftId={activeRouteProjectKey === project.projectKey ? routeDraftId : null}
           openPullRequestsInRightPanel={openPullRequestsInRightPanel}
           newThreadShortcutLabel={newThreadShortcutLabel}
           handleNewThread={handleNewThread}
@@ -3074,6 +3119,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     settledThreadListsByProject,
     activeRouteProjectKey,
     routeThreadKey,
+    routeDraftId,
     openPullRequestsInRightPanel,
     newThreadShortcutLabel,
     commandPaletteShortcutLabel,
@@ -3124,6 +3170,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     settledThreadListsByProject,
     activeRouteProjectKey,
     routeThreadKey,
+    routeDraftId,
     openPullRequestsInRightPanel,
     newThreadShortcutLabel,
     threadJumpLabelByKey,
@@ -3278,6 +3325,7 @@ export default function LegacySidebar() {
   const routeDraftThread = useComposerDraftStore((store) =>
     routeTarget?.kind === "draft" ? store.getDraftSession(routeTarget.draftId) : null,
   );
+  const routeDraftId = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
   const routeThreadRef = useMemo(
     () => resolveActiveThreadRouteRef(routeTarget, routeDraftThread),
     [routeDraftThread, routeTarget],
@@ -3450,6 +3498,16 @@ export default function LegacySidebar() {
   // Resolve the active route's project key to a logical key so it matches the
   // sidebar's grouped project entries.
   const activeRouteProjectKey = useMemo(() => {
+    if (routeDraftThread) {
+      const draftProjectRef = scopeProjectRef(
+        routeDraftThread.environmentId,
+        routeDraftThread.projectId,
+      );
+      const physicalKey =
+        projectPhysicalKeyByScopedRef.get(scopedProjectKey(draftProjectRef)) ??
+        scopedProjectKey(draftProjectRef);
+      return physicalToLogicalKey.get(physicalKey) ?? physicalKey;
+    }
     if (!routeThreadKey) {
       return null;
     }
@@ -3460,7 +3518,13 @@ export default function LegacySidebar() {
         scopedProjectKey(scopeProjectRef(activeThread.environmentId, activeThread.projectId)),
       ) ?? scopedProjectKey(scopeProjectRef(activeThread.environmentId, activeThread.projectId));
     return physicalToLogicalKey.get(physicalKey) ?? physicalKey;
-  }, [routeThreadKey, sidebarThreadByKey, physicalToLogicalKey, projectPhysicalKeyByScopedRef]);
+  }, [
+    routeDraftThread,
+    routeThreadKey,
+    sidebarThreadByKey,
+    physicalToLogicalKey,
+    projectPhysicalKeyByScopedRef,
+  ]);
 
   // Group threads by logical project key so all threads from grouped projects
   // are displayed together.
@@ -4081,6 +4145,7 @@ export default function LegacySidebar() {
         settledThreadListsByProject={settledThreadListsByProject}
         activeRouteProjectKey={activeRouteProjectKey}
         routeThreadKey={routeThreadKey}
+        routeDraftId={routeDraftId}
         openPullRequestsInRightPanel={routeThreadRef !== null}
         newThreadShortcutLabel={newThreadShortcutLabel}
         commandPaletteShortcutLabel={commandPaletteShortcutLabel}

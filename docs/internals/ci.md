@@ -15,6 +15,13 @@ and pushes to `main`:
   reporting workflow.
 - **Rust**: resource-monitor formatting and tests run in a dedicated job instead of installing the
   Rust toolchain in both the Check and Test jobs.
+- **Windows 2025 x64 Parity**: a Windows 2025 runner uses Node 24 to start real `.cmd` provider
+  fixtures, round-trip PowerShell arguments, open a ConPTY terminal, create a Git checkpoint ref in
+  a `C:\...` workspace, and prove process-tree cleanup. It also runs the native Rust resource-monitor
+  suite plus focused provider, terminal, checkpoint, path, desktop, and WSL-isolation tests before
+  typechecking and building the desktop plus server pipeline. Finally, it installs the real per-user
+  Scheduled Task against isolated state, force-crashes the tracked launcher, verifies Task Scheduler
+  recovery, repairs deliberate task drift, and uninstalls without orphan processes.
 - **Mobile Native Static Analysis**: `vp run lint:mobile` on macOS, wrapping
   `scripts/mobile-native-static-check.ts`. A cheap Linux **Mobile Native Changes** job gates it:
   the macOS runner only boots when the diff touches `apps/mobile` Swift/Kotlin sources, the
@@ -26,13 +33,16 @@ and pushes to `main`:
 - **Release Smoke**: exercises release-only workflow steps through `scripts/release-smoke.ts`, so
   release breakage surfaces on PRs rather than at tag time.
 
-Fork CI uses GitHub-hosted `ubuntu-24.04` and `macos-26` runners. Upstream's organization-scoped
+Fork CI uses GitHub-hosted `ubuntu-24.04`, `windows-2025`, and `macos-26` runners. Upstream's organization-scoped
 Blacksmith labels are intentionally not used in this workflow.
 
 `.github/workflows/release.yml` builds macOS (`arm64` and `x64`), Linux (`x64`), and Windows (`x64`)
 desktop artifacts from a single `v*.*.*` tag and publishes one GitHub release. It auto-enables
-signing only when platform credentials are present. macOS passkey builds additionally require
-`APPLE_TEAM_ID` and the `MACOS_PROVISIONING_PROFILE` secret; Windows uses Azure Trusted Signing.
-Without the core signing credentials, it still releases unsigned artifacts.
+signing for macOS when platform credentials are present. macOS passkey builds additionally require
+`APPLE_TEAM_ID` and the `MACOS_PROVISIONING_PROFILE` secret. Windows uses Azure Trusted Signing and
+official stable/nightly automation fails closed when any signing input is missing. Before npm or
+GitHub publication, CI installs the signed NSIS package, verifies installed startup, and exercises a
+real imported Ubuntu x64/glibc WSL instance with the shipped node-pty and telemetry sidecars. It then
+exercises a signed N→N+1 mock-server update while preserving an SQLite sentinel.
 
 See [Release Checklist](../operations/release.md) for the full release/signing setup checklist.

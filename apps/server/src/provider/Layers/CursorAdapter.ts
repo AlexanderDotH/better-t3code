@@ -1132,7 +1132,7 @@ export function makeCursorAdapter(
                 ),
               );
               promptParts.push({
-                type: "image",
+                type: attachment.type,
                 data: Buffer.from(bytes).toString("base64"),
                 mimeType: attachment.mimeType,
               });

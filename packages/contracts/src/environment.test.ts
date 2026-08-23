@@ -80,6 +80,20 @@ describe("ExecutionEnvironmentCapabilities", () => {
     expect(current.environmentSettingsVersion).toBe(3);
     expect(current.projectSettingsVersion).toBe(1);
   });
+
+  it("keeps harness chat sync optional for older environments", () => {
+    const legacy = decodeCapabilities({ repositoryIdentity: true });
+    const current = decodeCapabilities({
+      repositoryIdentity: true,
+      harnessChatSyncVersion: 1,
+    });
+
+    expect(legacy.harnessChatSyncVersion).toBeUndefined();
+    expect(current.harnessChatSyncVersion).toBe(1);
+    expect(() =>
+      decodeCapabilities({ repositoryIdentity: true, harnessChatSyncVersion: 0 }),
+    ).toThrow();
+  });
 });
 
 const descriptor = {
