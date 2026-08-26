@@ -2,6 +2,8 @@ import {
   CheckpointRef,
   EnvironmentId,
   MessageId,
+  OrchestrationProposedPlanId,
+  ThreadId,
   TurnId,
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
@@ -278,6 +280,297 @@ function buildAssistantTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("offers a result-only retry only on the targeted user message", () => {
+    const target = buildUserTimelineEntry("Retry this prompt");
+    const older = {
+      ...buildUserTimelineEntry("Older prompt"),
+      id: "entry-older",
+      message: {
+        ...buildUserTimelineEntry("Older prompt").message,
+        id: MessageId.make("message-older"),
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[older, target]}
+        retryAction={{
+          available: true,
+          messageId: target.message.id,
+          pending: false,
+          onRetry: vi.fn(),
+        }}
+      />,
+    );
+
+    expect(markup.match(/aria-label="Retry response"/g)).toHaveLength(1);
+    expect(markup).toContain("opacity-100");
+  });
+
+  it("disables and marks the result-only retry while it is pending", () => {
+    const target = buildUserTimelineEntry("Retry once");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[target]}
+        retryAction={{
+          available: true,
+          messageId: target.message.id,
+          pending: true,
+          onRetry: vi.fn(),
+        }}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Retrying response"');
+    expect(markup).toContain('aria-busy="true"');
+    expect(markup).toContain("disabled");
+  });
+
+  it("offers a fork action only for committed user messages", () => {
+    const committed = buildUserTimelineEntry("Committed prompt");
+    const optimistic = {
+      ...buildUserTimelineEntry("Optimistic prompt"),
+      id: "entry-optimistic",
+      message: {
+        ...buildUserTimelineEntry("Optimistic prompt").message,
+        id: MessageId.make("message-optimistic"),
+      },
+    };
+    const forkableMessageIds = new Set([committed.message.id]);
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[committed, optimistic]}
+        forkActions={{
+          available: true,
+          pendingBoundary: null,
+          forkableMessageIds,
+          forkableProposedPlanIds: new Set(),
+          onFork: vi.fn(),
+        }}
+      />,
+    );
+
+    expect(markup.match(/aria-label="Fork chat from here"/g)).toHaveLength(1);
+  });
+
+  it("offers a fork action for a completed assistant response while its turn continues", () => {
+    const turnId = TurnId.make("turn-still-running");
+    const baseAssistantEntry = buildAssistantTimelineEntry("Intermediate response");
+    const assistantEntry = {
+      ...baseAssistantEntry,
+      message: { ...baseAssistantEntry.message, turnId },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        latestTurn={{
+          turnId,
+          state: "running",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: null,
+        }}
+        runningTurnId={turnId}
+        timelineEntries={[assistantEntry]}
+        forkActions={{
+          available: true,
+          pendingBoundary: null,
+          forkableMessageIds: new Set([assistantEntry.message.id]),
+          forkableProposedPlanIds: new Set(),
+          onFork: vi.fn(),
+        }}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Fork chat from here"');
+  });
+
+  it("hides fork actions for streaming messages and older servers", () => {
+    const streamingEntry = buildAssistantTimelineEntry("Partial response");
+    streamingEntry.message.streaming = true;
+    const unsupportedMarkup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[buildUserTimelineEntry("Hello")]} />,
+    );
+    const streamingMarkup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[streamingEntry]}
+        forkActions={{
+          available: true,
+          pendingBoundary: null,
+          forkableMessageIds: new Set([streamingEntry.message.id]),
+          forkableProposedPlanIds: new Set(),
+          onFork: vi.fn(),
+        }}
+      />,
+    );
+
+    expect(unsupportedMarkup).not.toContain("Fork chat from here");
+    expect(streamingMarkup).not.toContain("Fork chat from here");
+  });
+
+  it("keeps the capable-server action visible but disabled while disconnected", () => {
+    const entry = buildUserTimelineEntry("Reconnect first");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[entry]}
+        forkActions={{
+          available: false,
+          pendingBoundary: null,
+          forkableMessageIds: new Set([entry.message.id]),
+          forkableProposedPlanIds: new Set(),
+          onFork: vi.fn(),
+        }}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Fork chat from here"');
+    expect(markup).toContain("disabled");
+  });
+
+  it("disables duplicate fork dispatches and marks the selected action busy", () => {
+    const entry = buildUserTimelineEntry("Fork once");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[entry]}
+        forkActions={{
+          available: true,
+          pendingBoundary: { kind: "message", messageId: entry.message.id },
+          forkableMessageIds: new Set([entry.message.id]),
+          forkableProposedPlanIds: new Set(),
+          onFork: vi.fn(),
+        }}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Forking chat"');
+    expect(markup).toContain('aria-busy="true"');
+    expect(markup).toContain("disabled");
+  });
+
+  it("keeps inherited rows forkable while hiding their revert mutation", () => {
+    const baseEntry = buildUserTimelineEntry("Frozen prompt");
+    const entry = {
+      ...baseEntry,
+      message: {
+        ...baseEntry.message,
+        historyOrigin: {
+          sourceThreadId: ThreadId.make("source-thread"),
+          sourceId: MessageId.make("source-message"),
+          ordinal: 0,
+        },
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[entry]}
+        revertTurnCountByUserMessageId={new Map([[entry.message.id, 1]])}
+        forkActions={{
+          available: true,
+          pendingBoundary: null,
+          forkableMessageIds: new Set([entry.message.id]),
+          forkableProposedPlanIds: new Set(),
+          onFork: vi.fn(),
+        }}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Fork chat from here"');
+    expect(markup).not.toContain('aria-label="Revert to this message"');
+  });
+
+  it("renders fork provenance, the exact boundary divider, and a finalized-plan action", () => {
+    const sourceThreadId = ThreadId.make("source-thread");
+    const sourceMessageId = MessageId.make("source-message");
+    const sourcePlanId = OrchestrationProposedPlanId.make("source-plan");
+    const baseMessageEntry = buildUserTimelineEntry("Frozen prompt");
+    const messageEntry = {
+      ...baseMessageEntry,
+      message: {
+        ...baseMessageEntry.message,
+        historyOrigin: {
+          sourceThreadId,
+          sourceId: sourceMessageId,
+          ordinal: 0,
+        },
+      },
+    };
+    const proposedPlanId = OrchestrationProposedPlanId.make("destination-plan");
+    const planEntry = {
+      id: proposedPlanId,
+      kind: "proposed-plan" as const,
+      createdAt: "2026-03-17T19:12:29.000Z",
+      proposedPlan: {
+        id: proposedPlanId,
+        turnId: null,
+        planMarkdown: "# Frozen plan",
+        implementedAt: null,
+        implementationThreadId: null,
+        createdAt: "2026-03-17T19:12:29.000Z",
+        updatedAt: "2026-03-17T19:12:29.000Z",
+        historyOrigin: { sourceThreadId, sourceId: sourcePlanId, ordinal: 1 },
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[messageEntry, planEntry]}
+        forkActions={{
+          available: true,
+          pendingBoundary: null,
+          forkableMessageIds: new Set([messageEntry.message.id]),
+          forkableProposedPlanIds: new Set([proposedPlanId]),
+          onFork: vi.fn(),
+        }}
+        forkProvenance={{
+          sourceTitle: "Original chat",
+          boundary: { kind: "proposed-plan", planId: sourcePlanId },
+          onOpenSource: vi.fn(),
+        }}
+      />,
+    );
+
+    expect(markup).toContain("Forked from");
+    expect(markup).toContain("Original chat");
+    expect(markup).toContain("Fork starts here");
+    expect(markup).toContain('data-history-read-only="true"');
+    expect(markup.match(/aria-label="Fork chat from here"/g)).toHaveLength(2);
+  });
+
+  it("keeps provenance without a link after the source thread disappears", () => {
+    const sourceThreadId = ThreadId.make("deleted-source-thread");
+    const sourceMessageId = MessageId.make("deleted-source-message");
+    const baseEntry = buildUserTimelineEntry("Frozen prompt");
+    const entry = {
+      ...baseEntry,
+      message: {
+        ...baseEntry.message,
+        historyOrigin: { sourceThreadId, sourceId: sourceMessageId, ordinal: 0 },
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[entry]}
+        forkProvenance={{
+          sourceTitle: "Deleted source",
+          boundary: { kind: "message", messageId: sourceMessageId },
+        }}
+      />,
+    );
+    const provenanceStart = markup.indexOf('data-fork-provenance="true"');
+    const provenanceEnd = markup.indexOf("</div>", provenanceStart);
+    const provenanceMarkup = markup.slice(provenanceStart, provenanceEnd);
+
+    expect(provenanceMarkup).toContain("Deleted source");
+    expect(provenanceMarkup).not.toContain("<button");
+    expect(markup).toContain("Fork starts here");
+  });
+
   it("animates only a newly inserted streaming assistant after the thread has committed", () => {
     const committedMessageIds = new Set(["message-existing"]);
 

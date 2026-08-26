@@ -491,7 +491,6 @@ export function AddProjectSourceScreen() {
                     : connectionStatusText({
                         phase: environment.connectionState,
                         error: environment.connectionError,
-                        traceId: environment.connectionErrorTraceId,
                       })
                 }
                 icon={

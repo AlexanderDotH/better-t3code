@@ -9,6 +9,15 @@ const gitDeckCssPath = decodeURIComponent(
 const workspaceDeckCssPath = decodeURIComponent(
   new URL("../workspace-deck/WorkspaceCardDeck.css", import.meta.url).pathname,
 );
+const surfaceMorphPath = decodeURIComponent(
+  new URL("../chat/surfaceMorph.ts", import.meta.url).pathname,
+);
+const workspaceDeckSourcePath = decodeURIComponent(
+  new URL("../workspace-deck/WorkspaceCardDeck.tsx", import.meta.url).pathname,
+);
+const workspaceDeckMorphSourcePath = decodeURIComponent(
+  new URL("../workspace-deck/workspaceCardDeck.morph.ts", import.meta.url).pathname,
+);
 const readGitDeckCss = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.readFileString(gitDeckCssPath);
@@ -17,12 +26,21 @@ const readWorkspaceDeckCss = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.readFileString(workspaceDeckCssPath);
 }).pipe(Effect.provide(NodeServices.layer));
+const readSurfaceMorphContract = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const surfaceMorphSource = yield* fileSystem.readFileString(surfaceMorphPath);
+  const workspaceDeckSource = yield* fileSystem.readFileString(workspaceDeckSourcePath);
+  const workspaceDeckMorphSource = yield* fileSystem.readFileString(workspaceDeckMorphSourcePath);
+  return { surfaceMorphSource, workspaceDeckMorphSource, workspaceDeckSource };
+}).pipe(Effect.provide(NodeServices.layer));
 
 describe("Git workspace deck motion CSS", () => {
-  it.effect("uses one equal-size compact viewport with 32px inset card peeks", () =>
+  it.effect("keeps the equal-size compact viewport between mirrored 32px card peeks", () =>
     Effect.gen(function* () {
       const css = yield* readWorkspaceDeckCss;
+      const gitCss = yield* readGitDeckCss;
 
+      expect(css).toMatch(/\.workspace-card-deck\s*\{[^}]*padding-block:\s*2rem;/);
       expect(css).toMatch(
         /\.workspace-card-deck__viewport\s*\{[^}]*height:\s*var\(--workspace-card-deck-compact-height\);/,
       );
@@ -34,18 +52,33 @@ describe("Git workspace deck motion CSS", () => {
         /\.workspace-card-deck__peek\s*\{[^}]*inset-inline:\s*1\.375rem;[^}]*(?:height|block-size):\s*2rem;/,
       );
       expect(css).toMatch(
+        /\.workspace-card-deck__peek--previous\s*\{[^}]*inset-block-start:\s*-2rem;[^}]*border-radius:\s*1rem 1rem 0 0;/,
+      );
+      expect(css).toMatch(
+        /\.workspace-card-deck__peek--next\s*\{[^}]*inset-block-end:\s*-2rem;[^}]*border-radius:\s*0 0 1rem 1rem;/,
+      );
+      expect(gitCss).toMatch(/\.git-compact-card\s*\{[^}]*border-radius:\s*1\.375rem;/);
+      expect(css).toMatch(
         /\.workspace-card-deck__viewport\s*\{[^}]*transition:\s*height 200ms ease-out;/,
       );
     }),
   );
 
-  it.effect("keeps non-adjacent bodies mounted but visually hidden at rest", () =>
+  it.effect("keeps the reordered back shell at the destination edge", () =>
     Effect.gen(function* () {
       const css = yield* readWorkspaceDeckCss;
 
+      expect(css).toMatch(/\.workspace-card-deck__peeks\s*\{[^}]*z-index:\s*1;/);
+      expect(css).toMatch(/\.workspace-card-deck__viewport\s*\{[^}]*z-index:\s*2;/);
       expect(css).toMatch(/\.workspace-card-deck__card\s*\{[^}]*visibility:\s*hidden;/);
       expect(css).toMatch(
         /\.workspace-card-deck__card\[data-card-position="active"\]\s*\{[^}]*visibility:\s*visible;/,
+      );
+      expect(css).toMatch(
+        /\.workspace-card-deck__viewport:not\(\[data-expanded="true"\]\)\s+\.workspace-card-deck__card\s*\{[^}]*overflow:\s*clip;/,
+      );
+      expect(css).toMatch(
+        /\[data-deck-morph-back-peek="true"\]\s*\{[^}]*will-change:\s*transform, opacity;/,
       );
     }),
   );
@@ -89,67 +122,58 @@ describe("Git workspace deck motion CSS", () => {
     }),
   );
 
-  it.effect("moves cards on one clipped vertical track without fading their contents", () =>
+  it.effect("morphs full card contents for 560ms with only a subtle transition fade", () =>
     Effect.gen(function* () {
       const css = yield* readWorkspaceDeckCss;
-      const cardKeyframes = css.slice(
-        css.indexOf("@keyframes workspace-card-carousel-in"),
-        css.indexOf("@keyframes workspace-peek-carousel-settle"),
-      );
+      const { surfaceMorphSource, workspaceDeckMorphSource, workspaceDeckSource } =
+        yield* readSurfaceMorphContract;
 
-      expect(css).toContain("@keyframes workspace-card-carousel-in");
-      expect(css).toContain("@keyframes workspace-card-carousel-out");
-      expect(css).toMatch(/workspace-card-carousel-in 420ms[^;]*both/);
-      expect(css).toMatch(/workspace-card-carousel-out 420ms[^;]*both/);
-      expect(css).toMatch(/translate3d\(0,\s*var\(--workspace-card-[^)]+-y\),\s*0\)/);
-      expect(css).not.toContain("rotate(");
-      expect(cardKeyframes).not.toContain("opacity:");
-      expect(css).toMatch(
-        /\.workspace-card-deck\[data-deck-transition\][\s\S]*?\.workspace-card-deck__card\[data-transition-role="incoming"\][\s\S]*?will-change:\s*transform;/,
-      );
+      expect(surfaceMorphSource).toMatch(/SURFACE_MORPH_PRIMARY_DURATION_MS\s*=\s*480\b/);
+      expect(workspaceDeckMorphSource).toMatch(/WORKSPACE_DECK_MORPH_DURATION_MS\s*=\s*560\b/);
+      expect(workspaceDeckMorphSource).toMatch(/WORKSPACE_DECK_CONTENT_PEEK_OPACITY\s*=\s*0\.84\b/);
+      expect(workspaceDeckSource).toMatch(/from\s+["'][^"']*surfaceMorph["']/);
+      expect(surfaceMorphSource).toMatch(/scale[XY]?/);
       expect(css).not.toMatch(/\.workspace-card-deck__card\s*\{[^}]*filter:/);
       expect(css).not.toMatch(/\.workspace-card-deck__card\s*\{[^}]*(?:opacity|backdrop-filter):/);
     }),
   );
 
-  it.effect("settles peek labels after the card shuffle without animating card contents", () =>
+  it.effect("gives animated chrome a pointerless, inert accessibility proxy", () =>
     Effect.gen(function* () {
       const css = yield* readWorkspaceDeckCss;
+      const { surfaceMorphSource, workspaceDeckMorphSource, workspaceDeckSource } =
+        yield* readSurfaceMorphContract;
+      const morphImplementation = `${surfaceMorphSource}\n${workspaceDeckSource}\n${workspaceDeckMorphSource}`;
 
-      expect(css).toContain("@keyframes workspace-peek-carousel-settle");
-      expect(css).toMatch(/workspace-peek-carousel-settle 180ms[^;]*240ms both/);
-      expect(css).toMatch(
-        /@keyframes workspace-peek-carousel-settle[\s\S]*?0%\s*\{[^}]*opacity:\s*0;[\s\S]*?100%\s*\{[^}]*opacity:\s*1;/,
-      );
-      expect(css).not.toMatch(/\.workspace-card-deck__card-content\s*\{[^}]*animation:/);
+      expect(morphImplementation).toMatch(/surfaceMorphProxy|data-surface-morph-proxy/);
+      expect(morphImplementation).toMatch(/aria-hidden["']?,?\s*["']true/);
+      expect(morphImplementation).toMatch(/setAttribute\(["']inert["'],\s*["']["']\)/);
+      expect(css).toMatch(/\.workspace-card-deck__morph-proxy\s*\{[^}]*pointer-events:\s*none;/);
     }),
   );
 
-  it.effect("limits will-change to active transitions", () =>
+  it.effect("limits compositor hints to active transitions", () =>
     Effect.gen(function* () {
       const css = yield* readWorkspaceDeckCss;
 
       const idleCardRule = css.match(/\.workspace-card-deck__card\s*\{([^}]*)\}/)?.[1] ?? "";
       expect(idleCardRule).not.toContain("will-change");
-      expect(css).toMatch(
-        /\.workspace-card-deck\[data-deck-transition\][\s\S]*?\.workspace-card-deck__card\[data-transition-role="incoming"\][\s\S]*?will-change:\s*transform;/,
-      );
+      expect(css).not.toMatch(/\.workspace-card-deck__card-content\s*\{[^}]*will-change:/);
     }),
   );
 
-  it.effect("swaps and resizes immediately when reduced motion is requested", () =>
+  it.effect("swaps immediately for reduced motion and retains a safe non-WAAPI fallback", () =>
     Effect.gen(function* () {
       const css = yield* readWorkspaceDeckCss;
+      const { surfaceMorphSource, workspaceDeckSource } = yield* readSurfaceMorphContract;
 
       expect(css).toMatch(
         /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.workspace-card-deck__viewport\s*\{[^}]*transition:\s*none;/,
       );
-      expect(css).toMatch(
-        /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.workspace-card-deck\[data-deck-transition\][\s\S]*?animation:\s*none;/,
-      );
-      expect(css).toMatch(
-        /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.workspace-card-deck__peek-content[\s\S]*?animation:\s*none;/,
-      );
+      expect(surfaceMorphSource).toContain("prefersReducedSurfaceMotion");
+      expect(surfaceMorphSource).toMatch(/\.animate\b|typeof[^\n]*animate/);
+      expect(workspaceDeckSource).toContain("data-deck-motion");
+      expect(css).toMatch(/\[data-deck-motion="fallback"\]/);
     }),
   );
 });

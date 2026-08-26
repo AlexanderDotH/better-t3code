@@ -159,6 +159,13 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
+import {
+  interfaceLanguageSyncStatusText,
+  useInterfaceLanguage,
+  useInterfaceLanguageSyncStatus,
+  useSetInterfaceLanguagePreference,
+} from "../../interfaceLanguageSync";
+import { translateInterfaceMessage } from "@t3tools/shared/interfaceLanguage";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -997,6 +1004,14 @@ export function AppearanceSettingsPanel() {
     themeHalves,
   } = useTheme();
   const customThemes = useCustomThemes();
+  const interfaceLanguage = useInterfaceLanguage();
+  const setInterfaceLanguagePreference = useSetInterfaceLanguagePreference();
+  const interfaceLanguageSyncStatus = useInterfaceLanguageSyncStatus();
+  const interfaceLanguageStatusText =
+    interfaceLanguageSyncStatusText(interfaceLanguage.language, interfaceLanguageSyncStatus) ??
+    (interfaceLanguageSyncStatus.isSyncing
+      ? translateInterfaceMessage(interfaceLanguage.language, "settings.interfaceLanguage.syncing")
+      : null);
   const [isImportThemeOpen, setIsImportThemeOpen] = useState(false);
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
@@ -1040,6 +1055,76 @@ export function AppearanceSettingsPanel() {
             onImportOpenChange={setIsImportThemeOpen}
           />
         </div>
+
+        <SettingsRow
+          {...searchableSetting("interface-language")}
+          title={translateInterfaceMessage(
+            interfaceLanguage.language,
+            "settings.interfaceLanguage.title",
+          )}
+          description={translateInterfaceMessage(
+            interfaceLanguage.language,
+            "settings.interfaceLanguage.description",
+          )}
+          status={interfaceLanguageStatusText}
+          resetAction={
+            interfaceLanguage.preference !== "system" ? (
+              <SettingResetButton
+                label="interface language"
+                onClick={() => setInterfaceLanguagePreference("system")}
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={interfaceLanguage.preference}
+              onValueChange={(value) => {
+                if (value === "system" || value === "en" || value === "de") {
+                  setInterfaceLanguagePreference(value);
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Interface language">
+                <SelectValue>
+                  {interfaceLanguage.preference === "system"
+                    ? translateInterfaceMessage(
+                        interfaceLanguage.language,
+                        "settings.interfaceLanguage.system",
+                      )
+                    : interfaceLanguage.preference === "de"
+                      ? translateInterfaceMessage(
+                          interfaceLanguage.language,
+                          "settings.interfaceLanguage.german",
+                        )
+                      : translateInterfaceMessage(
+                          interfaceLanguage.language,
+                          "settings.interfaceLanguage.english",
+                        )}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="system">
+                  {translateInterfaceMessage(
+                    interfaceLanguage.language,
+                    "settings.interfaceLanguage.system",
+                  )}
+                </SelectItem>
+                <SelectItem hideIndicator value="en">
+                  {translateInterfaceMessage(
+                    interfaceLanguage.language,
+                    "settings.interfaceLanguage.english",
+                  )}
+                </SelectItem>
+                <SelectItem hideIndicator value="de">
+                  {translateInterfaceMessage(
+                    interfaceLanguage.language,
+                    "settings.interfaceLanguage.german",
+                  )}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
 
         <SettingsRow
           {...searchableSetting("setting-glass-opacity")}

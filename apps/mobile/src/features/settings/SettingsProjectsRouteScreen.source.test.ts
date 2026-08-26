@@ -20,11 +20,15 @@ describe("SettingsProjectsRouteScreen harness chat sync source", () => {
     expect(syncSource).toContain("agentSettingsEnvironment.harnessChatSync.status");
   });
 
-  it("keeps synchronization manual with mobile search, archive, and pagination controls", () => {
+  it("keeps synchronization manual with a wrapped provider grid and pagination controls", () => {
     expect(syncSource).toContain("Include archived");
-    expect(syncSource).toContain("Load more");
+    expect(syncSource).toContain("View more");
     expect(syncSource).toContain("Sync selected");
     expect(syncSource).toContain("Clear all");
+    expect(syncSource).toContain("const PAGE_SIZE = 10");
+    expect(syncSource).toContain('accessibilityRole="tab"');
+    expect(syncSource).toContain('className="flex-row flex-wrap gap-2 px-1"');
+    expect(syncSource).not.toContain("showsHorizontalScrollIndicator");
   });
 
   it("resolves missing workspaces before calling the run mutation", () => {

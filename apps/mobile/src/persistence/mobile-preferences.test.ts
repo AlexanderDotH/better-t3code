@@ -11,6 +11,25 @@ vi.mock("expo-secure-store", () => ({
 import { sanitizeMobilePreferences } from "./mobile-preferences";
 
 describe("sanitizeMobilePreferences", () => {
+  it("deduplicates valid instance-scoped model favorites and drops malformed entries", () => {
+    expect(
+      sanitizeMobilePreferences({
+        modelFavorites: [
+          { provider: "openrouter", model: "openai/gpt-5.5" },
+          { provider: "openrouter", model: "openai/gpt-5.5" },
+          { provider: "openrouter_work", model: "anthropic/claude-sonnet" },
+          { provider: "", model: "bad" },
+          { provider: "openrouter", model: "" },
+        ],
+      }),
+    ).toEqual({
+      modelFavorites: [
+        { provider: "openrouter", model: "openai/gpt-5.5" },
+        { provider: "openrouter_work", model: "anthropic/claude-sonnet" },
+      ],
+    });
+  });
+
   it("persists the device-local agent workflow preferences", () => {
     expect(
       sanitizeMobilePreferences({
@@ -117,6 +136,37 @@ describe("sanitizeMobilePreferences", () => {
     expect(
       sanitizeMobilePreferences({
         chatVisualModeSyncRecord: record,
+      } as never),
+    ).toEqual({});
+  });
+
+  it("keeps a valid interface language sync record", () => {
+    expect(
+      sanitizeMobilePreferences({
+        interfaceLanguageSyncRecord: {
+          preference: "de",
+          updatedAt: 1_787_178_400_000,
+          updateId: "mobile-device:language-de",
+        },
+      }),
+    ).toEqual({
+      interfaceLanguageSyncRecord: {
+        preference: "de",
+        updatedAt: 1_787_178_400_000,
+        updateId: "mobile-device:language-de",
+      },
+    });
+  });
+
+  it.each([
+    { preference: "fr", updatedAt: 1_787_178_400_000, updateId: "invalid-language" },
+    { preference: "system", updatedAt: -1, updateId: "negative-time" },
+    { preference: "de", updatedAt: 1.5, updateId: "fractional-time" },
+    { preference: "en", updatedAt: 1_787_178_400_000, updateId: "   " },
+  ])("drops an invalid cached interface language record: %o", (record) => {
+    expect(
+      sanitizeMobilePreferences({
+        interfaceLanguageSyncRecord: record,
       } as never),
     ).toEqual({});
   });

@@ -273,6 +273,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       label: "Julius's iPhone",
       platform: "ios",
       iosMajorVersion: 18,
+      language: "en",
       appVersion: "1.0.0",
       pushToken: "apns-token",
       pushToStartToken: "push-to-start-token",
@@ -303,6 +304,25 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       bundleId: "com.t3tools.t3code.preview",
       apsEnvironment: "production",
     });
+  });
+
+  it("registers the resolved explicit interface language", () => {
+    expect(
+      makeRelayDeviceRegistrationRequest({
+        deviceId: "device-1",
+        label: "Julius's iPhone",
+        iosMajorVersion: 18,
+        notificationsEnabled: true,
+        preferences: {
+          interfaceLanguageSyncRecord: {
+            preference: "de",
+            updatedAt: 10,
+            updateId: "mobile:de",
+          },
+        },
+        systemLocales: ["en-US"],
+      }).language,
+    ).toBe("de");
   });
 
   it("routes development builds to the APNs sandbox", () => {
@@ -350,6 +370,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       label: "Julius's iPhone",
       platform: "ios",
       iosMajorVersion: 18,
+      language: "en",
       appVersion: "1.0.0",
       pushToStartToken: "push-to-start-token",
       preferences: {

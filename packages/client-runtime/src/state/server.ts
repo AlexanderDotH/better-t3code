@@ -1,5 +1,7 @@
 import {
   type EnvironmentId,
+  type ProviderAuthConnectEvent,
+  type ProviderAuthConnectInput,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
@@ -27,6 +29,8 @@ import {
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
   createRuntimeCommand,
+  createRuntimeStreamCommand,
+  runStreamInEnvironment,
   scheduleAtomCommandEffect,
 } from "./runtime.ts";
 import { EnvironmentRegistry } from "../connection/registry.ts";
@@ -64,6 +68,19 @@ export interface ServerUpdateTarget {
   readonly environmentId: EnvironmentId;
   readonly input: EnvironmentRpcInput<typeof WS_METHODS.serverUpdateServer>;
 }
+
+export interface ProviderAuthConnectStateTarget {
+  readonly environmentId: EnvironmentId;
+  readonly instanceId: ProviderAuthConnectInput["instanceId"];
+}
+
+const providerAuthConnectStateKey = (target: ProviderAuthConnectStateTarget): string =>
+  JSON.stringify([target.environmentId, target.instanceId]);
+
+const providerAuthCommandKey = (target: {
+  readonly environmentId: EnvironmentId;
+  readonly input: { readonly instanceId: ProviderAuthConnectInput["instanceId"] };
+}): string => `${target.environmentId}:${target.input.instanceId}`;
 
 const IDLE_SERVER_UPDATE_STATE: ServerUpdateState = { status: "idle" };
 const EMPTY_SERVER_UPDATE_STATE_ATOM = Atom.make<ServerUpdateState>(IDLE_SERVER_UPDATE_STATE).pipe(
@@ -471,6 +488,34 @@ export function createServerEnvironmentAtoms<R, E>(
     mode: "serial" as const,
     key: ({ environmentId }: { readonly environmentId: string }) => environmentId,
   };
+  const providerAuthConnectConcurrency = {
+    mode: "serial" as const,
+    key: (target: {
+      readonly environmentId: EnvironmentId;
+      readonly input: EnvironmentRpcInput<typeof WS_METHODS.serverProviderAuthConnect>;
+    }) => providerAuthCommandKey(target),
+  };
+  const providerAuthDisconnectConcurrency = {
+    mode: "serial" as const,
+    key: (target: {
+      readonly environmentId: EnvironmentId;
+      readonly input: EnvironmentRpcInput<typeof WS_METHODS.serverProviderAuthDisconnect>;
+    }) => providerAuthCommandKey(target),
+  };
+  const providerAuthSetCredentialConcurrency = {
+    mode: "serial" as const,
+    key: (target: {
+      readonly environmentId: EnvironmentId;
+      readonly input: EnvironmentRpcInput<typeof WS_METHODS.serverProviderAuthSetCredential>;
+    }) => providerAuthCommandKey(target),
+  };
+  const providerAuthConnectEventFamily = Atom.family((key: string) =>
+    Atom.make<ProviderAuthConnectEvent | null>(null).pipe(
+      Atom.withLabel(`environment-data:server:provider-auth-connect-event:${key}`),
+    ),
+  );
+  const providerAuthConnectEventAtom = (target: ProviderAuthConnectStateTarget) =>
+    providerAuthConnectEventFamily(providerAuthConnectStateKey(target));
   const configProjectionFamily = Atom.family((environmentId: EnvironmentId) =>
     runtime
       .atom(serverConfigStateChanges(environmentId))
@@ -679,12 +724,35 @@ export function createServerEnvironmentAtoms<R, E>(
       Atom.withLabel(`environment-data:server:providers:${environmentId}`),
     ),
   );
+  const connectProviderAuth = createRuntimeStreamCommand(runtime, {
+    label: "environment-data:server:provider-auth-connect",
+    scheduler: configScheduler,
+    concurrency: providerAuthConnectConcurrency,
+    execute: (target, atomRegistry) => {
+      const eventAtom = providerAuthConnectEventAtom({
+        environmentId: target.environmentId,
+        instanceId: target.input.instanceId,
+      });
+      atomRegistry.set(eventAtom, null);
+      return runStreamInEnvironment(
+        target.environmentId,
+        runStream(WS_METHODS.serverProviderAuthConnect, target.input),
+      ).pipe(
+        Stream.tap((event) =>
+          Effect.sync(() => {
+            atomRegistry.set(eventAtom, event);
+          }),
+        ),
+      );
+    },
+  });
 
   return {
     configValueAtom,
     updateStateAtom,
     settingsValueAtom,
     providersValueAtom,
+    providerAuthConnectEventAtom,
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,
@@ -742,6 +810,33 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    connectProviderAuth,
+    setProviderAuthCredential: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:provider-auth-set-credential",
+      tag: WS_METHODS.serverProviderAuthSetCredential,
+      scheduler: configScheduler,
+      concurrency: providerAuthSetCredentialConcurrency,
+      onSuccess: ({ environmentId, input }, atomRegistry) =>
+        Effect.sync(() => {
+          atomRegistry.set(
+            providerAuthConnectEventAtom({ environmentId, instanceId: input.instanceId }),
+            null,
+          );
+        }),
+    }),
+    disconnectProviderAuth: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:provider-auth-disconnect",
+      tag: WS_METHODS.serverProviderAuthDisconnect,
+      scheduler: configScheduler,
+      concurrency: providerAuthDisconnectConcurrency,
+      onSuccess: ({ environmentId, input }, atomRegistry) =>
+        Effect.sync(() => {
+          atomRegistry.set(
+            providerAuthConnectEventAtom({ environmentId, instanceId: input.instanceId }),
+            null,
+          );
+        }),
+    }),
     updateServer,
     upsertKeybinding: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:upsert-keybinding",
@@ -764,6 +859,22 @@ export function createServerEnvironmentAtoms<R, E>(
     createAssemblyAiStreamingToken: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:create-assembly-ai-streaming-token",
       tag: WS_METHODS.serverCreateAssemblyAiStreamingToken,
+    }),
+    startSpeechStreamingSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:start-streaming-session",
+      tag: WS_METHODS.speechStartStreamingSession,
+    }),
+    pushSpeechStreamingAudio: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:push-streaming-audio",
+      tag: WS_METHODS.speechPushStreamingAudio,
+    }),
+    finishSpeechStreamingSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:finish-streaming-session",
+      tag: WS_METHODS.speechFinishStreamingSession,
+    }),
+    cancelSpeechStreamingSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:cancel-streaming-session",
+      tag: WS_METHODS.speechCancelStreamingSession,
     }),
     getProjectSpeechProfile: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:speech:get-project-profile",

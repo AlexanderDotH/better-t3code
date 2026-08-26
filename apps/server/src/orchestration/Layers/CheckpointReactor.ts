@@ -82,6 +82,32 @@ export function isProjectCheckpointCaptureEnabled(
   return project?.checkpointsEnabled === true;
 }
 
+export function nextCheckpointTurnCount(
+  checkpoints: ReadonlyArray<{
+    readonly turnId: TurnId;
+    readonly checkpointTurnCount: number;
+    readonly status: string;
+    readonly historyOrigin?: unknown;
+  }>,
+  turnId: TurnId,
+): number {
+  const placeholder = checkpoints.find(
+    (checkpoint) =>
+      checkpoint.turnId === turnId &&
+      checkpoint.status === "missing" &&
+      checkpoint.historyOrigin === undefined,
+  );
+  if (placeholder !== undefined) {
+    return placeholder.checkpointTurnCount;
+  }
+  return (
+    checkpoints.reduce(
+      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
+      0,
+    ) + 1
+  );
+}
+
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const randomUUID = crypto.randomUUIDv4;
@@ -438,12 +464,7 @@ const make = Effect.gen(function* () {
 
       // If a placeholder checkpoint exists for this turn, reuse its turn count
       // instead of incrementing past it.
-      const existingPlaceholder = thread.checkpoints.find(
-        (checkpoint) => checkpoint.turnId === turnId && checkpoint.status === "missing",
-      );
-      const nextTurnCount = existingPlaceholder
-        ? existingPlaceholder.checkpointTurnCount
-        : currentTurnCount + 1;
+      const nextTurnCount = nextCheckpointTurnCount(thread.checkpoints, turnId);
 
       yield* captureAndDispatchCheckpoint({
         threadId: thread.id,
@@ -794,12 +815,23 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    const targetCheckpoint = thread.checkpoints.find(
+      (checkpoint) => checkpoint.checkpointTurnCount === event.payload.turnCount,
+    );
+    if (targetCheckpoint?.historyOrigin !== undefined) {
+      yield* appendRevertFailureActivity({
+        threadId: event.payload.threadId,
+        turnCount: event.payload.turnCount,
+        detail: "Inherited checkpoints are read-only and cannot be restored in the fork workspace.",
+        createdAt: now,
+      }).pipe(Effect.catch(() => Effect.void));
+      return;
+    }
+
     const targetCheckpointRef =
       event.payload.turnCount === 0
         ? checkpointRefForThreadTurn(event.payload.threadId, 0)
-        : thread.checkpoints.find(
-            (checkpoint) => checkpoint.checkpointTurnCount === event.payload.turnCount,
-          )?.checkpointRef;
+        : targetCheckpoint?.checkpointRef;
 
     if (!targetCheckpointRef) {
       yield* appendRevertFailureActivity({
@@ -837,7 +869,11 @@ const make = Effect.gen(function* () {
       ),
     );
 
-    const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
+    const rolledBackTurns = thread.checkpoints.filter(
+      (checkpoint) =>
+        checkpoint.historyOrigin === undefined &&
+        checkpoint.checkpointTurnCount > event.payload.turnCount,
+    ).length;
     if (rolledBackTurns > 0) {
       yield* providerService.rollbackConversation({
         threadId: sessionRuntime.value.threadId,
@@ -847,7 +883,10 @@ const make = Effect.gen(function* () {
 
     const staleCheckpointRefs: Array<CheckpointRef> = [];
     for (const checkpoint of thread.checkpoints) {
-      if (checkpoint.checkpointTurnCount > event.payload.turnCount) {
+      if (
+        checkpoint.historyOrigin === undefined &&
+        checkpoint.checkpointTurnCount > event.payload.turnCount
+      ) {
         staleCheckpointRefs.push(checkpoint.checkpointRef);
       }
     }

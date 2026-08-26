@@ -313,7 +313,15 @@ const config: ExpoConfig = {
         recordAudioAndroid: false,
       },
     ],
-    ["expo-image-picker", { photosPermission: false, microphonePermission: false }],
+    [
+      "expo-image-picker",
+      {
+        photosPermission: false,
+        // `false` blocks RECORD_AUDIO globally, including the permission that
+        // expo-audio needs for live voice input.
+        microphonePermission: "Allow $(PRODUCT_NAME) to turn speech into coding prompts.",
+      },
+    ],
     [
       "expo-splash-screen",
       {

@@ -18,12 +18,14 @@ function model(input: {
   readonly name?: string;
   readonly isDefault?: boolean;
   readonly reasoningEfforts?: ReadonlyArray<string>;
+  readonly isSelectable?: boolean;
 }): ServerProviderModel {
   return {
     slug: input.slug,
     name: input.name ?? input.slug,
     isCustom: false,
     ...(input.isDefault ? { isDefault: true } : {}),
+    ...(input.isSelectable === undefined ? {} : { isSelectable: input.isSelectable }),
     capabilities:
       input.reasoningEfforts === undefined
         ? null
@@ -196,6 +198,56 @@ describe("general subagent selection", () => {
         request: { model: "gpt-daybreak-blue-latest", reasoningEffort: "ultra" },
       }),
     ).toMatchObject({ status: "unavailable", reason: "reasoning-effort-unavailable" });
+  });
+
+  it("rejects and omits catalog models that the provider marks non-selectable", () => {
+    const openRouter = provider({
+      instanceId: "openrouter",
+      driver: "openrouter",
+      models: [
+        model({ slug: "openai/gpt-agent", isDefault: true }),
+        model({ slug: "openai/no-tools", isSelectable: false }),
+      ],
+    });
+    const input = {
+      providers: [openRouter],
+      callerProviderInstanceId: openRouter.instanceId,
+      parentModelSelection: {
+        instanceId: openRouter.instanceId,
+        model: "openai/gpt-agent",
+      },
+    } as const;
+
+    expect(
+      resolveGeneralSubagentSelection({
+        ...input,
+        request: { model: "openai/no-tools" },
+      }),
+    ).toMatchObject({ status: "unavailable", reason: "model-unavailable" });
+    expect(listGeneralSubagentModels(input)[0]?.models.map((candidate) => candidate.slug)).toEqual([
+      "openai/gpt-agent",
+    ]);
+  });
+
+  it("blocks warning providers that do not expose a valid default model", () => {
+    const missingDefault = provider({
+      instanceId: "openrouter-missing-default",
+      driver: "openrouter",
+      status: "warning",
+      models: [model({ slug: "openai/gpt-5.5" })],
+    });
+
+    expect(
+      resolveGeneralSubagentSelection({
+        providers: [missingDefault],
+        callerProviderInstanceId: missingDefault.instanceId,
+        parentModelSelection: {
+          instanceId: missingDefault.instanceId,
+          model: "openai/gpt-5.5",
+        },
+        request: {},
+      }),
+    ).toMatchObject({ status: "unavailable", reason: "provider-unavailable" });
   });
 
   it("lists only runnable providers and marks the inherited selection", () => {

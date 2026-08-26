@@ -19,6 +19,8 @@ export type ModelOption = {
   readonly providerDriver: string;
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
+  readonly isSelectable: boolean;
+  readonly unavailableReason: string | null;
   readonly continuationGroupKey: string | null;
   readonly requiresNewThreadForModelChange: boolean;
   readonly capabilities: ModelCapabilities | null;
@@ -85,10 +87,12 @@ export function resolveSelectableModelSelection(
   const provider = config.providers.find(
     (candidate) => candidate.instanceId === selection.instanceId,
   );
+  const model = provider?.models.find((candidate) => candidate.slug === selection.model);
   return provider &&
     provider.enabled &&
     provider.installed &&
-    provider.auth.status !== "unauthenticated"
+    provider.auth.status !== "unauthenticated" &&
+    model?.isSelectable !== false
     ? selection
     : null;
 }
@@ -136,6 +140,8 @@ export function buildModelOptions(
         providerDriver: provider.driver,
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
+        isSelectable: model.isSelectable !== false,
+        unavailableReason: model.unavailableReason ?? null,
         continuationGroupKey: provider.continuation?.groupKey ?? null,
         requiresNewThreadForModelChange: provider.requiresNewThreadForModelChange === true,
         capabilities: model.capabilities,
@@ -179,6 +185,8 @@ export function buildModelOptions(
         providerDriver: fallbackProviderDriver,
         isDefault: false,
         isLegacy: false,
+        isSelectable: true,
+        unavailableReason: null,
         continuationGroupKey: null,
         requiresNewThreadForModelChange: false,
         capabilities: null,

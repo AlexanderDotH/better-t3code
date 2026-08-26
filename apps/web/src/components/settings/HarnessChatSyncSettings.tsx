@@ -52,7 +52,7 @@ import {
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
-const CHAT_PAGE_SIZE = 25;
+export const HARNESS_CHAT_PAGE_SIZE = 10;
 
 interface ProjectOption {
   readonly id: ProjectId;
@@ -66,10 +66,44 @@ function formatChatDate(value: string | null): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
-function sourceCountLabel(source: HarnessChatSyncSource): string {
-  const chatLabel = source.chatCount === 1 ? "chat" : "chats";
-  const changedLabel = source.changedCount === 1 ? "1 update" : `${source.changedCount} updates`;
-  return `${source.chatCount} ${chatLabel} · ${changedLabel}`;
+function sourceCountLabel(input: {
+  readonly visibleCount: number;
+  readonly totalMatching: number;
+  readonly changedMatching: number;
+  readonly countsAreComplete: boolean;
+}): string {
+  if (!input.countsAreComplete) {
+    const changed = input.changedMatching > 0 ? ` · ${input.changedMatching}+ updates` : "";
+    return `${input.visibleCount} shown · more available${changed}`;
+  }
+  const chatLabel = input.totalMatching === 1 ? "chat" : "chats";
+  const changedLabel =
+    input.changedMatching === 1 ? "1 update" : `${input.changedMatching} updates`;
+  return `${input.totalMatching} ${chatLabel} · ${changedLabel}`;
+}
+
+function selectionSummaryLabel(input: {
+  readonly selection: HarnessChatSelectionState;
+  readonly visibleCount: number;
+  readonly totalMatching: number;
+  readonly changedMatching: number;
+  readonly countsAreComplete: boolean;
+}): string {
+  if (input.selection.mode === "allMatching") {
+    if (input.selection.excludedSessionIds.length > 0) {
+      const scope = `All matching except ${input.selection.excludedSessionIds.length}`;
+      return input.countsAreComplete
+        ? `${scope} · ${input.changedMatching} changed`
+        : `${scope} · ${input.visibleCount} shown · more available`;
+    }
+    return input.countsAreComplete
+      ? `All ${input.totalMatching} matching selected · ${input.changedMatching} changed`
+      : `All matching selected · ${input.visibleCount} shown · more available`;
+  }
+  const scope = `${input.selection.sessionIds.length} selected`;
+  return input.countsAreComplete
+    ? `${scope} · ${input.totalMatching} matching · ${input.changedMatching} changed`
+    : `${scope} · ${input.visibleCount} shown · more available`;
 }
 
 function syncResultSummary(result: HarnessChatSyncRunResult): string {
@@ -77,15 +111,31 @@ function syncResultSummary(result: HarnessChatSyncRunResult): string {
   return `Synced ${result.syncedCount} of ${result.selectedCount} ${chatLabel} · ${result.messagesImported} messages imported`;
 }
 
-function sourceStatusBadge(source: HarnessChatSyncSource): ReactNode {
+function sourceStatusBadge(
+  source: HarnessChatSyncSource,
+  changedMatching: number,
+  isLoading: boolean,
+  countsAreComplete: boolean,
+): ReactNode {
   if (source.status.kind === "unsupported") {
     return <Badge variant="warning">Unavailable</Badge>;
   }
   if (source.status.kind === "already-local") {
     return <Badge variant="success">Already in T3 Code</Badge>;
   }
-  if (source.changedCount > 0) {
-    return <Badge variant="info">{source.changedCount} changed</Badge>;
+  if (isLoading) {
+    return <Badge variant="outline">Checking</Badge>;
+  }
+  if (changedMatching > 0) {
+    return (
+      <Badge variant="info">
+        {changedMatching}
+        {countsAreComplete ? "" : "+"} changed
+      </Badge>
+    );
+  }
+  if (!countsAreComplete) {
+    return <Badge variant="outline">More available</Badge>;
   }
   return <Badge variant="outline">Up to date</Badge>;
 }
@@ -127,6 +177,7 @@ export interface HarnessChatSyncSourceViewProps {
   readonly includeArchived: boolean;
   readonly totalMatching: number;
   readonly changedMatching: number;
+  readonly countsAreComplete?: boolean;
   readonly hasNextPage: boolean;
   readonly isLoading: boolean;
   readonly isFetching: boolean;
@@ -235,6 +286,7 @@ export function HarnessChatSyncSourceView({
   includeArchived,
   totalMatching,
   changedMatching,
+  countsAreComplete = true,
   hasNextPage,
   isLoading,
   isFetching,
@@ -255,6 +307,17 @@ export function HarnessChatSyncSourceView({
   const visibleSessionIds = chats.map((chat) => chat.sessionId);
   const selectionState = getHarnessChatSelectionState(selection, visibleSessionIds);
   const selectionEmpty = selection.mode === "only" && selection.sessionIds.length === 0;
+  const latestUpdatedAt = chats.reduce<string | null>(
+    (latest, chat) => (latest === null || chat.updatedAt > latest ? chat.updatedAt : latest),
+    source.latestUpdatedAt,
+  );
+  const matchingLabel = selectionSummaryLabel({
+    selection,
+    visibleCount: chats.length,
+    totalMatching,
+    changedMatching,
+    countsAreComplete,
+  });
 
   return (
     <div className="overflow-hidden rounded-xl border border-border/70 bg-background/40">
@@ -263,10 +326,16 @@ export function HarnessChatSyncSourceView({
           <div className="flex flex-wrap items-center gap-2">
             <h4 className="truncate text-sm font-semibold">{source.label}</h4>
             <Badge variant="secondary">{source.driver}</Badge>
-            {sourceStatusBadge(source)}
+            {sourceStatusBadge(source, changedMatching, isLoading, countsAreComplete)}
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            {sourceCountLabel(source)} · Last activity {formatChatDate(source.latestUpdatedAt)}
+            {sourceCountLabel({
+              visibleCount: chats.length,
+              totalMatching,
+              changedMatching,
+              countsAreComplete,
+            })}{" "}
+            · Last activity {formatChatDate(latestUpdatedAt)}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -325,7 +394,7 @@ export function HarnessChatSyncSourceView({
                 indeterminate={selectionState === "indeterminate"}
                 onCheckedChange={(checked) => (checked ? onSelectAll() : onClearAll())}
               />
-              {totalMatching} matching · {changedMatching} changed
+              {matchingLabel}
             </label>
             <div className="flex items-center gap-1">
               <Button size="xs" variant="ghost-muted" onClick={onSelectAll}>
@@ -363,15 +432,15 @@ export function HarnessChatSyncSourceView({
               {hasNextPage ? (
                 <Button size="sm" variant="outline" disabled={isFetching} onClick={onLoadMore}>
                   {isFetching ? <LoaderCircleIcon className="animate-spin" /> : null}
-                  Load more
+                  View more
                 </Button>
               ) : (
-                <span className="text-xs text-muted-foreground">All matching chats loaded</span>
+                <span className="text-xs text-muted-foreground">All matching chats shown</span>
               )}
             </div>
             <Button
               size="sm"
-              disabled={selectionEmpty || source.chatCount === 0 || isSyncing}
+              disabled={selectionEmpty || (countsAreComplete && totalMatching === 0) || isSyncing}
               onClick={onSync}
             >
               {isSyncing ? <LoaderCircleIcon className="animate-spin" /> : <CloudDownloadIcon />}
@@ -536,14 +605,54 @@ function applyStatusOverrides(
   });
 }
 
+export function HarnessChatSyncSourceTabs({
+  sources,
+  activeSourceId,
+  onSourceChange,
+}: {
+  readonly sources: ReadonlyArray<HarnessChatSyncSource>;
+  readonly activeSourceId: HarnessChatSyncSource["id"];
+  readonly onSourceChange: (sourceId: HarnessChatSyncSource["id"]) => void;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Harness providers"
+      className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,11rem),1fr))] gap-1 rounded-xl border border-border/60 bg-background/30 p-1"
+    >
+      {sources.map((source) => {
+        const active = source.id === activeSourceId;
+        return (
+          <Button
+            key={source.id}
+            role="tab"
+            aria-selected={active}
+            size="sm"
+            variant={active ? "secondary" : "ghost"}
+            className="w-full min-w-0 justify-start overflow-hidden"
+            onClick={() => onSourceChange(source.id)}
+          >
+            <span className="min-w-0 truncate">{source.label}</span>
+            <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+              {source.driver}
+            </span>
+          </Button>
+        );
+      })}
+    </div>
+  );
+}
+
 function HarnessChatSyncSourceController({
   environmentId,
   source,
   projects,
+  active,
 }: {
   readonly environmentId: EnvironmentId;
   readonly source: HarnessChatSyncSource;
   readonly projects: ReadonlyArray<ProjectOption>;
+  readonly active: boolean;
 }) {
   const api = useMemo(() => ensureEnvironmentApi(environmentId), [environmentId]);
   const queryClient = useQueryClient();
@@ -582,18 +691,19 @@ function HarnessChatSyncSourceController({
         query: deferredSearchQuery,
         includeArchived,
         ...(pageParam ? { cursor: pageParam } : {}),
-        limit: CHAT_PAGE_SIZE,
+        limit: HARNESS_CHAT_PAGE_SIZE,
       }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-    enabled: source.status.kind === "supported",
+    enabled: active && source.status.kind === "supported",
   });
   const chats = useMemo(() => uniqueChats(listQuery.data?.pages ?? []), [listQuery.data?.pages]);
   const displayedChats = useMemo(
     () => applyStatusOverrides(chats, statusBySessionId),
     [chats, statusBySessionId],
   );
-  const firstPage = listQuery.data?.pages[0];
+  const pages = listQuery.data?.pages ?? [];
+  const lastPage = pages[pages.length - 1];
   const unresolvedSelectedChats = getSelectedUnresolvedHarnessChats(displayedChats, selection);
   const unresolvedFailureCount =
     lastResult?.failures.filter((failure) => failure.code === "target-unresolved").length ?? 0;
@@ -662,8 +772,9 @@ function HarnessChatSyncSourceController({
         selection={selection}
         searchQuery={searchQuery}
         includeArchived={includeArchived}
-        totalMatching={firstPage?.totalMatching ?? source.chatCount}
-        changedMatching={firstPage?.changedMatching ?? source.changedCount}
+        totalMatching={lastPage?.totalMatching ?? source.chatCount}
+        changedMatching={lastPage?.changedMatching ?? source.changedCount}
+        countsAreComplete={lastPage?.countsAreComplete ?? true}
         hasNextPage={listQuery.hasNextPage}
         isLoading={listQuery.isLoading}
         isFetching={
@@ -728,6 +839,12 @@ function HarnessChatSyncEnvironment({
     queryFn: () => api.harnessChatSync.sources({}),
   });
   const sources = sourcesQuery.data?.sources ?? [];
+  const [activeSourceId, setActiveSourceId] = useState<HarnessChatSyncSource["id"] | null>(null);
+  const activeSource =
+    sources.find((source) => source.id === activeSourceId) ??
+    sources.find((source) => source.status.kind === "supported") ??
+    sources[0] ??
+    null;
 
   return (
     <HarnessChatSyncEnvironmentView
@@ -750,16 +867,33 @@ function HarnessChatSyncEnvironment({
         <div className="rounded-xl border border-border/50 px-4 py-8 text-center text-xs text-muted-foreground">
           No harness chat sources are configured in this environment.
         </div>
-      ) : (
-        sources.map((source) => (
-          <HarnessChatSyncSourceController
-            key={source.id}
-            environmentId={environment.environmentId}
-            source={source}
-            projects={projects}
+      ) : activeSource ? (
+        <>
+          <HarnessChatSyncSourceTabs
+            sources={sources}
+            activeSourceId={activeSource.id}
+            onSourceChange={setActiveSourceId}
           />
-        ))
-      )}
+          {sources.map((source) => {
+            const active = source.id === activeSource.id;
+            return (
+              <div
+                key={source.id}
+                role="tabpanel"
+                aria-label={`${source.label} chats`}
+                hidden={!active}
+              >
+                <HarnessChatSyncSourceController
+                  environmentId={environment.environmentId}
+                  source={source}
+                  projects={projects}
+                  active={active}
+                />
+              </div>
+            );
+          })}
+        </>
+      ) : null}
     </HarnessChatSyncEnvironmentView>
   );
 }

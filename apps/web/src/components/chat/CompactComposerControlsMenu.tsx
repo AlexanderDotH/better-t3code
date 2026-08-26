@@ -56,7 +56,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
       </MenuTrigger>
       <MenuPopup
         align="start"
-        className={props.contextWindowMenuContent ? "w-80 max-w-[calc(100vw-1.5rem)]" : undefined}
+        className={props.contextWindowMenuContent ? "w-72 max-w-[calc(100vw-1.5rem)]" : undefined}
       >
         {props.traitsMenuContent ? (
           <>

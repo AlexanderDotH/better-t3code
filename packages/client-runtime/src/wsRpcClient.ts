@@ -167,6 +167,14 @@ export interface WsRpcClient {
       typeof WS_METHODS.serverDiscoverSourceControl
     >;
     readonly updateProvider: RpcUnaryMethod<typeof WS_METHODS.serverUpdateProvider>;
+    readonly connectProviderAuth: (
+      input: RpcInput<typeof WS_METHODS.serverProviderAuthConnect>,
+      listener: Parameters<RpcInputStreamMethod<typeof WS_METHODS.serverProviderAuthConnect>>[1],
+    ) => Promise<void>;
+    readonly setProviderAuthCredential: RpcUnaryMethod<
+      typeof WS_METHODS.serverProviderAuthSetCredential
+    >;
+    readonly disconnectProviderAuth: RpcUnaryMethod<typeof WS_METHODS.serverProviderAuthDisconnect>;
     readonly upsertKeybinding: RpcUnaryMethod<typeof WS_METHODS.serverUpsertKeybinding>;
     readonly removeKeybinding: RpcUnaryMethod<typeof WS_METHODS.serverRemoveKeybinding>;
     readonly getSettings: RpcUnaryNoArgMethod<typeof WS_METHODS.serverGetSettings>;
@@ -189,6 +197,10 @@ export interface WsRpcClient {
     readonly signalProcess: RpcUnaryMethod<typeof WS_METHODS.serverSignalProcess>;
   };
   readonly speech: {
+    readonly startStreamingSession: RpcUnaryMethod<typeof WS_METHODS.speechStartStreamingSession>;
+    readonly pushStreamingAudio: RpcUnaryMethod<typeof WS_METHODS.speechPushStreamingAudio>;
+    readonly finishStreamingSession: RpcUnaryMethod<typeof WS_METHODS.speechFinishStreamingSession>;
+    readonly cancelStreamingSession: RpcUnaryMethod<typeof WS_METHODS.speechCancelStreamingSession>;
     readonly getProjectProfile: RpcUnaryMethod<typeof WS_METHODS.speechGetProjectProfile>;
     readonly listProjectProfiles: RpcUnaryNoArgMethod<typeof WS_METHODS.speechListProjectProfiles>;
     readonly indexProject: RpcUnaryMethod<typeof WS_METHODS.speechIndexProject>;
@@ -443,6 +455,15 @@ export function createWsRpcClient(
         transport.request((client) => client[WS_METHODS.serverDiscoverSourceControl]({})),
       updateProvider: (input) =>
         transport.request((client) => client[WS_METHODS.serverUpdateProvider](input)),
+      connectProviderAuth: (input, listener) =>
+        transport.requestStream(
+          (client) => client[WS_METHODS.serverProviderAuthConnect](input),
+          listener,
+        ),
+      setProviderAuthCredential: (input) =>
+        transport.request((client) => client[WS_METHODS.serverProviderAuthSetCredential](input)),
+      disconnectProviderAuth: (input) =>
+        transport.request((client) => client[WS_METHODS.serverProviderAuthDisconnect](input)),
       upsertKeybinding: (input) =>
         transport.request((client) => client[WS_METHODS.serverUpsertKeybinding](input)),
       removeKeybinding: (input) =>
@@ -482,6 +503,14 @@ export function createWsRpcClient(
         transport.request((client) => client[WS_METHODS.serverSignalProcess](input)),
     },
     speech: {
+      startStreamingSession: (input) =>
+        transport.request((client) => client[WS_METHODS.speechStartStreamingSession](input)),
+      pushStreamingAudio: (input) =>
+        transport.request((client) => client[WS_METHODS.speechPushStreamingAudio](input)),
+      finishStreamingSession: (input) =>
+        transport.request((client) => client[WS_METHODS.speechFinishStreamingSession](input)),
+      cancelStreamingSession: (input) =>
+        transport.request((client) => client[WS_METHODS.speechCancelStreamingSession](input)),
       getProjectProfile: (input) =>
         transport.request((client) => client[WS_METHODS.speechGetProjectProfile](input)),
       listProjectProfiles: () =>

@@ -23,7 +23,7 @@ export const GeneralSubagentSpawnInput = Schema.Struct({
 export type GeneralSubagentSpawnInput = typeof GeneralSubagentSpawnInput.Type;
 
 export const GeneralSubagentWaitInput = Schema.Struct({
-  agentIds: Schema.Array(SubagentId).check(Schema.isMinLength(1), Schema.isMaxLength(32)),
+  agentIds: Schema.Array(SubagentId).check(Schema.isMinLength(1), Schema.isMaxLength(40)),
   timeoutSeconds: Schema.optionalKey(
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 60 })),
   ),
@@ -32,6 +32,24 @@ export type GeneralSubagentWaitInput = typeof GeneralSubagentWaitInput.Type;
 
 export const GeneralSubagentCancelInput = Schema.Struct({ agentId: SubagentId });
 export type GeneralSubagentCancelInput = typeof GeneralSubagentCancelInput.Type;
+
+export const GeneralSubagentListInput = Schema.Struct({});
+export type GeneralSubagentListInput = typeof GeneralSubagentListInput.Type;
+
+export const GeneralSubagentSendMessageInput = Schema.Struct({
+  agentId: SubagentId,
+  message: BoundedTask,
+});
+export type GeneralSubagentSendMessageInput = typeof GeneralSubagentSendMessageInput.Type;
+
+export const GeneralSubagentFollowUpInput = Schema.Struct({
+  agentId: SubagentId,
+  task: BoundedTask,
+});
+export type GeneralSubagentFollowUpInput = typeof GeneralSubagentFollowUpInput.Type;
+
+export const GeneralSubagentInterruptInput = GeneralSubagentCancelInput;
+export type GeneralSubagentInterruptInput = typeof GeneralSubagentInterruptInput.Type;
 
 const GeneralSubagentModel = Schema.Struct({
   slug: TrimmedNonEmptyString,
@@ -72,6 +90,11 @@ export const GeneralSubagentSnapshot = Schema.Struct({
 });
 export type GeneralSubagentSnapshot = typeof GeneralSubagentSnapshot.Type;
 
+export const GeneralSubagentListResult = Schema.Struct({
+  agents: Schema.Array(GeneralSubagentSnapshot),
+});
+export type GeneralSubagentListResult = typeof GeneralSubagentListResult.Type;
+
 export const GeneralSubagentWaitResult = Schema.Struct({
   agents: Schema.Array(GeneralSubagentSnapshot),
   allTerminal: Schema.Boolean,
@@ -85,6 +108,21 @@ export const GeneralSubagentCancelResult = Schema.Struct({
 });
 export type GeneralSubagentCancelResult = typeof GeneralSubagentCancelResult.Type;
 
+export const GeneralSubagentSendMessageResult = Schema.Struct({
+  agent: GeneralSubagentSnapshot,
+  queued: Schema.Boolean,
+});
+export type GeneralSubagentSendMessageResult = typeof GeneralSubagentSendMessageResult.Type;
+
+export const GeneralSubagentFollowUpResult = GeneralSubagentSendMessageResult;
+export type GeneralSubagentFollowUpResult = typeof GeneralSubagentFollowUpResult.Type;
+
+export const GeneralSubagentInterruptResult = Schema.Struct({
+  agent: GeneralSubagentSnapshot,
+  interrupted: Schema.Boolean,
+});
+export type GeneralSubagentInterruptResult = typeof GeneralSubagentInterruptResult.Type;
+
 export class GeneralSubagentError extends Schema.TaggedErrorClass<GeneralSubagentError>()(
   "GeneralSubagentError",
   {
@@ -94,6 +132,8 @@ export class GeneralSubagentError extends Schema.TaggedErrorClass<GeneralSubagen
       "model-unavailable",
       "reasoning-effort-unavailable",
       "agent-unavailable",
+      "direct-child-limit",
+      "nested-spawn-disabled",
       "spawn-failed",
       "operation-failed",
     ]),

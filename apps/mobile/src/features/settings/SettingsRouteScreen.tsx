@@ -8,8 +8,7 @@ import { SymbolView } from "../../components/AppSymbol";
 import * as Effect from "effect/Effect";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Alert, Linking, Platform, Pressable, ScrollView, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Alert, Linking, Platform, Pressable, View } from "react-native";
 
 import {
   isAtomCommandInterrupted,
@@ -18,7 +17,10 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import {
+  AndroidScreenScaffold,
+  ScreenScaffoldScrollView,
+} from "../../components/AndroidScreenScaffold";
 import { AppText as Text } from "../../components/AppText";
 import { supportsAgentAwarenessPush } from "../agent-awareness/capabilities";
 import { setLiveActivityUpdatesEnabled } from "../agent-awareness/liveActivityPreferences";
@@ -70,13 +72,7 @@ export function SettingsRouteScreen() {
   return (
     <>
       <WorkspaceSidebarToolbar />
-      {Platform.OS === "android" ? (
-        <>
-          {/* Android renders its own in-screen header instead of the native bar. */}
-          <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="Settings" onBack={() => navigation.goBack()} />
-        </>
-      ) : (
+      {Platform.OS !== "android" ? (
         <NativeStackScreenOptions
           options={{
             unstable_headerRightItems:
@@ -94,51 +90,42 @@ export function SettingsRouteScreen() {
                 : undefined,
           }}
         />
-      )}
-      {hasCloudPublicConfig() ? <ConfiguredSettingsRouteScreen /> : <LocalSettingsRouteScreen />}
+      ) : null}
+      <AndroidScreenScaffold title="Settings">
+        {hasCloudPublicConfig() ? <ConfiguredSettingsRouteScreen /> : <LocalSettingsRouteScreen />}
+      </AndroidScreenScaffold>
     </>
   );
 }
 
 function LocalSettingsRouteScreen() {
-  const insets = useSafeAreaInsets();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const environmentCount = Object.keys(savedConnectionsById).length;
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        showsVerticalScrollIndicator={false}
-        className="flex-1"
-        contentContainerClassName="gap-6 px-5 pt-4"
-        contentContainerStyle={{
-          paddingBottom: Math.max(insets.bottom, 18) + 18,
-        }}
-      >
-        <SettingsSection title="Configuration">
-          <SettingsRow
-            icon="desktopcomputer"
-            label="Environments"
-            value={`${environmentCount}`}
-            target="SettingsEnvironments"
-          />
-          <SettingsRow icon="sparkles" label="Agents & Servers" target="SettingsAgents" />
-        </SettingsSection>
+    <ScreenScaffoldScrollView>
+      <SettingsSection title="Configuration">
+        <SettingsRow
+          icon="desktopcomputer"
+          label="Environments"
+          value={`${environmentCount}`}
+          target="SettingsEnvironments"
+        />
+        <SettingsRow icon="sparkles" label="Agents & Servers" target="SettingsAgents" />
+      </SettingsSection>
 
-        <GeneralSettingsSection />
+      <GeneralSettingsSection />
 
-        <SettingsSection title="Appearance">
-          <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
-        </SettingsSection>
+      <SettingsSection title="Appearance">
+        <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
+      </SettingsSection>
 
-        <LegacySettingsSection />
+      <LegacySettingsSection />
 
-        <ArchivedThreadsSettingsSection />
+      <ArchivedThreadsSettingsSection />
 
-        <AppSettingsSection />
-      </ScrollView>
-    </View>
+      <AppSettingsSection />
+    </ScreenScaffoldScrollView>
   );
 }
 
@@ -147,7 +134,6 @@ function ConfiguredSettingsRouteScreen() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const agentAwarenessPushAvailable = supportsAgentAwarenessPush();
   const agentAwarenessPlatform = resolveAgentAwarenessPlatformPresentation(Platform.OS);
-  const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { getToken, isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const { user } = useUser();
@@ -441,91 +427,81 @@ function ConfiguredSettingsRouteScreen() {
   }, [isLoaded, navigation]);
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        showsVerticalScrollIndicator={false}
-        className="flex-1"
-        contentContainerClassName="gap-6 px-5 pt-4"
-        contentContainerStyle={{
-          paddingBottom: Math.max(insets.bottom, 18) + 18,
-        }}
-      >
-        <View className="gap-3">
-          <SettingsSection title="Account">
-            <SettingsRow
-              icon="person.crop.circle"
-              label="T3 Account"
-              value={accountLabel}
-              onPress={openAccount}
-            />
-          </SettingsSection>
-          <Text className="px-2 text-sm text-foreground-muted">
-            T3 Code works locally without signing in. Cloud features are optional.
-          </Text>
-        </View>
-
-        <SettingsSection title="Configuration">
+    <ScreenScaffoldScrollView>
+      <View className="gap-3">
+        <SettingsSection title="Account">
           <SettingsRow
-            icon="desktopcomputer"
-            label="Environments"
-            value={`${environmentCount}`}
-            target="SettingsEnvironments"
-          />
-          <SettingsRow icon="sparkles" label="Agents & Servers" target="SettingsAgents" />
-          <SettingsSwitchRow
-            icon="bell.badge"
-            label="Device Notifications"
-            disabled={
-              !agentAwarenessPlatform.supported ||
-              !agentAwarenessPushAvailable ||
-              notificationStatus === "checking" ||
-              notificationStatus === "unsupported"
-            }
-            subtitle={agentAwarenessPlatform.subtitle}
-            // Only reads as on when this device is actually registered with the
-            // relay; otherwise notifications cannot be delivered regardless of
-            // the local iOS permission.
-            value={
-              agentAwarenessPushAvailable && notificationStatus === "enabled" && deviceRegistered
-            }
-            onValueChange={handleDeviceNotificationsChange}
-          />
-          <SettingsSwitchRow
-            disabled={
-              !agentAwarenessPlatform.supported ||
-              !agentAwarenessPushAvailable ||
-              !isLoaded ||
-              liveActivityStatus === "checking" ||
-              liveActivityStatus === "linking"
-            }
-            icon="bolt.circle"
-            label="Live Activity Updates"
-            subtitle={agentAwarenessPlatform.subtitle}
-            // Same gate: a saved preference is meaningless until the device
-            // registration the relay needs to push updates has succeeded.
-            value={
-              agentAwarenessPushAvailable &&
-              (liveActivityStatus === "enabled" || liveActivityStatus === "linking") &&
-              deviceRegistered
-            }
-            onValueChange={handleLiveActivitiesChange}
+            icon="person.crop.circle"
+            label="T3 Account"
+            value={accountLabel}
+            onPress={openAccount}
           />
         </SettingsSection>
+        <Text className="px-2 text-sm text-foreground-muted">
+          T3 Code works locally without signing in. Cloud features are optional.
+        </Text>
+      </View>
 
-        <GeneralSettingsSection />
+      <SettingsSection title="Configuration">
+        <SettingsRow
+          icon="desktopcomputer"
+          label="Environments"
+          value={`${environmentCount}`}
+          target="SettingsEnvironments"
+        />
+        <SettingsRow icon="sparkles" label="Agents & Servers" target="SettingsAgents" />
+        <SettingsSwitchRow
+          icon="bell.badge"
+          label="Device Notifications"
+          disabled={
+            !agentAwarenessPlatform.supported ||
+            !agentAwarenessPushAvailable ||
+            notificationStatus === "checking" ||
+            notificationStatus === "unsupported"
+          }
+          subtitle={agentAwarenessPlatform.subtitle}
+          // Only reads as on when this device is actually registered with the
+          // relay; otherwise notifications cannot be delivered regardless of
+          // the local iOS permission.
+          value={
+            agentAwarenessPushAvailable && notificationStatus === "enabled" && deviceRegistered
+          }
+          onValueChange={handleDeviceNotificationsChange}
+        />
+        <SettingsSwitchRow
+          disabled={
+            !agentAwarenessPlatform.supported ||
+            !agentAwarenessPushAvailable ||
+            !isLoaded ||
+            liveActivityStatus === "checking" ||
+            liveActivityStatus === "linking"
+          }
+          icon="bolt.circle"
+          label="Live Activity Updates"
+          subtitle={agentAwarenessPlatform.subtitle}
+          // Same gate: a saved preference is meaningless until the device
+          // registration the relay needs to push updates has succeeded.
+          value={
+            agentAwarenessPushAvailable &&
+            (liveActivityStatus === "enabled" || liveActivityStatus === "linking") &&
+            deviceRegistered
+          }
+          onValueChange={handleLiveActivitiesChange}
+        />
+      </SettingsSection>
 
-        <SettingsSection title="Appearance">
-          <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
-        </SettingsSection>
+      <GeneralSettingsSection />
 
-        <LegacySettingsSection />
+      <SettingsSection title="Appearance">
+        <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
+      </SettingsSection>
 
-        <ArchivedThreadsSettingsSection />
+      <LegacySettingsSection />
 
-        <AppSettingsSection />
-      </ScrollView>
-    </View>
+      <ArchivedThreadsSettingsSection />
+
+      <AppSettingsSection />
+    </ScreenScaffoldScrollView>
   );
 }
 

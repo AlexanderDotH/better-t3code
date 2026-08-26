@@ -27,6 +27,15 @@ import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClie
 import { subscribeBeforeSnapshotWithoutMutex } from "../utils/subscribeBeforeSnapshot.ts";
 import { constrainHostMemoryToCurrentCgroup } from "./ContainerMemoryBudget.ts";
 import {
+  MAX_IN_PROCESS_TURNS_PER_PROVIDER_INSTANCE,
+  inProcessReservationBytes,
+  type InProcessCriticalPressureNotice,
+  type InProcessUsage,
+  type InProcessWorkAdmissionRequest,
+  type InProcessWorkLease,
+  type ProviderInProcessUsage,
+} from "./InProcessWorkAdmission.ts";
+import {
   makeDelegatingProviderProcessTreeController,
   makePosixProviderProcessTreeController,
   type ProviderProcessIdentity,
@@ -113,6 +122,23 @@ interface ActiveMeasurement extends SubagentAdmissionRequest {
   readonly agentId: string | undefined;
 }
 
+interface InProcessWorkGrant {
+  readonly id: number;
+  readonly workId: string;
+  readonly reservedBytes: number;
+}
+
+interface WaitingInProcessWork extends InProcessWorkAdmissionRequest {
+  readonly id: number;
+  readonly reservedBytes: number;
+  readonly deferred: Deferred.Deferred<InProcessWorkGrant | undefined>;
+}
+
+interface ActiveInProcessWork extends InProcessWorkAdmissionRequest {
+  readonly id: number;
+  readonly reservedBytes: number;
+}
+
 interface SuspendedProviderProcessTree extends ProviderProcessTreeLease {
   readonly registrationKey: string;
   readonly threadId: ThreadId;
@@ -125,6 +151,8 @@ interface GovernorState {
   readonly sample: ResourceGovernorSample | undefined;
   readonly waiting: ReadonlyArray<WaitingAdmission>;
   readonly active: ReadonlyMap<number, ActiveMeasurement>;
+  readonly waitingInProcess: ReadonlyArray<WaitingInProcessWork>;
+  readonly activeInProcess: ReadonlyMap<number, ActiveInProcessWork>;
   readonly growthByConfiguration: ReadonlyMap<string, ReadonlyArray<number>>;
   readonly unknownConfigurationsInFlight: ReadonlySet<string>;
   readonly registrations: ReadonlyMap<string, RegisteredProviderProcess>;
@@ -163,6 +191,9 @@ export class SubagentResourceGovernor extends Context.Service<
   SubagentResourceGovernor,
   {
     readonly awaitAdmission: (request: SubagentAdmissionRequest) => Effect.Effect<boolean>;
+    readonly acquireInProcessLease: (
+      request: InProcessWorkAdmissionRequest,
+    ) => Effect.Effect<InProcessWorkLease | undefined>;
     readonly confirmSubagent: (request: SubagentLifecycleRequest) => Effect.Effect<void>;
     readonly releaseSubagent: (
       request: Omit<SubagentLifecycleRequest, "configurationKey">,
@@ -179,6 +210,7 @@ export class SubagentResourceGovernor extends Context.Service<
     readonly cancelThread: (threadId: ThreadId) => Effect.Effect<void>;
     readonly shutdown: Effect.Effect<void>;
     readonly latest: Effect.Effect<ResourceProtectionSnapshot>;
+    readonly inProcessUsage: Effect.Effect<InProcessUsage>;
     readonly changes: Stream.Stream<ResourceProtectionSnapshot>;
     readonly monitoringDemand: Stream.Stream<boolean>;
     readonly subscribe: Effect.Effect<
@@ -314,6 +346,7 @@ function providerTreeRss(
 function reservedMemoryBytes(state: GovernorState): number {
   let total = 0;
   for (const measurement of state.active.values()) total += measurement.reservedBytes;
+  for (const work of state.activeInProcess.values()) total += work.reservedBytes;
   return total;
 }
 
@@ -321,6 +354,8 @@ function monitoringRequired(state: GovernorState): boolean {
   return (
     state.waiting.length > 0 ||
     state.active.size > 0 ||
+    state.waitingInProcess.length > 0 ||
+    state.activeInProcess.size > 0 ||
     state.registrations.size > 0 ||
     state.suspendedProcessTree !== undefined
   );
@@ -328,6 +363,7 @@ function monitoringRequired(state: GovernorState): boolean {
 
 function affectedThreadIds(state: GovernorState): ReadonlyArray<ThreadId> {
   const affected = new Set<ThreadId>(state.waiting.map((waiter) => waiter.threadId));
+  for (const waiter of state.waitingInProcess) affected.add(waiter.threadId);
   if (state.suspendedProcessTree) affected.add(state.suspendedProcessTree.threadId);
   return [...affected];
 }
@@ -344,65 +380,123 @@ function protectionSnapshot(state: GovernorState): ResourceProtectionSnapshot {
         ? "recovering"
         : suspension?.suspendConfirmed
           ? "throttled"
-          : state.waiting.length > 0
+          : state.waiting.length + state.waitingInProcess.length > 0
             ? "waiting"
             : "normal",
     totalMemoryBytes: memory?.totalBytes ?? 0,
     availableMemoryBytes: memory?.availableBytes ?? 0,
     reservedMemoryBytes: reservedMemoryBytes(state),
     coreReserveBytes: memory ? coreReserveBytes(memory.totalBytes) : 0,
-    waitingStarts: state.waiting.length,
+    waitingStarts: state.waiting.length + state.waitingInProcess.length,
     affectedThreadIds: affectedThreadIds(state),
   };
 }
 
+function sameProviderInstance(
+  left: Pick<InProcessWorkAdmissionRequest, "provider" | "providerInstanceId">,
+  right: Pick<InProcessWorkAdmissionRequest, "provider" | "providerInstanceId">,
+): boolean {
+  return left.provider === right.provider && left.providerInstanceId === right.providerInstanceId;
+}
+
+function activeInProcessCount(
+  active: ReadonlyMap<number, ActiveInProcessWork>,
+  request: InProcessWorkAdmissionRequest,
+): number {
+  let count = 0;
+  for (const work of active.values()) {
+    if (sameProviderInstance(work, request)) count += 1;
+  }
+  return count;
+}
+
 function drainAdmissions(state: GovernorState): {
   readonly state: GovernorState;
-  readonly granted: ReadonlyArray<WaitingAdmission>;
+  readonly grantedProcesses: ReadonlyArray<WaitingAdmission>;
+  readonly grantedInProcess: ReadonlyArray<WaitingInProcessWork>;
 } {
   if (
     !state.sample ||
     state.suspendedProcessTree ||
     state.criticalSamples >= CRITICAL_SAMPLE_COUNT
   ) {
-    return { state, granted: [] };
+    return { state, grantedProcesses: [], grantedInProcess: [] };
   }
 
   const waiting = [...state.waiting];
+  const waitingInProcess = [...state.waitingInProcess];
   const active = new Map(state.active);
+  const activeInProcess = new Map(state.activeInProcess);
   const unknownConfigurationsInFlight = new Set(state.unknownConfigurationsInFlight);
-  const granted: Array<WaitingAdmission> = [];
+  const grantedProcesses: Array<WaitingAdmission> = [];
+  const grantedInProcess: Array<WaitingInProcessWork> = [];
   const reserve = coreReserveBytes(state.sample.memory.totalBytes);
   let reserved = reservedMemoryBytes(state);
 
-  while (waiting.length > 0) {
-    const candidate = waiting[0];
-    if (!candidate) break;
-    const observations = state.growthByConfiguration.get(candidate.configurationKey) ?? [];
-    const initiallyUnknown = observations.length === 0;
-    if (initiallyUnknown && unknownConfigurationsInFlight.size > 0) break;
+  while (waiting.length + waitingInProcess.length > 0) {
+    const processCandidate = waiting[0];
+    const inProcessCandidate = waitingInProcess[0];
+    const processIsNext =
+      processCandidate !== undefined &&
+      (inProcessCandidate === undefined || processCandidate.id < inProcessCandidate.id);
 
-    const required = reservationBytesForGrowthSamples(observations);
-    if (state.sample.memory.availableBytes - reserve - reserved < required) break;
+    if (processIsNext && processCandidate) {
+      const observations = state.growthByConfiguration.get(processCandidate.configurationKey) ?? [];
+      const initiallyUnknown = observations.length === 0;
+      if (initiallyUnknown && unknownConfigurationsInFlight.size > 0) break;
 
-    waiting.shift();
-    granted.push(candidate);
-    reserved += required;
-    active.set(candidate.id, {
-      ...candidate,
-      reservedBytes: required,
-      baselineRssBytes: requestTreeRss(candidate, state.registrations),
-      samples: 0,
-      initiallyUnknown,
-      measured: false,
-      agentId: undefined,
-    });
-    if (initiallyUnknown) unknownConfigurationsInFlight.add(candidate.configurationKey);
+      const required = reservationBytesForGrowthSamples(observations);
+      if (state.sample.memory.availableBytes - reserve - reserved < required) break;
+
+      waiting.shift();
+      grantedProcesses.push(processCandidate);
+      reserved += required;
+      active.set(processCandidate.id, {
+        ...processCandidate,
+        reservedBytes: required,
+        baselineRssBytes: requestTreeRss(processCandidate, state.registrations),
+        samples: 0,
+        initiallyUnknown,
+        measured: false,
+        agentId: undefined,
+      });
+      if (initiallyUnknown) {
+        unknownConfigurationsInFlight.add(processCandidate.configurationKey);
+      }
+      continue;
+    }
+
+    if (!inProcessCandidate) break;
+    if (
+      activeInProcessCount(activeInProcess, inProcessCandidate) >=
+      MAX_IN_PROCESS_TURNS_PER_PROVIDER_INSTANCE
+    ) {
+      break;
+    }
+    if (
+      state.sample.memory.availableBytes - reserve - reserved <
+      inProcessCandidate.reservedBytes
+    ) {
+      break;
+    }
+
+    waitingInProcess.shift();
+    grantedInProcess.push(inProcessCandidate);
+    reserved += inProcessCandidate.reservedBytes;
+    activeInProcess.set(inProcessCandidate.id, inProcessCandidate);
   }
 
   return {
-    state: { ...state, waiting, active, unknownConfigurationsInFlight },
-    granted,
+    state: {
+      ...state,
+      waiting,
+      active,
+      waitingInProcess,
+      activeInProcess,
+      unknownConfigurationsInFlight,
+    },
+    grantedProcesses,
+    grantedInProcess,
   };
 }
 
@@ -461,6 +555,70 @@ function removeAdmission(state: GovernorState, id: number): GovernorState {
     unknownConfigurationsInFlight.delete(measurement.configurationKey);
   }
   return { ...state, waiting, active, unknownConfigurationsInFlight };
+}
+
+function removeInProcessAdmission(state: GovernorState, id: number): GovernorState {
+  const waitingInProcess = state.waitingInProcess.filter((candidate) => candidate.id !== id);
+  if (!state.activeInProcess.has(id)) {
+    return waitingInProcess.length === state.waitingInProcess.length
+      ? state
+      : { ...state, waitingInProcess };
+  }
+
+  const activeInProcess = new Map(state.activeInProcess);
+  activeInProcess.delete(id);
+  return { ...state, waitingInProcess, activeInProcess };
+}
+
+function inProcessUsageSnapshot(state: GovernorState): InProcessUsage {
+  const usageByProvider = new Map<string, ProviderInProcessUsage>();
+  const entryFor = (work: InProcessWorkAdmissionRequest) => {
+    const key = `${work.provider}\u0000${work.providerInstanceId}`;
+    const current = usageByProvider.get(key);
+    if (current) return { key, current };
+    return {
+      key,
+      current: {
+        provider: work.provider,
+        providerInstanceId: work.providerInstanceId,
+        activeCount: 0,
+        waitingCount: 0,
+        reservedBytes: 0,
+      },
+    };
+  };
+
+  let reservedBytes = 0;
+  for (const work of state.activeInProcess.values()) {
+    const { key, current } = entryFor(work);
+    reservedBytes += work.reservedBytes;
+    usageByProvider.set(key, {
+      ...current,
+      activeCount: current.activeCount + 1,
+      reservedBytes: current.reservedBytes + work.reservedBytes,
+    });
+  }
+  for (const work of state.waitingInProcess) {
+    const { key, current } = entryFor(work);
+    usageByProvider.set(key, { ...current, waitingCount: current.waitingCount + 1 });
+  }
+
+  return {
+    activeCount: state.activeInProcess.size,
+    waitingCount: state.waitingInProcess.length,
+    reservedBytes,
+    providers: [...usageByProvider.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([, usage]) => usage),
+  };
+}
+
+function criticalPressureVictim(
+  active: ReadonlyMap<number, ActiveInProcessWork>,
+): ActiveInProcessWork | undefined {
+  return [...active.values()].sort(
+    (left, right) => right.reservedBytes - left.reservedBytes || right.id - left.id,
+  )[0];
 }
 
 function linuxProcessStartTimeMs(pid: number): number | undefined {
@@ -576,6 +734,8 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
     sample: undefined,
     waiting: [],
     active: new Map(),
+    waitingInProcess: [],
+    activeInProcess: new Map(),
     growthByConfiguration: new Map(),
     unknownConfigurationsInFlight: new Set(),
     registrations: new Map(),
@@ -633,8 +793,18 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
     yield* Ref.set(stateRef, drained.state);
     yield* publish(drained.state);
     yield* Effect.forEach(
-      drained.granted,
+      drained.grantedProcesses,
       (admission) => Deferred.succeed(admission.deferred, true),
+      { discard: true },
+    );
+    yield* Effect.forEach(
+      drained.grantedInProcess,
+      (admission) =>
+        Deferred.succeed(admission.deferred, {
+          id: admission.id,
+          workId: admission.workId,
+          reservedBytes: admission.reservedBytes,
+        }),
       { discard: true },
     );
   });
@@ -646,6 +816,48 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
         yield* commitAdmissions(removeAdmission(current, id));
       }),
     );
+
+  const releaseInProcessLease = (id: number) =>
+    mutex.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(stateRef);
+        yield* commitAdmissions(removeInProcessAdmission(current, id));
+      }),
+    );
+
+  const acquireInProcessLease = (request: InProcessWorkAdmissionRequest) =>
+    Effect.gen(function* () {
+      const deferred = yield* Deferred.make<InProcessWorkGrant | undefined>();
+      const id = yield* mutex.withPermits(1)(
+        Effect.gen(function* () {
+          const current = yield* Ref.get(stateRef);
+          const admissionId = current.nextAdmissionId;
+          yield* commitAdmissions({
+            ...current,
+            nextAdmissionId: admissionId + 1,
+            waitingInProcess: [
+              ...current.waitingInProcess,
+              {
+                ...request,
+                id: admissionId,
+                reservedBytes: inProcessReservationBytes(request.reservation),
+                deferred,
+              },
+            ],
+          });
+          return admissionId;
+        }),
+      );
+      const grant = yield* Deferred.await(deferred).pipe(
+        Effect.onInterrupt(() => releaseInProcessLease(id)),
+      );
+      if (!grant) return undefined;
+      return {
+        workId: grant.workId,
+        reservedBytes: grant.reservedBytes,
+        release: releaseInProcessLease(grant.id),
+      } satisfies InProcessWorkLease;
+    });
 
   const awaitAdmission = (request: SubagentAdmissionRequest) =>
     Effect.gen(function* () {
@@ -772,137 +984,175 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
     );
 
   const observe = (sample: ResourceGovernorSample) =>
-    mutex.withPermits(1)(
-      Effect.gen(function* () {
-        let current = yield* Ref.get(stateRef);
-        if (current.suspendedProcessTree?.resumeRequired) {
-          const pendingResume = yield* resumeSuspendedProcessTree(current);
-          if (!pendingResume.resumed) {
-            yield* commitAdmissions({ ...pendingResume.state, sample: undefined });
-            return;
+    Effect.gen(function* () {
+      const cancellation = yield* mutex.withPermits(1)(
+        Effect.gen(function* () {
+          let current = yield* Ref.get(stateRef);
+          if (current.suspendedProcessTree?.resumeRequired) {
+            const pendingResume = yield* resumeSuspendedProcessTree(current);
+            if (!pendingResume.resumed) {
+              yield* commitAdmissions({ ...pendingResume.state, sample: undefined });
+              return undefined;
+            }
+            current = pendingResume.state;
           }
-          current = pendingResume.state;
-        }
-        const registrations = new Map<string, RegisteredProviderProcess>();
-        for (const [key, registration] of current.registrations) {
-          const tree = providerTreeRss(registration, sample.processes);
-          const nextKey =
-            tree.startTimeMs === undefined
-              ? key
-              : registrationKey({ pid: registration.pid, startTimeMs: tree.startTimeMs });
-          const elapsedMs =
-            registration.sampledAtMs === undefined
-              ? 0
-              : Math.max(0, sample.sampledAtMs - registration.sampledAtMs);
-          const growthBytesPerSecond =
-            tree.exact && registration.exact && elapsedMs > 0
-              ? Math.max(0, tree.residentBytes - registration.currentRssBytes) / (elapsedMs / 1_000)
-              : 0;
-          registrations.set(nextKey, {
-            ...registration,
-            startTimeMs: tree.startTimeMs,
-            key: nextKey,
-            exact: tree.exact,
-            currentRssBytes: tree.residentBytes,
-            growthBytesPerSecond,
-            sampledAtMs: sample.sampledAtMs,
-            processIdentities: tree.processIdentities,
-          });
-        }
-
-        let next: GovernorState = completeMeasurements({ ...current, sample, registrations });
-        const exactRegistrations = [...registrations.values()].filter(
-          (registration) => registration.exact,
-        );
-        const fastest = exactRegistrations.sort(
-          (left, right) => right.growthBytesPerSecond - left.growthBytesPerSecond,
-        )[0];
-        const projectedGrowthBytes = exactRegistrations.reduce(
-          (total, registration) => total + registration.growthBytesPerSecond,
-          0,
-        );
-        const projectedAvailableBytes =
-          sample.memory.availableBytes - projectedGrowthBytes * PROJECTION_WINDOW_SECONDS;
-        const critical = projectedAvailableBytes < coreReserveBytes(sample.memory.totalBytes);
-
-        if (next.suspendedProcessTree) {
-          const paused = registrations.get(next.suspendedProcessTree.registrationKey);
-          if (!paused?.exact || paused.startTimeMs === undefined) {
-            const resumed = yield* resumeSuspendedProcessTree({
-              ...next,
-              suspendedProcessTree: { ...next.suspendedProcessTree, resumeRequired: true },
+          const registrations = new Map<string, RegisteredProviderProcess>();
+          for (const [key, registration] of current.registrations) {
+            const tree = providerTreeRss(registration, sample.processes);
+            const nextKey =
+              tree.startTimeMs === undefined
+                ? key
+                : registrationKey({ pid: registration.pid, startTimeMs: tree.startTimeMs });
+            const elapsedMs =
+              registration.sampledAtMs === undefined
+                ? 0
+                : Math.max(0, sample.sampledAtMs - registration.sampledAtMs);
+            const growthBytesPerSecond =
+              tree.exact && registration.exact && elapsedMs > 0
+                ? Math.max(0, tree.residentBytes - registration.currentRssBytes) /
+                  (elapsedMs / 1_000)
+                : 0;
+            registrations.set(nextKey, {
+              ...registration,
+              startTimeMs: tree.startTimeMs,
+              key: nextKey,
+              exact: tree.exact,
+              currentRssBytes: tree.residentBytes,
+              growthBytesPerSecond,
+              sampledAtMs: sample.sampledAtMs,
+              processIdentities: tree.processIdentities,
             });
-            next = resumed.state;
-          } else if (critical) {
-            next = { ...next, criticalSamples: 0, healthySamples: 0 };
-          } else {
-            const healthySamples = next.healthySamples + 1;
-            if (healthySamples >= HEALTHY_SAMPLE_COUNT) {
+          }
+
+          let next: GovernorState = completeMeasurements({ ...current, sample, registrations });
+          const exactRegistrations = [...registrations.values()].filter(
+            (registration) => registration.exact,
+          );
+          const fastest = exactRegistrations.sort(
+            (left, right) => right.growthBytesPerSecond - left.growthBytesPerSecond,
+          )[0];
+          const projectedGrowthBytes = exactRegistrations.reduce(
+            (total, registration) => total + registration.growthBytesPerSecond,
+            0,
+          );
+          const projectedAvailableBytes =
+            sample.memory.availableBytes - projectedGrowthBytes * PROJECTION_WINDOW_SECONDS;
+          const critical = projectedAvailableBytes < coreReserveBytes(sample.memory.totalBytes);
+
+          if (next.suspendedProcessTree) {
+            const paused = registrations.get(next.suspendedProcessTree.registrationKey);
+            if (!paused?.exact || paused.startTimeMs === undefined) {
               const resumed = yield* resumeSuspendedProcessTree({
                 ...next,
                 suspendedProcessTree: { ...next.suspendedProcessTree, resumeRequired: true },
               });
               next = resumed.state;
+            } else if (critical) {
+              next = { ...next, criticalSamples: 0, healthySamples: 0 };
             } else {
-              next = { ...next, healthySamples };
+              const healthySamples = next.healthySamples + 1;
+              if (healthySamples >= HEALTHY_SAMPLE_COUNT) {
+                const resumed = yield* resumeSuspendedProcessTree({
+                  ...next,
+                  suspendedProcessTree: { ...next.suspendedProcessTree, resumeRequired: true },
+                });
+                next = resumed.state;
+              } else {
+                next = { ...next, healthySamples };
+              }
             }
-          }
-        } else if (critical) {
-          const criticalSamples = next.criticalSamples + 1;
-          next = { ...next, criticalSamples, healthySamples: 0 };
-          if (
-            criticalSamples >= CRITICAL_SAMPLE_COUNT &&
-            fastest &&
-            fastest.startTimeMs !== undefined &&
-            fastest.growthBytesPerSecond > 0 &&
-            fastest.processIdentities[0] !== undefined
-          ) {
-            const [rootIdentity, ...descendantIdentities] = fastest.processIdentities;
-            const lease: ProviderProcessTreeLease = {
-              leaseId: createProcessTreeLeaseId(),
-              processIdentities: [rootIdentity, ...descendantIdentities],
-            };
-            const suspension = yield* processTreeController.suspend(lease).pipe(Effect.result);
-            if (Result.isSuccess(suspension)) {
-              next = {
-                ...next,
-                suspendedProcessTree: {
-                  ...lease,
-                  registrationKey: fastest.key,
-                  threadId: fastest.threadId,
-                  suspendConfirmed: true,
-                  resumeRequired: false,
+          } else if (critical) {
+            const criticalSamples = next.criticalSamples + 1;
+            next = { ...next, criticalSamples, healthySamples: 0 };
+            const victim =
+              criticalSamples >= CRITICAL_SAMPLE_COUNT
+                ? criticalPressureVictim(next.activeInProcess)
+                : undefined;
+            let pressureCancellation:
+              | {
+                  readonly work: ActiveInProcessWork;
+                  readonly notice: InProcessCriticalPressureNotice;
+                }
+              | undefined;
+            if (victim) {
+              next = removeInProcessAdmission(next, victim.id);
+              pressureCancellation = {
+                work: victim,
+                notice: {
+                  reason: "critical-memory-pressure",
+                  workId: victim.workId,
+                  reservedBytes: victim.reservedBytes,
+                  sampledAtMs: sample.sampledAtMs,
+                  availableMemoryBytes: sample.memory.availableBytes,
+                  coreReserveBytes: coreReserveBytes(sample.memory.totalBytes),
                 },
-                criticalSamples: 0,
-                healthySamples: 0,
               };
-            } else if (suspension.failure.resumeRequired) {
-              const compensated = yield* processTreeController
-                .resume(lease)
-                .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
-              if (!compensated) {
+            } else if (
+              criticalSamples >= CRITICAL_SAMPLE_COUNT &&
+              fastest &&
+              fastest.startTimeMs !== undefined &&
+              fastest.growthBytesPerSecond > 0 &&
+              fastest.processIdentities[0] !== undefined
+            ) {
+              const [rootIdentity, ...descendantIdentities] = fastest.processIdentities;
+              const lease: ProviderProcessTreeLease = {
+                leaseId: createProcessTreeLeaseId(),
+                processIdentities: [rootIdentity, ...descendantIdentities],
+              };
+              const suspension = yield* processTreeController.suspend(lease).pipe(Effect.result);
+              if (Result.isSuccess(suspension)) {
                 next = {
                   ...next,
                   suspendedProcessTree: {
                     ...lease,
                     registrationKey: fastest.key,
                     threadId: fastest.threadId,
-                    suspendConfirmed: false,
-                    resumeRequired: true,
+                    suspendConfirmed: true,
+                    resumeRequired: false,
                   },
                   criticalSamples: 0,
                   healthySamples: 0,
                 };
+              } else if (suspension.failure.resumeRequired) {
+                const compensated = yield* processTreeController
+                  .resume(lease)
+                  .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
+                if (!compensated) {
+                  next = {
+                    ...next,
+                    suspendedProcessTree: {
+                      ...lease,
+                      registrationKey: fastest.key,
+                      threadId: fastest.threadId,
+                      suspendConfirmed: false,
+                      resumeRequired: true,
+                    },
+                    criticalSamples: 0,
+                    healthySamples: 0,
+                  };
+                }
               }
             }
+            yield* commitAdmissions(next);
+            return pressureCancellation;
+          } else {
+            next = { ...next, criticalSamples: 0, healthySamples: 0 };
           }
-        } else {
-          next = { ...next, criticalSamples: 0, healthySamples: 0 };
-        }
 
-        yield* commitAdmissions(next);
-      }),
-    );
+          yield* commitAdmissions(next);
+          return undefined;
+        }),
+      );
+      if (!cancellation) return;
+      yield* Effect.suspend(() => cancellation.work.onCriticalPressure(cancellation.notice)).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError("in-process work cancellation callback failed", {
+            workId: cancellation.work.workId,
+            cause,
+          }),
+        ),
+      );
+    });
 
   const telemetryUnavailable = mutex.withPermits(1)(
     Effect.gen(function* () {
@@ -1036,13 +1286,29 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
           { ...pendingResume.state, registrations },
           (admission) => admission.threadId === threadId,
         );
+        const cancelledInProcessWaiters = removed.state.waitingInProcess.filter(
+          (work) => work.threadId === threadId,
+        );
+        const inProcessIds = [
+          ...cancelledInProcessWaiters.map((work) => work.id),
+          ...[...removed.state.activeInProcess.values()]
+            .filter((work) => work.threadId === threadId)
+            .map((work) => work.id),
+        ];
+        let next = removed.state;
+        for (const id of inProcessIds) next = removeInProcessAdmission(next, id);
         yield* commitAdmissions({
-          ...removed.state,
+          ...next,
           healthySamples: 0,
         });
         yield* Effect.forEach(
           removed.cancelledWaiters,
           (waiter) => Deferred.succeed(waiter.deferred, false),
+          { discard: true },
+        );
+        yield* Effect.forEach(
+          cancelledInProcessWaiters,
+          (waiter) => Deferred.succeed(waiter.deferred, undefined),
           { discard: true },
         );
       }),
@@ -1067,6 +1333,8 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
         sample: undefined,
         waiting: [],
         active: new Map(),
+        waitingInProcess: [],
+        activeInProcess: new Map(),
         unknownConfigurationsInFlight: new Set(),
         registrations: new Map(),
         criticalSamples: 0,
@@ -1077,6 +1345,11 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
       yield* Effect.forEach(current.waiting, (waiter) => Deferred.succeed(waiter.deferred, false), {
         discard: true,
       });
+      yield* Effect.forEach(
+        current.waitingInProcess,
+        (waiter) => Deferred.succeed(waiter.deferred, undefined),
+        { discard: true },
+      );
       yield* PubSub.shutdown(changes);
       yield* PubSub.shutdown(monitoringDemandChanges);
     }),
@@ -1084,6 +1357,7 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
 
   return SubagentResourceGovernor.of({
     awaitAdmission,
+    acquireInProcessLease,
     confirmSubagent,
     releaseSubagent,
     releaseRootTurn,
@@ -1094,6 +1368,7 @@ export const makeSubagentResourceGovernor = Effect.fnUntraced(function* (
     cancelThread,
     shutdown,
     latest: Ref.get(latestRef),
+    inProcessUsage: Ref.get(stateRef).pipe(Effect.map(inProcessUsageSnapshot)),
     changes: Stream.fromPubSub(changes),
     monitoringDemand: Stream.concat(
       Stream.make(false),

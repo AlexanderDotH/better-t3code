@@ -64,6 +64,21 @@ const lightEnvironment = {
 } as const;
 
 describe("AgentActivity widget layout", () => {
+  it("renders widget-owned outcome copy in German", () => {
+    const layout = AgentActivity(
+      {
+        ...props,
+        language: "de",
+        activeCount: 0,
+        activities: [makeRow({ phase: "completed", status: "Fertig" })],
+      },
+      environment as never,
+    );
+
+    expect(JSON.stringify(layout)).toContain("Agentenarbeit abgeschlossen");
+    expect(JSON.stringify(layout)).toContain("Fertig");
+  });
+
   it("tints each row by its own phase using the web sidebar's dark palette", () => {
     const layout = AgentActivity(
       {

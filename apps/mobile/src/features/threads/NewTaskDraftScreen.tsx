@@ -1129,18 +1129,19 @@ export function NewTaskDraftScreen(props: {
               onPress={() => void handlePickImages()}
               showChevron={false}
             />
-            {voiceConfigured || voiceDictation.active ? (
-              <NativeVoiceDictationControl
-                state={voiceDictation.state}
-                audioWaveform={voiceDictation.audioWaveform}
-                disabled={
-                  !environmentConnected || isIncomingShareTransferPending || isImprovingPrompt
-                }
-                onStart={voiceDictation.start}
-                onStop={voiceDictation.stop}
-                onCancel={voiceDictation.cancel}
-              />
-            ) : null}
+            <NativeVoiceDictationControl
+              state={voiceDictation.state}
+              audioWaveform={voiceDictation.audioWaveform}
+              disabled={
+                selectedProject === null ||
+                !environmentConnected ||
+                isIncomingShareTransferPending ||
+                isImprovingPrompt
+              }
+              onStart={voiceDictation.start}
+              onStop={voiceDictation.stop}
+              onCancel={voiceDictation.cancel}
+            />
             {workflowSettings.supported && flow.prompt.trim().length > 0 ? (
               <ComposerToolbarButton
                 accessibilityLabel="Improve prompt"

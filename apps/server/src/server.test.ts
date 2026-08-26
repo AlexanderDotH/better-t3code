@@ -121,7 +121,10 @@ import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
+import { ProjectionHarnessChatSyncRepository } from "./persistence/Services/ProjectionHarnessChatSync.ts";
+import * as ProviderInstanceRegistry from "./provider/Services/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -400,7 +403,13 @@ const buildAppUnderTest = (options?: {
   config?: Partial<ServerConfig.ServerConfig["Service"]>;
   layers?: {
     keybindings?: Partial<Keybindings.Keybindings["Service"]>;
+    providerInstanceRegistry?: Partial<
+      ProviderInstanceRegistry.ProviderInstanceRegistry["Service"]
+    >;
     providerRegistry?: Partial<ProviderRegistry.ProviderRegistry["Service"]>;
+    providerSessionDirectory?: Partial<
+      ProviderSessionDirectory.ProviderSessionDirectory["Service"]
+    >;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
@@ -673,6 +682,18 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
+        Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+          getInstance: () => Effect.succeed(undefined),
+          listInstances: Effect.succeed([]),
+          listUnavailable: Effect.succeed([]),
+          streamChanges: Stream.empty,
+          subscribeChanges: Effect.die(
+            "ProviderInstanceRegistry.subscribeChanges not stubbed in this test",
+          ),
+          ...options?.layers?.providerInstanceRegistry,
+        }),
+      ),
+      Layer.provide(
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([]),
           refresh: () => Effect.succeed([]),
@@ -684,6 +705,30 @@ const buildAppUnderTest = (options?: {
           setProviderMaintenanceActionState: () => Effect.succeed([]),
           streamChanges: Stream.empty,
           ...options?.layers?.providerRegistry,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(ProviderSessionDirectory.ProviderSessionDirectory)({
+          upsert: () => Effect.void,
+          getProvider: () =>
+            Effect.die("ProviderSessionDirectory.getProvider not stubbed in this test"),
+          getBinding: () => Effect.succeed(Option.none()),
+          listThreadIds: () => Effect.succeed([]),
+          listBindings: () => Effect.succeed([]),
+          ...options?.layers?.providerSessionDirectory,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(ProjectionHarnessChatSyncRepository)({
+          upsertLink: () => Effect.void,
+          getLinkByThreadId: () => Effect.succeed(Option.none()),
+          getLinkBySourceSession: () => Effect.succeed(Option.none()),
+          getLinkByContinuationSession: () => Effect.succeed(Option.none()),
+          listLinksByContinuationKey: () => Effect.succeed([]),
+          listLinksBySourceId: () => Effect.succeed([]),
+          upsertMessageLink: () => Effect.void,
+          getMessageLink: () => Effect.succeed(Option.none()),
+          listMessageLinksByThreadId: () => Effect.succeed([]),
         }),
       ),
       Layer.provide(

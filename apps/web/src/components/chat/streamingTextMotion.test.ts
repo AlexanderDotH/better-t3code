@@ -4,14 +4,16 @@ import {
   calculateStreamingTextMotionTiming,
   createStreamingTextMotionFrame,
   detectStreamingTextAppend,
+  getStreamingTextMotionAnimationTiming,
   getStreamingTextMotionDelayMs,
   mapSourceAppendToRenderedSuffix,
+  mapSourceFrameToRenderedText,
   segmentStreamingTextGraphemes,
   smoothStreamingTextRate,
 } from "./streamingTextMotion";
 import {
   advanceStreamingTextMotionCommit,
-  clearStreamingTextMotionFrame,
+  clearCompletedStreamingTextMotionSequence,
 } from "./useStreamingTextMotion";
 
 const nativeSegmenter = Intl.Segmenter;
@@ -60,6 +62,21 @@ describe("streaming append detection", () => {
         { index: 0, sourceOffset: 6, text: "👋🏽" },
         { index: 1, sourceOffset: 10, text: "!" },
       ],
+    });
+  });
+
+  it("moves the append boundary back when provider deltas split a visual character", () => {
+    expect(detectStreamingTextAppend("e", "e\u0301")).toEqual({
+      sourceStart: 0,
+      sourceEnd: 2,
+      text: "e\u0301",
+      graphemes: [{ index: 0, sourceOffset: 0, text: "e\u0301" }],
+    });
+    expect(detectStreamingTextAppend("👨", "👨‍👩")).toEqual({
+      sourceStart: 0,
+      sourceEnd: 5,
+      text: "👨‍👩",
+      graphemes: [{ index: 0, sourceOffset: 0, text: "👨‍👩" }],
     });
   });
 
@@ -143,9 +160,52 @@ describe("adaptive streaming timing", () => {
     expect(getStreamingTextMotionDelayMs(result.frame!, 3)).toBe(35);
     expect(result.frame?.revealDeadlineMs).toBe(160);
   });
+
+  it("resumes retained character motion when a renderer remounts its spans", () => {
+    const append = detectStreamingTextAppend("", "x");
+    const result = createStreamingTextMotionFrame({
+      append: append!,
+      elapsedMs: 100,
+      generation: 1,
+      previousRate: undefined,
+      startedAtMs: 100,
+    });
+
+    expect(getStreamingTextMotionDelayMs(result.frame!, 0, 150)).toBe(-50);
+    expect(getStreamingTextMotionAnimationTiming(result.frame!, 0, 150)).toEqual({
+      delayMs: -50,
+      durationMs: 125,
+    });
+  });
 });
 
 describe("Markdown source reconciliation", () => {
+  it("maps a retained frame after a later provider delta extends the rendered text", () => {
+    const append = detectStreamingTextAppend("seed", "seed!");
+    const result = createStreamingTextMotionFrame({
+      append: append!,
+      elapsedMs: 100,
+      generation: 1,
+      previousRate: undefined,
+    });
+
+    expect(
+      mapSourceFrameToRenderedText({
+        frame: result.frame!,
+        source: "seed!?",
+        sourceStart: 0,
+        sourceEnd: 6,
+        renderedText: "seed!?",
+      }),
+    ).toEqual({
+      renderedStart: 4,
+      renderedEnd: 5,
+      sourceStart: 4,
+      text: "!",
+      graphemes: [{ index: 0, sourceOffset: 4, text: "!" }],
+    });
+  });
+
   it("maps only the appended visible suffix across a Markdown structure transition", () => {
     const source = "**world**";
     const append = detectStreamingTextAppend("**wor", source);
@@ -173,6 +233,15 @@ describe("Markdown source reconciliation", () => {
         { index: 1, sourceOffset: 6, text: "d" },
       ],
     });
+    expect(
+      mapSourceFrameToRenderedText({
+        frame: result.frame!,
+        source,
+        sourceStart: 2,
+        sourceEnd: source.length,
+        renderedText: "world",
+      }),
+    ).toEqual({ ...mapped!, renderedEnd: 5 });
   });
 
   it("excludes appended closing Markdown syntax from a rendered suffix", () => {
@@ -286,6 +355,121 @@ describe("Markdown source reconciliation", () => {
 });
 
 describe("streaming motion commit lifecycle", () => {
+  it("keeps a reveal sequence mounted until its final provider delta finishes", () => {
+    const hydrated = advanceStreamingTextMotionCommit(null, {
+      animateInitialStreamChunk: false,
+      isStreaming: true,
+      isVisible: true,
+      nowMs: 0,
+      streamId: "message-1",
+      text: "",
+    });
+    const firstDelta = advanceStreamingTextMotionCommit(hydrated, {
+      animateInitialStreamChunk: false,
+      isStreaming: true,
+      isVisible: true,
+      nowMs: 100,
+      streamId: "message-1",
+      text: "A",
+    });
+    const secondDelta = advanceStreamingTextMotionCommit(firstDelta, {
+      animateInitialStreamChunk: false,
+      isStreaming: true,
+      isVisible: true,
+      nowMs: 150,
+      streamId: "message-1",
+      text: "AB",
+    });
+
+    expect(
+      secondDelta.frames.map(({ generation, sourceStart, sourceEnd }) => ({
+        generation,
+        sourceStart,
+        sourceEnd,
+      })),
+    ).toEqual([
+      { generation: 1, sourceStart: 0, sourceEnd: 1 },
+      { generation: 2, sourceStart: 1, sourceEnd: 2 },
+    ]);
+
+    const afterFirstDeadline = clearCompletedStreamingTextMotionSequence(secondDelta, 226);
+    expect(afterFirstDeadline).toBe(secondDelta);
+    expect(afterFirstDeadline.frames.map(({ generation }) => generation)).toEqual([1, 2]);
+
+    const afterFinalDeadline = clearCompletedStreamingTextMotionSequence(secondDelta, 276);
+    expect(afterFinalDeadline.frames).toHaveLength(0);
+  });
+
+  it("supersedes unfinished motion when a later delta completes its grapheme", () => {
+    const hydrated = advanceStreamingTextMotionCommit(null, {
+      animateInitialStreamChunk: false,
+      isStreaming: true,
+      isVisible: true,
+      nowMs: 0,
+      streamId: "message-1",
+      text: "",
+    });
+    const baseCharacter = advanceStreamingTextMotionCommit(hydrated, {
+      animateInitialStreamChunk: false,
+      isStreaming: true,
+      isVisible: true,
+      nowMs: 100,
+      streamId: "message-1",
+      text: "e",
+    });
+    const combinedCharacter = advanceStreamingTextMotionCommit(baseCharacter, {
+      animateInitialStreamChunk: false,
+      isStreaming: true,
+      isVisible: true,
+      nowMs: 120,
+      streamId: "message-1",
+      text: "e\u0301",
+    });
+
+    expect(
+      combinedCharacter.frames.map(({ generation, graphemeCount, sourceStart, sourceEnd }) => ({
+        generation,
+        graphemeCount,
+        sourceStart,
+        sourceEnd,
+      })),
+    ).toEqual([{ generation: 2, graphemeCount: 1, sourceStart: 0, sourceEnd: 2 }]);
+  });
+
+  it("keeps existing transient nodes mounted when a rapid batch would exceed the budget", () => {
+    const hydrated = advanceStreamingTextMotionCommit(null, {
+      animateInitialStreamChunk: false,
+      isStreaming: true,
+      isVisible: true,
+      nowMs: 0,
+      streamId: "message-1",
+      text: "",
+    });
+    const firstBatch = advanceStreamingTextMotionCommit(hydrated, {
+      animateInitialStreamChunk: false,
+      isStreaming: true,
+      isVisible: true,
+      nowMs: 100,
+      streamId: "message-1",
+      text: "a".repeat(100),
+    });
+    const secondBatch = advanceStreamingTextMotionCommit(firstBatch, {
+      animateInitialStreamChunk: false,
+      isStreaming: true,
+      isVisible: true,
+      nowMs: 101,
+      streamId: "message-1",
+      text: `${"a".repeat(100)}${"b".repeat(100)}`,
+    });
+
+    expect(secondBatch.frames.map(({ generation }) => generation)).toEqual([1]);
+    expect(secondBatch.generation).toBe(2);
+    expect(secondBatch.text).toHaveLength(200);
+    expect(
+      secondBatch.frames.reduce((total, frame) => total + frame.graphemeCount, 0),
+    ).toBeLessThanOrEqual(160);
+  });
+
   it("treats the first render as hydration unless the caller marks a new live row", () => {
     const hydrated = advanceStreamingTextMotionCommit(null, {
       animateInitialStreamChunk: false,
@@ -304,9 +488,9 @@ describe("streaming motion commit lifecycle", () => {
       text: "New",
     });
 
-    expect(hydrated.frame).toBeNull();
-    expect(newlyInserted.frame?.sourceStart).toBe(0);
-    expect(newlyInserted.frame?.graphemeCount).toBe(3);
+    expect(hydrated.frames).toHaveLength(0);
+    expect(newlyInserted.frames[0]?.sourceStart).toBe(0);
+    expect(newlyInserted.frames[0]?.graphemeCount).toBe(3);
   });
 
   it("does not consume another generation when Strict Mode replays the same commit", () => {
@@ -352,8 +536,8 @@ describe("streaming motion commit lifecycle", () => {
     });
 
     expect(appended.generation).toBe(1);
-    expect(appended.frame?.smoothedRate).toBe(80);
-    expect(appended.frame?.sourceStart).toBe(1);
+    expect(appended.frames.at(-1)?.smoothedRate).toBe(80);
+    expect(appended.frames.at(-1)?.sourceStart).toBe(1);
   });
 
   it("clears and resets rate on replacement, completion, hiding, and stream changes", () => {
@@ -399,12 +583,12 @@ describe("streaming motion commit lifecycle", () => {
     });
 
     for (const state of [replaced, completed, hidden, changedStream]) {
-      expect(state.frame).toBeNull();
+      expect(state.frames).toHaveLength(0);
       expect(state.smoothedRate).toBeUndefined();
     }
   });
 
-  it("clears only the matching active generation after its deadline", () => {
+  it("preserves active frames before their reveal deadline", () => {
     const active = advanceStreamingTextMotionCommit(null, {
       animateInitialStreamChunk: true,
       isStreaming: true,
@@ -414,7 +598,6 @@ describe("streaming motion commit lifecycle", () => {
       text: "abc",
     });
 
-    expect(clearStreamingTextMotionFrame(active, active.frame!.generation).frame).toBeNull();
-    expect(clearStreamingTextMotionFrame(active, active.frame!.generation + 1)).toBe(active);
+    expect(clearCompletedStreamingTextMotionSequence(active, 224)).toBe(active);
   });
 });

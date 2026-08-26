@@ -11,6 +11,11 @@ import {
   type RelayLiveActivityRegistrationRequest,
 } from "@t3tools/contracts/relay";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
+import {
+  resolveInterfaceLocale,
+  type ResolvedInterfaceLanguage,
+} from "@t3tools/shared/interfaceLanguage";
+import { DEFAULT_INTERFACE_LANGUAGE_PREFERENCE } from "@t3tools/contracts";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import {
   isAtomCommandInterrupted,
@@ -488,22 +493,30 @@ export function armAgentAwarenessLiveActivityForLocalWork(input: {
       if (preferences?.liveActivitiesEnabled === false) {
         return;
       }
-      armAgentAwarenessLiveActivityForLocalWorkNow(input);
+      armAgentAwarenessLiveActivityForLocalWorkNow(input, preferences ?? {});
     });
 }
 
-function armAgentAwarenessLiveActivityForLocalWorkNow(input: {
-  readonly threadTitle: string;
-  readonly projectTitle: string;
-}): void {
+function armAgentAwarenessLiveActivityForLocalWorkNow(
+  input: {
+    readonly threadTitle: string;
+    readonly projectTitle: string;
+  },
+  preferences: Preferences,
+): void {
   try {
     if (AgentActivity.getInstances().length > 0) {
       return;
     }
     const nowIso = new Date(Date.now()).toISOString();
+    const language: ResolvedInterfaceLanguage = resolveInterfaceLocale(
+      preferences.interfaceLanguageSyncRecord?.preference ?? DEFAULT_INTERFACE_LANGUAGE_PREFERENCE,
+      [new Intl.DateTimeFormat().resolvedOptions().locale],
+    ).language;
     const activity = AgentActivity.start({
       title: "T3 Code",
-      subtitle: "Agent work in progress",
+      subtitle: language === "de" ? "Agentenarbeit läuft" : "Agent work in progress",
+      language,
       activeCount: 1,
       updatedAt: nowIso,
       activities: [
@@ -514,7 +527,7 @@ function armAgentAwarenessLiveActivityForLocalWorkNow(input: {
           threadTitle: input.threadTitle,
           modelTitle: "",
           phase: "starting",
-          status: "Connecting",
+          status: language === "de" ? "Verbindung wird hergestellt" : "Connecting",
           updatedAt: nowIso,
           deepLink: "/",
         },

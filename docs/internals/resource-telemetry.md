@@ -310,9 +310,14 @@ Admission uses these rules:
 - measure one unknown configuration at a time for five samples;
 - after observations exist, reserve the larger of 4 GiB or 1.25 times the
   observed P95 growth;
+- reserve cooperative in-process turns as 64 MiB plus twice the serialized
+  history size plus attachment and tool-result buffers;
 - retain admitted Codex root-turn reservations through `Stop` and confirmed
   native-subagent reservations through the matching `SubagentStop`;
-- grant queued starts in strict FIFO order without an agent-count limit.
+- account for process and in-process reservations against the same core reserve
+  and grant their queued starts in strict FIFO order;
+- cap active in-process turns at 40 per provider instance while keeping
+  process-based provider admission memory-driven rather than count-driven.
 
 Codex root turns use additive synchronous `UserPromptSubmit` and `Stop` hooks.
 Native subagents reserve through `PreToolUse` for `spawn_agent`, bind that
@@ -331,8 +336,12 @@ before every signal, `/proc` is read again and compared at the same precision.
 This permits the real process while fencing PID reuse.
 
 The five-second growth projection sums all exact registered provider trees. If
-it falls below the core reserve for two consecutive samples, admission stops
-and the fastest-growing exact provider tree receives `SIGSTOP`, root first.
+it falls below the core reserve for two consecutive samples, admission stops.
+An active cooperative in-process turn is released first: the governor selects
+the largest reservation and breaks ties by newest admission, then invokes its
+explicit cancellation callback once. Cancelled turns are never automatically
+retried. When no in-process turn is available, the fastest-growing exact
+provider tree receives `SIGSTOP`, root first.
 After five healthy samples the same identities are resumed children first. On
 POSIX, the controller uses `SIGSTOP`/`SIGCONT` with the existing `/proc`
 creation-time fence. On Windows, protocol v4 delegates the exact tree to the

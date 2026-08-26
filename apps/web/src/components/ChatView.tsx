@@ -14,6 +14,7 @@ import {
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type SubagentId,
+  type ThreadForkBoundary,
   type ThreadId,
   type TurnId,
   type KeybindingCommand,
@@ -27,6 +28,7 @@ import {
   connectionStatusTitle,
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
+import { resolveOpenRouterBootstrapModelPatch } from "@t3tools/client-runtime/openrouter-model-selection";
 import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
 import {
   changeRequestAutoSettles,
@@ -35,6 +37,7 @@ import {
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { resolveThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
+import { resolveInterruptedTurnRetryTarget } from "@t3tools/client-runtime/state/thread-retry";
 import {
   acceptReasoningRecommendation,
   consumeReasoningRecommendationOverride,
@@ -61,6 +64,7 @@ import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { resolveFetchMode } from "@t3tools/shared/fetchMode";
+import { resolveDefaultThreadEnvMode } from "@t3tools/shared/threadEnvMode";
 import {
   getTerminalLabel,
   nextTerminalId,
@@ -220,6 +224,7 @@ import {
   useClientSettings,
   useClientSettingsHydrated,
   useEnvironmentSettings,
+  useUpdateEnvironmentSettings,
 } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
@@ -231,6 +236,8 @@ import {
   preventTerminalCloseShortcut,
 } from "../lib/terminalCloseShortcut";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
+import { readT3ProjectFileDefaultThreadEnvMode } from "../lib/t3ProjectFileDefaults";
+import { resolveFirstTurnForkBudget, resolveForkWorkspaceSpec } from "../lib/threadFork";
 import {
   derivePhysicalProjectKey,
   deriveLogicalProjectKeyFromSettings,
@@ -276,6 +283,7 @@ import {
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment, useEnvironmentSubagent, useEnvironmentThread } from "../state/threads";
 import { buildResourceProtectionBanner } from "./resourceProtectionBanner.ts";
+import { useInterfaceLanguage } from "../interfaceLanguageSync";
 import {
   requestOlderSubagentActivities,
   requestOlderThreadTurns,
@@ -1329,6 +1337,7 @@ function ChatViewContent(props: ChatViewProps) {
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
+  const forkThread = useAtomCommand(threadEnvironment.fork, { reportFailure: false });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -1341,6 +1350,7 @@ function ChatViewContent(props: ChatViewProps) {
     reportFailure: false,
   });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const retryThreadTurn = useAtomCommand(threadEnvironment.retryTurn, { reportFailure: false });
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
@@ -1400,6 +1410,8 @@ function ChatViewContent(props: ChatViewProps) {
   }, [routeKind, routeThreadRef, routeThreadState]);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const settings = useEnvironmentSettings(environmentId);
+  const updateEnvironmentSettings = useUpdateEnvironmentSettings(environmentId);
+  const interfaceLanguage = useInterfaceLanguage().language;
   // New-thread defaults live in the primary environment's settings.json (the
   // settings UI never writes to remote environments), so read them from the
   // primary server rather than the thread's environment.
@@ -1470,6 +1482,10 @@ function ChatViewContent(props: ChatViewProps) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
+  const [retryingMessageId, setRetryingMessageId] = useState<MessageId | null>(null);
+  const retryDispatchInFlightRef = useRef(false);
+  const [forkingBoundary, setForkingBoundary] = useState<ThreadForkBoundary | null>(null);
+  const forkDispatchInFlightRef = useRef(false);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
@@ -1763,6 +1779,14 @@ function ChatViewContent(props: ChatViewProps) {
     [activeThreadEnvironmentId, activeThreadId],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  const forkSourceRef = useMemo(
+    () =>
+      activeThread?.fork
+        ? scopeThreadRef(activeThread.environmentId, activeThread.fork.provenance.sourceThreadId)
+        : null,
+    [activeThread],
+  );
+  const forkSourceShell = useThreadShell(forkSourceRef);
   const selectedSubagentId = resolveSelectedSubagentId(subagentDialogSelection, activeThreadKey);
   const subagentState = useEnvironmentSubagent(
     activeThreadRef?.environmentId ?? null,
@@ -1890,6 +1914,17 @@ function ChatViewContent(props: ChatViewProps) {
     return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
   }, [draftThreadKeys, openTerminalThreadKeys, serverThreadKeys]);
   const activeLatestTurn = activeThread?.latestTurn ?? null;
+  const interruptedTurnRetryTarget = useMemo(
+    () =>
+      activeThread
+        ? resolveInterruptedTurnRetryTarget({
+            latestTurn: activeLatestTurn,
+            messages: [...activeThread.messages, ...optimisticUserMessages],
+            session: activeThread.session,
+          })
+        : null,
+    [activeLatestTurn, activeThread, optimisticUserMessages],
+  );
   // Reading a finished thread clears the sidebar's Done badge. The visit is
   // stamped at the turn's completion time — not now/updatedAt — so it clears
   // exactly the completion the user is looking at: a wake or completion that
@@ -2351,6 +2386,9 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const pullRequestsCapabilityKnown = serverConfig !== null;
   const supportsPullRequests = serverConfig?.environment.capabilities.pullRequests === true;
+  const supportsThreadForking = serverConfig?.environment.capabilities.threadForking === true;
+  const supportsInterruptedTurnRetry =
+    serverConfig?.environment.capabilities.interruptedTurnRetry === true;
   const versionMismatch = resolveServerConfigVersionMismatch(serverConfig);
   const versionMismatchDismissKey =
     versionMismatch && activeThread
@@ -2387,6 +2425,7 @@ function ChatViewContent(props: ChatViewProps) {
         environmentId: activeThread.environmentId,
         threadId: activeThread.id,
         snapshot: resourceProtectionQuery.data,
+        language: interfaceLanguage,
       })
     : null;
   const systemComposerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
@@ -2581,6 +2620,14 @@ function ChatViewContent(props: ChatViewProps) {
     : DEFAULT_INTERACTION_MODE;
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
+  const liveThreadActivities = useMemo(
+    () => threadActivities.filter((activity) => activity.historyOrigin === undefined),
+    [threadActivities],
+  );
+  const liveSubagents = useMemo(
+    () => activeThread?.subagents.filter((subagent) => subagent.historyOrigin === undefined) ?? [],
+    [activeThread?.subagents],
+  );
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
   const turnPlans = useMemo(() => deriveTurnPlans(threadActivities), [threadActivities]);
   // Native subagent fold: memoized by activity-list identity and shared by
@@ -2591,9 +2638,9 @@ function ChatViewContent(props: ChatViewProps) {
   const agentPanelModel = useMemo(
     () =>
       deriveAgentPanelModel({
-        agents: foldSubagentActivities(threadActivities, { sessionLive: agentSessionLive }),
+        agents: foldSubagentActivities(liveThreadActivities, { sessionLive: agentSessionLive }),
       }),
-    [agentSessionLive, threadActivities],
+    [agentSessionLive, liveThreadActivities],
   );
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
@@ -2646,8 +2693,8 @@ function ChatViewContent(props: ChatViewProps) {
     );
   }, [activeLatestTurn?.turnId, activeThread?.proposedPlans, latestTurnSettled]);
   const activePlan = useMemo(
-    () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
-    [activeLatestTurn?.turnId, threadActivities],
+    () => deriveActivePlanState(liveThreadActivities, activeLatestTurn?.turnId ?? undefined),
+    [activeLatestTurn?.turnId, liveThreadActivities],
   );
   // Current step for the in-chat working row: only for the running turn's own
   // plan (deriveActivePlanState falls back to older turns' plans, which must
@@ -2735,7 +2782,7 @@ function ChatViewContent(props: ChatViewProps) {
       reasoningRecommendationSelection === null
         ? null
         : deriveReasoningRecommendation({
-            activities: threadActivities,
+            activities: liveThreadActivities,
             capabilities: reasoningRecommendationCapabilities,
             durableSelection: reasoningRecommendationSelection,
             latestCompletedTurnId:
@@ -2750,7 +2797,7 @@ function ChatViewContent(props: ChatViewProps) {
       reasoningRecommendationCapabilities,
       reasoningRecommendationSelection,
       reasoningRecommendationState?.handledEvidenceTurnId,
-      threadActivities,
+      liveThreadActivities,
     ],
   );
   useEffect(() => {
@@ -3071,6 +3118,18 @@ function ChatViewContent(props: ChatViewProps) {
       ),
     [activeThread?.proposedPlans, timelineMessages, turnPlans, workLogEntries],
   );
+  const forkableMessageIds = useMemo(
+    () => new Set(displayServerMessages.map((message) => message.id)),
+    [displayServerMessages],
+  );
+  const forkableProposedPlanIds = useMemo(
+    () => new Set((activeThread?.proposedPlans ?? []).map((plan) => plan.id)),
+    [activeThread?.proposedPlans],
+  );
+  const firstTurnForkBudget = useMemo(
+    () => resolveFirstTurnForkBudget(activeThread?.fork?.handoff),
+    [activeThread?.fork?.handoff],
+  );
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
     activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
@@ -3142,6 +3201,14 @@ function ChatViewContent(props: ChatViewProps) {
       : vcsEnvironment.status({
           environmentId,
           input: { cwd: gitStatusCwd },
+        }),
+  );
+  const projectRootGitStatusQuery = useEnvironmentQuery(
+    activeProject == null
+      ? null
+      : vcsEnvironment.status({
+          environmentId: activeProject.environmentId,
+          input: { cwd: activeProject.workspaceRoot },
         }),
   );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -4589,6 +4656,16 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     setIsRevertingCheckpoint(false);
+  }, [activeThread?.id]);
+
+  useEffect(() => {
+    retryDispatchInFlightRef.current = false;
+    setRetryingMessageId(null);
+  }, [activeThread?.id]);
+
+  useEffect(() => {
+    forkDispatchInFlightRef.current = false;
+    setForkingBoundary(null);
   }, [activeThread?.id]);
 
   useEffect(() => {
@@ -6826,6 +6903,16 @@ function ChatViewContent(props: ChatViewProps) {
         scheduleComposerFocus();
         return;
       }
+      if (entry) {
+        const openRouterBootstrapPatch = resolveOpenRouterBootstrapModelPatch({
+          settings,
+          provider: entry,
+          model: resolvedModel,
+        });
+        if (openRouterBootstrapPatch) {
+          updateEnvironmentSettings(openRouterBootstrapPatch);
+        }
+      }
       setComposerDraftModelSelection(
         scopeThreadRef(activeThread.environmentId, activeThread.id),
         nextModelSelection,
@@ -6842,6 +6929,7 @@ function ChatViewContent(props: ChatViewProps) {
       setStickyComposerModelSelection,
       providerStatuses,
       settings,
+      updateEnvironmentSettings,
     ],
   );
   const onThreadModelSelectionChange = useCallback(
@@ -6902,6 +6990,260 @@ function ChatViewContent(props: ChatViewProps) {
       });
     }
   };
+
+  const openForkSource = useCallback(() => {
+    if (!forkSourceRef || !forkSourceShell) return;
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: {
+        environmentId: forkSourceRef.environmentId,
+        threadId: forkSourceRef.threadId,
+      },
+    });
+  }, [forkSourceRef, forkSourceShell, navigate]);
+
+  const onRetryInterruptedTurn = useCallback(
+    async (messageId: MessageId) => {
+      const target = interruptedTurnRetryTarget;
+      if (
+        !activeThread ||
+        !isServerThread ||
+        !supportsInterruptedTurnRetry ||
+        target === null ||
+        target.messageId !== messageId ||
+        retryDispatchInFlightRef.current
+      ) {
+        return;
+      }
+      if (activeEnvironmentUnavailable || isConnecting) {
+        setThreadError(activeThread.id, "Reconnect this environment before retrying the response.");
+        return;
+      }
+
+      const targetThreadId = activeThread.id;
+      retryDispatchInFlightRef.current = true;
+      setRetryingMessageId(target.messageId);
+      setThreadError(targetThreadId, null);
+      beginLocalDispatch({ preparingWorktree: false });
+
+      try {
+        const fetchMode = resolveFetchMode({ featureEnabled: settings.experimentalFetch });
+        const result = await retryThreadTurn({
+          environmentId: activeThread.environmentId,
+          input: {
+            threadId: targetThreadId,
+            turnId: target.turnId,
+            messageId: target.messageId,
+            ...(fetchMode !== undefined ? { fetchMode } : {}),
+            modelSelection:
+              composerRef.current?.getSendContext().selectedModelSelection ??
+              activeThread.modelSelection,
+            createdAt: new Date().toISOString(),
+          },
+        });
+        if (result._tag === "Failure") {
+          resetLocalDispatch();
+          if (!isAtomCommandInterrupted(result)) {
+            setThreadError(
+              targetThreadId,
+              chatActionErrorMessage(squashAtomCommandFailure(result)),
+            );
+          }
+          return;
+        }
+        acknowledgeActiveThreadWoke();
+      } catch (error) {
+        resetLocalDispatch();
+        setThreadError(targetThreadId, chatActionErrorMessage(error));
+      } finally {
+        retryDispatchInFlightRef.current = false;
+        setRetryingMessageId(null);
+      }
+    },
+    [
+      acknowledgeActiveThreadWoke,
+      activeEnvironmentUnavailable,
+      activeThread,
+      beginLocalDispatch,
+      composerRef,
+      interruptedTurnRetryTarget,
+      isConnecting,
+      isServerThread,
+      resetLocalDispatch,
+      retryThreadTurn,
+      setThreadError,
+      settings.experimentalFetch,
+      supportsInterruptedTurnRetry,
+    ],
+  );
+  const timelineRetryAction = useMemo(
+    () =>
+      isServerThread && supportsInterruptedTurnRetry && interruptedTurnRetryTarget
+        ? {
+            available: !activeEnvironmentUnavailable && !isConnecting,
+            messageId: interruptedTurnRetryTarget.messageId,
+            pending: retryingMessageId === interruptedTurnRetryTarget.messageId,
+            onRetry: (targetMessageId: MessageId) => void onRetryInterruptedTurn(targetMessageId),
+          }
+        : null,
+    [
+      activeEnvironmentUnavailable,
+      interruptedTurnRetryTarget,
+      isConnecting,
+      isServerThread,
+      onRetryInterruptedTurn,
+      retryingMessageId,
+      supportsInterruptedTurnRetry,
+    ],
+  );
+
+  const onForkThread = useCallback(
+    async (boundary: ThreadForkBoundary) => {
+      if (
+        !activeThread ||
+        !activeProject ||
+        !isServerThread ||
+        !supportsThreadForking ||
+        forkDispatchInFlightRef.current
+      ) {
+        return;
+      }
+      if (activeEnvironmentUnavailable || isConnecting) {
+        setThreadError(activeThread.id, "Reconnect this environment before forking the chat.");
+        return;
+      }
+
+      const sourceThreadId = activeThread.id;
+      forkDispatchInFlightRef.current = true;
+      setForkingBoundary(boundary);
+      setThreadError(sourceThreadId, null);
+
+      try {
+        const projectFileDefault =
+          activeProject.defaultThreadEnvMode == null
+            ? await readT3ProjectFileDefaultThreadEnvMode(
+                activeProject.environmentId,
+                activeProject.workspaceRoot,
+              )
+            : null;
+        const defaultMode = resolveDefaultThreadEnvMode({
+          projectSetting: activeProject.defaultThreadEnvMode,
+          projectFile: projectFileDefault,
+          globalDefault: primaryServerSettings.defaultThreadEnvMode,
+        });
+        if (projectRootGitStatusQuery.data === null) {
+          throw new Error(
+            projectRootGitStatusQuery.error ??
+              "Wait for the project's workspace status before forking this chat.",
+          );
+        }
+        const workspace = resolveForkWorkspaceSpec({
+          defaultMode,
+          isGitRepository: projectRootGitStatusQuery.data?.isRepo === true,
+          projectRootBranch: projectRootGitStatusQuery.data?.refName ?? null,
+          newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
+        });
+        if (workspace.mode === "worktree" && workspace.baseBranch === null) {
+          throw new Error("Wait for the project's base branch before forking into a new worktree.");
+        }
+
+        const destinationThreadId = newThreadId();
+        const result = await forkThread({
+          environmentId: activeThread.environmentId,
+          input: {
+            threadId: destinationThreadId,
+            sourceThreadId,
+            boundary,
+            modelSelection:
+              composerRef.current?.getSendContext().selectedModelSelection ??
+              activeThread.modelSelection,
+            runtimeMode,
+            interactionMode,
+            workspace,
+            createdAt: new Date().toISOString(),
+          },
+        });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            setThreadError(
+              sourceThreadId,
+              chatActionErrorMessage(squashAtomCommandFailure(result)),
+            );
+          }
+          return;
+        }
+
+        await waitForStartedServerThread(
+          scopeThreadRef(activeThread.environmentId, destinationThreadId),
+        );
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: {
+            environmentId: activeThread.environmentId,
+            threadId: destinationThreadId,
+          },
+        });
+        scheduleComposerFocus();
+      } catch (error) {
+        setThreadError(sourceThreadId, chatActionErrorMessage(error));
+      } finally {
+        forkDispatchInFlightRef.current = false;
+        setForkingBoundary(null);
+      }
+    },
+    [
+      activeEnvironmentUnavailable,
+      activeProject,
+      activeThread,
+      composerRef,
+      forkThread,
+      interactionMode,
+      isConnecting,
+      isServerThread,
+      navigate,
+      primaryServerSettings.defaultThreadEnvMode,
+      primaryServerSettings.newWorktreesStartFromOrigin,
+      projectRootGitStatusQuery.data,
+      projectRootGitStatusQuery.error,
+      runtimeMode,
+      scheduleComposerFocus,
+      setThreadError,
+      supportsThreadForking,
+    ],
+  );
+  const timelineForkActions = useMemo(
+    () =>
+      isServerThread && supportsThreadForking
+        ? {
+            available: !activeEnvironmentUnavailable && !isConnecting,
+            pendingBoundary: forkingBoundary,
+            forkableMessageIds,
+            forkableProposedPlanIds,
+            onFork: (boundary: ThreadForkBoundary) => void onForkThread(boundary),
+          }
+        : null,
+    [
+      activeEnvironmentUnavailable,
+      forkableMessageIds,
+      forkableProposedPlanIds,
+      forkingBoundary,
+      isConnecting,
+      isServerThread,
+      onForkThread,
+      supportsThreadForking,
+    ],
+  );
+  const timelineForkProvenance = useMemo(
+    () =>
+      activeThread?.fork
+        ? {
+            sourceTitle: activeThread.fork.provenance.sourceTitle,
+            boundary: activeThread.fork.provenance.boundary,
+            ...(forkSourceShell ? { onOpenSource: openForkSource } : {}),
+          }
+        : null,
+    [activeThread?.fork, forkSourceShell, openForkSource],
+  );
 
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
     setExpandedImage(preview);
@@ -7233,7 +7575,7 @@ function ChatViewContent(props: ChatViewProps) {
                 <div data-chat-agent-floating-layer className="chat-agent-floating-layer">
                   <ChatAgentStack
                     key={activeThread.id}
-                    subagents={activeThread.subagents}
+                    subagents={liveSubagents}
                     selectedSubagentId={selectedSubagentId}
                     onSelectSubagent={selectSubagent}
                   />
@@ -7260,6 +7602,7 @@ function ChatViewContent(props: ChatViewProps) {
                 onOpenTurnDiff={onOpenTurnDiff}
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
                 onRevertUserMessage={onRevertUserMessage}
+                retryAction={timelineRetryAction}
                 isRevertingCheckpoint={isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
                 markdownCwd={gitCwd ?? undefined}
@@ -7276,6 +7619,8 @@ function ChatViewContent(props: ChatViewProps) {
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
                 topFadeEnabled={!hasTimelineTopBanner}
                 loadEarlier={loadEarlierTurns}
+                forkActions={timelineForkActions}
+                forkProvenance={timelineForkProvenance}
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}
@@ -7453,6 +7798,7 @@ function ChatViewContent(props: ChatViewProps) {
                                   isPreparingWorktree={isPreparingWorktree}
                                   externalDrawerAttached={externalComposerDrawerAttached}
                                   floatingDrawerHost={composerFloatingDrawerHost}
+                                  surfaceMorphScopeKey={activeThreadKey ?? "draft"}
                                   environmentUnavailable={activeEnvironmentUnavailableState}
                                   activePendingApproval={activePendingApproval}
                                   pendingApprovals={pendingApprovals}
@@ -7475,7 +7821,8 @@ function ChatViewContent(props: ChatViewProps) {
                                     activeProject?.defaultModelSelection
                                   }
                                   activeThreadModelSelection={activeThread?.modelSelection}
-                                  activeThreadActivities={activeThread?.activities}
+                                  activeThreadActivities={liveThreadActivities}
+                                  firstTurnForkBudget={firstTurnForkBudget}
                                   resolvedTheme={resolvedTheme}
                                   settings={settings}
                                   keybindings={keybindings}

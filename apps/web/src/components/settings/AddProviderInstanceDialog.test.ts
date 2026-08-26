@@ -49,7 +49,7 @@ describe("resolveWizardNavigation", () => {
 });
 
 describe("provider driver groups", () => {
-  it("offers exactly the six native provider drivers", () => {
+  it("offers subscription and API providers alongside the existing native provider drivers", () => {
     expect(DRIVER_OPTIONS.map((option) => option.value)).toEqual([
       ProviderDriverKind.make("codex"),
       ProviderDriverKind.make("claudeAgent"),
@@ -57,6 +57,8 @@ describe("provider driver groups", () => {
       ProviderDriverKind.make("grok"),
       ProviderDriverKind.make("opencode"),
       ProviderDriverKind.make("gemini"),
+      ProviderDriverKind.make("chatgpt"),
+      ProviderDriverKind.make("openrouter"),
     ]);
   });
 

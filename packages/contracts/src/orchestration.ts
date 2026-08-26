@@ -288,6 +288,15 @@ export type OrchestrationProject = typeof OrchestrationProject.Type;
 export const OrchestrationMessageRole = Schema.Literals(["user", "assistant", "system"]);
 export type OrchestrationMessageRole = typeof OrchestrationMessageRole.Type;
 
+/** Identifies the source row represented by an immutable inherited history row. */
+export const OrchestrationHistoryOrigin = Schema.Struct({
+  sourceThreadId: ThreadId,
+  sourceId: TrimmedNonEmptyString,
+  /** Stable global order across every inherited entity in the frozen prefix. */
+  ordinal: NonNegativeInt,
+});
+export type OrchestrationHistoryOrigin = typeof OrchestrationHistoryOrigin.Type;
+
 export const OrchestrationMessage = Schema.Struct({
   id: MessageId,
   role: OrchestrationMessageRole,
@@ -297,11 +306,32 @@ export const OrchestrationMessage = Schema.Struct({
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  historyOrigin: Schema.optional(OrchestrationHistoryOrigin),
 });
 export type OrchestrationMessage = typeof OrchestrationMessage.Type;
 
 export const OrchestrationProposedPlanId = TrimmedNonEmptyString;
 export type OrchestrationProposedPlanId = typeof OrchestrationProposedPlanId.Type;
+
+export const ThreadForkBoundary = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("message"),
+    messageId: MessageId,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("proposed-plan"),
+    planId: OrchestrationProposedPlanId,
+  }),
+]);
+export type ThreadForkBoundary = typeof ThreadForkBoundary.Type;
+
+export const ThreadForkWorkspace = Schema.Struct({
+  mode: ThreadEnvMode,
+  baseBranch: Schema.NullOr(TrimmedNonEmptyString),
+  startFromOrigin: Schema.Boolean,
+  runSetupScript: Schema.Boolean,
+});
+export type ThreadForkWorkspace = typeof ThreadForkWorkspace.Type;
 
 export const OrchestrationProposedPlan = Schema.Struct({
   id: OrchestrationProposedPlanId,
@@ -313,6 +343,7 @@ export const OrchestrationProposedPlan = Schema.Struct({
   ),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  historyOrigin: Schema.optional(OrchestrationHistoryOrigin),
 });
 export type OrchestrationProposedPlan = typeof OrchestrationProposedPlan.Type;
 
@@ -381,6 +412,7 @@ export const OrchestrationCheckpointSummary = Schema.Struct({
   files: Schema.Array(OrchestrationCheckpointFile),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
+  historyOrigin: Schema.optional(OrchestrationHistoryOrigin),
 });
 export type OrchestrationCheckpointSummary = typeof OrchestrationCheckpointSummary.Type;
 
@@ -401,6 +433,7 @@ export const OrchestrationThreadActivity = Schema.Struct({
   turnId: Schema.NullOr(TurnId),
   sequence: Schema.optional(NonNegativeInt),
   createdAt: IsoDateTime,
+  historyOrigin: Schema.optional(OrchestrationHistoryOrigin),
 });
 export type OrchestrationThreadActivity = typeof OrchestrationThreadActivity.Type;
 
@@ -420,6 +453,7 @@ export const OrchestrationLatestTurn = Schema.Struct({
   completedAt: Schema.NullOr(IsoDateTime),
   assistantMessageId: Schema.NullOr(MessageId),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  historyOrigin: Schema.optional(OrchestrationHistoryOrigin),
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
@@ -483,6 +517,7 @@ export const OrchestrationSubagentSummary = Schema.Struct({
   startedAt: IsoDateTime,
   updatedAt: IsoDateTime,
   completedAt: Schema.NullOr(IsoDateTime),
+  historyOrigin: Schema.optional(OrchestrationHistoryOrigin),
 });
 export type OrchestrationSubagentSummary = typeof OrchestrationSubagentSummary.Type;
 
@@ -493,6 +528,112 @@ export const OrchestrationSubagentDetail = Schema.Struct({
   activities: Schema.Array(OrchestrationThreadActivity),
 });
 export type OrchestrationSubagentDetail = typeof OrchestrationSubagentDetail.Type;
+
+export const ThreadForkWorkspaceStatus = Schema.Literals(["pending", "ready", "error"]);
+export type ThreadForkWorkspaceStatus = typeof ThreadForkWorkspaceStatus.Type;
+
+export const ThreadForkWorkspaceState = Schema.Struct({
+  spec: ThreadForkWorkspace,
+  status: ThreadForkWorkspaceStatus,
+  preparedAt: Schema.NullOr(IsoDateTime),
+  lastError: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type ThreadForkWorkspaceState = typeof ThreadForkWorkspaceState.Type;
+
+export const ThreadForkHandoffStatus = Schema.Literals(["pending", "completed"]);
+export type ThreadForkHandoffStatus = typeof ThreadForkHandoffStatus.Type;
+
+export const ThreadForkHandoffState = Schema.Struct({
+  status: ThreadForkHandoffStatus,
+  historyInputChars: NonNegativeInt,
+  historyAttachmentCount: NonNegativeInt,
+  remainingInputChars: NonNegativeInt,
+  remainingAttachmentCount: NonNegativeInt,
+  completedAt: Schema.NullOr(IsoDateTime),
+});
+export type ThreadForkHandoffState = typeof ThreadForkHandoffState.Type;
+
+export const ThreadForkProvenance = Schema.Struct({
+  sourceThreadId: ThreadId,
+  sourceTitle: TrimmedNonEmptyString,
+  boundary: ThreadForkBoundary,
+  forkedAt: IsoDateTime,
+});
+export type ThreadForkProvenance = typeof ThreadForkProvenance.Type;
+
+export const ThreadForkState = Schema.Struct({
+  provenance: ThreadForkProvenance,
+  workspace: ThreadForkWorkspaceState,
+  handoff: ThreadForkHandoffState,
+});
+export type ThreadForkState = typeof ThreadForkState.Type;
+
+export const ThreadForkHistoryTurnState = Schema.Literals([
+  "pending",
+  "running",
+  "interrupted",
+  "completed",
+  "error",
+]);
+export type ThreadForkHistoryTurnState = typeof ThreadForkHistoryTurnState.Type;
+
+export const ThreadForkHistoryTurn = Schema.Struct({
+  turnId: Schema.NullOr(TurnId),
+  pendingMessageId: Schema.NullOr(MessageId),
+  assistantMessageId: Schema.NullOr(MessageId),
+  sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  state: ThreadForkHistoryTurnState,
+  requestedAt: IsoDateTime,
+  startedAt: Schema.NullOr(IsoDateTime),
+  completedAt: Schema.NullOr(IsoDateTime),
+  checkpointTurnCount: Schema.NullOr(NonNegativeInt),
+  checkpointRef: Schema.NullOr(CheckpointRef),
+  checkpointStatus: Schema.NullOr(OrchestrationCheckpointStatus),
+  checkpointFiles: Schema.Array(OrchestrationCheckpointFile),
+  historyOrigin: OrchestrationHistoryOrigin,
+});
+export type ThreadForkHistoryTurn = typeof ThreadForkHistoryTurn.Type;
+
+export const ThreadForkHistoryMessage = Schema.Struct({
+  ...OrchestrationMessage.fields,
+  historyOrigin: OrchestrationHistoryOrigin,
+});
+export type ThreadForkHistoryMessage = typeof ThreadForkHistoryMessage.Type;
+
+export const ThreadForkHistoryProposedPlan = Schema.Struct({
+  ...OrchestrationProposedPlan.fields,
+  historyOrigin: OrchestrationHistoryOrigin,
+});
+export type ThreadForkHistoryProposedPlan = typeof ThreadForkHistoryProposedPlan.Type;
+
+export const ThreadForkHistoryActivity = Schema.Struct({
+  ...OrchestrationThreadActivity.fields,
+  historyOrigin: OrchestrationHistoryOrigin,
+});
+export type ThreadForkHistoryActivity = typeof ThreadForkHistoryActivity.Type;
+
+export const ThreadForkHistorySubagent = Schema.Struct({
+  ...OrchestrationSubagentSummary.fields,
+  historyOrigin: OrchestrationHistoryOrigin,
+});
+export type ThreadForkHistorySubagent = typeof ThreadForkHistorySubagent.Type;
+
+export const ThreadForkHistoryCheckpoint = Schema.Struct({
+  ...OrchestrationCheckpointSummary.fields,
+  historyOrigin: OrchestrationHistoryOrigin,
+});
+export type ThreadForkHistoryCheckpoint = typeof ThreadForkHistoryCheckpoint.Type;
+
+/** Arrays retain canonical source ordering within each projected entity kind. */
+export const ThreadForkHistory = Schema.Struct({
+  messages: Schema.Array(ThreadForkHistoryMessage),
+  proposedPlans: Schema.Array(ThreadForkHistoryProposedPlan),
+  activities: Schema.Array(ThreadForkHistoryActivity),
+  subagents: Schema.Array(ThreadForkHistorySubagent),
+  turns: Schema.Array(ThreadForkHistoryTurn),
+  checkpoints: Schema.Array(ThreadForkHistoryCheckpoint),
+});
+export type ThreadForkHistory = typeof ThreadForkHistory.Type;
 
 /**
  * Compact public state for a thread linked to provider-native harness history.
@@ -556,6 +697,7 @@ export const OrchestrationThread = Schema.Struct({
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
   session: Schema.NullOr(OrchestrationSession),
   harnessSync: Schema.optional(Schema.NullOr(OrchestrationHarnessSyncState)),
+  fork: Schema.optional(ThreadForkState),
 });
 export type OrchestrationThread = typeof OrchestrationThread.Type;
 
@@ -633,6 +775,7 @@ export const OrchestrationThreadShell = Schema.Struct({
     ),
   ),
   harnessSync: Schema.optional(Schema.NullOr(OrchestrationHarnessSyncState)),
+  fork: Schema.optional(ThreadForkState),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 
@@ -881,6 +1024,20 @@ const ThreadCreateCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const ThreadForkCommand = Schema.Struct({
+  type: Schema.Literal("thread.fork"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sourceThreadId: ThreadId,
+  boundary: ThreadForkBoundary,
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  workspace: ThreadForkWorkspace,
+  createdAt: IsoDateTime,
+});
+export type ThreadForkCommand = typeof ThreadForkCommand.Type;
+
 const ThreadDeleteCommand = Schema.Struct({
   type: Schema.Literal("thread.delete"),
   commandId: CommandId,
@@ -1045,6 +1202,18 @@ export const ThreadTurnStartCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const ThreadTurnRetryCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.retry"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnId: Schema.NullOr(TurnId),
+  messageId: MessageId,
+  fetchMode: Schema.optional(Schema.Literal("repository-exploration")),
+  modelSelection: Schema.optional(ModelSelection),
+  createdAt: IsoDateTime,
+});
+export type ThreadTurnRetryCommand = typeof ThreadTurnRetryCommand.Type;
+
 const ClientThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
@@ -1117,6 +1286,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
   ThreadCreateCommand,
+  ThreadForkCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
@@ -1131,6 +1301,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ThreadTurnStartCommand,
+  ThreadTurnRetryCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
@@ -1145,6 +1316,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
   ThreadCreateCommand,
+  ThreadForkCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
@@ -1159,6 +1331,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
+  ThreadTurnRetryCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
@@ -1174,6 +1347,28 @@ const ThreadSessionSetCommand = Schema.Struct({
   session: OrchestrationSession,
   createdAt: IsoDateTime,
 });
+
+export const ThreadForkWorkspaceUpdateStatus = Schema.Literals(["ready", "error"]);
+export type ThreadForkWorkspaceUpdateStatus = typeof ThreadForkWorkspaceUpdateStatus.Type;
+
+export const ThreadForkWorkspaceUpdateCommand = Schema.Struct({
+  type: Schema.Literal("thread.fork.workspace.update"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  status: ThreadForkWorkspaceUpdateStatus,
+  preparedAt: Schema.NullOr(IsoDateTime),
+  lastError: Schema.NullOr(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+});
+export type ThreadForkWorkspaceUpdateCommand = typeof ThreadForkWorkspaceUpdateCommand.Type;
+
+export const ThreadForkHandoffCompleteCommand = Schema.Struct({
+  type: Schema.Literal("thread.fork.handoff.complete"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  completedAt: IsoDateTime,
+});
+export type ThreadForkHandoffCompleteCommand = typeof ThreadForkHandoffCompleteCommand.Type;
 
 const ThreadMessageAssistantDeltaCommand = Schema.Struct({
   type: Schema.Literal("thread.message.assistant.delta"),
@@ -1379,6 +1574,8 @@ export type ProjectAgentInboxAcknowledgeCommand = typeof ProjectAgentInboxAcknow
 
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
+  ThreadForkWorkspaceUpdateCommand,
+  ThreadForkHandoffCompleteCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
   ThreadMessageImportCommand,
@@ -1411,6 +1608,9 @@ export const OrchestrationEventType = Schema.Literals([
   "project.meta-updated",
   "project.deleted",
   "thread.created",
+  "thread.forked",
+  "thread.fork-workspace-updated",
+  "thread.fork-handoff-completed",
   "thread.deleted",
   "thread.archived",
   "thread.unarchived",
@@ -1534,6 +1734,28 @@ export const ThreadCreatedPayload = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 
+export const ThreadForkedPayload = Schema.Struct({
+  threadId: ThreadId,
+  fork: ThreadForkState,
+  history: ThreadForkHistory,
+});
+export type ThreadForkedPayload = typeof ThreadForkedPayload.Type;
+
+export const ThreadForkWorkspaceUpdatedPayload = Schema.Struct({
+  threadId: ThreadId,
+  status: ThreadForkWorkspaceUpdateStatus,
+  preparedAt: Schema.NullOr(IsoDateTime),
+  lastError: Schema.NullOr(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+});
+export type ThreadForkWorkspaceUpdatedPayload = typeof ThreadForkWorkspaceUpdatedPayload.Type;
+
+export const ThreadForkHandoffCompletedPayload = Schema.Struct({
+  threadId: ThreadId,
+  completedAt: IsoDateTime,
+});
+export type ThreadForkHandoffCompletedPayload = typeof ThreadForkHandoffCompletedPayload.Type;
+
 export const ThreadDeletedPayload = Schema.Struct({
   threadId: ThreadId,
   deletedAt: IsoDateTime,
@@ -1640,6 +1862,7 @@ export const ThreadMessageSentPayload = Schema.Struct({
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  historyOrigin: Schema.optional(OrchestrationHistoryOrigin),
 });
 
 export const ThreadHarnessSyncLinkedPayload = Schema.Struct({
@@ -1667,6 +1890,8 @@ export type ThreadHarnessSyncMessageImportedPayload =
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
+  resultOnly: Schema.optional(Schema.Boolean),
+  retryOfTurnId: Schema.optional(TurnId),
   fetchMode: Schema.optional(Schema.Literal("repository-exploration")),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
@@ -1676,6 +1901,7 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   ),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   createdAt: IsoDateTime,
+  historyOrigin: Schema.optional(OrchestrationHistoryOrigin),
 });
 
 export const ThreadTurnInterruptRequestedPayload = Schema.Struct({
@@ -1744,6 +1970,7 @@ export const ThreadTurnDiffCompletedPayload = Schema.Struct({
   files: Schema.Array(OrchestrationCheckpointFile),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
+  historyOrigin: Schema.optional(OrchestrationHistoryOrigin),
 });
 
 export const ThreadActivityAppendedPayload = Schema.Struct({
@@ -1846,6 +2073,21 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.created"),
     payload: ThreadCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.forked"),
+    payload: ThreadForkedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.fork-workspace-updated"),
+    payload: ThreadForkWorkspaceUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.fork-handoff-completed"),
+    payload: ThreadForkHandoffCompletedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
@@ -2090,6 +2332,7 @@ const ProjectionCheckpointRow = Schema.Struct({
   files: Schema.Array(OrchestrationCheckpointFile),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
+  historyOrigin: Schema.optional(OrchestrationHistoryOrigin),
 });
 export type ProjectionCheckpointRow = typeof ProjectionCheckpointRow.Type;
 

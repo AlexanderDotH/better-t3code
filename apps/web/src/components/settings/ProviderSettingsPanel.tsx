@@ -96,6 +96,7 @@ import {
   type ProviderEnvironmentAccess,
   type ProviderOperateAccess,
   resolvePrimaryOperateAccess,
+  resolveProviderAuthFlow,
   resolveRemoteOperateAccess,
   resolveSelectedProviderEnvironmentId,
 } from "./ProviderSettingsPanel.logic";
@@ -344,10 +345,18 @@ function AccessGatedProviderSettings({
   if (access.kind !== "editable" && access.kind !== "read-only") {
     return <EnvironmentUnavailableRow environment={environment} access={access} />;
   }
+  const local =
+    environment.entry.target._tag === "PrimaryConnectionTarget" ||
+    isDesktopLocalConnectionTarget(environment.entry.target);
+  const authFlow = resolveProviderAuthFlow({
+    surface: isElectron ? "desktop" : "web",
+    local,
+  });
   return (
     <EnvironmentProviderSettings
       environmentId={environment.environmentId}
       environmentLabel={environment.label}
+      authFlow={authFlow}
       readOnly={access.kind === "read-only"}
     />
   );
@@ -356,10 +365,12 @@ function AccessGatedProviderSettings({
 export function EnvironmentProviderSettings({
   environmentId,
   environmentLabel,
+  authFlow = "device-code",
   readOnly = false,
 }: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
+  readonly authFlow?: "browser" | "device-code";
   /**
    * Render the full provider layout, greyed out and inert, when this session's
    * credential lacks `orchestration:operate` on the environment. Showing the
@@ -837,6 +848,9 @@ export function EnvironmentProviderSettings({
                 key={row.instanceId}
                 instanceId={row.instanceId}
                 instance={row.instance}
+                environmentId={environmentId}
+                providerAuthFlow={authFlow}
+                readOnly={readOnly}
                 driverOption={driverOption}
                 liveProvider={liveProvider}
                 isExpanded={openInstanceDetails[row.instanceId] ?? false}

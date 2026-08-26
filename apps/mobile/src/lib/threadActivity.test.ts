@@ -15,6 +15,7 @@ import {
 import {
   buildPendingUserInputAnswers,
   buildThreadFeed,
+  derivePendingApprovals,
   deriveThreadFeedPresentation,
   formatThreadFeedTimestamp,
   isPendingUserInputOptionSelected,
@@ -116,6 +117,24 @@ describe("pending user input answers", () => {
   });
 });
 
+describe("frozen inherited requests", () => {
+  it("does not expose inherited approval requests as live controls", () => {
+    const sourceThreadId = ThreadId.make("thread-source");
+    const activities = [
+      makeActivity({
+        id: EventId.make("approval-history"),
+        kind: "approval.requested",
+        summary: "Approve command",
+        createdAt: "2026-04-01T00:00:01.000Z",
+        payload: { requestId: "request-history", requestKind: "command" },
+        historyOrigin: { sourceThreadId, sourceId: "source-approval", ordinal: 1 },
+      }),
+    ];
+
+    expect(derivePendingApprovals(activities)).toEqual([]);
+  });
+});
+
 function makeActivity(
   input: Partial<OrchestrationThreadActivity> &
     Pick<OrchestrationThreadActivity, "id" | "kind" | "summary" | "createdAt">,
@@ -155,6 +174,93 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("preserves inherited history order through activity grouping and turn folding", () => {
+    const sourceThreadId = ThreadId.make("thread-source");
+    const turnId = TurnId.make("turn-history");
+    const thread = makeThread({
+      id: ThreadId.make("thread-fork"),
+      projectId: ProjectId.make("project-1"),
+      title: "Forked thread",
+      messages: [
+        {
+          id: MessageId.make("assistant-history"),
+          role: "assistant",
+          text: "Inherited answer",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:03.000Z",
+          updatedAt: "2026-04-01T00:00:03.000Z",
+          historyOrigin: { sourceThreadId, sourceId: "source-message", ordinal: 3 },
+        },
+      ],
+      activities: [
+        makeActivity({
+          id: EventId.make("activity-history"),
+          kind: "runtime.warning",
+          summary: "Inherited work",
+          turnId,
+          createdAt: "2026-04-01T00:00:02.000Z",
+          historyOrigin: { sourceThreadId, sourceId: "source-activity", ordinal: 2 },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    expect(feed[0]).toMatchObject({
+      type: "activity-group",
+      activities: [{ historyOrigin: { sourceId: "source-activity", ordinal: 2 } }],
+    });
+    expect(
+      deriveThreadFeedPresentation(feed, null, new Set([turnId]), "current").map((entry) => ({
+        id: entry.id,
+        historyOrigin: "historyOrigin" in entry ? entry.historyOrigin : undefined,
+      })),
+    ).toContainEqual({
+      id: "turn-fold:turn-history",
+      historyOrigin: { sourceThreadId, sourceId: "source-message", ordinal: 3 },
+    });
+  });
+
+  it("does not present inherited in-progress work as live", () => {
+    const sourceThreadId = ThreadId.make("thread-source");
+    const turnId = TurnId.make("turn-history");
+    const thread = makeThread({
+      id: ThreadId.make("thread-fork"),
+      projectId: ProjectId.make("project-1"),
+      title: "Forked thread",
+      activities: [
+        makeActivity({
+          id: EventId.make("tool-history"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Ran command",
+          turnId,
+          createdAt: "2026-04-01T00:00:02.000Z",
+          payload: {
+            itemType: "command_execution",
+            status: "inProgress",
+            detail: "pnpm test",
+          },
+          historyOrigin: { sourceThreadId, sourceId: "source-tool", ordinal: 2 },
+        }),
+      ],
+    });
+
+    expect(
+      deriveThreadFeedPresentation(
+        buildThreadFeed(thread),
+        {
+          turnId,
+          state: "running",
+          startedAt: "2026-04-01T00:00:01.000Z",
+          completedAt: null,
+        },
+        new Set(),
+        "current",
+      ),
+    ).toMatchObject([{ type: "work-summary", live: false }]);
+  });
+
   it("places proposed plans in timeline order and preserves their implementation state", () => {
     const proposedPlan: OrchestrationProposedPlan = {
       id: "plan-1",

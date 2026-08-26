@@ -25,6 +25,7 @@ import type {
   ProjectId,
   SubagentId,
   ThreadId,
+  ThreadForkHistory,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
@@ -48,6 +49,7 @@ export interface ProjectionThreadCheckpointContext {
   readonly worktreePath: string | null;
   readonly checkpointsEnabled: boolean;
   readonly checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>;
+  readonly baselineCheckpointThreadId?: ThreadId;
 }
 
 export interface ProjectionFullThreadDiffContext {
@@ -57,6 +59,7 @@ export interface ProjectionFullThreadDiffContext {
   readonly worktreePath: string | null;
   readonly latestCheckpointTurnCount: number;
   readonly toCheckpointRef: CheckpointRef | null;
+  readonly baselineCheckpointThreadId?: ThreadId;
 }
 
 /**
@@ -182,6 +185,11 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadDetailById: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
+
+  /** Rehydrate only the immutable inherited prefix required for first-turn provider handoff. */
+  readonly getThreadForkHistory: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<ThreadForkHistory>, ProjectionRepositoryError>;
 
   /**
    * Read one retained subagent and its transcript without hydrating the

@@ -16,6 +16,7 @@ import {
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   RuntimeSessionId,
   type ServerProvider,
+  type ProviderTurnStartResult,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import {
@@ -279,6 +280,11 @@ describe("ProviderCommandReactor", () => {
     readonly runFetchEffect?: (input: FetchRunInput) => Effect.Effect<FetchRunResult>;
     readonly fetchHandoffAllowed?: boolean;
     readonly fetchInterruptHandled?: boolean;
+    readonly forkBeforeStart?: boolean;
+    readonly forkSourceUserText?: string;
+    readonly sendTurnEffect?: (
+      execution: number,
+    ) => Effect.Effect<ProviderTurnStartResult, ProviderAdapterRequestError>;
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -357,12 +363,15 @@ describe("ProviderCommandReactor", () => {
     });
     let sendTurnExecutions = 0;
     const sendTurn = vi.fn((_: unknown) =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         sendTurnExecutions += 1;
-        return {
-          threadId: ThreadId.make("thread-1"),
-          turnId: asTurnId("turn-1"),
-        };
+        return (
+          input?.sendTurnEffect?.(sendTurnExecutions) ??
+          Effect.succeed({
+            threadId: ThreadId.make("thread-1"),
+            turnId: asTurnId(`turn-${sendTurnExecutions}`),
+          })
+        );
       }),
     );
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
@@ -658,21 +667,104 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
-    await runEffect(
-      engine.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make("cmd-thread-create"),
-        threadId: ThreadId.make("thread-1"),
-        projectId: asProjectId("project-1"),
-        title: "Thread",
-        modelSelection: modelSelection,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: null,
-        createdAt: now,
-      }),
-    );
+    if (input?.forkBeforeStart === true) {
+      const sourceThreadId = ThreadId.make("source-thread-1");
+      await runEffect(
+        engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-source-thread-create"),
+          threadId: sourceThreadId,
+          projectId: asProjectId("project-1"),
+          title: "Source Thread",
+          modelSelection: modelSelection,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        }),
+      );
+      await runEffect(
+        engine.dispatch({
+          type: "thread.message.import",
+          commandId: CommandId.make("cmd-source-user-import"),
+          threadId: sourceThreadId,
+          message: {
+            id: asMessageId("source-user-message"),
+            role: "user",
+            text: input.forkSourceUserText ?? "source question with image",
+            attachments: [
+              {
+                type: "image",
+                id: "source-image",
+                name: "source.png",
+                mimeType: "image/png",
+                sizeBytes: 32,
+              },
+            ],
+            turnId: null,
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      );
+      await runEffect(
+        engine.dispatch({
+          type: "thread.message.import",
+          commandId: CommandId.make("cmd-source-assistant-import"),
+          threadId: sourceThreadId,
+          message: {
+            id: asMessageId("source-assistant-message"),
+            role: "assistant",
+            text: "source completed answer",
+            attachments: [],
+            turnId: null,
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      );
+      await runEffect(
+        engine.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("cmd-thread-fork"),
+          threadId: ThreadId.make("thread-1"),
+          sourceThreadId,
+          boundary: {
+            kind: "message",
+            messageId: asMessageId("source-assistant-message"),
+          },
+          modelSelection,
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          workspace: {
+            mode: "local",
+            baseBranch: null,
+            startFromOrigin: false,
+            runSetupScript: false,
+          },
+          createdAt: now,
+        }),
+      );
+    } else {
+      await runEffect(
+        engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-thread-create"),
+          threadId: ThreadId.make("thread-1"),
+          projectId: asProjectId("project-1"),
+          title: "Thread",
+          modelSelection: modelSelection,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        }),
+      );
+    }
     if (
       input?.titleRegenerationBeforeStart === "two" ||
       input?.activeProjectPeerBeforeStart === true
@@ -896,6 +988,235 @@ describe("ProviderCommandReactor", () => {
       },
     };
   }
+
+  it("starts a fork in a fresh provider session and completes its handoff exactly once", async () => {
+    const harness = await createHarness({ forkBeforeStart: true });
+    harness.generateThreadTitle.mockReturnValue(
+      Effect.succeed({ title: "Generated fork question" }),
+    );
+    const now = "2026-01-01T00:00:01.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-fork-first-turn"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("fork-first-user-message"),
+          role: "user",
+          text: "new fork question",
+          attachments: [
+            {
+              type: "image",
+              id: "current-image",
+              name: "current.png",
+              mimeType: "image/png",
+              sizeBytes: 64,
+            },
+          ],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      freshSession: true,
+    });
+    expect(harness.startSession.mock.calls[0]?.[1]).not.toHaveProperty("resumeCursor");
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toContain("source question with image");
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toContain("source completed answer");
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toContain("new fork question");
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.attachments?.map((entry) => entry.id)).toEqual([
+      "source-image",
+      "current-image",
+    ]);
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return (
+        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.fork?.handoff
+          .status === "completed"
+      );
+    });
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return (
+        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.title ===
+        "Generated fork question"
+      );
+    });
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-fork-second-turn"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("fork-second-user-message"),
+          role: "user",
+          text: "ordinary follow-up",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.sendTurn.mock.calls[1]?.[0]?.input).toBe("ordinary follow-up");
+  });
+
+  it("fits oversized fork history around the first user prompt", async () => {
+    const sourceText = "source context ".repeat(10_000);
+    const harness = await createHarness({
+      forkBeforeStart: true,
+      forkSourceUserText: sourceText,
+    });
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-fork-bounded-handoff-turn"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("fork-bounded-handoff-message"),
+          role: "user",
+          text: "continue from the fork",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    const providerInput = harness.sendTurn.mock.calls[0]?.[0]?.input ?? "";
+    expect(providerInput.length).toBeLessThanOrEqual(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+    expect(providerInput).toContain("Earlier fork history was omitted");
+    expect(providerInput).toContain("source completed answer");
+    expect(providerInput).toContain("continue from the fork");
+
+    const readModel = await harness.readModel();
+    const forkThread = readModel.threads.find((thread) => thread.id === ThreadId.make("thread-1"));
+    expect(forkThread?.messages.some((message) => message.text === sourceText)).toBe(true);
+  });
+
+  it("keeps a failed fork handoff pending and retries it in another fresh session", async () => {
+    const harness = await createHarness({
+      forkBeforeStart: true,
+      sendTurnEffect: (execution) =>
+        execution === 1
+          ? Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: "codex",
+                method: "thread.turn.start",
+                detail: "injected first-send failure",
+              }),
+            )
+          : Effect.succeed({
+              threadId: ThreadId.make("thread-1"),
+              turnId: asTurnId("turn-retry"),
+            }),
+    });
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-fork-failed-turn"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("fork-failed-user-message"),
+          role: "user",
+          text: "first attempt",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+    await waitFor(() => harness.sendTurnExecutions === 1);
+    await harness.drain();
+    let readModel = await harness.readModel();
+    expect(
+      readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.fork?.handoff
+        .status,
+    ).toBe("pending");
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-fork-retry-turn"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("fork-retry-user-message"),
+          role: "user",
+          text: "retry now",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurnExecutions === 2);
+    expect(harness.startSession).toHaveBeenCalledTimes(2);
+    expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({ freshSession: true });
+    expect(harness.startSession.mock.calls[1]?.[1]).not.toHaveProperty("resumeCursor");
+    expect(harness.sendTurn.mock.calls[1]?.[0]?.input).toContain("source completed answer");
+    expect(harness.sendTurn.mock.calls[1]?.[0]?.input).toContain("first attempt");
+    await waitFor(async () => {
+      readModel = await harness.readModel();
+      return (
+        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.fork?.handoff
+          .status === "completed"
+      );
+    });
+  });
+
+  it("prioritizes a full-size first fork prompt over inherited provider context", async () => {
+    const harness = await createHarness({
+      forkBeforeStart: true,
+      forkSourceUserText: "source context ".repeat(100),
+    });
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-fork-over-budget-turn"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("fork-over-budget-user-message"),
+          role: "user",
+          text: "u".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS),
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toBe(
+      "u".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS),
+    );
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return (
+        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.fork?.handoff
+          .status === "completed"
+      );
+    });
+  });
 
   describe("startup session reconciliation", () => {
     const projectedAt = "2025-12-31T23:59:00.000Z";
@@ -1593,6 +1914,123 @@ describe("ProviderCommandReactor", () => {
     expect(harness.startSession.mock.invocationCallOrder[0]).toBeLessThan(
       harness.runFetch.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it("retries an interrupted result-less turn with the existing user message", async () => {
+    const harness = await createHarness();
+    const threadId = ThreadId.make("thread-1");
+    const messageId = asMessageId("user-message-result-only-retry");
+    const turnId = asTurnId("turn-1");
+    const runtimeSessionId = RuntimeSessionId.make("runtime-result-only-retry");
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-title-before-result-only-retry"),
+        threadId,
+        title: "New thread",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-before-result-only-retry"),
+        threadId,
+        message: {
+          messageId,
+          role: "user",
+          text: "answer this once",
+          attachments: [
+            {
+              type: "image",
+              id: "result-only-retry-image",
+              name: "question.png",
+              mimeType: "image/png",
+              sizeBytes: 64,
+            },
+          ],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-aborting-before-result-only-retry"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeSessionId,
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          abortState: {
+            runtimeSessionId,
+            targetTurnId: turnId,
+            phase: "interrupting",
+            requestedAt: "2026-01-01T00:00:02.000Z",
+            forceAt: "2026-01-01T00:00:07.000Z",
+          },
+          lastError: null,
+          updatedAt: "2026-01-01T00:00:02.000Z",
+        },
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.abort.settle",
+        commandId: CommandId.make("cmd-abort-settle-before-result-only-retry"),
+        threadId,
+        runtimeSessionId,
+        turnId,
+        outcome: "cooperative",
+        settledAt: "2026-01-01T00:00:03.000Z",
+        createdAt: "2026-01-01T00:00:03.000Z",
+      }),
+    );
+
+    const interruptedThread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === threadId,
+    );
+    expect(interruptedThread?.latestTurn).toMatchObject({
+      turnId,
+      state: "interrupted",
+      assistantMessageId: null,
+    });
+
+    harness.sendTurn.mockClear();
+    harness.generateThreadTitle.mockClear();
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.retry",
+        commandId: CommandId.make("cmd-result-only-retry"),
+        threadId,
+        turnId,
+        messageId,
+        createdAt: "2026-01-01T00:00:04.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await harness.drain();
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toBe("answer this once");
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.attachments?.map((entry) => entry.id)).toEqual([
+      "result-only-retry-image",
+    ]);
+    expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+    expect(
+      (await harness.readModel()).threads
+        .find((entry) => entry.id === threadId)
+        ?.messages.filter((message) => message.role === "user"),
+    ).toHaveLength(1);
   });
 
   it("injects project-agent coordination instructions when another project thread is active", async () => {

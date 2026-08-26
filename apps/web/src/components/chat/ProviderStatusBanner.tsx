@@ -6,6 +6,21 @@ import { Button } from "../ui/button";
 import { formatProviderDriverKindLabel } from "../../providerModels";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
+const STATUS_TONE = {
+  error: {
+    surface: "border-error/32 bg-error-surface text-error-foreground",
+    icon: "text-error",
+    message: "text-error-foreground/80",
+    dismiss: "text-error-foreground/60",
+  },
+  warning: {
+    surface: "border-warning/32 bg-warning-surface text-warning-foreground",
+    icon: "text-warning",
+    message: "text-warning-foreground/80",
+    dismiss: "text-warning-foreground/60",
+  },
+} as const;
+
 export function getProviderStatusBannerKey(status: ServerProvider | null): string | null {
   return !status || status.status === "ready" || status.status === "disabled"
     ? null
@@ -42,25 +57,31 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
       (status.status === "error"
         ? `${providerName} provider is unavailable.`
         : `${providerName} provider has limited availability.`));
+  const tone = STATUS_TONE[status.status === "warning" ? "warning" : "error"];
 
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">
       <div
         className={cn(
-          "alert-glass relative inline-flex items-center gap-3 rounded-xl border py-3 ps-3.5 pe-10 text-card-foreground text-sm",
-          status.status === "warning"
-            ? "border-warning/32 [&_svg]:text-warning"
-            : "border-destructive/32 text-destructive-foreground [&_svg]:text-destructive",
+          "relative inline-flex items-center gap-3 rounded-xl border py-3 ps-3.5 pe-10 text-sm shadow-sm",
+          tone.surface,
         )}
         data-variant={status.status === "warning" ? "warning" : "error"}
         role="alert"
       >
-        <InfoIcon className="size-4 shrink-0" aria-hidden />
+        <InfoIcon className={cn("size-4 shrink-0", tone.icon)} aria-hidden />
         <div className="flex min-w-0 flex-col gap-1">
           <div className="font-medium">{title}</div>
           <Tooltip>
             <TooltipTrigger
-              render={<div className="line-clamp-3 text-muted-foreground">{message}</div>}
+              render={
+                <div
+                  className={cn("line-clamp-3", tone.message)}
+                  data-provider-status-message="true"
+                >
+                  {message}
+                </div>
+              }
             />
             <TooltipPopup side="top" className="max-w-96 whitespace-pre-wrap">
               {message}
@@ -74,7 +95,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
           size="icon-xs"
           variant="ghost"
         >
-          <XIcon aria-hidden className="size-3.5" />
+          <XIcon aria-hidden className={cn("size-3.5", tone.dismiss)} />
         </Button>
       </div>
     </div>

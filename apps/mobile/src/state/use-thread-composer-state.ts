@@ -15,6 +15,7 @@ import {
   buildPlanImplementationPrompt,
   type PlanImplementationStrategy,
 } from "@t3tools/client-runtime/plan-implementation";
+import { resolveOpenRouterBootstrapModelPatch } from "@t3tools/client-runtime/openrouter-model-selection";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import {
   consumeReasoningRecommendationOverride,
@@ -64,6 +65,7 @@ import { serverEnvironment } from "./server";
 import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
 import { resolveMobileAgentWorkflowSettings } from "./agent-workflow-settings";
+import { mergeQueuedMessagesIntoThreadFeed } from "../features/threads/optimistic-thread-feed";
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -107,6 +109,10 @@ export function useThreadComposerState() {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const updateServerSettings = useAtomCommand(
+    serverEnvironment.updateSettings,
+    "OpenRouter default model",
+  );
   const [isImprovingPrompt, setIsImprovingPrompt] = useState(false);
   const serverConfig = useEnvironmentServerConfig(selectedThreadShell?.environmentId ?? null);
   const { connectedEnvironments } = useRemoteConnectionStatus();
@@ -132,8 +138,12 @@ export function useThreadComposerState() {
     [queuedMessagesByThreadKey, selectedThreadKey],
   );
   const selectedThreadFeed = useMemo(
-    () => (selectedThreadDetail ? buildThreadFeed(selectedThreadDetail) : []),
-    [selectedThreadDetail],
+    () =>
+      mergeQueuedMessagesIntoThreadFeed(
+        selectedThreadDetail ? buildThreadFeed(selectedThreadDetail) : [],
+        selectedThreadQueuedMessages,
+      ),
+    [selectedThreadDetail, selectedThreadQueuedMessages],
   );
 
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
@@ -496,6 +506,24 @@ export function useThreadComposerState() {
         ...(reconciled && reconciled !== current ? { reasoningRecommendation: reconciled } : {}),
       });
 
+      const provider = serverConfig?.providers.find(
+        (candidate) => candidate.instanceId === value.instanceId,
+      );
+      const openRouterBootstrapPatch =
+        provider && serverConfig
+          ? resolveOpenRouterBootstrapModelPatch({
+              settings: serverConfig.settings,
+              provider,
+              model: value.model,
+            })
+          : null;
+      if (openRouterBootstrapPatch && selectedThreadShell) {
+        void updateServerSettings({
+          environmentId: selectedThreadShell.environmentId,
+          input: { patch: openRouterBootstrapPatch },
+        });
+      }
+
       const updatesCurrentChatContext =
         modelSelection !== null &&
         selectedThreadShell !== null &&
@@ -512,7 +540,14 @@ export function useThreadComposerState() {
         });
       }
     },
-    [modelSelection, selectedThreadKey, selectedThreadShell, updateThreadMetadata],
+    [
+      modelSelection,
+      selectedThreadKey,
+      selectedThreadShell,
+      serverConfig,
+      updateServerSettings,
+      updateThreadMetadata,
+    ],
   );
 
   const onSetReasoningRecommendation = useCallback(

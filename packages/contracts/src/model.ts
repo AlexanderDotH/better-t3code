@@ -127,6 +127,11 @@ export const AgentReasoningEffort = Schema.Literals(AGENT_REASONING_EFFORT_VALUE
 export type AgentReasoningEffort = typeof AgentReasoningEffort.Type;
 export const DEFAULT_AGENT_REASONING_EFFORT: AgentReasoningEffort = "medium";
 
+const NonNegativeFiniteNumber = Schema.Number.check(
+  Schema.isFinite(),
+  Schema.isGreaterThanOrEqualTo(0),
+);
+
 export const ModelCapabilities = Schema.Struct({
   optionDescriptors: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
   contextWindow: Schema.optional(
@@ -136,6 +141,21 @@ export const ModelCapabilities = Schema.Struct({
       effectivePercent: Schema.optional(
         Schema.Number.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
       ),
+    }),
+  ),
+  inputModalities: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  outputModalities: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  pricing: Schema.optional(
+    Schema.Struct({
+      promptUsdPerMillion: Schema.optional(NonNegativeFiniteNumber),
+      completionUsdPerMillion: Schema.optional(NonNegativeFiniteNumber),
+    }),
+  ),
+  toolSupport: Schema.optional(
+    Schema.Struct({
+      tools: Schema.Boolean,
+      parallelToolCalls: Schema.Boolean,
+      toolChoice: Schema.Boolean,
     }),
   ),
 });

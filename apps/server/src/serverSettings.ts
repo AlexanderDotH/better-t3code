@@ -55,6 +55,8 @@ import {
   isModelSelectionProviderEnabled,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import { prepareLegacyOpenRouterSettingsMigration } from "./openRouterLegacySettingsMigration.ts";
+import { openRouterApiKeySecretName } from "./provider/openrouter/auth/OpenRouterCredentialStore.ts";
 
 export {
   resolveSourceControlWriterModelSelection,
@@ -205,6 +207,20 @@ function redactMcpServerDefinition(server: McpServerDefinition): McpServerDefini
   }
 }
 
+function redactOpenRouterInstanceConfig(instance: ProviderInstanceConfig): ProviderInstanceConfig {
+  if (
+    instance.driver !== "openrouter" ||
+    instance.config === null ||
+    typeof instance.config !== "object" ||
+    Array.isArray(instance.config) ||
+    !Object.hasOwn(instance.config, "apiKey")
+  ) {
+    return instance;
+  }
+  const { apiKey: _omit, ...config } = instance.config as Record<string, unknown>;
+  return { ...instance, config };
+}
+
 function redactSpeechTranscriptionSettings(
   settings: ServerSettings["speechTranscription"],
 ): ServerSettings["speechTranscription"] {
@@ -225,12 +241,14 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
   const providerInstances = Object.fromEntries(
     Object.entries(settings.providerInstances).map(([instanceId, instance]) => [
       instanceId,
-      instance.environment
-        ? {
-            ...instance,
-            environment: instance.environment.map(redactProviderEnvironmentVariable),
-          }
-        : instance,
+      redactOpenRouterInstanceConfig(
+        instance.environment
+          ? {
+              ...instance,
+              environment: instance.environment.map(redactProviderEnvironmentVariable),
+            }
+          : instance,
+      ),
     ]),
   );
   return {
@@ -365,13 +383,8 @@ function normalizePersistedSettingsCompatibility(input: unknown): unknown {
   return canonicalSettings;
 }
 
-const decodeServerSettingsJsonExit = (raw: string) => {
-  const parsed = decodeLenientJsonUnknownExit(raw);
-  if (parsed._tag === "Failure") {
-    return parsed;
-  }
-  return decodeServerSettingsExit(normalizePersistedSettingsCompatibility(parsed.value));
-};
+const decodePersistedServerSettingsExit = (input: unknown) =>
+  decodeServerSettingsExit(normalizePersistedSettingsCompatibility(input));
 
 function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings {
   return isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection)
@@ -481,13 +494,74 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  const persistLegacyOpenRouterCredentials = Effect.fn(
+    "ServerSettings.persistLegacyOpenRouterCredentials",
+  )(function* (
+    credentials: ReturnType<typeof prepareLegacyOpenRouterSettingsMigration>["credentials"],
+  ) {
+    for (const credential of credentials) {
+      yield* secretStore
+        .create(
+          openRouterApiKeySecretName(credential.instanceId),
+          textEncoder.encode(credential.apiKey),
+        )
+        .pipe(
+          Effect.catch((cause) => {
+            if (ServerSecretStore.isSecretAlreadyExistsError(cause)) return Effect.void;
+            return Effect.fail(
+              new ServerSettingsError({
+                settingsPath,
+                operation: "write-secret",
+                providerInstanceId: credential.instanceId,
+                cause,
+              }),
+            );
+          }),
+        );
+    }
+  });
+
+  const sanitizeOpenRouterProviderInstances = Effect.fn(
+    "ServerSettings.sanitizeOpenRouterProviderInstances",
+  )(function* (settings: ServerSettings) {
+    const migration = prepareLegacyOpenRouterSettingsMigration({
+      providerInstances: settings.providerInstances,
+    });
+    if (!migration.changed) return settings;
+    yield* persistLegacyOpenRouterCredentials(migration.credentials);
+    if (
+      migration.settings === null ||
+      typeof migration.settings !== "object" ||
+      Array.isArray(migration.settings) ||
+      !("providerInstances" in migration.settings)
+    ) {
+      return settings;
+    }
+    return {
+      ...settings,
+      providerInstances: migration.settings
+        .providerInstances as ServerSettings["providerInstances"],
+    };
+  });
+
   const loadSettingsFromDisk = Effect.gen(function* () {
     if (!(yield* readConfigExists)) {
       return DEFAULT_SERVER_SETTINGS;
     }
 
     const raw = yield* readRawConfig;
-    const decoded = decodeServerSettingsJsonExit(raw);
+    const parsed = decodeLenientJsonUnknownExit(raw);
+    if (parsed._tag === "Failure") {
+      yield* Effect.logWarning("failed to parse settings.json, using defaults", {
+        path: settingsPath,
+        issues: Cause.pretty(parsed.cause),
+        cause: parsed.cause,
+      });
+      return DEFAULT_SERVER_SETTINGS;
+    }
+
+    const migration = prepareLegacyOpenRouterSettingsMigration(parsed.value);
+    const decoded = decodePersistedServerSettingsExit(migration.settings);
     if (decoded._tag === "Failure") {
       yield* Effect.logWarning("failed to parse settings.json, using defaults", {
         path: settingsPath,
@@ -496,7 +570,12 @@ const make = Effect.gen(function* () {
       });
       return DEFAULT_SERVER_SETTINGS;
     }
-    return foldProviderInstanceEnabledFlags(decoded.value);
+    const settings = foldProviderInstanceEnabledFlags(decoded.value);
+    if (migration.changed) {
+      yield* persistLegacyOpenRouterCredentials(migration.credentials);
+      yield* writeSettingsAtomically(settings);
+    }
+    return settings;
   });
 
   const settingsCache = yield* Cache.make<typeof cacheKey, ServerSettings, ServerSettingsError>({
@@ -1056,9 +1135,10 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const current = yield* getSettingsFromCache;
         const requested = yield* modify(current);
+        const sanitizedRequested = yield* sanitizeOpenRouterProviderInstances(requested);
         const nextWithProviderSecrets = yield* persistProviderEnvironmentSecrets(
           current,
-          requested,
+          sanitizedRequested,
         );
         const nextWithMcpSecrets = yield* persistMcpSecretValues(current, nextWithProviderSecrets);
         const nextPersisted = yield* persistSpeechTranscriptionSecrets(nextWithMcpSecrets);

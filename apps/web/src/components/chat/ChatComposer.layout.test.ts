@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
 import chatComposerSource from "./ChatComposer.tsx?raw";
+import chatViewSource from "../ChatView.tsx?raw";
 
 const indexCssPath = decodeURIComponent(new URL("../../index.css", import.meta.url).pathname);
 const readIndexCss = Effect.gen(function* () {
@@ -94,4 +95,71 @@ describe("ChatComposer top-drawer layout", () => {
       );
     }),
   );
+});
+
+describe("ChatComposer surface morph integration", () => {
+  it("keeps explicit drawer origins paired with their real composer triggers", () => {
+    expect(chatComposerSource).toContain('data-composer-surface-morph-trigger="command"');
+    expect(chatComposerSource).toContain(
+      'setAttribute("data-composer-surface-morph-trigger", "stash")',
+    );
+    expect(chatComposerSource).toContain(
+      'setAttribute("data-composer-surface-morph-trigger", "tasks")',
+    );
+    expect(chatComposerSource).toContain(
+      'setAttribute("data-composer-surface-morph-origin", "tasks")',
+    );
+    expect(chatComposerSource).toContain('originKey="stash"');
+    expect(chatComposerSource).toContain('originKey="command"');
+    expect(chatComposerSource).toContain("data-composer-surface-morph-origin={props.originKey}");
+    expect(chatComposerSource).toContain(
+      'trigger.removeAttribute("data-composer-surface-morph-trigger")',
+    );
+    expect(chatComposerSource).toContain(
+      'drawer.removeAttribute("data-composer-surface-morph-origin")',
+    );
+  });
+
+  it("does not turn static composer content into a shared transform surface", () => {
+    expect(chatComposerSource).not.toContain('data-composer-surface-morph-key="composer"');
+    expect(chatComposerSource).not.toContain('data-composer-surface-morph-key="automatic-drawer"');
+    expect(chatComposerSource).not.toContain(
+      'data-composer-surface-morph-key="preview-annotations"',
+    );
+    expect(chatComposerSource).not.toContain('data-composer-surface-morph-key="review-comments"');
+    expect(chatComposerSource).not.toContain('data-composer-surface-morph-key="element-contexts"');
+    expect(chatComposerSource).not.toContain(
+      "data-composer-surface-morph-key={`attachment:${image.id}`}",
+    );
+  });
+
+  it("owns the drawer coordinator inside the composer instead of the outer chat layout", () => {
+    expect(chatComposerSource).toContain("createSurfaceMorphCoordinator");
+    expect(chatComposerSource).toContain("COMPOSER_SECONDARY_MORPH_DURATION_MS");
+    expect(chatComposerSource).toContain("surfaceMorphCoordinator?.dispose()");
+    expect(chatViewSource).not.toContain("createSurfaceMorphCoordinator");
+  });
+
+  it("moves the outer composer group only for the hero-to-dock state change", () => {
+    const hookSource = chatViewSource.slice(
+      chatViewSource.indexOf("function useDraftHeroLayoutTransition"),
+      chatViewSource.indexOf("const PreviewPanel"),
+    );
+
+    expect(hookSource).toContain("stateChanged &&");
+    expect(hookSource).toContain("transitionGroup.animate(");
+    expect(hookSource).not.toContain("coordinator.run(");
+    expect(hookSource).not.toContain("scale(");
+  });
+
+  it("keeps detached drawer exits visual-only while live React state changes", () => {
+    expect(chatComposerSource).toContain(
+      'proxy.setAttribute("data-composer-surface-morph-exit-proxy", "true")',
+    );
+    expect(chatComposerSource).toContain('proxy.setAttribute("aria-hidden", "true")');
+    expect(chatComposerSource).toContain('proxy.setAttribute("inert", "")');
+    expect(chatComposerSource).toContain('proxy.removeAttribute("id")');
+    expect(chatComposerSource).toContain('proxy.style.pointerEvents = "none"');
+    expect(chatComposerSource).toContain("durationMs: SURFACE_MORPH_EXIT_DURATION_MS");
+  });
 });

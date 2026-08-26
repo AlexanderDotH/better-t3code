@@ -6,7 +6,9 @@ import {
   type OrchestrationEvent,
   type OrchestrationMessage,
   type OrchestrationReadModel,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  isProviderSendTurnSupportedImageMimeType,
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
@@ -55,6 +57,7 @@ import { SkillEngine } from "../../skills/Services/SkillEngine.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import {
+  buildBoundedProviderForkTranscriptHandoff,
   buildProviderTranscriptHandoff,
   prependProviderTranscriptHandoff,
 } from "../providerTranscriptHandoff.ts";
@@ -418,6 +421,8 @@ const make = Effect.gen(function* () {
     );
 
   const threadModelSelections = new Map<string, ModelSelection>();
+  const completedForkHandoffs = new Set<ThreadId>();
+  const forkHandoffsInFlight = new Set<ThreadId>();
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -622,6 +627,7 @@ const make = Effect.gen(function* () {
     options?: {
       readonly modelSelection?: ModelSelection;
       readonly pendingTurnStart?: boolean;
+      readonly forceFreshSession?: boolean;
     },
   ) {
     const thread = yield* resolveThread(threadId);
@@ -631,6 +637,7 @@ const make = Effect.gen(function* () {
 
     const desiredRuntimeMode = thread.runtimeMode;
     const requestedModelSelection = options?.modelSelection;
+    const forceFreshSession = options?.forceFreshSession === true;
     const resolveActiveSession = (threadId: ThreadId) =>
       providerService
         .listSessions()
@@ -820,6 +827,7 @@ const make = Effect.gen(function* () {
         .sessionModelSwitch;
       const shouldRestartForModelChange = modelChanged && sessionModelSwitch === "unsupported";
       const shouldStartFresh =
+        forceFreshSession ||
         continuationIncompatible ||
         shouldRestartForModelChange ||
         requiresFreshSessionForModelChange;
@@ -836,6 +844,7 @@ const make = Effect.gen(function* () {
         !runtimeModeChanged &&
         !cwdChanged &&
         !instanceChanged &&
+        !forceFreshSession &&
         !shouldRestartForModelChange &&
         !requiresFreshSessionForModelChange &&
         !shouldRestartForModelSelectionChange
@@ -869,6 +878,7 @@ const make = Effect.gen(function* () {
         requiresFreshSessionForModelChange,
         continuationIncompatible,
         shouldRestartForModelSelectionChange,
+        forceFreshSession,
         hasResumeCursor: resumeCursor !== undefined,
       });
       const restartedSession = yield* startProviderSession(
@@ -894,7 +904,8 @@ const make = Effect.gen(function* () {
       };
     }
 
-    const shouldStartFresh = continuationIncompatible || requiresFreshSessionForModelChange;
+    const shouldStartFresh =
+      forceFreshSession || continuationIncompatible || requiresFreshSessionForModelChange;
     const startedSession = yield* startProviderSession(
       shouldStartFresh ? { freshSession: true } : undefined,
     );
@@ -921,12 +932,64 @@ const make = Effect.gen(function* () {
         new Error(`Thread '${input.threadId}' was not found in read model.`),
       );
     }
+    const forkHandoffRequired =
+      thread.fork?.handoff.status === "pending" && !completedForkHandoffs.has(input.threadId);
+    const forkHistory = forkHandoffRequired
+      ? yield* projectionSnapshotQuery.getThreadForkHistory(input.threadId).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () =>
+                new ProviderAdapterRequestError({
+                  provider: providerErrorLabelFromInstanceHint({
+                    instanceId: String(
+                      input.modelSelection?.instanceId ?? thread.modelSelection.instanceId,
+                    ),
+                  }),
+                  method: "thread.turn.start",
+                  detail: `Frozen fork history for thread '${input.threadId}' was not found.`,
+                }),
+              onSome: Effect.succeed,
+            }),
+          ),
+        )
+      : undefined;
+    const forkHandoffContext = forkHistory
+      ? (() => {
+          const nativeMessages = thread.messages.filter(
+            (entry) => entry.historyOrigin === undefined,
+          );
+          const boundaryIndex = nativeMessages.findIndex(
+            (entry) => entry.id === input.boundaryMessageId,
+          );
+          const priorNativeMessages =
+            boundaryIndex > 0 ? nativeMessages.slice(0, boundaryIndex) : [];
+          const nativeHandoff =
+            priorNativeMessages.length > 0
+              ? buildProviderTranscriptHandoff({
+                  messages: nativeMessages,
+                  boundaryMessageId: input.boundaryMessageId,
+                })
+              : undefined;
+          const nativeAttachments = priorNativeMessages.flatMap((message) =>
+            (message.attachments ?? []).filter(
+              (attachment) =>
+                attachment.type === "image" &&
+                isProviderSendTurnSupportedImageMimeType(attachment.mimeType),
+            ),
+          );
+          return {
+            history: forkHistory,
+            nativeHandoff,
+            nativeAttachments,
+          };
+        })()
+      : undefined;
     const sessionPreparation = yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       pendingTurnStart: true,
+      forceFreshSession: forkHandoffRequired,
     });
     threadModelSelections.set(input.threadId, sessionPreparation.modelSelection);
-    const normalizedAttachments = input.attachments ?? [];
     const activeSession = yield* providerService
       .listSessions()
       .pipe(
@@ -941,15 +1004,63 @@ const make = Effect.gen(function* () {
             ...(project ? { projectCwd: project.workspaceRoot } : {}),
             prompt: input.messageText,
           });
-    const providerInputWithHandoff = sessionPreparation.transcriptHandoffRequired
-      ? prependProviderTranscriptHandoff({
-          handoff: buildProviderTranscriptHandoff({
-            messages: thread.messages,
-            boundaryMessageId: input.boundaryMessageId,
-          }),
-          providerInput: providerMessageText,
+    const nativeProviderInput =
+      forkHandoffContext?.nativeHandoff === undefined
+        ? providerMessageText
+        : prependProviderTranscriptHandoff({
+            handoff: forkHandoffContext.nativeHandoff,
+            providerInput: providerMessageText,
+          });
+    const fixedAttachmentIds = new Set([
+      ...(input.attachments ?? []).map((attachment) => attachment.id),
+      ...(forkHandoffContext?.nativeAttachments ?? []).map((attachment) => attachment.id),
+    ]);
+    const frozenForkHandoff = forkHandoffContext
+      ? buildBoundedProviderForkTranscriptHandoff(forkHandoffContext.history, {
+          maxInputChars: Math.max(
+            0,
+            PROVIDER_SEND_TURN_MAX_INPUT_CHARS - nativeProviderInput.length - 2,
+          ),
+          maxAttachments: Math.max(0, PROVIDER_SEND_TURN_MAX_ATTACHMENTS - fixedAttachmentIds.size),
         })
-      : providerMessageText;
+      : undefined;
+    const attachmentsById = new Map<string, ChatAttachment>();
+    for (const attachment of [
+      ...(frozenForkHandoff?.attachments ?? []),
+      ...(forkHandoffContext?.nativeAttachments ?? []),
+      ...(input.attachments ?? []),
+    ]) {
+      if (!attachmentsById.has(attachment.id)) {
+        attachmentsById.set(attachment.id, attachment);
+      }
+    }
+    const normalizedAttachments = Array.from(attachmentsById.values());
+    if (normalizedAttachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+      return yield* new ProviderAdapterRequestError({
+        provider: providerErrorLabelFromInstanceHint({
+          instanceId: String(input.modelSelection?.instanceId ?? thread.modelSelection.instanceId),
+        }),
+        method: "thread.turn.start",
+        detail: `Fork history and the first user message contain ${normalizedAttachments.length} supported attachments, exceeding the provider attachment limit of ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
+      });
+    }
+    const providerInputWithHandoff =
+      frozenForkHandoff !== undefined
+        ? frozenForkHandoff.handoff.length === 0
+          ? nativeProviderInput
+          : prependProviderTranscriptHandoff({
+              handoff: frozenForkHandoff.handoff,
+              providerInput: nativeProviderInput,
+            })
+        : sessionPreparation.transcriptHandoffRequired
+          ? prependProviderTranscriptHandoff({
+              handoff: buildProviderTranscriptHandoff({
+                messages: thread.messages,
+                boundaryMessageId: input.boundaryMessageId,
+              }),
+              providerInput: providerMessageText,
+            })
+          : providerMessageText;
     if (providerInputWithHandoff.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
       return yield* new ProviderAdapterRequestError({
         provider: providerErrorLabel(activeSession?.provider),
@@ -1092,6 +1203,7 @@ const make = Effect.gen(function* () {
       readonly messageText: string;
       readonly attachments?: ReadonlyArray<ChatAttachment>;
       readonly titleSeed?: string;
+      readonly replaceableTitle?: string;
     }) {
       const attachments = input.attachments ?? [];
       yield* Effect.gen(function* () {
@@ -1108,7 +1220,10 @@ const make = Effect.gen(function* () {
 
         const thread = yield* resolveThread(input.threadId);
         if (!thread) return;
-        if (!canReplaceThreadTitle(thread.title, input.titleSeed)) {
+        if (
+          !canReplaceThreadTitle(thread.title, input.titleSeed) &&
+          thread.title !== input.replaceableTitle
+        ) {
           return;
         }
 
@@ -1518,9 +1633,28 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    const shouldReserveForkHandoff =
+      thread.fork?.handoff.status === "pending" &&
+      !completedForkHandoffs.has(event.payload.threadId);
+    if (shouldReserveForkHandoff && forkHandoffsInFlight.has(event.payload.threadId)) {
+      yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.turn.start.failed",
+        summary: "Provider turn start failed",
+        detail: "The fork history handoff is already being sent by another turn.",
+        turnId: null,
+        createdAt: event.payload.createdAt,
+      });
+      return;
+    }
+    if (shouldReserveForkHandoff) {
+      forkHandoffsInFlight.add(event.payload.threadId);
+    }
+
     const isFirstUserMessageTurn =
-      thread.messages.filter((entry) => entry.role === "user").length === 1;
-    if (isFirstUserMessageTurn) {
+      thread.messages.filter((entry) => entry.role === "user" && entry.historyOrigin === undefined)
+        .length === 1;
+    if (isFirstUserMessageTurn && event.payload.resultOnly !== true) {
       const project = yield* resolveProject(thread.projectId);
       const generationCwd =
         resolveThreadWorkspaceCwd({
@@ -1540,11 +1674,15 @@ const make = Effect.gen(function* () {
         ...generationInput,
       }).pipe(Effect.forkScoped);
 
-      if (canReplaceThreadTitle(thread.title, event.payload.titleSeed)) {
+      const isUnrenamedForkTitle =
+        thread.fork !== undefined &&
+        thread.title === `${thread.fork.provenance.sourceTitle} (fork)`;
+      if (canReplaceThreadTitle(thread.title, event.payload.titleSeed) || isUnrenamedForkTitle) {
         yield* maybeGenerateThreadTitleForFirstTurn({
           threadId: event.payload.threadId,
           cwd: generationCwd,
           ...generationInput,
+          ...(isUnrenamedForkTitle ? { replaceableTitle: thread.title } : {}),
         }).pipe(Effect.forkScoped);
       }
     }
@@ -1605,8 +1743,40 @@ const make = Effect.gen(function* () {
         return;
       }
 
+      const completePendingForkHandoff = Effect.fn("completePendingForkHandoff")(function* () {
+        if (thread.fork?.handoff.status !== "pending") {
+          return;
+        }
+        completedForkHandoffs.add(event.payload.threadId);
+        const completedAt = DateTime.formatIso(yield* DateTime.now);
+        yield* orchestrationEngine
+          .dispatch({
+            type: "thread.fork.handoff.complete",
+            commandId: CommandId.make(
+              `server:fork-handoff-complete:${event.commandId ?? event.eventId}`,
+            ),
+            threadId: event.payload.threadId,
+            completedAt,
+          })
+          .pipe(
+            Effect.retry({ times: 1 }),
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                "provider command reactor failed to persist fork handoff completion",
+                {
+                  threadId: event.payload.threadId,
+                  cause: Cause.pretty(cause),
+                },
+              ),
+            ),
+          );
+      });
+
       const sendMainTurn = (request: typeof sendTurnRequest.value) =>
-        providerService.sendTurn(request).pipe(Effect.catchCause(recoverTurnStartFailure));
+        providerService.sendTurn(request).pipe(
+          Effect.tap(() => completePendingForkHandoff()),
+          Effect.catchCause(recoverTurnStartFailure),
+        );
 
       if (event.payload.fetchMode === undefined) {
         yield* sendMainTurn(sendTurnRequest.value);
@@ -1744,7 +1914,15 @@ const make = Effect.gen(function* () {
       );
     });
 
-    yield* startProviderTurn.pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
+    yield* startProviderTurn.pipe(
+      Effect.catchCause(recoverTurnStartFailure),
+      Effect.ensuring(
+        Effect.sync(() => {
+          forkHandoffsInFlight.delete(event.payload.threadId);
+        }),
+      ),
+      Effect.forkScoped,
+    );
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (

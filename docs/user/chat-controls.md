@@ -97,11 +97,12 @@ ellipsis menu so the primary actions remain usable.
 ### Codex context window
 
 For Codex chats, the ellipsis menu also shows the current context-window value and an inline slider
-over the available ladder, from **16K** through **1M** tokens. **Model default** appears at the active
-model's natural position and leaves the context size to Codex instead of sending an override. With
-expanded chat controls enabled on a wide composer, the same selection appears as a separate
-**Context** chip and opens its slider in a popover. A narrow composer uses the inline menu
-presentation instead.
+over the values supported by the active model. The upper endpoint follows the current limit reported
+by Codex, while **Model default** appears at the model's natural position and leaves the context size
+to Codex instead of sending an override. If a saved value is higher than a model's current limit, it
+is reduced to that model's highest available value. With expanded chat controls enabled on a wide
+composer, the same selection appears as a separate **Context** chip and opens its slider in a
+popover. A narrow composer uses the inline menu presentation instead.
 
 The selection belongs to the current chat, is stored with its thread, and synchronizes through the
 owning T3 environment to web, desktop, and mobile clients. It does not become the default for new
@@ -110,11 +111,13 @@ the next Codex turn starts; an existing resumable Codex thread is reopened with 
 
 ## Voice input
 
-Web, desktop, and mobile can stream microphone input to AssemblyAI from the chat composer. The waveform and
-stop control stay gray while the connection is opening, turn red once the microphone stream is
-ready for speech, and return to gray while the final transcript is being finished. On web and
-desktop, press **Escape** to cancel and restore the draft from before recording. Mobile exposes the
-same cancel behavior from its native composer control.
+Web, desktop, and mobile can stream microphone input to AssemblyAI from the chat composer. On
+Android, the app requests microphone access when voice input starts, then streams live PCM audio
+through the connected T3 environment to AssemblyAI. The permanent AssemblyAI key stays on the
+environment. The waveform and stop control stay gray while the connection is opening, turn red once
+the microphone stream is ready for speech, and return to gray while the final transcript is being
+finished. On web and desktop, press **Escape** to cancel and restore the draft from before recording.
+Mobile exposes the same cancel behavior from its native composer control.
 
 In **Settings > Connections > Voice input**, **Output language** can keep the spoken language or
 translate the finished transcript to English. **Voice post-processing model** selects the agent model
@@ -128,6 +131,35 @@ or reindex repository terminology, or choose basic context derived only from pro
 Indexing extracts terminology and technology names; it does not send source snippets.
 
 ## Chat portability
+
+### Forking from a response
+
+Use **Fork chat from here** beside a committed user message, a completed agent response, or a
+finalized proposed plan to continue from that exact point in a new chat. T3 Code creates the fork
+immediately in the same project, opens it, and leaves the composer ready for the next question. An
+agent response can be forked as soon as that response is complete, even if the original agent is
+still doing later work in the same turn. Streaming and unsaved entries cannot be forked.
+
+The new chat receives an independent, frozen copy of everything visible through the selected
+entry, including attachments, plans, work rows, subagent summaries, and available checkpoint and
+diff history. Later changes, reversions, or deletion of the source chat do not change that copy.
+Inherited entries remain available for reading, copying, expanding, opening attachments, and
+forking again. Actions that would mutate old work, such as answering an inherited approval,
+implementing an inherited plan, or reverting an inherited checkpoint, are unavailable.
+
+A **Forked from** link opens the source chat while it still exists. **Fork starts here** separates
+the frozen prefix from new work. If the source is deleted, its title remains as provenance but is no
+longer a link.
+
+Forking requires a live connection to a server that advertises chat-fork support. The fork starts a
+fresh provider session and never reuses the source provider cursor, credentials, live approvals,
+branch, worktree, or running agent. Its workspace follows the ordinary new-chat defaults for the
+project: local checkout or a new worktree, configured base branch, origin preference, and setup
+script. A worktree is prepared only when the first new message is sent.
+
+The frozen history is handed to the provider with that first message. Long histories do not block
+fork creation: the complete frozen timeline stays in the new chat, while the newest context that fits
+is sent to the provider. The first message keeps the normal prompt and attachment limits.
 
 Copying a thread transcript exports the complete, unredacted conversation as Markdown, including
 history outside the client's currently loaded message window. On mobile, open the composer's thread
@@ -153,12 +185,23 @@ If the cooperative stop has not settled after five seconds, T3 Code automaticall
 same force stop. While the force stop is running, the button shows progress and cannot be selected
 again. Sending another message remains unavailable until the stop has settled.
 
+## Retrying an interrupted response
+
+If you stop a generation before the agent returns any response, a small refresh action appears
+beside that turn's last user message. Select **Retry response** to ask the agent for the result again.
+T3 Code reuses the existing message and attachments, so the transcript keeps one user-message entry
+instead of adding a duplicate. The action is unavailable when the interrupted turn already produced
+partial assistant output, another message has been queued, or the environment is disconnected.
+
+Retrying starts a fresh provider turn with the chat's current model and Fetch setting. It is
+available on web, desktop, and mobile when the connected environment advertises support.
+
 ## Memory protection during parallel agent work
 
 T3 Code protects the server from memory spikes without imposing a fixed agent limit. When the
 environment is short on available memory, new Codex turns and subagents remain queued. The affected
-thread shows **Subagent wartet auf freien Speicher** for a queued subagent, while Codex reports
-**Agent wartet auf freien Speicher** before a queued root turn starts. Every queued start is kept in
+thread shows **Subagent waiting for memory** for a queued subagent, while Codex reports
+**Agent waiting for memory** before a queued root turn starts. Every queued start is kept in
 arrival order and starts automatically once enough memory is available.
 
 An admitted Codex turn or subagent keeps its memory reservation until that exact turn or subagent
@@ -167,7 +210,7 @@ several still-running agents.
 
 If an already running provider grows fast enough to threaten the protected memory reserve, T3 Code
 temporarily pauses only that provider process tree. The affected thread shows **Provider
-vorübergehend gedrosselt** until the reserve has recovered. The provider then continues from the
+temporarily throttled** until the reserve has recovered. The provider then continues from the
 same point; its model, reasoning setting, tools, MCP servers, sandbox, and result are unchanged.
 
 There is no configurable agent-count cap. Safe concurrency adapts to current available memory and

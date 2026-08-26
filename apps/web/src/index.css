@@ -95,6 +95,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --glass-blur: 12px;
   --glass-opacity: 80%;
   --glass-saturation: 1.14;
+  --chat-context-bubble-surface: color-mix(in srgb, var(--color-blue-100) 72%, var(--color-white));
+  --chat-context-bubble-foreground: var(--color-blue-950);
+  --chat-context-bubble-muted-foreground: var(--color-blue-800);
+  --chat-context-bubble-outline: color-mix(in srgb, var(--color-blue-500) 36%, transparent);
   --desktop-window-right-resize-inset: 0px;
   --workspace-topbar-height: 52px;
   --workspace-controls-top: 0px;
@@ -109,6 +113,14 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --app-scrollbar-thumb-hover: rgb(255 255 255 / 12%);
     --glass-blur: 16px;
     --glass-saturation: 1.08;
+    --chat-context-bubble-surface: color-mix(
+      in srgb,
+      var(--color-blue-950) 64%,
+      var(--color-neutral-950)
+    );
+    --chat-context-bubble-foreground: var(--color-blue-50);
+    --chat-context-bubble-muted-foreground: var(--color-blue-200);
+    --chat-context-bubble-outline: color-mix(in srgb, var(--color-blue-400) 34%, transparent);
   }
 }
 
@@ -270,12 +282,24 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 @utility alert-glass {
   --alert-glass-tint: transparent;
+  --background: var(--chat-context-bubble-surface);
+  --foreground: var(--chat-context-bubble-foreground);
+  --card: var(--chat-context-bubble-surface);
+  --card-foreground: var(--chat-context-bubble-foreground);
+  --secondary: color-mix(in srgb, var(--chat-context-bubble-foreground) 10%, transparent);
+  --secondary-foreground: var(--chat-context-bubble-foreground);
+  --muted: color-mix(in srgb, var(--chat-context-bubble-foreground) 8%, transparent);
+  --muted-foreground: var(--chat-context-bubble-muted-foreground);
+  --accent: color-mix(in srgb, var(--chat-context-bubble-foreground) 12%, transparent);
+  --accent-foreground: var(--chat-context-bubble-foreground);
+  --border: var(--chat-context-bubble-outline);
+  --input: color-mix(in srgb, var(--chat-context-bubble-foreground) 14%, transparent);
   background:
     linear-gradient(
       color-mix(in srgb, var(--alert-glass-tint) 4%, transparent),
       color-mix(in srgb, var(--alert-glass-tint) 4%, transparent)
     ),
-    color-mix(in srgb, var(--background) var(--glass-opacity), transparent) !important;
+    color-mix(in srgb, var(--chat-context-bubble-surface) var(--glass-opacity), transparent) !important;
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
 
@@ -296,7 +320,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-    background: var(--background) !important;
+    background: var(--chat-context-bubble-surface) !important;
   }
 }
 
@@ -754,6 +778,33 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     outline: none;
   }
 
+  [data-chat-context-bubble],
+  .chat-composer-floating-island-region,
+  .chat-composer-shoulder-tab[data-variant],
+  :is(
+    .chat-composer-top-drawer-floating,
+    .chat-composer-drawer-surface.chat-composer-drawer-floating
+  ) {
+    --background: var(--chat-context-bubble-surface);
+    --foreground: var(--chat-context-bubble-foreground);
+    --card: var(--chat-context-bubble-surface);
+    --card-foreground: var(--chat-context-bubble-foreground);
+    --secondary: color-mix(in srgb, var(--chat-context-bubble-foreground) 10%, transparent);
+    --secondary-foreground: var(--chat-context-bubble-foreground);
+    --muted: color-mix(in srgb, var(--chat-context-bubble-foreground) 8%, transparent);
+    --muted-foreground: var(--chat-context-bubble-muted-foreground);
+    --accent: color-mix(in srgb, var(--chat-context-bubble-foreground) 12%, transparent);
+    --accent-foreground: var(--chat-context-bubble-foreground);
+    --border: var(--chat-context-bubble-outline);
+    --input: color-mix(in srgb, var(--chat-context-bubble-foreground) 14%, transparent);
+  }
+
+  [data-chat-context-bubble] {
+    border-color: var(--chat-context-bubble-outline);
+    background: var(--chat-context-bubble-surface);
+    color: var(--chat-context-bubble-foreground);
+  }
+
   .chat-composer-shoulder-tab {
     border-color: var(
       --chat-composer-outline,
@@ -777,33 +828,16 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     }
   }
 
-  .chat-composer-banner-stack-cap {
-    --chat-composer-attached-surface: var(--chat-composer-glass-surface, var(--card));
-    --chat-composer-attached-outline: var(
-      --chat-composer-outline,
-      color-mix(in srgb, var(--foreground) 8%, transparent)
-    );
+  .chat-composer-shoulder-tab[data-variant] {
+    border-color: var(--chat-context-bubble-outline);
     background: color-mix(
       in srgb,
-      var(--chat-composer-attached-surface) var(--glass-opacity),
+      var(--chat-context-bubble-surface) var(--glass-opacity),
       transparent
     );
-    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-
-    @variant dark {
-      --chat-composer-attached-surface: var(
-        --chat-composer-glass-surface,
-        color-mix(in srgb, var(--background) 96%, var(--color-white))
-      );
-      --chat-composer-attached-outline: var(
-        --chat-composer-outline,
-        color-mix(in srgb, var(--color-white) 5%, transparent)
-      );
-    }
 
     @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-      background: var(--chat-composer-attached-surface);
+      background: var(--chat-context-bubble-surface);
     }
   }
 
@@ -936,7 +970,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .chat-composer-floating-island-region {
-    padding-bottom: 1rem;
+    padding-bottom: 0.5rem;
   }
 
   .chat-composer-floating-island-region:not(
@@ -949,7 +983,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .chat-composer-floating-island {
-    --chat-composer-floating-island-surface: var(--chat-composer-glass-surface, var(--card));
+    --chat-composer-floating-island-surface: var(--chat-context-bubble-surface);
     --chat-composer-floating-island-outline: var(
       --chat-composer-outline,
       color-mix(in srgb, var(--foreground) 8%, transparent)
@@ -973,10 +1007,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
 
     @variant dark {
-      --chat-composer-floating-island-surface: var(
-        --chat-composer-glass-surface,
-        color-mix(in srgb, var(--background) 96%, var(--color-white))
-      );
+      --chat-composer-floating-island-surface: var(--chat-context-bubble-surface);
       --chat-composer-floating-island-outline: var(
         --chat-composer-outline,
         color-mix(in srgb, var(--color-white) 5%, transparent)
@@ -1005,14 +1036,35 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --chat-composer-floating-island-outline: color-mix(in srgb, var(--error) 32%, transparent);
   }
 
+  /* A blocking decision drawer owns the shared shell color. Passive status
+     banners can sit above it, but must not recolor the question or plan surface. */
+  .chat-composer-floating-island:has(
+    > .chat-composer-floating-drawer-host > [data-variant="info"]
+  ) {
+    --chat-composer-floating-island-outline: color-mix(in srgb, var(--info) 32%, transparent);
+  }
+
+  /* A banner-only region is a list of complete pills, not another shared card. */
+  .chat-composer-floating-island:has(
+    > .chat-composer-floating-island-section > .chat-composer-banner-list
+  ):not(
+    :has(
+      > .chat-composer-floating-island-section + .chat-composer-floating-island-section,
+      > .chat-composer-floating-drawer-host:not(:empty)
+    )
+  ) {
+    overflow: visible;
+    border-color: transparent;
+    background: transparent;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    box-shadow: none;
+  }
+
   .chat-composer-floating-island-section {
     position: relative;
     z-index: 0;
     min-width: 0;
-  }
-
-  .chat-composer-floating-island-section:has(> .chat-composer-banner-stack-has-stack) {
-    padding-top: 0.75rem;
   }
 
   .chat-composer-floating-island-section + .chat-composer-floating-island-section,
@@ -1026,7 +1078,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     background: var(--chat-composer-floating-island-outline);
   }
 
-  .chat-composer-floating-island-section
+  .chat-composer-floating-island
+    .chat-composer-floating-island-section
     > :is(.chat-composer-drawer-slot, .chat-composer-drawer-surface),
   .chat-composer-floating-island
     .chat-composer-floating-drawer-host
@@ -1079,6 +1132,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     mask-image: none;
   }
 
+  :is(
+    .chat-composer-top-drawer-floating,
+    .chat-composer-drawer-surface.chat-composer-drawer-floating
+  ) {
+    --chat-composer-attached-surface: var(--chat-context-bubble-surface);
+  }
+
   :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)[data-variant="error"] {
     --chat-composer-attached-outline: color-mix(in srgb, var(--error) 32%, transparent);
     --chat-composer-attached-tint: color-mix(in srgb, var(--error) 8%, transparent);
@@ -1097,6 +1157,16 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)[data-variant="warning"] {
     --chat-composer-attached-outline: color-mix(in srgb, var(--warning) 28%, transparent);
     --chat-composer-attached-tint: color-mix(in srgb, var(--warning) 8%, transparent);
+  }
+
+  .resource-protection-banner-surface[data-variant="warning"] {
+    border-color: color-mix(in srgb, var(--warning) 48%, transparent);
+    background:
+      linear-gradient(
+        color-mix(in srgb, var(--warning) 16%, transparent),
+        color-mix(in srgb, var(--warning) 16%, transparent)
+      ),
+      color-mix(in srgb, var(--chat-context-bubble-surface) var(--glass-opacity), transparent) !important;
   }
 
   .chat-composer-glass-shell {
@@ -1828,13 +1898,20 @@ html[data-theme-id] .chat-composer-glass-shell {
   }
 }
 
-html[data-theme-id]
-  :is(.chat-composer-banner-stack-cap, .chat-composer-drawer-surface, .chat-composer-top-drawer) {
+html[data-theme-id] :is(.chat-composer-drawer-surface, .chat-composer-top-drawer) {
   --chat-composer-attached-surface: var(--app-theme-surface-raised);
 }
 
 html[data-theme-id]
-  :is(.chat-composer-banner-stack-cap, .chat-composer-drawer-surface, .chat-composer-top-drawer):is(
+  :is(
+    .chat-composer-top-drawer-floating,
+    .chat-composer-drawer-surface.chat-composer-drawer-floating
+  ) {
+  --chat-composer-attached-surface: var(--chat-context-bubble-surface);
+}
+
+html[data-theme-id]
+  :is(.chat-composer-drawer-surface, .chat-composer-top-drawer):is(
     :not([data-variant]),
     [data-variant="default"]
   ) {
@@ -1858,7 +1935,7 @@ html[data-theme-id="t3-chat"] .chat-composer-glass-shell {
 }
 
 html[data-theme-id="t3-chat"]
-  :is(.chat-composer-banner-stack-cap, .chat-composer-drawer-surface, .chat-composer-top-drawer):is(
+  :is(.chat-composer-drawer-surface, .chat-composer-top-drawer):is(
     :not([data-variant]),
     [data-variant="default"]
   ) {
@@ -2200,7 +2277,6 @@ code {
 
 [data-stream-character] {
   display: inline-block;
-  will-change: transform, opacity;
   animation: stream-character-reveal var(--stream-character-duration) cubic-bezier(0.22, 1, 0.36, 1)
     var(--stream-character-delay) both;
 }
@@ -2210,7 +2286,6 @@ code {
     opacity: 1;
     transform: none;
     animation: none;
-    will-change: auto;
   }
 }
 

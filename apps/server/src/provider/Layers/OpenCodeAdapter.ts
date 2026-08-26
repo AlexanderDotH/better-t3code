@@ -26,6 +26,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type {
   McpStatus,
@@ -198,6 +199,20 @@ interface OpenCodeTurnSnapshot {
   readonly items: Array<unknown>;
 }
 
+type OpenCodePromptAsyncInput = Parameters<OpencodeClient["session"]["promptAsync"]>[0];
+
+interface OpenCodeQueuedPrompt {
+  readonly input: OpenCodePromptAsyncInput;
+  readonly agent: string | undefined;
+  readonly variant: string | undefined;
+}
+
+interface OpenCodeQueuedSubmission {
+  readonly turnId: TurnId;
+  readonly prompt: OpenCodeQueuedPrompt;
+  readonly raw: unknown;
+}
+
 type OpenCodeSubscribedEvent =
   Awaited<ReturnType<OpencodeClient["event"]["subscribe"]>> extends {
     readonly stream: AsyncIterable<infer TEvent>;
@@ -271,6 +286,14 @@ interface OpenCodeSessionContext {
   activeTurnId: TurnId | undefined;
   activeAgent: string | undefined;
   activeVariant: string | undefined;
+  /** Serializes prompt admission, idle settlement, and cancellation. */
+  readonly promptAdmissionLock: Semaphore.Semaphore;
+  /** Steering prompts waiting for the preceding OpenCode prompt to become idle. */
+  readonly pendingPrompts: Array<OpenCodeQueuedPrompt>;
+  /** Once observed, session.status idle is authoritative over its paired legacy event. */
+  observedStatusIdle: boolean;
+  /** Ignores a stale idle edge until the newly admitted queued prompt reports busy. */
+  awaitingQueuedPromptBusy: boolean;
   /**
    * One-shot guard flipped by `stopOpenCodeContext` / `emitUnexpectedExit`.
    * The session lifecycle is owned by `sessionScope`; this Ref exists only
@@ -811,6 +834,8 @@ export function makeOpenCodeAdapter(
     const serverConfig = yield* ServerConfig;
     const hostPlatform = yield* HostProcessPlatform;
     const openCodeRuntime = yield* OpenCodeRuntime;
+    const runtimeContext = yield* Effect.context<never>();
+    const runPromise = Effect.runPromiseWith(runtimeContext);
     const crypto = yield* Crypto.Crypto;
     const resourceGovernor = Option.getOrUndefined(
       yield* Effect.serviceOption(ResourceProtection.SubagentResourceGovernor),
@@ -1235,6 +1260,109 @@ export function makeOpenCodeAdapter(
       }
     });
 
+    const submitOpenCodePrompt = (
+      context: OpenCodeSessionContext,
+      prompt: OpenCodeQueuedPrompt,
+    ) => {
+      context.activeAgent = prompt.agent;
+      context.activeVariant = prompt.variant;
+      return runOpenCodeSdk("session.promptAsync", () =>
+        context.client.session.promptAsync(prompt.input),
+      ).pipe(Effect.mapError(mapRequestError));
+    };
+
+    const failActiveOpenCodeTurn = Effect.fn("failActiveOpenCodeTurn")(function* (
+      context: OpenCodeSessionContext,
+      turnId: TurnId | undefined,
+      message: string,
+      detail: unknown,
+      raw?: unknown,
+    ) {
+      context.pendingPrompts.length = 0;
+      context.awaitingQueuedPromptBusy = false;
+      context.activeTurnId = undefined;
+      context.activeAgent = undefined;
+      context.activeVariant = undefined;
+      yield* updateProviderSession(
+        context,
+        {
+          status: "error",
+          lastError: message,
+        },
+        { clearActiveTurnId: true },
+      );
+      if (turnId) {
+        yield* context.emit({
+          ...(yield* buildEventBase({
+            threadId: context.session.threadId,
+            turnId,
+            raw,
+          })),
+          type: "turn.completed",
+          payload: {
+            state: "failed",
+            errorMessage: message,
+          },
+        });
+      }
+      yield* context.emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId,
+          raw,
+        })),
+        type: "runtime.error",
+        payload: {
+          message,
+          class: "provider_error",
+          detail,
+        },
+      });
+    });
+
+    /** Called with promptAdmissionLock held. */
+    const settleOrDrainOpenCodeTurn = Effect.fn("settleOrDrainOpenCodeTurn")(function* (
+      context: OpenCodeSessionContext,
+      raw: unknown,
+    ) {
+      const turnId = context.activeTurnId;
+      if (!turnId) {
+        return;
+      }
+
+      const nextPrompt = context.pendingPrompts.shift();
+      if (nextPrompt) {
+        // Do not submit a new prompt from inside the SSE consumer. Some SDK
+        // transports do not resume that request until the current event
+        // callback yields, which would deadlock the event pump at idle.
+        context.awaitingQueuedPromptBusy = true;
+        context.activeAgent = nextPrompt.agent;
+        context.activeVariant = nextPrompt.variant;
+        return {
+          turnId,
+          prompt: nextPrompt,
+          raw,
+        } satisfies OpenCodeQueuedSubmission;
+      }
+
+      context.awaitingQueuedPromptBusy = false;
+      context.activeTurnId = undefined;
+      context.activeAgent = undefined;
+      context.activeVariant = undefined;
+      yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
+      yield* context.emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId,
+          raw,
+        })),
+        type: "turn.completed",
+        payload: {
+          state: "completed",
+        },
+      });
+    });
+
     const handleSubscribedEvent = Effect.fn("handleSubscribedEvent")(function* (
       context: OpenCodeSessionContext,
       event: OpenCodeSubscribedEvent,
@@ -1537,85 +1665,72 @@ export function makeOpenCodeAdapter(
         }
 
         case "session.status": {
-          if (event.properties.status.type === "busy") {
-            yield* updateProviderSession(context, {
-              status: "running",
-              activeTurnId: turnId,
-            });
-          }
+          const queuedSubmission = yield* context.promptAdmissionLock.withPermits(1)(
+            Effect.gen(function* () {
+              const activeTurnId = context.activeTurnId;
+              if (event.properties.status.type === "busy" && activeTurnId) {
+                context.awaitingQueuedPromptBusy = false;
+                yield* updateProviderSession(context, {
+                  status: "running",
+                  activeTurnId,
+                });
+                return undefined;
+              }
 
-          if (event.properties.status.type === "retry") {
-            yield* context.emit({
-              ...(yield* buildEventBase({
-                threadId: context.session.threadId,
-                turnId,
-                raw: event,
-              })),
-              type: "runtime.warning",
-              payload: {
-                message: event.properties.status.message,
-                detail: event.properties.status,
-              },
-            });
-            break;
-          }
+              if (event.properties.status.type === "retry") {
+                yield* context.emit({
+                  ...(yield* buildEventBase({
+                    threadId: context.session.threadId,
+                    turnId: activeTurnId,
+                    raw: event,
+                  })),
+                  type: "runtime.warning",
+                  payload: {
+                    message: event.properties.status.message,
+                    detail: event.properties.status,
+                  },
+                });
+                return undefined;
+              }
 
-          if (event.properties.status.type === "idle" && turnId) {
-            context.activeTurnId = undefined;
-            yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
-            yield* context.emit({
-              ...(yield* buildEventBase({
-                threadId: context.session.threadId,
-                turnId,
-                raw: event,
-              })),
-              type: "turn.completed",
-              payload: {
-                state: "completed",
-              },
-            });
+              if (event.properties.status.type === "idle") {
+                context.observedStatusIdle = true;
+                if (!context.awaitingQueuedPromptBusy) {
+                  return yield* settleOrDrainOpenCodeTurn(context, event);
+                }
+              }
+              return undefined;
+            }),
+          );
+          if (queuedSubmission) {
+            return queuedSubmission;
+          }
+          break;
+        }
+
+        case "session.idle": {
+          const queuedSubmission = yield* context.promptAdmissionLock.withPermits(1)(
+            context.observedStatusIdle
+              ? Effect.succeed<OpenCodeQueuedSubmission | undefined>(undefined)
+              : settleOrDrainOpenCodeTurn(context, event),
+          );
+          if (queuedSubmission) {
+            return queuedSubmission;
           }
           break;
         }
 
         case "session.error": {
           const message = sessionErrorMessage(event.properties.error);
-          const activeTurnId = context.activeTurnId;
-          context.activeTurnId = undefined;
-          yield* updateProviderSession(
-            context,
-            {
-              status: "error",
-              lastError: message,
-            },
-            { clearActiveTurnId: true },
-          );
-          if (activeTurnId) {
-            yield* context.emit({
-              ...(yield* buildEventBase({
-                threadId: context.session.threadId,
-                turnId: activeTurnId,
-                raw: event,
-              })),
-              type: "turn.completed",
-              payload: {
-                state: "failed",
-                errorMessage: message,
-              },
-            });
-          }
-          yield* context.emit({
-            ...(yield* buildEventBase({
-              threadId: context.session.threadId,
-              raw: event,
-            })),
-            type: "runtime.error",
-            payload: {
+          yield* context.promptAdmissionLock.withPermits(1)(
+            failActiveOpenCodeTurn(
+              context,
+              context.activeTurnId,
               message,
-              class: "provider_error",
-              detail: event.properties.error,
-            },
-          });
+              event.properties.error,
+              event,
+            ),
+          );
           break;
         }
 
@@ -1623,6 +1738,62 @@ export function makeOpenCodeAdapter(
           break;
       }
     });
+
+    const settleQueuedOpenCodePromptFailure = (
+      context: OpenCodeSessionContext,
+      queued: OpenCodeQueuedSubmission,
+      cause: unknown,
+    ) =>
+      context.promptAdmissionLock.withPermits(1)(
+        Effect.gen(function* () {
+          if (context.activeTurnId !== queued.turnId || (yield* Ref.get(context.stopped))) {
+            return;
+          }
+          const requestError = mapRequestError(
+            new OpenCodeRuntimeError({
+              operation: "session.promptAsync",
+              detail: openCodeRuntimeErrorDetail(cause),
+              cause,
+            }),
+          );
+          context.awaitingQueuedPromptBusy = false;
+          yield* failActiveOpenCodeTurn(
+            context,
+            queued.turnId,
+            requestError.detail,
+            requestError,
+            queued.raw,
+          );
+        }),
+      );
+
+    const scheduleQueuedOpenCodePrompt = (
+      context: OpenCodeSessionContext,
+      queued: OpenCodeQueuedSubmission,
+    ) => {
+      if (context.activeTurnId !== queued.turnId) {
+        context.awaitingQueuedPromptBusy = false;
+        return;
+      }
+      context.activeAgent = queued.prompt.agent;
+      context.activeVariant = queued.prompt.variant;
+      const fail = (cause: unknown) => {
+        void runPromise(
+          settleQueuedOpenCodePromptFailure(context, queued, cause).pipe(
+            Effect.catchCause((failureCause) =>
+              Effect.logError("Failed to settle queued OpenCode prompt submission.", {
+                cause: failureCause,
+              }),
+            ),
+          ),
+        );
+      };
+      try {
+        void context.client.session.promptAsync(queued.prompt.input).then(() => {}, fail);
+      } catch (cause) {
+        fail(cause);
+      }
+    };
 
     const startEventPump = Effect.fn("startEventPump")(function* (context: OpenCodeSessionContext) {
       // One AbortController per session scope. The finalizer fires when
@@ -1652,7 +1823,15 @@ export function makeOpenCodeAdapter(
                 detail: openCodeRuntimeErrorDetail(cause),
                 cause,
               }),
-          ).pipe(Stream.runForEach((event) => handleSubscribedEvent(context, event))),
+          ).pipe(
+            Stream.runForEach((event) =>
+              handleSubscribedEvent(context, event).pipe(
+                Effect.map((queued) => {
+                  if (queued) scheduleQueuedOpenCodePrompt(context, queued);
+                }),
+              ),
+            ),
+          ),
       ).pipe(
         Effect.exit,
         Effect.flatMap((exit) =>
@@ -1938,6 +2117,10 @@ export function makeOpenCodeAdapter(
           activeTurnId: undefined,
           activeAgent: undefined,
           activeVariant: undefined,
+          promptAdmissionLock: yield* Semaphore.make(1),
+          pendingPrompts: [],
+          observedStatusIdle: false,
+          awaitingQueuedPromptBusy: false,
           stopped: yield* Ref.make(false),
           sessionScope: started.sessionScope,
         };
@@ -1965,11 +2148,6 @@ export function makeOpenCodeAdapter(
 
     const sendTurn: OpenCodeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
       const context = yield* ensureSessionContext(provider, sessions, input.threadId);
-      // A sendTurn while a turn is active is a steer: OpenCode queues the
-      // prompt into the busy session and the work continues as one turn, so
-      // the active turn id is reused instead of opening a new turn.
-      const steeringTurnId = context.activeTurnId;
-      const turnId = steeringTurnId ?? TurnId.make(`opencode-turn-${yield* randomUUIDv4}`);
       const modelSelection =
         input.modelSelection ??
         (context.session.model
@@ -2010,84 +2188,90 @@ export function makeOpenCodeAdapter(
 
       const agent = getModelSelectionStringOptionValue(modelSelection, "agent");
       const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
-
-      context.activeTurnId = turnId;
-      context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
-      context.activeVariant = variant;
-      yield* updateProviderSession(
-        context,
-        {
-          status: "running",
-          activeTurnId: turnId,
-          model: modelSelection?.model ?? context.session.model,
-        },
-        { clearLastError: true },
-      );
-
-      if (steeringTurnId === undefined) {
-        yield* context.emit({
-          ...(yield* buildEventBase({ threadId: input.threadId, turnId })),
-          type: "turn.started",
-          payload: {
-            model: modelSelection?.model ?? context.session.model,
-            ...(variant ? { effort: variant } : {}),
-          },
-        });
-      }
-
-      yield* runOpenCodeSdk("session.promptAsync", () =>
-        context.client.session.promptAsync({
+      const prompt = {
+        agent: agent ?? (input.interactionMode === "plan" ? "plan" : undefined),
+        variant,
+        input: {
           sessionID: context.openCodeSessionId,
           model: parsedModel,
-          ...(context.activeAgent ? { agent: context.activeAgent } : {}),
-          ...(context.activeVariant ? { variant: context.activeVariant } : {}),
+          ...(agent ? { agent } : input.interactionMode === "plan" ? { agent: "plan" } : {}),
+          ...(variant ? { variant } : {}),
           parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
-        }),
-      ).pipe(
-        Effect.mapError(mapRequestError),
-        // On failure: clear active-turn state, flip the session back to ready
-        // with lastError set, emit turn.aborted, then let the typed error
-        // propagate. We don't need to rebuild the error here — `toRequestError`
-        // already produced the right shape.
-        Effect.tapError((requestError) =>
-          steeringTurnId !== undefined
-            ? Effect.void
-            : Effect.gen(function* () {
-                context.activeTurnId = undefined;
-                context.activeAgent = undefined;
-                context.activeVariant = undefined;
-                yield* updateProviderSession(
-                  context,
-                  {
-                    status: "ready",
-                    model: modelSelection?.model ?? context.session.model,
-                    lastError: requestError.detail,
-                  },
-                  { clearActiveTurnId: true },
-                );
-                yield* context.emit({
-                  ...(yield* buildEventBase({
-                    threadId: input.threadId,
-                    turnId,
-                  })),
-                  type: "turn.aborted",
-                  payload: {
-                    reason: requestError.detail,
-                  },
-                });
-              }),
-        ),
-      );
+        },
+      } satisfies OpenCodeQueuedPrompt;
 
-      return {
-        threadId: input.threadId,
-        turnId,
-        // Re-surface the durable cursor on every turn so the persisted binding
-        // is refreshed alongside last-seen/runtime state (mirrors Grok/Codex).
-        ...(context.session.resumeCursor !== undefined
-          ? { resumeCursor: context.session.resumeCursor }
-          : {}),
-      };
+      return yield* context.promptAdmissionLock.withPermits(1)(
+        Effect.gen(function* () {
+          // OpenCode accepts overlapping promptAsync requests, but does not
+          // give T3 a separate lifecycle boundary for each one. Keep steering
+          // in the active T3 turn and admit one upstream prompt per idle edge.
+          const steeringTurnId = context.activeTurnId;
+          const turnId = steeringTurnId ?? TurnId.make(`opencode-turn-${yield* randomUUIDv4}`);
+          context.activeTurnId = turnId;
+          yield* updateProviderSession(
+            context,
+            {
+              status: "running",
+              activeTurnId: turnId,
+              model: modelSelection?.model ?? context.session.model,
+            },
+            { clearLastError: true },
+          );
+
+          if (steeringTurnId !== undefined) {
+            context.pendingPrompts.push(prompt);
+          } else {
+            context.awaitingQueuedPromptBusy = false;
+            yield* context.emit({
+              ...(yield* buildEventBase({ threadId: input.threadId, turnId })),
+              type: "turn.started",
+              payload: {
+                model: modelSelection?.model ?? context.session.model,
+                ...(variant ? { effort: variant } : {}),
+              },
+            });
+
+            yield* submitOpenCodePrompt(context, prompt).pipe(
+              Effect.tapError((requestError) =>
+                Effect.gen(function* () {
+                  context.activeTurnId = undefined;
+                  context.activeAgent = undefined;
+                  context.activeVariant = undefined;
+                  yield* updateProviderSession(
+                    context,
+                    {
+                      status: "ready",
+                      model: modelSelection?.model ?? context.session.model,
+                      lastError: requestError.detail,
+                    },
+                    { clearActiveTurnId: true },
+                  );
+                  yield* context.emit({
+                    ...(yield* buildEventBase({
+                      threadId: input.threadId,
+                      turnId,
+                    })),
+                    type: "turn.aborted",
+                    payload: {
+                      reason: requestError.detail,
+                    },
+                  });
+                }),
+              ),
+            );
+          }
+
+          return {
+            threadId: input.threadId,
+            turnId,
+            // Re-surface the durable cursor on every turn so the persisted binding
+            // is refreshed alongside last-seen/runtime state (mirrors Grok/Codex).
+            ...(context.session.resumeCursor !== undefined
+              ? { resumeCursor: context.session.resumeCursor }
+              : {}),
+          };
+        }),
+      );
     });
 
     const interruptTurn: OpenCodeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
@@ -2100,21 +2284,32 @@ export function makeOpenCodeAdapter(
           return;
         }
         const context = yield* ensureSessionContext(provider, sessions, threadId);
-        yield* runOpenCodeSdk("session.abort", () =>
-          context.client.session.abort({ sessionID: context.openCodeSessionId }),
-        ).pipe(Effect.mapError(mapRequestError));
-        if (turnId ?? context.activeTurnId) {
-          yield* context.emit({
-            ...(yield* buildEventBase({
-              threadId,
-              turnId: turnId ?? context.activeTurnId,
-            })),
-            type: "turn.aborted",
-            payload: {
-              reason: "Interrupted by user.",
-            },
-          });
-        }
+        yield* context.promptAdmissionLock.withPermits(1)(
+          Effect.gen(function* () {
+            yield* runOpenCodeSdk("session.abort", () =>
+              context.client.session.abort({ sessionID: context.openCodeSessionId }),
+            ).pipe(Effect.mapError(mapRequestError));
+            const abortedTurnId = turnId ?? context.activeTurnId;
+            context.pendingPrompts.length = 0;
+            context.awaitingQueuedPromptBusy = false;
+            context.activeTurnId = undefined;
+            context.activeAgent = undefined;
+            context.activeVariant = undefined;
+            yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
+            if (abortedTurnId) {
+              yield* context.emit({
+                ...(yield* buildEventBase({
+                  threadId,
+                  turnId: abortedTurnId,
+                })),
+                type: "turn.aborted",
+                payload: {
+                  reason: "Interrupted by user.",
+                },
+              });
+            }
+          }),
+        );
       },
     );
 

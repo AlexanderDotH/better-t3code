@@ -42,6 +42,7 @@ export interface AgentActivityRowProps {
 export interface AgentActivityProps {
   readonly title: string;
   readonly subtitle: string;
+  readonly language?: "en" | "de";
   readonly activeCount: number;
   readonly updatedAt: string;
   readonly activities: ReadonlyArray<AgentActivityRowProps>;
@@ -131,19 +132,36 @@ export function AgentActivity(
   // minimal glyph — must agree, and a failure anywhere should dominate a
   // newer success.
   const allDone = props.activeCount === 0;
-  const doneLabel = failedRow ? "Failed" : "Done";
-  const outcomeLabel = failedRow ? "Agent work failed" : "Agent work completed";
+  const german = props.language === "de";
+  const doneLabel = failedRow ? (german ? "Fehlgeschlagen" : "Failed") : german ? "Fertig" : "Done";
+  const outcomeLabel = failedRow
+    ? german
+      ? "Agentenarbeit fehlgeschlagen"
+      : "Agent work failed"
+    : german
+      ? "Agentenarbeit abgeschlossen"
+      : "Agent work completed";
 
   // Header copy: "5 active agents" + (", 1 needs attention"). The banner renders
   // the two parts in-line so the attention half can carry the accent color;
   // `summary` is the short form for tight spots (expanded center, watch card).
   const agentWord = props.activeCount === 1 ? "agent" : "agents";
-  const agentsLabel = allDone ? outcomeLabel : `${props.activeCount} active ${agentWord}`;
+  const agentsLabel = allDone
+    ? outcomeLabel
+    : german
+      ? `${props.activeCount} ${props.activeCount === 1 ? "aktiver Agent" : "aktive Agenten"}`
+      : `${props.activeCount} active ${agentWord}`;
   const attentionSuffix =
     attentionRows.length > 0
-      ? `${attentionRows.length} need${attentionRows.length === 1 ? "s" : ""} attention`
+      ? german
+        ? `${attentionRows.length} ${attentionRows.length === 1 ? "benötigt" : "benötigen"} Aufmerksamkeit`
+        : `${attentionRows.length} need${attentionRows.length === 1 ? "s" : ""} attention`
       : "";
-  const activeLabel = allDone ? doneLabel : `${props.activeCount} active`;
+  const activeLabel = allDone
+    ? doneLabel
+    : german
+      ? `${props.activeCount} aktiv`
+      : `${props.activeCount} active`;
   const summary = attentionSuffix || activeLabel;
 
   // Any registered scheme variant routes back to this app; taps are delivered
@@ -328,8 +346,12 @@ export function AgentActivity(
       <Text modifiers={[font({ weight: "semibold", size: 11 }), foregroundStyle(tint)]}>
         {attentionRow
           ? attentionRow.phase === "waiting_for_approval"
-            ? "Approval"
-            : "Input"
+            ? german
+              ? "Freigabe"
+              : "Approval"
+            : german
+              ? "Eingabe"
+              : "Input"
           : activeLabel}
       </Text>
     ),

@@ -15,10 +15,11 @@ import { Image, StyleSheet } from "react-native";
 
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import { resolveMarkdownFileIcon } from "@t3tools/mobile-markdown-text/links";
-import { MOBILE_TYPOGRAPHY } from "../lib/typography";
+import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import { useNativePaste } from "../lib/useNativePaste";
 import { useFontFamily } from "../lib/useFontFamily";
 import { useThemeColor } from "../lib/useThemeColor";
+import { resolveComposerEditorMetrics } from "./composerEditorMetrics";
 import {
   acknowledgeComposerNativeEvent,
   assumeComposerControlledState,
@@ -74,6 +75,7 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly onComposerPasteImages?: (event: NativePasteImagesEvent) => void;
   readonly onComposerFocus?: () => void;
   readonly onComposerBlur?: () => void;
+  readonly onComposerSubmit?: () => void;
 }
 
 const NativeView = requireNativeView<NativeComposerEditorProps>(NATIVE_MODULE_NAME);
@@ -98,6 +100,7 @@ export function ComposerEditor({
   onPasteImages,
   onFocus,
   onBlur,
+  onSubmit,
   contentInsetVertical = 0,
   ...props
 }: ComposerEditorProps) {
@@ -121,6 +124,7 @@ export function ComposerEditor({
   const skillText = useThemeColor("--color-inline-skill-foreground");
   const fileTint = useThemeColor("--color-icon-muted");
   const handlePaste = useNativePaste((uris) => onPasteImages?.(uris));
+  const bodyText = useScaledTextRole("body");
 
   useImperativeHandle(
     ref,
@@ -231,6 +235,7 @@ export function ComposerEditor({
     fileTint: String(fileTint),
   });
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};
+  const resolvedMetrics = resolveComposerEditorMetrics(resolvedTextStyle, bodyText);
   const regularFontFamily = useFontFamily("regular");
   return (
     <TextInputWrapper onPaste={handlePaste} style={[{ minHeight: 0 }, style]}>
@@ -244,16 +249,8 @@ export function ComposerEditor({
             ? resolvedTextStyle.fontFamily
             : regularFontFamily
         }
-        fontSize={
-          typeof resolvedTextStyle.fontSize === "number"
-            ? resolvedTextStyle.fontSize
-            : MOBILE_TYPOGRAPHY.body.fontSize
-        }
-        lineHeight={
-          typeof resolvedTextStyle.lineHeight === "number"
-            ? resolvedTextStyle.lineHeight
-            : MOBILE_TYPOGRAPHY.body.lineHeight
-        }
+        fontSize={resolvedMetrics.fontSize}
+        lineHeight={resolvedMetrics.lineHeight}
         contentInsetVertical={contentInsetVertical}
         singleLineCentered={props.singleLineCentered ?? false}
         editable={props.editable ?? true}
@@ -296,6 +293,7 @@ export function ComposerEditor({
         onComposerPasteImages={(event) => onPasteImages?.(event.nativeEvent.uris)}
         onComposerFocus={onFocus}
         onComposerBlur={onBlur}
+        onComposerSubmit={onSubmit}
       />
     </TextInputWrapper>
   );

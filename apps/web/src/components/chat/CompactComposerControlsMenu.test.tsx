@@ -45,7 +45,7 @@ describe("CompactComposerControlsMenu", () => {
 
   it("widens only the popup that contains the context slider", () => {
     expect(compactComposerControlsMenuSource).toContain(
-      'props.contextWindowMenuContent ? "w-80 max-w-[calc(100vw-1.5rem)]" : undefined',
+      'props.contextWindowMenuContent ? "w-72 max-w-[calc(100vw-1.5rem)]" : undefined',
     );
   });
 
@@ -60,6 +60,6 @@ describe("CompactComposerControlsMenu", () => {
   });
 
   it("keeps the compact popup at its existing width without context content", () => {
-    expect(renderMenu()).not.toContain("w-80");
+    expect(renderMenu()).not.toContain("w-72");
   });
 });

@@ -14,6 +14,15 @@ export interface AndroidHeaderAction {
   readonly disabled?: boolean;
 }
 
+export interface AndroidScreenHeaderProps {
+  readonly title: string;
+  readonly subtitle?: string | null;
+  readonly actions?: ReadonlyArray<AndroidHeaderAction>;
+  readonly trailing?: ReactNode;
+  readonly onBack?: () => void;
+  readonly embedded?: boolean;
+}
+
 export function AndroidHeaderIconButton(props: {
   readonly accessibilityLabel: string;
   readonly icon: AppSymbolName;
@@ -45,14 +54,7 @@ export function AndroidHeaderIconButton(props: {
   );
 }
 
-export function AndroidScreenHeader(props: {
-  readonly title: string;
-  readonly subtitle?: string | null;
-  readonly actions?: ReadonlyArray<AndroidHeaderAction>;
-  readonly trailing?: ReactNode;
-  readonly onBack?: () => void;
-  readonly embedded?: boolean;
-}) {
+export function AndroidScreenHeader(props: AndroidScreenHeaderProps) {
   const insets = useSafeAreaInsets();
   const foregroundColor = useThemeColor("--color-foreground");
 
@@ -110,8 +112,6 @@ export function AndroidScreenHeader(props: {
   );
 }
 
-export function AndroidSheetHeader(
-  props: Omit<Parameters<typeof AndroidScreenHeader>[0], "embedded">,
-) {
+export function AndroidSheetHeader(props: Omit<AndroidScreenHeaderProps, "embedded">) {
   return <AndroidScreenHeader {...props} embedded />;
 }

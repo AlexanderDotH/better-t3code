@@ -50,17 +50,165 @@ export type ServerProviderState = typeof ServerProviderState.Type;
 export const ServerProviderAuthStatus = Schema.Literals([
   "authenticated",
   "unauthenticated",
+  "pending",
+  "expired",
+  "error",
   "unknown",
 ]);
 export type ServerProviderAuthStatus = typeof ServerProviderAuthStatus.Type;
+
+export const ProviderAuthFlow = Schema.Literals(["browser", "device-code"]);
+export type ProviderAuthFlow = typeof ProviderAuthFlow.Type;
+
+export const ServerProviderAuthCredential = Schema.Struct({
+  kind: Schema.Literal("api-key"),
+  label: TrimmedNonEmptyString,
+  placeholder: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerProviderAuthCredential = typeof ServerProviderAuthCredential.Type;
+
+export const ServerProviderAuthCapabilities = Schema.Struct({
+  flows: Schema.Array(ProviderAuthFlow),
+  canDisconnect: Schema.Boolean,
+  credential: Schema.optional(ServerProviderAuthCredential),
+});
+export type ServerProviderAuthCapabilities = typeof ServerProviderAuthCapabilities.Type;
+
+export const ServerProviderPlan = Schema.Struct({
+  id: Schema.optional(TrimmedNonEmptyString),
+  label: TrimmedNonEmptyString,
+});
+export type ServerProviderPlan = typeof ServerProviderPlan.Type;
 
 export const ServerProviderAuth = Schema.Struct({
   status: ServerProviderAuthStatus,
   type: Schema.optional(TrimmedNonEmptyString),
   label: Schema.optional(TrimmedNonEmptyString),
+  accountId: Schema.optional(TrimmedNonEmptyString),
   email: Schema.optional(TrimmedNonEmptyString),
+  expiresAt: Schema.optional(IsoDateTime),
+  capabilities: Schema.optional(ServerProviderAuthCapabilities),
+  plan: Schema.optional(ServerProviderPlan),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
+
+export const ServerProviderRateLimitStatus = Schema.Literals([
+  "available",
+  "limited",
+  "exhausted",
+  "unknown",
+]);
+export type ServerProviderRateLimitStatus = typeof ServerProviderRateLimitStatus.Type;
+
+export const ServerProviderRateLimit = Schema.Struct({
+  status: ServerProviderRateLimitStatus,
+  limit: Schema.optional(NonNegativeInt),
+  remaining: Schema.optional(NonNegativeInt),
+  resetsAt: Schema.optional(IsoDateTime),
+  retryAfterSeconds: Schema.optional(NonNegativeInt),
+  message: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerProviderRateLimit = typeof ServerProviderRateLimit.Type;
+
+export const ProviderAuthFailureCode = Schema.Literals([
+  "provider-not-found",
+  "auth-unsupported",
+  "flow-unsupported",
+  "auth-in-progress",
+  "authorization-declined",
+  "challenge-expired",
+  "broker-unavailable",
+  "broker-failed",
+  "credential-invalid",
+  "credential-storage-failed",
+  "credential-removal-failed",
+  "disconnect-conflict",
+  "unknown",
+]);
+export type ProviderAuthFailureCode = typeof ProviderAuthFailureCode.Type;
+
+export const ProviderAuthFailure = Schema.Struct({
+  code: ProviderAuthFailureCode,
+  reason: TrimmedNonEmptyString,
+  retryable: Schema.Boolean,
+});
+export type ProviderAuthFailure = typeof ProviderAuthFailure.Type;
+
+export const ProviderAuthConnectInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  flow: ProviderAuthFlow,
+});
+export type ProviderAuthConnectInput = typeof ProviderAuthConnectInput.Type;
+
+export const ProviderAuthConnectEvent = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("starting"),
+    flow: ProviderAuthFlow,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("browserChallenge"),
+    authorizationUrl: TrimmedNonEmptyString,
+    expiresAt: Schema.optional(IsoDateTime),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("deviceCodeChallenge"),
+    verificationUrl: TrimmedNonEmptyString,
+    userCode: TrimmedNonEmptyString,
+    expiresAt: IsoDateTime,
+    pollIntervalSeconds: PositiveInt,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("connected"),
+    auth: ServerProviderAuth,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("failed"),
+    failure: ProviderAuthFailure,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("cancelled"),
+    reason: Schema.optional(TrimmedNonEmptyString),
+  }),
+]);
+export type ProviderAuthConnectEvent = typeof ProviderAuthConnectEvent.Type;
+
+export const ProviderAuthDisconnectInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+});
+export type ProviderAuthDisconnectInput = typeof ProviderAuthDisconnectInput.Type;
+
+export const ProviderAuthSetCredentialInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  credential: TrimmedNonEmptyString,
+});
+export type ProviderAuthSetCredentialInput = typeof ProviderAuthSetCredentialInput.Type;
+
+export const ProviderAuthSetCredentialResult = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  auth: ServerProviderAuth,
+});
+export type ProviderAuthSetCredentialResult = typeof ProviderAuthSetCredentialResult.Type;
+
+export const ProviderAuthDisconnectResult = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  auth: ServerProviderAuth,
+});
+export type ProviderAuthDisconnectResult = typeof ProviderAuthDisconnectResult.Type;
+
+export class ProviderAuthOperationError extends Schema.TaggedErrorClass<ProviderAuthOperationError>()(
+  "ProviderAuthOperationError",
+  {
+    instanceId: ProviderInstanceId,
+    operation: Schema.Literals(["connect", "set-credential", "disconnect"]),
+    code: ProviderAuthFailureCode,
+    reason: TrimmedNonEmptyString,
+    retryable: Schema.Boolean,
+  },
+) {
+  override get message(): string {
+    return `Provider auth ${this.operation} failed for ${this.instanceId}: ${this.reason}`;
+  }
+}
 
 export const ServerProviderModel = Schema.Struct({
   slug: TrimmedNonEmptyString,
@@ -68,8 +216,11 @@ export const ServerProviderModel = Schema.Struct({
   shortName: Schema.optional(TrimmedNonEmptyString),
   subProvider: Schema.optional(TrimmedNonEmptyString),
   isCustom: Schema.Boolean,
+  isVerified: Schema.optional(Schema.Boolean),
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
+  isSelectable: Schema.optional(Schema.Boolean),
+  unavailableReason: Schema.optional(TrimmedNonEmptyString),
   capabilities: Schema.NullOr(ModelCapabilities),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
@@ -198,6 +349,7 @@ export const ServerProvider = Schema.Struct({
   version: Schema.NullOr(TrimmedNonEmptyString),
   status: ServerProviderState,
   auth: ServerProviderAuth,
+  rateLimit: Schema.optional(ServerProviderRateLimit),
   checkedAt: IsoDateTime,
   message: Schema.optional(TrimmedNonEmptyString),
   // Optional for back-compat: every legacy producer omits this field and
@@ -626,6 +778,41 @@ export const AssemblyAiStreamingTokenResult = Schema.Struct({
   context: AssemblyAiSpeechContext,
 });
 export type AssemblyAiStreamingTokenResult = typeof AssemblyAiStreamingTokenResult.Type;
+
+export const SpeechStreamingSessionId = TrimmedNonEmptyString.pipe(
+  Schema.brand("SpeechStreamingSessionId"),
+);
+export type SpeechStreamingSessionId = typeof SpeechStreamingSessionId.Type;
+
+export const SpeechStreamingSessionStartResult = Schema.Struct({
+  sessionId: SpeechStreamingSessionId,
+});
+export type SpeechStreamingSessionStartResult = typeof SpeechStreamingSessionStartResult.Type;
+
+export const SpeechStreamingAudioInput = Schema.Struct({
+  sessionId: SpeechStreamingSessionId,
+  audio: Schema.Uint8Array,
+});
+export type SpeechStreamingAudioInput = typeof SpeechStreamingAudioInput.Type;
+
+export const SpeechStreamingSessionInput = Schema.Struct({
+  sessionId: SpeechStreamingSessionId,
+});
+export type SpeechStreamingSessionInput = typeof SpeechStreamingSessionInput.Type;
+
+export const SpeechStreamingTranscriptResult = Schema.Struct({
+  transcript: Schema.String,
+});
+export type SpeechStreamingTranscriptResult = typeof SpeechStreamingTranscriptResult.Type;
+
+export class SpeechStreamingProxyError extends Schema.TaggedErrorClass<SpeechStreamingProxyError>()(
+  "SpeechStreamingProxyError",
+  { reason: TrimmedNonEmptyString },
+) {
+  override get message(): string {
+    return `Voice streaming error: ${this.reason}`;
+  }
+}
 
 export class AssemblyAiStreamingTokenError extends Schema.TaggedErrorClass<AssemblyAiStreamingTokenError>()(
   "AssemblyAiStreamingTokenError",

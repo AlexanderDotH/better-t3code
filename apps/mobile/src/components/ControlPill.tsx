@@ -17,6 +17,27 @@ import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
 import { SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
 
+type AndroidLongPressMenuChildProps = {
+  readonly accessibilityActions?: ComponentProps<typeof Pressable>["accessibilityActions"];
+  readonly accessibilityHint?: string;
+  readonly accessibilityState?: ComponentProps<typeof Pressable>["accessibilityState"];
+  readonly onAccessibilityAction?: ComponentProps<typeof Pressable>["onAccessibilityAction"];
+  readonly onLongPress?: () => void;
+};
+
+type MenuAnchorChildProps = {
+  readonly accessibilityLabel?: string;
+  readonly label?: string;
+};
+
+function getMenuAnchorAccessibilityLabel(children: ReactNode, menuTitle?: string): string {
+  if (!isValidElement(children)) {
+    return menuTitle ?? "Open menu";
+  }
+  const child = children as ReactElement<MenuAnchorChildProps>;
+  return child.props.accessibilityLabel ?? child.props.label ?? menuTitle ?? "Open menu";
+}
+
 export function ControlPill(props: {
   readonly icon?: ComponentProps<typeof SymbolView>["name"];
   readonly iconNode?: ReactNode;
@@ -92,6 +113,7 @@ export function ControlPill(props: {
     <Pressable
       accessibilityLabel={props.accessibilityLabel ?? props.label}
       accessibilityRole="button"
+      accessibilityState={{ disabled: props.disabled ?? false }}
       onPress={props.activateOnPressIn ? handlePress : props.onPress}
       onPressIn={props.activateOnPressIn ? handlePressIn : undefined}
       onPressOut={props.activateOnPressIn ? handlePressOut : undefined}
@@ -126,7 +148,7 @@ export function ControlPillMenu(
     // an injected onLongPress (mirroring the iOS context-menu interaction)
     // so its own tap handling still works.
     if (props.shouldOpenOnLongPress && isValidElement(props.children)) {
-      const child = props.children as ReactElement<{ onLongPress?: () => void }>;
+      const child = props.children as ReactElement<AndroidLongPressMenuChildProps>;
       return (
         <AndroidAnchoredMenu
           actions={props.actions}
@@ -135,20 +157,37 @@ export function ControlPillMenu(
           style={props.style}
           onPressAction={props.onPressAction}
         >
-          {(open) =>
-            cloneElement(child, {
-              onLongPress: () => {
-                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                open();
+          {(open, expanded) => {
+            const existingActions = child.props.accessibilityActions ?? [];
+            const accessibilityActions = existingActions.some(
+              (action) => action.name === "longpress",
+            )
+              ? existingActions
+              : [...existingActions, { name: "longpress", label: "Open menu" }];
+            const openWithFeedback = () => {
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              open();
+            };
+            return cloneElement(child, {
+              accessibilityActions,
+              accessibilityHint: child.props.accessibilityHint ?? "Long press to open menu",
+              accessibilityState: { ...child.props.accessibilityState, expanded },
+              onAccessibilityAction: (event) => {
+                child.props.onAccessibilityAction?.(event);
+                if (event.nativeEvent.actionName === "longpress") {
+                  openWithFeedback();
+                }
               },
-            })
-          }
+              onLongPress: openWithFeedback,
+            });
+          }}
         </AndroidAnchoredMenu>
       );
     }
     return (
       <AndroidAnchoredMenu
         actions={props.actions}
+        anchorAccessibilityLabel={getMenuAnchorAccessibilityLabel(props.children, props.title)}
         className={props.className}
         title={props.title}
         style={props.style}

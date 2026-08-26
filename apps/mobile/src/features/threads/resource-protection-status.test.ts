@@ -18,12 +18,19 @@ function snapshot(state: ResourceProtectionSnapshot["state"]): ResourceProtectio
 }
 
 describe("mobile resource protection status", () => {
-  it("shows server-authoritative waiting and throttled status copy", () => {
+  it("shows English server-authoritative waiting and throttled status copy by default", () => {
     expect(resolveMobileResourceProtectionStatus(snapshot("waiting"), threadId)).toEqual({
       kind: "waiting",
-      label: "Subagent wartet auf freien Speicher",
+      label: "Subagent waiting for memory",
     });
     expect(resolveMobileResourceProtectionStatus(snapshot("recovering"), threadId)).toEqual({
+      kind: "throttled",
+      label: "Provider temporarily throttled",
+    });
+  });
+
+  it("shows German copy when the interface resolves German", () => {
+    expect(resolveMobileResourceProtectionStatus(snapshot("recovering"), threadId, "de")).toEqual({
       kind: "throttled",
       label: "Provider vorübergehend gedrosselt",
     });

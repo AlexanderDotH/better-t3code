@@ -75,6 +75,7 @@ import { NATIVE_LIQUID_GLASS_SUPPORTED } from "./native/native-glass";
 import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { FORM_SHEET_PRESENTATION_OPTIONS } from "./native/sheet-surface";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
+import { rootHomeContentStyle } from "./lib/root-stack-options";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -471,7 +472,10 @@ export const RootStack = createNativeStackNavigator({
       linking: "",
       options: {
         ...GLASS_HEADER_OPTIONS,
-        contentStyle: { backgroundColor: "transparent" },
+        // Predictive back renders Home before the Thread pop commits. Android
+        // needs the navigation theme's opaque background during that preview;
+        // a transparent native destination can remain blank after the gesture.
+        contentStyle: rootHomeContentStyle(Platform.OS === "android" ? "android" : "ios"),
         headerBackVisible: false,
         ...getCompactBrandHeaderOptions(),
       },

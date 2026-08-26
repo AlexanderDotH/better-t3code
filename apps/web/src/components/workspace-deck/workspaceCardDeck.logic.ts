@@ -1,16 +1,25 @@
 export type WorkspaceDeckDirection = "forward" | "backward";
 export type WorkspaceDeckPosition = "previous" | "active" | "next" | "hidden";
 export type WorkspaceDeckSelectionMode = "animate" | "immediate";
+export type WorkspaceDeckMotionMode = "fallback" | "morph";
 
 export interface WorkspaceDeckCardRole<CardId extends string> {
   readonly id: CardId;
   readonly position: WorkspaceDeckPosition;
 }
 
+export interface WorkspaceDeckMorphRole<CardId extends string> {
+  readonly id: CardId;
+  readonly from: WorkspaceDeckPosition;
+  readonly to: WorkspaceDeckPosition;
+  readonly morph: "incoming" | "outgoing" | "orbiting";
+}
+
 export interface WorkspaceDeckTransition<CardId extends string> {
   readonly fromId: CardId;
   readonly toId: CardId;
   readonly direction: WorkspaceDeckDirection;
+  readonly motion: WorkspaceDeckMotionMode;
   readonly token: number;
 }
 
@@ -91,6 +100,27 @@ export function resolveWorkspaceDeckDirection<CardId extends string>(
   return forwardDistance <= backwardDistance ? "forward" : "backward";
 }
 
+export function resolveWorkspaceDeckMorphRoles<CardId extends string>(
+  cardIds: readonly CardId[],
+  fromCard: CardId,
+  toCard: CardId,
+): readonly WorkspaceDeckMorphRole<CardId>[] {
+  const fromRoles = new Map(
+    resolveWorkspaceDeckRoles(cardIds, fromCard).map((role) => [role.id, role.position]),
+  );
+  const toRoles = new Map(
+    resolveWorkspaceDeckRoles(cardIds, toCard).map((role) => [role.id, role.position]),
+  );
+
+  return cardIds.flatMap((id) => {
+    const from = fromRoles.get(id) ?? "hidden";
+    const to = toRoles.get(id) ?? "hidden";
+    if (from === to) return [];
+    const morph = id === toCard ? "incoming" : id === fromCard ? "outgoing" : "orbiting";
+    return [{ id, from, to, morph }];
+  });
+}
+
 export function resolveWorkspaceDeckActiveCard<CardId extends string>(input: {
   readonly cardIds: readonly CardId[];
   readonly activeCard: string | null | undefined;
@@ -118,7 +148,6 @@ export function resolveWorkspaceDeckSelection<CardId extends string>(input: {
     };
   }
 
-  if (input.transitionActive && !input.priority) return unchangedSelection(input.activeCard);
   if (input.priority) {
     return {
       activeCard: requestedCard,
@@ -133,7 +162,7 @@ export function resolveWorkspaceDeckSelection<CardId extends string>(input: {
   if (direction === null) return unchangedSelection(input.activeCard);
   return {
     activeCard: requestedCard,
-    cancelTransition: false,
+    cancelTransition: input.transitionActive,
     changed: true,
     direction,
     selectionMode: "animate",

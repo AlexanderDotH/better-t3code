@@ -7,6 +7,8 @@ import type {
   MessageId,
   OrchestrationProposedPlan,
   ServerProvider,
+  ThreadForkBoundary,
+  ThreadForkProvenance,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -109,6 +111,7 @@ import {
   type ThreadFeedLatestTurn,
 } from "../../lib/threadActivity";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
+import { threadFeedMountKey } from "./optimistic-thread-feed";
 import {
   resolveThreadFeedLiveFollow,
   type ThreadFeedLiveFollowEvent,
@@ -122,6 +125,12 @@ import {
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { useAssetUrl } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
+import {
+  findForkDividerEntryId,
+  resolveForkActionPresentation,
+  resolveForkBoundary,
+  threadFeedEntryIsInherited,
+} from "./thread-fork";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
@@ -175,6 +184,122 @@ export interface ThreadFeedProps {
     plan: OrchestrationProposedPlan,
     strategy: PlanImplementationStrategy,
   ) => Promise<MessageId | null>;
+  readonly forkActionSupported?: boolean;
+  readonly forkActionEnabled?: boolean;
+  readonly pendingForkBoundaryKey?: string | null;
+  readonly onFork?: (boundary: ThreadForkBoundary) => void;
+  readonly forkProvenance?: ThreadForkProvenance | null;
+  readonly forkSourceAvailable?: boolean;
+  readonly onOpenForkSource?: () => void;
+  readonly retryAction?: ThreadFeedRetryAction | null;
+}
+
+export interface ThreadFeedRetryAction {
+  readonly available: boolean;
+  readonly messageId: MessageId;
+  readonly pending: boolean;
+  readonly onRetry: (messageId: MessageId) => void;
+}
+
+const ForkChatButton = memo(function ForkChatButton(props: {
+  readonly disabled: boolean;
+  readonly busy: boolean;
+  readonly tintColor: ColorValue;
+  readonly onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityLabel="Fork chat from here"
+      accessibilityRole="button"
+      accessibilityState={{ busy: props.busy, disabled: props.disabled }}
+      disabled={props.disabled}
+      hitSlop={8}
+      onPress={props.onPress}
+      className="size-7 items-center justify-center rounded-lg active:opacity-50 disabled:opacity-40"
+    >
+      {props.busy ? (
+        <ActivityIndicator color={props.tintColor} size="small" />
+      ) : (
+        <SymbolView
+          name="arrow.triangle.branch"
+          size={14}
+          tintColor={props.tintColor}
+          type="monochrome"
+        />
+      )}
+    </Pressable>
+  );
+});
+
+const RetryResponseButton = memo(function RetryResponseButton(props: {
+  readonly disabled: boolean;
+  readonly busy: boolean;
+  readonly tintColor: ColorValue;
+  readonly onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityLabel={props.busy ? "Retrying response" : "Retry response"}
+      accessibilityRole="button"
+      accessibilityState={{ busy: props.busy, disabled: props.disabled }}
+      disabled={props.disabled}
+      hitSlop={8}
+      onPress={props.onPress}
+      className="size-7 items-center justify-center rounded-lg active:opacity-50 disabled:opacity-40"
+    >
+      {props.busy ? (
+        <ActivityIndicator color={props.tintColor} size="small" />
+      ) : (
+        <SymbolView
+          name="arrow.clockwise"
+          size={14}
+          tintColor={props.tintColor}
+          type="monochrome"
+        />
+      )}
+    </Pressable>
+  );
+});
+
+function ForkStartsHereDivider() {
+  return (
+    <View
+      accessibilityLabel="Fork starts here"
+      className="mb-5 mt-1 flex-row items-center gap-3 px-1"
+    >
+      <View className="h-px flex-1 bg-border" />
+      <Text className="font-t3-bold text-2xs uppercase tracking-widest text-foreground-muted">
+        Fork starts here
+      </Text>
+      <View className="h-px flex-1 bg-border" />
+    </View>
+  );
+}
+
+function ForkProvenanceHeader(props: {
+  readonly provenance: ThreadForkProvenance;
+  readonly sourceAvailable: boolean;
+  readonly onOpenSource?: () => void;
+}) {
+  const content = (
+    <Text className="font-t3-medium text-xs text-foreground-muted">
+      Forked from{" "}
+      <Text className="font-t3-bold text-foreground">{props.provenance.sourceTitle}</Text>
+    </Text>
+  );
+  if (!props.sourceAvailable || !props.onOpenSource) {
+    return <View className="items-center px-3 py-2">{content}</View>;
+  }
+  return (
+    <Pressable
+      accessibilityLabel={`Open source chat ${props.provenance.sourceTitle}`}
+      accessibilityRole="link"
+      className="items-center px-3 py-2 active:opacity-60"
+      onPress={props.onOpenSource}
+    >
+      {content}
+    </Pressable>
+  );
 }
 
 function MessageAttachmentImage(props: {
@@ -838,7 +963,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
   ]);
 }
 
-function renderFeedEntry(
+function renderFeedEntryContent(
   info: { item: ThreadFeedEntry; index: number },
   props: Pick<
     ThreadFeedProps,
@@ -847,6 +972,7 @@ function renderFeedEntry(
     | "planImplementationProvider"
     | "parallelPlanImplementationEnabled"
     | "reviewedPlanSubagentCounts"
+    | "retryAction"
   > & {
     readonly copiedRowId: string | null;
     readonly chatVisualMode: ChatVisualMode;
@@ -865,6 +991,11 @@ function renderFeedEntry(
       strategy: PlanImplementationStrategy,
     ) => void;
     readonly canImplementPlan: boolean;
+    readonly forkActionSupported: boolean;
+    readonly forkActionEnabled: boolean;
+    readonly pendingForkBoundaryKey: string | null;
+    readonly forkDividerAfterEntryId: string | null;
+    readonly onFork?: (boundary: ThreadForkBoundary) => void;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
     readonly userBubbleColor: string | import("react-native").ColorValue;
     readonly markdownStyles: MarkdownStyleSets;
@@ -875,6 +1006,16 @@ function renderFeedEntry(
 ) {
   const entry = info.item;
   const { markdownStyles, iconSubtleColor, userBubbleColor } = props;
+  const forkBoundary = resolveForkBoundary(entry);
+  const forkAction =
+    forkBoundary === null
+      ? null
+      : resolveForkActionPresentation({
+          boundary: forkBoundary,
+          supported: props.forkActionSupported,
+          connected: props.forkActionEnabled,
+          pendingBoundaryKey: props.pendingForkBoundaryKey,
+        });
 
   if (entry.type === "working") {
     return <WorkingTimelineRow chatVisualMode={props.chatVisualMode} startedAt={entry.createdAt} />;
@@ -968,6 +1109,10 @@ function renderFeedEntry(
         markdownStyles={markdownStyles.assistant}
         skills={props.skills}
         suggestion={suggestion}
+        inherited={threadFeedEntryIsInherited(entry)}
+        forkAction={forkAction}
+        onFork={forkBoundary && props.onFork ? () => props.onFork?.(forkBoundary) : undefined}
+        forkTintColor={iconSubtleColor}
         onLinkPress={props.onMarkdownLinkPress}
         onImplement={
           props.canImplementPlan
@@ -1003,6 +1148,8 @@ function renderFeedEntry(
       props.terminalAssistantMessageIds.has(message.id) &&
       !assistantTurnStillInProgress &&
       !message.streaming;
+    const retryAction =
+      isUser && props.retryAction?.messageId === message.id ? props.retryAction : null;
 
     if (isUser) {
       const enterAnimated = isFreshTimestamp(message.createdAt);
@@ -1060,6 +1207,14 @@ function renderFeedEntry(
             <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
               {timestampLabel}
             </Text>
+            {retryAction ? (
+              <RetryResponseButton
+                busy={retryAction.pending}
+                disabled={!retryAction.available || retryAction.pending}
+                tintColor={iconSubtleColor}
+                onPress={() => retryAction.onRetry(message.id)}
+              />
+            ) : null}
             {message.text.trim().length > 0 ? (
               <CopyTextButton
                 accessibilityLabel="Copy message"
@@ -1067,6 +1222,14 @@ function renderFeedEntry(
                 tintColor={iconSubtleColor}
                 buttonSize={28}
                 iconSize={13}
+              />
+            ) : null}
+            {forkAction?.visible && forkBoundary && props.onFork ? (
+              <ForkChatButton
+                busy={forkAction.busy}
+                disabled={forkAction.disabled}
+                tintColor={iconSubtleColor}
+                onPress={() => props.onFork?.(forkBoundary)}
               />
             ) : null}
           </View>
@@ -1128,18 +1291,30 @@ function renderFeedEntry(
               name={attachment.name}
             />
           ))}
-        {showAssistantMeta ? (
+        {showAssistantMeta || forkAction?.visible ? (
           <View className="mt-1 flex-row items-center gap-1">
-            <CopyTextButton
-              accessibilityLabel="Copy message"
-              text={message.text}
-              tintColor={iconSubtleColor}
-              buttonSize={28}
-              iconSize={13}
-            />
-            <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
-              {timestampLabel}
-            </Text>
+            {showAssistantMeta ? (
+              <CopyTextButton
+                accessibilityLabel="Copy message"
+                text={message.text}
+                tintColor={iconSubtleColor}
+                buttonSize={28}
+                iconSize={13}
+              />
+            ) : null}
+            {forkAction?.visible && forkBoundary && props.onFork ? (
+              <ForkChatButton
+                busy={forkAction.busy}
+                disabled={forkAction.disabled}
+                tintColor={iconSubtleColor}
+                onPress={() => props.onFork?.(forkBoundary)}
+              />
+            ) : null}
+            {showAssistantMeta ? (
+              <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
+                {timestampLabel}
+              </Text>
+            ) : null}
           </View>
         ) : null}
       </Animated.View>
@@ -1159,12 +1334,29 @@ function renderFeedEntry(
   );
 }
 
+function renderFeedEntry(
+  info: Parameters<typeof renderFeedEntryContent>[0],
+  props: Parameters<typeof renderFeedEntryContent>[1],
+) {
+  const content = renderFeedEntryContent(info, props);
+  return (
+    <>
+      {content}
+      {props.forkDividerAfterEntryId === info.item.id ? <ForkStartsHereDivider /> : null}
+    </>
+  );
+}
+
 const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
   readonly plan: OrchestrationProposedPlan;
   readonly implementing: boolean;
   readonly markdownStyles: MarkdownStyleSet;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly suggestion: ReturnType<typeof resolvePlanImplementationSuggestion>;
+  readonly inherited: boolean;
+  readonly forkAction: ReturnType<typeof resolveForkActionPresentation> | null;
+  readonly forkTintColor: ColorValue;
+  readonly onFork?: () => void;
   readonly onLinkPress: (href: string) => void;
   readonly onImplement?: (strategy: PlanImplementationStrategy) => void;
 }) {
@@ -1193,6 +1385,14 @@ const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
           <Text className="font-t3-medium text-xs text-emerald-600 dark:text-emerald-400">
             Implemented
           </Text>
+        ) : null}
+        {props.forkAction?.visible && props.onFork ? (
+          <ForkChatButton
+            busy={props.forkAction.busy}
+            disabled={props.forkAction.disabled}
+            tintColor={props.forkTintColor}
+            onPress={props.onFork}
+          />
         ) : null}
       </View>
       <View className="px-4 py-4">
@@ -1226,7 +1426,7 @@ const MobileProposedPlanCard = memo(function MobileProposedPlanCard(props: {
           </Text>
         </Pressable>
       ) : null}
-      {!implemented && props.onImplement ? (
+      {!implemented && !props.inherited && props.onImplement ? (
         <View className="flex-row flex-wrap gap-2 border-t border-neutral-200 px-4 py-3 dark:border-white/10">
           <Pressable
             accessibilityRole="button"
@@ -1690,6 +1890,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       chatVisualMode,
       copiedRowId,
       expandedWorkRows,
+      forkActionEnabled: props.forkActionEnabled,
+      pendingForkBoundaryKey: props.pendingForkBoundaryKey,
       iconSubtleColor,
       markdownStyles,
       reviewCommentColors,
@@ -1700,6 +1902,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       chatVisualMode,
       copiedRowId,
       expandedWorkRows,
+      props.forkActionEnabled,
+      props.pendingForkBoundaryKey,
       iconSubtleColor,
       markdownStyles,
       reviewCommentColors,
@@ -1852,14 +2056,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     ],
   );
 
-  // The empty↔filled key below remounts the list, which resets its imperative
-  // content-inset override — and useKeyboardChatComposerInset (mounted above
-  // the remount boundary) deduplicates by height, so it never re-reports the
-  // composer inset to the fresh instance. Without this, the remounted list's
-  // initial scroll-to-end computes with a zero end inset and rests one
-  // composer-height short of the end. Layout effect: it must land before the
-  // list's first positioning tick or the one-shot initial scroll misses it.
-  const listMountKey = `${feedThreadKey}:${props.feed.length === 0 ? "empty" : "filled"}`;
+  // On iOS the empty↔filled key remounts the list, which resets its imperative
+  // content-inset override. Android keeps the instance stable so the first
+  // optimistic message cannot expose a blank native-list frame. This layout
+  // effect replays the inset for the iOS remount before its first positioning
+  // tick; useKeyboardChatComposerInset above otherwise deduplicates by height.
+  const listMountKey = threadFeedMountKey(
+    feedThreadKey,
+    Platform.OS === "android" ? "android" : "ios",
+    props.feed.length,
+  );
   useLayoutEffect(() => {
     const bottom = props.contentInsetEndAdjustment.value;
     if (bottom > 0) {
@@ -1886,6 +2092,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
     return new Set(terminalIdsByTurn.values());
   }, [props.feed]);
+  const forkDividerAfterEntryId = useMemo(
+    () => (props.forkProvenance ? findForkDividerEntryId(presentedFeed) : null),
+    [presentedFeed, props.forkProvenance],
+  );
   const unsettledTurnId =
     props.latestTurn &&
     (props.latestTurn.completedAt === null || props.latestTurn.state === "running")
@@ -2106,9 +2316,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         implementingPlanIds,
         onImplementPlan,
         canImplementPlan: props.onImplementPlan !== undefined,
+        forkActionSupported: props.forkActionSupported === true,
+        forkActionEnabled: props.forkActionEnabled === true,
+        pendingForkBoundaryKey: props.pendingForkBoundaryKey ?? null,
+        forkDividerAfterEntryId,
+        onFork: props.onFork,
         planImplementationProvider: props.planImplementationProvider,
         parallelPlanImplementationEnabled: props.parallelPlanImplementationEnabled,
         reviewedPlanSubagentCounts: props.reviewedPlanSubagentCounts,
+        retryAction: props.retryAction,
         iconSubtleColor,
         userBubbleColor,
         markdownStyles,
@@ -2132,15 +2348,21 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onCopyWorkRow,
       onMarkdownLinkPress,
       implementingPlanIds,
+      forkDividerAfterEntryId,
       onImplementPlan,
       onPressImage,
       onToggleTurnFold,
       onToggleWorkGroup,
       onToggleWorkRow,
       props.environmentId,
+      props.forkActionEnabled,
+      props.forkActionSupported,
+      props.onFork,
+      props.pendingForkBoundaryKey,
       props.planImplementationProvider,
       props.parallelPlanImplementationEnabled,
       props.reviewedPlanSubagentCounts,
+      props.retryAction,
       props.skills,
     ],
   );
@@ -2163,8 +2385,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         <View className="flex-1">
           <KeyboardAwareLegendList
             ref={props.listRef}
-            // The empty↔filled key remounts the list when messages first
-            // arrive. LegendList's maintainScrollAtEnd calls scrollToEnd(),
+            // iOS remounts when messages first arrive. LegendList's
+            // maintainScrollAtEnd calls scrollToEnd(),
             // which is blind to UIKit's adjustedContentInset — inserting into
             // an already-attached list under a transparent header can pin
             // short content at offset 0 (one header-height too high). A fresh
@@ -2241,7 +2463,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             keyboardDismissMode="none"
             keyboardLiftBehavior="whenAtEnd"
             // Seed the list's scroll math with the real viewport before its own
-            // onLayout: the empty→filled remount can then tell at mount that
+            // onLayout: the iOS empty→filled remount can then tell at mount that
             // short content underflows the viewport and skip programmatic
             // positioning entirely (any offset write during screen attach races
             // UIKit's adjustedContentInset application and lands high or low).
@@ -2271,6 +2493,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             ListHeaderComponent={
               <>
                 {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
+                {props.forkProvenance ? (
+                  <ForkProvenanceHeader
+                    provenance={props.forkProvenance}
+                    sourceAvailable={props.forkSourceAvailable === true}
+                    onOpenSource={props.onOpenForkSource}
+                  />
+                ) : null}
                 {props.loadEarlier != null ? (
                   <Pressable
                     onPress={props.loadEarlier.onLoadEarlier}

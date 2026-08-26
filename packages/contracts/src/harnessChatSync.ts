@@ -141,6 +141,8 @@ export const HarnessChatSyncListResult = Schema.Struct({
   nextCursor: Schema.NullOr(TrimmedNonEmptyString),
   totalMatching: NonNegativeInt,
   changedMatching: NonNegativeInt,
+  /** False while the provider still has pages that have not been read. */
+  countsAreComplete: Schema.optionalKey(Schema.Boolean),
 });
 export type HarnessChatSyncListResult = typeof HarnessChatSyncListResult.Type;
 

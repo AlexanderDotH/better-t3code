@@ -81,7 +81,11 @@ describe("ChatMarkdown streamed-character reveal", () => {
 
     now.mockReturnValue(1_001);
     await screen.rerender(<StreamingMarkdown text="seed!?" />);
-    const fastCharacter = animatedCharacters(screen.container)[0];
+    const activeCharacters = animatedCharacters(screen.container);
+    expect(activeCharacters.map((character) => character.textContent).join("")).toBe("!?");
+    expect(activeCharacters[0]).toBe(slowCharacter);
+    expect(activeCharacters[0]?.style.getPropertyValue("--stream-character-delay")).toBe("0ms");
+    const fastCharacter = activeCharacters.at(-1);
     expect(fastCharacter).toBeDefined();
     const fastDuration = Number.parseFloat(
       fastCharacter?.style.getPropertyValue("--stream-character-duration") ?? "",
@@ -103,6 +107,22 @@ describe("ChatMarkdown streamed-character reveal", () => {
     now.mockReturnValue(2_000);
     await screen.rerender(<StreamingMarkdown text={`seed!?${"x".repeat(161)}`} />);
     expect(animatedCharacters(screen.container)).toHaveLength(0);
+  });
+
+  it("keeps a retained list character mounted when the next provider chunk arrives", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const now = vi.spyOn(performance, "now").mockReturnValue(0);
+    const screen = await render(<StreamingMarkdown text="1. seed" />);
+
+    now.mockReturnValue(1_000);
+    await screen.rerender(<StreamingMarkdown text="1. seed!" />);
+    const retainedCharacter = animatedCharacters(screen.container)[0];
+    expect(retainedCharacter).toBeDefined();
+
+    now.mockReturnValue(1_001);
+    await screen.rerender(<StreamingMarkdown text="1. seed!?" />);
+
+    expect(animatedCharacters(screen.container)[0]).toBe(retainedCharacter);
   });
 
   it("applies the production keyframe and removes all motion under reduced motion", async () => {
@@ -137,6 +157,7 @@ describe("ChatMarkdown streamed-character reveal", () => {
     expect(getComputedStyle(character!).animationTimingFunction).toBe(
       "cubic-bezier(0.22, 1, 0.36, 1)",
     );
+    expect(getComputedStyle(character!).willChange).toBe("auto");
 
     mediaRule!.media.mediaText = "all";
     expect(getComputedStyle(character!).animationName).toBe("none");
@@ -191,15 +212,16 @@ describe("ChatMarkdown streamed-character reveal", () => {
 
     await screen.rerender(<StreamingMarkdown text={"```ts\nconst value = "} streamId="code" />);
     await screen.rerender(<StreamingMarkdown text={"```ts\nconst value = 1"} streamId="code" />);
+    await screen.rerender(<StreamingMarkdown text={"```ts\nconst value = 12"} streamId="code" />);
 
     const shikiCharacters = Array.from(
       screen.container.querySelectorAll<HTMLElement>(
         ".chat-markdown-shiki [data-stream-character]",
       ),
     );
-    expect(shikiCharacters.map((character) => character.textContent).join("")).toBe("1");
+    expect(shikiCharacters.map((character) => character.textContent).join("")).toBe("12");
     expect(screen.container.querySelector(".chat-markdown-shiki")?.textContent).toContain(
-      "const value = 1",
+      "const value = 12",
     );
   });
 });

@@ -37,6 +37,7 @@ import {
   reduceMobileSubagentHistory,
   type MobileSubagentTranscriptEntry,
 } from "./subagent-presentation";
+import { subagentSurfacePresentation } from "./subagent-surface";
 
 const SUBAGENT_LIST_INITIAL_RENDER_COUNT = 12;
 const SUBAGENT_LIST_RENDER_BATCH_SIZE = 12;
@@ -146,7 +147,9 @@ function SubagentTranscriptContent(props: {
       maxToRenderPerBatch={SUBAGENT_TRANSCRIPT_RENDER_BATCH_SIZE}
       updateCellsBatchingPeriod={16}
       windowSize={7}
-      removeClippedSubviews={Platform.OS === "android"}
+      // Transcript rows can grow after markdown/layout measurement. Android's
+      // clipping cache otherwise leaves long agent output partially blank.
+      removeClippedSubviews={false}
       contentContainerStyle={{ gap: 12, paddingHorizontal: 16, paddingBottom: 40, paddingTop: 16 }}
       renderItem={renderEntry}
       ListHeaderComponent={
@@ -250,6 +253,7 @@ export const ThreadSubagentStack = memo(function ThreadSubagentStack(props: {
   const screenColor = useThemeColor("--color-screen");
   const isDark = useColorScheme() === "dark";
   const routeIsFocused = useIsFocused();
+  const surface = subagentSurfacePresentation(Platform.OS === "android" ? "android" : "ios");
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [history, dispatchHistory] = useReducer(
     reduceMobileSubagentHistory,
@@ -325,54 +329,92 @@ export const ThreadSubagentStack = memo(function ThreadSubagentStack(props: {
 
   return (
     <>
-      <View className="mb-3 flex-row items-center gap-2 px-4">
-        <FlatList
-          className="min-w-0 flex-1"
-          horizontal
-          data={visible}
-          keyExtractor={(agent) => agent.id}
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ gap: 8, paddingRight: 8 }}
-          initialNumToRender={SUBAGENT_LIST_INITIAL_RENDER_COUNT}
-          maxToRenderPerBatch={SUBAGENT_LIST_RENDER_BATCH_SIZE}
-          windowSize={5}
-          removeClippedSubviews={Platform.OS === "android"}
-          renderItem={renderVisibleAgent}
-        />
+      {Platform.OS === "android" ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Open agent history"
-          className="min-h-9 shrink-0 flex-row items-center gap-1.5 rounded-full border border-border bg-card px-3 active:opacity-65"
+          className="mx-4 mb-3 min-h-12 flex-row items-center gap-3 rounded-2xl border border-border bg-card px-4 active:opacity-65"
           onPress={() => {
             dispatchHistory({
               type: "open",
-              subagentId: history.selectedSubagentId ?? props.subagents[0]?.id ?? null,
+              subagentId: history.selectedSubagentId ?? historyAgents[0]?.id ?? null,
             });
           }}
         >
-          <SymbolView name="person.2" size={14} tintColor={iconColor} type="monochrome" />
-          <Text className="font-t3-bold text-xs text-foreground">{props.subagents.length}</Text>
+          <View className="h-8 w-8 items-center justify-center rounded-full bg-subtle">
+            <SymbolView name="person.2" size={16} tintColor={iconColor} type="monochrome" />
+          </View>
+          <View className="min-w-0 flex-1">
+            <Text className="font-t3-bold text-sm text-foreground">Agents</Text>
+            <Text className="text-xs text-foreground-muted">
+              {groups.active.length > 0
+                ? `${groups.active.length} active · ${props.subagents.length} total`
+                : `${props.subagents.length} in this chat`}
+            </Text>
+          </View>
+          <SymbolView name="chevron.right" size={14} tintColor={iconColor} type="monochrome" />
         </Pressable>
-      </View>
+      ) : (
+        <View className="mb-3 flex-row items-center gap-2 px-4">
+          <FlatList
+            className="min-w-0 flex-1"
+            horizontal
+            data={visible}
+            keyExtractor={(agent) => agent.id}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: 8, paddingRight: 8 }}
+            initialNumToRender={SUBAGENT_LIST_INITIAL_RENDER_COUNT}
+            maxToRenderPerBatch={SUBAGENT_LIST_RENDER_BATCH_SIZE}
+            windowSize={5}
+            removeClippedSubviews={surface.removeClippedSubviews}
+            renderItem={renderVisibleAgent}
+          />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open agent history"
+            className="min-h-9 shrink-0 flex-row items-center gap-1.5 rounded-full border border-border bg-card px-3 active:opacity-65"
+            onPress={() => {
+              dispatchHistory({
+                type: "open",
+                subagentId: history.selectedSubagentId ?? historyAgents[0]?.id ?? null,
+              });
+            }}
+          >
+            <SymbolView name="person.2" size={14} tintColor={iconColor} type="monochrome" />
+            <Text className="font-t3-bold text-xs text-foreground">{props.subagents.length}</Text>
+          </Pressable>
+        </View>
+      )}
 
       {historyIsVisible ? (
         <Modal
-          animationType="slide"
-          presentationStyle="pageSheet"
+          animationType={surface.animationType}
+          presentationStyle={surface.presentationStyle}
+          hardwareAccelerated={surface.hardwareAccelerated}
           visible
           onRequestClose={closeHistory}
         >
           <SafeAreaView
             className="flex-1 bg-screen"
-            edges={["top", "bottom"]}
+            edges={surface.safeAreaEdges}
             style={{ backgroundColor: screenColor }}
           >
-            <View className="flex-row items-center border-b border-border px-4 py-3">
-              <Text className="min-w-0 flex-1 font-t3-bold text-lg text-foreground">Agents</Text>
+            <View className="min-h-16 flex-row items-center gap-3 border-b border-border px-4 py-2">
+              <View className="h-10 w-10 items-center justify-center rounded-full bg-subtle">
+                <SymbolView name="person.2" size={18} tintColor={iconColor} type="monochrome" />
+              </View>
+              <View className="min-w-0 flex-1">
+                <Text className="font-t3-bold text-lg text-foreground">Agents</Text>
+                <Text className="text-xs text-foreground-muted">
+                  {groups.active.length > 0
+                    ? `${groups.active.length} active · ${props.subagents.length} total`
+                    : `${props.subagents.length} in this chat`}
+                </Text>
+              </View>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Close agent history"
-                className="h-9 w-9 items-center justify-center rounded-full bg-subtle active:opacity-65"
+                className="h-11 w-11 items-center justify-center rounded-full bg-subtle active:opacity-65"
                 onPress={closeHistory}
               >
                 <SymbolView
@@ -399,7 +441,7 @@ export const ThreadSubagentStack = memo(function ThreadSubagentStack(props: {
               initialNumToRender={SUBAGENT_LIST_INITIAL_RENDER_COUNT}
               maxToRenderPerBatch={SUBAGENT_LIST_RENDER_BATCH_SIZE}
               windowSize={5}
-              removeClippedSubviews={Platform.OS === "android"}
+              removeClippedSubviews={surface.removeClippedSubviews}
               renderItem={renderHistoryAgent}
             />
             {selectedSummary ? (

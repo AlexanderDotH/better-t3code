@@ -39,6 +39,10 @@
       "types": "./src/modelOptions.ts",
       "default": "./src/modelOptions.ts"
     },
+    "./openrouter-model-selection": {
+      "types": "./src/openRouterModelSelection.ts",
+      "default": "./src/openRouterModelSelection.ts"
+    },
     "./reasoning-recommendation": {
       "types": "./src/reasoningRecommendation.ts",
       "default": "./src/reasoningRecommendation.ts"
@@ -50,6 +54,10 @@
     "./chat-visual-mode-sync": {
       "types": "./src/chatVisualModeSync.ts",
       "default": "./src/chatVisualModeSync.ts"
+    },
+    "./interface-language-sync": {
+      "types": "./src/interfaceLanguageSync.ts",
+      "default": "./src/interfaceLanguageSync.ts"
     },
     "./project-thread-preview": {
       "types": "./src/projectThreadPreview.ts",
@@ -86,6 +94,10 @@
     "./providerSkills": {
       "types": "./src/providerSkills.ts",
       "default": "./src/providerSkills.ts"
+    },
+    "./providerSettingsForm": {
+      "types": "./src/providerSettingsForm.ts",
+      "default": "./src/providerSettingsForm.ts"
     },
     "./relay": {
       "types": "./src/relay/index.ts",
@@ -202,6 +214,10 @@
     "./state/thread-abort": {
       "types": "./src/state/threadAbort.ts",
       "default": "./src/state/threadAbort.ts"
+    },
+    "./state/thread-retry": {
+      "types": "./src/state/threadRetry.ts",
+      "default": "./src/state/threadRetry.ts"
     },
     "./state/vcs": {
       "types": "./src/state/vcs.ts",

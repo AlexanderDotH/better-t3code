@@ -14,6 +14,7 @@ import {
 } from "../workspace-deck/WorkspaceCardDrawerShell";
 import gitBranchesPanelSource from "./GitBranchesPanel.tsx?raw";
 import gitChangesPanelSource from "./GitChangesPanel.tsx?raw";
+import gitCompactCardSource from "./GitCompactCard.tsx?raw";
 import gitHistoryPanelSource from "./GitHistoryPanel.tsx?raw";
 import gitOperationsPanelSource from "./GitOperationsPanel.tsx?raw";
 import gitOverviewPanelSource from "./GitOverviewPanel.tsx?raw";
@@ -166,6 +167,16 @@ describe("Git workbench content sizing", () => {
     expect(workspaceCardDeckSource).toMatch(/observe\(expandedSurface/);
     expect(workspaceCardDeckSource).toMatch(/entry\.target === expandedSurface/);
     expect(gitWorkbenchDrawerShellSource).not.toContain("onHeightChange");
+  });
+
+  it("exposes compact and expanded border boxes to the shared surface morph", () => {
+    const html = renderGitDrawer(620);
+
+    expect(gitCompactCardSource).toContain('data-workspace-card-compact-surface="true"');
+    expect(html).toContain('data-workspace-card-expanded-surface="true"');
+    expect(workspaceCardDeckSource).toContain("COMPACT_SURFACE_SELECTOR");
+    expect(workspaceCardDeckSource).toContain("EXPANDED_SURFACE_SELECTOR");
+    expect(workspaceCardDeckSource).toMatch(/from\s+["'][^"']*surfaceMorph["']/);
   });
 
   it("keeps refresh status outside the scrolling document and reserves its top inset", () => {

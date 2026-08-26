@@ -51,9 +51,11 @@ driver advertises history sync. Gemini conversations already use T3 Code as thei
 shown as already local instead of as a second import source. A provider that cannot expose history
 reports that limitation without hiding chats previously synced from it.
 
-Non-archived, top-level chats are selected by default. Search, **Include archived**, and **Load
-more** refine the result list without resetting selection. You can exclude individual chats from
-the default selection, or choose **Clear all** and select only specific chats.
+Providers appear as tabs in a responsive grid, with only a lightweight availability probe during
+discovery. The selected tab then loads its first 10 non-archived, top-level chats; choose **View
+more** to read the next page. Those chats are selected by default. Search, **Include archived**, and
+provider tabs do not reset selection. You can exclude individual chats from the default selection,
+or choose **Clear all** and select only specific chats.
 
 T3 Code assigns a source chat to a project from its working directory:
 

@@ -162,6 +162,20 @@ describe("thread stream routing", () => {
     });
   });
 
+  it("delivers fork history and fork state transitions to the root thread", () => {
+    const forked = event(7, "thread.forked", { threadId });
+    const workspaceUpdated = event(8, "thread.fork-workspace-updated", { threadId });
+    const handoffCompleted = event(9, "thread.fork-handoff-completed", { threadId });
+
+    for (const forkEvent of [forked, workspaceUpdated, handoffCompleted]) {
+      expect(toRootThreadStreamItem(forkEvent)).toEqual({ kind: "event", event: forkEvent });
+      expect(toSubagentStreamItem(forkEvent, selectedSubagentId)).toEqual({
+        kind: "cursor",
+        sequence: forkEvent.sequence,
+      });
+    }
+  });
+
   it("sends only the selected subagent transcript and summary updates", () => {
     const selectedMessage = messageEvent(1, selectedSubagentId);
     expect(toSubagentStreamItem(selectedMessage, selectedSubagentId)).toEqual({

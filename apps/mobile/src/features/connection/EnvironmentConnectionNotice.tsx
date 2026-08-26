@@ -8,6 +8,14 @@ import { ActivityIndicator, Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useThemeColor } from "../../lib/useThemeColor";
+import {
+  connectionNoticeDetail,
+  connectionNoticeSupportsRetryNow,
+  type ConnectionNoticePresentation,
+} from "./environmentRecoveryPresentation";
+
+type EnvironmentConnectionNoticePresentation = ConnectionNoticePresentation &
+  Pick<EnvironmentConnectionPresentation, "traceId">;
 
 function noticeTitle(phase: EnvironmentConnectionPhase, environmentLabel: string): string {
   switch (phase) {
@@ -26,32 +34,9 @@ function noticeTitle(phase: EnvironmentConnectionPhase, environmentLabel: string
   }
 }
 
-function noticeDetail(
-  phase: EnvironmentConnectionPhase,
-  resourceName: string,
-  error: string | null,
-): string {
-  if (error) {
-    return `The app will keep retrying automatically. ${error}`;
-  }
-
-  switch (phase) {
-    case "offline":
-      return `Cached data remains available. The ${resourceName} will load when your connection returns.`;
-    case "connecting":
-    case "reconnecting":
-      return `The ${resourceName} will load as soon as the environment is ready.`;
-    case "available":
-    case "error":
-      return `Reconnect the environment to load the ${resourceName}.`;
-    case "connected":
-      return "";
-  }
-}
-
 export function EnvironmentConnectionNotice(props: {
   readonly environmentLabel: string;
-  readonly connection: EnvironmentConnectionPresentation;
+  readonly connection: EnvironmentConnectionNoticePresentation;
   readonly resourceName: string;
   readonly onRetry: () => void;
 }) {
@@ -77,12 +62,13 @@ export function EnvironmentConnectionNotice(props: {
           {noticeTitle(props.connection.phase, props.environmentLabel)}
         </Text>
         <Text className="text-center text-sm leading-normal text-foreground-muted">
-          {noticeDetail(props.connection.phase, props.resourceName, props.connection.error)}
+          {connectionNoticeDetail(props.connection, props.resourceName)}
           {props.connection.traceId ? (
             <>
               {" Trace ID: "}
               <Text
                 accessibilityHint="Copies the trace ID"
+                accessibilityLabel={`Copy trace ID ${props.connection.traceId}`}
                 accessibilityRole="button"
                 className="underline decoration-dotted"
                 onPress={() =>
@@ -97,8 +83,9 @@ export function EnvironmentConnectionNotice(props: {
           ) : null}
         </Text>
 
-        {props.connection.phase !== "offline" ? (
+        {connectionNoticeSupportsRetryNow(props.connection) ? (
           <Pressable
+            accessibilityLabel={`Retry ${props.environmentLabel}`}
             accessibilityRole="button"
             className="mt-1 rounded-full bg-subtle px-4 py-2.5 active:opacity-70"
             onPress={props.onRetry}

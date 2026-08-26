@@ -4,6 +4,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
+import * as DesktopApplicationMenu from "../../window/DesktopApplicationMenu.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 
@@ -23,6 +24,18 @@ export const setClientSettings = DesktopIpc.makeIpcMethod({
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.clientSettings.set")(function* (settings) {
     const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
+    const previousSettings = Option.getOrNull(yield* clientSettings.get);
     yield* clientSettings.set(settings);
+    const previousLanguageRecord = previousSettings?.interfaceLanguageLocalRecord ?? null;
+    const nextLanguageRecord = settings.interfaceLanguageLocalRecord;
+    if (
+      previousLanguageRecord?.preference === nextLanguageRecord?.preference &&
+      previousLanguageRecord?.updatedAt === nextLanguageRecord?.updatedAt &&
+      previousLanguageRecord?.updateId === nextLanguageRecord?.updateId
+    ) {
+      return;
+    }
+    const applicationMenu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
+    yield* applicationMenu.configure;
   }),
 });

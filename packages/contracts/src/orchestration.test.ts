@@ -24,8 +24,15 @@ import {
   OrchestrationThreadShell,
   ProjectCreateCommand,
   ThreadMetaUpdatedPayload,
+  ThreadForkCommand,
+  ThreadForkedPayload,
+  ThreadForkHandoffCompleteCommand,
+  ThreadForkHandoffCompletedPayload,
+  ThreadForkWorkspaceUpdateCommand,
+  ThreadForkWorkspaceUpdatedPayload,
   ThreadHarnessSyncLinkCommand,
   ThreadHarnessSyncMessageImportCommand,
+  ThreadTurnRetryCommand,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
@@ -42,6 +49,7 @@ const decodeProjectCreateCommand = Schema.decodeUnknownEffect(ProjectCreateComma
 const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPayload);
 const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
 const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
+const decodeThreadTurnRetryCommand = Schema.decodeUnknownEffect(ThreadTurnRetryCommand);
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
 );
@@ -66,11 +74,231 @@ const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationComma
 const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+const decodeThreadForkCommand = Schema.decodeUnknownEffect(ThreadForkCommand);
+const decodeThreadForkedPayload = Schema.decodeUnknownEffect(ThreadForkedPayload);
+const decodeThreadForkWorkspaceUpdateCommand = Schema.decodeUnknownEffect(
+  ThreadForkWorkspaceUpdateCommand,
+);
+const decodeThreadForkWorkspaceUpdatedPayload = Schema.decodeUnknownEffect(
+  ThreadForkWorkspaceUpdatedPayload,
+);
+const decodeThreadForkHandoffCompleteCommand = Schema.decodeUnknownEffect(
+  ThreadForkHandoffCompleteCommand,
+);
+const decodeThreadForkHandoffCompletedPayload = Schema.decodeUnknownEffect(
+  ThreadForkHandoffCompletedPayload,
+);
 const decodeThreadHarnessSyncLinkCommand = Schema.decodeUnknownEffect(ThreadHarnessSyncLinkCommand);
 const decodeThreadHarnessSyncMessageImportCommand = Schema.decodeUnknownEffect(
   ThreadHarnessSyncMessageImportCommand,
 );
 const decodeDispatchCommandError = Schema.decodeUnknownEffect(OrchestrationDispatchCommandError);
+
+const forkWorkspace = {
+  mode: "worktree",
+  baseBranch: "main",
+  startFromOrigin: true,
+  runSetupScript: true,
+} as const;
+
+it.effect("decodes message and proposed-plan thread fork commands", () =>
+  Effect.gen(function* () {
+    const base = {
+      type: "thread.fork",
+      commandId: "fork-command",
+      threadId: "thread-fork",
+      sourceThreadId: "thread-source",
+      modelSelection: { instanceId: "codex", model: "gpt-5.6" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspace: forkWorkspace,
+      createdAt: "2026-08-24T10:00:00.000Z",
+    } as const;
+    const fromMessage = yield* decodeThreadForkCommand({
+      ...base,
+      boundary: { kind: "message", messageId: "message-source" },
+    });
+    const fromPlan = yield* decodeClientOrchestrationCommand({
+      ...base,
+      boundary: { kind: "proposed-plan", planId: "plan-source" },
+      workspace: {
+        mode: "local",
+        baseBranch: null,
+        startFromOrigin: false,
+        runSetupScript: false,
+      },
+    });
+
+    assert.strictEqual(fromMessage.boundary.kind, "message");
+    assert.strictEqual(fromPlan.type, "thread.fork");
+    if (fromPlan.type === "thread.fork") {
+      assert.strictEqual(fromPlan.boundary.kind, "proposed-plan");
+      assert.strictEqual(fromPlan.workspace.baseBranch, null);
+    }
+  }),
+);
+
+it.effect("decodes frozen fork history with provenance and remaining first-turn budget", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadForkedPayload({
+      threadId: "thread-fork",
+      fork: {
+        provenance: {
+          sourceThreadId: "thread-source",
+          sourceTitle: "Source thread",
+          boundary: { kind: "message", messageId: "message-source" },
+          forkedAt: "2026-08-24T10:00:00.000Z",
+        },
+        workspace: {
+          spec: forkWorkspace,
+          status: "pending",
+          preparedAt: null,
+          lastError: null,
+        },
+        handoff: {
+          status: "pending",
+          historyInputChars: 4_000,
+          historyAttachmentCount: 1,
+          remainingInputChars: 116_000,
+          remainingAttachmentCount: 7,
+          completedAt: null,
+        },
+      },
+      history: {
+        messages: [
+          {
+            id: "message-fork",
+            role: "user",
+            text: "Question",
+            turnId: "turn-fork",
+            streaming: false,
+            createdAt: "2026-08-24T09:59:00.000Z",
+            updatedAt: "2026-08-24T09:59:00.000Z",
+            historyOrigin: {
+              sourceThreadId: "thread-source",
+              sourceId: "message-source",
+              ordinal: 0,
+            },
+          },
+        ],
+        proposedPlans: [],
+        activities: [],
+        subagents: [],
+        turns: [
+          {
+            turnId: "turn-fork",
+            pendingMessageId: "message-fork",
+            assistantMessageId: null,
+            state: "running",
+            requestedAt: "2026-08-24T09:59:00.000Z",
+            startedAt: "2026-08-24T09:59:01.000Z",
+            completedAt: null,
+            checkpointTurnCount: null,
+            checkpointRef: null,
+            checkpointStatus: null,
+            checkpointFiles: [],
+            historyOrigin: {
+              sourceThreadId: "thread-source",
+              sourceId: "turn-source",
+              ordinal: 1,
+            },
+          },
+        ],
+        checkpoints: [],
+      },
+    });
+
+    assert.strictEqual(parsed.history.messages[0]?.historyOrigin.sourceId, "message-source");
+    assert.strictEqual(parsed.fork.handoff.remainingInputChars, 116_000);
+    assert.strictEqual(parsed.fork.workspace.status, "pending");
+
+    const event = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-forked",
+      aggregateKind: "thread",
+      aggregateId: "thread-fork",
+      type: "thread.forked",
+      occurredAt: "2026-08-24T10:00:00.000Z",
+      commandId: "fork-command",
+      causationEventId: null,
+      correlationId: "fork-command",
+      metadata: {},
+      payload: parsed,
+    });
+    assert.strictEqual(event.type, "thread.forked");
+  }),
+);
+
+it.effect("decodes internal fork workspace and handoff state transitions", () =>
+  Effect.gen(function* () {
+    const workspaceCommand = yield* decodeThreadForkWorkspaceUpdateCommand({
+      type: "thread.fork.workspace.update",
+      commandId: "workspace-command",
+      threadId: "thread-fork",
+      status: "error",
+      preparedAt: null,
+      lastError: "Could not create worktree",
+      createdAt: "2026-08-24T10:01:00.000Z",
+    });
+    const workspacePayload = yield* decodeThreadForkWorkspaceUpdatedPayload({
+      threadId: "thread-fork",
+      status: "ready",
+      preparedAt: "2026-08-24T10:02:00.000Z",
+      lastError: null,
+      createdAt: "2026-08-24T10:02:00.000Z",
+    });
+    const handoffCommand = yield* decodeThreadForkHandoffCompleteCommand({
+      type: "thread.fork.handoff.complete",
+      commandId: "handoff-command",
+      threadId: "thread-fork",
+      completedAt: "2026-08-24T10:03:00.000Z",
+    });
+    const handoffPayload = yield* decodeThreadForkHandoffCompletedPayload({
+      threadId: "thread-fork",
+      completedAt: "2026-08-24T10:03:00.000Z",
+    });
+    const internalCommand = yield* decodeOrchestrationCommand(workspaceCommand);
+    const internalHandoffCommand = yield* decodeOrchestrationCommand(handoffCommand);
+    const clientWorkspaceCommand = yield* Effect.exit(
+      decodeClientOrchestrationCommand(workspaceCommand),
+    );
+    const workspaceEvent = yield* decodeOrchestrationEvent({
+      sequence: 2,
+      eventId: "event-workspace-updated",
+      aggregateKind: "thread",
+      aggregateId: "thread-fork",
+      type: "thread.fork-workspace-updated",
+      occurredAt: workspacePayload.createdAt,
+      commandId: workspaceCommand.commandId,
+      causationEventId: null,
+      correlationId: workspaceCommand.commandId,
+      metadata: {},
+      payload: workspacePayload,
+    });
+    const handoffEvent = yield* decodeOrchestrationEvent({
+      sequence: 3,
+      eventId: "event-handoff-completed",
+      aggregateKind: "thread",
+      aggregateId: "thread-fork",
+      type: "thread.fork-handoff-completed",
+      occurredAt: handoffPayload.completedAt,
+      commandId: handoffCommand.commandId,
+      causationEventId: null,
+      correlationId: handoffCommand.commandId,
+      metadata: {},
+      payload: handoffPayload,
+    });
+
+    assert.strictEqual(workspaceCommand.status, "error");
+    assert.strictEqual(workspacePayload.status, "ready");
+    assert.strictEqual(handoffCommand.completedAt, handoffPayload.completedAt);
+    assert.strictEqual(internalCommand.type, "thread.fork.workspace.update");
+    assert.strictEqual(internalHandoffCommand.type, "thread.fork.handoff.complete");
+    assert.strictEqual(clientWorkspaceCommand._tag, "Failure");
+    assert.strictEqual(workspaceEvent.type, "thread.fork-workspace-updated");
+    assert.strictEqual(handoffEvent.type, "thread.fork-handoff-completed");
+  }),
+);
 
 it.effect("decodes a dispatch error after its bootstrap thread was deleted", () =>
   Effect.gen(function* () {
@@ -319,6 +547,47 @@ it.effect("decodes thread.turn.start defaults for provider and runtime mode", ()
     assert.strictEqual(parsed.fetchMode, undefined);
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
     assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+  }),
+);
+
+it.effect("decodes a result-only retry against an existing user message and turn", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnRetryCommand({
+      type: "thread.turn.retry",
+      commandId: "cmd-turn-retry-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      messageId: "msg-1",
+      fetchMode: "repository-exploration",
+      modelSelection: {
+        instanceId: "codex",
+        model: "gpt-5.6",
+      },
+      createdAt: "2026-01-01T00:01:00.000Z",
+    });
+
+    assert.strictEqual(parsed.type, "thread.turn.retry");
+    assert.strictEqual(parsed.turnId, "turn-1");
+    assert.strictEqual(parsed.messageId, "msg-1");
+    assert.strictEqual(parsed.fetchMode, "repository-exploration");
+    assert.strictEqual(parsed.modelSelection?.model, "gpt-5.6");
+  }),
+);
+
+it.effect("decodes a result-only retry before a provider turn id exists", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnRetryCommand({
+      type: "thread.turn.retry",
+      commandId: "cmd-turn-retry-pending",
+      threadId: "thread-1",
+      turnId: null,
+      messageId: "msg-1",
+      createdAt: "2026-01-01T00:01:00.000Z",
+    });
+
+    assert.strictEqual(parsed.type, "thread.turn.retry");
+    assert.strictEqual(parsed.turnId, null);
+    assert.strictEqual(parsed.messageId, "msg-1");
   }),
 );
 
@@ -581,8 +850,10 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
 
     assert.strictEqual(thread.settledOverride, null);
     assert.strictEqual(thread.settledAt, null);
+    assert.strictEqual(thread.fork, undefined);
     assert.strictEqual(shell.settledOverride, null);
     assert.strictEqual(shell.settledAt, null);
+    assert.strictEqual(shell.fork, undefined);
   }),
 );
 
@@ -896,6 +1167,21 @@ it.effect("decodes Fetch mode on a turn-start request", () =>
     });
 
     assert.strictEqual(parsed.fetchMode, "repository-exploration");
+  }),
+);
+
+it.effect("decodes result-only retry metadata on a turn-start request", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartRequestedPayload({
+      threadId: "thread-1",
+      messageId: "msg-1",
+      resultOnly: true,
+      retryOfTurnId: "turn-1",
+      createdAt: "2026-01-01T00:01:00.000Z",
+    });
+
+    assert.strictEqual(parsed.resultOnly, true);
+    assert.strictEqual(parsed.retryOfTurnId, "turn-1");
   }),
 );
 

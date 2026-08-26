@@ -60,6 +60,55 @@ function settingsWithProviderInstances(): UnifiedSettings {
 }
 
 describe("instance-scoped model selection", () => {
+  it("keeps unsupported catalog entries visible but never resolves them as selections", () => {
+    const baseProvider = provider({
+      provider: ProviderDriverKind.make("openrouter"),
+      instanceId: "openrouter",
+      models: ["openai/no-tools", "openai/gpt-agent"],
+    });
+    const providers = [
+      {
+        ...baseProvider,
+        models: [
+          {
+            ...baseProvider.models[0]!,
+            isSelectable: false,
+            unavailableReason: "No tool support",
+            capabilities: {
+              outputModalities: ["text"],
+              toolSupport: { tools: false, parallelToolCalls: false, toolChoice: false },
+            },
+          },
+          {
+            ...baseProvider.models[1]!,
+            isDefault: true,
+            isSelectable: true,
+            capabilities: {
+              outputModalities: ["text"],
+              toolSupport: { tools: true, parallelToolCalls: true, toolChoice: true },
+            },
+          },
+        ],
+      },
+    ];
+    const entry = deriveProviderInstanceEntries(providers)[0]!;
+    const options = getAppModelOptionsForInstance(DEFAULT_UNIFIED_SETTINGS, entry);
+
+    expect(options[0]).toMatchObject({
+      slug: "openai/no-tools",
+      isSelectable: false,
+      unavailableReason: "No tool support",
+    });
+    expect(
+      resolveAppModelSelectionForInstance(
+        ProviderInstanceId.make("openrouter"),
+        DEFAULT_UNIFIED_SETTINGS,
+        providers,
+        "openai/no-tools",
+      ),
+    ).toBe("openai/gpt-agent");
+  });
+
   it("preserves server-provided legacy model metadata", () => {
     const baseProvider = provider({
       instanceId: "claudeAgent",

@@ -70,12 +70,15 @@ import {
 } from "../../state/use-remote-environment-registry";
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
+import { resolveOpenRouterBootstrapModelPatch } from "@t3tools/client-runtime/openrouter-model-selection";
 import {
   buildHomeProjectScopes,
   sortHomeProjectScopes,
   type HomeProjectScope,
 } from "../home/homeThreadList";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { resolvePendingTaskInteractionMode } from "./legacy-plan-mode";
 import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 import {
@@ -197,6 +200,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const { savedConnectionsById } = useSavedRemoteConnections();
   const groupingSettings = useMobileProjectGroupingSettings();
   const { enabled: planModeEnabled, loaded: planModePreferenceLoaded } = useLegacyPlanModeState();
+  const updateServerSettings = useAtomCommand(
+    serverEnvironment.updateSettings,
+    "OpenRouter default model",
+  );
   const projectScopes = useMemo(
     () =>
       sortHomeProjectScopes({
@@ -466,11 +473,34 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       if (!option) {
         return;
       }
+      const provider = selectedEnvironmentServerConfig?.providers.find(
+        (candidate) => candidate.instanceId === option.selection.instanceId,
+      );
+      const openRouterBootstrapPatch =
+        provider && selectedEnvironmentServerConfig
+          ? resolveOpenRouterBootstrapModelPatch({
+              settings: selectedEnvironmentServerConfig.settings,
+              provider,
+              model: option.selection.model,
+            })
+          : null;
+      if (openRouterBootstrapPatch && selectedProject) {
+        void updateServerSettings({
+          environmentId: selectedProject.environmentId,
+          input: { patch: openRouterBootstrapPatch },
+        });
+      }
       updateComposerDraftSettings(selectedProjectDraftKey, {
         modelSelection: options ? { ...option.selection, options } : option.selection,
       });
     },
-    [modelOptions, selectedProjectDraftKey],
+    [
+      modelOptions,
+      selectedEnvironmentServerConfig,
+      selectedProject,
+      selectedProjectDraftKey,
+      updateServerSettings,
+    ],
   );
   const setSelectedModelOptions = useCallback(
     (options: ReadonlyArray<ProviderOptionSelection> | undefined) => {

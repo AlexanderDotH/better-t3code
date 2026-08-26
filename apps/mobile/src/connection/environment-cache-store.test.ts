@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { type ClientCacheKind, MobileDatabase } from "../persistence/mobile-database";
-import { make } from "./environment-cache-store";
+import { loadEnvironmentCacheFreshnesses, make } from "./environment-cache-store";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const REFS: VcsListRefsResult = {
@@ -28,6 +28,7 @@ function cacheId(environmentId: EnvironmentId, kind: ClientCacheKind, cacheKey: 
 
 function makeDatabase() {
   const values = new Map<string, string>();
+  const freshnessByEnvironmentId = new Map<EnvironmentId, number>();
   const removed: Array<string> = [];
   const database = MobileDatabase.of({
     loadCache: (environmentId, kind, cacheKey) =>
@@ -36,6 +37,8 @@ function makeDatabase() {
       Effect.sync(() => {
         values.set(cacheId(environmentId, kind, cacheKey), payload);
       }),
+    loadEnvironmentCacheUpdatedAt: (environmentId) =>
+      Effect.succeed(Option.fromUndefinedOr(freshnessByEnvironmentId.get(environmentId))),
     removeCache: (environmentId, kind, cacheKey) =>
       Effect.sync(() => {
         const id = cacheId(environmentId, kind, cacheKey);
@@ -59,10 +62,30 @@ function makeDatabase() {
     loadPreferencesJson: Effect.succeed(Option.none()),
     savePreferencesJson: () => Effect.void,
   });
-  return { database, removed, values };
+  return { database, freshnessByEnvironmentId, removed, values };
 }
 
 describe("mobile SQLite environment cache store", () => {
+  it.effect("loads freshness for each saved environment without exposing cache payloads", () =>
+    Effect.gen(function* () {
+      const memory = makeDatabase();
+      const otherEnvironmentId = EnvironmentId.make("environment-2");
+      memory.freshnessByEnvironmentId.set(ENVIRONMENT_ID, 1_787_169_600_000);
+
+      const freshness = yield* loadEnvironmentCacheFreshnesses([
+        ENVIRONMENT_ID,
+        otherEnvironmentId,
+      ]).pipe(Effect.provideService(MobileDatabase, memory.database));
+
+      expect(freshness).toEqual(
+        new Map([
+          [ENVIRONMENT_ID, 1_787_169_600_000],
+          [otherEnvironmentId, null],
+        ]),
+      );
+    }),
+  );
+
   it.effect("round-trips schema-validated VCS refs", () =>
     Effect.gen(function* () {
       const memory = makeDatabase();

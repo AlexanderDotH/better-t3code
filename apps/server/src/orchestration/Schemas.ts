@@ -7,6 +7,9 @@ import {
   ProjectAgentMessageSentPayload as ContractsProjectAgentMessageSentPayloadSchema,
   ProjectAgentInboxAcknowledgedPayload as ContractsProjectAgentInboxAcknowledgedPayloadSchema,
   ThreadCreatedPayload as ContractsThreadCreatedPayloadSchema,
+  ThreadForkedPayload as ContractsThreadForkedPayloadSchema,
+  ThreadForkWorkspaceUpdatedPayload as ContractsThreadForkWorkspaceUpdatedPayloadSchema,
+  ThreadForkHandoffCompletedPayload as ContractsThreadForkHandoffCompletedPayloadSchema,
   ThreadArchivedPayload as ContractsThreadArchivedPayloadSchema,
   ThreadSettledPayload as ContractsThreadSettledPayloadSchema,
   ThreadMetaUpdatedPayload as ContractsThreadMetaUpdatedPayloadSchema,
@@ -50,6 +53,9 @@ export const ProjectAgentInboxAcknowledgedPayload =
   ContractsProjectAgentInboxAcknowledgedPayloadSchema;
 
 export const ThreadCreatedPayload = ContractsThreadCreatedPayloadSchema;
+export const ThreadForkedPayload = ContractsThreadForkedPayloadSchema;
+export const ThreadForkWorkspaceUpdatedPayload = ContractsThreadForkWorkspaceUpdatedPayloadSchema;
+export const ThreadForkHandoffCompletedPayload = ContractsThreadForkHandoffCompletedPayloadSchema;
 export const ThreadArchivedPayload = ContractsThreadArchivedPayloadSchema;
 export const ThreadSettledPayload = ContractsThreadSettledPayloadSchema;
 export const ThreadMetaUpdatedPayload = ContractsThreadMetaUpdatedPayloadSchema;

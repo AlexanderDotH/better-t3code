@@ -58,7 +58,9 @@ export function isFetchCapableProvider(provider: ServerProvider): boolean {
 }
 
 function exactModelIsAvailable(provider: ServerProvider, model: string): boolean {
-  return provider.models.some((candidate) => candidate.slug === model);
+  return provider.models.some(
+    (candidate) => candidate.slug === model && candidate.isSelectable !== false,
+  );
 }
 
 function resolveManualSelection(
@@ -104,7 +106,9 @@ function findBuiltInModel(
   slug: string,
 ): ServerProvider | undefined {
   return providers.find((provider) =>
-    provider.models.some((model) => model.slug === slug && !model.isCustom),
+    provider.models.some(
+      (model) => model.slug === slug && !model.isCustom && model.isSelectable !== false,
+    ),
   );
 }
 
@@ -174,10 +178,13 @@ function resolveAutoSelection(input: {
   }
 
   const provider = input.providers.find(
-    (candidate) => isFetchCapableProvider(candidate) && candidate.models.length > 0,
+    (candidate) =>
+      isFetchCapableProvider(candidate) &&
+      candidate.models.some((model) => model.isSelectable !== false),
   );
   const selectedModel =
-    provider?.models.find((candidate) => candidate.isDefault)?.slug ?? provider?.models[0]?.slug;
+    provider?.models.find((candidate) => candidate.isDefault && candidate.isSelectable !== false)
+      ?.slug ?? provider?.models.find((candidate) => candidate.isSelectable !== false)?.slug;
   if (provider && selectedModel) {
     return {
       status: "resolved",

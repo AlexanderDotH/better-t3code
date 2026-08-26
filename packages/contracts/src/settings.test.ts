@@ -5,14 +5,19 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
   ChatVisualMode,
   ChatVisualModeSyncRecord,
+  ChatGptSettings,
   ClientSettingsSchema,
   ClientSettingsPatch,
   DEFAULT_AGENT_ENHANCEMENT_SETTINGS,
   DEFAULT_CHAT_VISUAL_MODE,
   DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_INTERFACE_LANGUAGE_PREFERENCE,
   DEFAULT_PARALLEL_PLAN_REVIEW_MODEL_SELECTION,
   DEFAULT_PROJECT_THREAD_PREVIEW_COUNT,
   DEFAULT_SERVER_SETTINGS,
+  InterfaceLanguagePreference,
+  InterfaceLanguageSyncRecord,
+  OpenRouterSettings,
   ProjectThreadPreviewCount,
   ProjectThreadPreviewSyncRecord,
   defaultEnabledForDriver,
@@ -33,10 +38,15 @@ const decodeProjectThreadPreviewSyncRecord = Schema.decodeUnknownSync(
 );
 const decodeChatVisualMode = Schema.decodeUnknownSync(ChatVisualMode);
 const decodeChatVisualModeSyncRecord = Schema.decodeUnknownSync(ChatVisualModeSyncRecord);
+const decodeInterfaceLanguagePreference = Schema.decodeUnknownSync(InterfaceLanguagePreference);
+const decodeInterfaceLanguageSyncRecord = Schema.decodeUnknownSync(InterfaceLanguageSyncRecord);
+const decodeChatGptSettings = Schema.decodeUnknownSync(ChatGptSettings);
+const decodeOpenRouterSettings = Schema.decodeUnknownSync(OpenRouterSettings);
 const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodeProjectThreadPreviewSyncRecord = Schema.encodeSync(ProjectThreadPreviewSyncRecord);
 const encodeChatVisualModeSyncRecord = Schema.encodeSync(ChatVisualModeSyncRecord);
+const encodeInterfaceLanguageSyncRecord = Schema.encodeSync(InterfaceLanguageSyncRecord);
 
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
@@ -278,6 +288,56 @@ describe("ChatVisualModeSyncRecord", () => {
   });
 });
 
+describe("InterfaceLanguageSyncRecord", () => {
+  const record = {
+    preference: "de",
+    updatedAt: 1_787_178_400_000,
+    updateId: "device-a:de",
+  } as const;
+
+  it("defaults to the system language and accepts the supported preferences", () => {
+    expect(DEFAULT_INTERFACE_LANGUAGE_PREFERENCE).toBe("system");
+    expect(decodeInterfaceLanguagePreference("system")).toBe("system");
+    expect(decodeInterfaceLanguagePreference("en")).toBe("en");
+    expect(decodeInterfaceLanguagePreference("de")).toBe("de");
+    expect(() => decodeInterfaceLanguagePreference("fr")).toThrow();
+  });
+
+  it("round-trips a synchronized German selection", () => {
+    const decoded = decodeInterfaceLanguageSyncRecord(record);
+    const encoded = encodeInterfaceLanguageSyncRecord(decoded);
+
+    expect(encoded).toEqual(record);
+    expect(decodeInterfaceLanguageSyncRecord(encoded)).toEqual(record);
+  });
+
+  it("keeps the local cache nullable and the server record optional", () => {
+    expect(decodeClientSettings({}).interfaceLanguageLocalRecord).toBeNull();
+    expect(DEFAULT_CLIENT_SETTINGS.interfaceLanguageLocalRecord).toBeNull();
+    expect(
+      decodeClientSettingsPatch({ interfaceLanguageLocalRecord: record })
+        .interfaceLanguageLocalRecord,
+    ).toEqual(record);
+    expect(decodeServerSettings({}).interfaceLanguageSyncRecord).toBeUndefined();
+    expect(
+      decodeServerSettingsPatch({ interfaceLanguageSyncRecord: record })
+        .interfaceLanguageSyncRecord,
+    ).toEqual(record);
+  });
+
+  it.each([
+    { ...record, preference: "fr" },
+    { ...record, updatedAt: -1 },
+    { ...record, updatedAt: 1.5 },
+    { ...record, updateId: "   " },
+  ])("rejects an invalid synchronized language record: $record", (invalidRecord) => {
+    expect(() => decodeInterfaceLanguageSyncRecord(invalidRecord)).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({ interfaceLanguageSyncRecord: invalidRecord }),
+    ).toThrow();
+  });
+});
+
 describe("ClientSettings sidebar", () => {
   it("defaults to the current sidebar with automatic merge and inactivity settling", () => {
     const settings = decodeClientSettings({});
@@ -421,7 +481,7 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
 });
 
 describe("ServerSettings native provider boundary", () => {
-  it("hydrates defaults for exactly the six native providers", () => {
+  it("hydrates defaults for exactly the eight native providers", () => {
     const decoded = decodeServerSettings({});
 
     expect(Object.keys(decoded.providers)).toEqual([
@@ -431,7 +491,11 @@ describe("ServerSettings native provider boundary", () => {
       "grok",
       "opencode",
       "gemini",
+      "chatgpt",
+      "openrouter",
     ]);
+    expect(decoded.providers.chatgpt).toEqual({ enabled: false, binaryPath: "codex" });
+    expect(decoded.providers.openrouter).toEqual(decodeOpenRouterSettings({}));
   });
 
   it("keeps native patch fields and ignores removed legacy provider keys", () => {
@@ -443,7 +507,12 @@ describe("ServerSettings native provider boundary", () => {
         grok: { binaryPath: "  /usr/local/bin/grok  " },
         opencode: { binaryPath: "  /usr/local/bin/opencode  " },
         gemini: { enabled: true, customModels: ["gemini-custom"] },
-        openrouter: { apiKey: "  gateway-key  " },
+        chatgpt: { enabled: true, binaryPath: "  /usr/local/bin/codex  " },
+        openrouter: {
+          protocol: "responses",
+          defaultModel: "  openai/gpt-5.5  ",
+          contextCompression: true,
+        },
         nvidiaNim: { apiKey: "  nvapi-key  " },
         localOpenAi: { v1BaseUrl: "  http://127.0.0.1:11434/v1  " },
         opencodeZen: { apiKey: "  zen-key  " },
@@ -461,12 +530,124 @@ describe("ServerSettings native provider boundary", () => {
       "grok",
       "opencode",
       "gemini",
+      "chatgpt",
+      "openrouter",
     ]);
     expect(patch.providers?.codex?.binaryPath).toBe("/usr/local/bin/codex");
     expect(patch.providers?.gemini).toEqual({
       enabled: true,
       customModels: ["gemini-custom"],
     });
+    expect(patch.providers?.chatgpt).toEqual({
+      enabled: true,
+      binaryPath: "/usr/local/bin/codex",
+    });
+    expect(patch.providers?.openrouter).toEqual({
+      protocol: "responses",
+      defaultModel: "openai/gpt-5.5",
+      contextCompression: true,
+    });
+  });
+});
+
+describe("ChatGptSettings", () => {
+  it("defaults to a disabled subscription provider using the Codex auth broker binary", () => {
+    expect(decodeChatGptSettings({})).toEqual({ enabled: false, binaryPath: "codex" });
+  });
+
+  it("normalizes an explicit auth broker binary without accepting credential settings", () => {
+    expect(
+      decodeChatGptSettings({
+        enabled: true,
+        binaryPath: "  /opt/openai/bin/codex  ",
+        accessToken: "must-not-be-configurable",
+      }),
+    ).toEqual({ enabled: true, binaryPath: "/opt/openai/bin/codex" });
+  });
+});
+
+describe("OpenRouterSettings", () => {
+  it("defaults to a disabled, explicit-model Chat Completions provider", () => {
+    expect(decodeOpenRouterSettings({})).toEqual({
+      enabled: false,
+      protocol: "chat-completions",
+      defaultModel: "",
+      customModels: [],
+      contextCompression: false,
+      routingMode: "openrouter-default",
+      providerOrder: [],
+      routingSort: "price",
+      allowFallbacks: "inherit",
+      dataCollection: "inherit",
+      requireZdr: false,
+    });
+  });
+
+  it("normalizes advanced routing values and rejects negative or non-finite numbers", () => {
+    expect(
+      decodeOpenRouterSettings({
+        enabled: true,
+        protocol: "responses",
+        defaultModel: "  anthropic/claude-sonnet-4  ",
+        customModels: ["  @preset/t3  "],
+        contextCompression: true,
+        routingMode: "provider-order",
+        providerOrder: ["  anthropic  ", "google-vertex"],
+        routingSort: "latency",
+        allowFallbacks: "disabled",
+        dataCollection: "deny",
+        requireZdr: true,
+        preferredMinThroughput: 12.5,
+        preferredMaxLatency: 4,
+        maxPromptPriceUsdPerMillion: 3,
+        maxCompletionPriceUsdPerMillion: 15,
+        maxRequestPriceUsd: 0.1,
+      }),
+    ).toEqual({
+      enabled: true,
+      protocol: "responses",
+      defaultModel: "anthropic/claude-sonnet-4",
+      customModels: ["@preset/t3"],
+      contextCompression: true,
+      routingMode: "provider-order",
+      providerOrder: ["anthropic", "google-vertex"],
+      routingSort: "latency",
+      allowFallbacks: "disabled",
+      dataCollection: "deny",
+      requireZdr: true,
+      preferredMinThroughput: 12.5,
+      preferredMaxLatency: 4,
+      maxPromptPriceUsdPerMillion: 3,
+      maxCompletionPriceUsdPerMillion: 15,
+      maxRequestPriceUsd: 0.1,
+    });
+
+    expect(() => decodeOpenRouterSettings({ preferredMinThroughput: -1 })).toThrow();
+    expect(() =>
+      decodeOpenRouterSettings({ preferredMaxLatency: Number.POSITIVE_INFINITY }),
+    ).toThrow();
+  });
+
+  it("publishes renderer-neutral field annotations for advanced controls", () => {
+    const defaultModelAnnotations = Schema.resolveAnnotationsKey(
+      OpenRouterSettings.fields.defaultModel,
+    )?.providerSettingsForm;
+    const routingSortAnnotations = Schema.resolveAnnotationsKey(
+      OpenRouterSettings.fields.routingSort,
+    )?.providerSettingsForm;
+    const maxRequestPriceAnnotations = Schema.resolveAnnotationsKey(
+      OpenRouterSettings.fields.maxRequestPriceUsd,
+    )?.providerSettingsForm;
+
+    expect(defaultModelAnnotations).toMatchObject({
+      control: "select",
+      options: { source: "models" },
+    });
+    expect(routingSortAnnotations).toMatchObject({
+      control: "select",
+      visibleWhen: { field: "routingMode", equals: "sort" },
+    });
+    expect(maxRequestPriceAnnotations).toMatchObject({ control: "number", min: 0 });
   });
 });
 
@@ -522,6 +703,7 @@ describe("provider enabled defaults", () => {
     expect(decoded.providers.grok.enabled).toBe(true);
     expect(decoded.providers.opencode.enabled).toBe(true);
     expect(decoded.providers.gemini.enabled).toBe(false);
+    expect(decoded.providers.openrouter.enabled).toBe(false);
   });
 
   it("derives per-driver defaults from the settings schemas", () => {
@@ -530,6 +712,7 @@ describe("provider enabled defaults", () => {
     expect(defaultEnabledForDriver(ProviderDriverKind.make("grok"))).toBe(true);
     expect(defaultEnabledForDriver(ProviderDriverKind.make("opencode"))).toBe(true);
     expect(defaultEnabledForDriver(ProviderDriverKind.make("gemini"))).toBe(false);
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("openrouter"))).toBe(false);
     // Unknown fork drivers stay enabled; their own build decides otherwise.
     expect(defaultEnabledForDriver(ProviderDriverKind.make("ollama"))).toBe(true);
   });

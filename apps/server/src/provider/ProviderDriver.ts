@@ -34,6 +34,7 @@ import type * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import type { ProviderAdapterError, ProviderDriverError } from "./Errors.ts";
 import type { ProviderAdapterShape } from "./Services/ProviderAdapter.ts";
 import type { ProviderHistorySyncFacet } from "./Services/ProviderHistorySync.ts";
+import type { ProviderAuthenticationFacet } from "./Services/ProviderAuthentication.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
 
 /**
@@ -73,6 +74,7 @@ export interface ProviderInstance {
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly historySync: ProviderHistorySyncFacet;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
+  readonly authentication?: ProviderAuthenticationFacet;
 }
 
 export interface ProviderContinuationIdentity {

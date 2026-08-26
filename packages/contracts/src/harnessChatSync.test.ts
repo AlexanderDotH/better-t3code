@@ -123,10 +123,12 @@ describe("harness chat sync contracts", () => {
       nextCursor: "page-2",
       totalMatching: 12,
       changedMatching: 3,
+      countsAreComplete: false,
     });
 
     expect(result.chats[0]?.link?.nativeSessionId).toBe("session-1");
     expect(result.nextCursor).toBe("page-2");
+    expect(result.countsAreComplete).toBe(false);
   });
 
   it("decodes partial run failures without discarding successful sessions", () => {

@@ -141,6 +141,19 @@ import {
   submitComposerDraft,
 } from "./composerSubmission";
 import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation";
+import { ForkHandoffBudgetNotice } from "./ForkHandoffBudgetNotice";
+import type { FirstTurnForkBudget } from "../../lib/threadFork";
+import {
+  SURFACE_MORPH_EXIT_DURATION_MS,
+  SURFACE_MORPH_SECONDARY_DURATION_MS as COMPOSER_SECONDARY_MORPH_DURATION_MS,
+  captureSurfaceGeometry,
+  createSurfaceMorphCoordinator,
+  resolveSurfaceMorphOrigin,
+  type SurfaceGeometry,
+  type SurfaceMorphCoordinator,
+  type SurfaceMorphDirection,
+  type SurfaceMorphOrigin,
+} from "./surfaceMorph";
 
 type ComposerCommandMenuPosition = {
   bottom: number;
@@ -158,8 +171,17 @@ function composerCommandMenuPositionsEqual(
   );
 }
 
-function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children: ReactNode }) {
+function ComposerCommandMenuLayer(props: {
+  anchor: HTMLElement | null;
+  children: ReactNode;
+  coordinator: SurfaceMorphCoordinator | null;
+  originKey: "command" | "stash";
+  scopeKey: string;
+}) {
   const [position, setPosition] = useState<ComposerCommandMenuPosition | null>(null);
+  const layerRef = useRef<HTMLDivElement>(null);
+  const previousPositionRef = useRef<ComposerCommandMenuPosition | null>(null);
+  const surfaceSnapshotRef = useRef<DetachedComposerSurfaceSnapshot | null>(null);
 
   useLayoutEffect(() => {
     const anchor = props.anchor;
@@ -220,12 +242,88 @@ function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children:
     };
   }, [props.anchor]);
 
+  useLayoutEffect(() => {
+    const layer = layerRef.current;
+    const form = props.anchor?.closest<HTMLFormElement>('[data-chat-composer-form="true"]');
+    const element = layer?.querySelector<HTMLElement>(
+      '[data-composer-stash-drawer="true"], [data-composer-command-drawer="true"]',
+    );
+    if (!form || !element || !position || !props.coordinator) return;
+
+    const geometry = captureSurfaceGeometry(element);
+    const previous = surfaceSnapshotRef.current;
+    const positionChanged =
+      previousPositionRef.current !== null &&
+      !composerCommandMenuPositionsEqual(previousPositionRef.current, position);
+    if (!previous) {
+      const origin = resolveDetachedSurfaceOrigin(form, geometry, props.originKey);
+      if (origin) {
+        const source = pointSurfaceGeometry(origin);
+        props.coordinator.run({
+          direction: detachedSurfaceDirection(source, geometry, false),
+          durationMs: COMPOSER_SECONDARY_MORPH_DURATION_MS,
+          element,
+          from: source,
+          to: geometry,
+        });
+      }
+    } else if (!positionChanged && surfaceGeometriesDiffer(previous.geometry, geometry)) {
+      props.coordinator.run({
+        direction: detachedSurfaceDirection(previous.geometry, geometry, false),
+        durationMs:
+          geometry.rect.height < previous.geometry.rect.height
+            ? SURFACE_MORPH_EXIT_DURATION_MS
+            : COMPOSER_SECONDARY_MORPH_DURATION_MS,
+        element,
+        from: previous.geometry,
+        to: geometry,
+      });
+    }
+
+    surfaceSnapshotRef.current = {
+      element,
+      geometry,
+      key: props.originKey,
+      template: element.cloneNode(true) as HTMLElement,
+    };
+    previousPositionRef.current = position;
+  });
+
+  useLayoutEffect(
+    () => () => {
+      const snapshot = surfaceSnapshotRef.current;
+      const form = props.anchor?.closest<HTMLFormElement>('[data-chat-composer-form="true"]');
+      if (!snapshot || !form || !props.coordinator) return;
+
+      const origin = resolveDetachedSurfaceOrigin(form, snapshot.geometry, snapshot.key);
+      if (!origin) return;
+
+      const proxy = createDetachedSurfaceExitProxy(snapshot);
+      const destination = pointSurfaceGeometry(origin);
+      const run = props.coordinator.run({
+        direction: detachedSurfaceDirection(snapshot.geometry, destination, true),
+        durationMs: SURFACE_MORPH_EXIT_DURATION_MS,
+        element: proxy,
+        from: snapshot.geometry,
+        to: destination,
+      });
+      void run.finished.then(() => proxy.remove());
+      surfaceSnapshotRef.current = null;
+    },
+    [props.anchor, props.coordinator, props.originKey],
+  );
+
   if (!position) return null;
 
   return createPortal(
     <div
+      ref={layerRef}
       className="pointer-events-auto fixed z-[70]"
       data-composer-drawer-layer="true"
+      data-composer-surface-morph="secondary"
+      data-composer-surface-morph-key={`detached-drawer:${props.originKey}`}
+      data-composer-surface-morph-origin={props.originKey}
+      data-composer-surface-morph-scope={props.scopeKey}
       style={{
         bottom: position.bottom,
         left: position.left,
@@ -247,6 +345,85 @@ function ComposerDetachedDrawerPortal({
   readonly host: HTMLElement | null;
 }) {
   return host ? createPortal(children, host) : children;
+}
+
+type DetachedComposerSurfaceSnapshot = {
+  readonly element: HTMLElement;
+  readonly geometry: SurfaceGeometry;
+  readonly key: string;
+  readonly template: HTMLElement;
+};
+
+function surfaceGeometriesDiffer(from: SurfaceGeometry, to: SurfaceGeometry): boolean {
+  return (
+    Math.abs(from.rect.left - to.rect.left) >= 0.5 ||
+    Math.abs(from.rect.top - to.rect.top) >= 0.5 ||
+    Math.abs(from.rect.width - to.rect.width) >= 0.5 ||
+    Math.abs(from.rect.height - to.rect.height) >= 0.5
+  );
+}
+
+function pointSurfaceGeometry(origin: SurfaceMorphOrigin): SurfaceGeometry {
+  return {
+    rect: { left: origin.x - 4, top: origin.y - 4, width: 8, height: 8 },
+    radii: { topLeft: 16, topRight: 16, bottomRight: 16, bottomLeft: 16 },
+  };
+}
+
+function detachedSurfaceDirection(
+  from: SurfaceGeometry,
+  to: SurfaceGeometry,
+  exiting: boolean,
+): SurfaceMorphDirection {
+  const destinationBelowSource = to.rect.top >= from.rect.top;
+  if (exiting) return destinationBelowSource ? "to-bottom" : "to-top";
+  return destinationBelowSource ? "from-top" : "from-bottom";
+}
+
+function findComposerMorphTrigger(form: HTMLFormElement, key: string): HTMLElement | null {
+  const triggers = form.querySelectorAll<HTMLElement>("[data-composer-surface-morph-trigger]");
+  return (
+    Array.from(triggers).find((trigger) => trigger.dataset.composerSurfaceMorphTrigger === key) ??
+    null
+  );
+}
+
+function resolveDetachedSurfaceOrigin(
+  form: HTMLFormElement,
+  destination: SurfaceGeometry,
+  key: string,
+): SurfaceMorphOrigin | null {
+  const composer = form.querySelector<HTMLElement>('[data-chat-composer-main-surface="true"]');
+  if (!composer) return null;
+
+  const trigger = findComposerMorphTrigger(form, key);
+  return resolveSurfaceMorphOrigin({
+    composerRect: captureSurfaceGeometry(composer).rect,
+    destinationRect: destination.rect,
+    ...(trigger ? { triggerRect: captureSurfaceGeometry(trigger).rect } : {}),
+  });
+}
+
+function createDetachedSurfaceExitProxy(snapshot: DetachedComposerSurfaceSnapshot): HTMLElement {
+  const proxy = snapshot.template.cloneNode(true) as HTMLElement;
+  proxy.removeAttribute("id");
+  proxy.removeAttribute("data-composer-surface-morph-origin");
+  proxy.removeAttribute("data-composer-surface-morph-key");
+  proxy.setAttribute("aria-hidden", "true");
+  proxy.setAttribute("data-composer-surface-morph-exit-proxy", "true");
+  proxy.setAttribute("inert", "");
+  proxy.inert = true;
+  proxy.style.position = "fixed";
+  proxy.style.left = `${snapshot.geometry.rect.left}px`;
+  proxy.style.top = `${snapshot.geometry.rect.top}px`;
+  proxy.style.width = `${snapshot.geometry.rect.width}px`;
+  proxy.style.height = `${snapshot.geometry.rect.height}px`;
+  proxy.style.margin = "0";
+  proxy.style.pointerEvents = "none";
+  proxy.style.zIndex = "70";
+  proxy.querySelectorAll("[id]").forEach((element) => element.removeAttribute("id"));
+  document.body.append(proxy);
+  return proxy;
 }
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectValue } from "../ui/select";
@@ -569,6 +746,7 @@ export interface ChatComposerProps {
   isPreparingWorktree: boolean;
   externalDrawerAttached: boolean;
   floatingDrawerHost: HTMLElement | null;
+  surfaceMorphScopeKey: string;
   environmentUnavailable: {
     readonly label: string;
     readonly connection: EnvironmentConnectionPresentation;
@@ -609,6 +787,7 @@ export interface ChatComposerProps {
 
   // Context window
   activeThreadActivities: Thread["activities"] | undefined;
+  firstTurnForkBudget: FirstTurnForkBudget | null;
 
   // Misc
   resolvedTheme: "light" | "dark";
@@ -699,6 +878,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeProposedPlan,
     activeTasksProgress,
     activeTaskSteps,
+    firstTurnForkBudget,
     runtimeMode,
     interactionMode,
     lockedProvider,
@@ -1077,9 +1257,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     key: 0,
     active: false,
   });
+  const [surfaceMorphCoordinator] = useState<SurfaceMorphCoordinator | null>(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return null;
+    return createSurfaceMorphCoordinator({ windowTarget: window, documentTarget: document });
+  });
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile =
     isMobileViewport && !forceExpandedOnMobile && !isComposerFocused;
+  const providerInputLimit = firstTurnForkBudget?.remainingInputChars;
+  const attachmentLimit = Math.max(
+    0,
+    Math.min(
+      PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+      firstTurnForkBudget?.remainingAttachmentCount ?? PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+    ),
+  );
 
   // ------------------------------------------------------------------
   // Refs
@@ -1098,6 +1290,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const mobileComposerExpandInFlightRef = useRef(false);
   const stashPulseKeyRef = useRef(0);
   const stashPulseTimeoutRef = useRef<number | null>(null);
+  const markedMorphTriggerElementsRef = useRef<Set<HTMLElement>>(new Set());
+  const markedMorphDrawerElementsRef = useRef<Set<HTMLElement>>(new Set());
+  const surfaceMorphScopeKeyRef = useRef(props.surfaceMorphScopeKey);
   /**
    * Snapshots currently being encoded, keyed by target+prompt+image ids.
    * Keyed rather than boolean so a genuinely different prompt (or a different
@@ -1111,6 +1306,74 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    * next draft.
    */
   const pendingImageCompressionsRef = useRef<Map<ThreadId, number>>(new Map());
+
+  useLayoutEffect(() => {
+    if (surfaceMorphScopeKeyRef.current === props.surfaceMorphScopeKey) return;
+    surfaceMorphCoordinator?.cancel();
+    surfaceMorphScopeKeyRef.current = props.surfaceMorphScopeKey;
+  }, [props.surfaceMorphScopeKey, surfaceMorphCoordinator]);
+
+  useEffect(
+    () => () => {
+      surfaceMorphCoordinator?.dispose();
+    },
+    [surfaceMorphCoordinator],
+  );
+
+  useLayoutEffect(() => {
+    const form = composerFormRef.current;
+    if (!form) return;
+
+    for (const trigger of markedMorphTriggerElementsRef.current) {
+      if (!trigger.isConnected) markedMorphTriggerElementsRef.current.delete(trigger);
+    }
+    for (const drawer of markedMorphDrawerElementsRef.current) {
+      if (!drawer.isConnected) markedMorphDrawerElementsRef.current.delete(drawer);
+    }
+
+    // These controls live in focused child components that intentionally do
+    // not forward arbitrary DOM props. Mark the real buttons after the commit
+    // so origin capture stays pixel-accurate without adding layout wrappers.
+    const morphRoots = [form, props.floatingDrawerHost].filter(
+      (root): root is HTMLElement => root !== null,
+    );
+    for (const root of morphRoots) {
+      root.querySelectorAll<HTMLElement>('[data-prompt-stash-badge="true"]').forEach((trigger) => {
+        trigger.setAttribute("data-composer-surface-morph-trigger", "stash");
+        markedMorphTriggerElementsRef.current.add(trigger);
+      });
+      root
+        .querySelectorAll<HTMLElement>('[data-composer-tasks-badge="true"] button[aria-expanded]')
+        .forEach((trigger) => {
+          trigger.setAttribute("data-composer-surface-morph-trigger", "tasks");
+          markedMorphTriggerElementsRef.current.add(trigger);
+        });
+      root
+        .querySelectorAll<HTMLElement>('[data-chat-composer-tasks-drawer="true"]')
+        .forEach((drawer) => {
+          drawer.setAttribute("data-composer-surface-morph", "secondary");
+          drawer.setAttribute("data-composer-surface-morph-key", "tasks-drawer");
+          drawer.setAttribute("data-composer-surface-morph-origin", "tasks");
+          markedMorphDrawerElementsRef.current.add(drawer);
+        });
+    }
+  });
+
+  useEffect(
+    () => () => {
+      for (const trigger of markedMorphTriggerElementsRef.current) {
+        trigger.removeAttribute("data-composer-surface-morph-trigger");
+      }
+      for (const drawer of markedMorphDrawerElementsRef.current) {
+        drawer.removeAttribute("data-composer-surface-morph");
+        drawer.removeAttribute("data-composer-surface-morph-key");
+        drawer.removeAttribute("data-composer-surface-morph-origin");
+      }
+      markedMorphTriggerElementsRef.current.clear();
+      markedMorphDrawerElementsRef.current.clear();
+    },
+    [],
+  );
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -1473,11 +1736,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   useEffect(() => {
     if (composerSubmissionError === null) return;
-    const nextError = getComposerPromptLengthValidationMessage(prompt);
+    const nextError = getComposerPromptLengthValidationMessage(prompt, providerInputLimit);
     if (nextError !== composerSubmissionError) {
       setComposerSubmissionError(nextError);
     }
-  }, [composerSubmissionError, prompt]);
+  }, [composerSubmissionError, prompt, providerInputLimit]);
 
   useEffect(() => {
     setProviderInputSubmissionError(null);
@@ -2098,6 +2361,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       const submission = submitComposerDraft({
         prompt: promptRef.current,
+        ...(providerInputLimit !== undefined ? { maxInputChars: providerInputLimit } : {}),
         submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
         event,
         onSend: (sendEvent) => {
@@ -2117,6 +2381,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [
       activeThreadId,
       activePendingProgress,
+      providerInputLimit,
       isAbortPending,
       blurMobileComposerAfterSend,
       isSendDisabled,
@@ -2273,18 +2538,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         // unique image into the overflow list for nothing.
         const existingDedupKeys = new Set(
           composerImagesRef.current.map(
-            (image) => `${image.mimeType} ${image.sizeBytes} ${image.name}`,
+            (image) => `${image.mimeType}\u0000${image.sizeBytes}\u0000${image.name}`,
           ),
         );
-        const capacity = Math.max(
-          0,
-          PROVIDER_SEND_TURN_MAX_ATTACHMENTS - composerImagesRef.current.length,
-        );
+        const capacity = Math.max(0, attachmentLimit - composerImagesRef.current.length);
         const pending = entry.attachments.filter(
           (attachment) =>
             !existingIds.has(attachment.id) &&
             !existingDedupKeys.has(
-              `${attachment.mimeType} ${attachment.sizeBytes} ${attachment.name}`,
+              `${attachment.mimeType}\u0000${attachment.sizeBytes}\u0000${attachment.name}`,
             ),
         );
         // Anything past the attachment limit cannot be restored. The entry is
@@ -2317,7 +2579,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       if (unrestoredImageNames.length > 0) {
         missingImageReasons.push(
-          `${unrestoredImageNames.join(", ")} could not be restored: the composer is at its ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}-image limit.`,
+          `${unrestoredImageNames.join(", ")} could not be restored: the composer is at its ${attachmentLimit}-image limit.`,
         );
       }
       if (missingImageReasons.length > 0) {
@@ -2338,6 +2600,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
     [
       addComposerDraftImages,
+      attachmentLimit,
       composerDraftTarget,
       composerImagesRef,
       promptRef,
@@ -2376,7 +2639,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     // the composer has been cleared the user can type something genuinely
     // new (or switch threads) while encoding continues, and that deserves its
     // own entry.
-    const snapshotKey = `${String(composerDraftTarget)} ${prompt} ${images
+    const snapshotKey = `${String(composerDraftTarget)}\u0000${prompt}\u0000${images
       .map((image) => image.id)
       .join(",")}`;
     if (stashInFlightRef.current.has(snapshotKey)) return;
@@ -2691,8 +2954,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         error = `'${file.name}' is not a supported image type. Attach GIF, JPEG, PNG, or WebP images.`;
         continue;
       }
-      if (reservedCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-        error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
+      if (reservedCount >= attachmentLimit) {
+        error = `You can attach up to ${attachmentLimit} images per message.`;
         break;
       }
       acceptedFiles.push(file);
@@ -2993,6 +3256,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         const validationMessage = getComposerSubmissionValidationMessage({
           prompt: promptRef.current,
           providerInput,
+          ...(providerInputLimit !== undefined ? { maxInputChars: providerInputLimit } : {}),
           submissionTarget: "provider-turn",
         });
         providerInputRejectedRef.current = validationMessage !== null;
@@ -3030,6 +3294,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedProvider,
       selectedProviderModels,
       planImplementationSuggestion,
+      providerInputLimit,
     ],
   );
 
@@ -3277,6 +3542,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
             <div
               ref={setComposerMenuAnchor}
+              data-composer-surface-morph-trigger="command"
               className={cn(
                 "relative px-3 pb-2 sm:px-4",
                 "pt-3.5 sm:pt-4",
@@ -3285,7 +3551,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
             >
               {isStashMenuOpen && !composerMenuOpen && !isComposerApprovalState && (
-                <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
+                <ComposerCommandMenuLayer
+                  anchor={composerMenuAnchor}
+                  coordinator={surfaceMorphCoordinator}
+                  originKey="stash"
+                  scopeKey={props.surfaceMorphScopeKey}
+                >
                   <ComposerStashMenu
                     entries={stashQueue}
                     onRestore={restoreStashEntry}
@@ -3296,7 +3567,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
 
               {composerMenuOpen && !isComposerApprovalState && (
-                <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
+                <ComposerCommandMenuLayer
+                  anchor={composerMenuAnchor}
+                  coordinator={surfaceMorphCoordinator}
+                  originKey="command"
+                  scopeKey={props.surfaceMorphScopeKey}
+                >
                   <ComposerCommandMenu
                     items={composerMenuItems}
                     resolvedTheme={resolvedTheme}
@@ -3519,6 +3795,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             <ComposerPromptLengthValidation
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
+            <ForkHandoffBudgetNotice budget={firstTurnForkBudget} />
 
             {/* Bottom toolbar */}
             {isComposerCollapsedMobile || isComposerApprovalState ? null : (

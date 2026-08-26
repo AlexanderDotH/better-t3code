@@ -3,6 +3,9 @@ import {
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
@@ -18,6 +21,10 @@ import {
 } from "../auth/http.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
+import { makeOrchestrationCommandDispatcher } from "./orchestrationCommandDispatcher.ts";
+import { GitWorkflowService } from "../git/GitWorkflowService.ts";
+import { ProjectSetupScriptRunner } from "../project/ProjectSetupScriptRunner.ts";
+import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
 
 export const orchestrationHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -123,16 +130,65 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.dispatch")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          const dispatcher =
+            args.payload.type === "thread.turn.start"
+              ? yield* Effect.gen(function* () {
+                  const crypto = yield* Crypto.Crypto;
+                  const gitWorkflow = yield* GitWorkflowService;
+                  const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
+                  const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
+                  return makeOrchestrationCommandDispatcher({
+                    dispatch: orchestrationEngine.dispatch,
+                    randomUuid: crypto.randomUUIDv4,
+                    nowIso: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
+                    gitWorkflow,
+                    projectSetupScriptRunner,
+                    refreshGitStatus: (cwd) =>
+                      vcsStatusBroadcaster
+                        .refreshStatus(cwd)
+                        .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid),
+                    resolveThread: (threadId) =>
+                      projectionSnapshotQuery
+                        .getThreadShellById(threadId)
+                        .pipe(Effect.map(Option.getOrUndefined)),
+                    resolveProject: (projectId) =>
+                      projectionSnapshotQuery
+                        .getProjectShellById(projectId)
+                        .pipe(Effect.map(Option.getOrUndefined)),
+                  });
+                })
+              : undefined;
+          if (
+            args.payload.type === "thread.turn.start" &&
+            args.payload.bootstrap === undefined &&
+            dispatcher !== undefined
+          ) {
+            yield* dispatcher
+              .prepareTurnWorkspace({
+                commandId: args.payload.commandId,
+                threadId: args.payload.threadId,
+                messageText: args.payload.message.text,
+                attachmentCount: args.payload.message.attachments.length,
+              })
+              .pipe(
+                Effect.catchCause((cause) =>
+                  failEnvironmentInternal("orchestration_dispatch_failed", Cause.squash(cause)),
+                ),
+              );
+          }
           const normalizedCommand = yield* normalizeDispatchCommand(args.payload).pipe(
             Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")),
           );
-          return yield* orchestrationEngine
-            .dispatch(normalizedCommand)
-            .pipe(
-              Effect.catch((cause) =>
-                failEnvironmentInternal("orchestration_dispatch_failed", cause),
-              ),
-            );
+          return yield* Effect.gen(function* () {
+            if (normalizedCommand.type === "thread.turn.start" && dispatcher !== undefined) {
+              return yield* dispatcher.dispatch(normalizedCommand);
+            }
+            return yield* orchestrationEngine.dispatch(normalizedCommand);
+          }).pipe(
+            Effect.catchCause((cause) =>
+              failEnvironmentInternal("orchestration_dispatch_failed", Cause.squash(cause)),
+            ),
+          );
         }),
       );
   }),

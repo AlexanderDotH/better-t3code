@@ -45,7 +45,7 @@ import {
   type HarnessChatSelectionState,
 } from "./harness-chat-sync-settings";
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 10;
 
 function failureMessage(result: { readonly _tag: string }, fallback: string): string {
   if (result._tag !== "Failure") return fallback;
@@ -74,9 +74,20 @@ function resultSummary(result: HarnessChatSyncRunResult): string {
   return `${synced}${failed} · ${result.messagesImported} new messages`;
 }
 
-function sourceSummary(source: HarnessChatSyncSource): string {
-  const changed = source.changedCount > 0 ? ` · ${source.changedCount} changed` : "";
-  return `${source.chatCount} chats${changed} · ${formatUpdatedAt(source.latestUpdatedAt)}`;
+function sourceSummary(input: {
+  readonly source: HarnessChatSyncSource;
+  readonly visibleCount: number;
+  readonly totalMatching: number;
+  readonly changedMatching: number;
+  readonly countsAreComplete: boolean;
+}): string {
+  const latestUpdatedAt = input.source.latestUpdatedAt;
+  if (!input.countsAreComplete) {
+    const changed = input.changedMatching > 0 ? ` · ${input.changedMatching}+ changed` : "";
+    return `${input.visibleCount} shown · more available${changed}`;
+  }
+  const changed = input.changedMatching > 0 ? ` · ${input.changedMatching} changed` : "";
+  return `${input.totalMatching} chats${changed} · ${formatUpdatedAt(latestUpdatedAt)}`;
 }
 
 function projectTargetLabel(
@@ -241,6 +252,7 @@ function SupportedHarnessChatSource(props: {
   readonly source: HarnessChatSyncSource;
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly onSynced: () => void;
+  readonly active: boolean;
 }) {
   const listChats = useAtomCommand(agentSettingsEnvironment.harnessChatSync.list, {
     reportFailure: false,
@@ -259,6 +271,7 @@ function SupportedHarnessChatSource(props: {
   const [nextCursor, setNextCursor] = useState<HarnessChatSyncListResult["nextCursor"]>(null);
   const [totalMatching, setTotalMatching] = useState(0);
   const [changedMatching, setChangedMatching] = useState(0);
+  const [countsAreComplete, setCountsAreComplete] = useState(true);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshingStatus, setRefreshingStatus] = useState(false);
@@ -311,16 +324,18 @@ function SupportedHarnessChatSource(props: {
       setNextCursor(result.value.nextCursor);
       setTotalMatching(result.value.totalMatching);
       setChangedMatching(result.value.changedMatching);
+      setCountsAreComplete(result.value.countsAreComplete ?? true);
     },
     [includeArchived, listChats, props.environmentId, props.source.id, query],
   );
 
   useEffect(() => {
+    if (!props.active) return;
     void loadPage(null);
     return () => {
       requestSequence.current += 1;
     };
-  }, [loadPage]);
+  }, [loadPage, props.active]);
 
   const selectedUnresolved = useMemo(
     () =>
@@ -345,7 +360,9 @@ function SupportedHarnessChatSource(props: {
   const selectionLabel =
     selection.mode === "allMatching"
       ? selection.excludedSessionIds.size === 0
-        ? `All ${totalMatching} matching selected`
+        ? countsAreComplete
+          ? `All ${totalMatching} matching selected`
+          : `All matching selected · ${chats.length} shown`
         : `All matching except ${selection.excludedSessionIds.size}`
       : `${selection.sessionIds.size} selected`;
 
@@ -496,7 +513,17 @@ function SupportedHarnessChatSource(props: {
     <View className="gap-2">
       <SettingsSection card title={`${props.source.label} · ${props.source.driver}`}>
         <View className="gap-1 p-4">
-          <Text className="text-sm text-foreground-muted">{sourceSummary(props.source)}</Text>
+          <Text className="text-sm text-foreground-muted">
+            {loading
+              ? "Checking history…"
+              : sourceSummary({
+                  source: props.source,
+                  visibleCount: chats.length,
+                  totalMatching,
+                  changedMatching,
+                  countsAreComplete,
+                })}
+          </Text>
           {props.source.status.kind === "supported" &&
           !props.source.status.supportsActivityStatus ? (
             <Text className="text-xs leading-normal text-foreground-muted">
@@ -581,7 +608,7 @@ function SupportedHarnessChatSource(props: {
             className="border-t border-border-subtle p-4 disabled:opacity-40"
           >
             <Text className="text-center font-t3-medium text-foreground">
-              {loadingMore ? "Loading…" : "Load more"}
+              {loadingMore ? "Loading…" : "View more"}
             </Text>
           </Pressable>
         ) : null}
@@ -611,7 +638,8 @@ function SupportedHarnessChatSource(props: {
       </SettingsSection>
       {changedMatching > 0 ? (
         <Text className="px-2 text-xs text-foreground-muted">
-          {changedMatching} matching chats have changes.
+          {changedMatching}
+          {countsAreComplete ? "" : "+"} matching chats have changes.
         </Text>
       ) : null}
       {lastResult ? (
@@ -655,6 +683,7 @@ function HarnessChatSourceCard(props: {
   readonly source: HarnessChatSyncSource;
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly onSynced: () => void;
+  readonly active: boolean;
 }) {
   if (props.source.status.kind === "supported") {
     return <SupportedHarnessChatSource {...props} />;
@@ -689,7 +718,13 @@ export function HarnessChatSyncEnvironment(props: {
   const [sources, setSources] = useState<ReadonlyArray<HarnessChatSyncSource> | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeSourceId, setActiveSourceId] = useState<HarnessChatSyncSource["id"] | null>(null);
   const requestSequence = useRef(0);
+  const activeSource =
+    sources?.find((source) => source.id === activeSourceId) ??
+    sources?.find((source) => source.status.kind === "supported") ??
+    sources?.[0] ??
+    null;
 
   const reload = useCallback(async () => {
     if (!supported) return;
@@ -747,17 +782,51 @@ export function HarnessChatSyncEnvironment(props: {
             No configured provider exposes a harness history source.
           </Text>
         </SettingsSection>
-      ) : (
-        sources.map((source) => (
-          <HarnessChatSourceCard
-            key={source.id}
-            environmentId={props.environmentId}
-            source={source}
-            projects={props.projects}
-            onSynced={() => void reload()}
-          />
-        ))
-      )}
+      ) : activeSource ? (
+        <View className="gap-3">
+          <View accessibilityRole="tablist" className="flex-row flex-wrap gap-2 px-1">
+            {sources.map((source) => {
+              const active = source.id === activeSource.id;
+              return (
+                <Pressable
+                  key={source.id}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: active }}
+                  onPress={() => setActiveSourceId(source.id)}
+                  className={
+                    active
+                      ? "min-w-36 flex-1 basis-[47%] max-w-[48%] items-center rounded-xl bg-foreground px-4 py-2"
+                      : "min-w-36 flex-1 basis-[47%] max-w-[48%] items-center rounded-xl border border-border bg-card px-4 py-2"
+                  }
+                >
+                  <Text
+                    numberOfLines={1}
+                    className={
+                      active ? "font-t3-medium text-background" : "font-t3-medium text-foreground"
+                    }
+                  >
+                    {source.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          {sources.map((source) => {
+            const active = source.id === activeSource.id;
+            return (
+              <View key={source.id} style={{ display: active ? "flex" : "none" }}>
+                <HarnessChatSourceCard
+                  environmentId={props.environmentId}
+                  source={source}
+                  projects={props.projects}
+                  active={active}
+                  onSynced={() => void reload()}
+                />
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
       {sources !== null ? (
         <Pressable
           accessibilityRole="button"

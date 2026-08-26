@@ -3,11 +3,12 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
-import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
+import { McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/unstable/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -71,6 +72,42 @@ export const normalizeMcpHttpResponse = (
     ? HttpServerResponse.setStatus(response, 202)
     : response;
 };
+
+export function normalizeMcpToolInputSchema(
+  inputSchema: unknown,
+): Readonly<Record<string, unknown>> & { readonly type: "object" } {
+  return {
+    ...(Predicate.isObject(inputSchema) && !Array.isArray(inputSchema) ? inputSchema : {}),
+    type: "object",
+  };
+}
+
+const registerMcpCompatibleToolkit = Effect.fn("McpHttpServer.registerCompatibleToolkit")(
+  function* <Tools extends Record<string, Tool.Any>>(toolkit: Toolkit.Toolkit<Tools>) {
+    const server = yield* McpServer.McpServer;
+    const compatibleServer = McpServer.McpServer.of({
+      ...server,
+      addTool: (options) =>
+        server.addTool({
+          ...options,
+          tool: new McpSchema.Tool({
+            ...options.tool,
+            inputSchema: normalizeMcpToolInputSchema(options.tool.inputSchema),
+          }),
+        }),
+    });
+    yield* McpServer.registerToolkit(toolkit).pipe(
+      Effect.provideService(McpServer.McpServer, compatibleServer),
+    );
+  },
+);
+
+const mcpCompatibleToolkit = <Tools extends Record<string, Tool.Any>>(
+  toolkit: Toolkit.Toolkit<Tools>,
+) =>
+  Layer.effectDiscard(registerMcpCompatibleToolkit(toolkit)).pipe(
+    Layer.provide(McpServer.McpServer.layer),
+  );
 
 const makeMcpAuthMiddleware = (requiredCapability?: McpInvocationContext.McpCapability) =>
   McpSessionRegistry.McpSessionRegistry.pipe(
@@ -160,7 +197,7 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
     tool: new McpSchema.Tool({
       name: tool.name,
       description: Tool.getDescription(tool),
-      inputSchema: Tool.getJsonSchema(tool),
+      inputSchema: normalizeMcpToolInputSchema(Tool.getJsonSchema(tool)),
       annotations: {
         ...Context.getOption(tool.annotations, Tool.Title).pipe(
           Option.map((title) => ({ title })),
@@ -227,7 +264,7 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
   });
 });
 
-const PreviewStandardToolkitRegistrationLive = McpServer.toolkit(PreviewStandardToolkit).pipe(
+const PreviewStandardToolkitRegistrationLive = mcpCompatibleToolkit(PreviewStandardToolkit).pipe(
   Layer.provide(PreviewStandardToolkitHandlersLive),
 );
 
@@ -240,15 +277,15 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
   PreviewSnapshotRegistrationLive,
 );
 
-export const WorkspaceToolkitRegistrationLive = McpServer.toolkit(WorkspaceToolkit).pipe(
+export const WorkspaceToolkitRegistrationLive = mcpCompatibleToolkit(WorkspaceToolkit).pipe(
   Layer.provide(WorkspaceToolkitHandlersLive),
 );
 
-const ProjectCoordinationToolkitRegistrationLive = McpServer.toolkit(CoordinationToolkit).pipe(
+const ProjectCoordinationToolkitRegistrationLive = mcpCompatibleToolkit(CoordinationToolkit).pipe(
   Layer.provide(CoordinationToolkitHandlersLive),
 );
 
-export const GeneralSubagentToolkitRegistrationLive = McpServer.toolkit(
+export const GeneralSubagentToolkitRegistrationLive = mcpCompatibleToolkit(
   GeneralSubagentToolkit,
 ).pipe(Layer.provide(GeneralSubagentToolkitHandlersLive));
 

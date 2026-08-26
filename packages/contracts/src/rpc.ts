@@ -247,6 +247,18 @@ import {
   ServerConfig,
   AssemblyAiStreamingTokenError,
   AssemblyAiStreamingTokenResult,
+  SpeechStreamingAudioInput,
+  SpeechStreamingProxyError,
+  SpeechStreamingSessionInput,
+  SpeechStreamingSessionStartResult,
+  SpeechStreamingTranscriptResult,
+  ProviderAuthConnectEvent,
+  ProviderAuthConnectInput,
+  ProviderAuthDisconnectInput,
+  ProviderAuthDisconnectResult,
+  ProviderAuthOperationError,
+  ProviderAuthSetCredentialInput,
+  ProviderAuthSetCredentialResult,
   ServerProviderUpdateError,
   ServerProviderUpdateInput,
   ServerLifecycleStreamEvent,
@@ -392,6 +404,9 @@ export const WS_METHODS = {
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
   serverUpdateProvider: "server.updateProvider",
+  serverProviderAuthConnect: "server.providerAuthConnect",
+  serverProviderAuthSetCredential: "server.providerAuthSetCredential",
+  serverProviderAuthDisconnect: "server.providerAuthDisconnect",
   serverUpdateServer: "server.updateServer",
   serverUpdateServerWithProgress: "server.updateServerWithProgress",
   serverUpsertKeybinding: "server.upsertKeybinding",
@@ -399,6 +414,10 @@ export const WS_METHODS = {
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverCreateAssemblyAiStreamingToken: "server.createAssemblyAiStreamingToken",
+  speechStartStreamingSession: "speech.startStreamingSession",
+  speechPushStreamingAudio: "speech.pushStreamingAudio",
+  speechFinishStreamingSession: "speech.finishStreamingSession",
+  speechCancelStreamingSession: "speech.cancelStreamingSession",
   speechGetProjectProfile: "speech.getProjectProfile",
   speechListProjectProfiles: "speech.listProjectProfiles",
   speechIndexProject: "speech.indexProject",
@@ -547,6 +566,28 @@ export const WsServerUpdateProviderRpc = Rpc.make(WS_METHODS.serverUpdateProvide
   error: Schema.Union([ServerProviderUpdateError, EnvironmentAuthorizationError]),
 });
 
+export const WsServerProviderAuthConnectRpc = Rpc.make(WS_METHODS.serverProviderAuthConnect, {
+  payload: ProviderAuthConnectInput,
+  success: ProviderAuthConnectEvent,
+  error: Schema.Union([ProviderAuthOperationError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+export const WsServerProviderAuthSetCredentialRpc = Rpc.make(
+  WS_METHODS.serverProviderAuthSetCredential,
+  {
+    payload: ProviderAuthSetCredentialInput,
+    success: ProviderAuthSetCredentialResult,
+    error: Schema.Union([ProviderAuthOperationError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerProviderAuthDisconnectRpc = Rpc.make(WS_METHODS.serverProviderAuthDisconnect, {
+  payload: ProviderAuthDisconnectInput,
+  success: ProviderAuthDisconnectResult,
+  error: Schema.Union([ProviderAuthOperationError, EnvironmentAuthorizationError]),
+});
+
 export const WsServerUpdateServerRpc = Rpc.make(WS_METHODS.serverUpdateServer, {
   payload: ServerSelfUpdateInput,
   success: ServerSelfUpdateResult,
@@ -587,6 +628,35 @@ export const WsServerCreateAssemblyAiStreamingTokenRpc = Rpc.make(
     ]),
   },
 );
+
+export const WsSpeechStartStreamingSessionRpc = Rpc.make(WS_METHODS.speechStartStreamingSession, {
+  payload: ProjectSpeechProfileInput,
+  success: SpeechStreamingSessionStartResult,
+  error: Schema.Union([
+    SpeechStreamingProxyError,
+    AssemblyAiStreamingTokenError,
+    ProjectSpeechProfileError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
+export const WsSpeechPushStreamingAudioRpc = Rpc.make(WS_METHODS.speechPushStreamingAudio, {
+  payload: SpeechStreamingAudioInput,
+  success: SpeechStreamingTranscriptResult,
+  error: Schema.Union([SpeechStreamingProxyError, EnvironmentAuthorizationError]),
+});
+
+export const WsSpeechFinishStreamingSessionRpc = Rpc.make(WS_METHODS.speechFinishStreamingSession, {
+  payload: SpeechStreamingSessionInput,
+  success: SpeechStreamingTranscriptResult,
+  error: Schema.Union([SpeechStreamingProxyError, EnvironmentAuthorizationError]),
+});
+
+export const WsSpeechCancelStreamingSessionRpc = Rpc.make(WS_METHODS.speechCancelStreamingSession, {
+  payload: SpeechStreamingSessionInput,
+  success: Schema.Void,
+  error: Schema.Union([SpeechStreamingProxyError, EnvironmentAuthorizationError]),
+});
 
 export const WsSpeechGetProjectProfileRpc = Rpc.make(WS_METHODS.speechGetProjectProfile, {
   payload: ProjectSpeechProfileInput,
@@ -1546,6 +1616,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
+  WsServerProviderAuthConnectRpc,
+  WsServerProviderAuthSetCredentialRpc,
+  WsServerProviderAuthDisconnectRpc,
   WsServerUpdateServerRpc,
   WsServerUpdateServerWithProgressRpc,
   WsServerUpsertKeybindingRpc,
@@ -1553,6 +1626,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsServerCreateAssemblyAiStreamingTokenRpc,
+  WsSpeechStartStreamingSessionRpc,
+  WsSpeechPushStreamingAudioRpc,
+  WsSpeechFinishStreamingSessionRpc,
+  WsSpeechCancelStreamingSessionRpc,
   WsSpeechGetProjectProfileRpc,
   WsSpeechListProjectProfilesRpc,
   WsSpeechIndexProjectRpc,

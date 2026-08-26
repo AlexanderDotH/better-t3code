@@ -1,5 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
+import { ListToolsResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
@@ -351,20 +352,8 @@ it.effect(
               "application/json",
             ),
           });
-          const body = JSON.parse(yield* response.text) as {
-            readonly result: {
-              readonly tools: ReadonlyArray<{
-                readonly name: string;
-                readonly annotations?: {
-                  readonly readOnlyHint?: boolean;
-                  readonly destructiveHint?: boolean;
-                  readonly idempotentHint?: boolean;
-                  readonly openWorldHint?: boolean;
-                };
-              }>;
-            };
-          };
-          return body.result.tools;
+          const body = JSON.parse(yield* response.text) as { readonly result: unknown };
+          return ListToolsResultSchema.parse(body.result).tools;
         });
 
         const rejected = yield* initialize("/mcp/workspace", "preview-token");
@@ -387,6 +376,11 @@ it.effect(
         expect(previewTools.map(({ name }) => name)).toContain("subagent_wait");
         expect(previewTools.map(({ name }) => name)).toContain("subagent_cancel");
         expect(previewTools.map(({ name }) => name)).not.toContain("workspace_context");
+        expect(
+          previewTools
+            .filter(({ inputSchema }) => inputSchema.type !== "object")
+            .map(({ name }) => name),
+        ).toEqual([]);
         expect(previewTools.find(({ name }) => name === "project_agent_send")?.annotations).toEqual(
           {
             title: "Message project agents",

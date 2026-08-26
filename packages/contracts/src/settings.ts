@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { NonNegativeInt, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { ThreadEnvMode } from "./environment.ts";
@@ -60,6 +61,19 @@ export const ChatVisualModeSyncRecord = Schema.Struct({
   updateId: TrimmedNonEmptyString,
 });
 export type ChatVisualModeSyncRecord = typeof ChatVisualModeSyncRecord.Type;
+
+// ── Synchronized Interface Language ────────────────────────────
+
+export const InterfaceLanguagePreference = Schema.Literals(["system", "en", "de"]);
+export type InterfaceLanguagePreference = typeof InterfaceLanguagePreference.Type;
+export const DEFAULT_INTERFACE_LANGUAGE_PREFERENCE: InterfaceLanguagePreference = "system";
+
+export const InterfaceLanguageSyncRecord = Schema.Struct({
+  preference: InterfaceLanguagePreference,
+  updatedAt: NonNegativeInt,
+  updateId: TrimmedNonEmptyString,
+});
+export type InterfaceLanguageSyncRecord = typeof InterfaceLanguageSyncRecord.Type;
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -203,6 +217,10 @@ export const ClientSettingsSchema = Schema.Struct({
   environmentIdentificationMode: EnvironmentIdentificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE)),
   ),
+  /** Local cache participating in cross-environment interface-language sync. */
+  interfaceLanguageLocalRecord: Schema.NullOr(InterfaceLanguageSyncRecord).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   glassOpacity: GlassOpacity.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_GLASS_OPACITY)),
   ),
@@ -320,13 +338,40 @@ const makeDefaultedTrimmedStringSetting = (fallback: string) =>
 
 const makeBinaryPathSetting = makeDefaultedTrimmedStringSetting;
 
-export type ProviderSettingsFormControl = "text" | "password" | "textarea" | "switch";
+export type ProviderSettingsFormControl =
+  | "text"
+  | "password"
+  | "textarea"
+  | "switch"
+  | "select"
+  | "number"
+  | "ordered-string-list";
+
+export interface ProviderSettingsFormSelectOption {
+  readonly value: string;
+  readonly label: string;
+  readonly description?: string | undefined;
+}
+
+export type ProviderSettingsFormOptions =
+  | readonly ProviderSettingsFormSelectOption[]
+  | { readonly source: "models" };
+
+export interface ProviderSettingsFormVisibilityCondition {
+  readonly field: string;
+  readonly equals: string | number | boolean;
+}
 
 export interface ProviderSettingsFormAnnotation {
   readonly control?: ProviderSettingsFormControl | undefined;
   readonly placeholder?: string | undefined;
   readonly hidden?: boolean | undefined;
   readonly clearWhenEmpty?: "omit" | "persist" | undefined;
+  readonly options?: ProviderSettingsFormOptions | undefined;
+  readonly min?: number | undefined;
+  readonly max?: number | undefined;
+  readonly step?: number | undefined;
+  readonly visibleWhen?: ProviderSettingsFormVisibilityCondition | undefined;
 }
 
 export interface ProviderSettingsFormSchemaAnnotation {
@@ -414,6 +459,252 @@ export const CodexSettings = makeProviderSettingsSchema(
   },
 );
 export type CodexSettings = typeof CodexSettings.Type;
+
+export const ChatGptSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("codex").pipe(
+      Schema.annotateKey({
+        title: "Auth broker binary path",
+        description: "Path to the Codex binary used only for ChatGPT subscription sign-in.",
+        providerSettingsForm: { placeholder: "codex", clearWhenEmpty: "omit" },
+      }),
+    ),
+  },
+  { order: ["binaryPath"] },
+);
+export type ChatGptSettings = typeof ChatGptSettings.Type;
+
+const OpenRouterProtocol = Schema.Literals(["chat-completions", "responses"]);
+const OpenRouterRoutingMode = Schema.Literals(["openrouter-default", "provider-order", "sort"]);
+const OpenRouterRoutingSort = Schema.Literals(["price", "throughput", "latency"]);
+const OpenRouterAllowFallbacks = Schema.Literals(["inherit", "enabled", "disabled"]);
+const OpenRouterDataCollection = Schema.Literals(["inherit", "allow", "deny"]);
+const OpenRouterNonNegativeNumber = Schema.Number.check(
+  Schema.isFinite(),
+  Schema.isGreaterThanOrEqualTo(0),
+);
+
+const optionalOpenRouterNumber = (title: string, description: string) =>
+  Schema.optionalKey(OpenRouterNonNegativeNumber).pipe(
+    Schema.annotateKey({
+      title,
+      description,
+      providerSettingsForm: { control: "number", min: 0 },
+    }),
+  );
+
+export const OpenRouterSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    protocol: OpenRouterProtocol.pipe(
+      Schema.withDecodingDefault(Effect.succeed("chat-completions" as const)),
+      Schema.annotateKey({
+        title: "Protocol",
+        description: "Chat Completions is stable. OpenResponses is beta.",
+        providerSettingsForm: {
+          control: "select",
+          options: [
+            { value: "chat-completions", label: "Chat Completions" },
+            { value: "responses", label: "OpenResponses (Beta)" },
+          ],
+        },
+      }),
+    ),
+    defaultModel: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Default model",
+        description: "Required before OpenRouter can start turns or background workers.",
+        providerSettingsForm: {
+          control: "select",
+          options: { source: "models" },
+          clearWhenEmpty: "persist",
+        },
+      }),
+    ),
+    customModels: Schema.Array(TrimmedNonEmptyString).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({
+        title: "Custom models and presets",
+        description: "Additional model or @preset slugs not returned by the model catalog.",
+        providerSettingsForm: {
+          control: "ordered-string-list",
+          placeholder: "@preset/t3",
+        },
+      }),
+    ),
+    contextCompression: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({
+        title: "Context compression",
+        description: "Allow OpenRouter to compress messages when the model context is exceeded.",
+        providerSettingsForm: { control: "switch" },
+      }),
+    ),
+    routingMode: OpenRouterRoutingMode.pipe(
+      Schema.withDecodingDefault(Effect.succeed("openrouter-default" as const)),
+      Schema.annotateKey({
+        title: "Routing mode",
+        description: "Choose OpenRouter routing, an ordered provider list, or metric sorting.",
+        providerSettingsForm: {
+          control: "select",
+          options: [
+            { value: "openrouter-default", label: "OpenRouter default" },
+            { value: "provider-order", label: "Provider order" },
+            { value: "sort", label: "Sort providers" },
+          ],
+        },
+      }),
+    ),
+    providerOrder: Schema.Array(TrimmedNonEmptyString).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({
+        title: "Provider order",
+        description: "Try these OpenRouter provider slugs in order.",
+        providerSettingsForm: {
+          control: "ordered-string-list",
+          placeholder: "anthropic",
+          visibleWhen: { field: "routingMode", equals: "provider-order" },
+        },
+      }),
+    ),
+    routingSort: OpenRouterRoutingSort.pipe(
+      Schema.withDecodingDefault(Effect.succeed("price" as const)),
+      Schema.annotateKey({
+        title: "Provider sort",
+        description: "Sort eligible providers by price, throughput, or latency.",
+        providerSettingsForm: {
+          control: "select",
+          options: [
+            { value: "price", label: "Price" },
+            { value: "throughput", label: "Throughput" },
+            { value: "latency", label: "Latency" },
+          ],
+          visibleWhen: { field: "routingMode", equals: "sort" },
+        },
+      }),
+    ),
+    allowFallbacks: OpenRouterAllowFallbacks.pipe(
+      Schema.withDecodingDefault(Effect.succeed("inherit" as const)),
+      Schema.annotateKey({
+        title: "Endpoint fallbacks",
+        description: "Inherit the account setting or explicitly enable or disable fallbacks.",
+        providerSettingsForm: {
+          control: "select",
+          options: [
+            { value: "inherit", label: "Inherit account setting" },
+            { value: "enabled", label: "Enabled" },
+            { value: "disabled", label: "Disabled" },
+          ],
+        },
+      }),
+    ),
+    dataCollection: OpenRouterDataCollection.pipe(
+      Schema.withDecodingDefault(Effect.succeed("inherit" as const)),
+      Schema.annotateKey({
+        title: "Data collection",
+        description: "Inherit the account privacy setting or allow or deny data collection.",
+        providerSettingsForm: {
+          control: "select",
+          options: [
+            { value: "inherit", label: "Inherit account setting" },
+            { value: "allow", label: "Allow" },
+            { value: "deny", label: "Deny" },
+          ],
+        },
+      }),
+    ),
+    requireZdr: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({
+        title: "Require zero data retention",
+        description: "Only use endpoints that advertise zero data retention.",
+        providerSettingsForm: { control: "switch" },
+      }),
+    ),
+    preferredMinThroughput: optionalOpenRouterNumber(
+      "Preferred minimum throughput",
+      "Preferred minimum generation throughput in tokens per second.",
+    ),
+    preferredMaxLatency: optionalOpenRouterNumber(
+      "Preferred maximum latency",
+      "Preferred maximum generation latency in seconds.",
+    ),
+    maxPromptPriceUsdPerMillion: optionalOpenRouterNumber(
+      "Maximum prompt price",
+      "Maximum prompt price in USD per million tokens.",
+    ),
+    maxCompletionPriceUsdPerMillion: optionalOpenRouterNumber(
+      "Maximum completion price",
+      "Maximum completion price in USD per million tokens.",
+    ),
+    maxRequestPriceUsd: optionalOpenRouterNumber(
+      "Maximum request price",
+      "Maximum price in USD per request.",
+    ),
+  },
+  {
+    order: [
+      "protocol",
+      "defaultModel",
+      "customModels",
+      "contextCompression",
+      "routingMode",
+      "providerOrder",
+      "routingSort",
+      "allowFallbacks",
+      "dataCollection",
+      "requireZdr",
+      "preferredMinThroughput",
+      "preferredMaxLatency",
+      "maxPromptPriceUsdPerMillion",
+      "maxCompletionPriceUsdPerMillion",
+      "maxRequestPriceUsd",
+    ],
+  },
+);
+export type OpenRouterSettings = typeof OpenRouterSettings.Type;
+
+/**
+ * Driver-only decoder for opaque provider-instance configuration.
+ *
+ * Legacy migrations persist a marker when an old OpenRouter entry targeted a
+ * custom base URL. The public settings type stays exact and contains no
+ * migration-only field; this codec rejects the raw marker before the driver is
+ * created so the registry preserves the entry as an unavailable shadow with a
+ * clear explanation.
+ */
+export const OpenRouterDriverSettings = Schema.Unknown.pipe(
+  Schema.decodeTo(
+    OpenRouterSettings,
+    SchemaTransformation.transformOrFail({
+      decode: (value) => {
+        if (
+          typeof value === "object" &&
+          value !== null &&
+          "legacyBaseUrlIncompatible" in value &&
+          value.legacyBaseUrlIncompatible === true
+        ) {
+          return Effect.fail(
+            new SchemaIssue.InvalidValue({
+              message:
+                "This legacy OpenRouter instance used a non-OpenRouter base URL and cannot be migrated to the native OpenRouter provider.",
+            }),
+          );
+        }
+        return Effect.succeed(value as typeof OpenRouterSettings.Encoded);
+      },
+      encode: (value) => Effect.succeed(value),
+    }),
+  ),
+);
 
 export const ClaudeSettings = makeProviderSettingsSchema(
   {
@@ -749,6 +1040,7 @@ export const DEFAULT_PARALLEL_PLAN_REVIEW_MODEL_SELECTION: ModelSelection = {
 export const ServerSettings = Schema.Struct({
   projectThreadPreviewSyncRecord: Schema.optionalKey(ProjectThreadPreviewSyncRecord),
   chatVisualModeSyncRecord: Schema.optionalKey(ChatVisualModeSyncRecord),
+  interfaceLanguageSyncRecord: Schema.optionalKey(InterfaceLanguageSyncRecord),
   // Legacy token-by-token assistant output. Persisted settings and patches
   // using the former `enableAssistantStreaming` key are normalized at the
   // server boundary; current clients only receive this canonical key.
@@ -836,6 +1128,8 @@ export const ServerSettings = Schema.Struct({
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     gemini: GeminiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    chatgpt: ChatGptSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    openrouter: OpenRouterSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -960,6 +1254,30 @@ const CodexSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const ChatGptSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+});
+
+const OpenRouterSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  protocol: Schema.optionalKey(OpenRouterProtocol),
+  defaultModel: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+  contextCompression: Schema.optionalKey(Schema.Boolean),
+  routingMode: Schema.optionalKey(OpenRouterRoutingMode),
+  providerOrder: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+  routingSort: Schema.optionalKey(OpenRouterRoutingSort),
+  allowFallbacks: Schema.optionalKey(OpenRouterAllowFallbacks),
+  dataCollection: Schema.optionalKey(OpenRouterDataCollection),
+  requireZdr: Schema.optionalKey(Schema.Boolean),
+  preferredMinThroughput: Schema.optionalKey(OpenRouterNonNegativeNumber),
+  preferredMaxLatency: Schema.optionalKey(OpenRouterNonNegativeNumber),
+  maxPromptPriceUsdPerMillion: Schema.optionalKey(OpenRouterNonNegativeNumber),
+  maxCompletionPriceUsdPerMillion: Schema.optionalKey(OpenRouterNonNegativeNumber),
+  maxRequestPriceUsd: Schema.optionalKey(OpenRouterNonNegativeNumber),
+});
+
 const ClaudeSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
@@ -1018,6 +1336,7 @@ export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   projectThreadPreviewSyncRecord: Schema.optionalKey(ProjectThreadPreviewSyncRecord),
   chatVisualModeSyncRecord: Schema.optionalKey(ChatVisualModeSyncRecord),
+  interfaceLanguageSyncRecord: Schema.optionalKey(InterfaceLanguageSyncRecord),
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
   /** @deprecated Use `enableLegacyTokenStreaming`. Kept for mixed-version clients. */
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
@@ -1085,6 +1404,8 @@ export const ServerSettingsPatch = Schema.Struct({
       grok: Schema.optionalKey(GrokSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
       gemini: Schema.optionalKey(GeminiSettingsPatch),
+      chatgpt: Schema.optionalKey(ChatGptSettingsPatch),
+      openrouter: Schema.optionalKey(OpenRouterSettingsPatch),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual
@@ -1107,6 +1428,7 @@ export const ClientSettingsPatch = Schema.Struct({
   experimentalFetch: Schema.optionalKey(Schema.Boolean),
   experimentalParallelPlanImplementation: Schema.optionalKey(Schema.Boolean),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
+  interfaceLanguageLocalRecord: Schema.optionalKey(Schema.NullOr(InterfaceLanguageSyncRecord)),
   glassOpacity: Schema.optionalKey(GlassOpacity),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),
   fontSizePrompt: Schema.optionalKey(PromptFontSize),

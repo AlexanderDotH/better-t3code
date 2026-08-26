@@ -776,6 +776,12 @@ it.layer(
         WHERE message_id = 'message-rollback'
       `;
       assert.equal(rows[0]?.count ?? 0, 0);
+      const referenceRows = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count
+        FROM projection_attachment_references
+        WHERE message_id = 'message-rollback'
+      `;
+      assert.equal(referenceRows[0]?.count ?? 0, 0);
 
       const { attachmentsDir } = yield* ServerConfig;
       const attachmentPath = path.join(attachmentsDir, "thread-rollback-att-1.png");

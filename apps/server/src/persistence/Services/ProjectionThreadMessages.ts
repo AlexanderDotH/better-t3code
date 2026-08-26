@@ -13,6 +13,7 @@ import {
   ThreadId,
   TurnId,
   IsoDateTime,
+  OrchestrationHistoryOrigin,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
@@ -31,6 +32,7 @@ export const ProjectionThreadMessage = Schema.Struct({
   isStreaming: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  historyOrigin: Schema.optional(OrchestrationHistoryOrigin),
 });
 export type ProjectionThreadMessage = typeof ProjectionThreadMessage.Type;
 

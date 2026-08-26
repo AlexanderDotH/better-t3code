@@ -67,6 +67,7 @@ import Migration0051 from "./Migrations/051_ProjectionProjectCheckpointsEnabled.
 import Migration0052 from "./Migrations/052_AuthSessionClientConnectionCompatibility.ts";
 import Migration0053 from "./Migrations/053_ProjectionThreadSubagentManagedOrigin.ts";
 import Migration0054 from "./Migrations/054_ProjectionHarnessChatSync.ts";
+import Migration0055 from "./Migrations/055_ProjectionThreadForks.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -133,6 +134,7 @@ export const migrationEntries = [
   [52, "AuthSessionClientConnectionCompatibility", Migration0052],
   [53, "ProjectionThreadSubagentManagedOrigin", Migration0053],
   [54, "ProjectionHarnessChatSync", Migration0054],
+  [55, "ProjectionThreadForks", Migration0055],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

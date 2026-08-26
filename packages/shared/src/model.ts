@@ -20,10 +20,18 @@ export interface SelectableModelOption {
 export function createModelCapabilities(input: {
   optionDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
   contextWindow?: ModelCapabilities["contextWindow"];
+  inputModalities?: ModelCapabilities["inputModalities"];
+  outputModalities?: ModelCapabilities["outputModalities"];
+  pricing?: ModelCapabilities["pricing"];
+  toolSupport?: ModelCapabilities["toolSupport"];
 }): ModelCapabilities {
   return {
     optionDescriptors: input.optionDescriptors.map(cloneDescriptor),
     ...(input.contextWindow ? { contextWindow: { ...input.contextWindow } } : {}),
+    ...(input.inputModalities ? { inputModalities: [...input.inputModalities] } : {}),
+    ...(input.outputModalities ? { outputModalities: [...input.outputModalities] } : {}),
+    ...(input.pricing ? { pricing: { ...input.pricing } } : {}),
+    ...(input.toolSupport ? { toolSupport: { ...input.toolSupport } } : {}),
   };
 }
 
@@ -104,19 +112,23 @@ export function createCodexContextWindowDescriptor(
   metadata: NonNullable<ModelCapabilities["contextWindow"]>,
 ): Extract<ProviderOptionDescriptor, { type: "select" }> {
   const defaultLabel = formatModelContextWindowTokens(metadata.defaultTokens);
+  const maximumSelectableTokens = Math.min(
+    metadata.maxTokens,
+    CODEX_CONTEXT_WINDOW_CUSTOM_MAX_TOKENS,
+  );
   const numericTokens = new Set<number>(
     CODEX_CONTEXT_WINDOW_STABLE_TOKENS.filter(
       (tokens) =>
+        tokens <= maximumSelectableTokens &&
         tokens !== metadata.defaultTokens &&
         formatModelContextWindowTokens(tokens) !== defaultLabel,
     ),
   );
   if (
-    metadata.maxTokens >= CODEX_CONTEXT_WINDOW_MIN_TOKENS &&
-    metadata.maxTokens <= CODEX_CONTEXT_WINDOW_CUSTOM_MAX_TOKENS &&
-    metadata.maxTokens !== metadata.defaultTokens
+    maximumSelectableTokens >= CODEX_CONTEXT_WINDOW_MIN_TOKENS &&
+    maximumSelectableTokens !== metadata.defaultTokens
   ) {
-    numericTokens.add(metadata.maxTokens);
+    numericTokens.add(maximumSelectableTokens);
   }
   const choices = [
     ...Array.from(numericTokens, (tokens) => ({
@@ -186,6 +198,21 @@ function resolveDescriptorChoiceValue(
   }
   if (descriptor.options.some((option) => option.id === trimmed)) {
     return trimmed;
+  }
+  if (descriptor.id === CODEX_CONTEXT_WINDOW_OPTION_ID) {
+    const requestedTokens = Number(trimmed);
+    const maximumChoiceTokens = Math.max(
+      ...descriptor.options
+        .map((option) => Number(option.id))
+        .filter((tokens) => Number.isSafeInteger(tokens) && tokens > 0),
+    );
+    if (
+      Number.isSafeInteger(requestedTokens) &&
+      requestedTokens > maximumChoiceTokens &&
+      Number.isFinite(maximumChoiceTokens)
+    ) {
+      return String(maximumChoiceTokens);
+    }
   }
   return descriptor.currentValue ?? descriptor.options.find((option) => option.isDefault)?.id;
 }

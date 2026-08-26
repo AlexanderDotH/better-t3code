@@ -20,6 +20,8 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { ProjectionPendingApprovalRepository } from "../../persistence/Services/ProjectionPendingApprovals.ts";
+import { ProjectionAttachmentReferenceRepository } from "../../persistence/Services/ProjectionAttachmentReferences.ts";
+import { ProjectionCheckpointRepository } from "../../persistence/Services/ProjectionCheckpoints.ts";
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
 import { ProjectionStateRepository } from "../../persistence/Services/ProjectionState.ts";
 import { ProjectionThreadActivityRepository } from "../../persistence/Services/ProjectionThreadActivities.ts";
@@ -39,6 +41,8 @@ import {
 } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
+import { ProjectionAttachmentReferenceRepositoryLive } from "../../persistence/Layers/ProjectionAttachmentReferences.ts";
+import { ProjectionCheckpointRepositoryLive } from "../../persistence/Layers/ProjectionCheckpoints.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionProjectAgentCoordinationRepositoryLive } from "../../persistence/Layers/ProjectionProjectAgentCoordination.ts";
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
@@ -67,12 +71,7 @@ import {
   OrchestrationProjectionPipeline,
   type OrchestrationProjectionPipelineShape,
 } from "../Services/ProjectionPipeline.ts";
-import {
-  attachmentRelativePath,
-  parseAttachmentIdFromRelativePath,
-  parseThreadSegmentFromAttachmentId,
-  toSafeThreadAttachmentSegment,
-} from "../../attachmentStore.ts";
+import { parseAttachmentIdFromRelativePath } from "../../attachmentStore.ts";
 import { makeAbortInteractionResolutionActivities } from "../abortInteractionSettlement.ts";
 
 export const ORCHESTRATION_PROJECTOR_NAMES = {
@@ -194,8 +193,7 @@ interface ProjectorDefinition {
 }
 
 interface AttachmentSideEffects {
-  readonly deletedThreadIds: Set<string>;
-  readonly prunedThreadRelativePaths: Map<string, Set<string>>;
+  readonly candidateAttachmentIds: Set<string>;
 }
 
 const materializeAttachmentsForProjection = Effect.fn("materializeAttachmentsForProjection")(
@@ -376,7 +374,9 @@ function retainProjectionMessagesAfterRevert(
     }
   }
 
-  return messages.filter((message) => retainedMessageIds.has(message.messageId));
+  return messages.filter(
+    (message) => message.historyOrigin !== undefined || retainedMessageIds.has(message.messageId),
+  );
 }
 
 function retainProjectionActivitiesAfterRevert(
@@ -395,7 +395,10 @@ function retainProjectionActivitiesAfterRevert(
       .flatMap((turn) => (turn.turnId === null ? [] : [turn.turnId])),
   );
   return activities.filter(
-    (activity) => activity.turnId === null || retainedTurnIds.has(activity.turnId),
+    (activity) =>
+      activity.historyOrigin !== undefined ||
+      activity.turnId === null ||
+      retainedTurnIds.has(activity.turnId),
   );
 }
 
@@ -415,87 +418,30 @@ function retainProjectionProposedPlansAfterRevert(
       .flatMap((turn) => (turn.turnId === null ? [] : [turn.turnId])),
   );
   return proposedPlans.filter(
-    (proposedPlan) => proposedPlan.turnId === null || retainedTurnIds.has(proposedPlan.turnId),
+    (proposedPlan) =>
+      proposedPlan.historyOrigin !== undefined ||
+      proposedPlan.turnId === null ||
+      retainedTurnIds.has(proposedPlan.turnId),
   );
-}
-
-function collectThreadAttachmentRelativePaths(
-  threadId: string,
-  messages: ReadonlyArray<ProjectionThreadMessage>,
-): Set<string> {
-  const threadSegment = toSafeThreadAttachmentSegment(threadId);
-  if (!threadSegment) {
-    return new Set();
-  }
-  const relativePaths = new Set<string>();
-  for (const message of messages) {
-    for (const attachment of message.attachments ?? []) {
-      const attachmentThreadSegment = parseThreadSegmentFromAttachmentId(attachment.id);
-      if (!attachmentThreadSegment || attachmentThreadSegment !== threadSegment) {
-        continue;
-      }
-      relativePaths.add(attachmentRelativePath(attachment));
-    }
-  }
-  return relativePaths;
 }
 
 const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function* (
   sideEffects: AttachmentSideEffects,
 ) {
+  if (sideEffects.candidateAttachmentIds.size === 0) {
+    return;
+  }
   const serverConfig = yield* Effect.service(ServerConfig);
   const fileSystem = yield* Effect.service(FileSystem.FileSystem);
   const path = yield* Effect.service(Path.Path);
+  const attachmentReferences = yield* Effect.service(ProjectionAttachmentReferenceRepository);
 
   const attachmentsRootDir = serverConfig.attachmentsDir;
   const readAttachmentRootEntries = fileSystem
     .readDirectory(attachmentsRootDir, { recursive: false })
     .pipe(Effect.orElseSucceed(() => [] as Array<string>));
 
-  const removeDeletedThreadAttachmentEntry = Effect.fn("removeDeletedThreadAttachmentEntry")(
-    function* (threadSegment: string, entry: string) {
-      const normalizedEntry = entry.replace(/^[/\\]+/, "").replace(/\\/g, "/");
-      if (normalizedEntry.length === 0 || normalizedEntry.includes("/")) {
-        return;
-      }
-      const attachmentId = parseAttachmentIdFromRelativePath(normalizedEntry);
-      if (!attachmentId) {
-        return;
-      }
-      const attachmentThreadSegment = parseThreadSegmentFromAttachmentId(attachmentId);
-      if (!attachmentThreadSegment || attachmentThreadSegment !== threadSegment) {
-        return;
-      }
-      yield* fileSystem.remove(path.join(attachmentsRootDir, normalizedEntry), {
-        force: true,
-      });
-    },
-  );
-
-  const deleteThreadAttachments = Effect.fn("deleteThreadAttachments")(function* (
-    threadId: string,
-  ) {
-    const threadSegment = toSafeThreadAttachmentSegment(threadId);
-    if (!threadSegment) {
-      yield* Effect.logWarning("skipping attachment cleanup for unsafe thread id", {
-        threadId,
-      });
-      return;
-    }
-
-    const entries = yield* readAttachmentRootEntries;
-    yield* Effect.forEach(
-      entries,
-      (entry) => removeDeletedThreadAttachmentEntry(threadSegment, entry),
-      {
-        concurrency: 1,
-      },
-    );
-  });
-
-  const pruneThreadAttachmentEntry = Effect.fn("pruneThreadAttachmentEntry")(function* (
-    threadSegment: string,
-    keptThreadRelativePaths: Set<string>,
+  const pruneUnreferencedAttachmentEntry = Effect.fn("pruneUnreferencedAttachmentEntry")(function* (
     entry: string,
   ) {
     const relativePath = entry.replace(/^[/\\]+/, "").replace(/\\/g, "/");
@@ -506,54 +452,17 @@ const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function*
     if (!attachmentId) {
       return;
     }
-    const attachmentThreadSegment = parseThreadSegmentFromAttachmentId(attachmentId);
-    if (!attachmentThreadSegment || attachmentThreadSegment !== threadSegment) {
+    if (!sideEffects.candidateAttachmentIds.has(attachmentId)) {
       return;
     }
-
-    const absolutePath = path.join(attachmentsRootDir, relativePath);
-    const fileInfo = yield* fileSystem.stat(absolutePath).pipe(Effect.orElseSucceed(() => null));
-    if (!fileInfo || fileInfo.type !== "File") {
+    if (yield* attachmentReferences.hasReference({ attachmentId })) {
       return;
     }
-
-    if (!keptThreadRelativePaths.has(relativePath)) {
-      yield* fileSystem.remove(absolutePath, { force: true });
-    }
+    yield* fileSystem.remove(path.join(attachmentsRootDir, relativePath), { force: true });
   });
 
-  const pruneThreadAttachments = Effect.fn("pruneThreadAttachments")(function* (
-    threadId: string,
-    keptThreadRelativePaths: Set<string>,
-  ) {
-    if (sideEffects.deletedThreadIds.has(threadId)) {
-      return;
-    }
-
-    const threadSegment = toSafeThreadAttachmentSegment(threadId);
-    if (!threadSegment) {
-      yield* Effect.logWarning("skipping attachment prune for unsafe thread id", { threadId });
-      return;
-    }
-
-    const entries = yield* readAttachmentRootEntries;
-    yield* Effect.forEach(
-      entries,
-      (entry) => pruneThreadAttachmentEntry(threadSegment, keptThreadRelativePaths, entry),
-      { concurrency: 1 },
-    );
-  });
-
-  yield* Effect.forEach(sideEffects.deletedThreadIds, deleteThreadAttachments, {
-    concurrency: 1,
-  });
-
-  yield* Effect.forEach(
-    sideEffects.prunedThreadRelativePaths.entries(),
-    ([threadId, keptThreadRelativePaths]) =>
-      pruneThreadAttachments(threadId, keptThreadRelativePaths),
-    { concurrency: 1 },
-  );
+  const entries = yield* readAttachmentRootEntries;
+  yield* Effect.forEach(entries, pruneUnreferencedAttachmentEntry, { concurrency: 1 });
 });
 
 const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjectionPipeline")(
@@ -561,6 +470,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const sql = yield* SqlClient.SqlClient;
     const eventStore = yield* OrchestrationEventStore;
     const projectionStateRepository = yield* ProjectionStateRepository;
+    const projectionAttachmentReferenceRepository = yield* ProjectionAttachmentReferenceRepository;
+    const projectionCheckpointRepository = yield* ProjectionCheckpointRepository;
     const projectionProjectRepository = yield* ProjectionProjectRepository;
     const projectionThreadRepository = yield* ProjectionThreadRepository;
     const projectionThreadMessageRepository = yield* ProjectionThreadMessageRepository;
@@ -748,9 +659,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         projectionThreadActivityRepository.listByThreadId({ threadId }),
         projectionPendingApprovalRepository.listByThreadId({ threadId }),
       ]);
+      const liveMessages = messages.filter((message) => message.historyOrigin === undefined);
+      const liveProposedPlans = proposedPlans.filter(
+        (proposedPlan) => proposedPlan.historyOrigin === undefined,
+      );
+      const liveActivities = activities.filter((activity) => activity.historyOrigin === undefined);
 
       let latestUserMessageAt: string | null = null;
-      for (const message of messages) {
+      for (const message of liveMessages) {
         if (
           message.role === "user" &&
           (latestUserMessageAt === null || message.createdAt > latestUserMessageAt)
@@ -762,10 +678,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       const pendingApprovalCount = pendingApprovals.filter(
         (approval) => approval.status === "pending",
       ).length;
-      const pendingUserInputCount = derivePendingUserInputCountFromActivities(activities);
+      const pendingUserInputCount = derivePendingUserInputCountFromActivities(liveActivities);
       const hasActionableProposedPlan = deriveHasActionableProposedPlan({
         latestTurnId: existingRow.value.latestTurnId,
-        proposedPlans,
+        proposedPlans: liveProposedPlans,
       });
 
       yield* projectionThreadRepository.upsert({
@@ -779,7 +695,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
 
     const applyThreadsProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyThreadsProjection",
-    )(function* (event, attachmentSideEffects) {
+    )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
         case "thread.created":
           yield* projectionThreadRepository.upsert({
@@ -807,6 +723,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pendingApprovalCount: 0,
             pendingUserInputCount: 0,
             hasActionableProposedPlan: 0,
+            fork: null,
             deletedAt: null,
           });
           return;
@@ -1015,7 +932,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         }
 
         case "thread.deleted": {
-          attachmentSideEffects.deletedThreadIds.add(event.payload.threadId);
           const existingRow = yield* projectionThreadRepository.getById({
             threadId: event.payload.threadId,
           });
@@ -1026,6 +942,66 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...existingRow.value,
             deletedAt: event.payload.deletedAt,
             updatedAt: event.payload.deletedAt,
+          });
+          return;
+        }
+
+        case "thread.forked": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            fork: event.payload.fork,
+            updatedAt: event.payload.fork.provenance.forkedAt,
+          });
+          return;
+        }
+
+        case "thread.fork-workspace-updated": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow) || existingRow.value.fork === null) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            fork: {
+              ...existingRow.value.fork,
+              workspace: {
+                ...existingRow.value.fork.workspace,
+                status: event.payload.status,
+                preparedAt: event.payload.preparedAt,
+                lastError: event.payload.lastError,
+              },
+            },
+            updatedAt: event.payload.createdAt,
+          });
+          return;
+        }
+
+        case "thread.fork-handoff-completed": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow) || existingRow.value.fork === null) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            fork: {
+              ...existingRow.value.fork,
+              handoff: {
+                ...existingRow.value.fork.handoff,
+                status: "completed",
+                completedAt: event.payload.completedAt,
+              },
+            },
+            updatedAt: event.payload.completedAt,
           });
           return;
         }
@@ -1169,6 +1145,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             const turn = retainedTurns[index];
             if (
               !turn ||
+              turn.historyOrigin !== undefined ||
               turn.turnId === null ||
               turn.checkpointTurnCount === null ||
               turn.checkpointTurnCount > event.payload.turnCount
@@ -1229,7 +1206,23 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             isStreaming: false,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
+            ...(event.payload.historyOrigin !== undefined
+              ? { historyOrigin: event.payload.historyOrigin }
+              : {}),
           });
+          if (attachments !== undefined) {
+            const removedAttachmentIds =
+              yield* projectionAttachmentReferenceRepository.replaceMessage({
+                ownerKind: "thread",
+                threadId: event.payload.threadId,
+                subagentId: null,
+                messageId: nativeLink.value.messageId,
+                attachmentIds: attachments.map((attachment) => attachment.id),
+              });
+            for (const attachmentId of removedAttachmentIds) {
+              attachmentSideEffects.candidateAttachmentIds.add(attachmentId);
+            }
+          }
           return;
         }
 
@@ -1241,6 +1234,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             messageId: event.payload.messageId,
           });
           const previousMessage = Option.getOrUndefined(existingMessage);
+          if (
+            previousMessage?.historyOrigin !== undefined &&
+            event.payload.historyOrigin === undefined
+          ) {
+            return;
+          }
           const nextText = Option.match(existingMessage, {
             onNone: () => event.payload.text,
             onSome: (message) => {
@@ -1269,9 +1268,61 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             isStreaming: event.payload.streaming,
             createdAt: previousMessage?.createdAt ?? event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
+            ...(event.payload.historyOrigin !== undefined
+              ? { historyOrigin: event.payload.historyOrigin }
+              : {}),
           });
+          if (nextAttachments !== undefined) {
+            const removedAttachmentIds =
+              yield* projectionAttachmentReferenceRepository.replaceMessage({
+                ownerKind: "thread",
+                threadId: event.payload.threadId,
+                subagentId: null,
+                messageId: event.payload.messageId,
+                attachmentIds: nextAttachments.map((attachment) => attachment.id),
+              });
+            for (const attachmentId of removedAttachmentIds) {
+              attachmentSideEffects.candidateAttachmentIds.add(attachmentId);
+            }
+          }
           return;
         }
+
+        case "thread.forked":
+          yield* Effect.forEach(
+            event.payload.history.messages,
+            (message) =>
+              Effect.gen(function* () {
+                const attachments = message.attachments ?? [];
+                yield* projectionThreadMessageRepository.upsert({
+                  messageId: message.id,
+                  threadId: event.payload.threadId,
+                  turnId: message.turnId,
+                  role: message.role,
+                  text: message.text,
+                  ...(message.attachments !== undefined
+                    ? { attachments: [...message.attachments] }
+                    : {}),
+                  isStreaming: false,
+                  createdAt: message.createdAt,
+                  updatedAt: message.updatedAt,
+                  historyOrigin: message.historyOrigin,
+                });
+                const removedAttachmentIds =
+                  yield* projectionAttachmentReferenceRepository.replaceMessage({
+                    ownerKind: "thread",
+                    threadId: event.payload.threadId,
+                    subagentId: null,
+                    messageId: message.id,
+                    attachmentIds: attachments.map((attachment) => attachment.id),
+                  });
+                for (const attachmentId of removedAttachmentIds) {
+                  attachmentSideEffects.candidateAttachmentIds.add(attachmentId);
+                }
+              }),
+            { concurrency: 1, discard: true },
+          );
+          return;
 
         case "thread.reverted": {
           const existingRows = yield* projectionThreadMessageRepository.listByThreadId({
@@ -1293,16 +1344,41 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             return;
           }
 
+          const keptMessageIds = new Set(keptRows.map((message) => message.messageId));
+          for (const message of existingRows) {
+            if (keptMessageIds.has(message.messageId)) {
+              continue;
+            }
+            const removedAttachmentIds =
+              yield* projectionAttachmentReferenceRepository.replaceMessage({
+                ownerKind: "thread",
+                threadId: event.payload.threadId,
+                subagentId: null,
+                messageId: message.messageId,
+                attachmentIds: [],
+              });
+            for (const attachmentId of removedAttachmentIds) {
+              attachmentSideEffects.candidateAttachmentIds.add(attachmentId);
+            }
+          }
+
           yield* projectionThreadMessageRepository.deleteByThreadId({
             threadId: event.payload.threadId,
           });
           yield* Effect.forEach(keptRows, projectionThreadMessageRepository.upsert, {
             concurrency: 1,
           }).pipe(Effect.asVoid);
-          attachmentSideEffects.prunedThreadRelativePaths.set(
-            event.payload.threadId,
-            collectThreadAttachmentRelativePaths(event.payload.threadId, keptRows),
-          );
+          return;
+        }
+
+        case "thread.deleted": {
+          const removedAttachmentIds =
+            yield* projectionAttachmentReferenceRepository.deleteByThreadId({
+              threadId: event.payload.threadId,
+            });
+          for (const attachmentId of removedAttachmentIds) {
+            attachmentSideEffects.candidateAttachmentIds.add(attachmentId);
+          }
           return;
         }
 
@@ -1328,7 +1404,29 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             implementationThreadId: event.payload.proposedPlan.implementationThreadId,
             createdAt: event.payload.proposedPlan.createdAt,
             updatedAt: event.payload.proposedPlan.updatedAt,
+            ...(event.payload.proposedPlan.historyOrigin !== undefined
+              ? { historyOrigin: event.payload.proposedPlan.historyOrigin }
+              : {}),
           });
+          return;
+
+        case "thread.forked":
+          yield* Effect.forEach(
+            event.payload.history.proposedPlans,
+            (proposedPlan) =>
+              projectionThreadProposedPlanRepository.upsert({
+                planId: proposedPlan.id,
+                threadId: event.payload.threadId,
+                turnId: proposedPlan.turnId,
+                planMarkdown: proposedPlan.planMarkdown,
+                implementedAt: proposedPlan.implementedAt,
+                implementationThreadId: proposedPlan.implementationThreadId,
+                createdAt: proposedPlan.createdAt,
+                updatedAt: proposedPlan.updatedAt,
+                historyOrigin: proposedPlan.historyOrigin,
+              }),
+            { concurrency: 1, discard: true },
+          );
           return;
 
         case "thread.reverted": {
@@ -1385,7 +1483,30 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               ? { sequence: event.payload.activity.sequence }
               : {}),
             createdAt: event.payload.activity.createdAt,
+            ...(event.payload.activity.historyOrigin !== undefined
+              ? { historyOrigin: event.payload.activity.historyOrigin }
+              : {}),
           });
+          return;
+
+        case "thread.forked":
+          yield* Effect.forEach(
+            event.payload.history.activities,
+            (activity) =>
+              projectionThreadActivityRepository.upsert({
+                activityId: activity.id,
+                threadId: event.payload.threadId,
+                turnId: activity.turnId,
+                tone: activity.tone,
+                kind: activity.kind,
+                summary: activity.summary,
+                payload: activity.payload,
+                ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
+                createdAt: activity.createdAt,
+                historyOrigin: activity.historyOrigin,
+              }),
+            { concurrency: 1, discard: true },
+          );
           return;
 
         case "thread.turn-abort-settled": {
@@ -1483,6 +1604,19 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "thread.forked":
+          yield* Effect.forEach(
+            event.payload.history.subagents,
+            (subagent) =>
+              projectionThreadSubagentRepository.upsert({
+                threadId: event.payload.threadId,
+                ...subagent,
+                historyOrigin: subagent.historyOrigin,
+              }),
+            { concurrency: 1, discard: true },
+          );
+          return;
+
         case "thread.subagent-state-set": {
           const existing = yield* projectionThreadSubagentRepository.getById({
             threadId: event.payload.threadId,
@@ -1495,6 +1629,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               status: event.payload.status,
             }),
           );
+          if (current.historyOrigin !== undefined) {
+            return;
+          }
           if (event.payload.updatedAt.localeCompare(current.updatedAt) < 0) {
             return;
           }
@@ -1522,6 +1659,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               updatedAt: event.payload.updatedAt,
             }),
           );
+          if (current.historyOrigin !== undefined) {
+            return;
+          }
           if (event.payload.updatedAt.localeCompare(current.updatedAt) < 0) {
             return;
           }
@@ -1571,6 +1711,19 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             createdAt: previous?.createdAt ?? event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
           });
+          if (attachments !== undefined) {
+            const removedAttachmentIds =
+              yield* projectionAttachmentReferenceRepository.replaceMessage({
+                ownerKind: "subagent",
+                threadId: event.payload.threadId,
+                subagentId: event.payload.subagentId,
+                messageId: event.payload.messageId,
+                attachmentIds: attachments.map((attachment) => attachment.id),
+              });
+            for (const attachmentId of removedAttachmentIds) {
+              _attachmentSideEffects.candidateAttachmentIds.add(attachmentId);
+            }
+          }
           return;
         }
 
@@ -1686,6 +1839,31 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadTurnsProjection",
     )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
+        case "thread.forked":
+          yield* Effect.forEach(
+            event.payload.history.turns,
+            (turn) =>
+              projectionTurnRepository.upsertHistorical({
+                threadId: event.payload.threadId,
+                turnId: turn.turnId,
+                pendingMessageId: turn.pendingMessageId,
+                sourceProposedPlanThreadId: turn.sourceProposedPlan?.threadId ?? null,
+                sourceProposedPlanId: turn.sourceProposedPlan?.planId ?? null,
+                assistantMessageId: turn.assistantMessageId,
+                state: turn.state,
+                requestedAt: turn.requestedAt,
+                startedAt: turn.startedAt,
+                completedAt: turn.completedAt,
+                checkpointTurnCount: turn.checkpointTurnCount,
+                checkpointRef: turn.checkpointRef,
+                checkpointStatus: turn.checkpointStatus,
+                checkpointFiles: [...turn.checkpointFiles],
+                historyOrigin: turn.historyOrigin,
+              }),
+            { concurrency: 1, discard: true },
+          );
+          return;
+
         case "thread.turn-start-requested": {
           yield* projectionTurnRepository.replacePendingTurnStart({
             threadId: event.payload.threadId,
@@ -1743,7 +1921,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               threadId: event.payload.threadId,
             });
             yield* Effect.forEach(
-              existingTurns.filter((turn) => turn.turnId !== null && turn.state === "running"),
+              existingTurns.filter(
+                (turn) =>
+                  turn.historyOrigin === undefined &&
+                  turn.turnId !== null &&
+                  turn.state === "running",
+              ),
               (turn) =>
                 turn.turnId === null
                   ? Effect.void
@@ -1769,7 +1952,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           });
           yield* Effect.forEach(
             otherRunningTurns.filter(
-              (turn) => turn.turnId !== null && turn.turnId !== turnId && turn.state === "running",
+              (turn) =>
+                turn.historyOrigin === undefined &&
+                turn.turnId !== null &&
+                turn.turnId !== turnId &&
+                turn.state === "running",
             ),
             (turn) =>
               turn.turnId === null
@@ -2017,22 +2204,24 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           });
           const keptTurns = existingTurns.filter(
             (turn) =>
-              turn.turnId !== null &&
-              turn.checkpointTurnCount !== null &&
-              turn.checkpointTurnCount <= event.payload.turnCount,
+              turn.historyOrigin !== undefined ||
+              (turn.turnId !== null &&
+                turn.checkpointTurnCount !== null &&
+                turn.checkpointTurnCount <= event.payload.turnCount),
           );
           yield* projectionTurnRepository.deleteByThreadId({
             threadId: event.payload.threadId,
           });
           yield* Effect.forEach(
             keptTurns,
-            (turn) =>
-              turn.turnId === null
+            (turn) => {
+              if (turn.historyOrigin !== undefined) {
+                return projectionTurnRepository.upsertHistorical(turn);
+              }
+              return turn.turnId === null
                 ? Effect.void
-                : projectionTurnRepository.upsertByTurnId({
-                    ...turn,
-                    turnId: turn.turnId,
-                  }),
+                : projectionTurnRepository.upsertByTurnId({ ...turn, turnId: turn.turnId });
+            },
             { concurrency: 1 },
           ).pipe(Effect.asVoid);
           return;
@@ -2043,7 +2232,50 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       }
     });
 
-    const applyCheckpointsProjection: ProjectorDefinition["apply"] = () => Effect.void;
+    const applyCheckpointsProjection: ProjectorDefinition["apply"] = Effect.fn(
+      "applyCheckpointsProjection",
+    )(function* (event, _attachmentSideEffects) {
+      switch (event.type) {
+        case "thread.forked":
+          yield* Effect.forEach(
+            event.payload.history.checkpoints,
+            (checkpoint) =>
+              projectionCheckpointRepository.upsertHistorical({
+                threadId: event.payload.threadId,
+                turnId: checkpoint.turnId,
+                checkpointTurnCount: checkpoint.checkpointTurnCount,
+                checkpointRef: checkpoint.checkpointRef,
+                status: checkpoint.status,
+                files: [...checkpoint.files],
+                assistantMessageId: checkpoint.assistantMessageId,
+                completedAt: checkpoint.completedAt,
+                historyOrigin: checkpoint.historyOrigin,
+              }),
+            { concurrency: 1, discard: true },
+          );
+          return;
+
+        case "thread.turn-diff-completed":
+          if (event.payload.historyOrigin === undefined) {
+            return;
+          }
+          yield* projectionCheckpointRepository.upsert({
+            threadId: event.payload.threadId,
+            turnId: event.payload.turnId,
+            checkpointTurnCount: event.payload.checkpointTurnCount,
+            checkpointRef: event.payload.checkpointRef,
+            status: event.payload.status,
+            files: [...event.payload.files],
+            assistantMessageId: event.payload.assistantMessageId,
+            completedAt: event.payload.completedAt,
+            historyOrigin: event.payload.historyOrigin,
+          });
+          return;
+
+        default:
+          return;
+      }
+    });
 
     const applyPendingApprovalsProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyPendingApprovalsProjection",
@@ -2251,8 +2483,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       event: OrchestrationEvent,
     ) {
       const attachmentSideEffects: AttachmentSideEffects = {
-        deletedThreadIds: new Set<string>(),
-        prunedThreadRelativePaths: new Map<string, Set<string>>(),
+        candidateAttachmentIds: new Set<string>(),
       };
 
       yield* sql.withTransaction(
@@ -2302,6 +2533,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
         Effect.provideService(ServerConfig, serverConfig),
+        Effect.provideService(
+          ProjectionAttachmentReferenceRepository,
+          projectionAttachmentReferenceRepository,
+        ),
         Effect.asVoid,
         Effect.catchTag("SqlError", (sqlError) =>
           Effect.fail(toPersistenceSqlError("ProjectionPipeline.projectEvent:query")(sqlError)),
@@ -2316,6 +2551,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
       Effect.provideService(ServerConfig, serverConfig),
+      Effect.provideService(
+        ProjectionAttachmentReferenceRepository,
+        projectionAttachmentReferenceRepository,
+      ),
       Effect.asVoid,
       Effect.tap(() =>
         Effect.logDebug("orchestration projection pipeline bootstrapped").pipe(
@@ -2339,6 +2578,8 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   makeOrchestrationProjectionPipeline(),
 ).pipe(
   Layer.provideMerge(ProjectionProjectRepositoryLive),
+  Layer.provideMerge(ProjectionAttachmentReferenceRepositoryLive),
+  Layer.provideMerge(ProjectionCheckpointRepositoryLive),
   Layer.provideMerge(ProjectionProjectAgentCoordinationRepositoryLive),
   Layer.provideMerge(ProjectionHarnessChatSyncRepositoryLive),
   Layer.provideMerge(ProjectionThreadRepositoryLive),

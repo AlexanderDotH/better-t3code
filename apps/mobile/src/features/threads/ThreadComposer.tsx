@@ -63,6 +63,7 @@ import {
 import { ControlPill } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
+import type { ForkComposerBudget } from "./thread-fork";
 import {
   buildModelOptions,
   filterStartedThreadModelOptions,
@@ -147,6 +148,7 @@ export interface ThreadComposerProps {
   readonly onUpdateFetchEnabled: (enabled: boolean) => void;
   readonly onCopyTranscript?: () => Promise<void>;
   readonly transcriptExportBusy?: boolean;
+  readonly forkComposerBudget?: ForkComposerBudget | null;
   readonly onReconnectEnvironment: () => void;
   readonly onExpandedChange?: (expanded: boolean) => void;
   /** Fires on editor focus/blur; hosts use it to vet stale keyboard state. */
@@ -307,7 +309,7 @@ const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(
 
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
   const navigation = useNavigation();
-  const { themeAppearance } = useAppearancePreferences();
+  const { interfaceLanguage, themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
   const foregroundColor = useThemeColor("--color-foreground");
   const dangerForegroundColor = useThemeColor("--color-danger-foreground");
@@ -365,6 +367,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const harnessSessionActive = props.selectedThread.harnessSync?.activity === "active";
   const canSend =
     hasContent &&
+    props.forkComposerBudget?.canSend !== false &&
     stopAction.phase === null &&
     !props.isImprovingPrompt &&
     !voiceDictation.active &&
@@ -447,6 +450,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const resourceProtectionStatus = resolveMobileResourceProtectionStatus(
     resourceProtectionQuery.data,
     props.selectedThread.id,
+    interfaceLanguage.language,
   );
   const composerStatus = connectionStatus ?? harnessStatus ?? resourceProtectionStatus;
   const toolbarSurface = String(useThemeColor("--color-card"));
@@ -654,7 +658,34 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   // ── Handle command selection ──────────────────────────────
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
 
+  const handlePickDraftImages = useCallback(() => {
+    if (props.forkComposerBudget && !props.forkComposerBudget.canAddAttachment) {
+      Alert.alert(
+        "Fork context limit",
+        "Remove an attachment or send the first message before adding another image.",
+      );
+      return;
+    }
+    void props.onPickDraftImages();
+  }, [props.forkComposerBudget, props.onPickDraftImages]);
+
+  const handlePasteImages = useCallback(
+    (uris: ReadonlyArray<string>) => {
+      const remaining = props.forkComposerBudget?.attachmentRemaining;
+      if (remaining !== undefined && uris.length > Math.max(0, remaining)) {
+        Alert.alert(
+          "Attachment limit",
+          `You can add ${Math.max(0, remaining)} more attachment${remaining === 1 ? "" : "s"} to this message.`,
+        );
+        return;
+      }
+      void props.onNativePasteImages(uris);
+    },
+    [props.forkComposerBudget?.attachmentRemaining, props.onNativePasteImages],
+  );
+
   const handleSend = useCallback(async () => {
+    if (!canSend) return;
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
@@ -673,6 +704,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       inFlightThreadIdsRef.current.delete(threadKey);
     }
   }, [
+    canSend,
     onSendMessage,
     props.environmentId,
     props.environmentLabel,
@@ -930,7 +962,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               selection={composerSelection}
               onChangeText={props.onChangeDraftMessage}
               onSelectionChange={handleSelectionChange}
-              onPasteImages={(uris) => void props.onNativePasteImages(uris)}
+              onPasteImages={handlePasteImages}
               placeholder={props.placeholder}
               onFocus={handleFocus}
               onBlur={handleBlur}
@@ -993,7 +1025,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   disabled={isForceStopping}
                   onPress={props.onStopThread}
                 />
-              ) : voiceDictation.active || (!hasContent && voiceConfigured) ? (
+              ) : voiceDictation.active || !hasContent ? (
                 <NativeVoiceDictationControl
                   state={voiceDictation.state}
                   audioWaveform={voiceDictation.audioWaveform}
@@ -1022,19 +1054,22 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 <ComposerToolbarButton
                   accessibilityLabel="Add attachment"
                   icon="plus"
-                  onPress={() => void props.onPickDraftImages()}
+                  disabled={props.forkComposerBudget?.canAddAttachment === false}
+                  onPress={handlePickDraftImages}
                   showChevron={false}
                 />
-                {voiceConfigured || voiceDictation.active ? (
-                  <NativeVoiceDictationControl
-                    state={voiceDictation.state}
-                    audioWaveform={voiceDictation.audioWaveform}
-                    disabled={stopAction.phase !== null || props.isImprovingPrompt}
-                    onStart={voiceDictation.start}
-                    onStop={voiceDictation.stop}
-                    onCancel={voiceDictation.cancel}
-                  />
-                ) : null}
+                <NativeVoiceDictationControl
+                  state={voiceDictation.state}
+                  audioWaveform={voiceDictation.audioWaveform}
+                  disabled={
+                    props.serverConfig === null ||
+                    stopAction.phase !== null ||
+                    props.isImprovingPrompt
+                  }
+                  onStart={voiceDictation.start}
+                  onStop={voiceDictation.stop}
+                  onCancel={voiceDictation.cancel}
+                />
                 <ComposerInlineControl
                   accessibilityLabel="Model and reasoning settings"
                   emphasized
@@ -1090,6 +1125,29 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             </ComposerToolbarRow>
           ) : null}
         </ComposerSurface>
+
+        {props.forkComposerBudget ? (
+          <Text
+            accessibilityLiveRegion="polite"
+            className={`pt-2 text-xs ${
+              props.forkComposerBudget.canSend ? "text-foreground-muted" : "text-danger"
+            }`}
+          >
+            {props.forkComposerBudget.promptExceededBy > 0 ||
+            props.forkComposerBudget.attachmentsExceededBy > 0
+              ? [
+                  props.forkComposerBudget.promptExceededBy > 0
+                    ? `Shorten the prompt by ${props.forkComposerBudget.promptExceededBy.toLocaleString()} characters`
+                    : null,
+                  props.forkComposerBudget.attachmentsExceededBy > 0
+                    ? `remove ${props.forkComposerBudget.attachmentsExceededBy} attachment${props.forkComposerBudget.attachmentsExceededBy === 1 ? "" : "s"}`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" and ")
+              : `First fork message: ${Math.max(0, props.forkComposerBudget.promptRemaining).toLocaleString()} characters and ${Math.max(0, props.forkComposerBudget.attachmentRemaining)} attachments remaining. Inherited context adapts to fit.`}
+          </Text>
+        ) : null}
 
         {/* Queue count */}
         {props.queueCount > 0 ? (

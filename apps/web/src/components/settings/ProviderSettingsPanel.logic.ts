@@ -10,6 +10,15 @@ export interface ProviderEnvironmentOptionLike {
   readonly label: string;
 }
 
+export type ProviderAuthFlow = "browser" | "device-code";
+
+export function resolveProviderAuthFlow(input: {
+  readonly surface: "web" | "desktop" | "mobile";
+  readonly local: boolean;
+}): ProviderAuthFlow {
+  return input.surface !== "mobile" && input.local ? "browser" : "device-code";
+}
+
 export function buildProviderEnvironmentOptions<T extends ProviderEnvironmentOptionLike>(
   environments: ReadonlyArray<T>,
   primaryEnvironmentId: EnvironmentId | null,

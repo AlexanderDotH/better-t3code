@@ -79,6 +79,8 @@ import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { threadEnvironment } from "../../state/threads";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
+import { useThreadForkAction } from "./use-thread-fork-action";
+import { useThreadRetryAction } from "./use-thread-retry-action";
 import {
   useAdaptiveWorkspaceLayout,
   useAdaptiveWorkspacePaneRole,
@@ -90,6 +92,7 @@ import {
   ThreadInspectorContentStack,
   type ThreadInspectorMode,
 } from "./thread-inspector-content-stack";
+import { useThreadShells } from "../../state/entities";
 
 interface ThreadInspectorSelection {
   readonly routeThreadIdentity: string | null;
@@ -118,6 +121,7 @@ function OpeningThreadLoadingScreen() {
 type ThreadRouteScreenRouteProps = StaticScreenProps<{
   readonly environmentId: string;
   readonly threadId: string;
+  readonly focusComposer?: boolean;
 }>;
 
 interface ThreadRouteScreenProps extends ThreadRouteScreenRouteProps {
@@ -302,6 +306,9 @@ function ThreadRouteContent(
   );
   const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
+  const threadForkingSupported = serverConfig?.environment.capabilities.threadForking === true;
+  const interruptedTurnRetrySupported =
+    serverConfig?.environment.capabilities.interruptedTurnRetry === true;
   const transcriptExportSupported =
     (serverConfig?.environment.capabilities.agentWorkflowVersion ?? 0) >= 1;
   const routeConnectionState =
@@ -326,6 +333,59 @@ function ThreadRouteContent(
       selectedThreadDetail?.harnessSync,
     ],
   );
+  const threadShells = useThreadShells();
+  const forkSourceThreadId = selectedThread?.fork?.provenance.sourceThreadId ?? null;
+  const forkSourceAvailable =
+    forkSourceThreadId !== null &&
+    threadShells.some(
+      (thread) =>
+        thread.environmentId === selectedThread?.environmentId && thread.id === forkSourceThreadId,
+    );
+  const handleForked = useCallback(
+    (destinationThreadId: ThreadId) => {
+      if (selectedThread === null) return;
+      navigation.dispatch(
+        StackActions.replace("Thread", {
+          environmentId: String(selectedThread.environmentId),
+          threadId: String(destinationThreadId),
+          focusComposer: true,
+        }),
+      );
+    },
+    [navigation, selectedThread],
+  );
+  const handleOpenForkSource = useCallback(() => {
+    if (!forkSourceAvailable || forkSourceThreadId === null || selectedThread === null) return;
+    navigation.dispatch(
+      StackActions.replace("Thread", {
+        environmentId: String(selectedThread.environmentId),
+        threadId: String(forkSourceThreadId),
+      }),
+    );
+  }, [forkSourceAvailable, forkSourceThreadId, navigation, selectedThread]);
+  const forkAction = useThreadForkAction({
+    thread: selectedThreadWithDraftSettings,
+    project: selectedThreadProject,
+    serverConfig,
+    supported: threadForkingSupported,
+    connected: routeConnectionState === "connected",
+    onForked: handleForked,
+  });
+  const retryMessages = useMemo(
+    () =>
+      composer.selectedThreadFeed.flatMap((entry) =>
+        entry.type === "message" ? [entry.message] : [],
+      ),
+    [composer.selectedThreadFeed],
+  );
+  const retryAction = useThreadRetryAction({
+    thread: selectedThreadWithDraftSettings,
+    messages: retryMessages,
+    supported: interruptedTurnRetrySupported,
+    connected: routeConnectionState === "connected",
+    busy: composer.activeThreadBusy,
+    fetchEnabled: composer.fetchEnabled,
+  });
   const reasoningRecommendationSelection = selectedThreadWithDraftSettings?.modelSelection ?? null;
   const reasoningRecommendationCapabilities = useMemo(() => {
     if (reasoningRecommendationSelection === null) {
@@ -947,6 +1007,7 @@ function ThreadRouteContent(
           serverConfig={serverConfig}
           onStopThread={handleStopThread}
           onSendMessage={composer.onSendMessage}
+          retryAction={retryAction.retryAction}
           fetchSupported={composer.fetchSupported}
           fetchEnabled={composer.fetchEnabled}
           isImprovingPrompt={composer.isImprovingPrompt}
@@ -956,6 +1017,13 @@ function ThreadRouteContent(
           transcriptExportBusy={transcriptExportBusy || composer.activeThreadBusy}
           parallelPlanImplementationEnabled={composer.parallelPlanImplementationEnabled}
           onImplementPlan={composer.onImplementPlan}
+          forkActionSupported={forkAction.supported}
+          forkActionEnabled={forkAction.enabled}
+          pendingForkBoundaryKey={forkAction.pendingBoundaryKey}
+          onFork={(boundary) => void forkAction.onFork(boundary)}
+          forkSourceAvailable={forkSourceAvailable}
+          onOpenForkSource={handleOpenForkSource}
+          focusComposerOnMount={props.route.params.focusComposer === true}
           onReconnectEnvironment={handleReconnectEnvironment}
           onUpdateThreadModelSelection={composer.onUpdateModelSelection}
           onUpdateThreadRuntimeMode={composer.onUpdateRuntimeMode}

@@ -22,6 +22,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   OrchestrationEngineService,
@@ -40,6 +41,7 @@ import {
 import {
   GeneralSubagentCoordinator,
   GeneralSubagentCoordinatorLive,
+  GENERAL_SUBAGENT_TIMEOUT,
 } from "./GeneralSubagentCoordinator.ts";
 
 const parentThreadId = ThreadId.make("thread-general-parent");
@@ -102,7 +104,10 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
   const stops = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
   const commands = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
   const startedSignal = yield* Deferred.make<void>();
+  const secondTurnSentSignal = yield* Deferred.make<void>();
+  const stoppedSignal = yield* Deferred.make<void>();
   const bindings = new Map<ThreadId, RuntimeSessionId>();
+  const providerBindings = new Map<ThreadId, ProviderInstanceId>();
   let eventSequence = 0;
   let commandSequence = 0;
 
@@ -111,7 +116,7 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
   const eventBase = (threadId: ThreadId, runtimeSessionId: RuntimeSessionId) => ({
     eventId: EventId.make(`general-event-${++eventSequence}`),
     provider: codexDriver,
-    providerInstanceId: securityInstance,
+    providerInstanceId: providerBindings.get(threadId) ?? securityInstance,
     threadId,
     runtimeSessionId,
     createdAt,
@@ -124,6 +129,7 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
         yield* Deferred.succeed(startedSignal, undefined).pipe(Effect.ignore);
         const runtimeSessionId = input.runtimeSessionId!;
         bindings.set(threadId, runtimeSessionId);
+        providerBindings.set(threadId, input.providerInstanceId!);
         return {
           provider: codexDriver,
           providerInstanceId: securityInstance,
@@ -140,6 +146,9 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
     sendTurn: (input) =>
       Effect.gen(function* () {
         yield* Ref.update(sends, (values) => [...values, input]);
+        if ((yield* Ref.get(sends)).length >= 2) {
+          yield* Deferred.succeed(secondTurnSentSignal, undefined).pipe(Effect.ignore);
+        }
         const runtimeSessionId = bindings.get(input.threadId)!;
         const turnId = TurnId.make("general-worker-turn");
         yield* publish({
@@ -176,7 +185,10 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
     interruptAbortTarget: () => Effect.void,
     forceStopAbortTarget: () =>
       Effect.succeed({ outcome: "terminated", mechanism: "runtime-close" }),
-    stopTransientSession: (target) => Ref.update(stops, (values) => [...values, target.threadId]),
+    stopTransientSession: (target) =>
+      Ref.update(stops, (values) => [...values, target.threadId]).pipe(
+        Effect.andThen(Deferred.succeed(stoppedSignal, undefined).pipe(Effect.ignore)),
+      ),
     streamEvents: Stream.fromPubSub(events),
   } as unknown as ProviderServiceShape;
 
@@ -263,7 +275,29 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
     Layer.provideMerge(NodeServices.layer),
   );
 
-  return { layer, starts, sends, stops, commands, startedSignal };
+  const publishParentCompletion = publish({
+    eventId: EventId.make("general-parent-completed"),
+    provider: codexDriver,
+    providerInstanceId: codexInstance,
+    threadId: parentThreadId,
+    runtimeSessionId: RuntimeSessionId.make("runtime-parent"),
+    turnId: parentTurnId,
+    createdAt,
+    type: "turn.completed",
+    payload: { state: "completed" },
+  });
+
+  return {
+    layer,
+    starts,
+    sends,
+    stops,
+    commands,
+    startedSignal,
+    secondTurnSentSignal,
+    stoppedSignal,
+    publishParentCompletion,
+  };
 });
 
 describe("GeneralSubagentCoordinator", () => {
@@ -401,6 +435,206 @@ describe("GeneralSubagentCoordinator", () => {
         });
         expect(waited).toMatchObject({ allTerminal: true, timedOut: false });
       }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("reuses one provider session for mailbox-aware follow-up work", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const coordinator = yield* GeneralSubagentCoordinator;
+        const spawned = yield* coordinator.spawnAgent({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+          task: "Implement the parser and stop at the first safe boundary.",
+        });
+        const initial = yield* coordinator.waitAgent({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+          agentIds: [spawned.agentId],
+          timeoutSeconds: 5,
+        });
+        expect(initial).toMatchObject({ allTerminal: true, timedOut: false });
+        expect(yield* Ref.get(harness.starts)).toHaveLength(1);
+        expect(yield* Ref.get(harness.stops)).toHaveLength(0);
+
+        yield* coordinator.sendMessage({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+          agentId: spawned.agentId,
+          message: "Preserve the compatibility fixture while making the follow-up change.",
+        });
+        yield* coordinator.followUp({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+          agentId: spawned.agentId,
+          task: "Add the focused regression test now.",
+        });
+        const followedUp = yield* coordinator.waitAgent({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+          agentIds: [spawned.agentId],
+          timeoutSeconds: 5,
+        });
+
+        expect(followedUp).toMatchObject({ allTerminal: true, timedOut: false });
+        expect(yield* Ref.get(harness.starts)).toHaveLength(1);
+        const sends = yield* Ref.get(harness.sends);
+        expect(sends).toHaveLength(2);
+        expect(sends[1]?.input).toContain("Add the focused regression test now.");
+        expect(sends[1]?.input).toContain(
+          "Preserve the compatibility fixture while making the follow-up change.",
+        );
+
+        yield* coordinator.cancel({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+          agentId: spawned.agentId,
+        });
+        expect(yield* Ref.get(harness.stops)).toHaveLength(1);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("interrupts an active turn while retaining the session for a queued follow-up", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ completeTurn: false });
+      yield* Effect.gen(function* () {
+        const coordinator = yield* GeneralSubagentCoordinator;
+        const spawned = yield* coordinator.spawnAgent({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+          task: "Inspect the slow path until interrupted.",
+        });
+        yield* Deferred.await(harness.startedSignal);
+
+        const interrupted = yield* coordinator.interruptAgent({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+          agentId: spawned.agentId,
+        });
+        expect(interrupted).toMatchObject({ interrupted: true, agent: { status: "interrupted" } });
+        expect(yield* Ref.get(harness.stops)).toHaveLength(0);
+
+        yield* coordinator.followUp({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+          agentId: spawned.agentId,
+          task: "Resume with the smaller focused check.",
+        });
+        yield* Deferred.await(harness.secondTurnSentSignal);
+        expect(yield* Ref.get(harness.starts)).toHaveLength(1);
+        expect(yield* Ref.get(harness.sends)).toHaveLength(2);
+
+        yield* coordinator.cancel({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+          agentId: spawned.agentId,
+        });
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("caps roots at forty live direct children and rejects nested spawning", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ completeTurn: false });
+      yield* Effect.gen(function* () {
+        const coordinator = yield* GeneralSubagentCoordinator;
+        const spawned = yield* Effect.forEach(
+          Array.from({ length: 40 }, (_, index) => index),
+          (index) =>
+            coordinator.spawnAgent({
+              parentThreadId,
+              callerProviderInstanceId: codexInstance,
+              task: `Run isolated direct-child task ${index + 1}.`,
+            }),
+          { concurrency: 1 },
+        );
+        const overflow = yield* Effect.exit(
+          coordinator.spawnAgent({
+            parentThreadId,
+            callerProviderInstanceId: codexInstance,
+            task: "This forty-first child must be rejected.",
+          }),
+        );
+        expect(overflow._tag).toBe("Failure");
+        if (overflow._tag === "Failure") {
+          expect(String(overflow.cause)).toContain("40 live direct children");
+        }
+
+        const nested = yield* Effect.exit(
+          coordinator.spawnAgent({
+            parentThreadId: ThreadId.make(spawned[0]!.agentId),
+            callerProviderInstanceId: codexInstance,
+            task: "Nested work is intentionally unavailable.",
+          }),
+        );
+        expect(nested._tag).toBe("Failure");
+        if (nested._tag === "Failure") {
+          expect(String(nested.cause)).toContain("cannot spawn nested agents");
+        }
+
+        yield* Effect.forEach(
+          spawned,
+          ({ agentId }) =>
+            coordinator.cancel({
+              parentThreadId,
+              callerProviderInstanceId: codexInstance,
+              agentId,
+            }),
+          { concurrency: "unbounded", discard: true },
+        );
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("cleans retained child sessions when the owning parent turn completes", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const coordinator = yield* GeneralSubagentCoordinator;
+        const spawned = yield* coordinator.spawnAgent({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+          task: "Finish and retain the child session for follow-up.",
+        });
+        yield* coordinator.waitAgent({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+          agentIds: [spawned.agentId],
+          timeoutSeconds: 5,
+        });
+        expect(yield* Ref.get(harness.stops)).toHaveLength(0);
+
+        yield* harness.publishParentCompletion;
+        yield* Deferred.await(harness.stoppedSignal);
+        expect(yield* Ref.get(harness.stops)).toHaveLength(1);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("expires an idle retained session after thirty minutes", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const coordinator = yield* GeneralSubagentCoordinator;
+        const spawned = yield* coordinator.spawnAgent({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+          task: "Finish and wait for a possible follow-up.",
+        });
+        yield* coordinator.waitAgent({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+          agentIds: [spawned.agentId],
+          timeoutSeconds: 5,
+        });
+        expect(yield* Ref.get(harness.stops)).toHaveLength(0);
+
+        yield* TestClock.adjust(GENERAL_SUBAGENT_TIMEOUT);
+        yield* Deferred.await(harness.stoppedSignal);
+        expect(yield* Ref.get(harness.stops)).toHaveLength(1);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
 });

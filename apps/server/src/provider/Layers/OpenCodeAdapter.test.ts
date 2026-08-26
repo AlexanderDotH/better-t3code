@@ -60,6 +60,77 @@ type MessageEntry = {
   parts: Array<unknown>;
 };
 
+type ControlledEvent = {
+  readonly value: unknown;
+  readonly acknowledge: () => void;
+};
+
+type ClosableEventStream = AsyncIterable<unknown> & {
+  readonly close: () => void;
+};
+
+function makeControlledEventStream() {
+  const queued: Array<ControlledEvent> = [];
+  let waitingNext: ((result: IteratorResult<unknown>) => void) | undefined;
+  let acknowledgeDelivered: (() => void) | undefined;
+  let closed = false;
+
+  const deliver = (event: ControlledEvent, resolve: (result: IteratorResult<unknown>) => void) => {
+    acknowledgeDelivered = event.acknowledge;
+    resolve({ done: false, value: event.value });
+  };
+
+  const close = () => {
+    closed = true;
+    acknowledgeDelivered?.();
+    acknowledgeDelivered = undefined;
+    waitingNext?.({ done: true, value: undefined });
+    waitingNext = undefined;
+    for (const event of queued.splice(0)) event.acknowledge();
+  };
+
+  const stream: ClosableEventStream = {
+    close,
+    [Symbol.asyncIterator]() {
+      return {
+        next() {
+          acknowledgeDelivered?.();
+          acknowledgeDelivered = undefined;
+          if (closed) {
+            return Promise.resolve({ done: true as const, value: undefined });
+          }
+          const event = queued.shift();
+          if (event) {
+            return new Promise<IteratorResult<unknown>>((resolve) => deliver(event, resolve));
+          }
+          return new Promise<IteratorResult<unknown>>((resolve) => {
+            waitingNext = resolve;
+          });
+        },
+        return() {
+          close();
+          return Promise.resolve({ done: true as const, value: undefined });
+        },
+      } satisfies AsyncIterator<unknown>;
+    },
+  };
+
+  return {
+    stream,
+    emit: (value: unknown) =>
+      new Promise<void>((acknowledge) => {
+        const event = { value, acknowledge };
+        const resolve = waitingNext;
+        if (resolve) {
+          waitingNext = undefined;
+          setImmediate(() => deliver(event, resolve));
+          return;
+        }
+        queued.push(event);
+      }),
+  };
+}
+
 const runtimeMock = {
   state: {
     startCalls: [] as string[],
@@ -77,10 +148,12 @@ const runtimeMock = {
     closeCalls: [] as string[],
     revertCalls: [] as Array<{ sessionID: string; messageID?: string }>,
     promptCalls: [] as Array<unknown>,
+    promptCallWaiters: [] as Array<() => void>,
     promptAsyncError: null as Error | null,
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
     subscribedEvents: [] as unknown[],
+    subscribedEventStream: null as ClosableEventStream | null,
     sessionGetIds: [] as string[],
     missingSessionIds: new Set<string>(),
     transientErrorSessionIds: new Set<string>(),
@@ -106,10 +179,12 @@ const runtimeMock = {
     this.state.closeCalls.length = 0;
     this.state.revertCalls.length = 0;
     this.state.promptCalls.length = 0;
+    this.state.promptCallWaiters.length = 0;
     this.state.promptAsyncError = null;
     this.state.closeError = null;
     this.state.messages = [];
     this.state.subscribedEvents = [];
+    this.state.subscribedEventStream = null;
     this.state.sessionGetIds.length = 0;
     this.state.missingSessionIds.clear();
     this.state.transientErrorSessionIds.clear();
@@ -162,8 +237,10 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       };
     }),
   runOpenCodeCommand: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
-  createOpenCodeSdkClient: ({ baseUrl, serverPassword }) =>
-    ({
+  createOpenCodeSdkClient: ({ baseUrl, serverPassword }) => {
+    const subscribedEventStream = runtimeMock.state.subscribedEventStream;
+    const subscribedEvents = [...runtimeMock.state.subscribedEvents];
+    return {
       session: {
         create: async (input: Record<string, unknown>) => {
           runtimeMock.state.sessionCreateUrls.push(baseUrl);
@@ -206,6 +283,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         },
         promptAsync: async (input: unknown) => {
           runtimeMock.state.promptCalls.push(input);
+          for (const resolve of runtimeMock.state.promptCallWaiters.splice(0)) resolve();
           if (runtimeMock.state.promptAsyncError) {
             throw runtimeMock.state.promptAsyncError;
           }
@@ -231,13 +309,20 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         },
       },
       event: {
-        subscribe: async () => ({
-          stream: (async function* () {
-            for (const event of runtimeMock.state.subscribedEvents) {
-              yield event;
-            }
-          })(),
-        }),
+        subscribe: async (_input: unknown, options?: { signal?: AbortSignal }) => {
+          if (subscribedEventStream && options?.signal) {
+            options.signal.addEventListener("abort", subscribedEventStream.close, { once: true });
+          }
+          return {
+            stream:
+              subscribedEventStream ??
+              (async function* () {
+                for (const event of subscribedEvents) {
+                  yield event;
+                }
+              })(),
+          };
+        },
       },
       permission: {
         reply: async (input: { requestID: string; reply: string }) => {
@@ -275,7 +360,8 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           },
         },
       },
-    }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
+    } as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>;
+  },
   loadOpenCodeInventory: () =>
     Effect.fail(
       new OpenCodeRuntimeError({
@@ -1403,10 +1489,18 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
-  it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () =>
+  it.effect("serializes steering prompts and completes after the queued prompt becomes idle", () =>
     Effect.gen(function* () {
+      const events = makeControlledEventStream();
+      runtimeMock.state.subscribedEventStream = events.stream;
       const adapter = yield* OpenCodeAdapter;
       const threadId = asThreadId("thread-steer");
+      const eventsBeforeFinalIdle = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "runtime.warning"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
       yield* adapter.startSession({
         provider: ProviderDriverKind.make("opencode"),
         threadId,
@@ -1422,8 +1516,8 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         },
       });
 
-      // Steer: OpenCode queues the prompt into the busy session, so the
-      // active turn id is reused instead of opening a new turn.
+      // T3 owns prompt admission because concurrent promptAsync calls can
+      // produce sibling assistant responses for one upstream session.
       const steeredTurn = yield* adapter.sendTurn({
         threadId,
         input: "actually run 15",
@@ -1438,14 +1532,149 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const session = sessions.find((entry) => entry.threadId === threadId);
       NodeAssert.equal(session?.status, "running");
       NodeAssert.equal(String(session?.activeTurnId), String(turn.turnId));
+      NodeAssert.equal(runtimeMock.state.promptCalls.length, 1);
+
+      // The retry event is an in-band barrier. Reaching its runtime warning
+      // proves the event pump handled both preceding idle events in order.
+      const secondPromptObserved = new Promise<void>((resolve) => {
+        runtimeMock.state.promptCallWaiters.push(resolve);
+      });
+      yield* Effect.sync(() => {
+        void events.emit({
+          id: "event-first-idle",
+          type: "session.status",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            status: { type: "idle" },
+          },
+        });
+      });
+      yield* Effect.promise(() => secondPromptObserved);
+      yield* Effect.sync(() => {
+        void events.emit({
+          id: "event-first-legacy-idle",
+          type: "session.idle",
+          properties: { sessionID: "http://127.0.0.1:9999/session" },
+        });
+        void events.emit({
+          id: "event-queued-prompt-busy",
+          type: "session.status",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            status: { type: "busy" },
+          },
+        });
+        void events.emit({
+          id: "event-after-legacy-idle",
+          type: "session.status",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            status: {
+              type: "retry",
+              attempt: 1,
+              message: "test barrier",
+              next: 0,
+            },
+          },
+        });
+      });
+      const beforeFinalIdle = Array.from(yield* Fiber.join(eventsBeforeFinalIdle));
       NodeAssert.equal(runtimeMock.state.promptCalls.length, 2);
+      const afterPairedLegacyIdle = (yield* adapter.listSessions()).find(
+        (entry) => entry.threadId === threadId,
+      );
+      NodeAssert.equal(afterPairedLegacyIdle?.status, "running");
+      NodeAssert.equal(
+        beforeFinalIdle.some((event) => event.type === "turn.completed"),
+        false,
+      );
+
+      const completed = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "turn.completed" && event.threadId === threadId),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+
+      yield* Effect.sync(() => {
+        void events.emit({
+          id: "event-final-idle",
+          type: "session.status",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            status: { type: "idle" },
+          },
+        });
+      });
+
+      const completion = yield* Fiber.join(completed);
+      NodeAssert.equal(completion._tag, "Some");
+      if (completion._tag === "Some" && completion.value.type === "turn.completed") {
+        NodeAssert.equal(String(completion.value.turnId), String(turn.turnId));
+        NodeAssert.equal(completion.value.payload.state, "completed");
+      }
+      const afterFinalIdle = (yield* adapter.listSessions()).find(
+        (entry) => entry.threadId === threadId,
+      );
+      NodeAssert.equal(afterFinalIdle?.status, "ready");
+      NodeAssert.equal(afterFinalIdle?.activeTurnId, undefined);
     }),
   );
 
-  it.effect("keeps the running turn when a steer prompt fails", () =>
+  it.effect("completes from the legacy session.idle event when status idle is unavailable", () =>
     Effect.gen(function* () {
+      const events = makeControlledEventStream();
+      runtimeMock.state.subscribedEventStream = events.stream;
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-legacy-idle");
+      const completed = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "turn.completed" && event.threadId === threadId),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "finish from legacy idle",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+
+      yield* Effect.sync(() => {
+        void events.emit({
+          id: "event-legacy-idle",
+          type: "session.idle",
+          properties: { sessionID: "http://127.0.0.1:9999/session" },
+        });
+      });
+
+      const completion = yield* Fiber.join(completed);
+      const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
+      NodeAssert.equal(session?.status, "ready");
+      NodeAssert.equal(session?.activeTurnId, undefined);
+      NodeAssert.equal(completion._tag, "Some");
+      if (completion._tag === "Some" && completion.value.type === "turn.completed") {
+        NodeAssert.equal(String(completion.value.turnId), String(turn.turnId));
+      }
+    }),
+  );
+
+  it.effect("fails the running turn when a queued steer cannot be submitted", () =>
+    Effect.gen(function* () {
+      const events = makeControlledEventStream();
+      runtimeMock.state.subscribedEventStream = events.stream;
       const adapter = yield* OpenCodeAdapter;
       const threadId = asThreadId("thread-steer-failure");
+      const completed = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "turn.completed" && event.threadId === threadId),
+        Stream.runHead,
+        Effect.forkChild,
+      );
       yield* adapter.startSession({
         provider: ProviderDriverKind.make("opencode"),
         threadId,
@@ -1462,23 +1691,114 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       });
 
       runtimeMock.state.promptAsyncError = new Error("steer failed");
-      const error = yield* adapter
-        .sendTurn({
-          threadId,
-          input: "actually run 15",
-          modelSelection: {
-            instanceId: ProviderInstanceId.make("opencode"),
-            model: "openai/gpt-5",
-          },
-        })
-        .pipe(Effect.flip);
+      const steeredTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "actually run 15",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+      NodeAssert.equal(String(steeredTurn.turnId), String(turn.turnId));
+      NodeAssert.equal(runtimeMock.state.promptCalls.length, 1);
 
-      // The original turn keeps running — only the steer prompt failed.
-      NodeAssert.equal(error._tag, "ProviderAdapterRequestError");
+      yield* Effect.sync(() => {
+        void events.emit({
+          id: "event-idle-before-steer-failure",
+          type: "session.status",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            status: { type: "idle" },
+          },
+        });
+      });
+
+      const completion = yield* Fiber.join(completed);
       const sessions = yield* adapter.listSessions();
       const session = sessions.find((entry) => entry.threadId === threadId);
-      NodeAssert.equal(session?.status, "running");
-      NodeAssert.equal(String(session?.activeTurnId), String(turn.turnId));
+      NodeAssert.equal(session?.status, "error");
+      NodeAssert.equal(session?.activeTurnId, undefined);
+      NodeAssert.equal(session?.lastError, "steer failed");
+      NodeAssert.equal(completion._tag, "Some");
+      if (completion._tag === "Some" && completion.value.type === "turn.completed") {
+        NodeAssert.equal(String(completion.value.turnId), String(turn.turnId));
+        NodeAssert.equal(completion.value.payload.state, "failed");
+        NodeAssert.equal(completion.value.payload.errorMessage, "steer failed");
+      }
+    }),
+  );
+
+  it.effect("drops queued steering prompts when the active turn is interrupted", () =>
+    Effect.gen(function* () {
+      const events = makeControlledEventStream();
+      runtimeMock.state.subscribedEventStream = events.stream;
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-interrupt-queued-steer");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "start long work",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "queued steer",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+
+      yield* adapter.interruptTurn(threadId, turn.turnId);
+      NodeAssert.deepEqual(runtimeMock.state.abortCalls, ["http://127.0.0.1:9999/session"]);
+      NodeAssert.equal(runtimeMock.state.promptCalls.length, 1);
+
+      const afterIdle = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "runtime.warning"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Effect.sync(() => {
+        void events.emit({
+          id: "event-idle-after-interrupt",
+          type: "session.status",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            status: { type: "idle" },
+          },
+        });
+        void events.emit({
+          id: "event-after-interrupt-barrier",
+          type: "session.status",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            status: {
+              type: "retry",
+              attempt: 1,
+              message: "test barrier",
+              next: 0,
+            },
+          },
+        });
+      });
+
+      const observed = Array.from(yield* Fiber.join(afterIdle));
+      NodeAssert.equal(runtimeMock.state.promptCalls.length, 1);
+      NodeAssert.equal(
+        observed.some((event) => event.type === "turn.completed"),
+        false,
+      );
+      const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
+      NodeAssert.equal(session?.status, "ready");
+      NodeAssert.equal(session?.activeTurnId, undefined);
     }),
   );
 

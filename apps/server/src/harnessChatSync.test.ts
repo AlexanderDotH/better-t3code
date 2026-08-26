@@ -356,7 +356,7 @@ describe("Harness chat sync", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("deduplicates provider instances that share one continuation source", () =>
+  it.effect("probes only one page for provider instances that share a continuation source", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -364,25 +364,30 @@ describe("Harness chat sync", () => {
       });
       let secondaryListCalls = 0;
       let primaryListCalls = 0;
+      const primaryListLimits: number[] = [];
+      const summaries = Array.from({ length: 12 }, (_, index) => ({
+        sessionId: `session-${index + 1}`,
+        title: `Imported session ${index + 1}`,
+        preview: "Preview",
+        cwd: null,
+        model: null,
+        updatedAt: createdAt,
+        archived: false,
+        isChild: false,
+        messageCount: 1,
+        activity: "idle" as const,
+      }));
       const primaryAdapter: ProviderHistorySyncAdapter = {
-        list: () =>
+        list: ({ cursor, limit }) =>
           Effect.sync(() => {
             primaryListCalls += 1;
+            primaryListLimits.push(limit);
+            const offset = cursor === undefined ? 0 : Number(cursor);
+            const items = summaries.slice(offset, offset + limit);
+            const nextOffset = offset + items.length;
             return {
-              items: [
-                {
-                  sessionId: "session-1",
-                  title: "Imported session",
-                  preview: "Preview",
-                  cwd: null,
-                  model: null,
-                  updatedAt: createdAt,
-                  archived: false,
-                  isChild: false,
-                  messageCount: 1,
-                  activity: "idle",
-                },
-              ],
+              items,
+              ...(nextOffset < summaries.length ? { nextCursor: String(nextOffset) } : {}),
             };
           }),
         read: ({ sessionId }) => Effect.succeed({ sessionId, items: [], updatedAt: createdAt }),
@@ -414,16 +419,20 @@ describe("Harness chat sync", () => {
       const result = yield* Effect.gen(function* () {
         const service = yield* makeHarnessChatSync();
         const sources = yield* service.sources;
-        yield* service.list({
+        const firstPage = yield* service.list({
           sourceId: HarnessChatSyncSourceId.make("custom:history:shared"),
           query: "",
           includeArchived: false,
-          limit: 20,
+          limit: 10,
         });
-        return sources;
+        const status = yield* service.status({
+          sourceId: HarnessChatSyncSourceId.make("custom:history:shared"),
+          sessionIds: firstPage.chats.map((chat) => chat.sessionId),
+        });
+        return { sources, firstPage, status };
       }).pipe(Effect.provide(makeHarnessSyncTestLayer({ baseDir, instances })));
 
-      expect(result.sources).toEqual([
+      expect(result.sources.sources).toEqual([
         expect.objectContaining({
           id: HarnessChatSyncSourceId.make("custom:history:shared"),
           continuationKey: HarnessChatContinuationKey.make("custom:home:shared"),
@@ -432,12 +441,16 @@ describe("Harness chat sync", () => {
             ProviderInstanceId.make("custom-secondary"),
           ],
           preferredInstanceId: ProviderInstanceId.make("custom-primary"),
-          chatCount: 1,
-          changedCount: 1,
+          chatCount: 11,
+          changedCount: 10,
         }),
       ]);
+      expect(result.firstPage.chats).toHaveLength(10);
+      expect(result.firstPage.nextCursor).not.toBeNull();
+      expect(result.status.statuses).toHaveLength(10);
       expect(secondaryListCalls).toBe(0);
-      expect(primaryListCalls).toBe(1);
+      expect(primaryListCalls).toBe(2);
+      expect(primaryListLimits).toEqual([10, 10]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -479,7 +492,7 @@ describe("Harness chat sync", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("paginates filtered root chats while keeping global change counts", () =>
+  it.effect("returns the first native history page without scanning the remaining chats", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -512,47 +525,44 @@ describe("Harness chat sync", () => {
           },
         ],
       ]);
+      const summaries = [
+        {
+          sessionId: linkedSessionId,
+          title: "Match linked",
+          preview: null,
+          cwd: existingRoot,
+          model: null,
+          updatedAt: createdAt,
+          archived: false,
+          isChild: false,
+          messageCount: 1,
+          activity: "idle" as const,
+        },
+        ...Array.from({ length: 11 }, (_, index) => ({
+          sessionId: `session-new-${index + 1}`,
+          title: `Match new ${index + 1}`,
+          preview: null,
+          cwd: newRoot,
+          model: null,
+          updatedAt: createdAt,
+          archived: false,
+          isChild: false,
+          messageCount: 1,
+          activity: "unknown" as const,
+        })),
+      ];
+      const listRequests: Array<{ readonly cursor?: string; readonly limit: number }> = [];
       const adapter: ProviderHistorySyncAdapter = {
-        list: () =>
-          Effect.succeed({
-            items: [
-              {
-                sessionId: linkedSessionId,
-                title: "Match linked",
-                preview: null,
-                cwd: existingRoot,
-                model: null,
-                updatedAt: createdAt,
-                archived: false,
-                isChild: false,
-                messageCount: 1,
-                activity: "idle",
-              },
-              {
-                sessionId: "session-new",
-                title: "Match new",
-                preview: null,
-                cwd: newRoot,
-                model: null,
-                updatedAt: createdAt,
-                archived: false,
-                isChild: false,
-                messageCount: 1,
-                activity: "unknown",
-              },
-              {
-                sessionId: "session-child",
-                title: "Match child",
-                preview: null,
-                cwd: newRoot,
-                model: null,
-                updatedAt: createdAt,
-                archived: false,
-                isChild: true,
-                messageCount: 1,
-                activity: "unknown",
-              },
-            ],
+        list: ({ cursor, limit }) =>
+          Effect.sync(() => {
+            listRequests.push({ ...(cursor === undefined ? {} : { cursor }), limit });
+            const offset = cursor === undefined ? 0 : Number(cursor);
+            const items = summaries.slice(offset, offset + limit);
+            const nextOffset = offset + items.length;
+            return {
+              items,
+              ...(nextOffset < summaries.length ? { nextCursor: String(nextOffset) } : {}),
+            };
           }),
         read: ({ sessionId }) => Effect.succeed({ sessionId, items: [], updatedAt: createdAt }),
         resumeCursor: ({ sessionId }) => Effect.succeed({ resumeCursor: { sessionId } }),
@@ -570,14 +580,14 @@ describe("Harness chat sync", () => {
           sourceId,
           query: "match",
           includeArchived: false,
-          limit: 1,
+          limit: 10,
         });
         const second = yield* service.list({
           sourceId,
           query: "match",
           includeArchived: false,
           cursor: first.nextCursor ?? undefined,
-          limit: 1,
+          limit: 10,
         });
         return { first, second };
       }).pipe(
@@ -591,30 +601,26 @@ describe("Harness chat sync", () => {
         ),
       );
 
+      expect(result.first.chats).toHaveLength(10);
       expect(result.first).toMatchObject({
-        totalMatching: 2,
-        changedMatching: 1,
-        chats: [
-          {
-            sessionId: linkedSessionId,
-            hasChanges: false,
-            targetProject: { kind: "existing", projectId: project.id },
-          },
-        ],
+        totalMatching: 11,
+        changedMatching: 9,
+        countsAreComplete: false,
       });
-      expect(result.first.nextCursor).toBe("harness-offset:1");
-      expect(result.second.chats).toEqual([
-        expect.objectContaining({
-          sessionId: HarnessChatSessionId.make("session-new"),
-          hasChanges: true,
-          targetProject: {
-            kind: "create",
-            rootPath: newRoot,
-            suggestedName: NodePath.basename(newRoot),
-          },
-        }),
-      ]);
+      expect(result.first.chats[0]).toMatchObject({
+        sessionId: linkedSessionId,
+        hasChanges: false,
+        targetProject: { kind: "existing", projectId: project.id },
+      });
+      expect(result.first.nextCursor).not.toBeNull();
+      expect(result.second).toMatchObject({
+        totalMatching: 12,
+        changedMatching: 11,
+        countsAreComplete: true,
+      });
+      expect(result.second.chats).toHaveLength(2);
       expect(result.second.nextCursor).toBeNull();
+      expect(listRequests).toEqual([{ limit: 10 }, { cursor: "10", limit: 10 }]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

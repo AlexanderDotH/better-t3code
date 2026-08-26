@@ -1,4 +1,11 @@
-import { CommandId, EventId, ProjectId } from "@t3tools/contracts";
+import {
+  CommandId,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  EventId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -118,6 +125,126 @@ layer("OrchestrationEventStore", (it) => {
           ),
         );
       }
+    }),
+  );
+
+  it.effect("reads one thread stream in persisted order without unrelated events", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const now = "2026-01-01T00:00:00.000Z";
+      const threadA = ThreadId.make("thread-a");
+      const threadB = ThreadId.make("thread-b");
+
+      for (const [index, threadId] of [threadA, threadB, threadA].entries()) {
+        yield* eventStore.append({
+          type: index < 2 ? "thread.created" : "thread.meta-updated",
+          eventId: EventId.make(`evt-thread-stream-${index}`),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.make(`cmd-thread-stream-${index}`),
+          causationEventId: null,
+          correlationId: CommandId.make(`cmd-thread-stream-${index}`),
+          metadata: {},
+          payload:
+            index < 2
+              ? {
+                  threadId,
+                  projectId: ProjectId.make("project-thread-stream"),
+                  title: `Thread ${index}`,
+                  modelSelection: {
+                    instanceId: ProviderInstanceId.make("codex"),
+                    model: "gpt-5-codex",
+                  },
+                  runtimeMode: "approval-required",
+                  interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+                  branch: null,
+                  worktreePath: null,
+                  createdAt: now,
+                  updatedAt: now,
+                }
+              : {
+                  threadId,
+                  title: "Thread A updated",
+                  updatedAt: now,
+                },
+        });
+      }
+
+      const events = yield* Stream.runCollect(eventStore.readByThreadId(threadA)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      );
+
+      assert.deepEqual(
+        events.map((event) => [event.type, event.aggregateId]),
+        [
+          ["thread.created", threadA],
+          ["thread.meta-updated", threadA],
+        ],
+      );
+    }),
+  );
+
+  it.effect("reads complete thread streams across storage pages", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const threadId = ThreadId.make("thread-paged");
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* eventStore.append({
+        type: "thread.created",
+        eventId: EventId.make("evt-thread-paged-create"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-thread-paged-create"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-thread-paged-create"),
+        metadata: {},
+        payload: {
+          threadId,
+          projectId: ProjectId.make("project-thread-paged"),
+          title: "Paged thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* Effect.forEach(
+        Array.from({ length: 501 }, (_, index) => index),
+        (index) =>
+          eventStore.append({
+            type: "thread.meta-updated",
+            eventId: EventId.make(`evt-thread-paged-${index}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.make(`cmd-thread-paged-${index}`),
+            causationEventId: null,
+            correlationId: CommandId.make(`cmd-thread-paged-${index}`),
+            metadata: {},
+            payload: {
+              threadId,
+              title: `Paged thread ${index}`,
+              updatedAt: now,
+            },
+          }),
+        { concurrency: 1 },
+      );
+
+      const events = yield* Stream.runCollect(eventStore.readByThreadId(threadId)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      );
+      assert.equal(events.length, 502);
+      assert.equal(events[0]?.type, "thread.created");
+      assert.equal(events.at(-1)?.eventId, EventId.make("evt-thread-paged-500"));
     }),
   );
 });

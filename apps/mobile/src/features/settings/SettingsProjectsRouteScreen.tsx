@@ -1,4 +1,3 @@
-import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { ModelSelection, ServerConfig, ThreadEnvMode } from "@t3tools/contracts";
 import {
@@ -6,14 +5,15 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { useCallback, useMemo, useState } from "react";
-import { Alert, Platform, Pressable, ScrollView, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Alert, Pressable, View } from "react-native";
 
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import {
+  AndroidScreenScaffold,
+  ScreenScaffoldScrollView,
+} from "../../components/AndroidScreenScaffold";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { useThemeColor } from "../../lib/useThemeColor";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -177,8 +177,6 @@ function ProjectSettingsCard(props: { readonly project: EnvironmentProject }) {
 }
 
 export function SettingsProjectsRouteScreen() {
-  const navigation = useNavigation();
-  const insets = useSafeAreaInsets();
   const projects = useProjects();
   const { environments } = useWorkspaceState();
   const sortedProjects = useMemo(
@@ -187,20 +185,8 @@ export function SettingsProjectsRouteScreen() {
   );
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      {Platform.OS === "android" ? (
-        <>
-          <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="Projects" onBack={() => navigation.goBack()} />
-        </>
-      ) : null}
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        showsVerticalScrollIndicator={false}
-        className="flex-1"
-        contentContainerClassName="gap-6 px-5 pt-4"
-        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
-      >
+    <AndroidScreenScaffold title="Projects">
+      <ScreenScaffoldScrollView>
         {environments
           .filter((environment) => environment.connectionState === "connected")
           .map((environment) => (
@@ -224,7 +210,7 @@ export function SettingsProjectsRouteScreen() {
             <ProjectSettingsCard key={`${project.environmentId}:${project.id}`} project={project} />
           ))
         )}
-      </ScrollView>
-    </View>
+      </ScreenScaffoldScrollView>
+    </AndroidScreenScaffold>
   );
 }

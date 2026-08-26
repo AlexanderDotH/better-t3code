@@ -160,10 +160,12 @@ export const make = Effect.gen(function* () {
       gitWorkbenchVersion: 1,
       mcpWorkspaceVersion: 1,
       agentWorkflowVersion: 1,
-      environmentSettingsVersion: 3,
+      environmentSettingsVersion: 4,
       projectSettingsVersion: 1,
       harnessChatSyncVersion: 1,
       midChatProviderSwitching: true,
+      threadForking: true,
+      interruptedTurnRetry: true,
     },
   };
 

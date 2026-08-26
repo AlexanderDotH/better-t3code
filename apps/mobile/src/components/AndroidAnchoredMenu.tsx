@@ -3,7 +3,14 @@ import { BlurView } from "expo-blur";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
-import { BackHandler, Pressable, ScrollView, View } from "react-native";
+import {
+  AccessibilityInfo,
+  BackHandler,
+  findNodeHandle,
+  Pressable,
+  ScrollView,
+  View,
+} from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 import Animated, { FadeIn } from "react-native-reanimated";
 
@@ -13,11 +20,14 @@ import { useThemeColor } from "../lib/useThemeColor";
 import { cn } from "../lib/cn";
 import { type AppSymbolName, SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
+import {
+  calculateAndroidAnchoredMenuPlacement,
+  getAndroidMenuActionAccessibility,
+  getAndroidMenuBackLabel,
+  transitionAndroidMenu,
+  visibleAndroidMenuActions,
+} from "./androidAnchoredMenuModel";
 import { OverlayPortal } from "./OverlayPortal";
-
-const MENU_WIDTH = 250;
-const SCREEN_MARGIN = 12;
-const ANCHOR_GAP = 6;
 
 // Anchor position is snapshotted in window coordinates when the menu opens;
 // the overlay root measures itself the same way, and the menu is placed from
@@ -42,6 +52,7 @@ export type AndroidAnchoredMenuProps = {
   readonly actions: readonly MenuAction[];
   readonly title?: string;
   readonly onPressAction?: MenuComponentProps["onPressAction"];
+  readonly anchorAccessibilityLabel?: string;
   /** Applied to the anchor wrapper — call sites flex these to fill toolbars. */
   readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
@@ -51,7 +62,7 @@ export type AndroidAnchoredMenuProps = {
    * call from their own gesture — e.g. a row that selects on tap and opens
    * this menu on long-press.
    */
-  readonly children: ReactNode | ((open: () => void) => ReactNode);
+  readonly children: ReactNode | ((open: () => void, expanded: boolean) => ReactNode);
 };
 
 /**
@@ -66,19 +77,14 @@ export type AndroidAnchoredMenuProps = {
 export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const [anchor, setAnchor] = useState<AnchorSnapshot | null>(null);
   const [path, setPath] = useState<readonly MenuAction[]>([]);
-  // Height of the modal's root view, in the modal's own coordinate space.
-  // Menus that flip above their anchor are pinned by their BOTTOM edge
-  // (bottom = rootHeight - anchorTop), so drill-in height changes grow
-  // upward without any re-measurement — positioning them via `top` from the
-  // menu's measured height made every submenu transition settle over two
-  // frames and jitter.
-  const [rootHeight, setRootHeight] = useState<number | null>(null);
   // Window frame of the overlay root, measured on layout. Anchor coordinates
   // are converted into this frame, so the menu lands correctly no matter
   // where the portal host sits (status bar, keyboard resize, etc.).
   const [overlay, setOverlay] = useState<OverlayFrame | null>(null);
   const anchorRef = useRef<View>(null);
   const overlayRef = useRef<View>(null);
+  const firstActionRef = useRef<View>(null);
+  const submenuBackRef = useRef<View>(null);
 
   const { themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
@@ -93,7 +99,6 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
     setAnchor(null);
     setPath([]);
     setOverlay(null);
-    setRootHeight(null);
   }, []);
 
   const open = useCallback(() => {
@@ -105,7 +110,6 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const measureOverlay = useCallback(() => {
     overlayRef.current?.measureInWindow((x, y, width, height) => {
       setOverlay({ x, y, width, height });
-      setRootHeight(height);
     });
   }, []);
 
@@ -118,98 +122,97 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   // core on Android 16+, withAndroidPredictiveBackCompat on 13-15), which
   // also keeps the system from playing a "leave app" preview while the menu
   // merely closes.
-  const submenuDepth = path.length;
+  const goBack = useCallback(() => {
+    const transition = transitionAndroidMenu(path, { type: "back" });
+    if (transition.shouldClose) {
+      close();
+      return;
+    }
+    setPath(transition.path);
+  }, [close, path]);
+
   useEffect(() => {
     if (anchor === null) {
       return;
     }
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (submenuDepth > 0) {
-        setPath((current) => current.slice(0, -1));
-      } else {
-        close();
-      }
+      goBack();
       return true;
     });
     return () => subscription.remove();
-  }, [anchor, close, submenuDepth]);
+  }, [anchor, goBack]);
 
-  const parent = path.length > 0 ? path[path.length - 1] : null;
-  const levelActions = (parent?.subactions ?? props.actions).filter(
-    (action) => !(action.attributes?.hidden ?? false),
-  );
-
-  // Anchor in overlay-local coordinates (both measured in window space).
-  const local =
+  const parent = path.at(-1) ?? null;
+  const levelActions = visibleAndroidMenuActions(props.actions, path);
+  const placement =
     anchor === null || overlay === null
       ? null
-      : {
-          x: anchor.x - overlay.x,
-          y: anchor.y - overlay.y,
-          width: anchor.width,
-          height: anchor.height,
-        };
-  const preferredLeft =
-    local === null || overlay === null
-      ? 0
-      : local.x + local.width / 2 <= overlay.width / 2
-        ? local.x
-        : local.x + local.width - MENU_WIDTH;
-  const left =
-    overlay === null
-      ? 0
-      : Math.min(
-          Math.max(preferredLeft, SCREEN_MARGIN),
-          overlay.width - MENU_WIDTH - SCREEN_MARGIN,
-        );
-  // The keyboard stays up while the menu is open (in-window overlay, no
-  // focus change), so the space it covers is not usable — without this the
-  // composer-pill menus "open down" into the IME and can't be tapped.
-  const usableBottom =
-    overlay === null ? 0 : overlay.height - (keyboardVisible ? keyboardHeight : 0);
-  const spaceBelow =
-    local === null || overlay === null
-      ? 0
-      : usableBottom - (local.y + local.height) - ANCHOR_GAP - SCREEN_MARGIN;
-  const spaceAbove = local === null ? 0 : local.y - ANCHOR_GAP - SCREEN_MARGIN;
-  const opensDown = spaceBelow >= 280 || spaceBelow >= spaceAbove;
-  const maxHeight = Math.min(opensDown ? spaceBelow : spaceAbove, 480);
-  // The menu needs the overlay frame before it can be placed; it stays
-  // unmounted for that first frame so the fade-in plays at the final position.
-  const placeable = local !== null && rootHeight !== null;
+      : calculateAndroidAnchoredMenuPlacement({
+          anchor,
+          overlay,
+          keyboard: { visible: keyboardVisible, height: keyboardHeight },
+        });
+  const menuIsPlaced = placement !== null;
+  const submenuDepth = path.length;
+
+  useEffect(() => {
+    if (!menuIsPlaced) {
+      return;
+    }
+    let active = true;
+    void AccessibilityInfo.isScreenReaderEnabled().then((screenReaderEnabled) => {
+      if (!active || !screenReaderEnabled) {
+        return;
+      }
+      const focusTarget = submenuDepth > 0 ? submenuBackRef.current : firstActionRef.current;
+      const reactTag = findNodeHandle(focusTarget);
+      if (reactTag !== null) {
+        AccessibilityInfo.setAccessibilityFocus(reactTag);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [menuIsPlaced, submenuDepth]);
 
   const onPressItem = useCallback(
     (action: MenuAction) => {
-      if ((action.subactions?.length ?? 0) > 0) {
-        setPath((current) => [...current, action]);
+      const transition = transitionAndroidMenu(path, { type: "activate", action });
+      if (!transition.shouldClose) {
+        setPath(transition.path);
         return;
       }
       close();
-      if (action.id !== undefined) {
+      if (transition.selectedActionId !== null) {
         props.onPressAction?.({
-          nativeEvent: { event: action.id },
+          nativeEvent: { event: transition.selectedActionId },
         } as Parameters<NonNullable<MenuComponentProps["onPressAction"]>>[0]);
       }
     },
-    [close, props.onPressAction],
+    [close, path, props.onPressAction],
   );
 
   return (
     <>
       {typeof props.children === "function" ? (
         <View ref={anchorRef} collapsable={false} className={props.className} style={props.style}>
-          {props.children(open)}
+          {props.children(open, anchor !== null)}
         </View>
       ) : (
         <Pressable
           ref={anchorRef}
+          accessibilityHint="Shows available actions"
+          accessibilityLabel={props.anchorAccessibilityLabel ?? props.title ?? "Open menu"}
           accessibilityRole="button"
+          accessibilityState={{ expanded: anchor !== null }}
           className={props.className}
           collapsable={false}
           style={props.style}
           onPress={open}
         >
-          <View pointerEvents="none">{props.children}</View>
+          <View pointerEvents="none" importantForAccessibility="no-hide-descendants">
+            {props.children}
+          </View>
         </Pressable>
       )}
       {anchor === null ? null : (
@@ -221,16 +224,18 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
             onLayout={measureOverlay}
           >
             <Pressable accessible={false} className="absolute inset-0" onPress={close} />
-            {!placeable || local === null ? null : (
+            {placement === null ? null : (
               <Animated.View
                 entering={FadeIn.duration(120)}
-                className="absolute w-[250px] overflow-hidden rounded-[12px] border border-border shadow-2xl"
+                accessibilityViewIsModal
+                importantForAccessibility="yes"
+                onAccessibilityEscape={goBack}
+                className="absolute overflow-hidden rounded-[12px] border border-border shadow-2xl"
                 style={{
-                  left,
-                  maxHeight,
-                  ...(opensDown
-                    ? { top: local.y + local.height + ANCHOR_GAP }
-                    : { bottom: (rootHeight ?? 0) - local.y + ANCHOR_GAP }),
+                  left: placement.left,
+                  width: placement.width,
+                  maxHeight: placement.maxHeight,
+                  ...placement.vertical,
                 }}
               >
                 {/* Frosted backdrop: blur of the app content behind the menu,
@@ -252,12 +257,20 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                   showsVerticalScrollIndicator={false}
                 >
                   {parent !== null ? (
-                    // Muted parent title as the submenu header; tapping it
-                    // steps back, but it reads as a label, not a button.
                     <Pressable
-                      className="px-3.5 pb-1 pt-2.5"
-                      onPress={() => setPath((current) => current.slice(0, -1))}
+                      ref={submenuBackRef}
+                      accessibilityHint={`Closes the ${parent.title} submenu`}
+                      accessibilityLabel={getAndroidMenuBackLabel(path, props.title)}
+                      accessibilityRole="button"
+                      className="flex-row items-center gap-1 px-3.5 pb-1 pt-2.5"
+                      onPress={goBack}
                     >
+                      <SymbolView
+                        name="chevron.left"
+                        size={11}
+                        tintColor={iconSubtleColor}
+                        type="monochrome"
+                      />
                       <Text className="text-xs font-t3-bold text-foreground-muted">
                         {parent.title}
                       </Text>
@@ -265,7 +278,10 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                   ) : props.title ? (
                     <>
                       <View className="px-3.5 py-2">
-                        <Text className="text-center text-xs text-foreground-muted">
+                        <Text
+                          accessibilityRole="header"
+                          className="text-center text-xs text-foreground-muted"
+                        >
                           {props.title}
                         </Text>
                       </View>
@@ -275,10 +291,16 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                   {levelActions.map((action, index) => {
                     const destructive = action.attributes?.destructive ?? false;
                     const disabled = action.attributes?.disabled ?? false;
-                    const hasSubmenu = (action.subactions?.length ?? 0) > 0;
+                    const accessibility = getAndroidMenuActionAccessibility(action);
+                    const hasSubmenu = accessibility.state.expanded !== undefined;
                     return (
                       <Pressable
+                        ref={index === 0 ? firstActionRef : undefined}
                         key={action.id ?? `${index}-${action.title}`}
+                        accessibilityHint={accessibility.hint}
+                        accessibilityLabel={accessibility.label}
+                        accessibilityRole="menuitem"
+                        accessibilityState={accessibility.state}
                         android_ripple={{ color: rippleColor }}
                         disabled={disabled}
                         className={cn(

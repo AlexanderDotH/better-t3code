@@ -5,6 +5,7 @@ import {
   buildProviderEnvironmentOptions,
   classifyProviderEnvironmentAccess,
   resolvePrimaryOperateAccess,
+  resolveProviderAuthFlow,
   resolveRemoteOperateAccess,
   resolveSelectedProviderEnvironmentId,
 } from "./ProviderSettingsPanel.logic";
@@ -43,6 +44,19 @@ describe("provider environment selection", () => {
       relayId,
     );
     expect(resolveSelectedProviderEnvironmentId([], null, primaryId)).toBeNull();
+  });
+});
+
+describe("provider subscription auth flow", () => {
+  it("uses browser auth only for a local web or desktop environment", () => {
+    expect(resolveProviderAuthFlow({ surface: "web", local: true })).toBe("browser");
+    expect(resolveProviderAuthFlow({ surface: "desktop", local: true })).toBe("browser");
+  });
+
+  it("uses device code for mobile and every remote environment", () => {
+    expect(resolveProviderAuthFlow({ surface: "mobile", local: true })).toBe("device-code");
+    expect(resolveProviderAuthFlow({ surface: "web", local: false })).toBe("device-code");
+    expect(resolveProviderAuthFlow({ surface: "desktop", local: false })).toBe("device-code");
   });
 });
 

@@ -71,11 +71,24 @@ import {
 
 const HISTORY_SCAN_PAGE_SIZE = 200;
 const HISTORY_SCAN_MAX_PAGES = 10_000;
-const HISTORY_SUMMARY_CACHE_TTL_MS = 15_000;
-const HISTORY_SUMMARY_CACHE_MAX_ENTRIES = 32;
-const LIST_CURSOR_PREFIX = "harness-offset:";
+const HISTORY_PREVIEW_PAGE_SIZE = 10;
+const HISTORY_CACHE_TTL_MS = 15_000;
+const HISTORY_CACHE_MAX_ENTRIES = 32;
+const LIST_CURSOR_PREFIX = "harness-native:";
 const isIsoDateTime = Schema.is(IsoDateTime);
 const isHarnessChatSyncError = Schema.is(HarnessChatSyncError);
+const HistoryListCursorState = Schema.Struct({
+  providerCursor: Schema.String,
+  visibleOffset: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  changedOffset: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+const decodeHistoryListCursorState = Schema.decodeUnknownOption(HistoryListCursorState);
+
+interface DecodedHistoryListCursor {
+  readonly providerCursor?: string | undefined;
+  readonly visibleOffset: number;
+  readonly changedOffset: number;
+}
 
 interface HarnessHistorySourceGroup {
   readonly sourceId: HarnessChatSyncSourceId;
@@ -406,6 +419,129 @@ const loadAllHistorySummaries = Effect.fn("HarnessChatSync.loadAllHistorySummari
   });
 });
 
+interface HistorySummaryPage {
+  readonly summaries: ReadonlyArray<ProviderHistoryThreadSummary>;
+  readonly nextProviderCursor?: string | undefined;
+  readonly totalMatching?: number | undefined;
+}
+
+const loadHistorySummaryPage = Effect.fn("HarnessChatSync.loadHistorySummaryPage")(function* (
+  group: HarnessHistorySourceGroup,
+  input: {
+    readonly query: string;
+    readonly includeArchived: boolean;
+    readonly providerCursor?: string | undefined;
+    readonly limit: number;
+  },
+): Effect.fn.Return<HistorySummaryPage, ProviderHistorySyncError> {
+  const facet = group.preferred?.historySync;
+  if (!facet || facet.availability !== "supported") {
+    return yield* new ProviderHistorySyncError({
+      sourceId: group.sourceId,
+      operation: "list",
+      detail: "No enabled provider instance can read this history source.",
+    });
+  }
+
+  const summaries: ProviderHistoryThreadSummary[] = [];
+  const seenSessionIds = new Set<string>();
+  const seenCursors = new Set<string>();
+  let providerCursor = input.providerCursor;
+  let totalMatching: number | undefined;
+
+  for (let pageIndex = 0; pageIndex < HISTORY_SCAN_MAX_PAGES; pageIndex += 1) {
+    const remaining = input.limit - summaries.length;
+    if (remaining <= 0) {
+      return {
+        summaries,
+        ...(providerCursor === undefined ? {} : { nextProviderCursor: providerCursor }),
+        ...(totalMatching === undefined ? {} : { totalMatching }),
+      };
+    }
+    const page = yield* facet.adapter.list({
+      query: input.query.trim() || undefined,
+      includeArchived: input.includeArchived,
+      ...(providerCursor === undefined ? {} : { cursor: providerCursor }),
+      limit: remaining,
+    });
+    if (page.totalMatching !== undefined) totalMatching = page.totalMatching;
+    for (const summary of page.items) {
+      const sessionId = summary.sessionId.trim();
+      if (!sessionId || seenSessionIds.has(sessionId) || summary.isChild) continue;
+      if (!input.includeArchived && summary.archived) continue;
+      if (!matchesSummaryQuery(summary, input.query)) continue;
+      seenSessionIds.add(sessionId);
+      summaries.push(summary);
+      if (summaries.length >= input.limit) break;
+    }
+
+    const nextCursor = page.nextCursor?.trim();
+    if (!nextCursor) {
+      return {
+        summaries,
+        ...(totalMatching === undefined ? {} : { totalMatching }),
+      };
+    }
+    if (seenCursors.has(nextCursor) || nextCursor === providerCursor) {
+      return yield* new ProviderHistorySyncError({
+        sourceId: group.sourceId,
+        operation: "list",
+        detail: "The history provider repeated a pagination cursor.",
+      });
+    }
+    seenCursors.add(nextCursor);
+    providerCursor = nextCursor;
+  }
+
+  return yield* new ProviderHistorySyncError({
+    sourceId: group.sourceId,
+    operation: "list",
+    detail: "The history provider did not terminate pagination.",
+  });
+});
+
+const loadHistorySummariesForSessions = Effect.fn(
+  "HarnessChatSync.loadHistorySummariesForSessions",
+)(function* (
+  group: HarnessHistorySourceGroup,
+  sessionIds: ReadonlyArray<HarnessChatSessionId>,
+): Effect.fn.Return<ReadonlyArray<ProviderHistoryThreadSummary>, ProviderHistorySyncError> {
+  const requested = new Set(sessionIds);
+  if (requested.size === 0) return [];
+
+  const summaries = new Map<HarnessChatSessionId, ProviderHistoryThreadSummary>();
+  const limit = Math.min(
+    HISTORY_SCAN_PAGE_SIZE,
+    Math.max(HISTORY_PREVIEW_PAGE_SIZE, requested.size),
+  );
+  let providerCursor: string | undefined;
+  for (let pageIndex = 0; pageIndex < HISTORY_SCAN_MAX_PAGES; pageIndex += 1) {
+    const page = yield* loadHistorySummaryPage(group, {
+      query: "",
+      includeArchived: true,
+      ...(providerCursor === undefined ? {} : { providerCursor }),
+      limit,
+    });
+    for (const summary of page.summaries) {
+      const sessionId = HarnessChatSessionId.make(summary.sessionId.trim());
+      if (requested.has(sessionId)) summaries.set(sessionId, summary);
+    }
+    if (summaries.size === requested.size || page.nextProviderCursor === undefined) {
+      return sessionIds.flatMap((sessionId) => {
+        const summary = summaries.get(sessionId);
+        return summary ? [summary] : [];
+      });
+    }
+    providerCursor = page.nextProviderCursor;
+  }
+
+  return yield* new ProviderHistorySyncError({
+    sourceId: group.sourceId,
+    operation: "status",
+    detail: "The history provider did not terminate pagination.",
+  });
+});
+
 function normalizeOptionalText(value: string | null | undefined): string | null {
   const normalized = value?.trim();
   return normalized ? normalized : null;
@@ -462,10 +598,29 @@ function toPublicLink(link: ProjectionHarnessChatSyncLink): HarnessChatLink {
   };
 }
 
-function decodeListOffset(cursor: string | undefined): number {
-  if (!cursor?.startsWith(LIST_CURSOR_PREFIX)) return 0;
-  const value = Number(cursor.slice(LIST_CURSOR_PREFIX.length));
-  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+function decodeListCursor(cursor: string | undefined): DecodedHistoryListCursor {
+  if (!cursor?.startsWith(LIST_CURSOR_PREFIX)) {
+    return { visibleOffset: 0, changedOffset: 0 };
+  }
+  try {
+    const encoded = cursor.slice(LIST_CURSOR_PREFIX.length);
+    const decoded = decodeHistoryListCursorState(
+      JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")),
+    );
+    if (Option.isNone(decoded)) return { visibleOffset: 0, changedOffset: 0 };
+    return decoded.value;
+  } catch {
+    return { visibleOffset: 0, changedOffset: 0 };
+  }
+}
+
+function encodeListCursor(input: {
+  readonly providerCursor: string;
+  readonly visibleOffset: number;
+  readonly changedOffset: number;
+}): string {
+  const encoded = Buffer.from(JSON.stringify(input), "utf8").toString("base64url");
+  return `${LIST_CURSOR_PREFIX}${encoded}`;
 }
 
 function harnessSyncError(
@@ -528,6 +683,15 @@ export const makeHarnessChatSync = Effect.fn("makeHarnessChatSync")(function* ()
       }
     >(),
   );
+  const pageCache = yield* Ref.make(
+    new Map<
+      string,
+      {
+        readonly expiresAt: number;
+        readonly page: HistorySummaryPage;
+      }
+    >(),
+  );
 
   const getGroups = Effect.all({
     instances: providerInstances.listInstances,
@@ -564,6 +728,48 @@ export const makeHarnessChatSync = Effect.fn("makeHarnessChatSync")(function* ()
       ),
     );
 
+  const loadCachedHistorySummaryPage = Effect.fn("HarnessChatSync.loadCachedHistorySummaryPage")(
+    function* (
+      group: HarnessHistorySourceGroup,
+      input: {
+        readonly query: string;
+        readonly includeArchived: boolean;
+        readonly providerCursor?: string | undefined;
+        readonly limit: number;
+      },
+    ) {
+      const cacheKey = [
+        group.continuationKey,
+        input.includeArchived ? "1" : "0",
+        input.query.trim(),
+        input.providerCursor ?? "",
+        String(input.limit),
+      ].join("\0");
+      const currentTime = yield* Clock.currentTimeMillis;
+      const cached = (yield* Ref.get(pageCache)).get(cacheKey);
+      if (cached && cached.expiresAt > currentTime) return cached.page;
+
+      const page = yield* loadHistorySummaryPage(group, input);
+      yield* Ref.update(pageCache, (current) => {
+        const next = new Map(current);
+        for (const [key, value] of next) {
+          if (value.expiresAt <= currentTime) next.delete(key);
+        }
+        while (next.size >= HISTORY_CACHE_MAX_ENTRIES) {
+          const oldestKey = next.keys().next().value;
+          if (oldestKey === undefined) break;
+          next.delete(oldestKey);
+        }
+        next.set(cacheKey, {
+          expiresAt: currentTime + HISTORY_CACHE_TTL_MS,
+          page,
+        });
+        return next;
+      });
+      return page;
+    },
+  );
+
   const loadHistorySummaries = Effect.fn("HarnessChatSync.loadHistorySummaries")(function* (
     group: HarnessHistorySourceGroup,
     input: { readonly query: string; readonly includeArchived: boolean },
@@ -581,13 +787,13 @@ export const makeHarnessChatSync = Effect.fn("makeHarnessChatSync")(function* ()
       for (const [key, value] of next) {
         if (value.expiresAt <= currentTime) next.delete(key);
       }
-      while (next.size >= HISTORY_SUMMARY_CACHE_MAX_ENTRIES) {
+      while (next.size >= HISTORY_CACHE_MAX_ENTRIES) {
         const oldestKey = next.keys().next().value;
         if (oldestKey === undefined) break;
         next.delete(oldestKey);
       }
       next.set(cacheKey, {
-        expiresAt: currentTime + HISTORY_SUMMARY_CACHE_TTL_MS,
+        expiresAt: currentTime + HISTORY_CACHE_TTL_MS,
         summaries,
       });
       return next;
@@ -597,7 +803,7 @@ export const makeHarnessChatSync = Effect.fn("makeHarnessChatSync")(function* ()
 
   const sourceDescriptor = Effect.fn("HarnessChatSync.sourceDescriptor")(function* (
     group: HarnessHistorySourceGroup,
-  ): Effect.fn.Return<HarnessChatSyncSource, HarnessChatSyncError> {
+  ): Effect.fn.Return<HarnessChatSyncSource, never> {
     const base = {
       id: group.sourceId,
       continuationKey: group.continuationKey,
@@ -610,20 +816,23 @@ export const makeHarnessChatSync = Effect.fn("makeHarnessChatSync")(function* ()
     if (!group.preferred || group.preferred.historySync.availability !== "supported") {
       return { ...base, chatCount: 0, changedCount: 0, latestUpdatedAt: null };
     }
-
-    const loaded = yield* Effect.result(
+    const probed = yield* Effect.result(
       Effect.all({
-        summaries: loadHistorySummaries(group, { query: "", includeArchived: false }),
+        page: loadCachedHistorySummaryPage(group, {
+          query: "",
+          includeArchived: false,
+          limit: HISTORY_PREVIEW_PAGE_SIZE,
+        }),
         links: readLinks(group),
       }),
     );
-    if (Result.isFailure(loaded)) {
+    if (Result.isFailure(probed)) {
       return {
         ...base,
         status: {
-          kind: "unsupported" as const,
+          kind: "unsupported",
           reason: describeFailure(
-            loaded.failure,
+            probed.failure,
             "This harness could not list resumable chat history.",
           ),
         },
@@ -633,20 +842,25 @@ export const makeHarnessChatSync = Effect.fn("makeHarnessChatSync")(function* ()
       };
     }
 
-    const links = loaded.success.links;
+    const summaries = probed.success.page.summaries;
+    if (summaries.length === 0) {
+      return { ...base, chatCount: 0, changedCount: 0, latestUpdatedAt: null };
+    }
     let latestUpdatedAt: IsoDateTime | null = null;
     let changedCount = 0;
-    for (const summary of loaded.success.summaries) {
+    for (const summary of summaries) {
       const updatedAt = isIsoDateTime(summary.updatedAt) ? summary.updatedAt : null;
       if (updatedAt !== null && (latestUpdatedAt === null || updatedAt > latestUpdatedAt)) {
         latestUpdatedAt = updatedAt;
       }
-      const nativeSessionId = HarnessChatSessionId.make(summary.sessionId.trim());
-      if (isChanged(updatedAt, links.get(nativeSessionId))) changedCount += 1;
+      const sessionId = HarnessChatSessionId.make(summary.sessionId.trim());
+      if (isChanged(updatedAt, probed.success.links.get(sessionId))) changedCount += 1;
     }
+    const visibleLowerBound =
+      summaries.length + (probed.success.page.nextProviderCursor === undefined ? 0 : 1);
     return {
       ...base,
-      chatCount: loaded.success.summaries.length,
+      chatCount: Math.max(probed.success.page.totalMatching ?? 0, visibleLowerBound),
       changedCount,
       latestUpdatedAt,
     };
@@ -654,9 +868,7 @@ export const makeHarnessChatSync = Effect.fn("makeHarnessChatSync")(function* ()
 
   const sources: HarnessChatSyncShape["sources"] = Effect.gen(function* () {
     const groups = yield* getGroups;
-    return {
-      sources: yield* Effect.forEach(groups, sourceDescriptor, { concurrency: 4 }),
-    };
+    return { sources: yield* Effect.forEach(groups, sourceDescriptor, { concurrency: 4 }) };
   }).pipe(
     Effect.mapError((cause) =>
       isHarnessChatSyncError(cause)
@@ -704,15 +916,20 @@ export const makeHarnessChatSync = Effect.fn("makeHarnessChatSync")(function* ()
   const list: HarnessChatSyncShape["list"] = Effect.fn("HarnessChatSync.list")(function* (input) {
     const group = yield* requireSource(input.sourceId);
     const fallbackTimestamp = yield* now;
-    const loaded = yield* loadHistorySummaries(group, {
-      query: input.query,
-      includeArchived: input.includeArchived,
-    }).pipe(
-      Effect.mapError((cause) =>
-        harnessSyncError("source-unavailable", "Could not list that harness history.", cause),
+    const cursorState = decodeListCursor(input.cursor);
+    const [historyPage, links, snapshot] = yield* Effect.all([
+      loadCachedHistorySummaryPage(group, {
+        query: input.query,
+        includeArchived: input.includeArchived,
+        ...(cursorState.providerCursor === undefined
+          ? {}
+          : { providerCursor: cursorState.providerCursor }),
+        limit: input.limit,
+      }).pipe(
+        Effect.mapError((cause) =>
+          harnessSyncError("source-unavailable", "Could not list that harness history.", cause),
+        ),
       ),
-    );
-    const [links, snapshot] = yield* Effect.all([
       readLinks(group),
       projections
         .getShellSnapshot()
@@ -722,10 +939,9 @@ export const makeHarnessChatSync = Effect.fn("makeHarnessChatSync")(function* ()
           ),
         ),
     ]);
-    const offset = decodeListOffset(input.cursor);
-    const page = loaded.slice(offset, offset + input.limit);
+    const pageSummaries = historyPage.summaries;
     const chats = yield* Effect.forEach(
-      page,
+      pageSummaries,
       (summary) =>
         publicSummary({
           summary,
@@ -737,16 +953,29 @@ export const makeHarnessChatSync = Effect.fn("makeHarnessChatSync")(function* ()
         }),
       { concurrency: 8 },
     );
-    const changedMatching = loaded.reduce((count, summary) => {
+    const pageChanged = pageSummaries.reduce((count, summary) => {
       const normalized = normalizeHistorySummary(summary, fallbackTimestamp);
       return count + (isChanged(normalized.updatedAt, links.get(normalized.sessionId)) ? 1 : 0);
     }, 0);
-    const nextOffset = offset + page.length;
+    const visibleCount = cursorState.visibleOffset + pageSummaries.length;
+    const changedMatching = cursorState.changedOffset + pageChanged;
+    const countsAreComplete = historyPage.nextProviderCursor === undefined;
+    const nextCursor =
+      historyPage.nextProviderCursor === undefined
+        ? null
+        : encodeListCursor({
+            providerCursor: historyPage.nextProviderCursor,
+            visibleOffset: visibleCount,
+            changedOffset: changedMatching,
+          });
     return {
       chats,
-      nextCursor: nextOffset < loaded.length ? `${LIST_CURSOR_PREFIX}${nextOffset}` : null,
-      totalMatching: loaded.length,
+      nextCursor,
+      totalMatching: countsAreComplete
+        ? visibleCount
+        : Math.max(historyPage.totalMatching ?? 0, visibleCount + 1),
       changedMatching,
+      countsAreComplete,
     };
   });
 
@@ -838,12 +1067,11 @@ export const makeHarnessChatSync = Effect.fn("makeHarnessChatSync")(function* ()
           "No enabled provider instance can read that harness history source.",
         );
       }
+      const sessionIds = [
+        ...new Set(requestedSessionIds.map((sessionId) => HarnessChatSessionId.make(sessionId))),
+      ];
       const fallbackTimestamp = yield* now;
-      const summaries = yield* loadHistorySummaries(
-        group,
-        { query: "", includeArchived: true },
-        true,
-      ).pipe(
+      const summaries = yield* loadHistorySummariesForSessions(group, sessionIds).pipe(
         Effect.mapError((cause) =>
           harnessSyncError("source-unavailable", "Could not refresh harness chat status.", cause),
         ),
@@ -855,9 +1083,6 @@ export const makeHarnessChatSync = Effect.fn("makeHarnessChatSync")(function* ()
         ]),
       );
       const links = yield* readLinks(group);
-      const sessionIds = [
-        ...new Set(requestedSessionIds.map((sessionId) => HarnessChatSessionId.make(sessionId))),
-      ];
       const statuses = yield* Effect.forEach(
         sessionIds,
         Effect.fn("HarnessChatSync.refreshOneStatus")(function* (sessionId) {

@@ -230,6 +230,14 @@
     "./usageFormat": {
       "types": "./src/usageFormat.ts",
       "import": "./src/usageFormat.ts"
+    },
+    "./interfaceLanguage": {
+      "types": "./src/interfaceLanguage.ts",
+      "import": "./src/interfaceLanguage.ts"
+    },
+    "./modelCatalogFilters": {
+      "types": "./src/modelCatalogFilters.ts",
+      "import": "./src/modelCatalogFilters.ts"
     }
   },
   "scripts": {

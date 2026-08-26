@@ -7,16 +7,18 @@ orchestration layer does not know which one is behind a thread.
 
 ## Built-in drivers
 
-[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with six entries:
+[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with eight entries:
 
-| Driver kind   | Driver source                           |
-| ------------- | --------------------------------------- |
-| `codex`       | [`Drivers/CodexDriver.ts`][codex]       |
-| `claudeAgent` | [`Drivers/ClaudeDriver.ts`][claude]     |
-| `cursor`      | [`Drivers/CursorDriver.ts`][cursor]     |
-| `grok`        | [`Drivers/GrokDriver.ts`][grok]         |
-| `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode] |
-| `gemini`      | [`Drivers/GeminiDriver.ts`][gemini]     |
+| Driver kind   | Driver source                               |
+| ------------- | ------------------------------------------- |
+| `codex`       | [`Drivers/CodexDriver.ts`][codex]           |
+| `chatgpt`     | [`Drivers/ChatGptDriver.ts`][chatgpt]       |
+| `openrouter`  | [`Drivers/OpenRouterDriver.ts`][openrouter] |
+| `claudeAgent` | [`Drivers/ClaudeDriver.ts`][claude]         |
+| `cursor`      | [`Drivers/CursorDriver.ts`][cursor]         |
+| `grok`        | [`Drivers/GrokDriver.ts`][grok]             |
+| `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode]     |
+| `gemini`      | [`Drivers/GeminiDriver.ts`][gemini]         |
 
 Each driver declares its `driverKind`, a `configSchema`, and a `create` function that builds an
 adapter in a child scope. Adapter implementations live beside them in
@@ -56,14 +58,16 @@ into the shared orchestration model, and clients render typed domain events and 
 Adapters report capabilities instead of making orchestration branch on provider names. Internal MCP
 delivery is one such capability:
 
-| Driver   | MCP delivery               | Workspace context | Project coordination |
-| -------- | -------------------------- | ----------------- | -------------------- |
-| Codex    | Native configuration       | Yes               | Yes                  |
-| Claude   | Session configuration      | Yes               | Yes                  |
-| Cursor   | Session configuration      | Yes               | Yes                  |
-| OpenCode | Session configuration      | Yes               | Yes                  |
-| Grok     | Preview-only configuration | No                | Yes                  |
-| Gemini   | Unsupported (direct tools) | Yes               | No                   |
+| Driver     | MCP delivery               | Workspace context | Project coordination |
+| ---------- | -------------------------- | ----------------- | -------------------- |
+| Codex      | Native configuration       | Yes               | Yes                  |
+| ChatGPT    | T3-native MCP bridge       | Yes               | Yes                  |
+| OpenRouter | T3-native MCP bridge       | Yes               | Yes                  |
+| Claude     | Session configuration      | Yes               | Yes                  |
+| Cursor     | Session configuration      | Yes               | Yes                  |
+| OpenCode   | Session configuration      | Yes               | Yes                  |
+| Grok       | Preview-only configuration | No                | Yes                  |
+| Gemini     | Unsupported (direct tools) | Yes               | No                   |
 
 Codex, Claude, Cursor, and OpenCode receive the authenticated `/mcp/workspace` endpoint; Grok
 receives `/mcp`. Both expose collaborative preview and project-agent coordination tools, while only
@@ -77,6 +81,17 @@ directly. T3 owns Gemini history, streaming, approvals, interruption, and the fu
 Its `workspace_context`, edit, and bounded command tools invoke T3 services directly instead of
 giving the model an MCP transport. User MCP and project-agent coordination are therefore reported
 as unsupported by this adapter rather than silently pretending to be connected.
+
+ChatGPT Subscription is also T3-harnessed, but its Early Access bridge combines direct workspace
+tools with the authenticated internal T3 MCP endpoint and the MCP servers configured for that
+provider instance. Internal subagent, preview, and coordination tools retain their public names;
+configured MCP tools are namespaced by server to prevent collisions. See
+[ChatGPT Subscription harness](./chatgpt-subscription-harness.md).
+
+OpenRouter uses the same server-owned execution core with a different authentication, catalog,
+protocol, routing, and context-policy strategy bundle. Its stable default is Chat Completions; the
+OpenResponses strategy is explicitly beta. Both expose T3 tools rather than delegating the coding
+loop to an upstream agent SDK. See [Native provider harness](./native-provider-harness.md).
 
 ## Harness history synchronization
 
@@ -92,6 +107,8 @@ implementing the SPI rather than changing orchestration or client code.
 | Driver        | History source                                   | Continuation behavior                         |
 | ------------- | ------------------------------------------------ | --------------------------------------------- |
 | Codex         | App-server `thread/list` and `thread/read`       | Resumes the original Codex thread             |
+| ChatGPT       | T3-owned atomic history                          | Resumes T3's persisted subscription session   |
+| OpenRouter    | T3-owned atomic history                          | Replays the selected protocol from T3 history |
 | Claude Code   | SDK history in the instance's configured home    | Resumes the original SDK session/cursor       |
 | OpenCode      | SDK `session.list` and `session.messages`        | Resumes the original OpenCode session         |
 | Cursor / Grok | ACP session listing and loading, when negotiated | Resumes only when the ACP agent supports both |
@@ -141,8 +158,8 @@ are projected into the durable parent transcript with `origin: "t3-managed"`, ex
 metadata, progress, and terminal state. On restart, normal orphan-subagent reconciliation settles any
 projected worker whose in-memory runtime no longer exists.
 
-Codex, Claude, Cursor, Grok, and OpenCode can initiate this flow through the authenticated internal
-MCP toolkit. Gemini's direct SDK harness does not expose that toolkit, so Gemini cannot initiate
+Codex, ChatGPT, OpenRouter, Claude, Cursor, Grok, and OpenCode can initiate this flow through the
+authenticated internal MCP toolkit. Gemini's direct SDK harness does not expose that toolkit, so Gemini cannot initiate
 delegation in this slice; it remains eligible as a selected worker and performs the delegated coding
 task through its T3-owned direct tools. General workers cannot ask hidden user questions, do not
 spawn nested agents, and are cancelled if their parent turn completes first.
@@ -151,14 +168,16 @@ Fetch eligibility is another provider-snapshot capability. Providers without `fe
 appear in the Fetch model picker. The capability owns the recommended planning budget and command
 policy for transient exploration workers:
 
-| Driver   | Initial worker budget | Fetch command policy |
-| -------- | --------------------- | -------------------- |
-| Codex    | 8                     | Read-only sandbox    |
-| Claude   | 8                     | Deny commands        |
-| Cursor   | 8                     | Deny commands        |
-| Grok     | 8                     | Deny commands        |
-| OpenCode | 8                     | Deny commands        |
-| Gemini   | 8                     | Deny commands        |
+| Driver     | Initial worker budget | Fetch command policy |
+| ---------- | --------------------- | -------------------- |
+| Codex      | 8                     | Read-only sandbox    |
+| ChatGPT    | 8                     | Read-only sandbox    |
+| OpenRouter | 8                     | Deny commands        |
+| Claude     | 8                     | Deny commands        |
+| Cursor     | 8                     | Deny commands        |
+| Grok       | 8                     | Deny commands        |
+| OpenCode   | 8                     | Deny commands        |
+| Gemini     | 8                     | Deny commands        |
 
 The budget is a provider declaration, not an application-wide clamp. A provider or fork may
 advertise a larger supported worker count.
@@ -219,9 +238,13 @@ observe and stop a Fetch-enabled turn through existing controls.
 Clients never call a provider directly. They dispatch orchestration commands over the RPC method
 `orchestration.dispatchCommand`, defined with the rest of the orchestration surface in
 [`orchestration.ts`][contracts]. The client-dispatchable provider-facing commands are
-`thread.turn.start`, `thread.turn.interrupt`, `thread.approval.respond`,
+`thread.turn.start`, `thread.turn.retry`, `thread.turn.interrupt`, `thread.approval.respond`,
 `thread.user-input.respond`, `thread.checkpoint.revert`, and `thread.session.stop`, plus the mode
 setters `thread.runtime-mode.set` and `thread.interaction-mode.set`.
+
+`thread.turn.retry` references the existing user message and the exact interrupted turn. The
+decider accepts it only when that turn has no assistant output, then emits a result-only
+`thread.turn-start-requested` event without another `thread.message-sent` event.
 
 The engine persists an event for the command, and a server-side reactor performs the provider call.
 Provider output comes back as internal commands such as `thread.message.assistant.delta` and
@@ -252,6 +275,8 @@ when a request opens (approval) or user input is requested, via
 
 [drivers]: ../../apps/server/src/provider/builtInDrivers.ts
 [codex]: ../../apps/server/src/provider/Drivers/CodexDriver.ts
+[chatgpt]: ../../apps/server/src/provider/Drivers/ChatGptDriver.ts
+[openrouter]: ../../apps/server/src/provider/Drivers/OpenRouterDriver.ts
 [claude]: ../../apps/server/src/provider/Drivers/ClaudeDriver.ts
 [cursor]: ../../apps/server/src/provider/Drivers/CursorDriver.ts
 [grok]: ../../apps/server/src/provider/Drivers/GrokDriver.ts

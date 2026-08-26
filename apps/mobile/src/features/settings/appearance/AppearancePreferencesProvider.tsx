@@ -16,6 +16,10 @@ import {
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
 import { useChatVisualModeSync } from "../../../state/use-chat-visual-mode-sync";
 import { useProjectThreadPreviewSync } from "../../../state/use-project-thread-preview-sync";
+import {
+  useInterfaceLanguageSync,
+  type MobileInterfaceLanguageSyncState,
+} from "../../../state/use-interface-language-sync";
 import type { Preferences } from "../../../persistence/mobile-preferences";
 import {
   createMobileThemePairPatch,
@@ -67,6 +71,7 @@ interface AppearancePreferencesContextValue {
     readonly deferredEnvironmentLabels: readonly string[];
     readonly unsupportedEnvironmentLabels: readonly string[];
   };
+  readonly interfaceLanguage: MobileInterfaceLanguageSyncState;
 }
 
 const AppearancePreferencesContext = createContext<AppearancePreferencesContextValue | null>(null);
@@ -100,6 +105,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const chatVisualModeSync = useChatVisualModeSync();
   const projectThreadPreviewSync = useProjectThreadPreviewSync();
+  const interfaceLanguage = useInterfaceLanguageSync();
   const systemColorScheme = useColorScheme() === "dark" ? "dark" : "light";
   const storedPreferences = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value
@@ -214,11 +220,13 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
         deferredEnvironmentLabels: projectThreadPreviewSync.deferredEnvironmentLabels,
         unsupportedEnvironmentLabels: projectThreadPreviewSync.unsupportedEnvironmentLabels,
       },
+      interfaceLanguage,
     }),
     [
       preferences,
       chatVisualModeSync,
       projectThreadPreviewSync,
+      interfaceLanguage,
       themeId,
       themeIds,
       themeMode,

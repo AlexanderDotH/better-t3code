@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
+import { openRouterApiKeySecretName } from "./provider/openrouter/auth/OpenRouterCredentialStore.ts";
 import * as ServerSettingsModule from "./serverSettings.ts";
 import { redactServerSettingsForClient, ServerSettingsService } from "./serverSettings.ts";
 
@@ -27,7 +28,7 @@ const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 
 const makeServerSettingsLayer = () =>
   ServerSettingsModule.layer.pipe(
-    Layer.provide(ServerSecretStore.layer),
+    Layer.provideMerge(ServerSecretStore.layer),
     Layer.provideMerge(
       Layer.fresh(
         ServerConfig.layerTest(process.cwd(), {
@@ -44,6 +45,18 @@ const makeFailingSecretStoreLayer = (cause: ServerSecretStore.SecretStoreError) 
       get: () => Effect.fail(cause),
       set: () => Effect.void,
       create: () => Effect.void,
+      getOrCreateRandom: () => Effect.succeed(new Uint8Array()),
+      remove: () => Effect.void,
+    }),
+  );
+
+const makeCreateFailingSecretStoreLayer = (cause: ServerSecretStore.SecretStoreError) =>
+  Layer.succeed(
+    ServerSecretStore.ServerSecretStore,
+    ServerSecretStore.ServerSecretStore.of({
+      get: () => Effect.succeed(Option.none()),
+      set: () => Effect.void,
+      create: () => Effect.fail(cause),
       getOrCreateRandom: () => Effect.succeed(new Uint8Array()),
       remove: () => Effect.void,
     }),
@@ -171,6 +184,264 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.isFalse((yield* serverSettings.getSettings).enableLegacyTokenStreaming);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
+
+  it.effect("migrates legacy single-instance OpenRouter settings and extracts its API key", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const serverSettings = yield* ServerSettingsService;
+      const legacyApiKey = "sk-or-legacy-single";
+
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        JSON.stringify({
+          providers: {
+            openrouter: {
+              enabled: true,
+              apiKey: legacyApiKey,
+              baseUrl: "https://openrouter.ai/api/v1",
+              preferredMaxCatalogContextTokens: "200000",
+              contextCompression: true,
+              customModels: ["anthropic/claude-custom"],
+            },
+          },
+        }),
+      );
+
+      const settings = yield* serverSettings.getSettings;
+      const instanceId = ProviderInstanceId.make("openrouter");
+      assert.deepEqual(settings.providerInstances[instanceId], {
+        driver: ProviderDriverKind.make("openrouter"),
+        enabled: true,
+        config: {
+          defaultModel: "",
+          contextCompression: true,
+          customModels: ["anthropic/claude-custom"],
+        },
+      });
+
+      const stored = yield* secretStore.get(openRouterApiKeySecretName(instanceId));
+      assert.isTrue(Option.isSome(stored));
+      if (Option.isSome(stored)) {
+        assert.equal(new TextDecoder().decode(stored.value), legacyApiKey);
+      }
+
+      const persisted = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(persisted, legacyApiKey);
+      assert.notInclude(persisted, "apiKey");
+      assert.notInclude(persisted, "preferredMaxCatalogContextTokens");
+      assert.notInclude(persisted, "baseUrl");
+      assert.isUndefined(JSON.parse(persisted).providers?.openrouter);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect(
+    "extracts and redacts a legacy OpenRouter key submitted through the opaque instance map",
+    () =>
+      Effect.gen(function* () {
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const secretStore = yield* ServerSecretStore.ServerSecretStore;
+        const serverSettings = yield* ServerSettingsService;
+        const instanceId = ProviderInstanceId.make("openrouter_legacy_client");
+        const legacyApiKey = "sk-or-legacy-client-plaintext";
+
+        const clientProjection = redactServerSettingsForClient({
+          ...DEFAULT_SERVER_SETTINGS,
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("openrouter"),
+              config: { apiKey: legacyApiKey, defaultModel: "" },
+            },
+          },
+        });
+        assert.notInclude(JSON.stringify(clientProjection), legacyApiKey);
+        assert.notProperty(clientProjection.providerInstances[instanceId]?.config ?? {}, "apiKey");
+
+        const saved = yield* serverSettings.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("openrouter"),
+              enabled: true,
+              config: {
+                apiKey: legacyApiKey,
+                contextCompression: false,
+                customModels: ["@preset/legacy-client"],
+              },
+            },
+          },
+        });
+
+        assert.deepEqual(saved.providerInstances[instanceId]?.config, {
+          defaultModel: "",
+          contextCompression: false,
+          customModels: ["@preset/legacy-client"],
+        });
+        assert.notInclude(JSON.stringify(redactServerSettingsForClient(saved)), legacyApiKey);
+
+        const stored = yield* secretStore.get(openRouterApiKeySecretName(instanceId));
+        assert.isTrue(Option.isSome(stored));
+        if (Option.isSome(stored)) {
+          assert.equal(new TextDecoder().decode(stored.value), legacyApiKey);
+        }
+
+        const persisted = yield* fileSystem.readFileString(serverConfig.settingsPath);
+        assert.notInclude(persisted, legacyApiKey);
+        assert.notInclude(persisted, '"apiKey"');
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect(
+    "sanitizes explicit OpenRouter instances without replacing a newer stored credential",
+    () =>
+      Effect.gen(function* () {
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const secretStore = yield* ServerSecretStore.ServerSecretStore;
+        const serverSettings = yield* ServerSettingsService;
+        const instanceId = ProviderInstanceId.make("openrouter_work");
+        const storedApiKey = "sk-or-newer-stored";
+        const legacyApiKey = "sk-or-stale-settings";
+
+        yield* secretStore.set(
+          openRouterApiKeySecretName(instanceId),
+          new TextEncoder().encode(storedApiKey),
+        );
+        yield* fileSystem.writeFileString(
+          serverConfig.settingsPath,
+          JSON.stringify({
+            providerInstances: {
+              [instanceId]: {
+                driver: "openrouter",
+                enabled: true,
+                config: {
+                  enabled: false,
+                  apiKey: legacyApiKey,
+                  baseUrl: "https://gateway.example.test/v1",
+                  preferredMaxCatalogContextTokens: "100000",
+                  contextCompression: false,
+                  customModels: ["@preset/work"],
+                },
+              },
+            },
+          }),
+        );
+
+        const settings = yield* serverSettings.getSettings;
+        assert.deepEqual(settings.providerInstances[instanceId], {
+          driver: ProviderDriverKind.make("openrouter"),
+          enabled: false,
+          config: {
+            defaultModel: "",
+            contextCompression: false,
+            customModels: ["@preset/work"],
+            legacyBaseUrlIncompatible: true,
+          },
+        });
+
+        const stored = yield* secretStore.get(openRouterApiKeySecretName(instanceId));
+        assert.isTrue(Option.isSome(stored));
+        if (Option.isSome(stored)) {
+          assert.equal(new TextDecoder().decode(stored.value), storedApiKey);
+        }
+
+        const persisted = yield* fileSystem.readFileString(serverConfig.settingsPath);
+        assert.notInclude(persisted, legacyApiKey);
+        assert.notInclude(persisted, "gateway.example.test");
+        assert.notInclude(persisted, "preferredMaxCatalogContextTokens");
+        assert.include(persisted, '"legacyBaseUrlIncompatible": true');
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("does not synthesize a default OpenRouter instance when an explicit one exists", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const serverSettings = yield* ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("openrouter_personal");
+
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        JSON.stringify({
+          providers: {
+            openrouter: {
+              enabled: true,
+              apiKey: "sk-or-legacy-mirror",
+              contextCompression: true,
+              customModels: ["legacy/model"],
+            },
+          },
+          providerInstances: {
+            [instanceId]: {
+              driver: "openrouter",
+              config: { defaultModel: "openai/gpt-explicit" },
+            },
+          },
+        }),
+      );
+
+      const settings = yield* serverSettings.getSettings;
+      assert.isUndefined(settings.providerInstances[ProviderInstanceId.make("openrouter")]);
+      assert.deepEqual(settings.providerInstances[instanceId]?.config, {
+        defaultModel: "openai/gpt-explicit",
+      });
+      const stored = yield* secretStore.get(openRouterApiKeySecretName(instanceId));
+      assert.isTrue(Option.isSome(stored));
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("leaves plaintext settings intact when legacy credential extraction fails", () => {
+    const platformCause = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "open",
+      pathOrDescriptor: "OpenRouter credential secret",
+      description: "Secret backend unavailable.",
+    });
+    const cause = new ServerSecretStore.SecretStorePersistError({
+      resource: "OpenRouter credential secret",
+      cause: platformCause,
+    });
+    const configLayer = Layer.fresh(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3code-openrouter-migration-failure-test-",
+      }),
+    );
+    const settingsLayer = ServerSettingsModule.layer.pipe(
+      Layer.provide(makeCreateFailingSecretStoreLayer(cause)),
+      Layer.provideMerge(configLayer),
+    );
+
+    return Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsService;
+      const legacyApiKey = "sk-or-must-stay-on-disk";
+      const original = JSON.stringify({
+        providerInstances: {
+          openrouter: {
+            driver: "openrouter",
+            config: { apiKey: legacyApiKey },
+          },
+        },
+      });
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, original);
+
+      const error = yield* Effect.flip(serverSettings.getSettings);
+
+      assert.deepInclude(error, {
+        _tag: "ServerSettingsError",
+        operation: "write-secret",
+        providerInstanceId: "openrouter",
+      });
+      assert.strictEqual(error.cause, cause);
+      assert.notInclude(error.message, legacyApiKey);
+      assert.notInclude(JSON.stringify(error), legacyApiKey);
+      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), original);
+    }).pipe(Effect.provide(settingsLayer));
+  });
 
   it.effect(
     "decodes legacy object-shaped textGenerationModelSelection.options from settings.json",

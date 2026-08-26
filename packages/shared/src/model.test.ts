@@ -165,7 +165,7 @@ describe("Codex context window", () => {
     });
   });
 
-  it("keeps one million selectable beyond the reported model maximum", () => {
+  it("caps selectable steps at the reported model maximum", () => {
     const descriptor = createCodexContextWindowDescriptor({
       defaultTokens: 272_000,
       maxTokens: 872_000,
@@ -180,8 +180,9 @@ describe("Codex context window", () => {
       isDefault: true,
     });
     expect(descriptor.options.map((choice) => choice.label)).toContain("872K");
-    expect(descriptor.options.map((choice) => choice.label)).toContain("896K");
-    expect(descriptor.options.at(-1)).toEqual({ id: "1000000", label: "1M" });
+    expect(descriptor.options.map((choice) => choice.label)).not.toContain("896K");
+    expect(descriptor.options.map((choice) => choice.label)).not.toContain("1M");
+    expect(descriptor.options.at(-1)).toEqual({ id: "872000", label: "872K" });
     expect(descriptor.options.map((choice) => choice.label)).toEqual(
       [...descriptor.options]
         .sort(
@@ -206,7 +207,30 @@ describe("Codex context window", () => {
       isDefault: true,
     });
     expect(descriptor.options.filter((choice) => choice.label === "128K")).toHaveLength(1);
-    expect(descriptor.options.at(-1)).toEqual({ id: "1000000", label: "1M" });
+    expect(
+      descriptor.options.every((choice) => choice.id === "default" || Number(choice.id) < 128_000),
+    ).toBe(true);
+    expect(descriptor.options.at(-1)).toEqual({
+      id: "default",
+      label: "128K",
+      description: "Model default",
+      isDefault: true,
+    });
+  });
+
+  it("clamps a saved value above the model maximum to the maximum choice", () => {
+    const descriptor = createCodexContextWindowDescriptor({
+      defaultTokens: 272_000,
+      maxTokens: 872_000,
+      effectivePercent: 95,
+    });
+
+    expect(
+      getProviderOptionDescriptors({
+        caps: createModelCapabilities({ optionDescriptors: [descriptor] }),
+        selections: [{ id: "contextWindow", value: "1000000" }],
+      })[0],
+    ).toMatchObject({ currentValue: "872000" });
   });
 
   it("resolves only bounded numeric selections to runtime token counts", () => {

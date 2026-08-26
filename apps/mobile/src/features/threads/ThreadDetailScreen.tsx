@@ -20,6 +20,7 @@ import type {
   ProviderInteractionMode,
   RuntimeMode,
   ServerConfig as T3ServerConfig,
+  ThreadForkBoundary,
   ThreadId,
   UserInputQuestion,
 } from "@t3tools/contracts";
@@ -85,11 +86,12 @@ import {
   COMPOSER_EXPANDED_CHROME,
   ThreadComposer,
 } from "./ThreadComposer";
-import { ThreadFeed } from "./ThreadFeed";
+import { ThreadFeed, type ThreadFeedRetryAction } from "./ThreadFeed";
 import { ThreadSubagentStack } from "./ThreadSubagentStack";
 import { useMobilePlanParallelismReview } from "./use-plan-parallelism-review";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
+import { resolveForkComposerBudget } from "./thread-fork";
 
 export interface ThreadDetailScreenProps {
   readonly selectedThread: OrchestrationThreadShell;
@@ -147,6 +149,14 @@ export interface ThreadDetailScreenProps {
     plan: OrchestrationProposedPlan,
     strategy: PlanImplementationStrategy,
   ) => Promise<MessageId | null>;
+  readonly forkActionSupported: boolean;
+  readonly forkActionEnabled: boolean;
+  readonly pendingForkBoundaryKey: string | null;
+  readonly onFork: (boundary: ThreadForkBoundary) => void;
+  readonly forkSourceAvailable: boolean;
+  readonly onOpenForkSource: () => void;
+  readonly retryAction: ThreadFeedRetryAction | null;
+  readonly focusComposerOnMount?: boolean;
   readonly onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -287,6 +297,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const listRef = useRef<LegendListRef>(null);
   const feedTouchStartRef = useRef<{ pageX: number; pageY: number } | null>(null);
   const selectedThreadKeyRef = useRef(selectedThreadKey);
+  const focusedForkThreadKeyRef = useRef<string | null>(null);
   const lastScrolledSubmittedMessageIdRef = useRef<MessageId | null>(null);
   const [composerExpanded, setComposerExpanded] = useState(false);
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
@@ -320,6 +331,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     }
   })();
   const selectedThreadFeed = props.selectedThreadFeed;
+  const forkComposerBudget = resolveForkComposerBudget({
+    handoff: props.selectedThread.fork?.handoff ?? null,
+    draftMessage: props.draftMessage,
+    draftAttachmentCount: props.draftAttachments.length,
+  });
   const composerChrome = composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME;
   const composerOverlapHeight = composerChrome + composerBottomInset;
   // While a user-input request is pending, the questionnaire owns the
@@ -489,7 +505,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const latestActionablePlan = useMemo(() => {
     for (let index = props.selectedThreadFeed.length - 1; index >= 0; index -= 1) {
       const entry = props.selectedThreadFeed[index];
-      if (entry?.type === "proposed-plan" && entry.proposedPlan.implementedAt === null) {
+      if (
+        entry?.type === "proposed-plan" &&
+        entry.proposedPlan.implementedAt === null &&
+        !entry.proposedPlan.historyOrigin
+      ) {
         return entry.proposedPlan;
       }
     }
@@ -515,6 +535,18 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   useLayoutEffect(() => {
     selectedThreadKeyRef.current = selectedThreadKey;
   }, [selectedThreadKey]);
+
+  useEffect(() => {
+    if (
+      props.focusComposerOnMount !== true ||
+      focusedForkThreadKeyRef.current === selectedThreadKey
+    ) {
+      return;
+    }
+    focusedForkThreadKeyRef.current = selectedThreadKey;
+    const frame = requestAnimationFrame(() => composerEditorRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [props.focusComposerOnMount, selectedThreadKey]);
 
   useEffect(() => {
     setAnchorMessageId(null);
@@ -704,6 +736,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             parallelPlanImplementationEnabled={props.parallelPlanImplementationEnabled}
             reviewedPlanSubagentCounts={reviewedPlanSubagentCounts}
             onImplementPlan={workflowActionsSupported ? handleImplementPlan : undefined}
+            forkActionSupported={props.forkActionSupported}
+            forkActionEnabled={props.forkActionEnabled}
+            pendingForkBoundaryKey={props.pendingForkBoundaryKey}
+            onFork={props.onFork}
+            forkProvenance={props.selectedThread.fork?.provenance ?? null}
+            forkSourceAvailable={props.forkSourceAvailable}
+            onOpenForkSource={props.onOpenForkSource}
+            retryAction={props.retryAction}
             loadEarlier={props.loadEarlier ?? null}
           />
         </View>
@@ -868,6 +908,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 onUpdateFetchEnabled={props.onUpdateFetchEnabled}
                 onCopyTranscript={props.onCopyTranscript}
                 transcriptExportBusy={props.transcriptExportBusy}
+                forkComposerBudget={forkComposerBudget}
                 onExpandedChange={setComposerExpanded}
                 onEditorFocusChange={handleOwnedInputFocusChange}
               />

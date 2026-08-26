@@ -47,7 +47,14 @@ import {
   GeneralSubagentCancelInput,
   GeneralSubagentCancelResult,
   GeneralSubagentError,
+  GeneralSubagentFollowUpInput,
+  GeneralSubagentFollowUpResult,
+  GeneralSubagentInterruptInput,
+  GeneralSubagentInterruptResult,
+  GeneralSubagentListResult,
   GeneralSubagentModelsResult,
+  GeneralSubagentSendMessageInput,
+  GeneralSubagentSendMessageResult,
   type GeneralSubagentSnapshot,
   GeneralSubagentSpawnInput,
   GeneralSubagentSpawnResult,
@@ -58,6 +65,7 @@ import {
 export const GENERAL_SUBAGENT_TIMEOUT = Duration.minutes(30);
 export const GENERAL_SUBAGENT_ABORT_FORCE_DELAY = Duration.seconds(5);
 export const GENERAL_SUBAGENT_OUTPUT_MAX_CHARS = 64_000;
+export const GENERAL_SUBAGENT_MAX_DIRECT_CHILDREN = 40;
 const GENERAL_SUBAGENT_TRANSCRIPT_FLUSH_CHARS = 2_048;
 const GENERAL_SUBAGENT_RESULT_LIMIT = 256;
 const OUTPUT_TRUNCATION_MARKER = "\n... [subagent output truncated at 64,000 characters]";
@@ -85,6 +93,24 @@ Execution contract:
 - Do not claim the parent task is complete. Return your scoped outcome so the parent can integrate and verify it.`;
 }
 
+export function buildGeneralSubagentFollowUpPrompt(input: {
+  readonly task: string;
+  readonly messages: ReadonlyArray<string>;
+}): string {
+  const mailbox =
+    input.messages.length === 0
+      ? ""
+      : `\n\nMessages queued by the parent and delivered at this safe boundary:\n${input.messages
+          .map((message, index) => `${index + 1}. ${message}`)
+          .join("\n")}`;
+  return `T3 DIRECT SUBAGENT FOLLOW-UP
+
+Continue in the existing provider session. Complete this follow-up task end to end:
+${input.task}${mailbox}
+
+Keep the same execution contract: remain within the delegated scope, do not spawn nested agents, verify focused work, and return the scoped outcome to the parent.`;
+}
+
 export function generalSubagentApprovalAction(requestType: string): GeneralSubagentApprovalAction {
   if (requestType === "tool_user_input") return "fail-agent";
   if (requestType === "file_read_approval") return "accept";
@@ -109,6 +135,24 @@ export interface GeneralSubagentCoordinatorShape {
   readonly cancel: (
     input: GeneralSubagentCaller & GeneralSubagentCancelInput,
   ) => Effect.Effect<GeneralSubagentCancelResult, GeneralSubagentError>;
+  readonly listAgents: (
+    input: GeneralSubagentCaller,
+  ) => Effect.Effect<GeneralSubagentListResult, GeneralSubagentError>;
+  readonly spawnAgent: (
+    input: GeneralSubagentCaller & GeneralSubagentSpawnInput,
+  ) => Effect.Effect<GeneralSubagentSpawnResult, GeneralSubagentError>;
+  readonly sendMessage: (
+    input: GeneralSubagentCaller & GeneralSubagentSendMessageInput,
+  ) => Effect.Effect<GeneralSubagentSendMessageResult, GeneralSubagentError>;
+  readonly followUp: (
+    input: GeneralSubagentCaller & GeneralSubagentFollowUpInput,
+  ) => Effect.Effect<GeneralSubagentFollowUpResult, GeneralSubagentError>;
+  readonly waitAgent: (
+    input: GeneralSubagentCaller & GeneralSubagentWaitInput,
+  ) => Effect.Effect<GeneralSubagentWaitResult, GeneralSubagentError>;
+  readonly interruptAgent: (
+    input: GeneralSubagentCaller & GeneralSubagentInterruptInput,
+  ) => Effect.Effect<GeneralSubagentInterruptResult, GeneralSubagentError>;
 }
 
 export class GeneralSubagentCoordinator extends Context.Service<
@@ -131,18 +175,27 @@ interface ActiveGeneralSubagent {
   readonly syntheticThreadId: ThreadId;
   readonly runtimeSessionId: RuntimeSessionId;
   readonly subagentId: SubagentId;
-  readonly assistantMessageId: MessageId;
-  readonly task: string;
+  assistantMessageId: MessageId;
+  task: string;
   readonly selection: ModelSelection;
   readonly providerDriver: ProviderDriverKind;
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
-  readonly terminal: Deferred.Deferred<GeneralSubagentOutcome>;
-  readonly completed: Deferred.Deferred<void>;
+  terminal: Deferred.Deferred<GeneralSubagentOutcome>;
+  completed: Deferred.Deferred<void>;
+  wake: Deferred.Deferred<void>;
+  readonly disposed: Deferred.Deferred<void>;
+  readonly retainSession: boolean;
+  readonly followUps: Array<{ readonly task: string }>;
+  readonly mailbox: string[];
   summary: OrchestrationSubagentSummary;
   turnId: TurnId | null;
+  turnSequence: number;
+  turnActive: boolean;
   sessionStarted: boolean;
   cancelled: boolean;
+  disposeRequested: boolean;
+  disposing: boolean;
   finalizing: boolean;
   finalized: boolean;
   output: string;
@@ -473,10 +526,12 @@ const make = Effect.gen(function* () {
         rootWorkers,
         (worker) => {
           worker.cancelled = true;
+          worker.disposeRequested = true;
           return interruptWorker(worker).pipe(
             Effect.andThen(
               settleWorker(worker, "interrupted", "The parent turn completed before the subagent."),
             ),
+            Effect.andThen(Deferred.succeed(worker.wake, undefined).pipe(Effect.ignore)),
           );
         },
         { concurrency: "unbounded", discard: true },
@@ -500,6 +555,7 @@ const make = Effect.gen(function* () {
       yield* settleWorker(worker, "error", "General subagents cannot ask hidden user questions.");
     }
     if (event.type === "turn.started" && event.turnId) worker.turnId = event.turnId;
+    if (event.type === "session.exited") worker.sessionStarted = false;
     if (event.type === "content.delta" && event.payload.streamKind === "assistant_text") {
       appendOutput(worker, event.payload.delta);
       worker.transcriptBuffer += event.payload.delta;
@@ -579,7 +635,6 @@ const make = Effect.gen(function* () {
   const cleanupWorker = Effect.fn("GeneralSubagentCoordinator.cleanupWorker")(function* (
     worker: ActiveGeneralSubagent,
   ) {
-    workersByThread.delete(worker.syntheticThreadId);
     if (resourceGovernor) {
       yield* resourceGovernor.cancelThread(worker.syntheticThreadId).pipe(
         Effect.catchCause((cause) =>
@@ -602,12 +657,41 @@ const make = Effect.gen(function* () {
       if (Option.isNone(stopped) || Exit.isFailure(stopped.value)) {
         yield* forceStopWorker(worker);
       }
+      worker.sessionStarted = false;
     }
+  });
+
+  const disposeWorker = Effect.fn("GeneralSubagentCoordinator.disposeWorker")(function* (
+    worker: ActiveGeneralSubagent,
+  ) {
+    if (worker.finalized) return;
+    if (worker.disposing) {
+      yield* Deferred.await(worker.disposed);
+      return;
+    }
+    worker.disposing = true;
+    yield* cleanupWorker(worker).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          workersByThread.delete(worker.syntheticThreadId);
+          settledOrder.push(worker.subagentId);
+          pruneSettled();
+          worker.turnActive = false;
+          worker.finalizing = false;
+          worker.finalized = true;
+          worker.disposing = false;
+        }).pipe(
+          Effect.andThen(Deferred.succeed(worker.completed, undefined).pipe(Effect.ignore)),
+          Effect.andThen(Deferred.succeed(worker.disposed, undefined).pipe(Effect.ignore)),
+        ),
+      ),
+    );
   });
 
   const finalizeWorker = Effect.fn("GeneralSubagentCoordinator.finalizeWorker")(function* (
     worker: ActiveGeneralSubagent,
     outcome: GeneralSubagentOutcome,
+    cleanupAfter: boolean,
   ) {
     if (worker.finalizing || worker.finalized) return;
     worker.finalizing = true;
@@ -671,27 +755,30 @@ const make = Effect.gen(function* () {
         kind: "completed",
       });
       yield* dispatchSummary(worker, finalSummary);
+      worker.turnActive = false;
+      worker.finalizing = false;
+      if (cleanupAfter) {
+        yield* disposeWorker(worker);
+        return;
+      }
+      if (worker.followUps.length === 0) {
+        yield* Deferred.succeed(worker.completed, undefined).pipe(Effect.ignore);
+      }
     }).pipe(
-      Effect.ensuring(
-        cleanupWorker(worker).pipe(
-          Effect.andThen(
-            Effect.sync(() => {
-              settledOrder.push(worker.subagentId);
-              pruneSettled();
-              worker.finalizing = false;
-              worker.finalized = true;
-            }),
-          ),
-          Effect.andThen(Deferred.succeed(worker.completed, undefined).pipe(Effect.ignore)),
-        ),
+      Effect.onError(() =>
+        Effect.sync(() => {
+          worker.turnActive = false;
+          worker.finalizing = false;
+        }),
       ),
     );
   });
 
   const runWorkerLifecycle = Effect.fn("GeneralSubagentCoordinator.runWorkerLifecycle")(function* (
     worker: ActiveGeneralSubagent,
+    prompt: string,
   ) {
-    if (resourceGovernor) {
+    if (resourceGovernor && !worker.sessionStarted) {
       const admitted = yield* resourceGovernor.awaitAdmission({
         threadId: worker.syntheticThreadId,
         provider: worker.providerDriver,
@@ -717,43 +804,45 @@ const make = Effect.gen(function* () {
       } satisfies GeneralSubagentOutcome;
     }
 
-    worker.sessionStarted = true;
-    const started = yield* Effect.exit(
-      providerService.startTransientSession(
-        worker.syntheticThreadId,
-        {
-          threadId: worker.syntheticThreadId,
-          purpose: "subagent-worker",
-          runtimeSessionId: worker.runtimeSessionId,
-          providerInstanceId: worker.selection.instanceId,
-          cwd: worker.cwd,
-          modelSelection: worker.selection,
-          freshSession: true,
-          runtimeMode: worker.runtimeMode,
-        },
-        { workspaceContextThreadId: worker.parentThreadId, mcpMode: "full" },
-      ),
-    );
-    if (Exit.isFailure(started)) {
-      return {
-        status: worker.cancelled ? "interrupted" : "error",
-        detail: Cause.pretty(started.cause),
-      } satisfies GeneralSubagentOutcome;
-    }
-    if (started.value.runtimeSessionId !== worker.runtimeSessionId) {
-      return {
-        status: "error",
-        detail: "Transient provider session returned a mismatched runtime generation.",
-      } satisfies GeneralSubagentOutcome;
+    if (!worker.sessionStarted) {
+      worker.sessionStarted = true;
+      const started = yield* Effect.exit(
+        providerService.startTransientSession(
+          worker.syntheticThreadId,
+          {
+            threadId: worker.syntheticThreadId,
+            purpose: "subagent-worker",
+            runtimeSessionId: worker.runtimeSessionId,
+            providerInstanceId: worker.selection.instanceId,
+            cwd: worker.cwd,
+            modelSelection: worker.selection,
+            freshSession: worker.turnSequence === 0,
+            runtimeMode: worker.runtimeMode,
+          },
+          { workspaceContextThreadId: worker.parentThreadId, mcpMode: "full" },
+        ),
+      );
+      if (Exit.isFailure(started)) {
+        worker.sessionStarted = false;
+        return {
+          status: worker.cancelled ? "interrupted" : "error",
+          detail: Cause.pretty(started.cause),
+        } satisfies GeneralSubagentOutcome;
+      }
+      if (started.value.runtimeSessionId !== worker.runtimeSessionId) {
+        worker.sessionStarted = false;
+        return {
+          status: "error",
+          detail: "Transient provider session returned a mismatched runtime generation.",
+        } satisfies GeneralSubagentOutcome;
+      }
     }
 
+    worker.turnActive = true;
     const sent = yield* Effect.exit(
       providerService.sendTurn({
         threadId: worker.syntheticThreadId,
-        input: buildGeneralSubagentPrompt({
-          task: worker.task,
-          parentThreadId: worker.parentThreadId,
-        }),
+        input: prompt,
         modelSelection: worker.selection,
         interactionMode: "default",
       }),
@@ -782,18 +871,136 @@ const make = Effect.gen(function* () {
   const runWorker = Effect.fn("GeneralSubagentCoordinator.runWorker")(function* (
     worker: ActiveGeneralSubagent,
   ) {
-    const result = yield* runWorkerLifecycle(worker).pipe(
-      Effect.timeoutOption(GENERAL_SUBAGENT_TIMEOUT),
-    );
+    const result = yield* runWorkerLifecycle(
+      worker,
+      buildGeneralSubagentPrompt({ task: worker.task, parentThreadId: worker.parentThreadId }),
+    ).pipe(Effect.timeoutOption(GENERAL_SUBAGENT_TIMEOUT));
     if (Option.isSome(result)) {
-      yield* finalizeWorker(worker, result.value);
+      yield* finalizeWorker(worker, result.value, true);
       return;
     }
     yield* forceStopWorker(worker);
-    yield* finalizeWorker(worker, {
-      status: "timed-out",
-      detail: "Thirty-minute general subagent lifecycle timeout.",
+    yield* finalizeWorker(
+      worker,
+      {
+        status: "timed-out",
+        detail: "Thirty-minute general subagent lifecycle timeout.",
+      },
+      true,
+    );
+  });
+
+  const prepareFollowUpTurn = Effect.fn("GeneralSubagentCoordinator.prepareFollowUpTurn")(
+    function* (worker: ActiveGeneralSubagent, task: string) {
+      worker.turnSequence += 1;
+      worker.task = task;
+      worker.turnId = null;
+      worker.turnActive = false;
+      worker.cancelled = false;
+      worker.output = "";
+      worker.outputTruncated = false;
+      worker.detail = null;
+      worker.transcriptBuffer = "";
+      worker.assistantProjected = false;
+      worker.lastProgressFingerprint = null;
+      worker.assistantMessageId = MessageId.make(
+        `${worker.subagentId}:assistant:${worker.turnSequence}`,
+      );
+      worker.terminal = yield* Deferred.make<GeneralSubagentOutcome>();
+      const startedAt = yield* nowIso;
+      const messages = worker.mailbox.splice(0, worker.mailbox.length);
+      const prompt = buildGeneralSubagentFollowUpPrompt({ task, messages });
+      worker.summary = {
+        ...worker.summary,
+        task,
+        status: "starting",
+        statusMessage: null,
+        latestProgress: null,
+        latestTurn: null,
+        startedAt,
+        updatedAt: startedAt,
+        completedAt: null,
+      };
+      threadBackgroundLiveness.recordTaskLiveness({
+        threadId: worker.parentThreadId,
+        taskId: worker.subagentId,
+        taskType: "subagent",
+        status: "starting",
+        kind: "started",
+      });
+      yield* dispatchSummary(worker, worker.summary);
+      yield* orchestrationEngine.dispatch({
+        type: "thread.message.import",
+        commandId: yield* commandId(worker, `follow-up-${worker.turnSequence}`),
+        threadId: worker.parentThreadId,
+        subagentId: worker.subagentId,
+        message: {
+          id: MessageId.make(`${worker.subagentId}:user:${worker.turnSequence}`),
+          role: "user",
+          text: prompt,
+          turnId: null,
+          streaming: false,
+          createdAt: startedAt,
+          updatedAt: startedAt,
+        },
+      });
+      return prompt;
+    },
+  );
+
+  const takeFollowUp = Effect.fn("GeneralSubagentCoordinator.takeFollowUp")(function* (
+    worker: ActiveGeneralSubagent,
+  ) {
+    const queued = worker.followUps.shift();
+    if (queued) return Option.some(queued);
+    const signalled = yield* Deferred.await(worker.wake).pipe(
+      Effect.timeoutOption(GENERAL_SUBAGENT_TIMEOUT),
+    );
+    worker.wake = yield* Deferred.make<void>();
+    if (Option.isNone(signalled)) return Option.none<(typeof worker.followUps)[number]>();
+    return Option.fromNullishOr(worker.followUps.shift());
+  });
+
+  const runRetainedWorker = Effect.fn("GeneralSubagentCoordinator.runRetainedWorker")(function* (
+    worker: ActiveGeneralSubagent,
+  ) {
+    let prompt = buildGeneralSubagentPrompt({
+      task: worker.task,
+      parentThreadId: worker.parentThreadId,
     });
+    while (!worker.disposeRequested) {
+      const result = yield* runWorkerLifecycle(worker, prompt).pipe(
+        Effect.timeoutOption(GENERAL_SUBAGENT_TIMEOUT),
+      );
+      if (Option.isNone(result)) {
+        worker.disposeRequested = true;
+        yield* forceStopWorker(worker);
+        yield* finalizeWorker(
+          worker,
+          { status: "timed-out", detail: "Thirty-minute general subagent lifecycle timeout." },
+          true,
+        );
+        return;
+      }
+      yield* finalizeWorker(worker, result.value, worker.disposeRequested);
+      if (worker.finalized || worker.disposeRequested) {
+        if (!worker.finalized) yield* disposeWorker(worker);
+        return;
+      }
+
+      const followUp = yield* takeFollowUp(worker);
+      if (Option.isNone(followUp)) {
+        worker.disposeRequested = true;
+        yield* disposeWorker(worker);
+        return;
+      }
+      if (worker.disposeRequested) {
+        yield* disposeWorker(worker);
+        return;
+      }
+      prompt = yield* prepareFollowUpTurn(worker, followUp.value.task);
+    }
+    yield* disposeWorker(worker);
   });
 
   const resolveParent = Effect.fn("GeneralSubagentCoordinator.resolveParent")(function* (
@@ -846,9 +1053,16 @@ const make = Effect.gen(function* () {
   const listModels: GeneralSubagentCoordinatorShape["listModels"] = (input) =>
     listModelsEffect(input).pipe(Effect.mapError(publicError("Listing subagent models")));
 
-  const spawnEffect = Effect.fn("GeneralSubagentCoordinator.spawn")(function* (
+  const spawnWorkerEffect = Effect.fn("GeneralSubagentCoordinator.spawnWorker")(function* (
     input: GeneralSubagentCaller & GeneralSubagentSpawnInput,
+    retainSession: boolean,
   ) {
+    if (workersByThread.has(input.parentThreadId)) {
+      return yield* new GeneralSubagentError({
+        reason: "nested-spawn-disabled",
+        detail: "Direct T3-managed children cannot spawn nested agents in this release.",
+      });
+    }
     const parent = yield* resolveParent(input.parentThreadId);
     const providers = yield* providerRegistry.getProviders;
     const resolution = resolveGeneralSubagentSelection({
@@ -878,6 +1092,8 @@ const make = Effect.gen(function* () {
     const assistantMessageId = MessageId.make(`${id}:assistant`);
     const terminal = yield* Deferred.make<GeneralSubagentOutcome>();
     const completed = yield* Deferred.make<void>();
+    const wake = yield* Deferred.make<void>();
+    const disposed = yield* Deferred.make<void>();
     const startedAt = yield* nowIso;
     const reasoningEffort =
       getModelSelectionStringOptionValue(resolution.selection, "reasoningEffort") ??
@@ -921,10 +1137,19 @@ const make = Effect.gen(function* () {
       runtimeMode: parent.thread.runtimeMode,
       terminal,
       completed,
+      wake,
+      disposed,
+      retainSession,
+      followUps: [],
+      mailbox: [],
       summary,
       turnId: null,
+      turnSequence: 0,
+      turnActive: false,
       sessionStarted: false,
       cancelled: false,
+      disposeRequested: false,
+      disposing: false,
       finalizing: false,
       finalized: false,
       output: "",
@@ -934,8 +1159,28 @@ const make = Effect.gen(function* () {
       assistantProjected: false,
       lastProgressFingerprint: null,
     };
-    workersById.set(subagentId, worker);
-    workersByThread.set(syntheticThreadId, worker);
+    const admission = yield* Effect.sync(() => {
+      if (workersByThread.has(input.parentThreadId)) return "nested" as const;
+      const liveDirectChildren = [...workersById.values()].filter(
+        (candidate) => candidate.parentThreadId === input.parentThreadId && !candidate.finalized,
+      ).length;
+      if (liveDirectChildren >= GENERAL_SUBAGENT_MAX_DIRECT_CHILDREN) return "limit" as const;
+      workersById.set(subagentId, worker);
+      workersByThread.set(syntheticThreadId, worker);
+      return "admitted" as const;
+    });
+    if (admission === "nested") {
+      return yield* new GeneralSubagentError({
+        reason: "nested-spawn-disabled",
+        detail: "Direct T3-managed children cannot spawn nested agents in this release.",
+      });
+    }
+    if (admission === "limit") {
+      return yield* new GeneralSubagentError({
+        reason: "direct-child-limit",
+        detail: `Parent thread '${input.parentThreadId}' already owns ${GENERAL_SUBAGENT_MAX_DIRECT_CHILDREN} live direct children.`,
+      });
+    }
     threadBackgroundLiveness.recordTaskLiveness({
       threadId: input.parentThreadId,
       taskId: subagentId,
@@ -969,7 +1214,7 @@ const make = Effect.gen(function* () {
     );
     if (Exit.isFailure(initialized)) {
       const detail = `General subagent initialization failed: ${Cause.pretty(initialized.cause)}`;
-      yield* finalizeWorker(worker, { status: "error", detail }).pipe(
+      yield* finalizeWorker(worker, { status: "error", detail }, true).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("General subagent initialization cleanup failed", {
             subagentId,
@@ -982,12 +1227,19 @@ const make = Effect.gen(function* () {
       if (settledIndex >= 0) settledOrder.splice(settledIndex, 1);
       return yield* new GeneralSubagentError({ reason: "spawn-failed", detail });
     }
-    yield* runWorker(worker).pipe(
+    const lifecycle = retainSession ? runRetainedWorker(worker) : runWorker(worker);
+    yield* lifecycle.pipe(
       Effect.catchCause((cause) =>
-        finalizeWorker(worker, {
-          status: Cause.hasInterruptsOnly(cause) ? "interrupted" : "error",
-          detail: Cause.pretty(cause),
-        }),
+        worker.finalized
+          ? Effect.void
+          : finalizeWorker(
+              worker,
+              {
+                status: Cause.hasInterruptsOnly(cause) ? "interrupted" : "error",
+                detail: Cause.pretty(cause),
+              },
+              true,
+            ),
       ),
       Effect.forkIn(coordinatorScope),
     );
@@ -1001,7 +1253,11 @@ const make = Effect.gen(function* () {
     };
   });
   const spawn: GeneralSubagentCoordinatorShape["spawn"] = (input) =>
-    spawnEffect(input).pipe(Effect.mapError(publicError("Spawning the general subagent")));
+    spawnWorkerEffect(input, false).pipe(
+      Effect.mapError(publicError("Spawning the general subagent")),
+    );
+  const spawnAgent: GeneralSubagentCoordinatorShape["spawnAgent"] = (input) =>
+    spawnWorkerEffect(input, true).pipe(Effect.mapError(publicError("Spawning the direct agent")));
 
   const resolveOwnedWorkers = Effect.fn("GeneralSubagentCoordinator.resolveOwnedWorkers")(
     function* (parentThreadId: ThreadId, agentIds: ReadonlyArray<SubagentId>) {
@@ -1020,11 +1276,18 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const workerIsBusy = (worker: ActiveGeneralSubagent): boolean =>
+    !worker.finalized &&
+    (worker.turnActive ||
+      worker.followUps.length > 0 ||
+      worker.summary.status === "starting" ||
+      worker.summary.status === "running");
+
   const wait: GeneralSubagentCoordinatorShape["wait"] = Effect.fn(
     "GeneralSubagentCoordinator.wait",
   )(function* (input) {
     const workers = yield* resolveOwnedWorkers(input.parentThreadId, input.agentIds);
-    const active = workers.filter((worker) => !worker.finalized);
+    const active = workers.filter(workerIsBusy);
     const timeoutSeconds = input.timeoutSeconds ?? 30;
     const waited =
       active.length === 0
@@ -1038,7 +1301,7 @@ const make = Effect.gen(function* () {
           ).pipe(Effect.timeoutOption(Duration.seconds(timeoutSeconds)));
     return {
       agents: workers.map(snapshot),
-      allTerminal: workers.every((worker) => worker.finalized),
+      allTerminal: workers.every((worker) => !workerIsBusy(worker)),
       timedOut: Option.isNone(waited),
     };
   });
@@ -1057,28 +1320,117 @@ const make = Effect.gen(function* () {
       return { agent: snapshot(worker), cancelled: false };
     }
     worker.cancelled = true;
+    worker.disposeRequested = true;
     yield* interruptWorker(worker).pipe(
       Effect.timeoutOption(GENERAL_SUBAGENT_ABORT_FORCE_DELAY),
       Effect.asVoid,
     );
     yield* settleWorker(worker, "interrupted", "Cancelled by the parent agent.");
-    yield* Deferred.await(worker.completed).pipe(
+    yield* Deferred.succeed(worker.wake, undefined).pipe(Effect.ignore);
+    yield* Deferred.await(worker.disposed).pipe(
       Effect.timeoutOption(GENERAL_SUBAGENT_ABORT_FORCE_DELAY),
       Effect.asVoid,
     );
     if (!worker.finalized) {
       yield* forceStopWorker(worker);
-      yield* finalizeWorker(worker, {
-        status: "interrupted",
-        detail: "Cancelled by the parent agent.",
-      });
+      if (!worker.finalizing) {
+        yield* finalizeWorker(
+          worker,
+          { status: "interrupted", detail: "Cancelled by the parent agent." },
+          true,
+        );
+      } else {
+        yield* disposeWorker(worker);
+      }
     }
     return { agent: snapshot(worker), cancelled: true };
   });
   const cancel: GeneralSubagentCoordinatorShape["cancel"] = (input) =>
     cancelEffect(input).pipe(Effect.mapError(publicError("Cancelling the general subagent")));
 
-  return GeneralSubagentCoordinator.of({ listModels, spawn, wait, cancel });
+  const listAgents: GeneralSubagentCoordinatorShape["listAgents"] = (input) =>
+    Effect.succeed({
+      agents: [...workersById.values()]
+        .filter((worker) => worker.parentThreadId === input.parentThreadId)
+        .map(snapshot),
+    });
+
+  const sendMessageEffect = Effect.fn("GeneralSubagentCoordinator.sendMessage")(function* (
+    input: GeneralSubagentCaller & GeneralSubagentSendMessageInput,
+  ) {
+    const [worker] = yield* resolveOwnedWorkers(input.parentThreadId, [input.agentId]);
+    if (!worker || worker.finalized || !worker.retainSession) {
+      return yield* new GeneralSubagentError({
+        reason: "agent-unavailable",
+        detail: `Direct agent '${input.agentId}' has no reusable session.`,
+      });
+    }
+    worker.mailbox.push(input.message);
+    return { agent: snapshot(worker), queued: true };
+  });
+  const sendMessage: GeneralSubagentCoordinatorShape["sendMessage"] = (input) =>
+    sendMessageEffect(input).pipe(Effect.mapError(publicError("Messaging the direct agent")));
+
+  const followUpEffect = Effect.fn("GeneralSubagentCoordinator.followUp")(function* (
+    input: GeneralSubagentCaller & GeneralSubagentFollowUpInput,
+  ) {
+    const [worker] = yield* resolveOwnedWorkers(input.parentThreadId, [input.agentId]);
+    if (!worker || worker.finalized || !worker.retainSession) {
+      return yield* new GeneralSubagentError({
+        reason: "agent-unavailable",
+        detail: `Direct agent '${input.agentId}' has no reusable session.`,
+      });
+    }
+    if (!workerIsBusy(worker) && worker.followUps.length === 0) {
+      worker.completed = yield* Deferred.make<void>();
+    }
+    worker.followUps.push({ task: input.task });
+    yield* Deferred.succeed(worker.wake, undefined).pipe(Effect.ignore);
+    return { agent: snapshot(worker), queued: true };
+  });
+  const followUp: GeneralSubagentCoordinatorShape["followUp"] = (input) =>
+    followUpEffect(input).pipe(Effect.mapError(publicError("Following up with the direct agent")));
+
+  const interruptAgentEffect = Effect.fn("GeneralSubagentCoordinator.interruptAgent")(function* (
+    input: GeneralSubagentCaller & GeneralSubagentInterruptInput,
+  ) {
+    const [worker] = yield* resolveOwnedWorkers(input.parentThreadId, [input.agentId]);
+    if (!worker || worker.finalized || !worker.retainSession) {
+      return yield* new GeneralSubagentError({
+        reason: "agent-unavailable",
+        detail: `Direct agent '${input.agentId}' has no reusable session.`,
+      });
+    }
+    if (!workerIsBusy(worker)) return { agent: snapshot(worker), interrupted: false };
+    worker.cancelled = true;
+    yield* interruptWorker(worker).pipe(
+      Effect.timeoutOption(GENERAL_SUBAGENT_ABORT_FORCE_DELAY),
+      Effect.asVoid,
+    );
+    yield* settleWorker(worker, "interrupted", "Interrupted by the parent agent.");
+    yield* Deferred.await(worker.completed).pipe(
+      Effect.timeoutOption(GENERAL_SUBAGENT_ABORT_FORCE_DELAY),
+      Effect.asVoid,
+    );
+    return { agent: snapshot(worker), interrupted: true };
+  });
+  const interruptAgent: GeneralSubagentCoordinatorShape["interruptAgent"] = (input) =>
+    interruptAgentEffect(input).pipe(Effect.mapError(publicError("Interrupting the direct agent")));
+
+  const waitAgent: GeneralSubagentCoordinatorShape["waitAgent"] = wait;
+
+  return GeneralSubagentCoordinator.of({
+    listModels,
+    spawn,
+    wait,
+    cancel,
+    listAgents,
+    spawnAgent,
+    sendMessage,
+    followUp,
+    waitAgent,
+    interruptAgent,
+  });
 });
 
 export const GeneralSubagentCoordinatorLive = Layer.effect(GeneralSubagentCoordinator, make);

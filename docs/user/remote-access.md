@@ -60,6 +60,28 @@ If the copied link points directly at `http://192.168.x.y:3773`, open it from a 
 
 In the mobile app's **Add Environment** form, a numeric IP address without a scheme uses HTTP. Include `https://` explicitly when the backend is served over HTTPS.
 
+### Pairing from Mobile
+
+Open **Settings** → **Environments** → **Add environment**, then choose one of these paths:
+
+- **Scan QR code** scans the pairing code shown by the desktop app or CLI.
+- **Paste pairing link** reads the clipboard only after you select it.
+- **Enter manually** accepts the host address and one-time pairing code separately.
+
+Before connecting, mobile shows the normalized destination and whether it uses encrypted HTTPS or
+unencrypted HTTP. The pairing code stays hidden until you confirm. A pairing link that opens the app
+also stops on this review step; only development automation can connect without confirmation.
+
+While pairing, the button identifies whether the app is validating the details, checking the host,
+validating the code, or saving the environment. If setup fails, the message distinguishes an
+unreachable host, an expired or rejected code, and a device-storage failure.
+
+The Environments screen keeps the saved-on-this-device state separate from live connectivity.
+Transient failures retry automatically and offer **Retry now** while waiting. Authentication failures
+offer **Pair again** for a direct host or **Sign in again** for T3 Connect; configuration failures
+offer **Edit connection**. Disconnected environments show when their local cache last synchronized,
+and tasks created offline remain queued until the host reconnects.
+
 ### Tailscale Endpoints
 
 When the desktop app can detect Tailscale, it adds Tailnet endpoints to the reachable endpoint list.

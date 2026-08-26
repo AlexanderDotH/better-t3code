@@ -2,6 +2,7 @@ import {
   classifyTaskAgentKind,
   EventId,
   MessageId,
+  OrchestrationProposedPlanId,
   ProviderDriverKind,
   ThreadId,
   TurnId,
@@ -50,6 +51,7 @@ function makeActivity(overrides: {
   payload?: Record<string, unknown>;
   turnId?: string;
   sequence?: number;
+  historyOrigin?: OrchestrationThreadActivity["historyOrigin"];
 }): OrchestrationThreadActivity {
   // Fixtures model post-ingestion rows: ingestion stamps agentKind on every
   // task.* payload. Pass an explicit agentKind to model legacy rows.
@@ -73,10 +75,28 @@ function makeActivity(overrides: {
     payload,
     turnId: overrides.turnId ? TurnId.make(overrides.turnId) : null,
     ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
+    ...(overrides.historyOrigin !== undefined ? { historyOrigin: overrides.historyOrigin } : {}),
   };
 }
 
 describe("derivePendingApprovals", () => {
+  it("does not revive inherited approval requests", () => {
+    expect(
+      derivePendingApprovals([
+        makeActivity({
+          kind: "approval.requested",
+          tone: "approval",
+          payload: { requestId: "frozen-request", requestKind: "command" },
+          historyOrigin: {
+            sourceThreadId: ThreadId.make("source-thread"),
+            sourceId: "source-approval",
+            ordinal: 0,
+          },
+        }),
+      ]),
+    ).toEqual([]);
+  });
+
   it("tracks open approvals and removes resolved ones", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -232,6 +252,32 @@ describe("derivePendingApprovals", () => {
 });
 
 describe("derivePendingUserInputs", () => {
+  it("does not revive inherited user-input questions", () => {
+    expect(
+      derivePendingUserInputs([
+        makeActivity({
+          kind: "user-input.requested",
+          payload: {
+            requestId: "frozen-input",
+            questions: [
+              {
+                id: "scope",
+                header: "Scope",
+                question: "Which scope?",
+                options: [{ label: "All", description: "Everything" }],
+              },
+            ],
+          },
+          historyOrigin: {
+            sourceThreadId: ThreadId.make("source-thread"),
+            sourceId: "source-input",
+            ordinal: 0,
+          },
+        }),
+      ]),
+    ).toEqual([]);
+  });
+
   it("tracks open structured prompts and removes resolved ones", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -364,6 +410,26 @@ describe("derivePendingUserInputs", () => {
 });
 
 describe("deriveActivePlanState", () => {
+  it("does not make inherited turn plans live", () => {
+    expect(
+      deriveActivePlanState(
+        [
+          makeActivity({
+            kind: "turn.plan.updated",
+            turnId: "source-turn",
+            payload: { plan: [{ step: "Old work", status: "inProgress" }] },
+            historyOrigin: {
+              sourceThreadId: ThreadId.make("source-thread"),
+              sourceId: "source-plan-activity",
+              ordinal: 0,
+            },
+          }),
+        ],
+        undefined,
+      ),
+    ).toBeNull();
+  });
+
   it("returns the latest plan update for the active turn", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -675,6 +741,29 @@ describe("deriveTurnPlans", () => {
 });
 
 describe("findLatestProposedPlan", () => {
+  it("never treats an inherited plan as actionable in the fork", () => {
+    const sourceThreadId = ThreadId.make("source-thread");
+    const inheritedPlanId = OrchestrationProposedPlanId.make("source-plan");
+
+    expect(
+      findLatestProposedPlan(
+        [
+          {
+            id: OrchestrationProposedPlanId.make("destination-plan"),
+            turnId: null,
+            planMarkdown: "# Frozen plan",
+            implementedAt: null,
+            implementationThreadId: null,
+            createdAt: "2026-02-23T00:00:01.000Z",
+            updatedAt: "2026-02-23T00:00:01.000Z",
+            historyOrigin: { sourceThreadId, sourceId: inheritedPlanId, ordinal: 0 },
+          },
+        ],
+        null,
+      ),
+    ).toBeNull();
+  });
+
   it("prefers the latest proposed plan for the active turn", () => {
     expect(
       findLatestProposedPlan(
@@ -1823,6 +1912,53 @@ describe("deriveWorkLogEntries", () => {
 });
 
 describe("deriveTimelineEntries", () => {
+  it("uses inherited ordinals at equal timestamps and keeps native rows after the prefix", () => {
+    const sourceThreadId = ThreadId.make("source-thread");
+    const timestamp = "2026-02-23T00:00:01.000Z";
+    const entries = deriveTimelineEntries(
+      [
+        {
+          id: MessageId.make("native-message"),
+          role: "user",
+          text: "Native",
+          createdAt: timestamp,
+          turnId: null,
+          updatedAt: timestamp,
+          streaming: false,
+        },
+        {
+          id: MessageId.make("inherited-message"),
+          role: "user",
+          text: "Inherited",
+          createdAt: timestamp,
+          turnId: null,
+          updatedAt: timestamp,
+          streaming: false,
+          historyOrigin: { sourceThreadId, sourceId: "source-message", ordinal: 1 },
+        },
+      ],
+      [
+        {
+          id: OrchestrationProposedPlanId.make("inherited-plan"),
+          turnId: null,
+          planMarkdown: "# First inherited row",
+          implementedAt: null,
+          implementationThreadId: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          historyOrigin: { sourceThreadId, sourceId: "source-plan", ordinal: 0 },
+        },
+      ],
+      [],
+    );
+
+    expect(entries.map((entry) => entry.id)).toEqual([
+      "inherited-plan",
+      "inherited-message",
+      "native-message",
+    ]);
+  });
+
   it("includes proposed plans alongside messages and work entries in chronological order", () => {
     const entries = deriveTimelineEntries(
       [

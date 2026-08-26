@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
+  DRAFT_HERO_TRANSITION_DURATION_MS,
+  DRAFT_HERO_TRANSITION_EASING,
   runMobileComposerTransition,
   waitForDraftHeroTransition,
 } from "./draftHeroTransition";
@@ -11,6 +13,11 @@ afterEach(() => {
 });
 
 describe("waitForDraftHeroTransition", () => {
+  it("uses a short translation-only timing for the hero-to-dock handoff", () => {
+    expect(DRAFT_HERO_TRANSITION_DURATION_MS).toBe(180);
+    expect(DRAFT_HERO_TRANSITION_EASING).toBe("cubic-bezier(0.4, 0, 0.2, 1)");
+  });
+
   it("waits for active draft hero animations and ignores unrelated animations", async () => {
     let finishTransition: (() => void) | undefined;
     const transitionFinished = new Promise<void>((resolve) => {

@@ -38,6 +38,8 @@ const expectedTail = [
   [51, "ProjectionProjectCheckpointsEnabled"],
   [52, "AuthSessionClientConnectionCompatibility"],
   [53, "ProjectionThreadSubagentManagedOrigin"],
+  [54, "ProjectionHarnessChatSync"],
+  [55, "ProjectionThreadForks"],
 ] as const;
 
 const applyUpstreamSchema = Effect.gen(function* () {
@@ -165,7 +167,7 @@ const repeatedScenario = Effect.gen(function* () {
   assert.deepStrictEqual(yield* runMigrations(), []);
 });
 
-it("preserves immutable migration IDs 1-52 and appends managed subagents as migration 53", () => {
+it("preserves immutable migration IDs and appends fork projections as migration 55", () => {
   assert.deepStrictEqual(
     migrationEntries.slice(-expectedTail.length).map(([id, name]) => [id, name] as const),
     Array.from(expectedTail),

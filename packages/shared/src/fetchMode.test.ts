@@ -17,12 +17,17 @@ import {
 
 const model = (
   slug: string,
-  input: { readonly isCustom?: boolean; readonly isDefault?: boolean } = {},
+  input: {
+    readonly isCustom?: boolean;
+    readonly isDefault?: boolean;
+    readonly isSelectable?: boolean;
+  } = {},
 ): ServerProviderModel => ({
   slug,
   name: slug,
   isCustom: input.isCustom ?? false,
   ...(input.isDefault === undefined ? {} : { isDefault: input.isDefault }),
+  ...(input.isSelectable === undefined ? {} : { isSelectable: input.isSelectable }),
   capabilities: null,
 });
 
@@ -268,6 +273,31 @@ describe("Fetch model selection", () => {
       ],
       fetchModelSelection: requested,
       textGenerationModelSelection: selection("claude_work", "claude-opus"),
+    });
+
+    expect(result).toEqual({
+      status: "unavailable",
+      source: "manual",
+      requestedSelection: requested,
+      reason: "model-unavailable",
+    });
+  });
+
+  it("rejects a manual model that the provider marks non-selectable", () => {
+    const requested = selection("openrouter", "openai/no-tools");
+    const result = resolveFetchModelSelection({
+      providers: [
+        provider({
+          instanceId: "openrouter",
+          driver: "openrouter",
+          models: [
+            model("openai/no-tools", { isSelectable: false }),
+            model("openai/gpt-agent", { isDefault: true }),
+          ],
+        }),
+      ],
+      fetchModelSelection: requested,
+      textGenerationModelSelection: selection("openrouter", "openai/gpt-agent"),
     });
 
     expect(result).toEqual({

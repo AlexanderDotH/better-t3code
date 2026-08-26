@@ -60,6 +60,7 @@ import {
   type ThreadListV2ListItem,
 } from "../threads/threadListV2";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
+import { getHomeContentBottomPadding } from "./homeContentInsets";
 import {
   buildHomeListLayout,
   DEFAULT_GROUP_DISPLAY_STATE,
@@ -226,6 +227,25 @@ export function HomeScreen(props: HomeScreenProps) {
     Platform.OS === "ios" && !NATIVE_LIQUID_GLASS_SUPPORTED
       ? PRE_LIQUID_GLASS_BOTTOM_TOOLBAR_HEIGHT
       : 0;
+  const homeContentPlatform = Platform.OS === "android" ? "android" : "ios";
+  const emptyStateBottomPadding = getHomeContentBottomPadding({
+    platform: homeContentPlatform,
+    safeAreaBottom: insets.bottom,
+    iosBottomToolbarClearance,
+    surface: "empty",
+  });
+  const v1ListBottomPadding = getHomeContentBottomPadding({
+    platform: homeContentPlatform,
+    safeAreaBottom: insets.bottom,
+    iosBottomToolbarClearance,
+    surface: "thread-list-v1",
+  });
+  const v2ListBottomPadding = getHomeContentBottomPadding({
+    platform: homeContentPlatform,
+    safeAreaBottom: insets.bottom,
+    iosBottomToolbarClearance,
+    surface: "thread-list-v2",
+  });
   const searchEnvironmentIds = useMemo(
     () =>
       props.selectedEnvironmentId === null
@@ -1137,7 +1157,7 @@ export function HomeScreen(props: HomeScreenProps) {
       <View
         className="flex-1 items-center justify-center bg-screen px-8"
         style={{
-          paddingBottom: Math.max(insets.bottom, 24) + iosBottomToolbarClearance,
+          paddingBottom: emptyStateBottomPadding,
           paddingTop: NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + 72 : 0,
         }}
       >
@@ -1233,10 +1253,7 @@ export function HomeScreen(props: HomeScreenProps) {
             {...scrollGateHandlers}
             scrollEventThrottle={16}
             contentContainerStyle={{
-              paddingBottom:
-                Platform.OS === "ios"
-                  ? Math.max(insets.bottom, 24) + 96 + iosBottomToolbarClearance
-                  : Math.max(insets.bottom, 16) + 88,
+              paddingBottom: v2ListBottomPadding,
             }}
           />
         </SwipeableScrollGateProvider>
@@ -1279,10 +1296,7 @@ export function HomeScreen(props: HomeScreenProps) {
             // standard 44pt bottom toolbar that overlays the list and is not
             // reflected in insets while contentInsetAdjustmentBehavior is
             // "never".
-            paddingBottom:
-              Platform.OS === "ios"
-                ? Math.max(insets.bottom, 24) + 24 + iosBottomToolbarClearance
-                : Math.max(insets.bottom, 16) + 88,
+            paddingBottom: v1ListBottomPadding,
           }}
           scrollIndicatorInsets={
             Platform.OS === "ios"

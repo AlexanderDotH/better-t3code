@@ -14,56 +14,40 @@ const banner = (
 });
 
 describe("ComposerBannerStack", () => {
-  it("keeps expanded banners in layout flow so surrounding content moves out of their way", () => {
+  it("always shows every banner as a separate variant-colored pill", () => {
     const markup = renderToStaticMarkup(
-      <ComposerBannerStack items={[banner("front"), banner("stacked")]} />,
-    );
-
-    const expandedItems = markup.match(
-      /<div data-composer-banner-stack-expanded-items="true" class="([^"]+)">/,
-    );
-
-    expect(expandedItems?.[1]).toContain("grid-rows-[0fr]");
-    expect(expandedItems?.[1]).toContain("group-hover/banner-stack:grid-rows-[1fr]");
-    expect(expandedItems?.[1]).toContain("z-20");
-    expect(expandedItems?.[1]).not.toContain("absolute");
-    expect(markup).toContain("chat-composer-banner-stack-has-stack");
-    expect(markup.indexOf("front warning")).toBeLessThan(markup.indexOf("stacked warning"));
-    expect(markup).toContain("invisible pointer-events-none");
-    expect(markup).toContain("group-focus-within/banner-stack:visible");
-  });
-
-  it("colors the collapsed stack cap by the hidden banner's variant, not a fixed warning", () => {
-    const neutralBehind = renderToStaticMarkup(
-      <ComposerBannerStack items={[banner("front", "default"), banner("stacked", "default")]} />,
-    );
-    expect(neutralBehind).toContain("chat-composer-banner-stack-cap");
-    expect(neutralBehind).toContain("border-[var(--chat-composer-attached-outline)]");
-    expect(neutralBehind).not.toContain("border-border");
-    expect(neutralBehind).not.toContain("border-warning/24");
-
-    const warningBehind = renderToStaticMarkup(
       <ComposerBannerStack items={[banner("front", "default"), banner("stacked", "warning")]} />,
     );
-    expect(warningBehind).toContain("border-warning/24");
+
+    expect(markup.match(/data-composer-banner-pill="true"/g)).toHaveLength(2);
+    expect(markup.match(/rounded-full/g)).toHaveLength(2);
+    expect(markup).toContain('data-composer-banner-list="true"');
+    expect(markup).toContain('data-variant="default"');
+    expect(markup).toContain('data-variant="warning"');
+    expect(markup.indexOf("front warning")).toBeLessThan(markup.indexOf("stacked warning"));
+    expect(markup).not.toContain("invisible");
+    expect(markup).not.toContain("grid-rows-[0fr]");
+    expect(markup).not.toContain("group-hover/banner-stack");
+    expect(markup).not.toContain("group-focus-within/banner-stack");
+    expect(markup).not.toContain("chat-composer-banner-stack-cap");
   });
 
-  it("does not render an expandable region for a single banner", () => {
+  it("renders a single banner with the same permanent pill surface", () => {
     const markup = renderToStaticMarkup(<ComposerBannerStack items={[banner("front")]} />);
 
-    expect(markup).not.toContain("data-composer-banner-stack-expanded-items");
     expect(markup).toContain(
-      "group/banner-stack chat-composer-drawer-slot chat-composer-drawer-floating",
+      "chat-composer-banner-list chat-composer-drawer-slot chat-composer-drawer-floating",
     );
-    expect(markup).toContain("chat-composer-drawer-surface");
-    expect(markup).toContain("chat-composer-drawer-floating");
+    expect(markup).toContain('data-composer-banner-pill="true"');
+    expect(markup).toContain("alert-glass");
+    expect(markup).toContain("rounded-full");
     expect(markup).not.toContain("chat-composer-drawer-attached");
+    expect(markup).not.toContain("chat-composer-drawer-surface");
     expect(markup).toContain("text-xs");
     expect(markup).toContain('data-composer-banner-drawer="true"');
     expect(markup).toContain('data-variant="warning"');
     expect(markup).toContain("transform:none");
     expect(markup).not.toContain("will-change:transform");
-    expect(markup).not.toContain("chat-composer-banner-stack-has-stack");
   });
   it("applies item-specific surface and action layout classes", () => {
     const markup = renderToStaticMarkup(

@@ -13,14 +13,22 @@ import android.text.Spanned
 import android.text.TextWatcher
 import android.text.style.ReplacementSpan
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
+import com.facebook.react.common.assets.ReactFontManager
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
 import org.json.JSONObject
 import kotlin.math.max
+
+internal fun isComposerSubmitShortcut(
+  keyCode: Int,
+  ctrlPressed: Boolean,
+  metaPressed: Boolean,
+): Boolean = keyCode == KeyEvent.KEYCODE_ENTER && (ctrlPressed || metaPressed)
 
 class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   context,
@@ -31,6 +39,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   private val onComposerSelectionChange by EventDispatcher()
   private val onComposerFocus by EventDispatcher()
   private val onComposerBlur by EventDispatcher()
+  private val onComposerSubmit by EventDispatcher()
   private val onComposerPasteImages by EventDispatcher()
   private val onComposerContentSizeChange by EventDispatcher()
   private var applyingNativeValue = false
@@ -64,6 +73,9 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     }
     editor.pasteImagesListener = { uris ->
       onComposerPasteImages(mapOf("uris" to uris))
+    }
+    editor.submitListener = {
+      onComposerSubmit(emptyMap<String, Any>())
     }
     editor.setOnFocusChangeListener { _, hasFocus ->
       if (hasFocus) {
@@ -173,11 +185,12 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   }
 
   fun setFontFamily(fontFamily: String) {
-    editor.typeface = if (fontFamily.contains("Mono", ignoreCase = true)) {
-      Typeface.MONOSPACE
-    } else {
-      Typeface.DEFAULT
-    }
+    val family = fontFamily.trim().ifEmpty { "sans-serif" }
+    editor.typeface = ReactFontManager.getInstance().getTypeface(
+      family,
+      Typeface.NORMAL,
+      context.assets,
+    )
   }
 
   fun setFontSize(fontSize: Float) {
@@ -457,6 +470,15 @@ private fun parseTokens(value: String): List<ComposerToken> = try {
 private class SelectionAwareEditText(context: Context) : EditText(context) {
   var selectionListener: ((Int, Int) -> Unit)? = null
   var pasteImagesListener: ((List<String>) -> Unit)? = null
+  var submitListener: (() -> Unit)? = null
+
+  override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+    if (isComposerSubmitShortcut(keyCode, event.isCtrlPressed, event.isMetaPressed)) {
+      submitListener?.invoke()
+      return true
+    }
+    return super.onKeyDown(keyCode, event)
+  }
 
   override fun onSelectionChanged(selStart: Int, selEnd: Int) {
     super.onSelectionChanged(selStart, selEnd)

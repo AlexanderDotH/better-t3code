@@ -73,11 +73,17 @@ describe("ExecutionEnvironmentCapabilities", () => {
       environmentSettingsVersion: 3,
       projectSettingsVersion: 1,
     });
+    const interfaceLanguageSyncServer = decodeCapabilities({
+      repositoryIdentity: true,
+      environmentSettingsVersion: 4,
+      projectSettingsVersion: 1,
+    });
 
     expect(legacy.environmentSettingsVersion).toBeUndefined();
     expect(legacy.projectSettingsVersion).toBeUndefined();
     expect(previewSyncServer.environmentSettingsVersion).toBe(2);
     expect(current.environmentSettingsVersion).toBe(3);
+    expect(interfaceLanguageSyncServer.environmentSettingsVersion).toBe(4);
     expect(current.projectSettingsVersion).toBe(1);
   });
 
@@ -93,6 +99,28 @@ describe("ExecutionEnvironmentCapabilities", () => {
     expect(() =>
       decodeCapabilities({ repositoryIdentity: true, harnessChatSyncVersion: 0 }),
     ).toThrow();
+  });
+
+  it("keeps thread forking optional for older environments", () => {
+    const legacy = decodeCapabilities({ repositoryIdentity: true });
+    const current = decodeCapabilities({
+      repositoryIdentity: true,
+      threadForking: true,
+    });
+
+    expect(legacy.threadForking).toBeUndefined();
+    expect(current.threadForking).toBe(true);
+  });
+
+  it("keeps interrupted-turn retry optional for older environments", () => {
+    const legacy = decodeCapabilities({ repositoryIdentity: true });
+    const current = decodeCapabilities({
+      repositoryIdentity: true,
+      interruptedTurnRetry: true,
+    });
+
+    expect(legacy.interruptedTurnRetry).toBeUndefined();
+    expect(current.interruptedTurnRetry).toBe(true);
   });
 });
 

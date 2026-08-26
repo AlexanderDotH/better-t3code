@@ -32,6 +32,7 @@ import React, {
   isValidElement,
   use,
   useCallback,
+  useContext,
   memo,
   useEffect,
   useMemo,
@@ -40,7 +41,7 @@ import React, {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import type { Components, Options as ReactMarkdownOptions } from "react-markdown";
+import type { Components, ExtraProps, Options as ReactMarkdownOptions } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import { defaultUrlTransform } from "react-markdown";
 import rehypeRaw from "rehype-raw";
@@ -50,10 +51,10 @@ import remarkGfm from "remark-gfm";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import {
-  getStreamingTextMotionDelayMs,
-  mapSourceAppendToRenderedSuffix,
+  getStreamingTextMotionAnimationTiming,
+  mapSourceFrameToRenderedText,
   segmentStreamingTextGraphemes,
-  type RenderedStreamingTextSuffix,
+  type RenderedStreamingTextRange,
   type StreamingTextGrapheme,
   type StreamingTextMotionFrame,
 } from "./chat/streamingTextMotion";
@@ -347,16 +348,21 @@ interface SourceRange {
 }
 
 interface StreamingRehypeOptions {
-  readonly frame: StreamingTextMotionFrame;
+  readonly frames: readonly StreamingTextMotionFrame[];
   readonly source: string;
 }
 
+interface FramedRenderedStreamingTextRange extends RenderedStreamingTextRange {
+  readonly frame: StreamingTextMotionFrame;
+}
+
 interface StreamingTextNodeProps {
-  readonly node?: ChatMarkdownHastNode;
-  readonly children?: ReactNode;
+  readonly node?: ChatMarkdownHastNode | undefined;
+  readonly children?: ReactNode | undefined;
 }
 
 interface StreamingTextRunProps {
+  readonly animationTimeMs: number;
   readonly frame: StreamingTextMotionFrame;
   readonly graphemeIndexStart: number;
   readonly skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
@@ -365,10 +371,22 @@ interface StreamingTextRunProps {
 }
 
 interface StreamingLabelMotion {
+  readonly animationTimeMs: number;
   readonly frame: StreamingTextMotionFrame;
   readonly graphemeIndexStart: number;
   readonly sourceStart: number;
 }
+
+interface StreamingTextRenderContextValue {
+  readonly animationTimeMs: number;
+  readonly framesByGeneration: ReadonlyMap<number, StreamingTextMotionFrame>;
+  readonly skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  readonly source: string;
+}
+
+const StreamingTextRenderContext = React.createContext<StreamingTextRenderContextValue | null>(
+  null,
+);
 
 type StreamingCharacterStyle = CSSProperties & {
   readonly "--stream-character-delay": string;
@@ -381,7 +399,7 @@ type StreamingCharacterStyle = CSSProperties & {
  * own Shiki path because token offsets are the only reliable rendered mapping
  * once syntax highlighting changes the text-node structure.
  */
-function rehypeMarkStreamingText({ frame, source }: StreamingRehypeOptions) {
+function rehypeMarkStreamingText({ frames, source }: StreamingRehypeOptions) {
   return (tree: ChatMarkdownHastNode) => {
     const visit = (node: ChatMarkdownHastNode) => {
       if (
@@ -403,31 +421,40 @@ function rehypeMarkStreamingText({ frame, source }: StreamingRehypeOptions) {
           continue;
         }
 
-        const suffix = findStreamingRenderedSuffix({
+        const ranges = findStreamingRenderedRanges({
           child,
           parent: node,
-          frame,
+          frames,
           source,
         });
-        if (!suffix) {
+        if (ranges.length === 0) {
           nextChildren.push(child);
           continue;
         }
 
-        const prefix = child.value.slice(0, suffix.renderedStart);
-        if (prefix.length > 0) {
-          nextChildren.push({ ...child, value: prefix });
+        let renderedOffset = 0;
+        for (const range of ranges) {
+          const prefix = child.value.slice(renderedOffset, range.renderedStart);
+          if (prefix.length > 0) {
+            nextChildren.push({ ...child, value: prefix });
+          }
+          nextChildren.push({
+            type: "element",
+            tagName: STREAM_TEXT_TAG_NAME,
+            properties: {
+              streamGeneration: range.frame.generation,
+              streamGraphemeIndexStart: range.graphemes[0]?.index ?? 0,
+              streamSourceStart: range.sourceStart,
+            },
+            children: [{ type: "text", value: range.text }],
+            ...(child.position ? { position: child.position } : {}),
+          });
+          renderedOffset = range.renderedEnd;
         }
-        nextChildren.push({
-          type: "element",
-          tagName: STREAM_TEXT_TAG_NAME,
-          properties: {
-            streamGraphemeIndexStart: suffix.graphemes[0]?.index ?? 0,
-            streamSourceStart: suffix.sourceStart,
-          },
-          children: [{ type: "text", value: suffix.text }],
-          ...(child.position ? { position: child.position } : {}),
-        });
+        const suffix = child.value.slice(renderedOffset);
+        if (suffix.length > 0) {
+          nextChildren.push({ ...child, value: suffix });
+        }
       }
       node.children = nextChildren;
     };
@@ -436,34 +463,61 @@ function rehypeMarkStreamingText({ frame, source }: StreamingRehypeOptions) {
   };
 }
 
-function findStreamingRenderedSuffix({
+function findStreamingRenderedRanges({
   child,
   parent,
-  frame,
+  frames,
   source,
 }: {
   readonly child: ChatMarkdownHastNode;
   readonly parent: ChatMarkdownHastNode;
-  readonly frame: StreamingTextMotionFrame;
+  readonly frames: readonly StreamingTextMotionFrame[];
   readonly source: string;
-}): RenderedStreamingTextSuffix | null {
+}): readonly FramedRenderedStreamingTextRange[] {
   const renderedText = child.value;
   if (typeof renderedText !== "string") {
-    return null;
+    return [];
   }
-  for (const range of renderedTextSourceRanges(source, renderedText, child, parent)) {
-    const suffix = mapSourceAppendToRenderedSuffix({
-      frame,
-      source,
-      sourceStart: range.start,
-      sourceEnd: range.end,
-      renderedText,
-    });
-    if (suffix) {
-      return suffix;
+
+  const mappedRanges: FramedRenderedStreamingTextRange[] = [];
+  const sourceRanges = renderedTextSourceRanges(source, renderedText, child, parent);
+  const firstFrame = frames[0];
+  const lastFrame = frames.at(-1);
+  if (
+    firstFrame === undefined ||
+    lastFrame === undefined ||
+    sourceRanges.every(
+      (range) => range.end <= firstFrame.sourceStart || range.start >= lastFrame.sourceEnd,
+    )
+  ) {
+    return [];
+  }
+  for (const frame of frames) {
+    for (const range of sourceRanges) {
+      if (frame.sourceEnd <= range.start || frame.sourceStart >= range.end) continue;
+      const mapped = mapSourceFrameToRenderedText({
+        frame,
+        source,
+        sourceStart: range.start,
+        sourceEnd: range.end,
+        renderedText,
+      });
+      if (mapped !== null) {
+        mappedRanges.push({ ...mapped, frame });
+        break;
+      }
     }
   }
-  return null;
+  mappedRanges.sort((left, right) => left.renderedStart - right.renderedStart);
+
+  const disjointRanges: FramedRenderedStreamingTextRange[] = [];
+  for (const range of mappedRanges) {
+    if (range.renderedStart < (disjointRanges.at(-1)?.renderedEnd ?? 0)) {
+      continue;
+    }
+    disjointRanges.push(range);
+  }
+  return disjointRanges;
 }
 
 function renderedTextSourceRanges(
@@ -528,6 +582,7 @@ function uniqueSourceRanges(ranges: readonly SourceRange[]): readonly SourceRang
 }
 
 function StreamingTextRun({
+  animationTimeMs,
   frame,
   graphemeIndexStart,
   skills,
@@ -555,6 +610,7 @@ function StreamingTextRun({
         const characters = group.map((grapheme) => (
           <StreamingCharacter
             key={`${frame.generation}:${grapheme.sourceOffset}:${grapheme.text}`}
+            animationTimeMs={animationTimeMs}
             frame={frame}
             grapheme={grapheme}
             graphemeIndex={graphemeIndexStart + grapheme.index}
@@ -573,6 +629,81 @@ function StreamingTextRun({
   );
 }
 
+function StreamingTextNode({ node, children }: StreamingTextNodeProps) {
+  const renderContext = useContext(StreamingTextRenderContext);
+  const generation = node?.properties?.streamGeneration;
+  const sourceStart = node?.properties?.streamSourceStart;
+  const graphemeIndexStart = node?.properties?.streamGraphemeIndexStart;
+  const streamedText = nodeToPlainText(children);
+  const frame =
+    renderContext !== null && typeof generation === "number"
+      ? renderContext.framesByGeneration.get(generation)
+      : undefined;
+  if (
+    renderContext === null ||
+    !frame ||
+    typeof sourceStart !== "number" ||
+    typeof graphemeIndexStart !== "number" ||
+    streamedText.length === 0
+  ) {
+    return <>{children}</>;
+  }
+  return (
+    <StreamingTextRun
+      animationTimeMs={renderContext.animationTimeMs}
+      frame={frame}
+      graphemeIndexStart={graphemeIndexStart}
+      skills={renderContext.skills}
+      sourceStart={sourceStart}
+      text={streamedText}
+    />
+  );
+}
+
+function StreamingMarkdownParagraph({
+  node: _node,
+  children,
+  ...props
+}: React.JSX.IntrinsicElements["p"] & ExtraProps) {
+  const renderContext = useContext(StreamingTextRenderContext);
+  return (
+    <p {...props}>
+      {renderSkillAwareMarkdownChildren(children, renderContext?.skills ?? EMPTY_MARKDOWN_SKILLS)}
+    </p>
+  );
+}
+
+function StreamingMarkdownListItem({
+  node,
+  children,
+  ...props
+}: React.JSX.IntrinsicElements["li"] & ExtraProps) {
+  const renderContext = useContext(StreamingTextRenderContext);
+  const listItemStart = node?.position?.start.offset;
+  const markerOffset =
+    renderContext !== null && typeof listItemStart === "number"
+      ? findTaskListMarkerOffset(renderContext.source, listItemStart)
+      : null;
+  return (
+    <li {...props} data-task-marker-offset={markerOffset ?? undefined}>
+      {renderSkillAwareMarkdownChildren(children, renderContext?.skills ?? EMPTY_MARKDOWN_SKILLS)}
+    </li>
+  );
+}
+
+function StreamingMarkdownOrderedList({
+  node,
+  start,
+  style,
+  ...props
+}: React.JSX.IntrinsicElements["ol"] & ExtraProps) {
+  const itemCount =
+    node?.children?.filter((child) => child.type === "element" && child.tagName === "li").length ??
+    0;
+  const gutterStyle = orderedListGutterStyle(itemCount, start);
+  return <ol {...props} start={start} style={gutterStyle ? { ...style, ...gutterStyle } : style} />;
+}
+
 function StreamingLabelText({
   motion,
   text,
@@ -585,6 +716,7 @@ function StreamingLabelText({
   }
   return (
     <StreamingTextRun
+      animationTimeMs={motion.animationTimeMs}
       frame={motion.frame}
       graphemeIndexStart={motion.graphemeIndexStart}
       skills={EMPTY_MARKDOWN_SKILLS}
@@ -595,22 +727,26 @@ function StreamingLabelText({
 }
 
 function resolveMaterializedLabelMotion({
-  frame,
+  animationTimeMs,
+  frames,
   node,
   source,
 }: {
-  readonly frame: StreamingTextMotionFrame | null;
+  readonly animationTimeMs: number;
+  readonly frames: readonly StreamingTextMotionFrame[];
   readonly node: ChatMarkdownHastNode;
   readonly source: string;
 }): StreamingLabelMotion | null {
-  if (!frame) {
-    return null;
-  }
   const range = readNodeSourceRange(node);
-  if (!range || range.start < frame.sourceStart || range.end > frame.sourceEnd) {
+  if (!range) {
     return null;
   }
+  const frame = frames.find(
+    (candidate) => range.start >= candidate.sourceStart && range.end <= candidate.sourceEnd,
+  );
+  if (!frame) return null;
   return {
+    animationTimeMs,
     frame,
     graphemeIndexStart: segmentStreamingTextGraphemes(source.slice(frame.sourceStart, range.start))
       .length,
@@ -619,17 +755,24 @@ function resolveMaterializedLabelMotion({
 }
 
 function StreamingCharacter({
+  animationTimeMs,
   frame,
   grapheme,
   graphemeIndex,
 }: {
+  readonly animationTimeMs: number;
   readonly frame: StreamingTextMotionFrame;
   readonly grapheme: StreamingTextGrapheme;
   readonly graphemeIndex: number;
 }) {
+  // A retained span must keep the CSS timeline it mounted with. Rewriting
+  // animation-delay on every provider chunk makes browsers restart the fade.
+  const [animationTiming] = useState(() =>
+    getStreamingTextMotionAnimationTiming(frame, graphemeIndex, animationTimeMs),
+  );
   const style: StreamingCharacterStyle = {
-    "--stream-character-delay": `${getStreamingTextMotionDelayMs(frame, graphemeIndex)}ms`,
-    "--stream-character-duration": `${frame.durationMs}ms`,
+    "--stream-character-delay": `${animationTiming.delayMs}ms`,
+    "--stream-character-duration": `${animationTiming.durationMs}ms`,
   };
   return (
     <span
@@ -794,12 +937,14 @@ function estimateHighlightedSize(html: string, code: string): number {
 }
 
 function createStreamingCodeTransformer({
+  animationTimeMs,
   codeSourceStart,
-  frame,
+  frames,
   source,
 }: {
+  readonly animationTimeMs: number;
   readonly codeSourceStart: number;
-  readonly frame: StreamingTextMotionFrame;
+  readonly frames: readonly StreamingTextMotionFrame[];
   readonly source: string;
 }): ShikiTransformer {
   return {
@@ -807,35 +952,55 @@ function createStreamingCodeTransformer({
     span(hast, _line, _column, _lineElement, token) {
       const tokenSourceStart = codeSourceStart + token.offset;
       const tokenSourceEnd = tokenSourceStart + token.content.length;
-      const suffix = mapSourceAppendToRenderedSuffix({
-        frame,
-        source,
-        sourceStart: tokenSourceStart,
-        sourceEnd: tokenSourceEnd,
-        renderedText: token.content,
-      });
-      if (!suffix) {
+      const ranges: FramedRenderedStreamingTextRange[] = [];
+      for (const frame of frames) {
+        if (frame.sourceEnd <= tokenSourceStart) continue;
+        if (frame.sourceStart >= tokenSourceEnd) break;
+        const range = mapSourceFrameToRenderedText({
+          frame,
+          source,
+          sourceStart: tokenSourceStart,
+          sourceEnd: tokenSourceEnd,
+          renderedText: token.content,
+        });
+        if (range !== null) ranges.push({ ...range, frame });
+      }
+      ranges.sort((left, right) => left.renderedStart - right.renderedStart);
+      if (ranges.length === 0) {
         return;
       }
 
-      const prefix = token.content.slice(0, suffix.renderedStart);
       const children: typeof hast.children = [];
-      if (prefix.length > 0) {
-        children.push({ type: "text", value: prefix });
+      let renderedOffset = 0;
+      for (const range of ranges) {
+        if (range.renderedStart < renderedOffset) continue;
+        const prefix = token.content.slice(renderedOffset, range.renderedStart);
+        if (prefix.length > 0) {
+          children.push({ type: "text", value: prefix });
+        }
+        for (const grapheme of range.graphemes) {
+          const animationTiming = getStreamingTextMotionAnimationTiming(
+            range.frame,
+            grapheme.index,
+            animationTimeMs,
+          );
+          children.push({
+            type: "element",
+            tagName: "span",
+            properties: {
+              "data-stream-character": "",
+              "data-stream-generation": String(range.frame.generation),
+              "data-stream-source-offset": String(grapheme.sourceOffset),
+              style: `--stream-character-delay:${animationTiming.delayMs}ms;--stream-character-duration:${animationTiming.durationMs}ms`,
+            },
+            children: [{ type: "text", value: grapheme.text }],
+          });
+        }
+        renderedOffset = range.renderedEnd;
       }
-      for (const grapheme of suffix.graphemes) {
-        const delayMs = getStreamingTextMotionDelayMs(frame, grapheme.index);
-        children.push({
-          type: "element",
-          tagName: "span",
-          properties: {
-            "data-stream-character": "",
-            "data-stream-generation": String(frame.generation),
-            "data-stream-source-offset": String(grapheme.sourceOffset),
-            style: `--stream-character-delay:${delayMs}ms;--stream-character-duration:${frame.durationMs}ms`,
-          },
-          children: [{ type: "text", value: grapheme.text }],
-        });
+      const suffix = token.content.slice(renderedOffset);
+      if (suffix.length > 0) {
+        children.push({ type: "text", value: suffix });
       }
       hast.children = children;
     },
@@ -1219,21 +1384,23 @@ function MarkdownCodeBlock({
 }
 
 interface SuspenseShikiCodeBlockProps {
+  animationTimeMs: number;
   className: string | undefined;
   code: string;
   themeName: DiffThemeName;
   isStreaming: boolean;
-  streamingFrame: StreamingTextMotionFrame | null;
+  streamingFrames: readonly StreamingTextMotionFrame[];
   source: string;
   codeSourceStart: number | null;
 }
 
 function SuspenseShikiCodeBlock({
+  animationTimeMs,
   className,
   code,
   themeName,
   isStreaming,
-  streamingFrame,
+  streamingFrames,
   source,
   codeSourceStart,
 }: SuspenseShikiCodeBlockProps) {
@@ -1257,7 +1424,8 @@ function SuspenseShikiCodeBlock({
       themeName={themeName}
       cacheKey={cacheKey}
       isStreaming={isStreaming}
-      streamingFrame={streamingFrame}
+      streamingFrames={streamingFrames}
+      animationTimeMs={animationTimeMs}
       source={source}
       codeSourceStart={codeSourceStart}
     />
@@ -1265,23 +1433,25 @@ function SuspenseShikiCodeBlock({
 }
 
 interface UncachedShikiCodeBlockProps {
+  animationTimeMs: number;
   code: string;
   language: string;
   themeName: DiffThemeName;
   cacheKey: string;
   isStreaming: boolean;
-  streamingFrame: StreamingTextMotionFrame | null;
+  streamingFrames: readonly StreamingTextMotionFrame[];
   source: string;
   codeSourceStart: number | null;
 }
 
 function UncachedShikiCodeBlock({
+  animationTimeMs,
   code,
   language,
   themeName,
   cacheKey,
   isStreaming,
-  streamingFrame,
+  streamingFrames,
   source,
   codeSourceStart,
 }: UncachedShikiCodeBlockProps) {
@@ -1291,12 +1461,13 @@ function UncachedShikiCodeBlock({
       highlighter.codeToHtml(code, {
         lang: highlightLanguage,
         theme: themeName,
-        ...(streamingFrame !== null && codeSourceStart !== null
+        ...(streamingFrames.length > 0 && codeSourceStart !== null
           ? {
               transformers: [
                 createStreamingCodeTransformer({
+                  animationTimeMs,
                   codeSourceStart,
-                  frame: streamingFrame,
+                  frames: streamingFrames,
                   source,
                 }),
               ],
@@ -1314,7 +1485,16 @@ function UncachedShikiCodeBlock({
       // If highlighting fails for this language, render as plain text
       return highlight("text");
     }
-  }, [code, codeSourceStart, highlighter, language, source, streamingFrame, themeName]);
+  }, [
+    animationTimeMs,
+    code,
+    codeSourceStart,
+    highlighter,
+    language,
+    source,
+    streamingFrames,
+    themeName,
+  ]);
 
   useEffect(() => {
     if (!isStreaming) {
@@ -1896,24 +2076,39 @@ function ChatMarkdown({
   parseRawHtml = true,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
-  const streamingFrame = useStreamingTextMotion({
+  const streamingMotion = useStreamingTextMotion({
     text,
     streamId,
     isStreaming,
     animateInitialStreamChunk,
   });
+  const streamingFrames = streamingMotion.frames;
+  const streamingAnimationTimeMs = streamingMotion.animationTimeMs;
+  const streamingFramesByGeneration = useMemo(
+    () => new Map(streamingFrames.map((frame) => [frame.generation, frame])),
+    [streamingFrames],
+  );
+  const streamingTextRenderContext = useMemo<StreamingTextRenderContextValue>(
+    () => ({
+      animationTimeMs: streamingAnimationTimeMs,
+      framesByGeneration: streamingFramesByGeneration,
+      skills,
+      source: text,
+    }),
+    [skills, streamingAnimationTimeMs, streamingFramesByGeneration, text],
+  );
   const markdownRehypePlugins = useMemo<ReactMarkdownOptions["rehypePlugins"]>(() => {
     if (!parseRawHtml) {
       return undefined;
     }
-    if (!streamingFrame) {
+    if (streamingFrames.length === 0) {
       return CHAT_MARKDOWN_REHYPE_PLUGINS;
     }
     return [
       ...CHAT_MARKDOWN_REHYPE_PLUGINS,
-      [rehypeMarkStreamingText, { frame: streamingFrame, source: text }],
+      [rehypeMarkStreamingText, { frames: streamingFrames, source: text }],
     ];
-  }, [parseRawHtml, streamingFrame, text]);
+  }, [parseRawHtml, streamingFrames, text]);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
   });
@@ -2078,7 +2273,8 @@ function ChatMarkdown({
       }
       const labelMotion = sourceNode
         ? resolveMaterializedLabelMotion({
-            frame: streamingFrame,
+            animationTimeMs: streamingAnimationTimeMs,
+            frames: streamingFrames,
             node: sourceNode,
             source: text,
           })
@@ -2114,31 +2310,8 @@ function ChatMarkdown({
     return {
       // Keep this key literal: the React compiler currently preserves it here
       // but serializes a computed custom-element key as its identifier name.
-      "stream-text"({ node, children }: StreamingTextNodeProps) {
-        const sourceStart = node?.properties?.streamSourceStart;
-        const graphemeIndexStart = node?.properties?.streamGraphemeIndexStart;
-        const streamedText = nodeToPlainText(children);
-        if (
-          !streamingFrame ||
-          typeof sourceStart !== "number" ||
-          typeof graphemeIndexStart !== "number" ||
-          streamedText.length === 0
-        ) {
-          return <>{children}</>;
-        }
-        return (
-          <StreamingTextRun
-            frame={streamingFrame}
-            graphemeIndexStart={graphemeIndexStart}
-            skills={skills}
-            sourceStart={sourceStart}
-            text={streamedText}
-          />
-        );
-      },
-      p({ node: _node, children, ...props }) {
-        return <p {...props}>{renderSkillAwareMarkdownChildren(children, skills)}</p>;
-      },
+      "stream-text": StreamingTextNode,
+      p: StreamingMarkdownParagraph,
       blockquote({ node: _node, children, ...props }) {
         const alert =
           GITHUB_ALERT_PRESENTATIONS[
@@ -2159,25 +2332,8 @@ function ChatMarkdown({
           </div>
         );
       },
-      ol({ node, start, style, ...props }) {
-        const itemCount =
-          node?.children?.filter((child) => child.type === "element" && child.tagName === "li")
-            .length ?? 0;
-        const gutterStyle = orderedListGutterStyle(itemCount, start);
-        return (
-          <ol {...props} start={start} style={gutterStyle ? { ...style, ...gutterStyle } : style} />
-        );
-      },
-      li({ node, children, ...props }) {
-        const listItemStart = node?.position?.start.offset;
-        const markerOffset =
-          typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
-        return (
-          <li {...props} data-task-marker-offset={markerOffset ?? undefined}>
-            {renderSkillAwareMarkdownChildren(children, skills)}
-          </li>
-        );
-      },
+      ol: StreamingMarkdownOrderedList,
+      li: StreamingMarkdownListItem,
       input({ node: _node, type, checked, disabled: _disabled, ...props }) {
         if (type !== "checkbox" || !onTaskListChange) {
           return (
@@ -2338,7 +2494,8 @@ function ChatMarkdown({
         const codeSourceStart = resolveFencedCodeSourceStart(text, hastNode, codeBlock.code);
         const codeBlockStreamKey = createCodeBlockStreamKey(streamId, hastNode);
         const labelMotion = resolveMaterializedLabelMotion({
-          frame: streamingFrame,
+          animationTimeMs: streamingAnimationTimeMs,
+          frames: streamingFrames,
           node: hastNode,
           source: text,
         });
@@ -2354,11 +2511,12 @@ function ChatMarkdown({
               <Suspense fallback={<pre {...props}>{children}</pre>}>
                 <SuspenseShikiCodeBlock
                   key={codeBlockStreamKey ?? undefined}
+                  animationTimeMs={streamingAnimationTimeMs}
                   className={codeBlock.className}
                   code={codeBlock.code}
                   themeName={diffThemeName}
                   isStreaming={isStreaming}
-                  streamingFrame={streamingFrame}
+                  streamingFrames={streamingFrames}
                   source={text}
                   codeSourceStart={codeSourceStart}
                 />
@@ -2383,7 +2541,8 @@ function ChatMarkdown({
     resolvedTheme,
     skills,
     streamId,
-    streamingFrame,
+    streamingAnimationTimeMs,
+    streamingFrames,
     text,
     threadRef,
   ]);
@@ -2400,17 +2559,19 @@ function ChatMarkdown({
       )}
       onCopy={handleCopy}
     >
-      <ReactMarkdown
-        remarkPlugins={
-          lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
-        }
-        rehypePlugins={markdownRehypePlugins}
-        skipHtml={false}
-        components={markdownComponents}
-        urlTransform={markdownUrlTransform}
-      >
-        {text}
-      </ReactMarkdown>
+      <StreamingTextRenderContext.Provider value={streamingTextRenderContext}>
+        <ReactMarkdown
+          remarkPlugins={
+            lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
+          }
+          rehypePlugins={markdownRehypePlugins}
+          skipHtml={false}
+          components={markdownComponents}
+          urlTransform={markdownUrlTransform}
+        >
+          {text}
+        </ReactMarkdown>
+      </StreamingTextRenderContext.Provider>
     </div>
   );
 }

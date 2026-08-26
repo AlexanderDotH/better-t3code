@@ -15,9 +15,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
-  createNativeAssemblyAiSession,
-  type NativeAssemblyAiSession,
-} from "./native-assembly-ai-transport";
+  createNativeServerSpeechSession,
+  type NativeServerSpeechSession,
+} from "./native-server-speech-transport";
 
 export type NativeVoiceDictationState = "idle" | "starting" | "recording" | "stopping";
 
@@ -39,7 +39,16 @@ export function useNativeAssemblyAiDictation(input: {
   readonly onChangeDraftText: (text: string) => void;
   readonly onNotice: (title: string, error: Error) => void;
 }) {
-  const createToken = useAtomCommand(serverEnvironment.createAssemblyAiStreamingToken, {
+  const startStreamingSession = useAtomCommand(serverEnvironment.startSpeechStreamingSession, {
+    reportFailure: false,
+  });
+  const pushStreamingAudio = useAtomCommand(serverEnvironment.pushSpeechStreamingAudio, {
+    reportFailure: false,
+  });
+  const finishStreamingSession = useAtomCommand(serverEnvironment.finishSpeechStreamingSession, {
+    reportFailure: false,
+  });
+  const cancelStreamingSession = useAtomCommand(serverEnvironment.cancelSpeechStreamingSession, {
     reportFailure: false,
   });
   const translateTranscript = useAtomCommand(serverEnvironment.translateSpeechTranscript, {
@@ -50,7 +59,7 @@ export function useNativeAssemblyAiDictation(input: {
   const stateRef = useRef<NativeVoiceDictationState>("idle");
   const attemptRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
-  const sessionRef = useRef<NativeAssemblyAiSession | null>(null);
+  const sessionRef = useRef<NativeServerSpeechSession | null>(null);
   const originalDraftRef = useRef("");
   const latestTranscriptRef = useRef("");
   const draftTextRef = useRef(input.draftText);
@@ -148,21 +157,46 @@ export function useNativeAssemblyAiDictation(input: {
         interruptionMode: "doNotMix",
       });
       if (abortController.signal.aborted) return;
-      const tokenResult = await createToken({
-        environmentId: input.environmentId,
-        input: { projectId: input.projectId },
-      });
-      if (tokenResult._tag === "Failure") {
-        if (isAtomCommandInterrupted(tokenResult)) {
-          if (attemptRef.current !== attempt || abortController.signal.aborted) return;
-          throw new Error("Voice input token creation was interrupted.");
-        }
-        throw commandFailureMessage(tokenResult, "Could not create a voice streaming token.");
-      }
-      if (attemptRef.current !== attempt || abortController.signal.aborted) return;
-
-      const session = createNativeAssemblyAiSession({
-        config: tokenResult.value,
+      const session = createNativeServerSpeechSession({
+        startSession: async () => {
+          const result = await startStreamingSession({
+            environmentId: input.environmentId,
+            input: { projectId: input.projectId },
+          });
+          if (result._tag === "Failure") {
+            throw commandFailureMessage(result, "Could not start server voice streaming.");
+          }
+          return result.value;
+        },
+        pushAudio: async (streamingInput) => {
+          const result = await pushStreamingAudio({
+            environmentId: input.environmentId,
+            input: streamingInput,
+          });
+          if (result._tag === "Failure") {
+            throw commandFailureMessage(result, "Could not stream microphone audio.");
+          }
+          return result.value;
+        },
+        finishSession: async (streamingInput) => {
+          const result = await finishStreamingSession({
+            environmentId: input.environmentId,
+            input: streamingInput,
+          });
+          if (result._tag === "Failure") {
+            throw commandFailureMessage(result, "Could not finish server voice streaming.");
+          }
+          return result.value;
+        },
+        cancelSession: async (streamingInput) => {
+          const result = await cancelStreamingSession({
+            environmentId: input.environmentId,
+            input: streamingInput,
+          });
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            throw commandFailureMessage(result, "Could not cancel server voice streaming.");
+          }
+        },
         onTranscript: (text) => {
           if (attemptRef.current !== attempt || abortController.signal.aborted) return;
           latestTranscriptRef.current = text;
@@ -210,12 +244,15 @@ export function useNativeAssemblyAiDictation(input: {
     }
   }, [
     audioStream.stream,
-    createToken,
+    cancelStreamingSession,
+    finishStreamingSession,
     input.configured,
     input.environmentId,
     input.projectId,
+    pushStreamingAudio,
     releaseAudio,
     reset,
+    startStreamingSession,
     transition,
   ]);
 

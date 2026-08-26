@@ -3,11 +3,29 @@ import * as NodeAssert from "node:assert/strict";
 import { describe, it } from "vite-plus/test";
 
 import {
+  buildLocalOpenCodeInventoryArgs,
+  buildLocalOpenCodeServerArgs,
   parseAgentListCliOutput,
   parseModelsCliOutput,
   parseOpenCodeModelSlug,
   parseSkillsCliOutput,
 } from "./opencodeRuntime.ts";
+
+describe("local OpenCode process arguments", () => {
+  it("disables external plugins for the owned server and matching inventory commands", () => {
+    NodeAssert.deepStrictEqual(buildLocalOpenCodeServerArgs("127.0.0.1", 4301), [
+      "serve",
+      "--pure",
+      "--hostname=127.0.0.1",
+      "--port=4301",
+    ]);
+    NodeAssert.deepStrictEqual(buildLocalOpenCodeInventoryArgs(), {
+      models: ["models", "--verbose", "--pure"],
+      agents: ["agent", "list", "--pure"],
+      skills: ["debug", "skill", "--pure"],
+    });
+  });
+});
 
 describe("parseModelsCliOutput", () => {
   it("parses a single model from a single provider", () => {

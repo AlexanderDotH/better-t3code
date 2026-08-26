@@ -1,4 +1,3 @@
-import { useNavigation } from "@react-navigation/native";
 import type { DailyTotals, MergedUsage } from "@t3tools/shared/usageMerge";
 import {
   enumerateDays,
@@ -12,12 +11,13 @@ import {
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { useMemo, useState } from "react";
-import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Pressable, RefreshControl, View } from "react-native";
 
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import {
+  AndroidScreenScaffold,
+  ScreenScaffoldScrollView,
+} from "../../components/AndroidScreenScaffold";
 import { AppText as Text } from "../../components/AppText";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
@@ -34,8 +34,6 @@ const WINDOW_OPTIONS = [
 const CHART_HEIGHT = 180;
 
 export function UsageRouteScreen() {
-  const navigation = useNavigation();
-  const insets = useSafeAreaInsets();
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
     window: makeWindow(30),
@@ -94,19 +92,8 @@ export function UsageRouteScreen() {
   };
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      {Platform.OS === "android" ? (
-        <>
-          <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="Usage" onBack={() => navigation.goBack()} />
-        </>
-      ) : null}
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        showsVerticalScrollIndicator={false}
-        className="flex-1"
-        contentContainerClassName="gap-6 px-5 pt-4"
-        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
+    <AndroidScreenScaffold title="Usage">
+      <ScreenScaffoldScrollView
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshWindow} />}
       >
         <SegmentedControl
@@ -143,8 +130,8 @@ export function UsageRouteScreen() {
             <ModelsSection merged={merged} />
           </>
         )}
-      </ScrollView>
-    </View>
+      </ScreenScaffoldScrollView>
+    </AndroidScreenScaffold>
   );
 }
 

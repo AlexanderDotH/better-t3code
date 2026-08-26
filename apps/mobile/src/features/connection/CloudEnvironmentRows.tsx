@@ -110,6 +110,7 @@ function CloudEnvironmentRowsContent(
           <Text className="text-sm font-t3-bold uppercase text-foreground-muted">T3 Connect</Text>
           {discoveryAvailable ? (
             <Pressable
+              accessibilityLabel="Refresh T3 Connect environments"
               accessibilityRole="button"
               disabled={controller.relayDiscovery.isRefreshing}
               onPress={() => {
@@ -185,6 +186,7 @@ function CloudEnvironmentRowsContent(
             <CopyTraceIdButton traceId={controller.relayDiscovery.errorTraceId} />
           ) : null}
           <Pressable
+            accessibilityLabel="Retry loading T3 Connect environments"
             accessibilityRole="button"
             onPress={() => {
               void controller.refreshRelayEnvironments();
@@ -215,6 +217,7 @@ function ConnectedCloudEnvironmentRow(props: {
       connectionState={props.environment.connectionState}
       errorExpanded={props.errorExpanded}
       label={props.environment.environmentLabel}
+      savedOnDevice
       onValueChange={(enabled) => {
         if (enabled) {
           props.onConnect();
@@ -223,7 +226,7 @@ function ConnectedCloudEnvironmentRow(props: {
         props.onDisconnect();
       }}
       onToggleError={props.onToggleError}
-      value={props.environment.connectionState !== "available"}
+      value
     />
   );
 }
@@ -250,6 +253,7 @@ function CloudEnvironmentRow(props: {
       connectionState={presentation.connectionState}
       errorExpanded={props.errorExpanded}
       label={props.environment.environment.label}
+      savedOnDevice={false}
       onValueChange={(enabled) => {
         if (enabled) {
           props.onConnect();
@@ -270,6 +274,7 @@ function CloudEnvironmentRowShell(props: {
   readonly disabled?: boolean;
   readonly errorExpanded: boolean;
   readonly label: string;
+  readonly savedOnDevice: boolean;
   readonly onToggleError: () => void;
   readonly onValueChange: (enabled: boolean) => void;
   readonly statusText?: string;
@@ -284,7 +289,6 @@ function CloudEnvironmentRowShell(props: {
     connectionStatusText({
       phase: props.connectionState,
       error: props.connectionError,
-      traceId: props.connectionErrorTraceId,
     });
   const statusClassName = props.connectionError
     ? "text-rose-500 dark:text-rose-400"
@@ -358,14 +362,12 @@ function CloudEnvironmentRowShell(props: {
                 {" Trace ID: "}
                 <Text
                   accessibilityHint="Copies the trace ID"
+                  accessibilityLabel={`Copy trace ID ${errorTraceId}`}
                   accessibilityRole="button"
                   className={cn("text-xs underline decoration-dotted", statusClassName)}
-                  onLongPress={(event) => {
-                    event.stopPropagation();
-                    copyTextWithHaptic(errorTraceId, { target: "connection-trace-id" });
-                  }}
                   onPress={(event) => {
                     event.stopPropagation();
+                    copyTextWithHaptic(errorTraceId, { target: "connection-trace-id" });
                   }}
                 >
                   {errorTraceId}
@@ -388,6 +390,11 @@ function CloudEnvironmentRowShell(props: {
         </StatusContainer>
       </View>
       <ThemedSwitch
+        accessibilityLabel={
+          props.savedOnDevice
+            ? `Remove ${props.label} from this device`
+            : `Save ${props.label} on this device`
+        }
         disabled={props.disabled}
         onValueChange={props.onValueChange}
         value={props.value}
@@ -401,6 +408,7 @@ function CopyTraceIdButton(props: { readonly traceId: string }) {
 
   return (
     <Pressable
+      accessibilityLabel={`Copy trace ID ${props.traceId}`}
       accessibilityRole="button"
       onPress={() => {
         copyTextWithHaptic(props.traceId, { target: "connection-trace-id" });

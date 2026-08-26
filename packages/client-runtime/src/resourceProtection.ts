@@ -1,4 +1,8 @@
 import type { ResourceProtectionSnapshot, ThreadId } from "@t3tools/contracts";
+import {
+  translateInterfaceMessage,
+  type ResolvedInterfaceLanguage,
+} from "@t3tools/shared/interfaceLanguage";
 
 export interface ResourceProtectionPresentation {
   readonly kind: "waiting" | "throttled";
@@ -9,6 +13,7 @@ export interface ResourceProtectionPresentation {
 export function resolveResourceProtectionPresentation(
   snapshot: ResourceProtectionSnapshot | null | undefined,
   threadId: ThreadId | null | undefined,
+  language: ResolvedInterfaceLanguage = "en",
 ): ResourceProtectionPresentation | null {
   if (!snapshot || !threadId || !snapshot.affectedThreadIds.includes(threadId)) return null;
 
@@ -16,18 +21,18 @@ export function resolveResourceProtectionPresentation(
     case "waiting":
       return {
         kind: "waiting",
-        label: "Subagent wartet auf freien Speicher",
-        description: "Der Start wird automatisch fortgesetzt; Stoppen bleibt jederzeit möglich.",
+        label: translateInterfaceMessage(language, "resourceProtection.waiting.label"),
+        description: translateInterfaceMessage(language, "resourceProtection.waiting.description"),
       };
     case "throttled":
     case "recovering":
       return {
         kind: "throttled",
-        label: "Provider vorübergehend gedrosselt",
+        label: translateInterfaceMessage(language, "resourceProtection.throttled.label"),
         description:
           snapshot.state === "recovering"
-            ? "Die Speicherreserve stabilisiert sich; T3 setzt den Provider automatisch fort."
-            : "T3 setzt den Provider nach fünf gesunden Speichermessungen automatisch fort.",
+            ? translateInterfaceMessage(language, "resourceProtection.recovering.description")
+            : translateInterfaceMessage(language, "resourceProtection.throttled.description"),
       };
     case "normal":
       return null;
@@ -35,15 +40,19 @@ export function resolveResourceProtectionPresentation(
       return snapshot.waitingStarts > 0
         ? {
             kind: "waiting",
-            label: "Subagent wartet auf freien Speicher",
-            description:
-              "Der Start wird fortgesetzt, sobald T3 den verfügbaren Speicher wieder sicher messen kann; Stoppen bleibt möglich.",
+            label: translateInterfaceMessage(language, "resourceProtection.waiting.label"),
+            description: translateInterfaceMessage(
+              language,
+              "resourceProtection.unavailableWaiting.description",
+            ),
           }
         : {
             kind: "throttled",
-            label: "Provider vorübergehend gedrosselt",
-            description:
-              "T3 setzt den Provider fort, sobald der verfügbare Speicher wieder sicher messbar ist.",
+            label: translateInterfaceMessage(language, "resourceProtection.throttled.label"),
+            description: translateInterfaceMessage(
+              language,
+              "resourceProtection.unavailableThrottled.description",
+            ),
           };
   }
 }

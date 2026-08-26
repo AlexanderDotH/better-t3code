@@ -18,6 +18,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -31,6 +32,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
+import { cn } from "../../lib/cn";
 import { buildModelOptions, type ModelOption } from "../../lib/modelOptions";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -38,14 +40,21 @@ import { agentSettingsEnvironment } from "../../state/agent-settings";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
+import { environmentSession } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useWorkspaceState } from "../../state/workspace";
 import {
+  mobileProviderAuthEventPresentation,
+  providerAuthenticationPresentation,
+  providerAuthMutationAccess,
+  providerConfigSettingsPatch,
   providerEnabledSettingsPatch,
+  providerRateLimitLabel,
   providerStatusLabel,
   skillMutationTarget,
   supportsEnvironmentAgentSettings,
 } from "./environment-agent-settings";
+import { MobileProviderSettingsForm } from "./MobileProviderSettingsForm";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -98,13 +107,16 @@ export function ModelSelectionModal(props: {
       <Pressable
         key={key}
         accessibilityRole="radio"
-        accessibilityState={{ checked: selected }}
-        className={
+        accessibilityHint={option?.unavailableReason ?? undefined}
+        accessibilityState={{ checked: selected, disabled: option?.isSelectable === false }}
+        className={cn(
           index === 0
             ? "flex-row items-center gap-3 px-4 py-3"
-            : "flex-row items-center gap-3 border-t border-border-subtle px-4 py-3"
-        }
+            : "flex-row items-center gap-3 border-t border-border-subtle px-4 py-3",
+          option?.isSelectable === false && "opacity-50",
+        )}
         onPress={() => {
+          if (option?.isSelectable === false) return;
           props.onSelect(option?.selection ?? null);
           props.onClose();
         }}
@@ -114,7 +126,9 @@ export function ModelSelectionModal(props: {
             {option?.label ?? props.defaultLabel ?? "Default text model"}
           </Text>
           {option ? (
-            <Text className="text-sm text-foreground-muted">{option.providerLabel}</Text>
+            <Text className="text-sm text-foreground-muted">
+              {option.unavailableReason ?? option.providerLabel}
+            </Text>
           ) : null}
         </View>
         {selected ? (
@@ -211,6 +225,7 @@ function InlineSettingsSwitch(props: {
 function ProviderSettings(props: {
   readonly environmentId: EnvironmentId;
   readonly config: ServerConfig;
+  readonly readOnly: boolean;
   readonly updateSettings: (patch: ServerSettingsPatch, label: string) => Promise<boolean>;
 }) {
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
@@ -262,6 +277,8 @@ function ProviderSettings(props: {
           enabled: !provider.enabled,
         });
         const title = provider.displayName ?? String(provider.instanceId);
+        const configuredInstance = props.config.settings.providerInstances[provider.instanceId];
+        const authPresentation = providerAuthenticationPresentation(provider);
         const updateAvailable = provider.versionAdvisory?.canUpdate === true;
         return (
           <View
@@ -276,7 +293,7 @@ function ProviderSettings(props: {
                 </Text>
               </View>
               <InlineSettingsSwitch
-                disabled={enabledPatch === null}
+                disabled={props.readOnly || enabledPatch === null}
                 label={`${title} enabled`}
                 value={provider.enabled}
                 onValueChange={(enabled) => {
@@ -293,6 +310,28 @@ function ProviderSettings(props: {
               <Text className="text-sm leading-normal text-foreground-muted">
                 {provider.message}
               </Text>
+            ) : null}
+            {authPresentation ? (
+              <MobileProviderAuthentication
+                environmentId={props.environmentId}
+                provider={provider}
+                readOnly={props.readOnly}
+              />
+            ) : null}
+            {configuredInstance ? (
+              <MobileProviderSettingsForm
+                disabled={props.readOnly}
+                provider={provider}
+                value={configuredInstance.config}
+                onChange={(config) => {
+                  const patch = providerConfigSettingsPatch({
+                    instanceId: provider.instanceId,
+                    settings: props.config.settings,
+                    config,
+                  });
+                  if (patch) void props.updateSettings(patch, `${title} settings`);
+                }}
+              />
             ) : null}
             {updateAvailable ? (
               <Pressable
@@ -322,6 +361,269 @@ function ProviderSettings(props: {
         </Text>
       </Pressable>
     </SettingsSection>
+  );
+}
+
+function MobileProviderAuthentication(props: {
+  readonly environmentId: EnvironmentId;
+  readonly provider: ServerProvider;
+  readonly readOnly: boolean;
+}) {
+  const presentation = providerAuthenticationPresentation(props.provider)!;
+  const event = useAtomValue(
+    serverEnvironment.providerAuthConnectEventAtom({
+      environmentId: props.environmentId,
+      instanceId: props.provider.instanceId,
+    }),
+  );
+  const connectProviderAuth = useAtomCommand(serverEnvironment.connectProviderAuth, {
+    reportFailure: false,
+  });
+  const disconnectProviderAuth = useAtomCommand(serverEnvironment.disconnectProviderAuth, {
+    reportFailure: false,
+  });
+  const setProviderAuthCredential = useAtomCommand(serverEnvironment.setProviderAuthCredential, {
+    reportFailure: false,
+  });
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
+  const [dialogVisible, setDialogVisible] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [credentialDraft, setCredentialDraft] = useState("");
+  const [localError, setLocalError] = useState<string | null>(null);
+  const eventPresentation = event
+    ? mobileProviderAuthEventPresentation(event, presentation.providerLabel)
+    : null;
+  const rateLimit = providerRateLimitLabel(props.provider.rateLimit);
+  const placeholderTextColor = String(useThemeColor("--color-foreground-muted"));
+
+  const refresh = useCallback(async () => {
+    await refreshProviders({ environmentId: props.environmentId, input: {} });
+  }, [props.environmentId, refreshProviders]);
+
+  const connect = useCallback(async () => {
+    if (presentation.method === "api-key") return;
+    setBusy(true);
+    setLocalError(null);
+    setDialogVisible(true);
+    const result = await connectProviderAuth({
+      environmentId: props.environmentId,
+      input: { instanceId: props.provider.instanceId, flow: presentation.method },
+    });
+    setBusy(false);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      setLocalError(failureMessage(result, `${presentation.providerLabel} sign-in failed.`));
+      return;
+    }
+    await refresh();
+  }, [
+    connectProviderAuth,
+    presentation.method,
+    presentation.providerLabel,
+    props.environmentId,
+    props.provider.instanceId,
+    refresh,
+  ]);
+
+  const saveCredential = useCallback(async () => {
+    const credential = credentialDraft.trim();
+    if (!credential) return;
+    setCredentialDraft("");
+    setBusy(true);
+    const result = await setProviderAuthCredential({
+      environmentId: props.environmentId,
+      input: { instanceId: props.provider.instanceId, credential },
+    });
+    setBusy(false);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      Alert.alert(
+        `Could not save ${presentation.credentialLabel ?? "credential"}`,
+        failureMessage(result, `${presentation.providerLabel} rejected the credential.`),
+      );
+      return;
+    }
+    await refresh();
+  }, [
+    credentialDraft,
+    presentation.credentialLabel,
+    presentation.providerLabel,
+    props.environmentId,
+    props.provider.instanceId,
+    refresh,
+    setProviderAuthCredential,
+  ]);
+
+  const disconnect = useCallback(async () => {
+    setBusy(true);
+    const result = await disconnectProviderAuth({
+      environmentId: props.environmentId,
+      input: { instanceId: props.provider.instanceId },
+    });
+    setBusy(false);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      Alert.alert(
+        `Could not disconnect ${presentation.providerLabel}`,
+        failureMessage(result, `${presentation.providerLabel} disconnect failed.`),
+      );
+      return;
+    }
+    await refresh();
+  }, [
+    disconnectProviderAuth,
+    presentation.providerLabel,
+    props.environmentId,
+    props.provider.instanceId,
+    refresh,
+  ]);
+
+  if (props.readOnly) {
+    return (
+      <Text className="text-sm leading-normal text-foreground-muted">
+        {presentation.detail} · Authentication actions require edit access.
+      </Text>
+    );
+  }
+
+  return (
+    <View className="gap-2 pt-1">
+      <Text className="text-sm leading-normal text-foreground-muted">
+        {[presentation.detail, rateLimit].filter(Boolean).join(" · ")}
+      </Text>
+      {presentation.method === "api-key" ? (
+        <View className="gap-2">
+          <TextInput
+            accessibilityLabel={presentation.credentialLabel ?? "API key"}
+            autoCapitalize="none"
+            autoCorrect={false}
+            onChangeText={setCredentialDraft}
+            placeholder={presentation.credentialPlaceholder ?? "API key"}
+            placeholderTextColor={placeholderTextColor}
+            secureTextEntry
+            value={credentialDraft}
+            className="rounded-2xl bg-subtle px-4 py-3 text-base text-foreground"
+          />
+          <Pressable
+            accessibilityRole="button"
+            disabled={busy || credentialDraft.trim().length === 0}
+            onPress={() => void saveCredential()}
+            className="self-start rounded-xl bg-foreground px-4 py-2 disabled:opacity-40"
+          >
+            <Text className="font-t3-medium text-background">
+              {busy ? "Saving…" : (presentation.credentialActionLabel ?? presentation.actionLabel)}
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
+      {presentation.action === "disconnect" ? (
+        <Pressable
+          accessibilityRole="button"
+          disabled={busy}
+          onPress={() =>
+            Alert.alert(
+              `Disconnect ${presentation.providerLabel}?`,
+              "This interrupts active turns and removes only this provider instance's stored credential.",
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Disconnect",
+                  style: "destructive",
+                  onPress: () => void disconnect(),
+                },
+              ],
+            )
+          }
+          className="self-start rounded-xl bg-subtle px-4 py-2 disabled:opacity-40"
+        >
+          <Text className="font-t3-medium text-foreground">
+            {busy ? "Disconnecting…" : "Disconnect"}
+          </Text>
+        </Pressable>
+      ) : presentation.method !== "api-key" &&
+        (presentation.action === "connect" || presentation.action === "reconnect") ? (
+        <Pressable
+          accessibilityRole="button"
+          disabled={busy}
+          onPress={() => void connect()}
+          className="self-start rounded-xl bg-foreground px-4 py-2 disabled:opacity-40"
+        >
+          <Text className="font-t3-medium text-background">
+            {busy ? "Connecting…" : presentation.actionLabel}
+          </Text>
+        </Pressable>
+      ) : null}
+
+      <Modal
+        animationType="slide"
+        presentationStyle="pageSheet"
+        visible={dialogVisible}
+        onRequestClose={() => setDialogVisible(false)}
+      >
+        <View className="flex-1 justify-center gap-5 bg-sheet px-6">
+          <Text className="text-2xl font-t3-semibold text-foreground">
+            Connect {presentation.providerLabel}
+          </Text>
+          <Text className="text-base leading-normal text-foreground-muted">
+            {localError ??
+              eventPresentation?.message ??
+              `Preparing secure ${presentation.providerLabel} sign-in…`}
+          </Text>
+          {eventPresentation?.kind === "browser" ? (
+            <Pressable
+              accessibilityRole="link"
+              onPress={() =>
+                void Linking.openURL(eventPresentation.authorizationUrl).catch(() =>
+                  Alert.alert(
+                    "Could not open authorization page",
+                    eventPresentation.authorizationUrl,
+                  ),
+                )
+              }
+              className="self-start rounded-xl bg-foreground px-4 py-3"
+            >
+              <Text className="font-t3-medium text-background">Open authorization page</Text>
+            </Pressable>
+          ) : null}
+          {eventPresentation?.kind === "device-code" ? (
+            <>
+              <Text className="self-start rounded-2xl bg-card px-5 py-3 text-xl font-t3-semibold tracking-widest text-foreground">
+                {eventPresentation.userCode}
+              </Text>
+              <Pressable
+                accessibilityRole="link"
+                onPress={() =>
+                  void Linking.openURL(eventPresentation.verificationUrl).catch(() =>
+                    Alert.alert(
+                      "Could not open verification page",
+                      eventPresentation.verificationUrl,
+                    ),
+                  )
+                }
+                className="self-start rounded-xl bg-foreground px-4 py-3"
+              >
+                <Text className="font-t3-medium text-background">Open verification page</Text>
+              </Pressable>
+            </>
+          ) : null}
+          {(localError || eventPresentation?.kind === "error") && !busy ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => void connect()}
+              className="self-start rounded-xl bg-foreground px-4 py-3"
+            >
+              <Text className="font-t3-medium text-background">Retry</Text>
+            </Pressable>
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setDialogVisible(false)}
+            className="self-start py-2"
+          >
+            <Text className="font-t3-medium text-foreground">Close</Text>
+          </Pressable>
+        </View>
+      </Modal>
+    </View>
   );
 }
 
@@ -495,6 +797,7 @@ function EnvironmentAgentSettings(props: {
   const updateServerSettings = useAtomCommand(serverEnvironment.updateSettings, {
     reportFailure: false,
   });
+  const authSession = useAtomValue(environmentSession.sessionStateValueAtom(props.environmentId));
   const [assemblyAiKey, setAssemblyAiKey] = useState("");
   const placeholderTextColor = String(useThemeColor("--color-foreground-muted"));
 
@@ -553,6 +856,7 @@ function EnvironmentAgentSettings(props: {
       <ProviderSettings
         environmentId={props.environmentId}
         config={config}
+        readOnly={providerAuthMutationAccess(authSession) === "read-only"}
         updateSettings={updateSettings}
       />
 

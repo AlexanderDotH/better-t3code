@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { ServerProviderModel } from "@t3tools/contracts";
+import { ProviderDriverKind, type ServerProviderModel } from "@t3tools/contracts";
 
-import { deriveProviderModelsForDisplay } from "./ProviderInstanceCard";
+import {
+  deriveProviderModelsForDisplay,
+  shouldRenderProviderModelsSection,
+} from "./ProviderInstanceCard";
 
 describe("deriveProviderModelsForDisplay", () => {
   it("uses current config custom models instead of stale live custom rows", () => {
@@ -32,5 +35,15 @@ describe("deriveProviderModelsForDisplay", () => {
         customModels: ["kept-custom"],
       }).map((model) => model.slug),
     ).toEqual(["server-model", "kept-custom"]);
+  });
+});
+
+describe("shouldRenderProviderModelsSection", () => {
+  it("keeps the catalog manager out of OpenRouter settings", () => {
+    expect(shouldRenderProviderModelsSection(ProviderDriverKind.make("openrouter"))).toBe(false);
+  });
+
+  it.each(["codex", "gemini"] as const)("preserves the catalog manager for %s", (driver) => {
+    expect(shouldRenderProviderModelsSection(ProviderDriverKind.make(driver))).toBe(true);
   });
 });

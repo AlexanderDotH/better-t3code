@@ -1,15 +1,15 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { useNavigation } from "@react-navigation/native";
 import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { Platform, Pressable, ScrollView, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Pressable, View } from "react-native";
 
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import {
+  AndroidScreenScaffold,
+  ScreenScaffoldScrollView,
+} from "../../components/AndroidScreenScaffold";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { useThemeColor } from "../../lib/useThemeColor";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   mobileProjectGroupingModePatch,
   resolveMobileProjectGroupingSettings,
@@ -40,8 +40,6 @@ const GROUPING_OPTIONS: ReadonlyArray<{
 ];
 
 export function SettingsProjectGroupingRouteScreen() {
-  const navigation = useNavigation();
-  const insets = useSafeAreaInsets();
   const checkmarkColor = useThemeColor("--color-icon");
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
@@ -51,20 +49,8 @@ export function SettingsProjectGroupingRouteScreen() {
     : null;
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      {Platform.OS === "android" ? (
-        <>
-          <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="Project Grouping" onBack={() => navigation.goBack()} />
-        </>
-      ) : null}
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        showsVerticalScrollIndicator={false}
-        className="flex-1"
-        contentContainerClassName="gap-3 px-5 pt-4"
-        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
-      >
+    <AndroidScreenScaffold title="Project Grouping">
+      <ScreenScaffoldScrollView contentContainerClassName="gap-3">
         <SettingsSection title="Default grouping">
           {GROUPING_OPTIONS.map((option, index) => (
             <Pressable
@@ -100,7 +86,7 @@ export function SettingsProjectGroupingRouteScreen() {
             </Pressable>
           ))}
         </SettingsSection>
-      </ScrollView>
-    </View>
+      </ScreenScaffoldScrollView>
+    </AndroidScreenScaffold>
   );
 }

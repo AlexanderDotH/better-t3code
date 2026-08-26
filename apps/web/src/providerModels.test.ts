@@ -5,7 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { isPlanModeAvailable } from "./providerModels";
+import { getDefaultServerModel, isPlanModeAvailable } from "./providerModels";
 
 const CODEX = ProviderDriverKind.make("codex");
 const CLAUDE = ProviderDriverKind.make("claudeAgent");
@@ -75,5 +75,30 @@ describe("isPlanModeAvailable", () => {
         legacyPlanModeEnabled: true,
       }),
     ).toBe(false);
+  });
+});
+
+describe("getDefaultServerModel", () => {
+  it("skips provider models marked non-selectable", () => {
+    const openRouter = {
+      ...provider(ProviderDriverKind.make("openrouter"), true),
+      models: [
+        {
+          slug: "openai/no-tools",
+          name: "No tools",
+          isCustom: false,
+          isSelectable: false,
+          capabilities: null,
+        },
+        {
+          slug: "openai/gpt-agent",
+          name: "GPT Agent",
+          isCustom: false,
+          capabilities: null,
+        },
+      ],
+    } satisfies ServerProvider;
+
+    expect(getDefaultServerModel([openRouter], openRouter.driver)).toBe("openai/gpt-agent");
   });
 });

@@ -15,11 +15,12 @@ import * as Result from "effect/Result";
 import { useState, type ReactNode } from "react";
 import {
   isProviderDriverKind,
+  ProviderDriverKind,
   resolveProviderInstanceEnabled,
   type ProviderInstanceConfig,
+  type EnvironmentId,
   type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
-  type ProviderDriverKind,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
@@ -44,6 +45,9 @@ import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { ProviderSubscriptionAuthBridge } from "./ProviderSubscriptionAuthBridge";
+import { deriveProviderSubscriptionPresentation } from "./ProviderSubscriptionAuth";
+import type { ProviderAuthFlow } from "./ProviderSettingsPanel.logic";
 import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
@@ -130,6 +134,10 @@ export function deriveProviderModelsForDisplay(input: {
       },
   );
   return [...serverModels, ...customModels];
+}
+
+export function shouldRenderProviderModelsSection(driverKind: ProviderDriverKind | null): boolean {
+  return driverKind !== ProviderDriverKind.make("openrouter");
 }
 
 function ProviderAuthEmail(props: {
@@ -320,10 +328,13 @@ function ProviderEnvironmentSection(props: {
 }
 
 interface ProviderInstanceCardProps {
+  readonly environmentId: EnvironmentId;
   readonly instanceId: ProviderInstanceId;
   readonly instance: ProviderInstanceConfig;
   readonly driverOption: DriverOption | undefined;
   readonly liveProvider: ServerProvider | undefined;
+  readonly providerAuthFlow: ProviderAuthFlow;
+  readonly readOnly: boolean;
   readonly isExpanded: boolean;
   readonly onExpandedChange: (open: boolean) => void;
   readonly onUpdate: (nextInstance: ProviderInstanceConfig) => void;
@@ -375,10 +386,13 @@ interface ProviderInstanceCardProps {
  *     false wins, then envelope, then config, then the driver default).
  */
 export function ProviderInstanceCard({
+  environmentId,
   instanceId,
   instance,
   driverOption,
   liveProvider,
+  providerAuthFlow,
+  readOnly,
   isExpanded,
   onExpandedChange,
   onUpdate,
@@ -410,10 +424,16 @@ export function ProviderInstanceCard({
   const summary = rawSummary;
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
   const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
-  const updateCommand = versionAdvisory?.updateCommand ?? null;
-  const FallbackIconComponent = driverOption?.icon;
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
+  const subscriptionPresentation = deriveProviderSubscriptionPresentation({
+    providerName: displayName,
+    auth: liveProvider?.auth ?? { status: "unknown" },
+    ...(liveProvider?.message ? { message: liveProvider.message } : {}),
+    ...(liveProvider?.rateLimit ? { rateLimit: liveProvider.rateLimit } : {}),
+  });
+  const updateCommand = versionAdvisory?.updateCommand ?? null;
+  const FallbackIconComponent = driverOption?.icon;
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
   const { copyToClipboard } = useCopyToClipboard<{ providerName: string }>({
     onCopy: ({ providerName }) => {
@@ -577,7 +597,7 @@ export function ProviderInstanceCard({
   );
 
   const authRowNode = (
-    <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-[13px] leading-[1.45] text-muted-foreground/80">
+    <p className="flex min-w-0 flex-wrap items-center gap-x-1 break-words text-[13px] leading-[1.45] text-muted-foreground/80">
       {hasAuthenticatedEmail ? (
         <>
           <span>Authenticated as</span>
@@ -705,7 +725,16 @@ export function ProviderInstanceCard({
             </div>
             {authRowNode}
           </div>
-          <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+          <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
+            {subscriptionPresentation ? (
+              <ProviderSubscriptionAuthBridge
+                environmentId={environmentId}
+                instanceId={instanceId}
+                flow={providerAuthFlow}
+                readOnly={readOnly}
+                presentation={subscriptionPresentation}
+              />
+            ) : null}
             <Button
               size="compact"
               variant="ghost-muted"
@@ -766,13 +795,14 @@ export function ProviderInstanceCard({
               <ProviderSettingsForm
                 definition={driverOption}
                 value={instance.config}
+                models={liveProvider?.models}
                 idPrefix={`provider-instance-${instanceId}`}
                 variant="card"
                 onChange={updateConfig}
               />
             ) : null}
 
-            {driverOption !== undefined ? (
+            {driverOption !== undefined && shouldRenderProviderModelsSection(driverKind) ? (
               <ProviderModelsSection
                 instanceId={instanceId}
                 driverKind={driverKind}
@@ -786,7 +816,9 @@ export function ProviderInstanceCard({
                 onFavoriteModelsChange={onFavoriteModelsChange}
                 onModelOrderChange={onModelOrderChange}
               />
-            ) : (
+            ) : null}
+
+            {driverOption === undefined ? (
               <div>
                 <p className="text-xs text-muted-foreground">
                   This instance uses a driver (
@@ -795,7 +827,7 @@ export function ProviderInstanceCard({
                   edited from this surface.
                 </p>
               </div>
-            )}
+            ) : null}
           </div>
         </CollapsibleContent>
       </Collapsible>

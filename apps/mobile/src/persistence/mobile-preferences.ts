@@ -8,6 +8,8 @@ import * as Semaphore from "effect/Semaphore";
 import {
   ChatVisualModeSyncRecord,
   type ChatVisualModeSyncRecord as ChatVisualModeSyncRecordType,
+  InterfaceLanguageSyncRecord,
+  type InterfaceLanguageSyncRecord as InterfaceLanguageSyncRecordType,
   ProjectThreadPreviewSyncRecord,
   type ProjectThreadPreviewSyncRecord as ProjectThreadPreviewSyncRecordType,
   type SidebarProjectGroupingMode,
@@ -24,6 +26,7 @@ const decodeProjectThreadPreviewSyncRecord = Schema.decodeUnknownOption(
   ProjectThreadPreviewSyncRecord,
 );
 const decodeChatVisualModeSyncRecord = Schema.decodeUnknownOption(ChatVisualModeSyncRecord);
+const decodeInterfaceLanguageSyncRecord = Schema.decodeUnknownOption(InterfaceLanguageSyncRecord);
 
 export interface Preferences {
   readonly liveActivitiesEnabled?: boolean;
@@ -47,6 +50,8 @@ export interface Preferences {
   readonly projectThreadPreviewSyncRecord?: ProjectThreadPreviewSyncRecordType;
   /** Offline mirror of the newest synchronized chat transcript presentation. */
   readonly chatVisualModeSyncRecord?: ChatVisualModeSyncRecordType;
+  /** Offline mirror of the newest synchronized interface-language selection. */
+  readonly interfaceLanguageSyncRecord?: InterfaceLanguageSyncRecordType;
   /** Records that Mobile transitioned from its former fixed six-row preview to default three. */
   readonly projectThreadPreviewMigrationVersion?: 1;
   /** @deprecated Kept temporarily so older OTA bundles retain the selected mode. */
@@ -63,6 +68,10 @@ export interface Preferences {
   readonly legacyThreadListEnabled?: boolean;
   /** Device-local counterpart of desktop's `planModeEnabled` legacy flag. */
   readonly planModeEnabled?: boolean;
+  readonly modelFavorites?: ReadonlyArray<{
+    readonly provider: string;
+    readonly model: string;
+  }>;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedErrorClass<MobilePreferencesLoadError>()(
@@ -123,12 +132,14 @@ export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
     olderProjectsExpanded?: boolean;
     projectThreadPreviewSyncRecord?: ProjectThreadPreviewSyncRecordType;
     chatVisualModeSyncRecord?: ChatVisualModeSyncRecordType;
+    interfaceLanguageSyncRecord?: InterfaceLanguageSyncRecordType;
     projectThreadPreviewMigrationVersion?: 1;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     autoSettleOnMerge?: boolean;
     legacyThreadListEnabled?: boolean;
     planModeEnabled?: boolean;
+    modelFavorites?: ReadonlyArray<{ readonly provider: string; readonly model: string }>;
   } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
@@ -209,6 +220,12 @@ export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
   if (Option.isSome(chatVisualModeSyncRecord)) {
     preferences.chatVisualModeSyncRecord = chatVisualModeSyncRecord.value;
   }
+  const interfaceLanguageSyncRecord = decodeInterfaceLanguageSyncRecord(
+    parsed.interfaceLanguageSyncRecord,
+  );
+  if (Option.isSome(interfaceLanguageSyncRecord)) {
+    preferences.interfaceLanguageSyncRecord = interfaceLanguageSyncRecord.value;
+  }
   if (parsed.projectThreadPreviewMigrationVersion === 1) {
     preferences.projectThreadPreviewMigrationVersion = 1;
   }
@@ -230,6 +247,29 @@ export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.planModeEnabled === "boolean") {
     preferences.planModeEnabled = parsed.planModeEnabled;
+  }
+  if (Array.isArray(parsed.modelFavorites)) {
+    const seen = new Set<string>();
+    const modelFavorites: Array<{ provider: string; model: string }> = [];
+    for (const favorite of parsed.modelFavorites as ReadonlyArray<unknown>) {
+      if (
+        typeof favorite !== "object" ||
+        favorite === null ||
+        !("provider" in favorite) ||
+        typeof favorite.provider !== "string" ||
+        !("model" in favorite) ||
+        typeof favorite.model !== "string"
+      ) {
+        continue;
+      }
+      const provider = favorite.provider.trim();
+      const model = favorite.model.trim();
+      const key = `${provider}\u0000${model}`;
+      if (!provider || !model || seen.has(key)) continue;
+      seen.add(key);
+      modelFavorites.push({ provider, model });
+    }
+    if (modelFavorites.length > 0) preferences.modelFavorites = modelFavorites;
   }
   return preferences;
 }

@@ -11,6 +11,46 @@ import {
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it("keeps unsupported OpenRouter models visible with non-selectable metadata", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "openrouter",
+          driver: "openrouter",
+          displayName: "OpenRouter",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "openai/no-tools",
+              name: "No tools",
+              isCustom: false,
+              isSelectable: false,
+              unavailableReason: "No tool support",
+              capabilities: {
+                outputModalities: ["text"],
+                toolSupport: { tools: false, parallelToolCalls: false, toolChoice: false },
+              },
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    expect(buildModelOptions(config, null)[0]).toMatchObject({
+      providerDriver: "openrouter",
+      isSelectable: false,
+      unavailableReason: "No tool support",
+    });
+    expect(
+      resolveSelectableModelSelection(config, {
+        instanceId: ProviderInstanceId.make("openrouter"),
+        model: "openai/no-tools",
+      }),
+    ).toBeNull();
+  });
+
   it("normalizes live gateway GPT defaults and preserves persisted per-thread options", () => {
     const config = {
       providers: [

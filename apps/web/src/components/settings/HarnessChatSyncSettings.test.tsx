@@ -9,6 +9,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { createDefaultHarnessChatSelection } from "./HarnessChatSyncSettings.logic";
 import {
   HarnessChatSyncEnvironmentView,
+  HARNESS_CHAT_PAGE_SIZE,
+  HarnessChatSyncSourceTabs,
   HarnessChatSyncSourceView,
   MissingProjectResolverContent,
   supportsHarnessChatSync,
@@ -84,6 +86,10 @@ const handlers = {
 };
 
 describe("HarnessChatSyncSourceView", () => {
+  it("loads provider chats in groups of ten", () => {
+    expect(HARNESS_CHAT_PAGE_SIZE).toBe(10);
+  });
+
   it("hides the feature for older environments and accepts version 1 or newer", () => {
     expect(supportsHarnessChatSync(undefined)).toBe(false);
     expect(supportsHarnessChatSync({ environment: { capabilities: {} } } as never)).toBe(false);
@@ -105,6 +111,7 @@ describe("HarnessChatSyncSourceView", () => {
         includeArchived={false}
         totalMatching={18}
         changedMatching={2}
+        countsAreComplete={false}
         hasNextPage
         isLoading={false}
         isFetching={false}
@@ -123,10 +130,37 @@ describe("HarnessChatSyncSourceView", () => {
     expect(markup).toContain("Linked");
     expect(markup).toContain("T3 thread thread-1");
     expect(markup).toContain("Updates available");
-    expect(markup).toContain("Load more");
+    expect(markup).toContain("All matching selected");
+    expect(markup).toContain("1 shown · more available");
+    expect(markup).toContain("View more");
     expect(markup).toContain("Sync selected");
     expect(markup).toContain("Synced 1 of 2 chats");
     expect(markup).toContain("Choose a project before syncing this chat.");
+  });
+
+  it("renders provider tabs as a responsive two-dimensional grid", () => {
+    const openCode = {
+      ...supportedSource,
+      id: "opencode-home",
+      continuationKey: "opencode:/home/alex/.local/share/opencode",
+      label: "OpenCode",
+      driver: "opencode",
+    } as HarnessChatSyncSource;
+    const markup = renderToStaticMarkup(
+      <HarnessChatSyncSourceTabs
+        sources={[supportedSource, openCode]}
+        activeSourceId={openCode.id}
+        onSourceChange={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain('role="tablist"');
+    expect(markup).toContain('aria-selected="false"');
+    expect(markup).toContain('aria-selected="true"');
+    expect(markup).toContain("grid-cols-[repeat(auto-fit,minmax(min(100%,11rem),1fr))]");
+    expect(markup).not.toContain("overflow-x-auto");
+    expect(markup).toContain("Work Codex");
+    expect(markup).toContain("OpenCode");
   });
 
   it("explains unavailable and already-local sources without offering a sync action", () => {

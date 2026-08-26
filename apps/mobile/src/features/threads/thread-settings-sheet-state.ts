@@ -1,4 +1,14 @@
+import {
+  matchesOpenRouterModelFilters,
+  type OpenRouterModelFilter,
+} from "@t3tools/shared/modelCatalogFilters";
+
 import type { ModelOption } from "../../lib/modelOptions";
+
+/** Large remote catalogs get a focused picker page instead of expanding inline. */
+export function providerCatalogUsesDrillIn(driver: string | undefined): boolean {
+  return driver === "openrouter";
+}
 
 /** Match the terms a user can actually see or recognize in the model picker. */
 export function modelMatchesCatalogQuery(input: {
@@ -17,6 +27,27 @@ export function modelMatchesCatalogQuery(input: {
     input.model.selection.model,
     input.providerLabel,
   ].some((value) => value.toLocaleLowerCase().includes(query));
+}
+
+/** Compose OpenRouter's provider-owned capability filters with picker-local state. */
+export function filterOpenRouterProviderCatalog(input: {
+  readonly models: ReadonlyArray<ModelOption>;
+  readonly providerLabel: string;
+  readonly query: string;
+  readonly filters: ReadonlySet<OpenRouterModelFilter>;
+  readonly favoritesOnly: boolean;
+  readonly isFavorite: (model: ModelOption) => boolean;
+}): ReadonlyArray<ModelOption> {
+  return input.models.filter(
+    (model) =>
+      (!input.favoritesOnly || input.isFavorite(model)) &&
+      matchesOpenRouterModelFilters(model, input.filters) &&
+      modelMatchesCatalogQuery({
+        model,
+        providerLabel: input.providerLabel,
+        query: input.query,
+      }),
+  );
 }
 
 /** Preserve staged provider options when the highlighted model is tapped again. */

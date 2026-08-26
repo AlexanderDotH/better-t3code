@@ -19,20 +19,35 @@ function snapshot(state: ResourceProtectionSnapshot["state"]): ResourceProtectio
 }
 
 describe("resourceProtectionBanner", () => {
-  it("maps waiting and throttled server authority to the web banner", () => {
+  it("maps waiting and throttled server authority to the English web banner", () => {
     expect(
       buildResourceProtectionBanner({ environmentId, threadId, snapshot: snapshot("waiting") }),
     ).toMatchObject({
       variant: "info",
       urgent: false,
-      title: "Subagent wartet auf freien Speicher",
+      title: "Subagent waiting for memory",
     });
     expect(
       buildResourceProtectionBanner({ environmentId, threadId, snapshot: snapshot("throttled") }),
     ).toMatchObject({
       variant: "warning",
       urgent: true,
+      title: "Provider temporarily throttled",
+      className: "resource-protection-banner-surface px-4 py-2.5 sm:px-5 sm:py-3",
+    });
+  });
+
+  it("uses the resolved German interface language", () => {
+    expect(
+      buildResourceProtectionBanner({
+        environmentId,
+        threadId,
+        snapshot: snapshot("throttled"),
+        language: "de",
+      }),
+    ).toMatchObject({
       title: "Provider vorübergehend gedrosselt",
+      description: "T3 setzt den Provider nach fünf gesunden Speichermessungen automatisch fort.",
     });
   });
 

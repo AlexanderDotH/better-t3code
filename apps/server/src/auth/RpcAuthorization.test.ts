@@ -76,6 +76,9 @@ describe("RPC authorization scopes", () => {
   it("requires operate scope for local feature mutations", () => {
     const operateMethods = [
       WS_METHODS.serverCreateAssemblyAiStreamingToken,
+      WS_METHODS.serverProviderAuthConnect,
+      WS_METHODS.serverProviderAuthSetCredential,
+      WS_METHODS.serverProviderAuthDisconnect,
       WS_METHODS.speechIndexProject,
       WS_METHODS.speechCreateBasicProjectProfile,
       WS_METHODS.speechTranslateTranscript,

@@ -46,8 +46,12 @@ describe("WorkspaceCardDeck", () => {
     );
 
     expect(html.match(/data-workspace-card-body=/g)).toHaveLength(3);
+    expect(html.match(/data-workspace-card-morph-host=/g)).toHaveLength(3);
     expect(html).toMatch(
       /<section[^>]*data-workspace-card-body="chat"[^>]*data-card-position="active"[^>]*aria-label="chat card"[^>]*>/,
+    );
+    expect(html).toMatch(
+      /data-workspace-card-morph-host="chat"[^>]*aria-hidden="true"[^>]*inert=""/,
     );
     expect(html).toMatch(
       /<section[^>]*data-workspace-card-body="git"[^>]*data-card-position="next"[^>]*aria-hidden="true"[^>]*inert=""/,

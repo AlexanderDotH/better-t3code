@@ -90,6 +90,24 @@ and thread synchronization are independent data states. A healthy RPC transport
 with a failed shell subscription is shown as connected with a synchronization
 error, not as a reconnect that is not actually scheduled.
 
+`EnvironmentConnectionPresentation` carries the supervisor details clients need
+to explain that state: network status, establishment stage, attempt number, and
+a structured transient or blocked failure. Its retry value is derived from the
+supervisor rather than scheduled by a client:
+
+- `automatic` with an epoch-millisecond `at` value means the supervisor is in
+  backoff until that time.
+- `automatic` with `at: null` means the next transient attempt is already in
+  progress.
+- `manual` with `at: null` means a blocked failure requires external recovery;
+  it never implies a timer.
+- `none` means no retry is pending or active.
+
+The compatibility `error` and `traceId` fields remain available for existing
+status surfaces. New recovery UI should branch on the structured failure and
+retry values instead of parsing those strings. A client may display the
+supervisor's retry time, but it must not schedule or initiate the retry itself.
+
 ## Data Boundary
 
 Finite requests, durable subscriptions, and commands are separate APIs:

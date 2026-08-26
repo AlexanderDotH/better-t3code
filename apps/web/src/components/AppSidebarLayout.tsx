@@ -42,6 +42,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { resolveThreadSidebarLayout, ThreadSidebarSelection } from "./ThreadSidebarSelection";
 import { ChatVisualModeSyncCoordinator } from "../chatVisualModeSync";
 import { ProjectThreadPreviewSyncCoordinator } from "../projectThreadPreviewSync";
+import { InterfaceLanguageSyncCoordinator } from "../interfaceLanguageSync";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "90px";
 
@@ -218,6 +219,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     <SidebarProvider className="h-dvh! min-h-0!" defaultOpen style={sidebarProviderStyle}>
       <ChatVisualModeSyncCoordinator />
       <ProjectThreadPreviewSyncCoordinator />
+      <InterfaceLanguageSyncCoordinator />
       <ProjectProjectionRetention />
       <Sidebar
         side="left"

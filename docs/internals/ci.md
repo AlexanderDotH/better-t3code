@@ -30,6 +30,11 @@ and pushes to `main`:
   success for the required check. Renames are matched on both their old and new path. The gate fails
   open in every other case: if the changed-file list cannot be resolved, GitHub truncates it, or the
   gate job itself fails, the lint runs.
+- **Mobile Android Debug Build**: the same fail-open changed-file gate runs a clean Expo Android
+  prebuild and assembles an arm64 debug APK when Android native source, Expo configuration,
+  Android config plugins, native-module metadata, native assets, dependency manifests, patches, or
+  the build workflow changes. The job asserts that Gradle produced `app-debug.apk`; it does not
+  launch the app, exercise an emulator, or prove device/runtime behavior.
 - **Release Smoke**: exercises release-only workflow steps through `scripts/release-smoke.ts`, so
   release breakage surfaces on PRs rather than at tag time.
 

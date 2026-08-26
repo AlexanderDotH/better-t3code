@@ -2,8 +2,10 @@ import {
   type ChatVisualMode,
   type EnvironmentId,
   type MessageId,
+  type OrchestrationProposedPlanId,
   type ScopedThreadRef,
   type ServerProviderSkill,
+  type ThreadForkBoundary,
   type TurnId,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -59,6 +61,7 @@ import {
   MinusIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
+  RefreshCwIcon,
   SearchIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -74,6 +77,8 @@ import { ChangedFilesCard } from "./ChangedFilesTree";
 import { shouldAutoExpandChangedFiles } from "./changedFilesPresentation";
 import { keepTimelineEndVisibleAfterOverlayGrowth } from "./timelineScrollAnchoring";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { ForkChatButton } from "./ForkChatButton";
+import { forkBoundaryKey, resolveForkBoundaryTimelineEntryId } from "../../lib/threadFork";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
@@ -152,6 +157,7 @@ interface TimelineRowSharedState {
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
+  retryAction: TimelineRetryAction | null;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
@@ -159,6 +165,29 @@ interface TimelineRowSharedState {
   shouldAnimateInitialStreamChunk: (messageId: MessageId, isStreaming: boolean) => boolean;
   agentPanelModel: AgentPanelModel;
   showReasoning: boolean;
+  forkActions: TimelineForkActions | null;
+  forkDividerAfterRowId: string | null;
+}
+
+export interface TimelineForkActions {
+  readonly available: boolean;
+  readonly pendingBoundary: ThreadForkBoundary | null;
+  readonly forkableMessageIds: ReadonlySet<MessageId>;
+  readonly forkableProposedPlanIds: ReadonlySet<OrchestrationProposedPlanId>;
+  readonly onFork: (boundary: ThreadForkBoundary) => void;
+}
+
+export interface TimelineRetryAction {
+  readonly available: boolean;
+  readonly messageId: MessageId;
+  readonly pending: boolean;
+  readonly onRetry: (messageId: MessageId) => void;
+}
+
+export interface TimelineForkProvenance {
+  readonly sourceTitle: string;
+  readonly boundary: ThreadForkBoundary;
+  readonly onOpenSource?: (() => void) | undefined;
 }
 
 interface TimelineRowActivityState {
@@ -174,6 +203,8 @@ const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = <div className="h-10 sm:h-12" />;
+const TIMELINE_CONTENT_GUTTER_CLASS_NAME =
+  "mx-auto w-full min-w-0 max-w-[calc(48rem+1.5rem)] px-3 sm:max-w-[calc(48rem+2.5rem)] sm:px-5";
 
 // Header row shown when older turns exist beyond the loaded window. Plain
 // button, no spinner animation; the label change is the loading indicator.
@@ -188,7 +219,7 @@ function TimelineLoadEarlierHeader({
 }) {
   return (
     <div className={fade ? "pt-10 sm:pt-12" : "pt-3 sm:pt-4"}>
-      <div className="mx-auto w-full max-w-3xl pb-2">
+      <div className={cn(TIMELINE_CONTENT_GUTTER_CLASS_NAME, "pb-2")}>
         <button
           type="button"
           onClick={onLoadEarlier}
@@ -198,6 +229,27 @@ function TimelineLoadEarlierHeader({
           {loading ? "Loading earlier turns…" : "Load earlier turns"}
         </button>
       </div>
+    </div>
+  );
+}
+
+function TimelineForkProvenanceBanner({ sourceTitle, onOpenSource }: TimelineForkProvenance) {
+  return (
+    <div className={cn(TIMELINE_CONTENT_GUTTER_CLASS_NAME, "pb-4")} data-fork-provenance="true">
+      <p className="px-1 text-xs text-muted-foreground">
+        Forked from{" "}
+        {onOpenSource ? (
+          <button
+            type="button"
+            className="font-medium text-foreground underline decoration-border underline-offset-4 hover:decoration-foreground"
+            onClick={onOpenSource}
+          >
+            {sourceTitle}
+          </button>
+        ) : (
+          <span className="font-medium text-foreground">{sourceTitle}</span>
+        )}
+      </p>
     </div>
   );
 }
@@ -250,6 +302,7 @@ interface MessagesTimelineProps {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
+  retryAction?: TimelineRetryAction | null;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   activeThreadEnvironmentId: EnvironmentId;
@@ -274,6 +327,8 @@ interface MessagesTimelineProps {
   topFadeEnabled?: boolean;
   /** Non-null when older turns exist beyond the loaded window. */
   loadEarlier?: { readonly loading: boolean; readonly onLoadEarlier: () => void } | null;
+  forkActions?: TimelineForkActions | null;
+  forkProvenance?: TimelineForkProvenance | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +349,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
+  retryAction = null,
   isRevertingCheckpoint,
   onImageExpand,
   activeThreadEnvironmentId,
@@ -311,6 +367,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
   loadEarlier = null,
+  forkActions = null,
+  forkProvenance = null,
 }: MessagesTimelineProps) {
   const showReasoning = useClientSettings((settings) => settings.showReasoning);
   const chatVisualMode = useChatVisualMode();
@@ -480,6 +538,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
+  const forkDividerAfterRowId = useMemo(
+    () =>
+      forkProvenance === null
+        ? null
+        : resolveForkBoundaryTimelineEntryId(timelineEntries, forkProvenance.boundary),
+    [forkProvenance, timelineEntries],
+  );
   const shouldAnimateInitialStreamChunk = useInitialStreamAnimationRegistry(
     routeThreadKey,
     timelineEntries,
@@ -577,6 +642,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertUserMessage,
+      retryAction,
       onImageExpand,
       onOpenTurnDiff,
       onToggleTurnFold,
@@ -584,6 +650,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       shouldAnimateInitialStreamChunk,
       agentPanelModel,
       showReasoning,
+      forkActions,
+      forkDividerAfterRowId,
     }),
     [
       chatVisualMode,
@@ -595,6 +663,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertUserMessage,
+      retryAction,
       onImageExpand,
       onOpenTurnDiff,
       onToggleTurnFold,
@@ -602,6 +671,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       shouldAnimateInitialStreamChunk,
       agentPanelModel,
       showReasoning,
+      forkActions,
+      forkDividerAfterRowId,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -619,7 +690,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // from TimelineRowCtx, which propagates through LegendList's memo.
   const renderItem = useCallback(
     ({ item }: { item: MessagesTimelineRow }) => (
-      <div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-clip" data-timeline-root="true">
+      <div
+        className={cn(TIMELINE_CONTENT_GUTTER_CLASS_NAME, "overflow-x-clip")}
+        data-timeline-root="true"
+      >
         <TimelineRowContent row={item} />
       </div>
     ),
@@ -659,21 +733,24 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             maintainVisibleContentPosition={maintainVisibleContentPosition}
             onScroll={handleScroll}
             className={cn(
-              "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
+              "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
               topFadeEnabled && "topbar-scroll-fade",
             )}
             ListHeaderComponent={
-              loadEarlier !== null ? (
-                <TimelineLoadEarlierHeader
-                  loading={loadEarlier.loading}
-                  onLoadEarlier={loadEarlier.onLoadEarlier}
-                  fade={topFadeEnabled}
-                />
-              ) : topFadeEnabled ? (
-                TIMELINE_LIST_FADE_HEADER
-              ) : (
-                TIMELINE_LIST_HEADER
-              )
+              <>
+                {loadEarlier !== null ? (
+                  <TimelineLoadEarlierHeader
+                    loading={loadEarlier.loading}
+                    onLoadEarlier={loadEarlier.onLoadEarlier}
+                    fade={topFadeEnabled}
+                  />
+                ) : topFadeEnabled ? (
+                  TIMELINE_LIST_FADE_HEADER
+                ) : (
+                  TIMELINE_LIST_HEADER
+                )}
+                {forkProvenance ? <TimelineForkProvenanceBanner {...forkProvenance} /> : null}
+              </>
             }
             ListFooterComponent={TIMELINE_LIST_FOOTER}
           />
@@ -989,7 +1066,7 @@ type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["grouped
 type TimelineRow = MessagesTimelineRow;
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
-  const { chatVisualMode } = use(TimelineRowCtx);
+  const { chatVisualMode, forkDividerAfterRowId } = use(TimelineRowCtx);
   const isExpandedToolGroupEntry = row.kind === "work" && row.isExpandedToolGroupEntry;
   const isLastExpandedToolGroupEntry = row.kind === "work" && row.isLastExpandedToolGroupEntry;
   const isExpandedToolGroupHeader =
@@ -997,67 +1074,84 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
     (row.kind === "work-live" && row.expanded);
 
   return (
-    <div
-      className={cn(
-        // Commentary (non-terminal assistant) rows carry no metadata row, so
-        // they sit closer to the work that follows them.
-        chatVisualMode === "classic"
-          ? (row.kind === "message" &&
-              row.message.role === "assistant" &&
-              !row.showAssistantMeta) ||
-            row.kind === "work" ||
-            row.kind === "work-live" ||
-            row.kind === "work-toggle" ||
-            row.kind === "turn-plan"
-            ? "pb-2"
-            : "pb-4"
-          : isExpandedToolGroupEntry
-            ? isLastExpandedToolGroupEntry
-              ? "pb-1"
-              : "pb-0"
-            : isExpandedToolGroupHeader
-              ? "pb-0"
-              : row.kind === "turn-fold" || row.kind === "working"
-                ? "pb-1.5"
-                : (row.kind === "message" &&
-                      row.message.role === "assistant" &&
-                      !row.showAssistantMeta) ||
-                    row.kind === "work" ||
-                    row.kind === "work-live" ||
-                    row.kind === "work-toggle" ||
-                    row.kind === "turn-plan"
-                  ? "pb-2"
-                  : "pb-4",
-        row.kind === "message" && row.message.role === "assistant" ? "group/assistant" : null,
-      )}
-      data-timeline-row-id={row.id}
-      data-timeline-row-kind={row.kind}
-      data-message-id={row.kind === "message" ? row.message.id : undefined}
-      data-message-role={row.kind === "message" ? row.message.role : undefined}
-    >
-      {row.kind === "work" ? (
-        <WorkGroupSection
-          groupedEntries={row.groupedEntries}
-          isExpandedToolGroupEntry={row.isExpandedToolGroupEntry}
-        />
+    <>
+      <div
+        className={cn(
+          // Commentary (non-terminal assistant) rows carry no metadata row, so
+          // they sit closer to the work that follows them.
+          chatVisualMode === "classic"
+            ? (row.kind === "message" &&
+                row.message.role === "assistant" &&
+                !row.showAssistantMeta) ||
+              row.kind === "work" ||
+              row.kind === "work-live" ||
+              row.kind === "work-toggle" ||
+              row.kind === "turn-plan"
+              ? "pb-2"
+              : "pb-4"
+            : isExpandedToolGroupEntry
+              ? isLastExpandedToolGroupEntry
+                ? "pb-1"
+                : "pb-0"
+              : isExpandedToolGroupHeader
+                ? "pb-0"
+                : row.kind === "turn-fold" || row.kind === "working"
+                  ? "pb-1.5"
+                  : (row.kind === "message" &&
+                        row.message.role === "assistant" &&
+                        !row.showAssistantMeta) ||
+                      row.kind === "work" ||
+                      row.kind === "work-live" ||
+                      row.kind === "work-toggle" ||
+                      row.kind === "turn-plan"
+                    ? "pb-2"
+                    : "pb-4",
+          row.kind === "message" && row.message.role === "assistant" ? "group/assistant" : null,
+        )}
+        data-timeline-row-id={row.id}
+        data-timeline-row-kind={row.kind}
+        data-message-id={row.kind === "message" ? row.message.id : undefined}
+        data-message-role={row.kind === "message" ? row.message.role : undefined}
+      >
+        {row.kind === "work" ? (
+          <WorkGroupSection
+            groupedEntries={row.groupedEntries}
+            isExpandedToolGroupEntry={row.isExpandedToolGroupEntry}
+          />
+        ) : null}
+        {row.kind === "work-live" ? (
+          chatVisualMode === "classic" ? (
+            <WorkGroupSection
+              groupedEntries={row.groupedEntries}
+              isExpandedToolGroupEntry={false}
+            />
+          ) : (
+            <LiveWorkEntryTimelineRow row={row} />
+          )
+        ) : null}
+        {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
+        {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
+        {row.kind === "message" && row.message.role === "user" ? (
+          <UserTimelineRow row={row} />
+        ) : null}
+        {row.kind === "message" && row.message.role === "assistant" ? (
+          <AssistantTimelineRow row={row} />
+        ) : null}
+        {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
+        {row.kind === "turn-plan" ? <TurnPlanTimelineRow row={row} /> : null}
+        {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
+      </div>
+      {forkDividerAfterRowId === row.id ? (
+        <div
+          className="flex items-center gap-3 pb-4 pt-1 text-xs text-muted-foreground"
+          data-fork-start-divider="true"
+        >
+          <span className="h-px flex-1 bg-border" />
+          <span>Fork starts here</span>
+          <span className="h-px flex-1 bg-border" />
+        </div>
       ) : null}
-      {row.kind === "work-live" ? (
-        chatVisualMode === "classic" ? (
-          <WorkGroupSection groupedEntries={row.groupedEntries} isExpandedToolGroupEntry={false} />
-        ) : (
-          <LiveWorkEntryTimelineRow row={row} />
-        )
-      ) : null}
-      {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
-      {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
-      {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
-      {row.kind === "message" && row.message.role === "assistant" ? (
-        <AssistantTimelineRow row={row} />
-      ) : null}
-      {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
-      {row.kind === "turn-plan" ? <TurnPlanTimelineRow row={row} /> : null}
-      {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
-    </div>
+    </>
   );
 });
 
@@ -1083,7 +1177,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const userAudio = userAttachments.filter((attachment) => attachment.type === "audio");
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
-  const canRevertAgentWork = typeof row.revertTurnCount === "number";
+  const canRevertAgentWork =
+    row.message.historyOrigin === undefined && typeof row.revertTurnCount === "number";
+  const canRetryResponse = ctx.retryAction?.messageId === row.message.id;
+  const canFork =
+    row.message.streaming === false &&
+    ctx.forkActions?.forkableMessageIds.has(row.message.id) === true;
 
   return (
     <div className="group flex flex-col items-end gap-1">
@@ -1146,7 +1245,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           markdownCwd={ctx.markdownCwd}
         />
       </div>
-      <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+      <div
+        className={cn(
+          "flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100",
+          canRetryResponse ? "opacity-100" : "opacity-0",
+        )}
+      >
         <div className="flex shrink-0 items-center gap-2">
           <Tooltip>
             <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
@@ -1159,7 +1263,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             </TooltipPopup>
           </Tooltip>
           <div className="flex items-center gap-0.5">
+            {canRetryResponse ? <RetryUserMessageButton messageId={row.message.id} /> : null}
             {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
+            {canFork ? (
+              <TimelineForkButton boundary={{ kind: "message", messageId: row.message.id }} />
+            ) : null}
             {displayedUserMessage.copyText && (
               <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
             )}
@@ -1167,6 +1275,42 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         </div>
       </div>
     </div>
+  );
+}
+
+function RetryUserMessageButton({ messageId }: { messageId: MessageId }) {
+  const ctx = use(TimelineRowCtx);
+  const activity = use(TimelineRowActivityCtx);
+  const action = ctx.retryAction;
+  if (action === null || action.messageId !== messageId) {
+    return null;
+  }
+
+  const label = action.pending ? "Retrying response" : "Retry response";
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            disabled={
+              !action.available ||
+              action.pending ||
+              activity.isRevertingCheckpoint ||
+              activity.isWorking
+            }
+            onClick={() => action.onRetry(messageId)}
+            aria-label={label}
+            aria-busy={action.pending || undefined}
+          />
+        }
+      >
+        <RefreshCwIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -1226,6 +1370,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   const audioAttachments = (row.message.attachments ?? []).filter(
     (attachment) => attachment.type === "audio",
   );
+  const canFork = !isStreaming && ctx.forkActions?.forkableMessageIds.has(row.message.id) === true;
 
   return (
     <>
@@ -1250,10 +1395,13 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           resolvedTheme={ctx.resolvedTheme}
           onOpenTurnDiff={ctx.onOpenTurnDiff}
         />
-        {row.showAssistantMeta ? (
+        {row.showAssistantMeta || canFork ? (
           <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
             <AssistantCopyButton row={row} />
-            {!row.message.streaming && (
+            {canFork ? (
+              <TimelineForkButton boundary={{ kind: "message", messageId: row.message.id }} />
+            ) : null}
+            {row.showAssistantMeta && !row.message.streaming && (
               <Tooltip>
                 <TooltipTrigger
                   render={<p className="text-muted-foreground text-xs tabular-nums" />}
@@ -1294,6 +1442,7 @@ function ProposedPlanTimelineRow({
   row: Extract<TimelineRow, { kind: "proposed-plan" }>;
 }) {
   const ctx = use(TimelineRowCtx);
+  const canFork = ctx.forkActions?.forkableProposedPlanIds.has(row.proposedPlan.id) === true;
 
   return (
     <div className="min-w-0 px-1 py-0.5">
@@ -1303,8 +1452,32 @@ function ProposedPlanTimelineRow({
         threadRef={ctx.threadRef ?? undefined}
         cwd={ctx.markdownCwd}
         workspaceRoot={ctx.workspaceRoot}
+        readOnly={row.proposedPlan.historyOrigin !== undefined}
+        forkAction={
+          canFork ? (
+            <TimelineForkButton boundary={{ kind: "proposed-plan", planId: row.proposedPlan.id }} />
+          ) : undefined
+        }
       />
     </div>
+  );
+}
+
+function TimelineForkButton({ boundary }: { boundary: ThreadForkBoundary }) {
+  const actions = use(TimelineRowCtx).forkActions;
+  if (!actions) return null;
+
+  const boundaryKey = forkBoundaryKey(boundary);
+  const pendingBoundaryKey = actions.pendingBoundary
+    ? forkBoundaryKey(actions.pendingBoundary)
+    : null;
+  return (
+    <ForkChatButton
+      available={actions.available}
+      busy={pendingBoundaryKey === boundaryKey}
+      dispatchPending={pendingBoundaryKey !== null}
+      onFork={() => actions.onFork(boundary)}
+    />
   );
 }
 

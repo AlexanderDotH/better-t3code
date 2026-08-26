@@ -5,6 +5,7 @@ import {
   defaultInstanceIdForDriver,
   isPlanParallelismReviewDriverKind,
   type ModelSelection,
+  type ModelCapabilities,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -65,11 +66,12 @@ function readInstanceCustomModels(
   if (instanceId !== defaultInstanceId) {
     return [];
   }
-  const legacyProviders = settings.providers as Record<
-    string,
-    { readonly customModels: ReadonlyArray<string> } | undefined
-  >;
-  return legacyProviders[driverKind]?.customModels ?? [];
+  const legacyProvider = (settings.providers as unknown as Record<string, unknown>)[driverKind];
+  if (legacyProvider === null || typeof legacyProvider !== "object") return [];
+  const customModels = (legacyProvider as Record<string, unknown>).customModels;
+  return Array.isArray(customModels)
+    ? customModels.filter((entry): entry is string => typeof entry === "string")
+    : [];
 }
 
 export interface AppModelOption {
@@ -80,6 +82,9 @@ export interface AppModelOption {
   isCustom: boolean;
   isDefault?: boolean;
   isLegacy?: boolean;
+  isSelectable?: boolean;
+  unavailableReason?: string;
+  capabilities?: ModelCapabilities | null;
 }
 
 function toAppModelOption(model: ServerProvider["models"][number]): AppModelOption {
@@ -92,7 +97,16 @@ function toAppModelOption(model: ServerProvider["models"][number]): AppModelOpti
   if (model.subProvider) option.subProvider = model.subProvider;
   if (model.isDefault) option.isDefault = true;
   if (model.isLegacy) option.isLegacy = true;
+  if (model.isSelectable !== undefined) option.isSelectable = model.isSelectable;
+  if (model.unavailableReason) option.unavailableReason = model.unavailableReason;
+  option.capabilities = model.capabilities;
   return option;
+}
+
+function selectableAppModelOptions(
+  options: ReadonlyArray<AppModelOption>,
+): ReadonlyArray<AppModelOption> {
+  return options.filter((option) => option.isSelectable !== false);
 }
 
 function readInstanceModelPreferences(
@@ -235,8 +249,9 @@ export function resolveAppModelSelection(
 ): string {
   const resolvedProvider = resolveSelectableProvider(providers, provider);
   const options = getAppModelOptions(settings, providers, resolvedProvider, selectedModel);
+  const selectableOptions = selectableAppModelOptions(options);
   return (
-    resolveSelectableModel(resolvedProvider, selectedModel, options) ??
+    resolveSelectableModel(resolvedProvider, selectedModel, selectableOptions) ??
     getDefaultServerModel(providers, resolvedProvider)
   );
 }
@@ -252,12 +267,13 @@ export function resolveAppModelSelectionForInstance(
   );
   if (!entry) return null;
   const options = getAppModelOptionsForInstance(settings, entry);
+  const selectableOptions = selectableAppModelOptions(options);
   return (
-    resolveSelectableModel(entry.driverKind, selectedModel, options) ??
-    options.find((option) => option.isDefault)?.slug ??
-    options[0]?.slug ??
-    entry.models.find((model) => model.isDefault)?.slug ??
-    entry.models[0]?.slug ??
+    resolveSelectableModel(entry.driverKind, selectedModel, selectableOptions) ??
+    selectableOptions.find((option) => option.isDefault)?.slug ??
+    selectableOptions[0]?.slug ??
+    entry.models.find((model) => model.isDefault && model.isSelectable !== false)?.slug ??
+    entry.models.find((model) => model.isSelectable !== false)?.slug ??
     null
   );
 }
@@ -373,7 +389,7 @@ function resolveModelSelectionState(
     const selectedModel = selectedEntry ? selection.model : null;
     const model =
       resolveAppModelSelectionForInstance(entry.instanceId, settings, providers, selectedModel) ??
-      entry.models[0]?.slug ??
+      entry.models.find((candidate) => candidate.isSelectable !== false)?.slug ??
       DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind];
     if (!model) {
       return createModelSelection(entry.instanceId, "", []);

@@ -53,7 +53,9 @@ export function isGeneralSubagentProviderAvailable(provider: ServerProvider): bo
     provider.status !== "error" &&
     provider.status !== "disabled" &&
     provider.auth.status !== "unauthenticated" &&
-    provider.models.length > 0
+    provider.models.some((model) => model.isSelectable !== false) &&
+    (provider.status !== "warning" ||
+      provider.models.some((model) => model.isDefault === true && model.isSelectable !== false))
   );
 }
 
@@ -76,7 +78,10 @@ function unavailable(
 }
 
 function defaultModel(provider: ServerProvider): ServerProviderModel | undefined {
-  return provider.models.find((candidate) => candidate.isDefault) ?? provider.models[0];
+  return (
+    provider.models.find((candidate) => candidate.isDefault && candidate.isSelectable !== false) ??
+    provider.models.find((candidate) => candidate.isSelectable !== false)
+  );
 }
 
 function resolveModel(input: {
@@ -89,7 +94,9 @@ function resolveModel(input: {
     (input.parentModelSelection.instanceId === input.provider.instanceId
       ? input.parentModelSelection.model
       : defaultModel(input.provider)?.slug);
-  return input.provider.models.find((candidate) => candidate.slug === modelSlug);
+  return input.provider.models.find(
+    (candidate) => candidate.slug === modelSlug && candidate.isSelectable !== false,
+  );
 }
 
 function inheritedOptions(input: {
@@ -188,15 +195,17 @@ export function listGeneralSubagentModels(input: {
       driver: provider.driver,
       displayName: provider.displayName ?? provider.driver,
       current: provider.instanceId === input.callerProviderInstanceId,
-      models: provider.models.map((model) => ({
-        slug: model.slug,
-        name: model.name,
-        current:
-          provider.instanceId === input.parentModelSelection.instanceId &&
-          model.slug === input.parentModelSelection.model,
-        isDefault: model.isDefault === true,
-        reasoningEfforts: reasoningEfforts(model),
-      })),
+      models: provider.models
+        .filter((model) => model.isSelectable !== false)
+        .map((model) => ({
+          slug: model.slug,
+          name: model.name,
+          current:
+            provider.instanceId === input.parentModelSelection.instanceId &&
+            model.slug === input.parentModelSelection.model,
+          isDefault: model.isDefault === true,
+          reasoningEfforts: reasoningEfforts(model),
+        })),
     }))
     .sort((left, right) => Number(right.current) - Number(left.current));
 }

@@ -72,6 +72,28 @@ const DEFAULT_OPENCODE_SERVER_TIMEOUT_MS = 30_000;
 const DEFAULT_HOSTNAME = "127.0.0.1";
 type OpenCodeMcpConfig = Record<string, McpLocalConfig | McpRemoteConfig>;
 
+/**
+ * T3-owned OpenCode processes must not load external plugins. Plugin hooks can
+ * rewrite prompts or create additional sessions, which breaks the one-turn
+ * lifecycle expected by the provider adapter. Pure mode keeps normal config,
+ * credentials, agents, and skills while skipping only external plugins.
+ */
+export function buildLocalOpenCodeServerArgs(hostname: string, port: number): Array<string> {
+  return ["serve", "--pure", `--hostname=${hostname}`, `--port=${port}`];
+}
+
+export function buildLocalOpenCodeInventoryArgs(): {
+  readonly models: ReadonlyArray<string>;
+  readonly agents: ReadonlyArray<string>;
+  readonly skills: ReadonlyArray<string>;
+} {
+  return {
+    models: ["models", "--verbose", "--pure"],
+    agents: ["agent", "list", "--pure"],
+    skills: ["debug", "skill", "--pure"],
+  };
+}
+
 export interface OpenCodeServerProcess {
   readonly url: string;
   readonly exitCode: Effect.Effect<number, never>;
@@ -529,7 +551,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           ),
         ));
       const timeoutMs = input.timeoutMs ?? DEFAULT_OPENCODE_SERVER_TIMEOUT_MS;
-      const args = ["serve", `--hostname=${hostname}`, `--port=${port}`];
+      const args = buildLocalOpenCodeServerArgs(hostname, port);
       const spawnCommand = yield* resolveCommand(input.binaryPath, args, input.environment);
       const configContent = resolveOpenCodeConfigContent(
         input.environment,
@@ -757,23 +779,24 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     Effect.gen(function* () {
       const env = input.environment !== undefined ? { environment: input.environment } : ({} as {});
       const commandContext = { cwd: input.cwd, ...env };
+      const inventoryArgs = buildLocalOpenCodeInventoryArgs();
 
       const runModelsCli = () =>
         runOpenCodeCommand({
           binaryPath: input.binaryPath,
-          args: ["models", "--verbose"],
+          args: inventoryArgs.models,
           ...commandContext,
         }).pipe(Effect.exit);
       const runAgentsCli = () =>
         runOpenCodeCommand({
           binaryPath: input.binaryPath,
-          args: ["agent", "list"],
+          args: inventoryArgs.agents,
           ...commandContext,
         }).pipe(Effect.exit);
       const runSkillsCli = () =>
         runOpenCodeCommand({
           binaryPath: input.binaryPath,
-          args: ["debug", "skill"],
+          args: inventoryArgs.skills,
           ...commandContext,
         }).pipe(Effect.exit);
 

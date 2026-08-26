@@ -47,6 +47,19 @@ A single user-to-assistant work cycle inside a thread. It starts with user input
 
 A user-visible log item attached to a thread. In [the contracts][1], activities cover important non-message events like approvals, tool actions, and failures. They are projected into thread state in [projector.ts][4].
 
+#### Thread fork
+
+A new durable thread whose initial timeline is an independent copy of a source thread through one
+message or proposed-plan boundary. A fork stays in the same project, starts a fresh provider session,
+and selects its workspace through ordinary new-thread defaults. See [thread-forking.md][30].
+
+#### Inherited history
+
+The immutable messages, activities, plans, subagents, turns, and checkpoints copied into a thread
+fork. Each row has a `historyOrigin` that records its source identity and global ordinal. Clients may
+inspect or fork inherited history again, but must not expose controls that mutate it. See
+[thread-forking.md][30].
+
 ### Orchestration
 
 Orchestration is the server-side domain layer that turns runtime activity into stable app state. The main entry point is [OrchestrationEngine.ts][7], with core logic in [decider.ts][8] and [projector.ts][4].
@@ -242,6 +255,7 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 - [MCP servers][29]
 - [Git workbench][27]
 - [Workspace card deck][28]
+- [Thread forking][30]
 
 [1]: ../../packages/contracts/src/orchestration.ts
 [2]: ./workspace-layout.md
@@ -272,3 +286,4 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [27]: ./git-workbench.md
 [28]: ./workspace-card-deck.md
 [29]: ../user/mcp-servers.md
+[30]: ./thread-forking.md

@@ -181,7 +181,7 @@ export function ChatWorkspaceDeck(props: ChatWorkspaceDeckProps) {
       });
       if (result.blockedReason !== null) {
         props.onCardSelectionBlocked?.(result.blockedReason);
-        return;
+        return false;
       }
       if (result.shouldDismissChatUi) {
         rememberChatFocus();
@@ -196,12 +196,14 @@ export function ChatWorkspaceDeck(props: ChatWorkspaceDeckProps) {
         };
         setSelectionLocked(true);
         props.onExpandedCardChange(null);
-        return;
+        return true;
       }
       if (result.nextCard !== policyActiveCard) {
         setSelectionMode("animate");
         props.onActiveCardChange(result.nextCard, direction);
+        return true;
       }
+      return false;
     },
     [policyActiveCard, props, rememberChatFocus, selectionLocked],
   );

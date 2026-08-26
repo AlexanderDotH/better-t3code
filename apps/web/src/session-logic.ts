@@ -5,6 +5,7 @@ import {
   ApprovalRequestId,
   isToolLifecycleItemType,
   type OrchestrationLatestTurn,
+  type OrchestrationHistoryOrigin,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
   ProviderDriverKind,
@@ -71,6 +72,7 @@ export interface WorkLogEntry {
   id: string;
   createdAt: string;
   turnId?: TurnId | null;
+  historyOrigin?: OrchestrationHistoryOrigin;
   /** Stable provider identity across in-progress and completed lifecycle updates. */
   toolCallId?: string;
   label: string;
@@ -411,6 +413,7 @@ export function derivePendingApprovals(
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
 
   for (const activity of ordered) {
+    if (activity.historyOrigin !== undefined) continue;
     const payload =
       activity.payload && typeof activity.payload === "object"
         ? (activity.payload as Record<string, unknown>)
@@ -517,6 +520,7 @@ export function derivePendingUserInputs(
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
 
   for (const activity of ordered) {
+    if (activity.historyOrigin !== undefined) continue;
     const payload =
       activity.payload && typeof activity.payload === "object"
         ? (activity.payload as Record<string, unknown>)
@@ -663,7 +667,9 @@ export function deriveActivePlanState(
   latestTurnId: TurnId | undefined,
 ): ActivePlanState | null {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
-  const allPlanActivities = ordered.filter((activity) => activity.kind === "turn.plan.updated");
+  const allPlanActivities = ordered.filter(
+    (activity) => activity.kind === "turn.plan.updated" && activity.historyOrigin === undefined,
+  );
   // Prefer plan from the current turn; fall back to the most recent plan from any turn
   // so that TodoWrite tasks persist across follow-up messages.
   const latest = Option.firstSomeOf([
@@ -692,6 +698,7 @@ export interface TurnPlanEntry {
   /** Anchor timestamp: the turn's FIRST plan activity, so the chip renders where planning began. */
   createdAt: string;
   turnId: TurnId | null;
+  historyOrigin?: OrchestrationHistoryOrigin;
   plan: ActivePlanState;
 }
 
@@ -731,6 +738,7 @@ export function deriveTurnPlans(
           id: `turn-plan:${key}`,
           createdAt: activity.createdAt,
           turnId: activity.turnId,
+          ...(activity.historyOrigin ? { historyOrigin: activity.historyOrigin } : {}),
           plan,
         },
       });
@@ -746,8 +754,11 @@ export function findLatestProposedPlan(
   proposedPlans: ReadonlyArray<ProposedPlan>,
   latestTurnId: TurnId | string | null | undefined,
 ): LatestProposedPlanState | null {
+  const nativeProposedPlans = proposedPlans.filter(
+    (proposedPlan) => proposedPlan.historyOrigin === undefined,
+  );
   if (latestTurnId) {
-    const matchingTurnPlan = [...proposedPlans]
+    const matchingTurnPlan = [...nativeProposedPlans]
       .filter((proposedPlan) => proposedPlan.turnId === latestTurnId)
       .toSorted(
         (left, right) =>
@@ -759,7 +770,7 @@ export function findLatestProposedPlan(
     }
   }
 
-  const latestPlan = [...proposedPlans]
+  const latestPlan = [...nativeProposedPlans]
     .toSorted(
       (left, right) =>
         left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id),
@@ -939,6 +950,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     id: activity.id,
     createdAt: activity.createdAt,
     turnId: activity.turnId,
+    ...(activity.historyOrigin ? { historyOrigin: activity.historyOrigin } : {}),
     label: taskLabel || activity.summary,
     tone:
       activity.kind === "task.progress" || isReasoningActivity
@@ -1826,9 +1838,28 @@ export function deriveTimelineEntries(
     createdAt: entry.createdAt,
     entry,
   }));
-  return [...messageRows, ...proposedPlanRows, ...turnPlanRows, ...workRows].toSorted((a, b) =>
-    a.createdAt.localeCompare(b.createdAt),
+  return [...messageRows, ...proposedPlanRows, ...turnPlanRows, ...workRows].toSorted(
+    compareTimelineEntries,
   );
+}
+
+function timelineEntryHistoryOrigin(entry: TimelineEntry): OrchestrationHistoryOrigin | undefined {
+  if (entry.kind === "message") return entry.message.historyOrigin;
+  if (entry.kind === "proposed-plan") return entry.proposedPlan.historyOrigin;
+  if (entry.kind === "turn-plan") return entry.turnPlan.historyOrigin;
+  return entry.entry.historyOrigin;
+}
+
+function compareTimelineEntries(left: TimelineEntry, right: TimelineEntry): number {
+  const timestampOrder = left.createdAt.localeCompare(right.createdAt);
+  if (timestampOrder !== 0) return timestampOrder;
+
+  const leftOrigin = timelineEntryHistoryOrigin(left);
+  const rightOrigin = timelineEntryHistoryOrigin(right);
+  if (leftOrigin && rightOrigin) return leftOrigin.ordinal - rightOrigin.ordinal;
+  if (leftOrigin) return -1;
+  if (rightOrigin) return 1;
+  return 0;
 }
 
 export function inferCheckpointTurnCountByTurnId(

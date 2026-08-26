@@ -1,10 +1,12 @@
 import {
   ClaudeSettings,
+  ChatGptSettings,
   CodexSettings,
   CursorSettings,
   GeminiSettings,
   GrokSettings,
   OpenCodeSettings,
+  OpenRouterSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
@@ -16,6 +18,7 @@ import {
   type Icon,
   OpenAI,
   OpenCodeIcon,
+  OpenRouterIcon,
 } from "../Icons";
 
 type ProviderSettingsSchema = {
@@ -84,6 +87,20 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     icon: GeminiIcon,
     badgeLabel: EARLY_ACCESS_BADGE,
     settingsSchema: GeminiSettings,
+  },
+  {
+    value: ProviderDriverKind.make("chatgpt"),
+    label: "ChatGPT Subscription",
+    icon: OpenAI,
+    badgeLabel: EARLY_ACCESS_BADGE,
+    settingsSchema: ChatGptSettings,
+  },
+  {
+    value: ProviderDriverKind.make("openrouter"),
+    label: "OpenRouter",
+    icon: OpenRouterIcon,
+    badgeLabel: EARLY_ACCESS_BADGE,
+    settingsSchema: OpenRouterSettings,
   },
 ];
 

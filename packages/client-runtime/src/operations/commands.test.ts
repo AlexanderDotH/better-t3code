@@ -1,9 +1,12 @@
 import {
   CommandId,
   EnvironmentId,
+  MessageId,
   ORCHESTRATION_WS_METHODS,
   ProjectId,
+  ProviderInstanceId,
   ThreadId,
+  TurnId,
   type ClientOrchestrationCommand,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -24,6 +27,8 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
   archiveThread,
   createProject,
+  forkThread,
+  retryThreadTurn,
   settleThread,
   stopThreadSession,
   unsettleThread,
@@ -116,6 +121,82 @@ describe("environment commands", () => {
           commandId: "queued-command",
           threadId: "thread-1",
           createdAt: "2026-06-06T00:01:00.000Z",
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("dispatches a fork command with generated metadata and an exact boundary", () =>
+    Effect.gen(function* () {
+      const dispatched: ClientOrchestrationCommand[] = [];
+      const supervisor = yield* makeSupervisor(dispatched);
+
+      yield* forkThread({
+        threadId: ThreadId.make("thread-fork"),
+        sourceThreadId: ThreadId.make("thread-source"),
+        boundary: { kind: "message", messageId: MessageId.make("message-source") },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.6",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspace: {
+          mode: "worktree",
+          baseBranch: "main",
+          startFromOrigin: true,
+          runSetupScript: true,
+        },
+        createdAt: "2026-08-24T10:00:00.000Z",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(dispatched).toEqual([
+        {
+          type: "thread.fork",
+          commandId: "00000000-0000-4000-8000-000000000000",
+          threadId: "thread-fork",
+          sourceThreadId: "thread-source",
+          boundary: { kind: "message", messageId: "message-source" },
+          modelSelection: { instanceId: "codex", model: "gpt-5.6" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspace: {
+            mode: "worktree",
+            baseBranch: "main",
+            startFromOrigin: true,
+            runSetupScript: true,
+          },
+          createdAt: "2026-08-24T10:00:00.000Z",
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("dispatches a result-only retry without a user message payload", () =>
+    Effect.gen(function* () {
+      const dispatched: ClientOrchestrationCommand[] = [];
+      const supervisor = yield* makeSupervisor(dispatched);
+
+      yield* retryThreadTurn({
+        threadId: ThreadId.make("thread-1"),
+        turnId: TurnId.make("turn-1"),
+        messageId: MessageId.make("message-1"),
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.6",
+        },
+        createdAt: "2026-08-26T10:00:00.000Z",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(dispatched).toEqual([
+        {
+          type: "thread.turn.retry",
+          commandId: "00000000-0000-4000-8000-000000000000",
+          threadId: "thread-1",
+          turnId: "turn-1",
+          messageId: "message-1",
+          modelSelection: { instanceId: "codex", model: "gpt-5.6" },
+          createdAt: "2026-08-26T10:00:00.000Z",
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),

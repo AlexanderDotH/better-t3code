@@ -5,6 +5,9 @@ import { GeneralSubagentCoordinator } from "../../../subagents/GeneralSubagentCo
 import type {
   GeneralSubagentCancelInput,
   GeneralSubagentError,
+  GeneralSubagentFollowUpInput,
+  GeneralSubagentInterruptInput,
+  GeneralSubagentSendMessageInput,
   GeneralSubagentSpawnInput,
   GeneralSubagentWaitInput,
 } from "../../../subagents/GeneralSubagentProtocol.ts";
@@ -39,9 +42,33 @@ export const invokeGeneralSubagentWait = (input: GeneralSubagentWaitInput) =>
 export const invokeGeneralSubagentCancel = (input: GeneralSubagentCancelInput) =>
   invoke((coordinator, caller) => coordinator.cancel({ ...caller, ...input }));
 
+export const invokeGeneralSubagentList = () =>
+  invoke((coordinator, caller) => coordinator.listAgents(caller));
+
+export const invokeGeneralSubagentSpawnAgent = (input: GeneralSubagentSpawnInput) =>
+  invoke((coordinator, caller) => coordinator.spawnAgent({ ...caller, ...input }));
+
+export const invokeGeneralSubagentSendMessage = (input: GeneralSubagentSendMessageInput) =>
+  invoke((coordinator, caller) => coordinator.sendMessage({ ...caller, ...input }));
+
+export const invokeGeneralSubagentFollowUp = (input: GeneralSubagentFollowUpInput) =>
+  invoke((coordinator, caller) => coordinator.followUp({ ...caller, ...input }));
+
+export const invokeGeneralSubagentWaitAgent = (input: GeneralSubagentWaitInput) =>
+  invoke((coordinator, caller) => coordinator.waitAgent({ ...caller, ...input }));
+
+export const invokeGeneralSubagentInterrupt = (input: GeneralSubagentInterruptInput) =>
+  invoke((coordinator, caller) => coordinator.interruptAgent({ ...caller, ...input }));
+
 export const GeneralSubagentToolkitHandlersLive = GeneralSubagentToolkit.toLayer({
   subagent_models: invokeGeneralSubagentModels,
   subagent_spawn: invokeGeneralSubagentSpawn,
   subagent_wait: invokeGeneralSubagentWait,
   subagent_cancel: invokeGeneralSubagentCancel,
+  list_agents: invokeGeneralSubagentList,
+  spawn_agent: invokeGeneralSubagentSpawnAgent,
+  send_message: invokeGeneralSubagentSendMessage,
+  followup_task: invokeGeneralSubagentFollowUp,
+  wait_agent: invokeGeneralSubagentWaitAgent,
+  interrupt_agent: invokeGeneralSubagentInterrupt,
 });

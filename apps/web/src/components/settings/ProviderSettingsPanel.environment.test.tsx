@@ -90,6 +90,7 @@ import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
 const environmentId = EnvironmentId.make("remote-device");
 const codexId = ProviderInstanceId.make("codex");
 const customId = ProviderInstanceId.make("codex_work");
+const chatGptId = ProviderInstanceId.make("chatgpt_work");
 
 function provider(): ServerProvider {
   return {
@@ -118,12 +119,14 @@ function provider(): ServerProvider {
 
 function renderPanel(options?: {
   readonly readOnly?: boolean;
+  readonly authFlow?: "browser" | "device-code";
 }): ReactElement<Record<string, unknown>> {
   hooks.beginRender();
   return EnvironmentProviderSettings({
     environmentId,
     environmentLabel: "Remote device",
     ...(options?.readOnly === undefined ? {} : { readOnly: options.readOnly }),
+    ...(options?.authFlow === undefined ? {} : { authFlow: options.authFlow }),
   }) as ReactElement<Record<string, unknown>>;
 }
 
@@ -205,6 +208,41 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(
       visitElements(panel, (element) => element.props.title === "Limited permissions"),
     ).toBeNull();
+  });
+
+  it("passes auth routing to the provider card without a duplicate onboarding row", () => {
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [chatGptId]: {
+          driver: ProviderDriverKind.make("chatgpt"),
+          enabled: true,
+        },
+      },
+    };
+    atoms.providers = [
+      {
+        ...provider(),
+        instanceId: chatGptId,
+        driver: ProviderDriverKind.make("chatgpt"),
+        auth: {
+          status: "unauthenticated",
+          capabilities: { flows: ["device-code"], canDisconnect: false },
+        },
+      },
+    ];
+
+    const panel = renderPanel({ authFlow: "device-code", readOnly: true });
+    const card = visitElements(panel, (element) => element.props.instanceId === chatGptId);
+    expect(card?.props.environmentId).toBe(environmentId);
+    expect(card?.props.providerAuthFlow).toBe("device-code");
+    expect(card?.props.readOnly).toBe(true);
+
+    const onboarding = visitElements(
+      panel,
+      (element) => element.props.title === "ChatGPT Subscription",
+    );
+    expect(onboarding).toBeNull();
   });
 
   it("deletes and resets provider configuration without erasing shared preferences", () => {

@@ -23,6 +23,17 @@ If the OpenCode instance uses a configured **Server URL**, T3 Code connects to t
 Configure Google credentials on the host running that server; T3 Code cannot inject its instance
 environment variables into a remote OpenCode process.
 
+## Local Servers and Plugins
+
+OpenCode servers started and owned by T3 Code run in OpenCode's pure mode. Your normal OpenCode
+configuration, credentials, agents, and skills remain available, but external OpenCode plugins are
+not loaded. This keeps plugin hooks from rewriting T3 Code prompts or creating additional OpenCode
+sessions outside the thread's turn lifecycle.
+
+To use external OpenCode plugins intentionally, start and manage your own `opencode serve` process,
+then configure its URL as the instance's **Server URL**. T3 Code connects to that server without
+changing its plugin policy or owning its process lifecycle.
+
 After authenticating, use the OpenCode instance in Chat and pick model slugs like
 `google/gemini-2.5-flash` in the model list. OpenCode model selection in T3 Code expects
 the format `provider/model`.

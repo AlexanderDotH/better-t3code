@@ -15,10 +15,11 @@
 
 .workspace-card-deck__viewport[data-expanded="true"] {
   height: var(--workspace-card-deck-expanded-height, var(--workspace-card-deck-compact-height));
-  transition: none;
+  transition: height 420ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .workspace-card-deck__viewport[data-collapsing="true"] {
+  transition: height 360ms cubic-bezier(0.22, 1, 0.36, 1);
   will-change: height;
 }
 
@@ -56,7 +57,6 @@
 .workspace-card-deck__card[data-card-position="active"] {
   position: relative;
   z-index: 3;
-  transform: translate3d(0, 0, 0) scale(1);
   visibility: visible;
   pointer-events: auto;
 }
@@ -158,23 +158,19 @@
   pointer-events: auto;
 }
 
-.workspace-card-deck[data-deck-transition="forward"] {
+.workspace-card-deck[data-deck-motion="fallback"][data-deck-transition="forward"] {
   --workspace-card-carousel-in-y: 100%;
   --workspace-card-carousel-out-y: -100%;
   --workspace-card-carousel-peek-y: 0.25rem;
 }
 
-.workspace-card-deck[data-deck-transition="backward"] {
+.workspace-card-deck[data-deck-motion="fallback"][data-deck-transition="backward"] {
   --workspace-card-carousel-in-y: -100%;
   --workspace-card-carousel-out-y: 100%;
   --workspace-card-carousel-peek-y: -0.25rem;
 }
 
-.workspace-card-deck[data-deck-transition] {
-  pointer-events: none;
-}
-
-.workspace-card-deck[data-deck-transition] .workspace-card-deck__viewport {
+.workspace-card-deck[data-deck-motion="fallback"] .workspace-card-deck__viewport {
   overflow: clip;
 }
 
@@ -182,30 +178,104 @@
   pointer-events: none;
 }
 
-.workspace-card-deck[data-deck-transition]
+.workspace-card-deck[data-deck-motion="fallback"]
   .workspace-card-deck__card[data-transition-role="incoming"],
-.workspace-card-deck[data-deck-transition]
+.workspace-card-deck[data-deck-motion="fallback"]
   .workspace-card-deck__card[data-transition-role="outgoing"] {
   overflow: clip;
   visibility: visible;
   will-change: transform;
+  pointer-events: none;
 }
 
-.workspace-card-deck[data-deck-transition] .workspace-card-deck__peek-content {
+.workspace-card-deck[data-deck-motion="fallback"] .workspace-card-deck__peek-content {
   animation: workspace-peek-carousel-settle 180ms ease-out 240ms both;
   will-change: transform, opacity;
 }
 
-.workspace-card-deck[data-deck-transition]
+.workspace-card-deck[data-deck-motion="fallback"]
   .workspace-card-deck__card[data-transition-role="incoming"] {
   z-index: 4;
   animation: workspace-card-carousel-in 420ms cubic-bezier(0.32, 0.72, 0, 1) both;
 }
 
-.workspace-card-deck[data-deck-transition]
+.workspace-card-deck[data-deck-motion="fallback"]
   .workspace-card-deck__card[data-transition-role="outgoing"] {
   z-index: 3;
   animation: workspace-card-carousel-out 420ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+.workspace-card-deck__morph-host {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.workspace-card-deck__morph-proxy {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid;
+  will-change: left, top, width, height, border-radius;
+  pointer-events: none;
+}
+
+.workspace-card-deck[data-deck-motion="morph"] .workspace-card-deck__viewport,
+.workspace-card-deck[data-deck-expansion-morph] .workspace-card-deck__viewport,
+.workspace-card-deck[data-deck-expansion-morph] .workspace-card-deck__card,
+.workspace-card-deck[data-deck-motion="morph"] .workspace-card-deck__card[data-transition-role] {
+  overflow: visible;
+}
+
+.workspace-card-deck[data-deck-motion="morph"] .workspace-card-deck__card[data-transition-role] {
+  visibility: visible;
+  pointer-events: none;
+}
+
+.workspace-card-deck[data-deck-transition] .workspace-card-deck__card[data-transition-role] * {
+  pointer-events: none !important;
+}
+
+.workspace-card-deck[data-deck-motion="morph"]
+  .workspace-card-deck__card[data-transition-role="incoming"] {
+  z-index: 4;
+}
+
+.workspace-card-deck[data-deck-motion="morph"]
+  .workspace-card-deck__card[data-transition-role="outgoing"] {
+  z-index: 3;
+}
+
+.workspace-card-deck[data-deck-motion="morph"]
+  .workspace-card-deck__card[data-transition-role="incoming"]
+  .workspace-card-deck__intrinsic,
+.workspace-card-deck[data-deck-motion="morph"]
+  .workspace-card-deck__card[data-transition-role="outgoing"]
+  .workspace-card-deck__intrinsic,
+.workspace-card-deck[data-deck-expansion-morph] .workspace-card-deck__intrinsic {
+  position: relative;
+  z-index: 1;
+  overflow: clip;
+  will-change: transform, clip-path, border-radius, opacity;
+}
+
+.workspace-card-deck [data-deck-morph-back-peek="true"] {
+  will-change: transform, opacity;
+}
+
+.workspace-card-deck [data-deck-morph-surface="true"] {
+  overflow: visible !important;
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+.workspace-card-deck [data-deck-morph-surface="true"]::before,
+.workspace-card-deck [data-deck-morph-surface="true"]::after {
+  opacity: 0 !important;
 }
 
 @keyframes workspace-card-carousel-in {

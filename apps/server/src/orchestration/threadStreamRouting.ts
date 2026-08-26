@@ -22,6 +22,9 @@ function isRootThreadDetailEvent(event: OrchestrationEvent): boolean {
     case "thread.session-set":
     case "thread.harness-sync-linked":
     case "thread.harness-sync-message-imported":
+    case "thread.forked":
+    case "thread.fork-workspace-updated":
+    case "thread.fork-handoff-completed":
     case "thread.subagent-upserted":
     case "thread.subagent-state-set":
     case "thread.subagent-progress-set":

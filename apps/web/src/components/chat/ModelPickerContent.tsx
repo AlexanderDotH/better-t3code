@@ -4,6 +4,12 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
+import {
+  DEFAULT_OPENROUTER_MODEL_CATALOG_FILTER_STATE,
+  buildOpenRouterModelCatalogView,
+  resolveOpenRouterModelAuthor,
+  type OpenRouterModelCatalogFilterState,
+} from "@t3tools/shared/modelCatalogFilters";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { ChevronRightIcon, SearchIcon } from "lucide-react";
@@ -36,7 +42,7 @@ import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
 import {
-  isProviderInstancePickerReady,
+  isProviderInstancePickerBrowsable,
   isProviderInstancePickerVisible,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
@@ -45,6 +51,7 @@ import {
   resolveInitialModelPickerInstance,
   type ModelPickerInstanceSelection,
 } from "./modelPickerInstanceSelection";
+import { OpenRouterCatalogFilterPanel } from "./openrouter-model-picker";
 
 type ModelPickerItem = {
   slug: string;
@@ -57,12 +64,28 @@ type ModelPickerItem = {
   instanceAccentColor?: string | undefined;
   continuationGroupKey?: string | undefined;
   isLegacy?: boolean | undefined;
+  isSelectable?: boolean | undefined;
+  unavailableReason?: string | undefined;
+  capabilities?: ModelEsque["capabilities"];
 };
 
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
 
 function ModelListSeparator() {
   return <div className="h-0.5" />;
+}
+
+function resolveModelSubProvider(
+  model: ModelEsque,
+  driverKind: ProviderDriverKind,
+): string | undefined {
+  if (model.subProvider) {
+    return model.subProvider;
+  }
+  if (driverKind !== "openrouter") {
+    return undefined;
+  }
+  return resolveOpenRouterModelAuthor(model)?.label;
 }
 
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
@@ -107,6 +130,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     onInstanceModelChange,
   } = props;
   const [searchQuery, setSearchQuery] = useState("");
+  const [openRouterCatalogFilterState, setOpenRouterCatalogFilterState] =
+    useState<OpenRouterModelCatalogFilterState>(
+      () => DEFAULT_OPENROUTER_MODEL_CATALOG_FILTER_STATE,
+    );
   const [showTopScrollFade, setShowTopScrollFade] = useState(false);
   const [showBottomScrollFade, setShowBottomScrollFade] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -118,7 +145,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       activeInstanceId: props.activeInstanceId,
       preferredInstanceId: props.preferredInstanceId,
       selectableInstanceIds: new Set(
-        instanceEntries.filter(isProviderInstancePickerReady).map((entry) => entry.instanceId),
+        instanceEntries.filter(isProviderInstancePickerBrowsable).map((entry) => entry.instanceId),
       ),
       isLocked: props.lockedProvider !== null,
       hasFavorites: favorites.length > 0,
@@ -146,6 +173,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const handleSelectInstance = useCallback(
     (instanceId: ModelPickerInstanceSelection) => {
+      highlightedModelKeyRef.current = null;
       setSelectedInstanceId(instanceId);
       if (instanceId !== "favorites") {
         props.onInstanceSelect?.(instanceId);
@@ -155,6 +183,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       });
     },
     [focusSearchInput, props.onInstanceSelect],
+  );
+
+  const handleOpenRouterCatalogFilterChange = useCallback(
+    (state: OpenRouterModelCatalogFilterState) => {
+      highlightedModelKeyRef.current = null;
+      setOpenRouterCatalogFilterState(state);
+    },
+    [],
   );
 
   useLayoutEffect(() => {
@@ -199,14 +235,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     [props.lockedContinuationGroupKey, props.lockedProvider],
   );
 
-  const readyInstanceSet = useMemo(() => {
-    const ready = new Set<ProviderInstanceId>();
+  const browsableInstanceSet = useMemo(() => {
+    const browsable = new Set<ProviderInstanceId>();
     for (const entry of instanceEntries) {
-      if (isProviderInstancePickerReady(entry)) {
-        ready.add(entry.instanceId);
+      if (isProviderInstancePickerBrowsable(entry)) {
+        browsable.add(entry.instanceId);
       }
     }
-    return ready;
+    return browsable;
   }, [instanceEntries]);
 
   // Flatten models into a searchable array. One pass over the
@@ -222,16 +258,20 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         // its models — stale options shouldn't appear in the picker.
         continue;
       }
-      if (!readyInstanceSet.has(instanceId)) {
+      if (!browsableInstanceSet.has(instanceId)) {
         continue;
       }
       for (const model of models) {
+        const subProvider = resolveModelSubProvider(model, entry.driverKind);
         out.push({
           slug: model.slug,
           name: model.name,
           ...(model.shortName ? { shortName: model.shortName } : {}),
-          ...(model.subProvider ? { subProvider: model.subProvider } : {}),
+          ...(subProvider ? { subProvider } : {}),
           ...(model.isLegacy ? { isLegacy: true } : {}),
+          ...(model.isSelectable === undefined ? {} : { isSelectable: model.isSelectable }),
+          ...(model.unavailableReason ? { unavailableReason: model.unavailableReason } : {}),
+          ...(model.capabilities === undefined ? {} : { capabilities: model.capabilities }),
           instanceId,
           driverKind: entry.driverKind,
           instanceDisplayName: entry.displayName,
@@ -243,7 +283,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       }
     }
     return out;
-  }, [modelOptionsByInstance, entryByInstanceId, readyInstanceSet]);
+  }, [modelOptionsByInstance, entryByInstanceId, browsableInstanceSet]);
 
   const isLocked = props.lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
@@ -275,15 +315,33 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     return [...available, ...disabled];
   }, [instanceEntries, isLocked, matchesLockedProvider]);
-  const showSidebar = !isSearching && sidebarInstanceEntries.length > 0;
+  const selectedEntry =
+    selectedInstanceId === "favorites" ? undefined : entryByInstanceId.get(selectedInstanceId);
+  const openRouterCatalogInstanceId =
+    selectedInstanceId !== "favorites" && selectedEntry?.driverKind === "openrouter"
+      ? selectedInstanceId
+      : null;
+  const showSidebar =
+    (!isSearching || openRouterCatalogInstanceId !== null) && sidebarInstanceEntries.length > 0;
   const instanceOrder = useMemo(
     () => instanceEntries.map((entry) => entry.instanceId),
     [instanceEntries],
   );
+  const openRouterCatalogView = useMemo(() => {
+    if (openRouterCatalogInstanceId === null) {
+      return null;
+    }
+    const catalogModels = flatModels.filter(
+      (model) => model.instanceId === openRouterCatalogInstanceId,
+    );
+    return buildOpenRouterModelCatalogView(catalogModels, openRouterCatalogFilterState, {
+      isFavorite: (model) => favoritesSet.has(providerModelKey(model.instanceId, model.slug)),
+    });
+  }, [favoritesSet, flatModels, openRouterCatalogFilterState, openRouterCatalogInstanceId]);
 
   // Filter models based on search query and selected instance
   const filteredModels = useMemo(() => {
-    let result = flatModels;
+    let result = openRouterCatalogView?.models ?? flatModels;
 
     // Apply tokenized fuzzy search across the combined provider/model search fields.
     if (searchQuery.trim()) {
@@ -293,6 +351,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           score: scoreModelPickerSearch(
             {
               name: model.name,
+              slug: model.slug,
               ...(model.shortName ? { shortName: model.shortName } : {}),
               ...(model.subProvider ? { subProvider: model.subProvider } : {}),
               driverKind: model.driverKind,
@@ -304,6 +363,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           isFavorite: favoritesSet.has(providerModelKey(model.instanceId, model.slug)),
           tieBreaker: buildModelPickerSearchText({
             name: model.name,
+            slug: model.slug,
             ...(model.shortName ? { shortName: model.shortName } : {}),
             ...(model.subProvider ? { subProvider: model.subProvider } : {}),
             driverKind: model.driverKind,
@@ -321,9 +381,23 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           } => rankedModel.score !== null,
         );
 
-      // When searching, we only respect locked provider (by driver kind),
-      // ignoring sidebar selection so account-scoped searches can find a
-      // model before the user chooses a specific instance rail item.
+      if (openRouterCatalogView !== null) {
+        return rankedMatches
+          .toSorted((a, b) => {
+            const scoreDelta = a.score - b.score;
+            if (scoreDelta !== 0) {
+              return scoreDelta;
+            }
+            if (a.isFavorite !== b.isFavorite) {
+              return a.isFavorite ? -1 : 1;
+            }
+            return a.tieBreaker.localeCompare(b.tieBreaker);
+          })
+          .map((rankedModel) => rankedModel.model);
+      }
+
+      // Generic search keeps the existing cross-provider behavior. The
+      // OpenRouter catalog branch above stays scoped to its selected instance.
       if (props.lockedProvider !== null) {
         const lockedProviderMatches: Array<(typeof rankedMatches)[number]> = [];
         for (const rankedModel of rankedMatches) {
@@ -359,6 +433,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         .map((rankedModel) => rankedModel.model);
     }
 
+    if (openRouterCatalogView !== null) {
+      return openRouterCatalogView.models;
+    }
+
     if (props.lockedProvider !== null) {
       result = result.filter((m) => matchesLockedProvider(m));
       if (selectedInstanceId === "favorites") {
@@ -382,6 +460,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     flatModels,
     instanceOrder,
     matchesLockedProvider,
+    openRouterCatalogView,
     props.lockedProvider,
     searchQuery,
     selectedInstanceId,
@@ -428,7 +507,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const handleModelSelect = useCallback(
     (modelSlug: string, instanceId: ProviderInstanceId) => {
-      if (getModelDisabledReason?.(instanceId, modelSlug)) {
+      const candidate = modelOptionsByInstance
+        .get(instanceId)
+        ?.find((model) => model.slug === modelSlug);
+      if (candidate?.isSelectable === false || getModelDisabledReason?.(instanceId, modelSlug)) {
         return;
       }
       const options = modelOptionsByInstance.get(instanceId);
@@ -442,7 +524,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       // `resolveSelectableModel` uses the driver kind for normalization
       // (slug casing etc.). Custom instances share their driver's
       // normalization rules, so pass the driver kind here.
-      const resolvedModel = resolveSelectableModel(entry.driverKind, modelSlug, options);
+      const resolvedModel = resolveSelectableModel(
+        entry.driverKind,
+        modelSlug,
+        options.filter((option) => option.isSelectable !== false),
+      );
       if (resolvedModel) {
         onInstanceModelChange(instanceId, resolvedModel);
       }
@@ -471,7 +557,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     >();
     let selectableModelIndex = 0;
     for (const model of visibleModels) {
-      if (getModelDisabledReason?.(model.instanceId, model.slug)) {
+      if (model.isSelectable === false || getModelDisabledReason?.(model.instanceId, model.slug)) {
         continue;
       }
       const jumpCommand = modelPickerJumpCommandForIndex(selectableModelIndex);
@@ -517,6 +603,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       ),
     [visibleModels],
   );
+  useEffect(() => {
+    const highlightedModelKey = highlightedModelKeyRef.current;
+    if (highlightedModelKey && !filteredItemKeys.includes(highlightedModelKey)) {
+      highlightedModelKeyRef.current = null;
+    }
+  }, [filteredItemKeys]);
   const updateModelListScrollFades = useCallback(() => {
     const scrollElement = modelListRef.current?.getScrollableNode();
     if (!(scrollElement instanceof HTMLElement)) {
@@ -668,21 +760,38 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               "flex min-h-0 flex-1 flex-col overflow-hidden bg-muted/40",
               showSidebar && "border-l border-border/70",
             )}
+            data-openrouter-model-catalog-page={openRouterCatalogView === null ? undefined : "true"}
           >
             {/* Search bar */}
-            <div className="px-2 pt-2">
-              <div className="border-b border-border/70 pb-2.5 transition-colors focus-within:border-ring">
+            <div className={cn("px-2 pt-2", openRouterCatalogView && "pb-1")}>
+              <div
+                className={cn(
+                  "border-b border-border/70 pb-2.5 transition-[border-color,box-shadow] focus-within:border-ring",
+                  openRouterCatalogView &&
+                    "rounded-lg border bg-background/70 px-1 py-0.5 shadow-xs focus-within:border-ring/70 focus-within:ring-2 focus-within:ring-ring/10",
+                )}
+              >
                 <ComboboxInput
                   ref={searchInputRef}
                   className="[&_input]:h-6.5 [&_input]:font-sans [&_input]:leading-6.5"
-                  inputClassName="rounded-none bg-transparent text-sm"
-                  placeholder="Search models..."
+                  inputClassName={cn(
+                    "rounded-none bg-transparent text-sm",
+                    openRouterCatalogView && "rounded-md",
+                  )}
+                  placeholder={
+                    openRouterCatalogView === null
+                      ? "Search models..."
+                      : "Search OpenRouter models..."
+                  }
                   showTrigger={false}
                   startAddon={
                     <SearchIcon className="-translate-x-0.5 size-4 shrink-0 text-muted-foreground opacity-70" />
                   }
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e) => {
+                    highlightedModelKeyRef.current = null;
+                    setSearchQuery(e.target.value);
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === "Escape") {
                       e.preventDefault();
@@ -690,20 +799,24 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       props.onRequestClose?.();
                       return;
                     }
-                    if (e.key === "Enter" && highlightedModelKeyRef.current) {
+                    const highlightedModelKey = highlightedModelKeyRef.current;
+                    if (
+                      e.key === "Enter" &&
+                      highlightedModelKey &&
+                      filteredItemKeys.includes(highlightedModelKey)
+                    ) {
                       (
                         e as typeof e & { preventBaseUIHandler?: () => void }
                       ).preventBaseUIHandler?.();
                       e.preventDefault();
                       e.stopPropagation();
-                      const legacyInstanceId = parseModelPickerLegacySectionKey(
-                        highlightedModelKeyRef.current,
-                      );
+                      const legacyInstanceId =
+                        parseModelPickerLegacySectionKey(highlightedModelKey);
                       if (legacyInstanceId) {
                         toggleLegacySection(legacyInstanceId);
                         return;
                       }
-                      const model = parseModelPickerModelKey(highlightedModelKeyRef.current);
+                      const model = parseModelPickerModelKey(highlightedModelKey);
                       if (model) {
                         handleModelSelect(model.slug, model.instanceId);
                       }
@@ -718,6 +831,17 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 />
               </div>
             </div>
+            {openRouterCatalogView && selectedEntry ? (
+              <OpenRouterCatalogFilterPanel
+                state={openRouterCatalogFilterState}
+                view={{
+                  ...openRouterCatalogView,
+                  matchingCount: filteredModels.length,
+                }}
+                instanceDisplayName={selectedEntry.displayName}
+                onChange={handleOpenRouterCatalogFilterChange}
+              />
+            ) : null}
 
             {/* Model list */}
             <div className="relative min-h-0 flex-1 overflow-hidden pr-px">
@@ -758,7 +882,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       return null;
                     }
                     const disabledReason =
-                      getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
+                      model.isSelectable === false
+                        ? (model.unavailableReason ??
+                          "This model is not compatible with T3 Code agent turns.")
+                        : (getModelDisabledReason?.(model.instanceId, model.slug) ?? null);
                     return (
                       <ModelListRow
                         key={modelKey}
@@ -775,6 +902,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                           modelKey === modelPickerModelKey(props.activeInstanceId, props.model)
                         }
                         showProvider={isSearching || selectedInstanceId === "favorites"}
+                        presentation={openRouterCatalogView ? "catalog" : "compact"}
                         preferShortName={!isLocked}
                         useTriggerLabel={false}
                         showNewBadge={isModelPickerNewModel(model.driverKind, model.slug)}
@@ -784,10 +912,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       />
                     );
                   }}
-                  estimatedItemSize={38}
+                  estimatedItemSize={openRouterCatalogView ? 50 : 38}
                   drawDistance={480}
                   recycleItems
-                  contentContainerClassName="pl-2 pr-px"
+                  contentContainerClassName={cn("pr-px", openRouterCatalogView ? "pl-1.5" : "pl-2")}
                   ItemSeparatorComponent={ModelListSeparator}
                   onLayout={updateModelListScrollFades}
                   onScroll={updateModelListScrollFades}
