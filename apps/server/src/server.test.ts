@@ -154,6 +154,7 @@ import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
+import * as ProjectMemoryStore from "./projectMemory/ProjectMemoryStore.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -731,6 +732,8 @@ const buildAppUnderTest = (options?: {
           }),
           Layer.mock(ProviderService.ProviderService)({
             uploadFeedback: () => Effect.die("Provider feedback is not stubbed in this test"),
+            getCapabilities: () =>
+              Effect.succeed({ sessionModelSwitch: "in-session", mcp: "unsupported" }),
             ...options?.layers?.providerService,
           }),
         ),
@@ -1109,6 +1112,7 @@ const buildAppUnderTest = (options?: {
       Layer.provideMerge(makeAuthTestLayer()),
       Layer.provideMerge(ServerSecretStore.layer),
       Layer.provide(workspaceAndProjectServicesLayer),
+      Layer.provide(ProjectMemoryStore.layer({ t3Home: baseDir })),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(layerConfig),
     );
@@ -5026,6 +5030,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         {
           instanceId: ProviderInstanceId.make("codex"),
           driver: ProviderDriverKind.make("codex"),
+          runtimeCapabilities: { nativeThreadFork: false, manualCompaction: false },
           enabled: true,
           installed: true,
           version: "1.0.0",
@@ -5258,6 +5263,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         {
           instanceId: ProviderInstanceId.make("codex"),
           driver: ProviderDriverKind.make("codex"),
+          runtimeCapabilities: { nativeThreadFork: false, manualCompaction: false },
           enabled: true,
           installed: true,
           version: "1.0.0",

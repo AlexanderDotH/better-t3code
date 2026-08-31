@@ -482,6 +482,9 @@ const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function*
       if (parseThreadSegmentFromAttachmentId(attachmentId) !== threadSegment) {
         return;
       }
+      if (yield* attachmentReferences.hasReference({ attachmentId })) {
+        return;
+      }
       yield* fileSystem.remove(path.join(attachmentsRootDir, relativePath), { force: true });
     },
   );

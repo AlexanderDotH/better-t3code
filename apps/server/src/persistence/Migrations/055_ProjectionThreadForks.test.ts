@@ -21,7 +21,7 @@ it.effect("055 persists fork provenance and frozen-history origins", () =>
   Effect.gen(function* () {
     yield* runMigrations({ toMigrationInclusive: 54 });
 
-    const migrations = yield* runMigrations();
+    const migrations = yield* runMigrations({ toMigrationInclusive: 55 });
     assert.deepStrictEqual(
       migrations.map(([id, name]) => [id, name]),
       [[55, "ProjectionThreadForks"]],
