@@ -21,7 +21,7 @@ const dependencies = [
 
 export const WorkspaceContextTool = Tool.make("workspace_context", {
   description:
-    "Batch independent repository path/content searches and bounded line reads against this authenticated thread's trusted workspace. Use this read-only tool for discovery before issuing several sequential shell searches or file reads. The server selects the project or worktree root; callers cannot override it.",
+    "Batch independent repository path/content searches and bounded line reads against this authenticated thread's trusted workspace. Searches or reads spanning multiple regular UTF-8 files MUST use batched `workspace_context` calls, using the fewest calls its limits allow; do not use shell text readers/searchers. The server selects the project or worktree root; callers cannot override it.",
   parameters: WorkspaceContextInput,
   success: WorkspaceContextResult,
   failure: WorkspaceContextError,

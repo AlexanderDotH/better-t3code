@@ -21,7 +21,7 @@ const OBJECT_SCHEMA = {
 const WORKSPACE_CONTEXT_DECLARATION: NativeHarnessToolDeclaration = {
   name: NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
   description:
-    "Search paths or text and read bounded line ranges inside the current workspace. Batch independent queries and reads in one call.",
+    "Search paths or text and read bounded line ranges inside the current workspace. Searches or reads spanning multiple regular UTF-8 files MUST use batched `workspace_context` calls, using the fewest calls its limits allow; do not use shell text readers/searchers.",
   inputSchema: Schema.toJsonSchemaDocument(WorkspaceContextInput).schema,
   availability: "read-only",
 };

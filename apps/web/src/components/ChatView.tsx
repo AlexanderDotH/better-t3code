@@ -2044,23 +2044,27 @@ function ChatViewContent(props: ChatViewProps) {
   const activeRunningTurnId =
     (activeThread?.session?.status === "running" ? activeThread.session.activeTurnId : null) ??
     (activeLatestTurn?.state === "running" ? activeLatestTurn.turnId : null);
-  // Reading a finished thread clears the sidebar's Done badge. The visit is
-  // stamped at the turn's completion time — not now/updatedAt — so it clears
-  // exactly the completion the user is looking at: a wake or completion that
-  // lands later still gets its signal (markThreadVisited never moves the
-  // timestamp backwards).
+  // Reading a finished thread clears its sidebar attention badge. Failures
+  // use the session status edge; successful turns use their completion time.
+  // A later completion or failure still gets its own signal because visits
+  // never move backwards.
   useEffect(() => {
-    const completedAt = serverThread?.latestTurn?.completedAt;
-    if (!serverThread?.id || !completedAt) return;
+    const visitedAt =
+      serverThread?.session?.status === "error"
+        ? serverThread.session.updatedAt
+        : serverThread?.latestTurn?.completedAt;
+    if (!serverThread?.id || !visitedAt) return;
     markThreadVisited(
       scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
-      completedAt,
+      visitedAt,
     );
   }, [
     markThreadVisited,
     serverThread?.environmentId,
     serverThread?.id,
     serverThread?.latestTurn?.completedAt,
+    serverThread?.session?.status,
+    serverThread?.session?.updatedAt,
   ]);
   useEffect(() => {
     setMountedTerminalThreadKeys((currentThreadIds) => {

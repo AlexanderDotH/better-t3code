@@ -287,6 +287,14 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   return completedAt > lastVisitedAt;
 }
 
+function hasUnseenFailure(thread: ThreadStatusInput): boolean {
+  if (thread.session?.status !== "error") return false;
+  if (!thread.lastVisitedAt) return true;
+  const failedAt = Date.parse(thread.session.updatedAt);
+  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
+  return Number.isNaN(failedAt) || Number.isNaN(lastVisitedAt) || failedAt > lastVisitedAt;
+}
+
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
   if (target === null) return true;
   return !target.closest(THREAD_SELECTION_SAFE_SELECTOR);
@@ -538,9 +546,9 @@ export function resolveSidebarThreadPresentationState(
   }
   if (thread.session?.status === "starting") return "connecting";
   // A failed session outranks lingering background liveness: the user must
-  // see the failure, not a stale Working (review finding).
+  // see each new failure once, not a stale Working forever.
   if (thread.session?.status === "error") {
-    return "failed";
+    return hasUnseenFailure(thread) ? "failed" : "ready";
   }
   if (
     thread.interactionMode === "plan" &&

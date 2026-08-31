@@ -200,6 +200,9 @@ describe("interface language", () => {
   });
 
   it("ships Auto reasoning controls and usage labels on web and mobile", () => {
+    expect(translateInterfaceMessage("en", "chat.traits.autoDescription")).toBe(
+      "Sets reasoning level based on your prompt input.",
+    );
     for (const language of ["en", "de", "fr"] as const) {
       expect(
         translateInterfaceMessage(language, "betterT3.agent.autoReasoningModel.label"),

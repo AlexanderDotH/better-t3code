@@ -60,7 +60,9 @@ hundreds of definitions on every provider round.
 ChatGPT Subscription, OpenRouter, OpenAI Responses, and Gemini advertise the same two T3-owned
 workspace contracts. `workspace_context` batches bounded search and reads. `workspace_edit` performs
 single-file or mixed UTF-8 write, exact-replace, range-splice, and delete batches through
-`WorkspaceFileSystem`.
+`WorkspaceFileSystem`. Shared direct-harness instructions require multi-file regular UTF-8 discovery
+to use the fewest batched `workspace_context` calls its limits allow, not shell text readers or
+searchers.
 
 New rounds advertise one mutation tool rather than overlapping `write_file`, `replace_text`, and
 `apply_patch` definitions. Completed calls using those legacy names replay only as persisted provider

@@ -168,6 +168,8 @@ size checks.
 to eight independent path/content queries and twelve targeted file reads. Queries support `path`,
 `content`, and combined `auto` modes. Reads use one-indexed inclusive line ranges. A successful
 targeted read includes a content revision suitable for a later `workspace_edit` revision guard.
+Provider guidance requires searches or reads spanning multiple regular UTF-8 files to use the fewest
+batched `workspace_context` calls allowed by these limits instead of shell text readers or searchers.
 
 Tool annotations declare it read-only, non-destructive, idempotent, and closed-world. It cannot
 write files or execute arbitrary commands.

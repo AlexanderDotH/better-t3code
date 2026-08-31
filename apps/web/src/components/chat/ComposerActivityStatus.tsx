@@ -1,5 +1,5 @@
 import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
-import { ArrowDownToLineIcon, ArrowUpFromLineIcon, LoaderCircleIcon } from "lucide-react";
+import { BotIcon, LoaderCircleIcon, MessageSquareIcon } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { type ThreadSyncPhase } from "../../threadSync";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
@@ -112,13 +112,13 @@ export function ComposerActivityTokenMetrics(props: {
       direction: "input",
       label: translate("chat.timeline.inputTokens"),
       value: props.status.inputTokens ?? 0,
-      Icon: ArrowDownToLineIcon,
+      Icon: MessageSquareIcon,
     },
     {
       direction: "output",
       label: translate("chat.timeline.outputTokens"),
       value: props.status.outputTokens ?? 0,
-      Icon: ArrowUpFromLineIcon,
+      Icon: BotIcon,
     },
   ] as const;
   return metrics.map(({ direction, label, value, Icon }) => {

@@ -63,15 +63,21 @@ describe("NativeHarnessTools", () => {
     ]);
   });
 
-  it("advertises only the shared workspace_edit mutation contract", () => {
+  it("advertises the shared workspace contracts", () => {
     const declarations = nativeHarnessToolDeclarations({
       interactionMode: "default",
       sandboxMode: "workspace-write",
     });
+    const workspaceContext = declarations.find(
+      (declaration) => declaration.name === NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
+    );
     const workspaceEdit = declarations.find(
       (declaration) => declaration.name === NATIVE_HARNESS_WORKSPACE_EDIT_TOOL,
     );
 
+    expect(workspaceContext?.description).toContain(
+      "Searches or reads spanning multiple regular UTF-8 files MUST use batched `workspace_context` calls, using the fewest calls its limits allow; do not use shell text readers/searchers.",
+    );
     expect(workspaceEdit?.inputSchema).toEqual(
       Schema.toJsonSchemaDocument(WorkspaceEditInput).schema,
     );

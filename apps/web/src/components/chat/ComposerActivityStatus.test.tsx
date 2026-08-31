@@ -76,7 +76,7 @@ describe("ComposerActivityStatus", () => {
     ).toEqual({ inputTokens: 0, outputTokens: 0 });
   });
 
-  it("fills the activity surface and separates input and output tokens with icons", () => {
+  it("uses prompt and agent icons for input and output tokens", () => {
     const status = {
       kind: "working" as const,
       startedAt: null,
@@ -96,8 +96,8 @@ describe("ComposerActivityStatus", () => {
     expect(markup).toContain('data-variant="activity"');
     expect(markup).toContain('data-composer-token-direction="input"');
     expect(markup).toContain('data-composer-token-direction="output"');
-    expect(markup).toContain("lucide-arrow-down-to-line");
-    expect(markup).toContain("lucide-arrow-up-from-line");
+    expect(markup).toContain("lucide-message-square");
+    expect(markup).toContain("lucide-bot");
     expect(markup).toContain("1.2k");
     expect(markup).toContain("75");
     expect(markup).toContain("Input");

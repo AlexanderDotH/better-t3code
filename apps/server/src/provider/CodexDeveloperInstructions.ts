@@ -48,7 +48,7 @@ Use the attached T3 preview tools for browser work. Start with \`preview_status\
     tools.workspace
       ? `## T3 workspace
 
-Prefer \`workspace_context\` for batched repository discovery.${
+Use \`workspace_context\` for repository discovery. Searches or reads spanning multiple regular UTF-8 files MUST use batched \`workspace_context\` calls, using the fewest calls its limits allow; do not use shell text readers/searchers.${
           tools.workspaceWrite && workspaceEditAllowed
             ? " Prefer `workspace_edit` for ordinary UTF-8 text changes and batch related files in one call. Use provider patch or command tools only for approval-required edits, formatters, generators, binaries, large files, or permission changes."
             : ""

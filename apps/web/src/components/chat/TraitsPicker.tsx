@@ -335,7 +335,6 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   modelOptions,
   allowPromptInjectedEffort = true,
   planModeEnabled,
-  autoReasoningStatus,
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
   const translate = useInterfaceTranslator().message;
@@ -474,19 +473,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                 {shouldOfferAutoReasoning(provider, descriptor) ? (
                   <MenuRadioItem value={T3_AUTO_REASONING_OPTION_ID} hideIndicator closeOnClick>
                     <span className="flex w-full min-w-0 flex-col">
-                      <span className="font-medium">
-                        {
-                          buildTraitsTriggerDisplay({
-                            provider,
-                            descriptors: [descriptor],
-                            primarySelectDescriptorId: descriptor.id,
-                            ultrathinkPromptControlled: false,
-                            autoReasoning: autoReasoningStatus ?? { enabled: true },
-                            autoLabel: translate("chat.traits.auto"),
-                            fallbackLabel: translate("chat.traits.fallback"),
-                          }).label
-                        }
-                      </span>
+                      <span className="font-medium">{translate("chat.traits.auto")}</span>
                       <span className="max-w-56 text-pretty text-muted-foreground/80 text-xs">
                         {translate("chat.traits.autoDescription")}
                       </span>
@@ -757,7 +744,6 @@ export const TraitsPicker = memo(function TraitsPicker({
           modelOptions={modelOptions}
           allowPromptInjectedEffort={allowPromptInjectedEffort}
           planModeEnabled={planModeEnabled}
-          {...(autoReasoningStatus ? { autoReasoningStatus } : {})}
           {...persistence}
         />
       </MenuPopup>

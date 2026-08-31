@@ -97,6 +97,14 @@ function SidebarBrand({ onBackdrop, side }: { onBackdrop: boolean; side: "left" 
       )}
       to="/"
     >
+      <span
+        className={cn(
+          "-translate-y-px truncate text-sm font-medium tracking-tight",
+          onBackdrop ? "text-white/70" : "text-muted-foreground",
+        )}
+      >
+        Better
+      </span>
       <T3Wordmark />
       <span
         className={cn(

@@ -86,7 +86,7 @@ describe("buildCodexDeveloperInstructions delegation history policy", () => {
     expect(instructions).not.toMatch(/## (?:Coordination|Knowledge graph|Workspace context)/);
   });
 
-  it("prefers batched workspace tools only when the active profile can write", () => {
+  it("requires batched workspace discovery and recommends edits only for writable profiles", () => {
     const tools = {
       preview: false,
       workspace: true,
@@ -103,6 +103,9 @@ describe("buildCodexDeveloperInstructions delegation history policy", () => {
     );
 
     expect(instructions).toContain("workspace_context");
+    expect(instructions).toContain(
+      "Searches or reads spanning multiple regular UTF-8 files MUST use batched `workspace_context` calls, using the fewest calls its limits allow; do not use shell text readers/searchers.",
+    );
     expect(instructions).toContain("workspace_edit");
     expect(instructions).toMatch(/batch/i);
     expect(instructions).toMatch(/formatters.*generators.*binaries.*large files.*permission/i);
@@ -113,6 +116,9 @@ describe("buildCodexDeveloperInstructions delegation history policy", () => {
       tools,
     );
     expect(plan).toContain("workspace_context");
+    expect(plan).toContain(
+      "Searches or reads spanning multiple regular UTF-8 files MUST use batched `workspace_context` calls, using the fewest calls its limits allow; do not use shell text readers/searchers.",
+    );
     expect(plan).not.toContain("workspace_edit");
     expect(plan).not.toContain("formatters");
   });

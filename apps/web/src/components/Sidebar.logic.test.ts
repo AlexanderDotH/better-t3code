@@ -1401,6 +1401,30 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Failed", pulse: false });
   });
 
+  it("clears a failed provider session after the user visits it", () => {
+    const failedThread = {
+      ...baseThread,
+      session: {
+        ...baseThread.session,
+        status: "error" as const,
+        activeTurnId: null,
+        lastError: "boom",
+        updatedAt: "2026-03-09T10:05:00.000Z",
+      },
+    };
+
+    expect(
+      resolveThreadStatusPill({
+        thread: { ...failedThread, lastVisitedAt: "2026-03-09T10:04:59.999Z" },
+      }),
+    ).toMatchObject({ label: "Failed", pulse: false });
+    expect(
+      resolveThreadStatusPill({
+        thread: { ...failedThread, lastVisitedAt: "2026-03-09T10:05:00.000Z" },
+      }),
+    ).toBeNull();
+  });
+
   it("does not manufacture completed state without a client visit marker", () => {
     expect(
       resolveThreadStatusPill({

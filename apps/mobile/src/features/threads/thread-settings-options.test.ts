@@ -38,9 +38,11 @@ describe("selectableChoices", () => {
 
   it("adds Auto only to the Codex reasoning-effort picker", () => {
     const reasoningEffort = { ...effortDescriptor, id: "reasoningEffort" };
-    expect(
-      threadReasoningChoices(ProviderDriverKind.make("codex"), reasoningEffort)[0],
-    ).toMatchObject({ id: T3_AUTO_REASONING_OPTION_ID, label: "Auto" });
+    expect(threadReasoningChoices(ProviderDriverKind.make("codex"), reasoningEffort)[0]).toEqual({
+      id: T3_AUTO_REASONING_OPTION_ID,
+      label: "Auto",
+      description: "Sets reasoning level based on your prompt input.",
+    });
     expect(
       threadReasoningChoices(ProviderDriverKind.make("claudeAgent"), reasoningEffort).map(
         ({ id }) => id,

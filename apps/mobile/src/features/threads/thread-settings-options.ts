@@ -71,7 +71,7 @@ export function threadReasoningChoices(
         {
           id: T3_AUTO_REASONING_OPTION_ID,
           label: "Auto",
-          description: "Choose effort per turn; the current manual level remains the fallback.",
+          description: "Sets reasoning level based on your prompt input.",
         },
         ...choices,
       ]

@@ -1715,9 +1715,9 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
   "chat.traits.default": ["Default", "Standard", "Par défaut"],
   "chat.traits.auto": ["Auto", "Auto", "Auto"],
   "chat.traits.autoDescription": [
-    "Choose reasoning effort for each turn. The current manual level remains the fallback.",
-    "Wählt den Reasoning-Aufwand für jeden Turn. Die aktuelle manuelle Stufe bleibt der Fallback.",
-    "Choisit l’effort de raisonnement pour chaque tour. Le niveau manuel actuel reste la solution de repli.",
+    "Sets reasoning level based on your prompt input.",
+    "Legt die Reasoning-Stufe anhand deiner Eingabe fest.",
+    "Définit le niveau de raisonnement selon votre saisie.",
   ],
   "chat.traits.fallback": ["Fallback", "Fallback", "Repli"],
   "chat.traits.ultrathinkLocked": [

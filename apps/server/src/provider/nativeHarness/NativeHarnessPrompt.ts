@@ -8,6 +8,6 @@ export function nativeHarnessWorkspaceInstructions(input: {
   const canEdit =
     input.interactionMode !== "plan" && input.sandboxMode !== "read-only" && !input.fetchWorker;
   return canEdit
-    ? "Prefer workspace_context for batched repository discovery. Prefer workspace_edit for ordinary UTF-8 text changes and batch related files in one call. Use an available command tool only for formatters, generators, binaries, large files, or permission changes."
-    : "Prefer workspace_context for batched repository discovery.";
+    ? "Use workspace_context for repository discovery. Searches or reads spanning multiple regular UTF-8 files MUST use batched `workspace_context` calls, using the fewest calls its limits allow; do not use shell text readers/searchers. Prefer workspace_edit for ordinary UTF-8 text changes and batch related files in one call. Use an available command tool only for formatters, generators, binaries, large files, or permission changes."
+    : "Use workspace_context for repository discovery. Searches or reads spanning multiple regular UTF-8 files MUST use batched `workspace_context` calls, using the fewest calls its limits allow; do not use shell text readers/searchers.";
 }

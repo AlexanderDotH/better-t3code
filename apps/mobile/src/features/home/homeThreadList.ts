@@ -221,6 +221,8 @@ export function partitionHomeProjectGroupsByActivity(input: {
         ? activeThreads.map((thread) =>
             parseActivityTimestamp(
               input.nowMs,
+              thread.unsettledAt,
+              thread.settledAt,
               thread.latestUserMessageAt,
               thread.updatedAt,
               thread.createdAt,
