@@ -58,6 +58,8 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { isAutoReasoningEnabled } from "@t3tools/shared/model";
 
 import { ControlPill } from "../../components/ControlPill";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -92,6 +94,7 @@ import { useMobilePlanParallelismReview } from "./use-plan-parallelism-review";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { resolveForkComposerBudget } from "./thread-fork";
+import type { AutoReasoningStatus } from "./thread-settings-summary";
 
 export interface ThreadDetailScreenProps {
   readonly selectedThread: OrchestrationThreadShell;
@@ -122,6 +125,7 @@ export interface ThreadDetailScreenProps {
   readonly threadCwd: string | null;
   readonly selectedThreadQueueCount: number;
   readonly activeThreadBusy: boolean;
+  readonly autoReasoningStatus?: AutoReasoningStatus;
   readonly serverConfig: T3ServerConfig | null;
   readonly layoutVariant?: LayoutVariant;
   readonly usesAutomaticContentInsets?: boolean;
@@ -254,6 +258,7 @@ const USER_INPUT_TOGGLE_TIMING = {
 };
 
 export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: ThreadDetailScreenProps) {
+  const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const liveKeyboardHeight = useKeyboardState((state) => state.height);
@@ -790,7 +795,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     }}
                   >
                     <ControlPill
-                      accessibilityLabel="Scroll to end"
+                      accessibilityLabel={translator.message("mobile.thread.scrollEnd")}
                       activateOnPressIn
                       className="h-9 w-9 bg-transparent"
                       icon={{ ios: "chevron.down", android: "keyboard_arrow_down" }}
@@ -799,7 +804,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   </LiquidGlassView>
                 ) : (
                   <ControlPill
-                    accessibilityLabel="Scroll to end"
+                    accessibilityLabel={translator.message("mobile.thread.scrollEnd")}
                     activateOnPressIn
                     className="h-9 w-9 border border-border bg-card shadow-md shadow-black/10"
                     icon={{ ios: "chevron.down", android: "keyboard_arrow_down" }}
@@ -854,7 +859,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   ) : null}
                 </Animated.View>
               ) : null}
-              {props.reasoningRecommendation || props.pendingReasoningOverride ? (
+              {(props.reasoningRecommendation || props.pendingReasoningOverride) &&
+              !isAutoReasoningEnabled(props.selectedThread.modelSelection) ? (
                 <Animated.View
                   className="shrink-0 px-4 pb-3"
                   entering={FadeInDown.duration(220)}
@@ -863,6 +869,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   <ReasoningRecommendationCard
                     recommendation={props.reasoningRecommendation}
                     pendingOverride={props.pendingReasoningOverride}
+                    autoReasoningActive={isAutoReasoningEnabled(
+                      props.selectedThread.modelSelection,
+                    )}
                     onAccept={props.onAcceptReasoningRecommendation}
                     onDismiss={props.onDismissReasoningRecommendation}
                     onUndo={props.onUndoReasoningRecommendation}
@@ -878,7 +887,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 editorRef={composerEditorRef}
                 draftMessage={props.draftMessage}
                 draftAttachments={props.draftAttachments}
-                placeholder="Ask the repo agent, or run a command…"
+                placeholder={translator.message("mobile.thread.repoPrompt")}
                 contentMaxWidth={contentMaxWidth}
                 connectionState={props.connectionStateLabel}
                 connectionError={props.connectionError}
@@ -888,6 +897,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 serverConfig={props.serverConfig}
                 queueCount={props.selectedThreadQueueCount}
                 activeThreadBusy={props.activeThreadBusy}
+                {...(props.autoReasoningStatus
+                  ? { autoReasoningStatus: props.autoReasoningStatus }
+                  : {})}
                 environmentId={props.environmentId}
                 projectCwd={props.projectWorkspaceRoot}
                 bottomInset={composerBottomInset}

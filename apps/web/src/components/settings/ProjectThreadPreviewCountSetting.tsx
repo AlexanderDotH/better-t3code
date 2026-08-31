@@ -4,6 +4,7 @@ import {
 } from "@t3tools/contracts";
 
 import { ProjectThreadPreviewCountControl } from "../ProjectThreadPreviewCountControl";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -16,22 +17,23 @@ export function ProjectThreadPreviewCountSetting({
   readonly onChange: (count: ProjectThreadPreviewCount) => void;
   readonly status: string | null;
 }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <SettingsRow
       {...searchableSetting("chats-per-project")}
-      description="Choose how many chats each project shows before Show more in the Classic sidebar. This syncs through compatible connected T3 servers."
+      description={translate("settings.projects.preview.description")}
       status={status}
       resetAction={
         count !== DEFAULT_PROJECT_THREAD_PREVIEW_COUNT ? (
           <SettingResetButton
-            label="chats per project"
+            label={translate("settings.projects.preview.resetLabel")}
             onClick={() => onChange(DEFAULT_PROJECT_THREAD_PREVIEW_COUNT)}
           />
         ) : null
       }
       control={
         <ProjectThreadPreviewCountControl
-          ariaLabel="Chats per project"
+          ariaLabel={translate("settings.projects.preview.aria")}
           count={count}
           onChange={onChange}
         />

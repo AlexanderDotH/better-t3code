@@ -1,21 +1,22 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  createMobileInterfaceLanguageRecord,
+  createMobileInterfaceLocaleRecordV1,
   nextMobileInterfaceLanguageUpdatedAt,
-  resolveMobileInterfaceLanguagePreference,
+  resolveMobileInterfaceLocalePreference,
 } from "./interface-language-preference";
 
 describe("mobile interface language preference", () => {
   it("uses System before a synchronized choice exists", () => {
-    expect(resolveMobileInterfaceLanguagePreference(undefined)).toBe("system");
+    expect(resolveMobileInterfaceLocalePreference(undefined)).toBe("system");
   });
 
-  it("creates a valid explicit German record", () => {
-    expect(createMobileInterfaceLanguageRecord("de", 42, "mobile:de")).toEqual({
-      preference: "de",
+  it("creates a valid explicit French V1 record", () => {
+    expect(createMobileInterfaceLocaleRecordV1("fr", 42, "mobile:fr")).toEqual({
+      version: 1,
+      preference: "fr",
       updatedAt: 42,
-      updateId: "mobile:de",
+      updateId: "mobile:fr",
     });
   });
 

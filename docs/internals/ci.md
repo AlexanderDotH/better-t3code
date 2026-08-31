@@ -8,7 +8,9 @@ and pushes to `main`:
 - **Check**: `vp check` (format and lint; this repo sets `typeCheck: false` in its lint options),
   then `vpr typecheck` for the workspace type check. The same job
   builds the desktop pipeline (`vp run build:desktop`) and verifies the preload bundle exists and
-  still exports its expected symbols.
+  still exports its expected symbols. The verifier parses imports, then executes the trusted
+  artifact with controlled bridge stubs to confirm that Electron's sandbox can call the required
+  APIs.
 - **Test**: all non-server package tests run in parallel with a four-package concurrency limit.
 - **Test Server 1/2/3**: the serial server suite is split across three isolated runners. The shard
   that produces the thread-transfer budget publishes the single report artifact consumed by the

@@ -53,7 +53,7 @@ import { sourceControlEnvironment } from "../../state/sourceControl";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { ErrorBanner } from "../../components/ErrorBanner";
 import { SourceControlIcon } from "../../components/SourceControlIcon";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { uuidv4 } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
@@ -161,8 +161,6 @@ function ListRow(props: {
   readonly right?: ReactNode;
   readonly onPress?: () => void;
 }) {
-  const chevronColor = useThemeColor("--color-chevron");
-
   return (
     <Pressable
       disabled={props.disabled}
@@ -194,7 +192,12 @@ function ListRow(props: {
         {"right" in props ? (
           props.right
         ) : !props.disabled ? (
-          <SymbolView name="chevron.right" size={13} tintColor={chevronColor} type="monochrome" />
+          <SymbolView
+            name="chevron.right"
+            size={13}
+            tintColorClassName={"accent-chevron"}
+            type="monochrome"
+          />
         ) : null}
       </View>
     </Pressable>
@@ -207,8 +210,6 @@ function PrimaryActionButton(props: {
   readonly loading?: boolean;
   readonly onPress: () => void;
 }) {
-  const primaryForeground = useThemeColor("--color-primary-foreground");
-
   return (
     <Pressable
       disabled={props.disabled}
@@ -216,7 +217,7 @@ function PrimaryActionButton(props: {
       className="h-12 items-center justify-center rounded-full bg-primary active:opacity-70 disabled:opacity-45"
     >
       {props.loading ? (
-        <ActivityIndicator color={String(primaryForeground)} />
+        <ActivityIndicator colorClassName={String("accent-primary-foreground")} />
       ) : (
         <Text className="text-base font-t3-bold text-primary-foreground">{props.label}</Text>
       )}
@@ -391,18 +392,23 @@ function useSelectedEnvironment(): {
 
 function EmptyEnvironmentState() {
   const navigation = useNavigation();
+  const translator = useMobileInterfaceTranslator();
 
   return (
     <View className="items-center gap-3 rounded-2xl bg-card px-5 py-8">
-      <Text className="text-center text-lg font-t3-bold">Environment unavailable</Text>
+      <Text className="text-center text-lg font-t3-bold">
+        {translator.message("mobile.project.environmentUnavailable")}
+      </Text>
       <Text className="text-center text-sm leading-normal text-foreground-muted">
-        Start or reconnect an environment before adding a project.
+        {translator.message("mobile.project.reconnectDescription")}
       </Text>
       <Pressable
         onPress={() => navigation.dispatch(StackActions.replace("ConnectionsNew"))}
         className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
       >
-        <Text className="text-sm font-t3-bold text-primary-foreground">Add environment</Text>
+        <Text className="text-sm font-t3-bold text-primary-foreground">
+          {translator.message("mobile.connection.addEnvironment")}
+        </Text>
       </Pressable>
     </View>
   );
@@ -416,7 +422,6 @@ function SourceControlRow(props: {
   readonly isFirst: boolean;
 }) {
   const navigation = useNavigation();
-  const iconColor = useThemeColor("--color-icon");
   const title =
     props.source === "url" ? "Git URL" : `${addProjectRemoteSourceLabel(props.source)} repository`;
   const subtitle =
@@ -425,9 +430,9 @@ function SourceControlRow(props: {
       : `Clone ${addProjectRemoteSourceLabel(props.source)} ${props.hint}`;
   const icon =
     props.source === "url" ? (
-      <SymbolView name="link" size={17} tintColor={iconColor} type="monochrome" />
+      <SymbolView name="link" size={17} tintColorClassName={"accent-icon"} type="monochrome" />
     ) : (
-      <SourceControlIcon kind={props.source} size={18} color={String(iconColor)} />
+      <SourceControlIcon kind={props.source} size={18} colorClassName="accent-icon" />
     );
 
   if (!props.ready) {
@@ -456,8 +461,7 @@ function SourceControlRow(props: {
 
 export function AddProjectSourceScreen() {
   const navigation = useNavigation();
-  const accentColor = useThemeColor("--color-icon-muted");
-  const iconColor = useThemeColor("--color-icon");
+  const translator = useMobileInterfaceTranslator();
   const { environmentOptions, selectedEnvironment, setSelectedEnvironmentId } =
     useSelectedEnvironment();
   const discoveryState = useEnvironmentQuery(
@@ -479,7 +483,7 @@ export function AddProjectSourceScreen() {
 
       {environmentOptions.length > 1 ? (
         <>
-          <SectionTitle>Environments</SectionTitle>
+          <SectionTitle>{translator.message("mobile.settings.environments")}</SectionTitle>
           <ListSection>
             {environmentOptions.map((environment, index) => (
               <ListRow
@@ -497,7 +501,7 @@ export function AddProjectSourceScreen() {
                   <SymbolView
                     name="server.rack"
                     size={17}
-                    tintColor={iconColor}
+                    tintColorClassName={"accent-icon"}
                     type="monochrome"
                   />
                 }
@@ -509,7 +513,7 @@ export function AddProjectSourceScreen() {
                     <SymbolView
                       name="checkmark"
                       size={14}
-                      tintColor={iconColor}
+                      tintColorClassName={"accent-icon"}
                       type="monochrome"
                     />
                   ) : null
@@ -525,13 +529,13 @@ export function AddProjectSourceScreen() {
         <>
           <ListSection>
             <ListRow
-              title="Local folder"
-              subtitle="Browse a folder on disk"
+              title={translator.message("mobile.project.localFolder")}
+              subtitle={translator.message("mobile.project.browseFolder")}
               icon={
                 <SymbolView
                   name="folder.badge.plus"
                   size={17}
-                  tintColor={iconColor}
+                  tintColorClassName={"accent-icon"}
                   type="monochrome"
                 />
               }
@@ -561,7 +565,9 @@ export function AddProjectSourceScreen() {
               ),
             )}
           </ListSection>
-          {discoveryState.isPending ? <ActivityIndicator color={accentColor} /> : null}
+          {discoveryState.isPending ? (
+            <ActivityIndicator colorClassName={"accent-icon-muted"} />
+          ) : null}
         </>
       ) : null}
     </AddProjectShell>
@@ -746,7 +752,7 @@ function FolderBrowser(props: {
   }) => Promise<boolean>;
   readonly pinnedDirectoryName?: string;
 }) {
-  const accentColor = useThemeColor("--color-icon-muted");
+  const translator = useMobileInterfaceTranslator();
   const browsePath = useMemo(
     () => getFilesystemBrowsePath(props.pathInput, props.environment.platform),
     [props.environment.platform, props.pathInput],
@@ -777,12 +783,12 @@ function FolderBrowser(props: {
 
   return (
     <>
-      <SectionTitle>Browse folders</SectionTitle>
+      <SectionTitle>{translator.message("mobile.project.browseFolders")}</SectionTitle>
       {browseState.error ? <ErrorBanner message={browseState.error} /> : null}
       <ListSection>
         {browseState.isPending && browseState.data === null ? (
           <View className="items-center py-5">
-            <ActivityIndicator color={accentColor} />
+            <ActivityIndicator colorClassName={"accent-icon-muted"} />
           </View>
         ) : null}
         {browsePath.canBrowseUp ? (
@@ -792,7 +798,7 @@ function FolderBrowser(props: {
               <SymbolView
                 name="arrow.turn.left.up"
                 size={17}
-                tintColor={accentColor}
+                tintColorClassName={"accent-icon-muted"}
                 type="monochrome"
               />
             }
@@ -811,7 +817,14 @@ function FolderBrowser(props: {
           <ListRow
             key={entry.fullPath}
             title={entry.name}
-            icon={<SymbolView name="folder" size={17} tintColor={accentColor} type="monochrome" />}
+            icon={
+              <SymbolView
+                name="folder"
+                size={17}
+                tintColorClassName={"accent-icon-muted"}
+                type="monochrome"
+              />
+            }
             isFirst={index === 0 && !browsePath.canBrowseUp}
             right={null}
             onPress={() => {
@@ -828,6 +841,7 @@ function FolderBrowser(props: {
 }
 
 export function AddProjectLocalFolderScreen(props: { readonly environmentId?: string | string[] }) {
+  const translator = useMobileInterfaceTranslator();
   const environment = useEnvironmentFromParam(props.environmentId);
   const createProject = useCreateProject(environment);
   const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } =
@@ -867,7 +881,7 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
             onSubmit={() => void submitPath()}
           />
           <PrimaryActionButton
-            label="Add project"
+            label={translator.message("mobile.project.add")}
             disabled={isBrowseNavigating || isSubmitting}
             onPress={() => void submitPath()}
             loading={isSubmitting}
@@ -892,6 +906,7 @@ export function AddProjectDestinationScreen(props: {
   readonly repositoryTitle?: string | string[];
   readonly repositoryName?: string | string[];
 }) {
+  const translator = useMobileInterfaceTranslator();
   const cloneRepository = useAtomCommand(sourceControlEnvironment.cloneRepository, {
     reportFailure: false,
   });
@@ -974,7 +989,7 @@ export function AddProjectDestinationScreen(props: {
             onSubmit={() => void submitPath()}
           />
           <PrimaryActionButton
-            label="Clone project"
+            label={translator.message("mobile.project.clone")}
             disabled={isBrowseNavigating || isSubmitting || !remoteUrl}
             onPress={() => void submitPath()}
             loading={isSubmitting}

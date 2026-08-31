@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vite-plus/test";
-import { MessageId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import {
+  buildMobileThreadForkCommand,
   findForkDividerEntryId,
   forkBoundaryKey,
+  MOBILE_THREAD_FORK_MESSAGE_KEYS,
+  mobileForkedThreadRoute,
+  mobileThreadForkingSupported,
   resolveForkActionPresentation,
   resolveForkBoundary,
   resolveForkComposerBudget,
@@ -12,6 +22,17 @@ import {
 } from "./thread-fork";
 
 describe("mobile thread fork presentation", () => {
+  it("requires the explicit capability and exposes typed accessible copy", () => {
+    expect(mobileThreadForkingSupported({})).toBe(false);
+    expect(mobileThreadForkingSupported({ threadForking: false })).toBe(false);
+    expect(mobileThreadForkingSupported({ threadForking: true })).toBe(true);
+    expect(MOBILE_THREAD_FORK_MESSAGE_KEYS).toEqual({
+      forkHere: "mobile.thread.forkHere",
+      forkedFrom: "mobile.thread.forkedFrom",
+      forkStarts: "mobile.thread.forkStarts",
+    });
+  });
+
   it("offers exact boundaries for committed user, completed assistant, and plan entries", () => {
     expect(
       resolveForkBoundary({
@@ -156,7 +177,7 @@ describe("mobile thread fork presentation", () => {
     expect(findForkDividerEntryId([inherited, inheritedWork, current])).toBe("history-work");
   });
 
-  it("uses ordinary first-turn limits while inherited context adapts", () => {
+  it("uses ordinary first-turn limits while inherited context stays separate", () => {
     expect(
       resolveForkComposerBudget({
         handoff: {
@@ -188,5 +209,57 @@ describe("mobile thread fork presentation", () => {
         draftAttachmentCount: 3,
       }),
     ).toBeNull();
+  });
+
+  it("builds one exact fork command and a composer-focused destination route", () => {
+    const destinationThreadId = ThreadId.make("forked-thread");
+    const environmentId = EnvironmentId.make("environment-a");
+    expect(
+      buildMobileThreadForkCommand({
+        thread: {
+          environmentId,
+          id: ThreadId.make("source-thread"),
+          projectId: ProjectId.make("project-a"),
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.6",
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        },
+        destinationThreadId,
+        boundary: { kind: "message", messageId: MessageId.make("message-a") },
+        workspace: {
+          mode: "worktree",
+          baseBranch: "main",
+          startFromOrigin: true,
+          runSetupScript: true,
+        },
+      }),
+    ).toEqual({
+      environmentId: "environment-a",
+      input: {
+        threadId: "forked-thread",
+        sourceThreadId: "source-thread",
+        boundary: { kind: "message", messageId: "message-a" },
+        modelSelection: { instanceId: "codex", model: "gpt-5.6" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspace: {
+          mode: "worktree",
+          baseBranch: "main",
+          startFromOrigin: true,
+          runSetupScript: true,
+        },
+      },
+    });
+    expect(mobileForkedThreadRoute({ environmentId, destinationThreadId })).toEqual({
+      screen: "Thread",
+      params: {
+        environmentId: "environment-a",
+        threadId: "forked-thread",
+        focusComposer: true,
+      },
+    });
   });
 });

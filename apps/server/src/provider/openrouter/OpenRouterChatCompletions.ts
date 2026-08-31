@@ -51,11 +51,19 @@ const chatMessages = (request: OpenRouterRoundRequest): ReadonlyArray<unknown> =
       case "tool":
         messages.push({ role: "tool", tool_call_id: item.callId, content: item.content });
         break;
-      case "assistant":
+      case "assistant": {
+        const reasoningDetails =
+          item.opaque?.protocol === "chat-completions" && item.opaque.reasoningDetails.length > 0
+            ? item.opaque.reasoningDetails
+            : undefined;
         messages.push({
           role: "assistant",
           content: item.content || null,
-          ...(item.reasoning === undefined ? {} : { reasoning: item.reasoning }),
+          ...(reasoningDetails !== undefined
+            ? { reasoning_details: reasoningDetails }
+            : item.reasoning === undefined
+              ? {}
+              : { reasoning: item.reasoning }),
           ...(item.toolCalls === undefined || item.toolCalls.length === 0
             ? {}
             : {
@@ -65,11 +73,9 @@ const chatMessages = (request: OpenRouterRoundRequest): ReadonlyArray<unknown> =
                   function: { name: toolCall.name, arguments: toolCall.arguments },
                 })),
               }),
-          ...(item.opaque?.protocol === "chat-completions"
-            ? { reasoning_details: item.opaque.reasoningDetails }
-            : {}),
         });
         break;
+      }
     }
   }
   return messages;

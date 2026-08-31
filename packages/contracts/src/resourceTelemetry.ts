@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -436,7 +437,17 @@ export const ResourceProtectionState = Schema.Literals([
 ]);
 export type ResourceProtectionState = typeof ResourceProtectionState.Type;
 
-/** Ephemeral server authority for admission and provider throttling state. */
+export const RESOURCE_PROTECTION_MAX_AFFECTED_THREAD_IDS = 256;
+const ResourceProtectionAffectedThreadIds = Schema.Array(ThreadId).check(
+  Schema.isMaxLength(RESOURCE_PROTECTION_MAX_AFFECTED_THREAD_IDS),
+);
+
+/**
+ * Ephemeral server authority for admission and provider throttling state.
+ * Producers select the first bounded unique IDs in policy order and set the
+ * truncation flag when further affected threads exist. Decoding rejects an
+ * oversized array and never slices it silently.
+ */
 export const ResourceProtectionSnapshot = Schema.Struct({
   state: ResourceProtectionState,
   totalMemoryBytes: NonNegativeInt,
@@ -444,7 +455,10 @@ export const ResourceProtectionSnapshot = Schema.Struct({
   reservedMemoryBytes: NonNegativeInt,
   coreReserveBytes: NonNegativeInt,
   waitingStarts: NonNegativeInt,
-  affectedThreadIds: Schema.Array(ThreadId),
+  affectedThreadIds: ResourceProtectionAffectedThreadIds,
+  affectedThreadIdsTruncated: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
 });
 export type ResourceProtectionSnapshot = typeof ResourceProtectionSnapshot.Type;
 

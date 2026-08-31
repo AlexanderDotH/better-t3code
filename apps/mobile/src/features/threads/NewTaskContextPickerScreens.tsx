@@ -24,7 +24,7 @@ import { AppText as Text } from "../../components/AppText";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import { useFontFamily } from "../../lib/useFontFamily";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
@@ -35,6 +35,7 @@ import {
 } from "../layout/native-mail-search-toolbar";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 function SelectionRow(props: {
   readonly icon?: "arrow.triangle.branch" | "desktopcomputer";
@@ -45,9 +46,6 @@ function SelectionRow(props: {
   readonly subtitle?: string;
   readonly title: string;
 }) {
-  const iconColor = useThemeColor("--color-icon-muted");
-  const checkmarkColor = useThemeColor("--color-icon");
-
   return (
     <Pressable
       accessibilityLabel={[props.title, props.subtitle].filter(Boolean).join(", ")}
@@ -62,7 +60,12 @@ function SelectionRow(props: {
       style={{ opacity: props.disabled ? 0.45 : 1 }}
     >
       {props.icon ? (
-        <SymbolView name={props.icon} size={17} tintColor={iconColor} type="monochrome" />
+        <SymbolView
+          name={props.icon}
+          size={17}
+          tintColorClassName={"accent-icon-muted"}
+          type="monochrome"
+        />
       ) : null}
       <View className="min-w-0 flex-1 gap-0.5">
         <Text className="text-base font-t3-medium text-foreground" numberOfLines={1}>
@@ -78,7 +81,7 @@ function SelectionRow(props: {
         <SymbolView
           name="checkmark"
           size={16}
-          tintColor={checkmarkColor}
+          tintColorClassName={"accent-icon"}
           type="monochrome"
           weight="semibold"
         />
@@ -142,6 +145,7 @@ function PickerSurface(props: { readonly children: ReactNode }) {
 }
 
 export function NewTaskEnvironmentPickerRouteScreen() {
+  const translator = useMobileInterfaceTranslator();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -151,11 +155,14 @@ export function NewTaskEnvironmentPickerRouteScreen() {
       <NativeStackScreenOptions
         options={{
           headerShown: Platform.OS !== "android",
-          title: "Environment",
+          title: translator.message("mobile.navigation.environment"),
         }}
       />
       {Platform.OS === "android" ? (
-        <AndroidScreenHeader title="Environment" onBack={() => navigation.goBack()} />
+        <AndroidScreenHeader
+          title={translator.message("mobile.navigation.environment")}
+          onBack={() => navigation.goBack()}
+        />
       ) : null}
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
@@ -188,18 +195,20 @@ export function NewTaskEnvironmentPickerRouteScreen() {
 }
 
 export function NewTaskBranchPickerRouteScreen() {
+  const translator = useMobileInterfaceTranslator();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const placeholderColor = useThemeColor("--color-placeholder");
-  const foregroundColor = useThemeColor("--color-foreground");
+  const foregroundColor = useUniwindTheme()["--color-foreground"];
   const fontFamily = useFontFamily("regular");
   const switchRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const [switchingBranchName, setSwitchingBranchName] = useState<string | null>(null);
   const selectingBranchNameRef = useRef<string | null>(null);
   const allowSelectionNavigationRef = useRef(false);
   const mountedRef = useRef(true);
-  const screenTitle = flow.workspaceMode === "worktree" ? "Base branch" : "Branch";
+  const screenTitle = translator.message(
+    flow.workspaceMode === "worktree" ? "mobile.thread.baseBranch" : "mobile.thread.branch",
+  );
   const usesNativeMailSearchToolbar = Platform.OS === "ios" && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED;
   const selectedBranchName =
     flow.selectedBranchName ??
@@ -265,8 +274,10 @@ export function NewTaskBranchPickerRouteScreen() {
             if (mountedRef.current && navigation.isFocused() && !isAtomCommandInterrupted(result)) {
               const error = squashAtomCommandFailure(result);
               Alert.alert(
-                "Could not switch branch",
-                error instanceof Error ? error.message : "The branch could not be checked out.",
+                translator.message("mobile.thread.switchBranchFailed"),
+                error instanceof Error
+                  ? error.message
+                  : translator.message("mobile.thread.checkoutFailed"),
               );
             }
             return;
@@ -304,6 +315,7 @@ export function NewTaskBranchPickerRouteScreen() {
       flow.workspaceMode,
       navigation,
       switchRef,
+      translator,
     ],
   );
 
@@ -333,7 +345,7 @@ export function NewTaskBranchPickerRouteScreen() {
       <View className="mb-3 overflow-hidden rounded-2xl">
         <ToggleRow
           onValueChange={flow.setStartFromOrigin}
-          title="Start from origin"
+          title={translator.message("mobile.thread.startFromOrigin")}
           value={flow.startFromOrigin}
         />
       </View>
@@ -360,12 +372,12 @@ export function NewTaskBranchPickerRouteScreen() {
           {flow.branchesLoading ? <ActivityIndicator /> : null}
           <Text className="text-center text-sm text-foreground-muted">
             {flow.branchesLoading
-              ? "Loading branches…"
+              ? translator.message("mobile.thread.loadingBranches")
               : flow.branchesError
                 ? flow.branchesError
                 : flow.branchQuery
-                  ? "No matching branches"
-                  : "No branches available"}
+                  ? translator.message("mobile.thread.noMatchingBranches")
+                  : translator.message("mobile.thread.noBranches")}
           </Text>
           {!flow.branchesLoading && flow.branchesError ? (
             <Pressable
@@ -373,7 +385,9 @@ export function NewTaskBranchPickerRouteScreen() {
               className="rounded-full bg-card px-4 py-2 active:opacity-70"
               onPress={flow.loadBranches}
             >
-              <Text className="text-sm font-t3-medium text-foreground">Try again</Text>
+              <Text className="text-sm font-t3-medium text-foreground">
+                {translator.message("common.retry")}
+              </Text>
             </Pressable>
           ) : null}
         </View>
@@ -418,8 +432,8 @@ export function NewTaskBranchPickerRouteScreen() {
             autoCorrect={false}
             className="h-11 rounded-xl bg-card px-4 text-base text-foreground"
             onChangeText={flow.setBranchQuery}
-            placeholder="Find a branch"
-            placeholderTextColor={placeholderColor}
+            placeholder={translator.message("mobile.thread.findBranch")}
+            placeholderTextColorClassName={"accent-placeholder"}
             style={{ color: foregroundColor, fontFamily }}
             value={flow.branchQuery}
           />
@@ -439,7 +453,7 @@ export function NewTaskBranchPickerRouteScreen() {
             ? () => [
                 createNativeMailSearchToolbarItem({
                   onSearchTextChange: flow.setBranchQuery,
-                  placeholder: "Find a branch",
+                  placeholder: translator.message("mobile.thread.findBranch"),
                   searchTextChangeId: "new-task-branch-search-text",
                   showsSearchDismissButton: true,
                 }),
@@ -452,7 +466,7 @@ export function NewTaskBranchPickerRouteScreen() {
                 autoCapitalize: "none",
                 hideNavigationBar: false,
                 obscureBackground: false,
-                placeholder: "Find a branch",
+                placeholder: translator.message("mobile.thread.findBranch"),
                 onChangeText: (event) => {
                   flow.setBranchQuery(event.nativeEvent.text);
                 },

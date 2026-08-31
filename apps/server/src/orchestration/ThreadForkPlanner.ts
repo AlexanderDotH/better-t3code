@@ -48,6 +48,8 @@ interface MutableHistoryState {
       | "stopped"
       | "error";
     readonly activeTurnId: TurnId | null;
+    readonly providerInstanceId?: ThreadForkHistoryTurn["providerInstanceId"];
+    readonly providerForkCursor?: ThreadForkHistoryTurn["providerForkCursor"];
   } | null;
   frozenThroughOrdinal: number;
   nextOrdinal: number;
@@ -447,7 +449,16 @@ function applyTurnEvent(
     }
     case "thread.session-set": {
       const session = event.payload.session;
-      state.session = { status: session.status, activeTurnId: session.activeTurnId };
+      state.session = {
+        status: session.status,
+        activeTurnId: session.activeTurnId,
+        ...(session.providerInstanceId !== undefined
+          ? { providerInstanceId: session.providerInstanceId }
+          : {}),
+        ...(session.providerForkCursor !== undefined
+          ? { providerForkCursor: session.providerForkCursor }
+          : {}),
+      };
       if (session.status === "running" && session.activeTurnId !== null) {
         const pending = state.turns.find((turn) => turn.turnId === null);
         const existing = state.turns.find((turn) => turn.turnId === session.activeTurnId);
@@ -476,6 +487,16 @@ function applyTurnEvent(
           checkpointRef: existing?.checkpointRef ?? null,
           checkpointStatus: existing?.checkpointStatus ?? null,
           checkpointFiles: existing?.checkpointFiles ?? [],
+          ...(session.providerInstanceId !== undefined
+            ? { providerInstanceId: session.providerInstanceId }
+            : existing?.providerInstanceId !== undefined
+              ? { providerInstanceId: existing.providerInstanceId }
+              : {}),
+          ...(session.providerForkCursor !== undefined
+            ? { providerForkCursor: session.providerForkCursor }
+            : existing?.providerForkCursor !== undefined
+              ? { providerForkCursor: existing.providerForkCursor }
+              : {}),
           ...(existing?.sourceProposedPlan !== undefined
             ? { sourceProposedPlan: existing.sourceProposedPlan }
             : pending?.sourceProposedPlan !== undefined
@@ -500,7 +521,17 @@ function applyTurnEvent(
       if (settledState !== null) {
         state.turns = state.turns.map((turn) =>
           turn.historyOrigin.ordinal > state.frozenThroughOrdinal && turn.state === "running"
-            ? { ...turn, state: settledState, completedAt: session.updatedAt }
+            ? {
+                ...turn,
+                state: settledState,
+                completedAt: session.updatedAt,
+                ...(session.providerInstanceId !== undefined
+                  ? { providerInstanceId: session.providerInstanceId }
+                  : {}),
+                ...(session.providerForkCursor !== undefined
+                  ? { providerForkCursor: session.providerForkCursor }
+                  : {}),
+              }
             : turn,
         );
       }
@@ -548,6 +579,12 @@ function applyTurnEvent(
         checkpointRef: event.payload.checkpointRef,
         checkpointStatus: event.payload.status,
         checkpointFiles: event.payload.files,
+        ...(existing?.providerInstanceId !== undefined
+          ? { providerInstanceId: existing.providerInstanceId }
+          : {}),
+        ...(existing?.providerForkCursor !== undefined
+          ? { providerForkCursor: existing.providerForkCursor }
+          : {}),
         ...(existing?.sourceProposedPlan !== undefined
           ? { sourceProposedPlan: existing.sourceProposedPlan }
           : {}),
@@ -615,6 +652,12 @@ function applyAssistantMessageToTurn(
     checkpointRef: existing?.checkpointRef ?? null,
     checkpointStatus: existing?.checkpointStatus ?? null,
     checkpointFiles: existing?.checkpointFiles ?? [],
+    ...(existing?.providerInstanceId !== undefined
+      ? { providerInstanceId: existing.providerInstanceId }
+      : {}),
+    ...(existing?.providerForkCursor !== undefined
+      ? { providerForkCursor: existing.providerForkCursor }
+      : {}),
     ...(existing?.sourceProposedPlan !== undefined
       ? { sourceProposedPlan: existing.sourceProposedPlan }
       : {}),
@@ -929,6 +972,17 @@ export const planThreadFork = Effect.fn("planThreadFork")(function* (input: {
   }
 
   const sourceHistory = yield* reconstructPrefix(input.command, input.sourceEvents);
+  let providerForkCursor: ThreadForkHistoryTurn["providerForkCursor"];
+  for (let index = sourceHistory.turns.length - 1; index >= 0; index -= 1) {
+    const turn = sourceHistory.turns[index];
+    if (
+      turn?.providerInstanceId === input.command.modelSelection.instanceId &&
+      turn.providerForkCursor !== undefined
+    ) {
+      providerForkCursor = turn.providerForkCursor;
+      break;
+    }
+  }
   const history = yield* remapHistory({
     sourceThreadId: input.command.sourceThreadId,
     destinationThreadId: input.command.threadId,
@@ -983,6 +1037,7 @@ export const planThreadFork = Effect.fn("planThreadFork")(function* (input: {
           remainingAttachmentCount: PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
           completedAt: null,
         },
+        ...(providerForkCursor !== undefined ? { providerForkCursor } : {}),
       },
       history,
     },

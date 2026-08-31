@@ -5,6 +5,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   WorkspaceContextUnavailableError,
+  WorkspaceEditError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
@@ -55,6 +56,27 @@ it.effect("rejects workspace access when a credential grants preview only", () =
     );
 
     expect(error).toBeInstanceOf(WorkspaceContextUnavailableError);
+    expect(error.reason).toBe("credential_not_authorized");
+  });
+});
+
+it.effect("rejects workspace editing when a credential grants read access only", () => {
+  const invocation: McpInvocationContext.McpInvocationScope = {
+    environmentId: EnvironmentId.make("environment-1"),
+    threadId: ThreadId.make("thread-1"),
+    providerSessionId: "provider-session-1",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    capabilities: new Set(["workspace"]),
+    issuedAt: 1,
+  };
+
+  return Effect.gen(function* () {
+    const error = yield* McpInvocationContext.requireWorkspaceWriteMcpCapability().pipe(
+      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+      Effect.flip,
+    );
+
+    expect(error).toBeInstanceOf(WorkspaceEditError);
     expect(error.reason).toBe("credential_not_authorized");
   });
 });

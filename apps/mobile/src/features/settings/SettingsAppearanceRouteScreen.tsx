@@ -10,10 +10,12 @@ import { TextAppearanceSection } from "./appearance/sections/TextAppearanceSecti
 import { ThreadListAppearanceSection } from "./appearance/sections/ThreadListAppearanceSection";
 import { ThemeAppearanceSection } from "./appearance/sections/ThemeAppearanceSection";
 import { InterfaceLanguageSection } from "./appearance/sections/InterfaceLanguageSection";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function SettingsAppearanceRouteScreen() {
+  const translator = useMobileInterfaceTranslator();
   return (
-    <AndroidScreenScaffold title="Appearance">
+    <AndroidScreenScaffold title={translator.message("mobile.appearance.title")}>
       <ScreenScaffoldScrollView>
         <ThemeAppearanceSection />
         <InterfaceLanguageSection />

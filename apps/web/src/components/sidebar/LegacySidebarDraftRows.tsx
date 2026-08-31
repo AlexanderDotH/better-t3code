@@ -10,66 +10,26 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { useShallow } from "zustand/react/shallow";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 import {
-  composerDraftHasUserContent,
   DraftId,
   useComposerDraftStore,
   type ComposerThreadDraftState,
   type DraftSessionState,
 } from "../../composerDraftStore";
+import {
+  resolveSidebarDraftPreview,
+  resolveSidebarDraftRows,
+  sidebarDraftHasVisibleContent,
+  type SidebarDraftRowData,
+} from "./sidebarDraftViewModel";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarMenuSubButton, SidebarMenuSubItem } from "../ui/sidebar";
 
-export interface LegacySidebarDraftRowData {
-  draftId: DraftId;
-  session: DraftSessionState;
-  composer: ComposerThreadDraftState;
-}
-
-export function resolveLegacySidebarDraftPreview(composer: ComposerThreadDraftState): string {
-  const promptPreview = composer.prompt.trim().split("\n", 1)[0] ?? "";
-  if (promptPreview.length > 0) {
-    return promptPreview;
-  }
-
-  // `images` mirrors persisted attachments after rehydration, so these two
-  // collections describe the same image payload and must not be added.
-  const attachmentCount =
-    Math.max(composer.images.length, composer.persistedAttachments.length) +
-    composer.terminalContexts.length +
-    composer.elementContexts.length +
-    composer.previewAnnotations.length +
-    composer.reviewComments.length;
-  return `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`;
-}
-
-export function resolveLegacySidebarDraftRows(input: {
-  sessionsByDraftId: Readonly<Record<string, DraftSessionState>>;
-  composersByDraftId: Readonly<Record<string, ComposerThreadDraftState>>;
-  activeDraftId: string | null;
-  frozenActiveRow: LegacySidebarDraftRowData | null;
-}): LegacySidebarDraftRowData[] {
-  const rows: LegacySidebarDraftRowData[] = [];
-  for (const [draftKey, session] of Object.entries(input.sessionsByDraftId)) {
-    if (session.promotedTo != null) {
-      continue;
-    }
-    if (draftKey === input.activeDraftId) {
-      if (input.frozenActiveRow?.draftId === draftKey) {
-        rows.push(input.frozenActiveRow);
-      }
-      continue;
-    }
-    const composer = input.composersByDraftId[draftKey];
-    if (!composer || !composerDraftHasUserContent(composer)) {
-      continue;
-    }
-    rows.push({ draftId: DraftId.make(draftKey), session, composer });
-  }
-  rows.sort((left, right) => right.session.createdAt.localeCompare(left.session.createdAt));
-  return rows;
-}
+export type LegacySidebarDraftRowData = SidebarDraftRowData;
+export const resolveLegacySidebarDraftPreview = resolveSidebarDraftPreview;
+export const resolveLegacySidebarDraftRows = resolveSidebarDraftRows;
 
 function projectRefKeySet(projectRefs: readonly ScopedProjectRef[]): ReadonlySet<string> {
   return new Set(projectRefs.map(scopedProjectKey));
@@ -89,9 +49,8 @@ export function useProjectHasDraftContent(projectRefs: readonly ScopedProjectRef
   return useComposerDraftStore((store) => {
     for (const [draftKey, session] of Object.entries(store.draftThreadsByThreadKey)) {
       if (
-        session.promotedTo == null &&
         sessionBelongsToProject(session, projectRefKeys) &&
-        composerDraftHasUserContent(store.draftsByThreadKey[draftKey])
+        sidebarDraftHasVisibleContent(session, store.draftsByThreadKey[draftKey])
       ) {
         return true;
       }
@@ -106,6 +65,7 @@ export const LegacySidebarDraftRow = memo(function LegacySidebarDraftRow(props: 
   onNavigate: (draftId: DraftId) => void;
   onDiscard: (draftId: DraftId) => void;
 }) {
+  const translator = useInterfaceTranslator();
   const { draftId } = props.row;
   const preview = resolveLegacySidebarDraftPreview(props.row.composer);
   const handleActivate = useCallback(() => props.onNavigate(draftId), [draftId, props.onNavigate]);
@@ -165,7 +125,7 @@ export const LegacySidebarDraftRow = memo(function LegacySidebarDraftRow(props: 
             render={
               <button
                 type="button"
-                aria-label="Discard draft"
+                aria-label={translator.message("sidebar.thread.discardDraft")}
                 data-thread-selection-safe
                 className="pointer-events-none absolute top-1/2 right-0.5 inline-flex h-6 min-w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md px-1 text-icon-muted opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring max-sm:pointer-events-auto max-sm:opacity-100 group-hover/classic-draft:pointer-events-auto group-hover/classic-draft:opacity-100 group-focus-within/classic-draft:pointer-events-auto group-focus-within/classic-draft:opacity-100"
                 onPointerDown={stopPointerDownPropagation}
@@ -175,7 +135,9 @@ export const LegacySidebarDraftRow = memo(function LegacySidebarDraftRow(props: 
               </button>
             }
           />
-          <TooltipPopup side="top">Discard draft</TooltipPopup>
+          <TooltipPopup side="top">
+            {translator.message("sidebar.thread.discardDraft")}
+          </TooltipPopup>
         </Tooltip>
       </SidebarMenuSubButton>
     </SidebarMenuSubItem>
@@ -225,9 +187,8 @@ export const LegacySidebarDraftRows = memo(function LegacySidebarDraftRows(props
     const row =
       props.activeDraftId !== null &&
       session !== undefined &&
-      session.promotedTo == null &&
       composer !== undefined &&
-      composerDraftHasUserContent(composer)
+      sidebarDraftHasVisibleContent(session, composer)
         ? { draftId: DraftId.make(props.activeDraftId), session, composer }
         : null;
     setFrozenActive({ draftId: props.activeDraftId, row });

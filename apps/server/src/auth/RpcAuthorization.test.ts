@@ -38,6 +38,25 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.cloudInstallRelayClient)).toBe(AuthRelayWriteScope);
   });
 
+  it("separates Knowledge Graph observation from lifecycle mutations", () => {
+    for (const method of [
+      WS_METHODS.knowledgeGraphSubscribe,
+      WS_METHODS.knowledgeGraphQuery,
+      WS_METHODS.knowledgeGraphNodeContent,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+
+    for (const method of [
+      WS_METHODS.knowledgeGraphRebuild,
+      WS_METHODS.knowledgeGraphCancel,
+      WS_METHODS.knowledgeGraphPause,
+      WS_METHODS.knowledgeGraphClear,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+  });
+
   it("classifies local feature reads without granting mutation access", () => {
     const readMethods = [
       ORCHESTRATION_WS_METHODS.exportThreadTranscript,
@@ -111,6 +130,12 @@ describe("RPC authorization scopes", () => {
     for (const method of operateMethods) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
     }
+  });
+
+  it("requires permission to operate on a thread before uploading feedback", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.providerUploadFeedback)).toBe(
+      AuthOrchestrationOperateScope,
+    );
   });
 
   it("reads the reviewer menu under the same scope as the pull request it belongs to", () => {

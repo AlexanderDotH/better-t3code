@@ -11,6 +11,9 @@
  * @module ServerSettings
  */
 import {
+  BetterT3SettingsV1,
+  bootstrapBetterT3SettingsV1,
+  DEFAULT_EXISTING_BETTER_T3_SETTINGS_V1,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   DEFAULT_MODEL_BY_PROVIDER,
@@ -46,6 +49,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import * as ServerConfig from "./config.ts";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
@@ -363,6 +367,49 @@ export const layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
 const LenientJsonUnknown = fromLenientJson(Schema.Unknown);
 const decodeLenientJsonUnknownExit = Schema.decodeUnknownExit(LenientJsonUnknown);
 const decodeServerSettingsExit = Schema.decodeUnknownExit(ServerSettings);
+const isBetterT3SettingsV1 = Schema.is(BetterT3SettingsV1);
+
+function readExplicitLegacyDeepThinkingEnabled(
+  settings: Readonly<Record<string, unknown>>,
+): boolean | undefined {
+  const agentEnhancement = settings.agentEnhancement;
+  if (
+    agentEnhancement === null ||
+    typeof agentEnhancement !== "object" ||
+    Array.isArray(agentEnhancement)
+  ) {
+    return undefined;
+  }
+  const deepThinking = (agentEnhancement as Record<string, unknown>).deepThinking;
+  if (deepThinking === null || typeof deepThinking !== "object" || Array.isArray(deepThinking)) {
+    return undefined;
+  }
+  const enabled = (deepThinking as Record<string, unknown>).enabled;
+  return typeof enabled === "boolean" ? enabled : undefined;
+}
+
+function normalizeBetterT3Compatibility(settings: Readonly<Record<string, unknown>>): unknown {
+  const persisted = settings.betterT3Environment;
+  if (Object.hasOwn(settings, "betterT3Environment") && !isBetterT3SettingsV1(persisted)) {
+    return persisted;
+  }
+  const legacyDeepThinkingEnabled = readExplicitLegacyDeepThinkingEnabled(settings);
+  return bootstrapBetterT3SettingsV1({
+    version: 1,
+    initialization: "existing-install-migration",
+    persistedSettings: isBetterT3SettingsV1(persisted) ? persisted : null,
+    compatibilityFlags:
+      legacyDeepThinkingEnabled === undefined
+        ? []
+        : [{ featureId: "agent.deepThinking", enabled: legacyDeepThinkingEnabled }],
+  });
+}
+
+function needsDeepThinkingCompatibilityWrite(settings: Readonly<Record<string, unknown>>): boolean {
+  if (readExplicitLegacyDeepThinkingEnabled(settings) === undefined) return false;
+  const persisted = settings.betterT3Environment;
+  return isBetterT3SettingsV1(persisted) && !Object.hasOwn(persisted.flags, "agent.deepThinking");
+}
 
 function normalizePersistedSettingsCompatibility(input: unknown): unknown {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
@@ -371,20 +418,107 @@ function normalizePersistedSettingsCompatibility(input: unknown): unknown {
 
   const settings = input as Record<string, unknown>;
   const { enableAssistantStreaming, ...canonicalSettings } = settings;
+  const nextSettings: Record<string, unknown> = {
+    ...canonicalSettings,
+    betterT3Environment: normalizeBetterT3Compatibility(settings),
+  };
+  const legacyLocale = settings.interfaceLanguageSyncRecord;
   if (
-    !("enableLegacyTokenStreaming" in settings) &&
+    !Object.hasOwn(settings, "interfaceLocaleSyncRecordV1") &&
+    legacyLocale !== null &&
+    typeof legacyLocale === "object" &&
+    !Array.isArray(legacyLocale)
+  ) {
+    nextSettings.interfaceLocaleSyncRecordV1 = { version: 1, ...legacyLocale };
+  }
+  if (
+    !Object.hasOwn(settings, "enableLegacyTokenStreaming") &&
     typeof enableAssistantStreaming === "boolean"
   ) {
     return {
-      ...canonicalSettings,
+      ...nextSettings,
       enableLegacyTokenStreaming: enableAssistantStreaming,
     };
   }
-  return canonicalSettings;
+  return nextSettings;
+}
+
+function persistedSettingsNeedsCompatibilityWrite(input: unknown): boolean {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) return false;
+  const settings = input as Record<string, unknown>;
+  return (
+    !Object.hasOwn(settings, "betterT3Environment") ||
+    needsDeepThinkingCompatibilityWrite(settings) ||
+    (Object.hasOwn(settings, "interfaceLanguageSyncRecord") &&
+      !Object.hasOwn(settings, "interfaceLocaleSyncRecordV1")) ||
+    (Object.hasOwn(settings, "enableAssistantStreaming") &&
+      !Object.hasOwn(settings, "enableLegacyTokenStreaming"))
+  );
 }
 
 const decodePersistedServerSettingsExit = (input: unknown) =>
   decodeServerSettingsExit(normalizePersistedSettingsCompatibility(input));
+
+const PersistedOptionalProviderSettings = Schema.Struct({
+  providers: Schema.optionalKey(
+    Schema.Struct({
+      cursor: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
+      grok: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
+      opencode: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
+    }),
+  ),
+});
+const decodePersistedOptionalProviderSettingsJsonExit = Schema.decodeUnknownExit(
+  fromLenientJson(PersistedOptionalProviderSettings),
+);
+
+function restoreUsedProviders(
+  settings: ServerSettings,
+  persisted: typeof PersistedOptionalProviderSettings.Type,
+  providerHistory: ReadonlyArray<{
+    readonly providerName: string;
+    readonly providerInstanceId: string | null;
+  }>,
+): ServerSettings {
+  const usedProviders = new Set(providerHistory.map(({ providerName }) => providerName));
+  const usedProviderInstances = new Set(
+    providerHistory.map(
+      ({ providerName, providerInstanceId }) => providerInstanceId ?? providerName,
+    ),
+  );
+  const providerInstances = Object.fromEntries(
+    Object.entries(settings.providerInstances).map(([instanceId, instance]) => [
+      instanceId,
+      instance.enabled === undefined &&
+      (instance.driver === "cursor" ||
+        instance.driver === "grok" ||
+        instance.driver === "opencode") &&
+      usedProviderInstances.has(instanceId)
+        ? { ...instance, enabled: true }
+        : instance,
+    ]),
+  );
+
+  return {
+    ...settings,
+    providers: {
+      ...settings.providers,
+      cursor: {
+        ...settings.providers.cursor,
+        enabled: persisted.providers?.cursor?.enabled ?? usedProviders.has("cursor"),
+      },
+      grok: {
+        ...settings.providers.grok,
+        enabled: persisted.providers?.grok?.enabled ?? usedProviders.has("grok"),
+      },
+      opencode: {
+        ...settings.providers.opencode,
+        enabled: persisted.providers?.opencode?.enabled ?? usedProviders.has("opencode"),
+      },
+    },
+    providerInstances,
+  };
+}
 
 function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings {
   return isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection)
@@ -413,14 +547,27 @@ function fallbackTextGenerationProvider(settings: ServerSettings): ServerSetting
 
 // Values under these keys are compared as a whole — never stripped field-by-field.
 const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
+  "betterT3Environment",
   "backgroundActivity",
   "automaticGitFetchInterval",
   "providerHealthRefreshInterval",
   "sourceControlWriterModelSelection",
   "textGenerationModelSelection",
+  "autoReasoningModelSelection",
   "voiceTranslationModelSelection",
   "parallelPlanReviewModelSelection",
 ]);
+
+// Preserve both enabled states because provider history cannot recover a new opt-in.
+const PERSISTED_SERVER_SETTINGS_DEFAULTS = {
+  ...DEFAULT_SERVER_SETTINGS,
+  providers: {
+    ...DEFAULT_SERVER_SETTINGS.providers,
+    cursor: { ...DEFAULT_SERVER_SETTINGS.providers.cursor, enabled: undefined },
+    grok: { ...DEFAULT_SERVER_SETTINGS.providers.grok, enabled: undefined },
+    opencode: { ...DEFAULT_SERVER_SETTINGS.providers.opencode, enabled: undefined },
+  },
+};
 
 function stripDefaultServerSettings(current: unknown, defaults: unknown): unknown | undefined {
   if (Array.isArray(current) || Array.isArray(defaults)) {
@@ -461,6 +608,7 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
+  const sql = yield* SqlClient.SqlClient;
   const writeSemaphore = yield* Semaphore.make(1);
   const cacheKey = "settings" as const;
   const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
@@ -545,37 +693,87 @@ const make = Effect.gen(function* () {
   });
 
   const loadSettingsFromDisk = Effect.gen(function* () {
-    if (!(yield* readConfigExists)) {
-      return DEFAULT_SERVER_SETTINGS;
+    let settings = DEFAULT_SERVER_SETTINGS;
+    let persisted: typeof PersistedOptionalProviderSettings.Type = {};
+    let openRouterMigration:
+      | ReturnType<typeof prepareLegacyOpenRouterSettingsMigration>
+      | undefined;
+    let compatibilityMigrationChanged = false;
+
+    const settingsFileExists = yield* readConfigExists;
+    if (settingsFileExists) {
+      settings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        betterT3Environment: DEFAULT_EXISTING_BETTER_T3_SETTINGS_V1,
+      };
+      const raw = yield* readRawConfig;
+      const parsed = decodeLenientJsonUnknownExit(raw);
+      const persistedSettings = decodePersistedOptionalProviderSettingsJsonExit(raw);
+      if (persistedSettings._tag === "Success") {
+        persisted = persistedSettings.value;
+      }
+      if (parsed._tag === "Failure" || persistedSettings._tag === "Failure") {
+        const failure = parsed._tag === "Failure" ? parsed : persistedSettings;
+        if (failure._tag === "Failure") {
+          yield* Effect.logWarning("failed to parse settings.json, using defaults", {
+            path: settingsPath,
+            issues: Cause.pretty(failure.cause),
+            cause: failure.cause,
+          });
+        }
+      } else {
+        const compatibilityWriteNeeded = persistedSettingsNeedsCompatibilityWrite(parsed.value);
+        openRouterMigration = prepareLegacyOpenRouterSettingsMigration(parsed.value);
+        const decoded = decodePersistedServerSettingsExit(openRouterMigration.settings);
+        if (decoded._tag === "Failure") {
+          yield* Effect.logWarning("failed to decode settings.json, using defaults", {
+            path: settingsPath,
+            issues: Cause.pretty(decoded.cause),
+            cause: decoded.cause,
+          });
+        } else {
+          settings = decoded.value;
+          compatibilityMigrationChanged = compatibilityWriteNeeded;
+        }
+      }
     }
 
-    const raw = yield* readRawConfig;
-    const parsed = decodeLenientJsonUnknownExit(raw);
-    if (parsed._tag === "Failure") {
-      yield* Effect.logWarning("failed to parse settings.json, using defaults", {
-        path: settingsPath,
-        issues: Cause.pretty(parsed.cause),
-        cause: parsed.cause,
-      });
-      return DEFAULT_SERVER_SETTINGS;
-    }
+    const providerHistory = yield* sql<{
+      readonly providerName: string;
+      readonly providerInstanceId: string | null;
+    }>`
+      SELECT DISTINCT
+        provider_name AS "providerName",
+        provider_instance_id AS "providerInstanceId"
+      FROM projection_thread_sessions
+      WHERE provider_name IN ('cursor', 'grok', 'opencode')
+      UNION
+      SELECT DISTINCT
+        provider_name AS "providerName",
+        provider_instance_id AS "providerInstanceId"
+      FROM provider_session_runtime
+      WHERE provider_name IN ('cursor', 'grok', 'opencode')
+    `.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ServerSettingsError({
+            settingsPath,
+            operation: "read-provider-history",
+            cause,
+          }),
+      ),
+    );
 
-    const migration = prepareLegacyOpenRouterSettingsMigration(parsed.value);
-    const decoded = decodePersistedServerSettingsExit(migration.settings);
-    if (decoded._tag === "Failure") {
-      yield* Effect.logWarning("failed to parse settings.json, using defaults", {
-        path: settingsPath,
-        issues: Cause.pretty(decoded.cause),
-        cause: decoded.cause,
-      });
-      return DEFAULT_SERVER_SETTINGS;
+    const restoredSettings = foldProviderInstanceEnabledFlags(
+      restoreUsedProviders(settings, persisted, providerHistory),
+    );
+    if (openRouterMigration?.changed) {
+      yield* persistLegacyOpenRouterCredentials(openRouterMigration.credentials);
     }
-    const settings = foldProviderInstanceEnabledFlags(decoded.value);
-    if (migration.changed) {
-      yield* persistLegacyOpenRouterCredentials(migration.credentials);
-      yield* writeSettingsAtomically(settings);
+    if (openRouterMigration?.changed || compatibilityMigrationChanged) {
+      yield* writeSettingsAtomically(restoredSettings);
     }
-    return settings;
+    return restoredSettings;
   });
 
   const settingsCache = yield* Cache.make<typeof cacheKey, ServerSettings, ServerSettingsError>({
@@ -1041,7 +1239,7 @@ const make = Effect.gen(function* () {
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
       const sparseSettingsJson = yield* encodeServerSettingsJson(
-        stripDefaultServerSettings(settings, DEFAULT_SERVER_SETTINGS) ?? {},
+        stripDefaultServerSettings(settings, PERSISTED_SERVER_SETTINGS_DEFAULTS) ?? {},
       );
 
       return yield* writeFileStringAtomically({

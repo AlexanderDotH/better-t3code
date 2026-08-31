@@ -82,16 +82,44 @@ export const GeneralSubagentSpawnResult = Schema.Struct({
 });
 export type GeneralSubagentSpawnResult = typeof GeneralSubagentSpawnResult.Type;
 
+export const GeneralSubagentIdentity = GeneralSubagentSpawnResult;
+export type GeneralSubagentIdentity = typeof GeneralSubagentIdentity.Type;
+
+const GeneralSubagentChangeOrFinding = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  details: TrimmedNonEmptyString,
+});
+
+const GeneralSubagentVerification = Schema.Struct({
+  command: TrimmedNonEmptyString,
+  result: TrimmedNonEmptyString,
+});
+
+export const GeneralSubagentDetailedResult = Schema.Struct({
+  outcome: TrimmedNonEmptyString,
+  changesOrFindings: Schema.Array(GeneralSubagentChangeOrFinding),
+  verification: Schema.Array(GeneralSubagentVerification),
+  risksOrBlockers: Schema.Array(TrimmedNonEmptyString),
+  transcriptRef: TrimmedNonEmptyString,
+});
+export type GeneralSubagentDetailedResult = typeof GeneralSubagentDetailedResult.Type;
+
 export const GeneralSubagentSnapshot = Schema.Struct({
+  ...GeneralSubagentSpawnResult.fields,
+  result: Schema.NullOr(GeneralSubagentDetailedResult),
+});
+export type GeneralSubagentSnapshot = typeof GeneralSubagentSnapshot.Type;
+
+const GeneralSubagentActionSnapshot = Schema.Struct({
   ...GeneralSubagentSpawnResult.fields,
   task: BoundedTask,
   output: Schema.NullOr(Schema.String),
   detail: Schema.NullOr(Schema.String),
 });
-export type GeneralSubagentSnapshot = typeof GeneralSubagentSnapshot.Type;
+export type GeneralSubagentActionSnapshot = typeof GeneralSubagentActionSnapshot.Type;
 
 export const GeneralSubagentListResult = Schema.Struct({
-  agents: Schema.Array(GeneralSubagentSnapshot),
+  agents: Schema.Array(GeneralSubagentIdentity),
 });
 export type GeneralSubagentListResult = typeof GeneralSubagentListResult.Type;
 
@@ -103,13 +131,13 @@ export const GeneralSubagentWaitResult = Schema.Struct({
 export type GeneralSubagentWaitResult = typeof GeneralSubagentWaitResult.Type;
 
 export const GeneralSubagentCancelResult = Schema.Struct({
-  agent: GeneralSubagentSnapshot,
+  agent: GeneralSubagentActionSnapshot,
   cancelled: Schema.Boolean,
 });
 export type GeneralSubagentCancelResult = typeof GeneralSubagentCancelResult.Type;
 
 export const GeneralSubagentSendMessageResult = Schema.Struct({
-  agent: GeneralSubagentSnapshot,
+  agent: GeneralSubagentActionSnapshot,
   queued: Schema.Boolean,
 });
 export type GeneralSubagentSendMessageResult = typeof GeneralSubagentSendMessageResult.Type;
@@ -118,7 +146,7 @@ export const GeneralSubagentFollowUpResult = GeneralSubagentSendMessageResult;
 export type GeneralSubagentFollowUpResult = typeof GeneralSubagentFollowUpResult.Type;
 
 export const GeneralSubagentInterruptResult = Schema.Struct({
-  agent: GeneralSubagentSnapshot,
+  agent: GeneralSubagentActionSnapshot,
   interrupted: Schema.Boolean,
 });
 export type GeneralSubagentInterruptResult = typeof GeneralSubagentInterruptResult.Type;

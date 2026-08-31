@@ -11,6 +11,7 @@ import {
 
 import { AppText as Text } from "../../components/AppText";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   getNativeTerminalHardwareKeyRevision,
@@ -58,13 +59,14 @@ function estimateGridSize(input: {
 }
 
 const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: TerminalSurfaceProps) {
+  const translator = useMobileInterfaceTranslator();
   const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
   const inputRef = useRef<TextInput>(null);
   const { themeAppearance, themeId } = useAppearancePreferences();
   const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
   const statusLabel = props.isRunning
-    ? "Native terminal unavailable. Using text fallback."
-    : "Open terminal to start a shell.";
+    ? translator.message("mobile.terminal.fallbackRunning")
+    : translator.message("mobile.terminal.fallbackStopped");
 
   const handleLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
@@ -133,7 +135,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
           autoCorrect={false}
           blurOnSubmit={false}
           editable={props.isRunning}
-          placeholder="type and press return"
+          placeholder={translator.message("mobile.terminal.inputPlaceholder")}
           placeholderTextColor={theme.mutedForeground}
           returnKeyType="send"
           className="text-sm"

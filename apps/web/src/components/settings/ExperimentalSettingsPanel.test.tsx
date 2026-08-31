@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { translateInterfaceMessage } from "@t3tools/shared/interfaceLanguage";
 
 import { ExperimentalSettingsPanelView } from "./ExperimentalSettingsPanel";
 import { SETTINGS_NAV_ITEMS } from "./SettingsSidebarNav";
@@ -29,6 +30,32 @@ describe("Experimental settings navigation", () => {
 });
 
 describe("ExperimentalSettingsPanelView", () => {
+  it("renders the experimental workflow copy from the active locale", () => {
+    const markup = renderToStaticMarkup(
+      <ExperimentalSettingsPanelView
+        translate={(key, values) => translateInterfaceMessage("fr", key, values)}
+        fetchEnabled={false}
+        fetchModelAutomatic
+        fetchModelControl={null}
+        fetchModelDirty={false}
+        fetchModelWarning={null}
+        parallelPlanImplementationEnabled={false}
+        planReviewModelControl={null}
+        planReviewModelDirty={false}
+        onParallelPlanImplementationChange={() => {}}
+        onFetchChange={() => {}}
+        onResetFetchModel={() => {}}
+        onResetFetch={() => {}}
+        onResetParallelPlanImplementation={() => {}}
+        onResetPlanReviewModel={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("Les fonctionnalités expérimentales");
+    expect(markup).toContain("Implémentation parallèle du plan");
+    expect(markup).toContain("Activer l’exploration de dépôt avec Fetch");
+  });
+
   it("warns that experiments may change and defaults parallel plan implementation off", () => {
     const markup = renderToStaticMarkup(
       <ExperimentalSettingsPanelView
@@ -90,10 +117,10 @@ describe("ExperimentalSettingsPanelView", () => {
     );
 
     expect(markup).toContain('aria-checked="true"');
-    expect(markup).toContain("Reset parallel plan implementation to default");
+    expect(markup).toContain("Reset Parallel plan implementation to default");
     expect(markup).toContain("Reset Fetch to default");
     expect(markup).toContain("Reset Fetch model to default");
-    expect(markup).toContain("Reset agent count review model to default");
+    expect(markup).toContain("Reset Agent count review model to default");
     expect(markup).toContain("The selected Fetch provider is unavailable.");
     expect(markup).not.toContain('<fieldset disabled=""');
   });

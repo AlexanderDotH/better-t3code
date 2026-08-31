@@ -10,9 +10,13 @@ import {
   UploadIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactElement } from "react";
+import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { readThemeHalvesRaw } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
 import {
   getThemeDefinition,
+  singleAppearanceOf,
   getThemeModes,
   removeCustomThemes,
   serializeThemeFile,
@@ -125,6 +129,7 @@ function ThemeLibraryCard({
     onSelectAndUse: (themeIndex: number, mode: ThemeAppearance) => void;
   };
 }) {
+  const translate = useInterfaceTranslator().message;
   // A one-appearance theme can only take its own side of the mix, so the card
   // tooltip promises exactly what clicking it does.
   const cardModes = theme.previews.map((preview) => preview.mode);
@@ -160,7 +165,7 @@ function ThemeLibraryCard({
             <div className="relative">
               {variantNavigation ? (
                 <div
-                  aria-label="Light and dark theme variants"
+                  aria-label={translate("settings.theme.settings.variantsAria")}
                   className="relative h-20"
                   role="group"
                   onBlurCapture={(event) => {
@@ -329,7 +334,7 @@ function ThemeLibraryCard({
                           </Button>
                         }
                       />
-                      <TooltipPopup>Duplicate theme</TooltipPopup>
+                      <TooltipPopup>{translate("settings.theme.settings.duplicate")}</TooltipPopup>
                     </Tooltip>
                   ) : null}
                   {onEdit ? (
@@ -349,7 +354,7 @@ function ThemeLibraryCard({
                           </Button>
                         }
                       />
-                      <TooltipPopup>Edit theme</TooltipPopup>
+                      <TooltipPopup>{translate("settings.theme.settings.edit")}</TooltipPopup>
                     </Tooltip>
                   ) : null}
                   {onDownload ? (
@@ -369,7 +374,7 @@ function ThemeLibraryCard({
                           </Button>
                         }
                       />
-                      <TooltipPopup>Export theme file</TooltipPopup>
+                      <TooltipPopup>{translate("settings.theme.settings.export")}</TooltipPopup>
                     </Tooltip>
                   ) : null}
                   {onRemove ? (
@@ -522,7 +527,9 @@ export function ThemeLibrary({
   themeHalves: ThemeHalves | null;
   setThemeHalf: (appearance: ThemeAppearance, themeId: string | null) => boolean;
 }) {
+  const translate = useInterfaceTranslator().message;
   const openThemeEditor = useThemeEditorStore((store) => store.openThemeEditor);
+  const environmentThemes = useEnvironmentThemeDefinitions();
   const [themeRemovalTarget, setThemeRemovalTarget] = useState<{
     theme: ThemeDefinition;
     collectionThemes: ReadonlyArray<ThemeDefinition>;
@@ -542,21 +549,21 @@ export function ThemeLibrary({
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Couldn’t save theme selection",
-        description: "Try again.",
+        title: translate("settings.theme.settings.saveFailed"),
+        description: translate("settings.theme.settings.tryAgain"),
       }),
     );
-  }, []);
+  }, [translate]);
 
   const notifyThemeRemovalFailure = useCallback(() => {
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Couldn’t remove theme",
-        description: "Try again.",
+        title: translate("settings.theme.settings.removeFailed"),
+        description: translate("settings.theme.settings.tryAgain"),
       }),
     );
-  }, []);
+  }, [translate]);
 
   const persistTheme = useCallback(
     (nextTheme: string) => {
@@ -581,13 +588,17 @@ export function ThemeLibrary({
     const removedIds = new Set(themeIdsToRemove);
     if (removedIds.size === 0) return;
     const removesBase = removedIds.has(getThemeDefinition(theme)?.id ?? "");
+    // Captured raw before persistTheme clears the mix: a half naming a
+    // published theme whose set has not streamed in yet is pruned from the
+    // `themeHalves` prop, and rebuilding from that would drop it.
+    const storedHalves = readThemeHalvesRaw();
     // Keep the themes installed if we cannot move the selection off one of
     // them; the dialog stays open so the user can retry or cancel.
     if (removesBase && !persistTheme(appearanceMode === "system" ? "system" : appearanceMode)) {
       return;
     }
     for (const appearance of ["light", "dark"] as const) {
-      const half = themeHalves?.[appearance];
+      const half = storedHalves[appearance];
       if (half === undefined) continue;
       // Writing a base preference clears the whole mix, so halves that name
       // a surviving theme are written back; removed halves fall back to base.
@@ -610,7 +621,6 @@ export function ThemeLibrary({
     persistTheme,
     setThemeHalf,
     theme,
-    themeHalves,
     themeIdsToRemove,
     themeRemovalTarget,
   ]);
@@ -629,7 +639,10 @@ export function ThemeLibrary({
       // the base would still own that appearance. Convert the base into an
       // explicit half on the other side so this side falls back to default.
       if (cardId === null && baseCardId !== null) {
-        const otherOwner = themeHalves?.[otherAppearance] ?? baseCardId;
+        // Read raw, before persistTheme clears the mix: the other half may
+        // name a published theme that has not streamed in yet, and falling
+        // back to the base would silently rewrite it.
+        const otherOwner = readThemeHalvesRaw()[otherAppearance] ?? baseCardId;
         if (!persistTheme(appearanceMode === "system" ? "system" : appearanceMode)) return;
         if (!setThemeHalf(otherAppearance, otherOwner)) {
           // Best-effort rollback: restore the whole-theme selection rather
@@ -651,7 +664,6 @@ export function ThemeLibrary({
       setTheme,
       setThemeHalf,
       theme,
-      themeHalves,
     ],
   );
 
@@ -710,7 +722,7 @@ export function ThemeLibrary({
 
   const renderModeTiles = () => (
     <div
-      aria-label="Appearance mode"
+      aria-label={translate("settings.theme.settings.modeAria")}
       className="mx-auto grid w-full max-w-[56rem] grid-cols-3 gap-3 px-3 sm:px-4"
       role="group"
     >
@@ -809,6 +821,37 @@ export function ThemeLibrary({
             />
           );
         })}
+        {environmentThemes
+          .filter(
+            // A saved theme with the same id wins resolution, so its card is
+            // the one that must show; rendering both would also collide keys.
+            (environmentTheme) => !customThemes.some((theme) => theme.id === environmentTheme.id),
+          )
+          .map((environmentTheme) => (
+            // No edit or remove: the environment republishes these palettes on
+            // every change, so anything saved here would be overwritten.
+            // Duplicating is the way to keep a copy.
+            <ThemeLibraryCard
+              activeModes={pickedModesFor(environmentTheme.id)}
+              isActive={false}
+              key={environmentTheme.id}
+              onDuplicate={() =>
+                openThemeEditor({
+                  editingThemeId: null,
+                  seedThemeId: environmentTheme.id,
+                  seedName: `${environmentTheme.label} copy`,
+                  initialAppearance,
+                })
+              }
+              onUse={() => {
+                const half = singleAppearanceOf(environmentTheme);
+                if (half === null) persistTheme(environmentTheme.id);
+                else assignHalf(half, environmentTheme.id);
+              }}
+              onUseMode={handlePairPick(environmentTheme.id)}
+              theme={getThemeCardDefinition(environmentTheme)}
+            />
+          ))}
         {customThemeCollections.map(([collectionId, themes]) => (
           <CustomThemeCollectionCard
             activeModesFor={pickedModesFor}
@@ -849,14 +892,16 @@ export function ThemeLibrary({
   return (
     <div className="space-y-3">
       <p className="px-3 text-[13px] leading-[1.45] text-muted-foreground/80 sm:px-4">
-        Choose how T3 Code looks. Use a built-in theme or make your own.
+        {translate("settings.theme.settings.description")}
       </p>
       <h3 className="px-3 text-sm font-medium tracking-[-0.005em] text-foreground sm:px-4">
-        Color scheme
+        {translate("settings.theme.settings.colorScheme")}
       </h3>
       {renderModeTiles()}
       <div className="flex min-h-8 flex-wrap items-center justify-between gap-3 px-3 pt-2 sm:px-4">
-        <h3 className="text-sm font-medium tracking-[-0.005em] text-foreground">Themes</h3>
+        <h3 className="text-sm font-medium tracking-[-0.005em] text-foreground">
+          {translate("settings.theme.settings.themes")}
+        </h3>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button
             size="xs"
@@ -871,11 +916,11 @@ export function ThemeLibrary({
             }
           >
             <PaintbrushIcon />
-            Create theme
+            {translate("settings.theme.settings.create")}
           </Button>
           <Button size="xs" variant="outline" onClick={() => onImportOpenChange(true)}>
             <PlusIcon />
-            Add theme
+            {translate("settings.theme.settings.add")}
           </Button>
         </div>
       </div>
@@ -917,7 +962,7 @@ export function ThemeLibrary({
             stackedThreadToast({
               type: "success",
               title: `${importedTheme.label} added`,
-              description: "It’s now active.",
+              description: translate("settings.theme.toast.nowActive"),
             }),
           );
           return true;
@@ -990,7 +1035,9 @@ export function ThemeLibrary({
             </div>
           ) : null}
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {translate("settings.common.cancel")}
+            </AlertDialogClose>
             <Button
               disabled={themeIdsToRemove.length === 0}
               variant="destructive"

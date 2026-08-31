@@ -34,7 +34,7 @@ import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { cn } from "../../lib/cn";
 import { buildModelOptions, type ModelOption } from "../../lib/modelOptions";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { agentSettingsEnvironment } from "../../state/agent-settings";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
@@ -58,6 +58,7 @@ import { MobileProviderSettingsForm } from "./MobileProviderSettingsForm";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import {
   EnvironmentChatImportSettings,
   EnvironmentSpeechProfileSettings,
@@ -87,15 +88,17 @@ export function ModelSelectionModal(props: {
   readonly defaultLabel?: string;
   readonly allowDefault?: boolean;
   readonly visible: boolean;
+  readonly optionPredicate?: (option: ModelOption) => boolean;
   readonly onClose: () => void;
   readonly onSelect: (selection: ModelSelection | null) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
-  const checkmarkColor = useThemeColor("--color-icon");
-  const options = useMemo(
-    () => buildModelOptions(props.config, props.current),
-    [props.config, props.current],
-  );
+  const checkmarkColor = useUniwindTheme()["--color-icon"];
+  const options = useMemo(() => {
+    const available = buildModelOptions(props.config, props.current);
+    return props.optionPredicate ? available.filter(props.optionPredicate) : available;
+  }, [props.config, props.current, props.optionPredicate]);
   const selectedKey = props.current
     ? `${props.current.instanceId}:${props.current.model}`
     : "default";
@@ -123,7 +126,9 @@ export function ModelSelectionModal(props: {
       >
         <View className="min-w-0 flex-1 gap-0.5">
           <Text className="text-base text-foreground">
-            {option?.label ?? props.defaultLabel ?? "Default text model"}
+            {option?.label ??
+              props.defaultLabel ??
+              translator.message("mobile.settings.agents.defaultTextModel")}
           </Text>
           {option ? (
             <Text className="text-sm text-foreground-muted">
@@ -148,9 +153,13 @@ export function ModelSelectionModal(props: {
     <Modal animationType="slide" presentationStyle="pageSheet" visible={props.visible}>
       <View className="flex-1 bg-sheet">
         <View className="flex-row items-center border-b border-border px-5 py-4">
-          <Text className="flex-1 text-xl font-t3-semibold text-foreground">Choose model</Text>
+          <Text className="flex-1 text-xl font-t3-semibold text-foreground">
+            {translator.message("mobile.settings.agents.chooseModel")}
+          </Text>
           <Pressable accessibilityRole="button" onPress={props.onClose} className="px-2 py-1">
-            <Text className="text-base font-t3-medium text-foreground">Done</Text>
+            <Text className="text-base font-t3-medium text-foreground">
+              {translator.message("common.done")}
+            </Text>
           </Pressable>
         </View>
         <ScrollView
@@ -208,8 +217,9 @@ function InlineSettingsSwitch(props: {
   readonly value: boolean;
   readonly onValueChange: (value: boolean) => void;
 }) {
-  const activeTrack = String(useThemeColor("--color-switch-active"));
-  const track = String(useThemeColor("--color-secondary-border"));
+  const theme = useUniwindTheme();
+  const activeTrack = theme["--color-switch-active"];
+  const track = theme["--color-secondary-border"];
   return (
     <Switch
       accessibilityLabel={props.label}
@@ -228,6 +238,7 @@ function ProviderSettings(props: {
   readonly readOnly: boolean;
   readonly updateSettings: (patch: ServerSettingsPatch, label: string) => Promise<boolean>;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -269,7 +280,7 @@ function ProviderSettings(props: {
   );
 
   return (
-    <SettingsSection title="Providers">
+    <SettingsSection title={translator.message("mobile.settings.agents.providers")}>
       {props.config.providers.map((provider, index) => {
         const enabledPatch = providerEnabledSettingsPatch({
           provider,
@@ -357,7 +368,9 @@ function ProviderSettings(props: {
         className="border-t border-border-subtle p-4"
       >
         <Text className="text-center font-t3-medium text-foreground">
-          {refreshing ? "Refreshing…" : "Refresh provider status"}
+          {refreshing
+            ? translator.message("mobile.settings.agents.refreshing")
+            : translator.message("mobile.settings.agents.refreshStatus")}
         </Text>
       </Pressable>
     </SettingsSection>
@@ -369,6 +382,7 @@ function MobileProviderAuthentication(props: {
   readonly provider: ServerProvider;
   readonly readOnly: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const presentation = providerAuthenticationPresentation(props.provider)!;
   const event = useAtomValue(
     serverEnvironment.providerAuthConnectEventAtom({
@@ -396,7 +410,7 @@ function MobileProviderAuthentication(props: {
     ? mobileProviderAuthEventPresentation(event, presentation.providerLabel)
     : null;
   const rateLimit = providerRateLimitLabel(props.provider.rateLimit);
-  const placeholderTextColor = String(useThemeColor("--color-foreground-muted"));
+  const placeholderTextColor = useUniwindTheme()["--color-foreground-muted"];
 
   const refresh = useCallback(async () => {
     await refreshProviders({ environmentId: props.environmentId, input: {} });
@@ -480,7 +494,7 @@ function MobileProviderAuthentication(props: {
   if (props.readOnly) {
     return (
       <Text className="text-sm leading-normal text-foreground-muted">
-        {presentation.detail} · Authentication actions require edit access.
+        {presentation.detail} · {translator.message("mobile.settings.agents.authEditRequired")}
       </Text>
     );
   }
@@ -493,11 +507,16 @@ function MobileProviderAuthentication(props: {
       {presentation.method === "api-key" ? (
         <View className="gap-2">
           <TextInput
-            accessibilityLabel={presentation.credentialLabel ?? "API key"}
+            accessibilityLabel={
+              presentation.credentialLabel ?? translator.message("mobile.settings.agents.apiKey")
+            }
             autoCapitalize="none"
             autoCorrect={false}
             onChangeText={setCredentialDraft}
-            placeholder={presentation.credentialPlaceholder ?? "API key"}
+            placeholder={
+              presentation.credentialPlaceholder ??
+              translator.message("mobile.settings.agents.apiKey")
+            }
             placeholderTextColor={placeholderTextColor}
             secureTextEntry
             value={credentialDraft}
@@ -510,7 +529,9 @@ function MobileProviderAuthentication(props: {
             className="self-start rounded-xl bg-foreground px-4 py-2 disabled:opacity-40"
           >
             <Text className="font-t3-medium text-background">
-              {busy ? "Saving…" : (presentation.credentialActionLabel ?? presentation.actionLabel)}
+              {busy
+                ? translator.message("mobile.settings.agents.saving")
+                : (presentation.credentialActionLabel ?? presentation.actionLabel)}
             </Text>
           </Pressable>
         </View>
@@ -521,12 +542,14 @@ function MobileProviderAuthentication(props: {
           disabled={busy}
           onPress={() =>
             Alert.alert(
-              `Disconnect ${presentation.providerLabel}?`,
-              "This interrupts active turns and removes only this provider instance's stored credential.",
+              translator.message("mobile.settings.agents.disconnectTitle", {
+                provider: presentation.providerLabel,
+              }),
+              translator.message("mobile.settings.agents.disconnectDescription"),
               [
-                { text: "Cancel", style: "cancel" },
+                { text: translator.message("common.cancel"), style: "cancel" },
                 {
-                  text: "Disconnect",
+                  text: translator.message("mobile.settings.agents.disconnect"),
                   style: "destructive",
                   onPress: () => void disconnect(),
                 },
@@ -536,7 +559,9 @@ function MobileProviderAuthentication(props: {
           className="self-start rounded-xl bg-subtle px-4 py-2 disabled:opacity-40"
         >
           <Text className="font-t3-medium text-foreground">
-            {busy ? "Disconnecting…" : "Disconnect"}
+            {busy
+              ? translator.message("mobile.settings.agents.disconnecting")
+              : translator.message("mobile.settings.agents.disconnect")}
           </Text>
         </Pressable>
       ) : presentation.method !== "api-key" &&
@@ -548,7 +573,9 @@ function MobileProviderAuthentication(props: {
           className="self-start rounded-xl bg-foreground px-4 py-2 disabled:opacity-40"
         >
           <Text className="font-t3-medium text-background">
-            {busy ? "Connecting…" : presentation.actionLabel}
+            {busy
+              ? translator.message("mobile.settings.agents.connecting")
+              : presentation.actionLabel}
           </Text>
         </Pressable>
       ) : null}
@@ -561,12 +588,16 @@ function MobileProviderAuthentication(props: {
       >
         <View className="flex-1 justify-center gap-5 bg-sheet px-6">
           <Text className="text-2xl font-t3-semibold text-foreground">
-            Connect {presentation.providerLabel}
+            {translator.message("mobile.settings.agents.connectProvider", {
+              provider: presentation.providerLabel,
+            })}
           </Text>
           <Text className="text-base leading-normal text-foreground-muted">
             {localError ??
               eventPresentation?.message ??
-              `Preparing secure ${presentation.providerLabel} sign-in…`}
+              translator.message("mobile.settings.agents.preparingSignIn", {
+                provider: presentation.providerLabel,
+              })}
           </Text>
           {eventPresentation?.kind === "browser" ? (
             <Pressable
@@ -574,14 +605,16 @@ function MobileProviderAuthentication(props: {
               onPress={() =>
                 void Linking.openURL(eventPresentation.authorizationUrl).catch(() =>
                   Alert.alert(
-                    "Could not open authorization page",
+                    translator.message("mobile.settings.agents.openAuthorizationFailed"),
                     eventPresentation.authorizationUrl,
                   ),
                 )
               }
               className="self-start rounded-xl bg-foreground px-4 py-3"
             >
-              <Text className="font-t3-medium text-background">Open authorization page</Text>
+              <Text className="font-t3-medium text-background">
+                {translator.message("mobile.settings.agents.openAuthorization")}
+              </Text>
             </Pressable>
           ) : null}
           {eventPresentation?.kind === "device-code" ? (
@@ -594,14 +627,16 @@ function MobileProviderAuthentication(props: {
                 onPress={() =>
                   void Linking.openURL(eventPresentation.verificationUrl).catch(() =>
                     Alert.alert(
-                      "Could not open verification page",
+                      translator.message("mobile.settings.agents.openVerificationFailed"),
                       eventPresentation.verificationUrl,
                     ),
                   )
                 }
                 className="self-start rounded-xl bg-foreground px-4 py-3"
               >
-                <Text className="font-t3-medium text-background">Open verification page</Text>
+                <Text className="font-t3-medium text-background">
+                  {translator.message("mobile.settings.agents.openVerification")}
+                </Text>
               </Pressable>
             </>
           ) : null}
@@ -611,7 +646,9 @@ function MobileProviderAuthentication(props: {
               onPress={() => void connect()}
               className="self-start rounded-xl bg-foreground px-4 py-3"
             >
-              <Text className="font-t3-medium text-background">Retry</Text>
+              <Text className="font-t3-medium text-background">
+                {translator.message("common.retry")}
+              </Text>
             </Pressable>
           ) : null}
           <Pressable
@@ -619,7 +656,9 @@ function MobileProviderAuthentication(props: {
             onPress={() => setDialogVisible(false)}
             className="self-start py-2"
           >
-            <Text className="font-t3-medium text-foreground">Close</Text>
+            <Text className="font-t3-medium text-foreground">
+              {translator.message("common.close")}
+            </Text>
           </Pressable>
         </View>
       </Modal>
@@ -628,6 +667,7 @@ function MobileProviderAuthentication(props: {
 }
 
 function SkillSettings(props: { readonly environmentId: EnvironmentId }) {
+  const translator = useMobileInterfaceTranslator();
   const listSkills = useAtomCommand(agentSettingsEnvironment.skills.list, { reportFailure: false });
   const setSkillEnabled = useAtomCommand(agentSettingsEnvironment.skills.setEnabled, {
     reportFailure: false,
@@ -651,13 +691,17 @@ function SkillSettings(props: { readonly environmentId: EnvironmentId }) {
   }, [reload]);
 
   return (
-    <SettingsSection title="Skills">
+    <SettingsSection title={translator.message("mobile.settings.agents.skills")}>
       {skills === null ? (
         <Pressable onPress={() => void reload()} className="p-4">
-          <Text className="text-sm text-foreground-muted">{error ?? "Loading skills…"}</Text>
+          <Text className="text-sm text-foreground-muted">
+            {error ?? translator.message("mobile.settings.agents.loadingSkills")}
+          </Text>
         </Pressable>
       ) : skills.length === 0 ? (
-        <Text className="p-4 text-sm text-foreground-muted">No skills discovered.</Text>
+        <Text className="p-4 text-sm text-foreground-muted">
+          {translator.message("mobile.settings.agents.noSkills")}
+        </Text>
       ) : (
         skills.map((skill, index) => (
           <View
@@ -710,6 +754,7 @@ function SkillSettings(props: { readonly environmentId: EnvironmentId }) {
 }
 
 function McpSettings(props: { readonly environmentId: EnvironmentId }) {
+  const translator = useMobileInterfaceTranslator();
   const listMcp = useAtomCommand(agentSettingsEnvironment.mcp.list, { reportFailure: false });
   const setMcpEnabled = useAtomCommand(agentSettingsEnvironment.mcp.setEnabled, {
     reportFailure: false,
@@ -733,13 +778,17 @@ function McpSettings(props: { readonly environmentId: EnvironmentId }) {
   }, [reload]);
 
   return (
-    <SettingsSection title="MCP servers">
+    <SettingsSection title={translator.message("mobile.settings.agents.mcpServers")}>
       {servers === null ? (
         <Pressable onPress={() => void reload()} className="p-4">
-          <Text className="text-sm text-foreground-muted">{error ?? "Loading MCP servers…"}</Text>
+          <Text className="text-sm text-foreground-muted">
+            {error ?? translator.message("mobile.settings.agents.loadingMcp")}
+          </Text>
         </Pressable>
       ) : servers.length === 0 ? (
-        <Text className="p-4 text-sm text-foreground-muted">No MCP servers configured.</Text>
+        <Text className="p-4 text-sm text-foreground-muted">
+          {translator.message("mobile.settings.agents.noMcp")}
+        </Text>
       ) : (
         servers.map((server, index) => (
           <View
@@ -793,13 +842,14 @@ function EnvironmentAgentSettings(props: {
   readonly environmentLabel: string;
   readonly projects: ReadonlyArray<EnvironmentProject>;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const config = useEnvironmentServerConfig(props.environmentId);
   const updateServerSettings = useAtomCommand(serverEnvironment.updateSettings, {
     reportFailure: false,
   });
   const authSession = useAtomValue(environmentSession.sessionStateValueAtom(props.environmentId));
   const [assemblyAiKey, setAssemblyAiKey] = useState("");
-  const placeholderTextColor = String(useThemeColor("--color-foreground-muted"));
+  const placeholderTextColor = useUniwindTheme()["--color-foreground-muted"];
 
   const updateSettings = useCallback(
     async (patch: ServerSettingsPatch, label: string): Promise<boolean> => {
@@ -825,7 +875,7 @@ function EnvironmentAgentSettings(props: {
     return (
       <SettingsSection title={props.environmentLabel}>
         <Text className="p-4 text-sm text-foreground-muted">
-          Connect to this environment to manage its agent settings.
+          {translator.message("mobile.settings.agents.connectEnvironment")}
         </Text>
       </SettingsSection>
     );
@@ -834,8 +884,7 @@ function EnvironmentAgentSettings(props: {
     return (
       <SettingsSection title={props.environmentLabel}>
         <Text className="p-4 text-sm leading-normal text-foreground-muted">
-          This server version does not advertise remote agent administration. Update the server to
-          manage providers, skills, MCP, and voice from mobile.
+          {translator.message("mobile.settings.agents.adminUnsupported")}
         </Text>
       </SettingsSection>
     );
@@ -860,10 +909,10 @@ function EnvironmentAgentSettings(props: {
         updateSettings={updateSettings}
       />
 
-      <SettingsSection title="Server behavior">
+      <SettingsSection title={translator.message("mobile.settings.agents.serverBehavior")}>
         <SettingsSwitchRow
           icon="arrow.triangle.2.circlepath"
-          label="Provider update checks"
+          label={translator.message("mobile.settings.agents.providerUpdates")}
           value={settings.enableProviderUpdateChecks}
           onValueChange={(value) =>
             void updateSettings({ enableProviderUpdateChecks: value }, "provider update checks")
@@ -871,7 +920,7 @@ function EnvironmentAgentSettings(props: {
         />
         <SettingsSwitchRow
           icon="text.bubble"
-          label="Legacy token streaming"
+          label={translator.message("mobile.settings.agents.legacyStreaming")}
           value={settings.enableLegacyTokenStreaming}
           onValueChange={(value) =>
             void updateSettings({ enableLegacyTokenStreaming: value }, "token streaming")
@@ -879,7 +928,7 @@ function EnvironmentAgentSettings(props: {
         />
         <SettingsSwitchRow
           icon="arrow.triangle.branch"
-          label="New worktrees start from origin"
+          label={translator.message("mobile.settings.agents.worktreesOrigin")}
           value={settings.newWorktreesStartFromOrigin}
           onValueChange={(value) =>
             void updateSettings({ newWorktreesStartFromOrigin: value }, "worktree defaults")
@@ -887,12 +936,12 @@ function EnvironmentAgentSettings(props: {
         />
       </SettingsSection>
 
-      <SettingsSection title="Agent models">
+      <SettingsSection title={translator.message("mobile.settings.agents.models")}>
         <ModelSelectionSetting
           allowDefault={false}
           config={config}
           icon="text.bubble"
-          label="Text generation"
+          label={translator.message("mobile.settings.agents.textGeneration")}
           selection={settings.textGenerationModelSelection}
           onSelect={(selection) => {
             if (selection)
@@ -901,9 +950,9 @@ function EnvironmentAgentSettings(props: {
         />
         <ModelSelectionSetting
           config={config}
-          defaultLabel="Automatic"
+          defaultLabel={translator.message("mobile.settings.agents.automatic")}
           icon="sparkles"
-          label="Fetch workers"
+          label={translator.message("mobile.settings.agents.fetchWorkers")}
           selection={settings.fetchModelSelection}
           onSelect={(selection) =>
             void updateSettings({ fetchModelSelection: selection }, "Fetch model")
@@ -913,7 +962,7 @@ function EnvironmentAgentSettings(props: {
           allowDefault={false}
           config={config}
           icon="arrow.triangle.branch"
-          label="Parallel plan review"
+          label={translator.message("mobile.settings.agents.parallelReview")}
           selection={settings.parallelPlanReviewModelSelection}
           onSelect={(selection) => {
             if (selection)
@@ -925,9 +974,9 @@ function EnvironmentAgentSettings(props: {
         />
         <ModelSelectionSetting
           config={config}
-          defaultLabel="Text generation model"
+          defaultLabel={translator.message("mobile.settings.agents.textGenerationModel")}
           icon="mic"
-          label="Voice translation"
+          label={translator.message("mobile.settings.agents.voiceTranslation")}
           selection={settings.voiceTranslationModelSelection}
           onSelect={(selection) =>
             void updateSettings({ voiceTranslationModelSelection: selection }, "voice model")
@@ -935,22 +984,26 @@ function EnvironmentAgentSettings(props: {
         />
       </SettingsSection>
 
-      <SettingsSection title="Voice transcription">
+      <SettingsSection title={translator.message("mobile.settings.agents.voiceTranscription")}>
         <View className="gap-3 p-4">
           <View className="gap-1">
-            <Text className="text-lg text-foreground">AssemblyAI API key</Text>
+            <Text className="text-lg text-foreground">
+              {translator.message("mobile.settings.agents.assemblyKey")}
+            </Text>
             <Text className="text-sm leading-normal text-foreground-muted">
               {keyConfigured
-                ? "A key is stored securely on this server. Enter a replacement below."
-                : "Stored by this server and exchanged only for short-lived streaming tokens."}
+                ? translator.message("mobile.settings.agents.keyStored")
+                : translator.message("mobile.settings.agents.keyExchange")}
             </Text>
           </View>
           <TextInput
-            accessibilityLabel="AssemblyAI API key"
+            accessibilityLabel={translator.message("mobile.settings.agents.assemblyKey")}
             autoCapitalize="none"
             autoCorrect={false}
             onChangeText={setAssemblyAiKey}
-            placeholder={keyConfigured ? "Saved API key" : "aai_..."}
+            placeholder={
+              keyConfigured ? translator.message("mobile.settings.agents.savedApiKey") : "aai_..."
+            }
             placeholderTextColor={placeholderTextColor}
             secureTextEntry
             value={assemblyAiKey}
@@ -976,7 +1029,9 @@ function EnvironmentAgentSettings(props: {
               }}
               className="rounded-xl bg-foreground px-4 py-2 disabled:opacity-40"
             >
-              <Text className="font-t3-medium text-background">Save key</Text>
+              <Text className="font-t3-medium text-background">
+                {translator.message("mobile.settings.agents.saveKey")}
+              </Text>
             </Pressable>
             {keyConfigured ? (
               <Pressable
@@ -993,7 +1048,9 @@ function EnvironmentAgentSettings(props: {
                 }
                 className="rounded-xl bg-subtle px-4 py-2"
               >
-                <Text className="font-t3-medium text-foreground">Remove</Text>
+                <Text className="font-t3-medium text-foreground">
+                  {translator.message("mobile.settings.agents.remove")}
+                </Text>
               </Pressable>
             ) : null}
           </View>
@@ -1013,30 +1070,31 @@ function EnvironmentAgentSettings(props: {
 }
 
 function DeviceWorkflowSettings() {
+  const translator = useMobileInterfaceTranslator();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const ready = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
   const preferences = AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : {};
   return (
-    <SettingsSection title="This device">
+    <SettingsSection title={translator.message("mobile.settings.agents.thisDevice")}>
       <SettingsSwitchRow
         disabled={!ready}
         icon="sparkles"
-        label="Fetch mode"
+        label={translator.message("mobile.settings.agents.fetchMode")}
         value={preferences.experimentalFetch === true}
         onValueChange={(value) => savePreferences({ experimentalFetch: value })}
       />
       <SettingsSwitchRow
         disabled={!ready}
         icon="wand.and.stars"
-        label="Improve prompts before send"
+        label={translator.message("mobile.settings.agents.improvePrompts")}
         value={preferences.improvePromptBeforeSend === true}
         onValueChange={(value) => savePreferences({ improvePromptBeforeSend: value })}
       />
       <SettingsSwitchRow
         disabled={!ready}
         icon="arrow.triangle.branch"
-        label="Parallel plan implementation"
+        label={translator.message("mobile.settings.agents.parallelImplementation")}
         value={preferences.experimentalParallelPlanImplementation === true}
         onValueChange={(value) =>
           savePreferences({ experimentalParallelPlanImplementation: value })
@@ -1045,7 +1103,7 @@ function DeviceWorkflowSettings() {
       <SettingsSwitchRow
         disabled={!ready}
         icon="mic"
-        label="Translate voice input to English"
+        label={translator.message("mobile.settings.agents.translateVoice")}
         value={preferences.voiceInputOutputLanguage === "english"}
         onValueChange={(value) =>
           savePreferences({ voiceInputOutputLanguage: value ? "english" : "native" })
@@ -1056,6 +1114,7 @@ function DeviceWorkflowSettings() {
 }
 
 export function SettingsAgentEnvironmentsRouteScreen() {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { environments } = useWorkspaceState();
@@ -1066,7 +1125,10 @@ export function SettingsAgentEnvironmentsRouteScreen() {
       {Platform.OS === "android" ? (
         <>
           <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="Agents & Servers" onBack={() => navigation.goBack()} />
+          <AndroidScreenHeader
+            title={translator.message("mobile.settings.agentsServers")}
+            onBack={() => navigation.goBack()}
+          />
         </>
       ) : null}
       <ScrollView
@@ -1078,9 +1140,9 @@ export function SettingsAgentEnvironmentsRouteScreen() {
       >
         <DeviceWorkflowSettings />
         {environments.length === 0 ? (
-          <SettingsSection title="Environments">
+          <SettingsSection title={translator.message("mobile.settings.environments")}>
             <Text className="p-4 text-sm text-foreground-muted">
-              Add an environment before configuring agents and servers.
+              {translator.message("mobile.settings.agents.addEnvironmentDescription")}
             </Text>
           </SettingsSection>
         ) : (

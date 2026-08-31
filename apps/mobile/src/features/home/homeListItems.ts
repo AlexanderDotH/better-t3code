@@ -163,8 +163,7 @@ export function homeListItemsAreEqual(previous: HomeListItem, item: HomeListItem
 }
 
 function threadStaysVisibleBeyondPreview(thread: EnvironmentThreadShell): boolean {
-  const statusKind = resolveThreadStatus(thread)?.kind;
-  return statusKind === "working" || statusKind === "connecting";
+  return resolveThreadStatus(thread) !== null;
 }
 
 function projectThreadKey(thread: EnvironmentThreadShell): string {

@@ -1,12 +1,19 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ChatAttachment, ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import type {
+  ChatAttachment,
+  KnowledgeGraphSemanticModelRequestV1,
+  KnowledgeGraphSemanticModelResultV1,
+  ModelSelection,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import { TextGenerationError } from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
+import type { AutoReasoningMessage } from "./AutoReasoning.ts";
 
 export type TextGenerationProvider =
   | "codex"
@@ -63,6 +70,20 @@ export interface BranchNameGenerationInput {
 }
 
 export interface BranchNameGenerationResult {
+  branch: string;
+}
+
+export interface ThreadMetadataGenerationInput {
+  cwd: string;
+  message: string;
+  /** Metadata-only context. Naming providers must not load or attach the binary payload. */
+  attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  /** What model and provider to use for generation. */
+  modelSelection: ModelSelection;
+}
+
+export interface ThreadMetadataGenerationResult {
+  title: string;
   branch: string;
 }
 
@@ -133,12 +154,53 @@ export interface FetchExplorationGenerationInput {
 
 export type FetchExplorationGenerationResult = FetchExplorationPlan;
 
+export interface KnowledgeGraphEnrichmentGenerationInput {
+  readonly request: KnowledgeGraphSemanticModelRequestV1;
+  readonly modelSelection: ModelSelection;
+}
+
+export type KnowledgeGraphEnrichmentGenerationResult = KnowledgeGraphSemanticModelResultV1;
+
+export interface AutoReasoningGenerationInput {
+  readonly cwd: string;
+  readonly userPrompt: string;
+  readonly interactionMode: "default" | "plan";
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+  readonly allowedEfforts: ReadonlyArray<string>;
+  readonly conversation: ReadonlyArray<AutoReasoningMessage>;
+  readonly modelSelection: ModelSelection;
+}
+
+export interface AutoReasoningGenerationResult {
+  readonly effort: string;
+  readonly usage?: {
+    readonly inputTokens?: number;
+    readonly outputTokens?: number;
+    readonly totalTokens?: number;
+  };
+}
+
+export const unsupportedKnowledgeGraphEnrichment = (
+  providerName: string,
+): TextGeneration["Service"]["enrichKnowledgeGraph"] =>
+  Effect.fn(`${providerName}.enrichKnowledgeGraph`)(function* () {
+    return yield* new TextGenerationError({
+      operation: "enrichKnowledgeGraph",
+      detail: `${providerName} has not passed Knowledge Graph enrichment conformance.`,
+      reason: "model-unavailable",
+    });
+  });
+
 export interface TextGenerationService {
+  decideAutoReasoning(input: AutoReasoningGenerationInput): Promise<AutoReasoningGenerationResult>;
   generateCommitMessage(
     input: CommitMessageGenerationInput,
   ): Promise<CommitMessageGenerationResult>;
   generatePrContent(input: PrContentGenerationInput): Promise<PrContentGenerationResult>;
   generateBranchName(input: BranchNameGenerationInput): Promise<BranchNameGenerationResult>;
+  generateThreadMetadata(
+    input: ThreadMetadataGenerationInput,
+  ): Promise<ThreadMetadataGenerationResult>;
   generateThreadTitle(input: ThreadTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
   translateTranscriptToEnglish(
     input: TranscriptTranslationInput,
@@ -150,6 +212,9 @@ export interface TextGenerationService {
   planFetchExploration(
     input: FetchExplorationGenerationInput,
   ): Promise<FetchExplorationGenerationResult>;
+  enrichKnowledgeGraph(
+    input: KnowledgeGraphEnrichmentGenerationInput,
+  ): Promise<KnowledgeGraphEnrichmentGenerationResult>;
 }
 
 /**
@@ -158,6 +223,10 @@ export interface TextGenerationService {
 export class TextGeneration extends Context.Service<
   TextGeneration,
   {
+    readonly decideAutoReasoning: (
+      input: AutoReasoningGenerationInput,
+    ) => Effect.Effect<AutoReasoningGenerationResult, TextGenerationError>;
+
     /**
      * Generate a commit message from staged change context.
      */
@@ -179,6 +248,11 @@ export class TextGeneration extends Context.Service<
       input: BranchNameGenerationInput,
     ) => Effect.Effect<BranchNameGenerationResult, TextGenerationError>;
 
+    /** Generate the first-turn title and branch in one structured model call. */
+    readonly generateThreadMetadata: (
+      input: ThreadMetadataGenerationInput,
+    ) => Effect.Effect<ThreadMetadataGenerationResult, TextGenerationError>;
+
     /** Generate a concise thread title from a first message or thread history. */
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
@@ -199,6 +273,10 @@ export class TextGeneration extends Context.Service<
     readonly planFetchExploration: (
       input: FetchExplorationGenerationInput,
     ) => Effect.Effect<FetchExplorationGenerationResult, TextGenerationError>;
+
+    readonly enrichKnowledgeGraph: (
+      input: KnowledgeGraphEnrichmentGenerationInput,
+    ) => Effect.Effect<KnowledgeGraphEnrichmentGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -206,14 +284,17 @@ export class TextGeneration extends Context.Service<
 export type TextGenerationShape = TextGeneration["Service"];
 
 type TextGenerationOp =
+  | "decideAutoReasoning"
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
+  | "generateThreadMetadata"
   | "generateThreadTitle"
   | "translateTranscriptToEnglish"
   | "improvePrompt"
   | "reviewPlanParallelism"
-  | "planFetchExploration";
+  | "planFetchExploration"
+  | "enrichKnowledgeGraph";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -237,6 +318,10 @@ export const makeTextGenerationFromRegistry = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
 ): TextGeneration["Service"] =>
   TextGeneration.of({
+    decideAutoReasoning: (input) =>
+      resolveInstance(registry, "decideAutoReasoning", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.decideAutoReasoning(input)),
+      ),
     generateCommitMessage: (input) =>
       resolveInstance(registry, "generateCommitMessage", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateCommitMessage(input)),
@@ -248,6 +333,10 @@ export const makeTextGenerationFromRegistry = (
     generateBranchName: (input) =>
       resolveInstance(registry, "generateBranchName", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateBranchName(input)),
+      ),
+    generateThreadMetadata: (input) =>
+      resolveInstance(registry, "generateThreadMetadata", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.generateThreadMetadata(input)),
       ),
     generateThreadTitle: (input) =>
       resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
@@ -272,6 +361,10 @@ export const makeTextGenerationFromRegistry = (
     planFetchExploration: (input) =>
       resolveInstance(registry, "planFetchExploration", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.planFetchExploration(input)),
+      ),
+    enrichKnowledgeGraph: (input) =>
+      resolveInstance(registry, "enrichKnowledgeGraph", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.enrichKnowledgeGraph(input)),
       ),
   });
 

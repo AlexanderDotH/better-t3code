@@ -23,7 +23,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useEnvironmentSubagent } from "../../state/threads";
 import {
   CLOSED_MOBILE_SUBAGENT_HISTORY_STATE,
@@ -38,6 +38,7 @@ import {
   type MobileSubagentTranscriptEntry,
 } from "./subagent-presentation";
 import { subagentSurfacePresentation } from "./subagent-surface";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const SUBAGENT_LIST_INITIAL_RENDER_COUNT = 12;
 const SUBAGENT_LIST_RENDER_BATCH_SIZE = 12;
@@ -57,10 +58,13 @@ function AgentChip(props: {
   readonly agent: OrchestrationSubagentSummary;
   readonly onPress: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Inspect ${mobileSubagentDisplayName(props.agent)}`}
+      accessibilityLabel={translator.message("mobile.subagent.inspect", {
+        agent: mobileSubagentDisplayName(props.agent),
+      })}
       className={`min-h-9 flex-row items-center gap-2 rounded-full border px-3 active:opacity-65 ${statusClasses(props.agent)}`}
       onPress={props.onPress}
     >
@@ -89,6 +93,7 @@ function SubagentTranscript(props: {
   readonly threadId: ThreadId;
   readonly subagentId: SubagentId;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const state = useEnvironmentSubagent(props.environmentId, props.threadId, props.subagentId);
   const detail = Option.getOrNull(state.data);
   const error = Option.getOrNull(state.error);
@@ -101,14 +106,18 @@ function SubagentTranscript(props: {
     return (
       <View className="flex-1 items-center justify-center gap-3 px-6">
         <ActivityIndicator />
-        <Text className="text-sm text-foreground-muted">Loading agent transcript…</Text>
+        <Text className="text-sm text-foreground-muted">
+          {translator.message("mobile.subagent.loadingTranscript")}
+        </Text>
       </View>
     );
   }
   if (!detail) {
     return (
       <View className="flex-1 items-center justify-center gap-2 px-6">
-        <Text className="font-t3-bold text-base text-foreground">Transcript unavailable</Text>
+        <Text className="font-t3-bold text-base text-foreground">
+          {translator.message("mobile.subagent.transcriptUnavailable")}
+        </Text>
         {error ? <Text className="text-center text-sm text-danger">{error}</Text> : null}
       </View>
     );
@@ -131,6 +140,7 @@ function SubagentTranscriptContent(props: {
   readonly isLoadingOlderActivities: boolean;
   readonly onLoadOlderActivities: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const entries = useMemo(() => deriveMobileSubagentTranscript(props.detail), [props.detail]);
   const renderEntry = useCallback(
     ({ item }: ListRenderItemInfo<MobileSubagentTranscriptEntry>) => (
@@ -171,7 +181,7 @@ function SubagentTranscriptContent(props: {
           {props.hasOlderActivities ? (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Load earlier agent activity"
+              accessibilityLabel={translator.message("mobile.subagent.loadEarlierA11y")}
               disabled={props.isLoadingOlderActivities}
               className="min-h-10 flex-row items-center justify-center gap-2 rounded-xl border border-border bg-card px-4 active:opacity-65 disabled:opacity-55"
               onPress={props.onLoadOlderActivities}
@@ -179,8 +189,8 @@ function SubagentTranscriptContent(props: {
               {props.isLoadingOlderActivities ? <ActivityIndicator size="small" /> : null}
               <Text className="font-t3-bold text-xs text-foreground">
                 {props.isLoadingOlderActivities
-                  ? "Loading earlier activity…"
-                  : "Load earlier activity"}
+                  ? translator.message("mobile.subagent.loadingEarlier")
+                  : translator.message("mobile.subagent.loadEarlier")}
               </Text>
             </Pressable>
           ) : null}
@@ -188,7 +198,7 @@ function SubagentTranscriptContent(props: {
       }
       ListEmptyComponent={
         <Text className="py-12 text-center text-sm text-foreground-muted">
-          No transcript events yet.
+          {translator.message("mobile.subagent.noEvents")}
         </Text>
       }
     />
@@ -198,6 +208,7 @@ function SubagentTranscriptContent(props: {
 function MobileSubagentTranscriptEntryView(props: {
   readonly entry: MobileSubagentTranscriptEntry;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const entry = props.entry;
   if (entry.type === "message") {
     return (
@@ -228,8 +239,8 @@ function MobileSubagentTranscriptEntryView(props: {
   if (entry.type === "proposed-plan") {
     return (
       <View className="rounded-2xl border border-blue-500/25 bg-blue-500/5 px-4 py-3">
-        <Text className="mb-2 font-t3-bold text-xs uppercase tracking-widest text-blue-600 dark:text-blue-400">
-          Proposed plan
+        <Text className="mb-2 font-t3-bold text-xs uppercase tracking-widest text-adaptive-blue-600-400">
+          {translator.message("mobile.subagent.proposedPlan")}
         </Text>
         <Text selectable className="font-mono text-xs leading-relaxed text-foreground">
           {entry.proposedPlan.planMarkdown}
@@ -249,8 +260,10 @@ export const ThreadSubagentStack = memo(function ThreadSubagentStack(props: {
   readonly threadId: ThreadId;
   readonly subagents: ReadonlyArray<OrchestrationSubagentSummary>;
 }) {
-  const iconColor = useThemeColor("--color-icon-subtle");
-  const screenColor = useThemeColor("--color-screen");
+  const translator = useMobileInterfaceTranslator();
+  const theme = useUniwindTheme();
+  const iconColor = theme["--color-icon-subtle"];
+  const screenColor = theme["--color-screen"];
   const isDark = useColorScheme() === "dark";
   const routeIsFocused = useIsFocused();
   const surface = subagentSurfacePresentation(Platform.OS === "android" ? "android" : "ios");
@@ -332,7 +345,7 @@ export const ThreadSubagentStack = memo(function ThreadSubagentStack(props: {
       {Platform.OS === "android" ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Open agent history"
+          accessibilityLabel={translator.message("mobile.subagent.openHistory")}
           className="mx-4 mb-3 min-h-12 flex-row items-center gap-3 rounded-2xl border border-border bg-card px-4 active:opacity-65"
           onPress={() => {
             dispatchHistory({
@@ -345,11 +358,18 @@ export const ThreadSubagentStack = memo(function ThreadSubagentStack(props: {
             <SymbolView name="person.2" size={16} tintColor={iconColor} type="monochrome" />
           </View>
           <View className="min-w-0 flex-1">
-            <Text className="font-t3-bold text-sm text-foreground">Agents</Text>
+            <Text className="font-t3-bold text-sm text-foreground">
+              {translator.message("mobile.subagent.agents")}
+            </Text>
             <Text className="text-xs text-foreground-muted">
               {groups.active.length > 0
-                ? `${groups.active.length} active · ${props.subagents.length} total`
-                : `${props.subagents.length} in this chat`}
+                ? translator.message("mobile.subagent.activeTotal", {
+                    active: groups.active.length,
+                    total: props.subagents.length,
+                  })
+                : translator.message("mobile.subagent.inChat", {
+                    count: props.subagents.length,
+                  })}
             </Text>
           </View>
           <SymbolView name="chevron.right" size={14} tintColor={iconColor} type="monochrome" />
@@ -371,7 +391,7 @@ export const ThreadSubagentStack = memo(function ThreadSubagentStack(props: {
           />
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Open agent history"
+            accessibilityLabel={translator.message("mobile.subagent.openHistory")}
             className="min-h-9 shrink-0 flex-row items-center gap-1.5 rounded-full border border-border bg-card px-3 active:opacity-65"
             onPress={() => {
               dispatchHistory({
@@ -404,16 +424,23 @@ export const ThreadSubagentStack = memo(function ThreadSubagentStack(props: {
                 <SymbolView name="person.2" size={18} tintColor={iconColor} type="monochrome" />
               </View>
               <View className="min-w-0 flex-1">
-                <Text className="font-t3-bold text-lg text-foreground">Agents</Text>
+                <Text className="font-t3-bold text-lg text-foreground">
+                  {translator.message("mobile.subagent.agents")}
+                </Text>
                 <Text className="text-xs text-foreground-muted">
                   {groups.active.length > 0
-                    ? `${groups.active.length} active · ${props.subagents.length} total`
-                    : `${props.subagents.length} in this chat`}
+                    ? translator.message("mobile.subagent.activeTotal", {
+                        active: groups.active.length,
+                        total: props.subagents.length,
+                      })
+                    : translator.message("mobile.subagent.inChat", {
+                        count: props.subagents.length,
+                      })}
                 </Text>
               </View>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Close agent history"
+                accessibilityLabel={translator.message("mobile.subagent.closeHistory")}
                 className="h-11 w-11 items-center justify-center rounded-full bg-subtle active:opacity-65"
                 onPress={closeHistory}
               >
@@ -453,7 +480,9 @@ export const ThreadSubagentStack = memo(function ThreadSubagentStack(props: {
               />
             ) : (
               <View className="flex-1 items-center justify-center px-6">
-                <Text className="text-sm text-foreground-muted">Select an agent to inspect.</Text>
+                <Text className="text-sm text-foreground-muted">
+                  {translator.message("mobile.subagent.select")}
+                </Text>
               </View>
             )}
           </SafeAreaView>

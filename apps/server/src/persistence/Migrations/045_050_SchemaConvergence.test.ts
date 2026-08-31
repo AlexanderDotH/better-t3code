@@ -15,6 +15,8 @@ import Migration050 from "./050_ProjectionProjectFaviconPathCompatibility.ts";
 import Migration051 from "./051_ProjectionProjectCheckpointsEnabled.ts";
 import Migration052 from "./052_AuthSessionClientConnectionCompatibility.ts";
 import Migration053 from "./053_ProjectionThreadSubagentManagedOrigin.ts";
+import Migration056 from "./056_ProjectionThreadLinkedPullRequest.ts";
+import Migration057 from "./057_ProjectionThreadsUnsettledAt.ts";
 
 const expectedTail = [
   [33, "ProjectionThreadsSettled"],
@@ -40,6 +42,10 @@ const expectedTail = [
   [53, "ProjectionThreadSubagentManagedOrigin"],
   [54, "ProjectionHarnessChatSync"],
   [55, "ProjectionThreadForks"],
+  [56, "ProjectionThreadLinkedPullRequest"],
+  [57, "ProjectionThreadsUnsettledAt"],
+  [58, "Upstream42And43SchemaConvergence"],
+  [59, "KnowledgeGraphDerivedData"],
 ] as const;
 
 const applyUpstreamSchema = Effect.gen(function* () {
@@ -146,6 +152,28 @@ const upstream41Scenario = Effect.gen(function* () {
   yield* runMigrations();
 });
 
+const upstream43Scenario = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* runMigrations({ toMigrationInclusive: 35 });
+  yield* applyUpstreamSchema;
+  yield* Migration052;
+  yield* Migration056;
+  yield* Migration057;
+  yield* sql`
+    INSERT INTO effect_sql_migrations (migration_id, name)
+    VALUES
+      (36, 'ProjectionThreadsPinned'),
+      (37, 'ProjectionTurnsKeysetIndex'),
+      (38, 'ProjectionThreadsPinOrderKey'),
+      (39, 'ProjectionProjectsDefaultThreadEnvMode'),
+      (40, 'ProjectionProjectFaviconPath'),
+      (41, 'AuthSessionClientConnection'),
+      (42, 'ProjectionThreadLinkedPullRequest'),
+      (43, 'ProjectionThreadsUnsettledAt')
+  `;
+  yield* runMigrations();
+});
+
 const historicalForkCollisionScenario = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* runMigrations({ toMigrationInclusive: 32 });
@@ -167,7 +195,7 @@ const repeatedScenario = Effect.gen(function* () {
   assert.deepStrictEqual(yield* runMigrations(), []);
 });
 
-it("preserves immutable migration IDs and appends fork projections as migration 55", () => {
+it("preserves immutable migration IDs and appends upstream collision repair as migration 58", () => {
   assert.deepStrictEqual(
     migrationEntries.slice(-expectedTail.length).map(([id, name]) => [id, name] as const),
     Array.from(expectedTail),
@@ -221,12 +249,13 @@ it.effect("enables checkpoints for projects created before migration 51", () =>
   }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
 );
 
-it.effect("converges fresh, fork, upstream, and historical-collision ledgers", () =>
+it.effect("converges fresh, fork, upstream-41, upstream-43, and historical ledgers", () =>
   Effect.gen(function* () {
     const fresh = yield* captureScenario(freshScenario);
     const scenarios = yield* Effect.all([
       captureScenario(fork51Scenario),
       captureScenario(upstream41Scenario),
+      captureScenario(upstream43Scenario),
       captureScenario(historicalForkCollisionScenario),
       captureScenario(repeatedScenario),
     ]);

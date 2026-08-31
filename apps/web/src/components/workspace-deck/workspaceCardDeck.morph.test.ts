@@ -2,18 +2,19 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   animateWorkspaceDeckBackPeek,
-  animateWorkspaceDeckContentFade,
-  animateWorkspaceDeckCorners,
-  animateWorkspaceDeckOutgoing,
+  animateWorkspaceDeckContentHandoff,
+  buildWorkspaceDeckFrameMorphDescriptor,
+  captureWorkspaceDeckContentHandoffState,
   captureWorkspaceDeckSurface,
   createWorkspaceDeckAppearanceKeyframe,
   createWorkspaceDeckAppearanceKeyframes,
+  createWorkspaceDeckMorphProxy,
   localizeWorkspaceDeckChromeKeyframes,
   markWorkspaceDeckMorphSurface,
-  WORKSPACE_DECK_CONTENT_PEEK_OPACITY,
+  resolveWorkspaceDeckContentHandoffOffset,
   WORKSPACE_DECK_MORPH_DURATION_MS,
 } from "./workspaceCardDeck.morph";
-import { buildSurfaceMorphDescriptor, type SurfaceGeometry } from "../chat/surfaceMorph";
+import type { SurfaceGeometry } from "../chat/surfaceMorph";
 
 describe("workspace deck morph chrome", () => {
   it("reveals the reordered back peek at its destination edge without clipping its hit target", () => {
@@ -25,98 +26,272 @@ describe("workspace deck morph chrome", () => {
       },
       dataset: {},
     } as unknown as HTMLElement;
-    const from: SurfaceGeometry = {
-      rect: { left: 122, top: 300, width: 356, height: 32 },
-      radii: { topLeft: 0, topRight: 0, bottomRight: 16, bottomLeft: 16 },
-    };
-    const to: SurfaceGeometry = {
-      rect: { left: 122, top: 68, width: 356, height: 32 },
-      radii: { topLeft: 16, topRight: 16, bottomRight: 0, bottomLeft: 0 },
-    };
-
     animateWorkspaceDeckBackPeek({
       duration: WORKSPACE_DECK_MORPH_DURATION_MS,
       element,
-      from,
-      to,
     });
 
     expect(element.dataset.deckMorphBackPeek).toBe("true");
-    expect(keyframes[0]?.[0]).toMatchObject({
-      opacity: 0.72,
-      transform: "translate3d(0, 3px, 0) scaleX(0.985)",
-    });
-    expect(keyframes[0]?.at(-1)).toMatchObject({
-      opacity: 1,
-      transform: "translate3d(0, 0, 0) scaleX(1)",
-    });
-    expect(keyframes[0]?.every((frame) => Number(frame.opacity ?? 1) >= 0.72)).toBe(true);
+    expect(keyframes[0]?.[0]).toMatchObject({ opacity: 1 });
+    expect(keyframes[0]?.at(-1)).toMatchObject({ opacity: 1 });
+    expect(keyframes[0]?.every((frame) => frame.opacity === 1)).toBe(true);
+    expect(keyframes[0]?.every((frame) => !("transform" in frame))).toBe(true);
     expect(keyframes[0]?.some((frame) => "clipPath" in frame)).toBe(false);
-    expect(keyframes[0]?.some((frame) => String(frame.transform).includes("232px"))).toBe(false);
   });
 
-  it("adds a subtle interruption-safe fade to compressed card content", () => {
-    const keyframes: Keyframe[][] = [];
-    const options: KeyframeAnimationOptions[] = [];
-    const element = {
-      animate: (frames: Keyframe[], animationOptions: KeyframeAnimationOptions) => {
-        keyframes.push(frames);
-        options.push(animationOptions);
-        return { cancel: () => undefined } as Animation;
-      },
-    } as unknown as HTMLElement;
+  it("keeps outgoing content solid until the crisp 22% handoff", () => {
+    const outgoing = fakeAnimatedElement();
 
-    animateWorkspaceDeckContentFade({
+    animateWorkspaceDeckContentHandoff({
       duration: WORKSPACE_DECK_MORPH_DURATION_MS,
-      element,
-      from: 0.93,
-      to: WORKSPACE_DECK_CONTENT_PEEK_OPACITY,
+      element: outgoing.element,
+      handoffOffset: 0.22,
+      role: "outgoing",
     });
 
-    expect(keyframes[0]?.[0]).toMatchObject({ offset: 0, opacity: 0.93 });
-    expect(keyframes[0]?.at(-1)).toMatchObject({
-      offset: 1,
-      opacity: WORKSPACE_DECK_CONTENT_PEEK_OPACITY,
+    expect(contentTimeline(outgoing.keyframes[0] ?? [])).toEqual([
+      { offset: 0, opacity: 1 },
+      { offset: 0.22, opacity: 0 },
+      { offset: 1, opacity: 0 },
+    ]);
+    expect(outgoing.keyframes[0]?.[0]?.easing).toBe("steps(1, end)");
+    expect(outgoing.keyframes[0]?.every(isNaturalScaleContentFrame)).toBe(true);
+  });
+
+  it("reveals incoming content at the same crisp 22% handoff", () => {
+    const incoming = fakeAnimatedElement();
+
+    animateWorkspaceDeckContentHandoff({
+      duration: WORKSPACE_DECK_MORPH_DURATION_MS,
+      element: incoming.element,
+      handoffOffset: 0.22,
+      role: "incoming",
     });
-    expect(options[0]).toMatchObject({
+
+    expect(contentTimeline(incoming.keyframes[0] ?? [])).toEqual([
+      { offset: 0, opacity: 0 },
+      { offset: 0.22, opacity: 1 },
+      { offset: 1, opacity: 1 },
+    ]);
+    expect(incoming.keyframes[0]?.[0]?.easing).toBe("steps(1, end)");
+    expect(incoming.keyframes[0]?.every(isNaturalScaleContentFrame)).toBe(true);
+  });
+
+  it("reveals the new target peek label at the crisp 22% handoff", () => {
+    const targetPeek = fakeAnimatedElement();
+
+    animateWorkspaceDeckContentHandoff({
+      duration: WORKSPACE_DECK_MORPH_DURATION_MS,
+      element: targetPeek.element,
+      handoffOffset: 0.22,
+      role: "peek",
+    });
+
+    expect(
+      (targetPeek.keyframes[0] ?? []).map(({ offset, opacity }) => ({ offset, opacity })),
+    ).toEqual([
+      { offset: 0, opacity: 0 },
+      { offset: 0.22, opacity: 1 },
+      { offset: 1, opacity: 1 },
+    ]);
+    expect(targetPeek.keyframes[0]?.[0]?.easing).toBe("steps(1, end)");
+    expect(targetPeek.keyframes[0]?.every(isNaturalScaleContentFrame)).toBe(true);
+    expect(targetPeek.options[0]).toMatchObject({
       duration: WORKSPACE_DECK_MORPH_DURATION_MS,
       fill: "both",
     });
   });
 
-  it("compensates visible corner radii across non-uniform scale", () => {
-    const keyframes: Keyframe[][] = [];
-    const element = {
-      animate: (frames: Keyframe[]) => {
-        keyframes.push(frames);
-        return { cancel: () => undefined } as Animation;
-      },
-    } as unknown as HTMLElement;
-    const from: SurfaceGeometry = {
+  it("cuts immediately to new content when a rapid follow-up interrupts an invisible card", () => {
+    const outgoing = fakeAnimatedElement({
+      opacity: "0.76",
+      transform: "translate3d(0, 2px, 0)",
+      willChange: "filter",
+    });
+
+    const motion = animateWorkspaceDeckContentHandoff({
+      duration: WORKSPACE_DECK_MORPH_DURATION_MS,
+      element: outgoing.element,
+      handoffOffset: 0,
+      role: "outgoing",
+    });
+
+    expect(contentTimeline(outgoing.keyframes[0] ?? [])).toEqual([
+      { offset: 0, opacity: 0 },
+      { offset: 1, opacity: 0 },
+    ]);
+    expect(outgoing.element.style.willChange).toBe("opacity");
+
+    const incoming = fakeAnimatedElement();
+    animateWorkspaceDeckContentHandoff({
+      duration: WORKSPACE_DECK_MORPH_DURATION_MS,
+      element: incoming.element,
+      handoffOffset: 0,
+      role: "incoming",
+    });
+    expect(contentTimeline(incoming.keyframes[0] ?? [])).toEqual([
+      { offset: 0, opacity: 1 },
+      { offset: 1, opacity: 1 },
+    ]);
+
+    motion.restoreStyles();
+
+    expect(outgoing.element.style.opacity).toBe("0.76");
+    expect(outgoing.element.style.transform).toBe("translate3d(0, 2px, 0)");
+    expect(outgoing.element.style.willChange).toBe("filter");
+  });
+
+  it("uses an immediate handoff only when the interrupted active content is invisible", () => {
+    expect(resolveWorkspaceDeckContentHandoffOffset({ opacity: 0 })).toBe(0);
+    expect(resolveWorkspaceDeckContentHandoffOffset({ opacity: 0.49 })).toBe(0);
+    expect(resolveWorkspaceDeckContentHandoffOffset({ opacity: 0.5 })).toBe(0.22);
+    expect(resolveWorkspaceDeckContentHandoffOffset({ opacity: 1 })).toBe(0.22);
+    expect(resolveWorkspaceDeckContentHandoffOffset(undefined)).toBe(0.22);
+  });
+
+  it("captures interrupted opacity without coupling it to element transforms", () => {
+    const element = fakeElement();
+
+    expect(
+      captureWorkspaceDeckContentHandoffState(element, () =>
+        fakeStyle({
+          opacity: "0.42",
+          transform: "matrix(1, 0, 0, 1, 0, -1.5)",
+        }),
+      ),
+    ).toEqual({ opacity: 0.42 });
+    expect(
+      captureWorkspaceDeckContentHandoffState(element, () =>
+        fakeStyle({ opacity: "invalid", transform: "none" }),
+      ),
+    ).toEqual({ opacity: 1 });
+  });
+
+  it("moves forward and backward frames toward their destination with a 3px directional settle", () => {
+    const upperPeek: SurfaceGeometry = {
+      rect: { left: 122, top: 68, width: 356, height: 32 },
+      radii: { topLeft: 16, topRight: 16, bottomRight: 0, bottomLeft: 0 },
+    };
+    const active: SurfaceGeometry = {
+      rect: { left: 100, top: 100, width: 400, height: 200 },
+      radii: { topLeft: 22, topRight: 22, bottomRight: 22, bottomLeft: 22 },
+    };
+    const lowerPeek: SurfaceGeometry = {
       rect: { left: 122, top: 300, width: 356, height: 32 },
       radii: { topLeft: 0, topRight: 0, bottomRight: 16, bottomLeft: 16 },
     };
-    const to: SurfaceGeometry = {
+
+    const forwardIncoming = buildWorkspaceDeckFrameMorphDescriptor({
+      direction: "forward",
+      durationMs: WORKSPACE_DECK_MORPH_DURATION_MS,
+      from: lowerPeek,
+      role: "incoming",
+      to: active,
+    });
+    const forwardOutgoing = buildWorkspaceDeckFrameMorphDescriptor({
+      direction: "forward",
+      durationMs: WORKSPACE_DECK_MORPH_DURATION_MS,
+      from: active,
+      role: "outgoing",
+      to: upperPeek,
+    });
+    const backwardIncoming = buildWorkspaceDeckFrameMorphDescriptor({
+      direction: "backward",
+      durationMs: WORKSPACE_DECK_MORPH_DURATION_MS,
+      from: upperPeek,
+      role: "incoming",
+      to: active,
+    });
+    const backwardOutgoing = buildWorkspaceDeckFrameMorphDescriptor({
+      direction: "backward",
+      durationMs: WORKSPACE_DECK_MORPH_DURATION_MS,
+      from: active,
+      role: "outgoing",
+      to: lowerPeek,
+    });
+
+    expect(frameTops(forwardIncoming.geometryKeyframes)).toEqual([300, 97, 100]);
+    expect(frameTops(forwardOutgoing.geometryKeyframes)).toEqual([100, 65, 68]);
+    expect(frameTops(backwardIncoming.geometryKeyframes)).toEqual([68, 103, 100]);
+    expect(frameTops(backwardOutgoing.geometryKeyframes)).toEqual([100, 303, 300]);
+    for (const descriptor of [
+      forwardIncoming,
+      forwardOutgoing,
+      backwardIncoming,
+      backwardOutgoing,
+    ]) {
+      expect(frameOffsets(descriptor.geometryKeyframes)).toEqual([0, 0.84, 1]);
+      expect(descriptor.geometryKeyframes.every(isGeometryOnlyFrame)).toBe(true);
+    }
+  });
+
+  it("detaches and attaches corners on their own track with exact resting radii", () => {
+    const lowerPeek: SurfaceGeometry = {
+      rect: { left: 122, top: 300, width: 356, height: 32 },
+      radii: { topLeft: 0, topRight: 0, bottomRight: 16, bottomLeft: 16 },
+    };
+    const upperPeek: SurfaceGeometry = {
+      rect: { left: 122, top: 68, width: 356, height: 32 },
+      radii: { topLeft: 16, topRight: 16, bottomRight: 0, bottomLeft: 0 },
+    };
+    const active: SurfaceGeometry = {
       rect: { left: 100, top: 100, width: 400, height: 200 },
       radii: { topLeft: 22, topRight: 22, bottomRight: 22, bottomLeft: 22 },
     };
 
-    animateWorkspaceDeckCorners({
-      duration: WORKSPACE_DECK_MORPH_DURATION_MS,
-      element,
-      from,
-      fromScaleX: 0.89,
-      fromScaleY: 0.16,
-      to,
-      toScaleX: 1,
-      toScaleY: 1,
+    const incoming = buildWorkspaceDeckFrameMorphDescriptor({
+      direction: "forward",
+      durationMs: WORKSPACE_DECK_MORPH_DURATION_MS,
+      from: lowerPeek,
+      role: "incoming",
+      to: active,
+    });
+    const outgoing = buildWorkspaceDeckFrameMorphDescriptor({
+      direction: "forward",
+      durationMs: WORKSPACE_DECK_MORPH_DURATION_MS,
+      from: active,
+      role: "outgoing",
+      to: upperPeek,
     });
 
-    expect(keyframes[0]?.length).toBeGreaterThan(10);
-    expect(keyframes[0]?.[0]).toMatchObject({
-      borderRadius: "0px 0px 17.97752808988764px 17.97752808988764px / 0px 0px 100px 100px",
+    expect(frameOffsets(incoming.cornerKeyframes)).toEqual([0, 0.12, 1]);
+    expect(frameOffsets(outgoing.cornerKeyframes)).toEqual([0, 0.12, 0.88, 1]);
+    expect(incoming.cornerKeyframes[0]?.borderRadius).toBe("0px 0px 16px 16px");
+    expect(incoming.cornerKeyframes.at(-1)?.borderRadius).toBe("22px 22px 22px 22px");
+    expect(outgoing.cornerKeyframes[0]?.borderRadius).toBe("22px 22px 22px 22px");
+    expect(outgoing.cornerKeyframes.at(-1)?.borderRadius).toBe("16px 16px 0px 0px");
+    expect(allCornersRounded(incoming.cornerKeyframes[1])).toBe(true);
+    expect(allCornersRounded(outgoing.cornerKeyframes[1])).toBe(true);
+    expect(allCornersRounded(outgoing.cornerKeyframes[2])).toBe(true);
+    expect(incoming.cornerKeyframes.every(isCornerOnlyFrame)).toBe(true);
+    expect(outgoing.cornerKeyframes.every(isCornerOnlyFrame)).toBe(true);
+    expect(incoming.geometryKeyframes.every((frame) => !("borderRadius" in frame))).toBe(true);
+    expect(outgoing.geometryKeyframes.every((frame) => !("borderRadius" in frame))).toBe(true);
+  });
+
+  it("rounds an interrupted outgoing frame early instead of holding edgy corners", () => {
+    const interrupted: SurfaceGeometry = {
+      rect: { left: 116, top: 248, width: 368, height: 74 },
+      radii: { topLeft: 4, topRight: 4, bottomRight: 17, bottomLeft: 17 },
+    };
+    const upperPeek: SurfaceGeometry = {
+      rect: { left: 122, top: 68, width: 356, height: 32 },
+      radii: { topLeft: 16, topRight: 16, bottomRight: 0, bottomLeft: 0 },
+    };
+
+    const outgoing = buildWorkspaceDeckFrameMorphDescriptor({
+      direction: "forward",
+      durationMs: WORKSPACE_DECK_MORPH_DURATION_MS,
+      from: interrupted,
+      role: "outgoing",
+      to: upperPeek,
     });
-    expect(keyframes[0]?.at(-1)?.borderRadius).toBe("22px 22px 22px 22px / 22px 22px 22px 22px");
+
+    expect(frameOffsets(outgoing.cornerKeyframes)).toEqual([0, 0.12, 0.88, 1]);
+    expect(outgoing.cornerKeyframes[0]?.borderRadius).toBe("4px 4px 17px 17px");
+    expect(outgoing.cornerKeyframes[1]?.borderRadius).toBe("17px 17px 17px 17px");
+    expect(outgoing.cornerKeyframes[2]?.borderRadius).toBe("17px 17px 17px 17px");
+    expect(outgoing.cornerKeyframes.at(-1)?.borderRadius).toBe("16px 16px 0px 0px");
   });
 
   it("uses only the interpolable background color in chrome keyframes", () => {
@@ -137,7 +312,9 @@ describe("workspace deck morph chrome", () => {
   });
 
   it("keeps color, glass, and geometry on the same easing timeline", () => {
-    const descriptor = buildSurfaceMorphDescriptor({
+    const descriptor = buildWorkspaceDeckFrameMorphDescriptor({
+      direction: "forward",
+      durationMs: WORKSPACE_DECK_MORPH_DURATION_MS,
       from: {
         rect: { left: 122, top: 300, width: 356, height: 32 },
         radii: { topLeft: 0, topRight: 0, bottomRight: 16, bottomLeft: 16 },
@@ -146,7 +323,7 @@ describe("workspace deck morph chrome", () => {
         rect: { left: 100, top: 100, width: 400, height: 200 },
         radii: { topLeft: 22, topRight: 22, bottomRight: 22, bottomLeft: 22 },
       },
-      direction: "from-bottom",
+      role: "incoming",
     });
     const from = {
       backdropFilter: "blur(12px)",
@@ -161,7 +338,85 @@ describe("workspace deck morph chrome", () => {
         easing,
         offset,
       })),
-    ).toEqual(descriptor.chromeKeyframes.map(({ easing, offset }) => ({ easing, offset })));
+    ).toEqual(descriptor.geometryKeyframes.map(({ easing, offset }) => ({ easing, offset })));
+    expect(frameOffsets(descriptor.appearanceKeyframes)).toEqual([0, 0.84, 1]);
+  });
+
+  it("starts independent geometry, corner, and appearance animations on each proxy", () => {
+    const host = fakeMorphHost();
+    const descriptor = buildWorkspaceDeckFrameMorphDescriptor({
+      direction: "forward",
+      durationMs: WORKSPACE_DECK_MORPH_DURATION_MS,
+      from: {
+        rect: { left: 122, top: 300, width: 356, height: 32 },
+        radii: { topLeft: 0, topRight: 0, bottomRight: 16, bottomLeft: 16 },
+      },
+      role: "incoming",
+      to: {
+        rect: { left: 100, top: 100, width: 400, height: 200 },
+        radii: { topLeft: 22, topRight: 22, bottomRight: 22, bottomLeft: 22 },
+      },
+    });
+    const appearance = {
+      backdropFilter: "blur(12px)",
+      backgroundColor: "rgb(20, 20, 20)",
+      borderColor: "rgb(40, 40, 40)",
+      boxShadow: "none",
+    };
+
+    const proxy = createWorkspaceDeckMorphProxy({
+      descriptor,
+      from: appearance,
+      host: host.element,
+      role: "incoming",
+      to: { ...appearance, backgroundColor: "rgb(60, 60, 60)" },
+    });
+
+    expect(host.animationCalls).toHaveLength(3);
+    expect(
+      new Set([proxy.appearanceAnimation, proxy.geometryAnimation, proxy.cornerAnimation]),
+    ).toEqual(new Set(host.animations));
+    expect(animationFramesFor(host, proxy.geometryAnimation).every(isGeometryOnlyFrame)).toBe(true);
+    expect(animationFramesFor(host, proxy.cornerAnimation).every(isCornerOnlyFrame)).toBe(true);
+    expect(host.appended).toEqual([proxy.element]);
+    expect(proxy.element.dataset.surfaceMorphProxy).toBe("deck-incoming");
+    expect(proxy.element.getAttribute("aria-hidden")).toBe("true");
+    expect(proxy.element.getAttribute("inert")).toBe("");
+  });
+
+  it("keeps all proxy animation handles nullable for the non-WAAPI fallback", () => {
+    const host = fakeMorphHost({ supportsAnimate: false });
+    const descriptor = buildWorkspaceDeckFrameMorphDescriptor({
+      direction: "backward",
+      durationMs: WORKSPACE_DECK_MORPH_DURATION_MS,
+      from: {
+        rect: { left: 122, top: 68, width: 356, height: 32 },
+        radii: { topLeft: 16, topRight: 16, bottomRight: 0, bottomLeft: 0 },
+      },
+      role: "incoming",
+      to: {
+        rect: { left: 100, top: 100, width: 400, height: 200 },
+        radii: { topLeft: 22, topRight: 22, bottomRight: 22, bottomLeft: 22 },
+      },
+    });
+    const appearance = {
+      backdropFilter: "none",
+      backgroundColor: "transparent",
+      borderColor: "transparent",
+      boxShadow: "none",
+    };
+
+    const proxy = createWorkspaceDeckMorphProxy({
+      descriptor,
+      from: appearance,
+      host: host.element,
+      role: "incoming",
+      to: appearance,
+    });
+
+    expect(proxy.appearanceAnimation).toBeNull();
+    expect(proxy.geometryAnimation).toBeNull();
+    expect(proxy.cornerAnimation).toBeNull();
   });
 
   it("keeps chrome geometry in the card-local coordinate system", () => {
@@ -243,44 +498,127 @@ describe("workspace deck morph chrome", () => {
     expect(captureWorkspaceDeckSurface(surface, readStyle).opacity).toBe(1);
   });
 
-  it("continues outgoing content from the visible geometry of an interrupted morph", () => {
-    const keyframes: Keyframe[][] = [];
-    const element = {
-      animate: (frames: Keyframe[]) => {
-        keyframes.push(frames);
-        return { cancel: () => undefined } as Animation;
-      },
-      getBoundingClientRect: () => ({ left: 100, top: 100, width: 400, height: 200 }),
-      style: { overflow: "", transformOrigin: "", willChange: "" },
-    } as unknown as HTMLElement;
-    const surface = {
-      getBoundingClientRect: () => ({ left: 100, top: 100, width: 400, height: 240 }),
-    } as unknown as HTMLElement;
-    const from: SurfaceGeometry = {
-      rect: { left: 110, top: 82, width: 378, height: 108 },
-      radii: { topLeft: 19, topRight: 19, bottomRight: 11, bottomLeft: 11 },
-    };
-    const to: SurfaceGeometry = {
-      rect: { left: 122, top: 68, width: 356, height: 32 },
-      radii: { topLeft: 16, topRight: 16, bottomRight: 0, bottomLeft: 0 },
-    };
+  it("captures the currently visible proxy radii before an interrupted follow-up", () => {
+    const surface = fakeElement();
+    const snapshot = captureWorkspaceDeckSurface(surface, () =>
+      fakeStyle({
+        borderTopLeftRadius: "13px",
+        borderTopRightRadius: "17px",
+        borderBottomRightRadius: "9px",
+        borderBottomLeftRadius: "5px",
+      }),
+    );
 
-    animateWorkspaceDeckOutgoing({
-      descriptor: buildSurfaceMorphDescriptor({ from, to, direction: "to-top" }),
-      element,
-      from,
-      surface,
-      to,
-    });
-
-    expect(keyframes[0]?.[0]).toMatchObject({
-      transform: "translate3d(10px, -18px, 0) scale(0.945, 0.45)",
-    });
-    expect(keyframes[0]?.at(-1)).toMatchObject({
-      transform: "translate3d(22px, -32px, 0) scale(0.89, 0.13333333333333333)",
+    expect(snapshot.geometry.radii).toEqual({
+      topLeft: 13,
+      topRight: 17,
+      bottomRight: 9,
+      bottomLeft: 5,
     });
   });
 });
+
+function contentTimeline(keyframes: readonly Keyframe[]) {
+  return keyframes.map(({ offset, opacity }) => ({ offset, opacity }));
+}
+
+function isNaturalScaleContentFrame(frame: Keyframe): boolean {
+  return !("transform" in frame) && !("borderRadius" in frame) && !("clipPath" in frame);
+}
+
+function frameOffsets(keyframes: readonly Keyframe[]): readonly (number | null)[] {
+  return keyframes.map(({ offset }) => offset ?? null);
+}
+
+function frameTops(keyframes: readonly Keyframe[]): readonly number[] {
+  return keyframes.map(({ top }) => Number.parseFloat(String(top)));
+}
+
+function isGeometryOnlyFrame(frame: Keyframe): boolean {
+  return (
+    "left" in frame &&
+    "top" in frame &&
+    "width" in frame &&
+    "height" in frame &&
+    !("borderRadius" in frame)
+  );
+}
+
+function isCornerOnlyFrame(frame: Keyframe): boolean {
+  return (
+    "borderRadius" in frame &&
+    !("left" in frame) &&
+    !("top" in frame) &&
+    !("width" in frame) &&
+    !("height" in frame)
+  );
+}
+
+function allCornersRounded(keyframe: Keyframe | undefined): boolean {
+  return String(keyframe?.borderRadius)
+    .split(/\s+/)
+    .every((radius) => Number.parseFloat(radius) > 0);
+}
+
+function fakeAnimatedElement(style: Partial<CSSStyleDeclaration> = {}) {
+  const keyframes: Keyframe[][] = [];
+  const options: KeyframeAnimationOptions[] = [];
+  const element = {
+    animate: (frames: Keyframe[], animationOptions: KeyframeAnimationOptions) => {
+      keyframes.push(frames);
+      options.push(animationOptions);
+      return { cancel: () => undefined } as Animation;
+    },
+    style: Object.assign({ opacity: "", transform: "", willChange: "" }, style),
+  } as unknown as HTMLElement;
+  return { element, keyframes, options };
+}
+
+function fakeMorphHost(options: { readonly supportsAnimate?: boolean } = {}) {
+  const animations: Animation[] = [];
+  const animationCalls: Array<{
+    readonly frames: Keyframe[];
+    readonly options: KeyframeAnimationOptions;
+  }> = [];
+  const appended: Element[] = [];
+  const attributes = new Map<string, string>();
+  const proxyElement = {
+    animate:
+      options.supportsAnimate === false
+        ? undefined
+        : (frames: Keyframe[], animationOptions: KeyframeAnimationOptions) => {
+            const animation = { cancel: () => undefined } as Animation;
+            animations.push(animation);
+            animationCalls.push({ frames, options: animationOptions });
+            return animation;
+          },
+    className: "",
+    dataset: {},
+    getAttribute: (name: string) => attributes.get(name) ?? null,
+    setAttribute: (name: string, value: string) => attributes.set(name, value),
+    style: {
+      backdropFilter: "",
+      backgroundColor: "",
+      borderColor: "",
+      boxShadow: "",
+      setProperty: () => undefined,
+    },
+  } as unknown as HTMLDivElement;
+  const element = {
+    append: (child: Element) => appended.push(child),
+    getBoundingClientRect: () => ({ left: 100, top: 100, width: 400, height: 200 }),
+    ownerDocument: { createElement: () => proxyElement },
+  } as unknown as HTMLElement;
+  return { animationCalls, animations, appended, element };
+}
+
+function animationFramesFor(
+  host: ReturnType<typeof fakeMorphHost>,
+  animation: Animation | null,
+): readonly Keyframe[] {
+  const index = animation === null ? -1 : host.animations.indexOf(animation);
+  return host.animationCalls[index]?.frames ?? [];
+}
 
 function fakeElement(options?: {
   readonly ancestorHost?: HTMLElement;
@@ -295,24 +633,26 @@ function fakeElement(options?: {
 }
 
 function fakeStyle(overrides: Partial<CSSStyleDeclaration> = {}): CSSStyleDeclaration {
-  return {
-    backdropFilter: "none",
-    background: "transparent",
-    backgroundColor: "rgba(0, 0, 0, 0)",
-    backgroundImage: "none",
-    borderBottomLeftRadius: "22px",
-    borderBottomRightRadius: "22px",
-    borderBottomWidth: "0px",
-    borderColor: "transparent",
-    borderLeftWidth: "0px",
-    borderRightWidth: "0px",
-    borderStyle: "none",
-    borderTopLeftRadius: "22px",
-    borderTopRightRadius: "22px",
-    borderTopWidth: "0px",
-    boxShadow: "none",
-    opacity: "1",
-    getPropertyValue: () => "",
-    ...overrides,
-  } as CSSStyleDeclaration;
+  return Object.assign(
+    {
+      backdropFilter: "none",
+      background: "transparent",
+      backgroundColor: "rgba(0, 0, 0, 0)",
+      backgroundImage: "none",
+      borderBottomLeftRadius: "22px",
+      borderBottomRightRadius: "22px",
+      borderBottomWidth: "0px",
+      borderColor: "transparent",
+      borderLeftWidth: "0px",
+      borderRightWidth: "0px",
+      borderStyle: "none",
+      borderTopLeftRadius: "22px",
+      borderTopRightRadius: "22px",
+      borderTopWidth: "0px",
+      boxShadow: "none",
+      opacity: "1",
+      getPropertyValue: () => "",
+    },
+    overrides,
+  ) as CSSStyleDeclaration;
 }

@@ -10,6 +10,7 @@ import { useState, type ReactNode } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
@@ -22,26 +23,18 @@ import {
 
 const VERDICTS: ReadonlyArray<{
   readonly value: PullRequestReviewVerdict;
-  readonly label: string;
-  readonly sent: string;
   readonly icon: ReactNode;
 }> = [
   {
     value: "comment",
-    label: "Comment",
-    sent: "Review submitted",
     icon: <MessageSquareIcon className="size-3" />,
   },
   {
     value: "approve",
-    label: "Approve",
-    sent: "Pull request approved",
     icon: <CheckIcon className="size-3" />,
   },
   {
     value: "request-changes",
-    label: "Request changes",
-    sent: "Changes requested",
     icon: <XCircleIcon className="size-3" />,
   },
 ];
@@ -57,6 +50,7 @@ export function PullRequestReviewBar({
   verdicts: ReadonlyArray<PullRequestReviewVerdict>;
   onSubmitted: () => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const [pending, setPending] = useState(false);
   const comments = usePendingReviewComments(reference);
   const reviewKey = pullRequestReviewKey(reference);
@@ -72,10 +66,24 @@ export function PullRequestReviewBar({
     reportFailure: false,
   });
 
-  const offered = VERDICTS.filter((verdict) => verdicts.includes(verdict.value));
+  const offered = VERDICTS.filter((verdict) => verdicts.includes(verdict.value)).map((verdict) => ({
+    ...verdict,
+    label:
+      verdict.value === "comment"
+        ? translate("pullRequest.review.comment")
+        : verdict.value === "approve"
+          ? translate("pullRequest.review.approve")
+          : translate("pullRequest.review.requestChanges"),
+    sent:
+      verdict.value === "comment"
+        ? translate("pullRequest.review.submitted")
+        : verdict.value === "approve"
+          ? translate("pullRequest.review.approved")
+          : translate("pullRequest.review.changesRequested"),
+  }));
   if (offered.length === 0) return null;
 
-  const submit = async (verdict: (typeof VERDICTS)[number]) => {
+  const submit = async (verdict: (typeof offered)[number]) => {
     if (pending) return;
     const submittedBody = body;
     const submittedComments = comments;
@@ -92,7 +100,7 @@ export function PullRequestReviewBar({
     setPending(false);
     if (result._tag === "Failure") {
       // The draft is kept: whatever went wrong, retyping the review is not the answer.
-      toastManager.add({ type: "error", title: "The review could not be submitted" });
+      toastManager.add({ type: "error", title: translate("pullRequest.review.submitFailed") });
       return;
     }
     // More remarks may have been added while the host was accepting this snapshot. Leave those,
@@ -115,12 +123,12 @@ export function PullRequestReviewBar({
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <span>
           {comments.length === 0
-            ? "No line comments yet"
-            : `${comments.length} ${comments.length === 1 ? "comment" : "comments"} pending`}
+            ? translate("pullRequest.review.noLineComments")
+            : translate("pullRequest.review.pendingComments", { count: comments.length })}
         </span>
         {comments.length > 0 ? (
           <Button size="xs" variant="ghost" disabled={pending} onClick={() => clear(reviewKey)}>
-            Discard
+            {translate("pullRequest.review.discard")}
           </Button>
         ) : null}
       </div>
@@ -128,8 +136,8 @@ export function PullRequestReviewBar({
         size="sm"
         className="mt-2"
         value={body}
-        placeholder="Summarize your review (optional)"
-        aria-label="Review summary"
+        placeholder={translate("pullRequest.review.summaryPlaceholder")}
+        aria-label={translate("pullRequest.review.summaryAria")}
         onChange={(event) => setSummary(reviewKey, event.target.value)}
       />
       <div className="mt-2 flex flex-wrap justify-end gap-2">

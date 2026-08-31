@@ -11,6 +11,7 @@ import {
   type RelayLiveActivityRegistrationRequest,
 } from "@t3tools/contracts/relay";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
+import { resolveInterfaceLocaleSyncRecord } from "@t3tools/client-runtime/interface-language-sync";
 import {
   resolveInterfaceLocale,
   type ResolvedInterfaceLanguage,
@@ -509,13 +510,22 @@ function armAgentAwarenessLiveActivityForLocalWorkNow(
       return;
     }
     const nowIso = new Date(Date.now()).toISOString();
+    const localePreference = resolveInterfaceLocaleSyncRecord({
+      localeRecord: preferences.interfaceLocaleSyncRecordV1 ?? null,
+      legacyRecord: preferences.interfaceLanguageSyncRecord ?? null,
+    })?.preference;
     const language: ResolvedInterfaceLanguage = resolveInterfaceLocale(
-      preferences.interfaceLanguageSyncRecord?.preference ?? DEFAULT_INTERFACE_LANGUAGE_PREFERENCE,
+      localePreference ?? DEFAULT_INTERFACE_LANGUAGE_PREFERENCE,
       [new Intl.DateTimeFormat().resolvedOptions().locale],
     ).language;
     const activity = AgentActivity.start({
       title: "T3 Code",
-      subtitle: language === "de" ? "Agentenarbeit läuft" : "Agent work in progress",
+      subtitle:
+        language === "de"
+          ? "Agentenarbeit läuft"
+          : language === "fr"
+            ? "Travail de l’agent en cours"
+            : "Agent work in progress",
       language,
       activeCount: 1,
       updatedAt: nowIso,
@@ -527,7 +537,12 @@ function armAgentAwarenessLiveActivityForLocalWorkNow(
           threadTitle: input.threadTitle,
           modelTitle: "",
           phase: "starting",
-          status: language === "de" ? "Verbindung wird hergestellt" : "Connecting",
+          status:
+            language === "de"
+              ? "Verbindung wird hergestellt"
+              : language === "fr"
+                ? "Connexion en cours"
+                : "Connecting",
           updatedAt: nowIso,
           deepLink: "/",
         },

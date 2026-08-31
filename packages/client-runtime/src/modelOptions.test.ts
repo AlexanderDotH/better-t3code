@@ -47,6 +47,25 @@ function codexSelection(options?: ModelSelection["options"]): ModelSelection {
 }
 
 describe("normalizeClientModelSelection", () => {
+  it("preserves the T3 Auto Reasoning marker while normalizing Codex speed", () => {
+    expect(
+      normalizeClientModelSelection({
+        provider: CODEX,
+        selection: codexSelection([
+          { id: "reasoningEffort", value: "high" },
+          { id: "t3AutoReasoning", value: true },
+        ]),
+        capabilities: CODEX_FAST_CAPABILITIES,
+      }),
+    ).toEqual(
+      codexSelection([
+        { id: "reasoningEffort", value: "high" },
+        { id: "t3AutoReasoning", value: true },
+        { id: "serviceTier", value: "default" },
+      ]),
+    );
+  });
+
   it("stores Standard explicitly when a fast-capable Codex model has no saved tier", () => {
     expect(
       normalizeClientModelSelection({
@@ -144,6 +163,25 @@ describe("normalizeClientModelSelection", () => {
 });
 
 describe("toStickyModelSelection", () => {
+  it("keeps Auto Reasoning and its concrete fallback sticky", () => {
+    expect(
+      toStickyModelSelection({
+        provider: CODEX,
+        selection: codexSelection([
+          { id: "reasoningEffort", value: "high" },
+          { id: "t3AutoReasoning", value: true },
+          { id: "serviceTier", value: "priority" },
+          { id: "contextWindow", value: "262144" },
+        ]),
+      }),
+    ).toEqual(
+      codexSelection([
+        { id: "reasoningEffort", value: "high" },
+        { id: "t3AutoReasoning", value: true },
+      ]),
+    );
+  });
+
   it("keeps reasoning sticky while speed and context remain scoped to the current Codex chat", () => {
     expect(
       toStickyModelSelection({

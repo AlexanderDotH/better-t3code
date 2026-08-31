@@ -1,4 +1,8 @@
-import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+  type ExecutionEnvironmentDescriptor,
+} from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -147,12 +151,16 @@ export const make = Effect.gen(function* () {
     capabilities: {
       repositoryIdentity: true,
       connectionProbe: true,
+      attachmentUploads: true,
+      fileAttachments: { maxUploadBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES },
       pullRequests: true,
       threadSettlement: true,
       threadSnooze: true,
+      environmentThemes: true,
       threadPinning: true,
       threadPinReorder: true,
       threadTitleRegeneration: true,
+      threadPullRequestLinking: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverSelfUpdate === "boot-service" || serverSelfUpdate === "respawn"
         ? { serverSelfUpdateProgress: true }
@@ -160,9 +168,12 @@ export const make = Effect.gen(function* () {
       gitWorkbenchVersion: 1,
       mcpWorkspaceVersion: 1,
       agentWorkflowVersion: 1,
-      environmentSettingsVersion: 4,
+      environmentSettingsVersion: 5,
       projectSettingsVersion: 1,
       harnessChatSyncVersion: 1,
+      knowledgeGraphVersion: 1,
+      resourceProtectionVersion: 1,
+      resourceDiagnosticsVersion: 1,
       midChatProviderSwitching: true,
       threadForking: true,
       interruptedTurnRetry: true,

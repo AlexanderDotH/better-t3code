@@ -19,7 +19,15 @@ import {
   FilesystemBrowseResult,
   FilesystemBrowseError,
 } from "./filesystem.ts";
-import { AssetAccessError, AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
+import {
+  AssetAccessError,
+  AssetCreateUrlInput,
+  AssetCreateUrlResult,
+  AttachmentCreateUploadUrlInput,
+  AttachmentCreateUploadUrlResult,
+  AttachmentDeleteInput,
+  AttachmentUploadSigningKeyError,
+} from "./assets.ts";
 import {
   GitActionProgressEvent,
   VcsSwitchRefInput,
@@ -86,6 +94,20 @@ import {
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
 import {
+  KnowledgeGraphCancelInput,
+  KnowledgeGraphClearInput,
+  KnowledgeGraphMutationResultV1,
+  KnowledgeGraphNodeContentInput,
+  KnowledgeGraphNodeContentResultV1,
+  KnowledgeGraphOperationError,
+  KnowledgeGraphPauseInput,
+  KnowledgeGraphQueryInput,
+  KnowledgeGraphQueryResultV1,
+  KnowledgeGraphRebuildInput,
+  KnowledgeGraphStreamEvent,
+  KnowledgeGraphSubscribeInput,
+} from "./knowledgeGraph.ts";
+import {
   ClientOrchestrationCommand,
   ORCHESTRATION_WS_METHODS,
   OrchestrationDispatchCommandError,
@@ -103,6 +125,25 @@ import {
   OrchestrationRpcSchemas,
   OrchestrationGetWorkflowScriptError,
 } from "./orchestration.ts";
+import {
+  ProviderCompactThreadInput,
+  ProviderCompactionError,
+  ProviderUploadFeedbackError,
+  ProviderUploadFeedbackInput,
+  ProviderUploadFeedbackResult,
+} from "./provider.ts";
+import {
+  ProjectMemoryDocumentClearRequest,
+  ProjectMemoryDocumentMutationResponse,
+  ProjectMemoryDocumentReplaceRequest,
+  ProjectMemoryDocumentViewRequest,
+  ProjectMemoryDocumentViewResponse,
+  ProjectMemoryError,
+  ProjectMemoryImportRequest,
+  ProjectMemoryImportResponse,
+  ProjectMemorySettingsResponse,
+  ProjectMemorySettingsUpdateRequest,
+} from "./projectMemory.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   PlanParallelismReviewError,
@@ -344,6 +385,11 @@ export const WS_METHODS = {
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
   assetsCreateUrl: "assets.createUrl",
+  attachmentsCreateUploadUrl: "attachments.createUploadUrl",
+  attachmentsDelete: "attachments.delete",
+
+  // Provider methods
+  providerUploadFeedback: "provider.uploadFeedback",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -413,6 +459,12 @@ export const WS_METHODS = {
   serverRemoveKeybinding: "server.removeKeybinding",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
+  providerCompactThread: "provider.compactThread",
+  projectMemoryView: "projectMemory.view",
+  projectMemoryUpdateSettings: "projectMemory.updateSettings",
+  projectMemoryReplace: "projectMemory.replace",
+  projectMemoryImport: "projectMemory.import",
+  projectMemoryClear: "projectMemory.clear",
   serverCreateAssemblyAiStreamingToken: "server.createAssemblyAiStreamingToken",
   speechStartStreamingSession: "speech.startStreamingSession",
   speechPushStreamingAudio: "speech.pushStreamingAudio",
@@ -503,6 +555,15 @@ export const WS_METHODS = {
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
+
+  // Continuous project Knowledge Graph
+  knowledgeGraphSubscribe: "knowledgeGraph.subscribe",
+  knowledgeGraphQuery: "knowledgeGraph.query",
+  knowledgeGraphNodeContent: "knowledgeGraph.nodeContent",
+  knowledgeGraphRebuild: "knowledgeGraph.rebuild",
+  knowledgeGraphCancel: "knowledgeGraph.cancel",
+  knowledgeGraphPause: "knowledgeGraph.pause",
+  knowledgeGraphClear: "knowledgeGraph.clear",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -614,6 +675,42 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsProviderCompactThreadRpc = Rpc.make(WS_METHODS.providerCompactThread, {
+  payload: ProviderCompactThreadInput,
+  success: Schema.Void,
+  error: Schema.Union([ProviderCompactionError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectMemoryViewRpc = Rpc.make(WS_METHODS.projectMemoryView, {
+  payload: ProjectMemoryDocumentViewRequest,
+  success: ProjectMemoryDocumentViewResponse,
+  error: Schema.Union([ProjectMemoryError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectMemoryUpdateSettingsRpc = Rpc.make(WS_METHODS.projectMemoryUpdateSettings, {
+  payload: ProjectMemorySettingsUpdateRequest,
+  success: ProjectMemorySettingsResponse,
+  error: Schema.Union([ProjectMemoryError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectMemoryReplaceRpc = Rpc.make(WS_METHODS.projectMemoryReplace, {
+  payload: ProjectMemoryDocumentReplaceRequest,
+  success: ProjectMemoryDocumentMutationResponse,
+  error: Schema.Union([ProjectMemoryError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectMemoryImportRpc = Rpc.make(WS_METHODS.projectMemoryImport, {
+  payload: ProjectMemoryImportRequest,
+  success: ProjectMemoryImportResponse,
+  error: Schema.Union([ProjectMemoryError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectMemoryClearRpc = Rpc.make(WS_METHODS.projectMemoryClear, {
+  payload: ProjectMemoryDocumentClearRequest,
+  success: ProjectMemoryDocumentMutationResponse,
+  error: Schema.Union([ProjectMemoryError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerCreateAssemblyAiStreamingTokenRpc = Rpc.make(
@@ -1173,6 +1270,23 @@ export const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   error: Schema.Union([AssetAccessError, EnvironmentAuthorizationError]),
 });
 
+export const WsAttachmentsCreateUploadUrlRpc = Rpc.make(WS_METHODS.attachmentsCreateUploadUrl, {
+  payload: AttachmentCreateUploadUrlInput,
+  success: AttachmentCreateUploadUrlResult,
+  error: Schema.Union([AttachmentUploadSigningKeyError, EnvironmentAuthorizationError]),
+});
+
+export const WsAttachmentsDeleteRpc = Rpc.make(WS_METHODS.attachmentsDelete, {
+  payload: AttachmentDeleteInput,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFeedback, {
+  payload: ProviderUploadFeedbackInput,
+  success: ProviderUploadFeedbackResult,
+  error: Schema.Union([ProviderUploadFeedbackError, EnvironmentAuthorizationError]),
+});
+
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
   payload: VcsStatusInput,
   success: VcsStatusStreamEvent,
@@ -1562,6 +1676,54 @@ export const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTermina
   stream: true,
 });
 
+const KnowledgeGraphRpcError = Schema.Union([
+  KnowledgeGraphOperationError,
+  EnvironmentAuthorizationError,
+]);
+
+export const WsKnowledgeGraphSubscribeRpc = Rpc.make(WS_METHODS.knowledgeGraphSubscribe, {
+  payload: KnowledgeGraphSubscribeInput,
+  success: KnowledgeGraphStreamEvent,
+  error: KnowledgeGraphRpcError,
+  stream: true,
+});
+
+export const WsKnowledgeGraphQueryRpc = Rpc.make(WS_METHODS.knowledgeGraphQuery, {
+  payload: KnowledgeGraphQueryInput,
+  success: KnowledgeGraphQueryResultV1,
+  error: KnowledgeGraphRpcError,
+});
+
+export const WsKnowledgeGraphNodeContentRpc = Rpc.make(WS_METHODS.knowledgeGraphNodeContent, {
+  payload: KnowledgeGraphNodeContentInput,
+  success: KnowledgeGraphNodeContentResultV1,
+  error: KnowledgeGraphRpcError,
+});
+
+export const WsKnowledgeGraphRebuildRpc = Rpc.make(WS_METHODS.knowledgeGraphRebuild, {
+  payload: KnowledgeGraphRebuildInput,
+  success: KnowledgeGraphMutationResultV1,
+  error: KnowledgeGraphRpcError,
+});
+
+export const WsKnowledgeGraphCancelRpc = Rpc.make(WS_METHODS.knowledgeGraphCancel, {
+  payload: KnowledgeGraphCancelInput,
+  success: KnowledgeGraphMutationResultV1,
+  error: KnowledgeGraphRpcError,
+});
+
+export const WsKnowledgeGraphPauseRpc = Rpc.make(WS_METHODS.knowledgeGraphPause, {
+  payload: KnowledgeGraphPauseInput,
+  success: KnowledgeGraphMutationResultV1,
+  error: KnowledgeGraphRpcError,
+});
+
+export const WsKnowledgeGraphClearRpc = Rpc.make(WS_METHODS.knowledgeGraphClear, {
+  payload: KnowledgeGraphClearInput,
+  success: KnowledgeGraphMutationResultV1,
+  error: KnowledgeGraphRpcError,
+});
+
 export const WsSubscribeTerminalMetadataRpc = Rpc.make(WS_METHODS.subscribeTerminalMetadata, {
   payload: Schema.Struct({}),
   success: TerminalMetadataStreamEvent,
@@ -1570,7 +1732,16 @@ export const WsSubscribeTerminalMetadataRpc = Rpc.make(WS_METHODS.subscribeTermi
 });
 
 export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerConfig, {
-  payload: Schema.Struct({}),
+  payload: Schema.Struct({
+    /**
+     * Whether this client understands `environmentThemesUpdated` events.
+     * Already-shipped clients decode the stream against the old event union
+     * and would die on an unknown member, so the server emits the theme
+     * stream only to subscribers that ask for it. Absent on old clients;
+     * dropped by old servers.
+     */
+    environmentThemes: Schema.optional(Schema.Boolean),
+  }),
   success: ServerConfigStreamEvent,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),
   stream: true,
@@ -1625,6 +1796,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsProviderCompactThreadRpc,
+  WsProjectMemoryViewRpc,
+  WsProjectMemoryUpdateSettingsRpc,
+  WsProjectMemoryReplaceRpc,
+  WsProjectMemoryImportRpc,
+  WsProjectMemoryClearRpc,
   WsServerCreateAssemblyAiStreamingTokenRpc,
   WsSpeechStartStreamingSessionRpc,
   WsSpeechPushStreamingAudioRpc,
@@ -1709,6 +1886,16 @@ export const WsRpcGroup = RpcGroup.make(
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAssetsCreateUrlRpc,
+  WsAttachmentsCreateUploadUrlRpc,
+  WsAttachmentsDeleteRpc,
+  WsProviderUploadFeedbackRpc,
+  WsKnowledgeGraphSubscribeRpc,
+  WsKnowledgeGraphQueryRpc,
+  WsKnowledgeGraphNodeContentRpc,
+  WsKnowledgeGraphRebuildRpc,
+  WsKnowledgeGraphCancelRpc,
+  WsKnowledgeGraphPauseRpc,
+  WsKnowledgeGraphClearRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,

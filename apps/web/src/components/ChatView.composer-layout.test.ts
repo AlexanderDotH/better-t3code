@@ -1,20 +1,7 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
+import { describe, expect, it } from "vite-plus/test";
 
 import chatViewSource from "./ChatView.tsx?raw";
 import chatComposerSource from "./chat/ChatComposer.tsx?raw";
-import composerFloatingIslandSource from "./chat/ComposerFloatingIsland.tsx?raw";
-import surfaceMorphSource from "./chat/surfaceMorph.ts?raw";
-
-const composerSurfaceMorphCssPath = decodeURIComponent(
-  new URL("./chat/ComposerSurfaceMorph.css", import.meta.url).pathname,
-);
-const readComposerSurfaceMorphCss = Effect.gen(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
-  return yield* fileSystem.readFileString(composerSurfaceMorphCssPath);
-}).pipe(Effect.provide(NodeServices.layer));
 
 describe("ChatView composer overlay layout", () => {
   it("allows the draft composer card stack to shrink with a narrow chat column", () => {
@@ -23,83 +10,91 @@ describe("ChatView composer overlay layout", () => {
     );
   });
 
-  it("composes every above-deck status source into one floating island", () => {
-    const islandIndex = chatViewSource.indexOf("<ComposerFloatingIsland");
-    const islandEndIndex = chatViewSource.indexOf("</ComposerFloatingIsland>", islandIndex);
-    const bannerIndex = chatViewSource.indexOf("<ComposerBannerStack", islandIndex);
-    const syncIndex = chatViewSource.indexOf("<ThreadSyncStatusPill", islandIndex);
+  it("keeps one composer surface while transient state floats outside the card deck", () => {
+    const bubbleIndex = chatViewSource.indexOf("<ComposerFloatingBubble");
     const deckIndex = chatViewSource.indexOf("<ChatWorkspaceDeckController");
-
-    expect(chatViewSource).toContain(
-      "const [composerFloatingDrawerHost, setComposerFloatingDrawerHost] =",
+    const shellIndex = chatViewSource.indexOf("<ComposerSurface.Shell", deckIndex);
+    const hostIndex = chatViewSource.indexOf("<ComposerSurface.Host", shellIndex);
+    const composerIndex = chatViewSource.indexOf("<ChatComposer", hostIndex);
+    const hostEndIndex = chatViewSource.indexOf("</ComposerSurface.Host>", composerIndex);
+    const contextStripIndex = chatViewSource.indexOf(
+      'renderComposerContextStrip("next")',
+      hostEndIndex,
     );
-    expect(islandIndex).toBeGreaterThanOrEqual(0);
-    expect(bannerIndex).toBeGreaterThan(islandIndex);
-    expect(syncIndex).toBeGreaterThan(bannerIndex);
-    expect(islandEndIndex).toBeGreaterThan(syncIndex);
-    expect(deckIndex).toBeGreaterThan(islandEndIndex);
-    expect(chatViewSource).toContain("portalHostRef={setComposerFloatingDrawerHost}");
-    expect(chatViewSource).toContain("floatingDrawerHost={composerFloatingDrawerHost}");
+    const shellEndIndex = chatViewSource.indexOf("</ComposerSurface.Shell>", contextStripIndex);
+    const bannerIndex = chatComposerSource.indexOf("<ComposerBannerStack");
+    const mainSurfaceIndex = chatComposerSource.indexOf("<ComposerSurface.Main", bannerIndex);
+
+    expect(bubbleIndex).toBeGreaterThanOrEqual(0);
+    expect(deckIndex).toBeGreaterThan(bubbleIndex);
+    expect(shellIndex).toBeGreaterThan(deckIndex);
+    expect(hostIndex).toBeGreaterThan(shellIndex);
+    expect(composerIndex).toBeGreaterThan(hostIndex);
+    expect(hostEndIndex).toBeGreaterThan(composerIndex);
+    expect(contextStripIndex).toBeGreaterThan(hostEndIndex);
+    expect(shellEndIndex).toBeGreaterThan(contextStripIndex);
+    expect(chatViewSource.match(/<ComposerSurface\.Shell/g)).toHaveLength(1);
+    expect(chatViewSource.match(/<ComposerSurface\.Host/g)).toHaveLength(1);
+    expect(chatViewSource).toContain("bannerItems={composerBannerItems}");
+    expect(chatViewSource).toContain("floatingBubbleHost={composerFloatingBubbleHost}");
+    expect(bannerIndex).toBeGreaterThanOrEqual(0);
+    expect(mainSurfaceIndex).toBeGreaterThan(bannerIndex);
+    expect(chatComposerSource.match(/<ComposerBannerStack/g)).toHaveLength(1);
+    expect(chatComposerSource.match(/<ComposerSurface\.Main/g)).toHaveLength(1);
+    expect(chatViewSource).not.toContain("ComposerFloatingIsland");
+    expect(chatComposerSource).not.toContain("floatingDrawerHost");
   });
 
-  it("keeps morph origins on drawers without transforming static composer content", () => {
-    expect(chatComposerSource).toContain("data-composer-surface-morph-origin=");
-    expect(chatComposerSource).toContain("data-composer-surface-morph-trigger=");
-    expect(chatComposerSource).not.toContain('data-composer-surface-morph-key="composer"');
-    expect(chatComposerSource).not.toContain("data-composer-surface-morph-key={`attachment:");
-    expect(chatComposerSource).not.toContain('data-composer-surface-morph-key="element-contexts"');
+  it("keeps activity presentation single-owned while sharing the turn start timestamp", () => {
+    expect(chatViewSource.match(/activeTurnStartedAt=\{activeWorkStartedAt\}/g)).toHaveLength(1);
+    expect(chatViewSource.match(/activeWorkStartedAt=\{activeWorkStartedAt\}/g)).toHaveLength(1);
+    expect(chatViewSource).not.toContain("<ComposerActivityRow");
+    expect(chatViewSource).not.toContain("ComposerFloatingIsland");
+    expect(chatViewSource).not.toContain("ComposerThreadSyncStatus");
   });
 
-  it("uses the shared 420ms secondary and 360ms exit contracts", () => {
-    expect(surfaceMorphSource).toMatch(/SURFACE_MORPH_SECONDARY_DURATION_MS\s*=\s*420\b/);
-    expect(surfaceMorphSource).toMatch(/SURFACE_MORPH_EXIT_DURATION_MS\s*=\s*360\b/);
+  it("cleans up the coalesced composer-overlay measurement frame", () => {
+    const effectStart = chatViewSource.indexOf("if (!composerOverlayElement) return;");
+    const effectEnd = chatViewSource.indexOf("if (!chatColumnElement) return;", effectStart);
+    const effectSource = chatViewSource.slice(effectStart, effectEnd);
+
+    expect(effectStart).toBeGreaterThanOrEqual(0);
+    expect(effectEnd).toBeGreaterThan(effectStart);
+    expect(effectSource).toContain("composerOverlayResizeFrameRef.current !== null");
+    expect(effectSource).toContain("window.requestAnimationFrame");
+    expect(effectSource).toContain("window.cancelAnimationFrame");
+    expect(effectSource).toContain("composerOverlayResizeFrameRef.current = null");
   });
 
-  it.effect("forms automatic floating drawers through the complete droplet phase sequence", () =>
-    Effect.gen(function* () {
-      const css = yield* readComposerSurfaceMorphCss;
-
-      expect(surfaceMorphSource).toMatch(/start:\s*0(?:\.0+)?\b/);
-      expect(surfaceMorphSource).toMatch(/neck:\s*0\.22\b/);
-      expect(surfaceMorphSource).toMatch(/rise:\s*0\.68\b/);
-      expect(surfaceMorphSource).toMatch(/detach:\s*0\.84\b/);
-      expect(surfaceMorphSource).toMatch(/end:\s*1(?:\.0+)?\b/);
-      expect(composerFloatingIslandSource).toContain('data-composer-surface-morph-kind="droplet"');
-      expect(composerFloatingIslandSource).toContain('data-composer-surface-morph-chrome="true"');
-      expect(composerFloatingIslandSource).toContain('data-composer-surface-morph-neck="true"');
-      expect(css).toMatch(
-        /\[data-composer-surface-morph-neck="true"\][\s\S]*?transform-origin:\s*50% 100%/,
-      );
-    }),
-  );
-
-  it("distinguishes clicked trigger origins from automatic composer-edge origins", () => {
-    expect(composerFloatingIslandSource).toContain("data-composer-surface-morph-origin-mode");
-    expect(composerFloatingIslandSource).toContain('"trigger"');
-    expect(composerFloatingIslandSource).toContain('"automatic-edge"');
+  it("keeps workspace-card ownership and Better T3 controls on the composed surface", () => {
+    expect(chatViewSource).toContain("onNonChatActiveChange={setNonChatWorkspaceCardActive}");
+    expect(chatViewSource).toContain("onExpandedChange={setWorkspaceCardExpanded}");
+    expect(chatViewSource).toContain("isRecording={voiceRecordingActive}");
+    expect(chatViewSource).toContain("voiceInputConfigured={voiceInputConfigured}");
+    expect(chatViewSource).toContain("onImplementPlan={onImplementPlan}");
+    expect(chatViewSource).toContain("onImplementPlanInNewThread={onImplementPlanInNewThread}");
+    expect(chatViewSource).toContain("activeProposedPlan={activeProposedPlan}");
+    expect(chatViewSource).toContain("activeTasksProgress={activeComposerTasksProgress}");
+    expect(chatViewSource).toContain("mcpRuntimeSessionId={activeThread.session?.runtimeSessionId");
+    expect(chatViewSource).toContain("!nonChatWorkspaceCardActive &&");
+    expect(chatViewSource).toContain("!workspaceCardExpanded &&");
   });
 
-  it.effect("keeps droplet chrome outside the interaction and accessibility trees", () =>
-    Effect.gen(function* () {
-      const css = yield* readComposerSurfaceMorphCss;
-
-      expect(composerFloatingIslandSource).toContain('data-composer-surface-morph-layer="true"');
-      expect(composerFloatingIslandSource).toContain('aria-hidden="true"');
-      expect(composerFloatingIslandSource).toContain("inert");
-      expect(css).toMatch(
-        /\[data-composer-surface-morph-layer="true"\]\s*\{[^}]*pointer-events:\s*none;/,
-      );
-    }),
-  );
-
-  it.effect("disables decorative morphing when reduced motion is requested", () =>
-    Effect.gen(function* () {
-      const css = yield* readComposerSurfaceMorphCss;
-
-      expect(surfaceMorphSource).toContain("prefersReducedSurfaceMotion");
-      expect(css).toMatch(
-        /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\[data-composer-surface-morph-layer="true"\][\s\S]*?animation-duration:\s*0\.001ms\s*!important/,
-      );
-    }),
-  );
+  it("localizes merged composer-disabled states", () => {
+    expect(chatViewSource).toContain(
+      'feedbackUploading\n                                      ? translate("chat.composer.sendingProgress")',
+    );
+    expect(chatViewSource).toContain(
+      'threadDetailLoading\n                                        ? translate("chat.composer.sync.loadingMessages")',
+    );
+    expect(chatViewSource).toContain(
+      'isHarnessSessionActive\n                                          ? translate("chat.harness.sendingPaused")',
+    );
+    expect(chatViewSource).not.toContain(
+      'feedbackUploading\n                                      ? "Sending feedback"',
+    );
+    expect(chatViewSource).not.toContain(
+      'threadDetailLoading\n                                        ? "Messages loading"',
+    );
+  });
 });

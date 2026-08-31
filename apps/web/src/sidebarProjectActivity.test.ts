@@ -157,6 +157,26 @@ describe("partitionSidebarProjectsByActivity", () => {
     expect(afterActivity.olderProjects).toEqual([]);
   });
 
+  it("keeps a project recent when its final old thread is settled now", () => {
+    const oldTimestamp = timestampAtAge(SIDEBAR_PROJECT_INACTIVITY_MS + 1);
+    const settledAt = timestampAtAge(0);
+    const project = makeProject("project", [
+      makeMember("project", { createdAt: oldTimestamp, updatedAt: oldTimestamp }),
+    ]);
+    const settledThread = makeThread({
+      createdAt: oldTimestamp,
+      updatedAt: settledAt,
+      latestUserMessageAt: oldTimestamp,
+      settledOverride: "settled",
+      settledAt,
+    });
+
+    const result = partition([project], new Map([["project", [settledThread]]]));
+
+    expect(result.recentProjects).toEqual([project]);
+    expect(result.olderProjects).toEqual([]);
+  });
+
   it("uses project metadata activity and falls back to project creation", () => {
     const updatedProject = makeProject("updated", [
       makeMember("updated", {

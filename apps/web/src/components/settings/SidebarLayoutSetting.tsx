@@ -1,8 +1,9 @@
 import { cn } from "../../lib/utils";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 const SIDEBAR_LAYOUTS = [
-  { value: "current", label: "Current", legacySidebarEnabled: false },
-  { value: "classic", label: "Classic", legacySidebarEnabled: true },
+  { value: "current", legacySidebarEnabled: false },
+  { value: "classic", legacySidebarEnabled: true },
 ] as const;
 
 export function SidebarLayoutSelector({
@@ -12,13 +13,25 @@ export function SidebarLayoutSelector({
   readonly legacySidebarEnabled: boolean;
   readonly onChange: (legacySidebarEnabled: boolean) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   return (
-    <div aria-label="Sidebar layout" className="grid w-full grid-cols-2 gap-2 sm:w-64" role="group">
+    <div
+      aria-label={translate("settings.sidebar.layout")}
+      className="grid w-full grid-cols-2 gap-2 sm:w-64"
+      role="group"
+    >
       {SIDEBAR_LAYOUTS.map((layout) => {
         const isSelected = legacySidebarEnabled === layout.legacySidebarEnabled;
+        const label = translate(
+          layout.value === "current"
+            ? "settings.chatVisuals.current"
+            : "settings.chatVisuals.classic",
+        );
         return (
           <button
-            aria-label={`${layout.label} sidebar`}
+            aria-label={translate("settings.projects.appearance.sidebarOptionAria", {
+              mode: label,
+            })}
             aria-pressed={isSelected}
             className={cn(
               "cursor-pointer rounded-lg border px-3 py-2 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
@@ -31,7 +44,7 @@ export function SidebarLayoutSelector({
             style={isSelected ? { boxShadow: "inset 0 0 0 1px var(--ring)" } : undefined}
             type="button"
           >
-            {layout.label}
+            {label}
           </button>
         );
       })}

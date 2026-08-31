@@ -21,13 +21,16 @@ import {
   type ProviderSessionStartInput,
 } from "@t3tools/contracts";
 import { describe, expect } from "vite-plus/test";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -576,6 +579,65 @@ function runInput(overrides: Partial<FetchRunInput> = {}): FetchRunInput {
 }
 
 describe("FetchWorkerCoordinator service", () => {
+  it.effect("drains exact worker runtimes when coordinator ownership ends", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ gateStarts: true });
+        const coordinatorScope = yield* Scope.make();
+        const context = yield* Layer.buildWithScope(harness.layer, coordinatorScope);
+        const coordinator = Context.get(context, FetchWorkerCoordinator);
+        const runFiber = yield* coordinator.run(runInput()).pipe(Effect.forkChild);
+        yield* Deferred.await(harness.firstStartEntered);
+
+        yield* Scope.close(coordinatorScope, Exit.void);
+
+        expect(yield* Ref.get(harness.forces)).toHaveLength(1);
+        expect(yield* Ref.get(harness.stops)).toHaveLength(1);
+        const finalUpsert = (yield* Ref.get(harness.commands)).findLast(
+          (command) => command.type === "thread.subagent.upsert",
+        );
+        expect(finalUpsert?.type).toBe("thread.subagent.upsert");
+        if (finalUpsert?.type === "thread.subagent.upsert") {
+          expect(finalUpsert.subagent.status).toBe("interrupted");
+        }
+        yield* Deferred.succeed(harness.releaseStarts, undefined);
+        yield* Fiber.interrupt(runFiber);
+        expect(yield* Ref.get(harness.forces)).toHaveLength(1);
+        expect(yield* Ref.get(harness.stops)).toHaveLength(1);
+        const terminalUpserts = (yield* Ref.get(harness.commands)).filter(
+          (command) =>
+            command.type === "thread.subagent.upsert" && command.subagent.status === "interrupted",
+        );
+        expect(terminalUpserts).toHaveLength(1);
+      }),
+    ),
+  );
+
+  it.effect("rejects a legacy Fetch command policy before planning and still hands off", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const coordinator = yield* FetchWorkerCoordinator;
+        const mainTurnSent = yield* Deferred.make<void>();
+        const result = yield* coordinator.run(
+          runInput({ commandExecutionPolicy: "read-only-sandbox" }),
+        );
+
+        expect(result.status).toBe("unavailable");
+        expect(result.warnings.join(" ")).toContain("command denial");
+        expect(yield* Ref.get(harness.planInputs)).toHaveLength(0);
+        expect(yield* Ref.get(harness.starts)).toHaveLength(0);
+        expect(
+          yield* coordinator.handoffToMain(
+            { threadId: parentThreadId, runId: result.runId },
+            Deferred.succeed(mainTurnSent, undefined).pipe(Effect.asVoid),
+          ),
+        ).toBe(true);
+        yield* Deferred.await(mainTurnSent);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("a skip plan creates zero transient workers", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ skip: true, workerCount: 0 });
@@ -1132,47 +1194,49 @@ describe("FetchWorkerCoordinator service", () => {
     }),
   );
 
-  it.effect("retries typed Auto Spark unavailability once with exact Luna metadata", () =>
-    Effect.gen(function* () {
-      const fallbackSelection: ModelSelection = {
-        instanceId: ProviderInstanceId.make("codex-secondary"),
-        model: "gpt-5.6-luna",
-        options: [{ id: "reasoningEffort", value: "low" }],
-      };
-      const harness = yield* makeHarness({
-        plan: (input) =>
-          input.modelSelection.model.includes("spark")
-            ? Effect.fail(
-                new TextGenerationError({
-                  operation: "planFetchExploration",
-                  detail: "model unavailable",
-                  reason: "model-unavailable",
+  it.effect.each(["model-unavailable", "rate-limited"] as const)(
+    "retries typed Auto Spark $0 once with exact Luna metadata",
+    (reason) =>
+      Effect.gen(function* () {
+        const fallbackSelection: ModelSelection = {
+          instanceId: ProviderInstanceId.make("codex-secondary"),
+          model: "gpt-5.6-luna",
+          options: [{ id: "reasoningEffort", value: "low" }],
+        };
+        const harness = yield* makeHarness({
+          plan: (input) =>
+            input.modelSelection.model.includes("spark")
+              ? Effect.fail(
+                  new TextGenerationError({
+                    operation: "planFetchExploration",
+                    detail: "model unavailable",
+                    reason,
+                  }),
+                )
+              : Effect.succeed({
+                  decision: "run",
+                  workers: [{ scope: "Fallback", questions: ["Where is it?"] }],
                 }),
-              )
-            : Effect.succeed({
-                decision: "run",
-                workers: [{ scope: "Fallback", questions: ["Where is it?"] }],
-              }),
-      });
-      yield* Effect.gen(function* () {
-        const coordinator = yield* FetchWorkerCoordinator;
-        const result = yield* coordinator.run(
-          runInput({
-            lunaFallback: {
-              modelSelection: fallbackSelection,
-              providerDriver: codexDriver,
-              maxRecommendedWorkers: 10,
-              commandExecutionPolicy: "deny",
-            },
-          }),
-        );
-        expect(result.modelSelection).toEqual(fallbackSelection);
-        expect(result.successfulWorkers).toBe(1);
-        expect((yield* Ref.get(harness.starts))[0]?.modelSelection).toEqual(fallbackSelection);
-        expect(
-          (yield* Ref.get(harness.planInputs)).map((input) => input.maxRecommendedWorkers),
-        ).toEqual([8, 10]);
-      }).pipe(Effect.provide(harness.layer), Effect.scoped);
-    }),
+        });
+        yield* Effect.gen(function* () {
+          const coordinator = yield* FetchWorkerCoordinator;
+          const result = yield* coordinator.run(
+            runInput({
+              lunaFallback: {
+                modelSelection: fallbackSelection,
+                providerDriver: codexDriver,
+                maxRecommendedWorkers: 10,
+                commandExecutionPolicy: "deny",
+              },
+            }),
+          );
+          expect(result.modelSelection).toEqual(fallbackSelection);
+          expect(result.successfulWorkers).toBe(1);
+          expect((yield* Ref.get(harness.starts))[0]?.modelSelection).toEqual(fallbackSelection);
+          expect(
+            (yield* Ref.get(harness.planInputs)).map((input) => input.maxRecommendedWorkers),
+          ).toEqual([8, 10]);
+        }).pipe(Effect.provide(harness.layer), Effect.scoped);
+      }),
   );
 });

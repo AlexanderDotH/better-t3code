@@ -1,10 +1,27 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { pseudoLocalizeInterfaceMessage } from "@t3tools/shared/interfaceLanguage";
+
+const translatorFixture = vi.hoisted(() => ({ language: "en" as "en" | "de" }));
+
+vi.mock("~/hooks/useInterfaceTranslator", async () => {
+  const { createInterfaceTranslator } = await import("@t3tools/shared/interfaceLanguage");
+  return {
+    useInterfaceTranslator: () =>
+      createInterfaceTranslator({
+        language: translatorFixture.language,
+        locale: translatorFixture.language === "de" ? "de-DE" : "en-US",
+      }),
+  };
+});
 
 import { WorkspaceCardDrawerShell } from "./WorkspaceCardDrawerShell";
 
 describe("WorkspaceCardDrawerShell", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    translatorFixture.language = "en";
+    vi.unstubAllGlobals();
+  });
 
   it("renders a reusable vertically resizable drawer with caller-owned labels and tabs", () => {
     const html = renderToStaticMarkup(
@@ -132,5 +149,35 @@ describe("WorkspaceCardDrawerShell", () => {
     );
 
     expect(html).toBe("");
+  });
+
+  it("localizes the tablist label while preserving a long dynamic title", () => {
+    translatorFixture.language = "de";
+    const title = Array.from({ length: 3 }, () =>
+      pseudoLocalizeInterfaceMessage("betterT3.chat.workspaceCardDeck.label"),
+    ).join(" ");
+    const html = renderToStaticMarkup(
+      <WorkspaceCardDrawerShell
+        open
+        sizingMode="content"
+        availableHeight={620}
+        activeTab="overview"
+        ariaLabel={title}
+        collapseLabel={title}
+        tabs={[
+          { id: "overview", label: "Overview" },
+          { id: "details", label: "Details" },
+        ]}
+        title={title}
+        onActiveTabChange={vi.fn()}
+        onOpenChange={vi.fn()}
+      >
+        <div>Content</div>
+      </WorkspaceCardDrawerShell>,
+    );
+
+    expect(html).toContain(`aria-label="Ansichten für ${title}"`);
+    expect(html).toContain('class="min-w-0"');
+    expect(html).toContain('class="workspace-card-drawer__tabs"');
   });
 });

@@ -18,6 +18,8 @@ import {
   ClientSurface,
   CommandId,
   type DiscoveredLocalServerList,
+  type EditorId,
+  type FileManagerRevealKind,
   type OrchestrationClientOrigin,
   type OrchestrationCommand,
   type GitActionProgressEvent,
@@ -38,6 +40,8 @@ import {
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
   type ProjectId,
+  ProjectMemoryError,
+  type ProjectMemoryOperation,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
   type ProjectFileOperation,
@@ -48,10 +52,13 @@ import {
   ProjectSearchEntriesError,
   ProjectWriteConflictError,
   ProjectWriteFileError,
+  ProviderCompactionError,
+  ProviderUploadFeedbackError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
   type ServerSelfUpdateError,
   type ServerSelfUpdateProgressEvent,
+  type ServerProvider,
   SpeechStreamingProxyError,
   SpeechStreamingSessionId,
   type FilesystemBrowseFailure,
@@ -74,16 +81,21 @@ import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
+import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import {
   projectActivityEvent,
   projectThreadDetailSnapshot,
 } from "./orchestration/ActivityPayloadProjection.ts";
-import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
+import {
+  cleanupFailedUploadedAttachments,
+  normalizeDispatchCommand,
+} from "./orchestration/Normalizer.ts";
 import { makeOrchestrationCommandDispatcher } from "./orchestration/orchestrationCommandDispatcher.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
 import { ThreadTranscriptExport } from "./orchestration/Services/ThreadTranscriptExport.ts";
 import {
   isThreadAggregateEvent,
@@ -97,6 +109,7 @@ import {
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderInstanceRegistry from "./provider/Services/ProviderInstanceRegistry.ts";
+import * as ProviderService from "./provider/Services/ProviderService.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -107,11 +120,13 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
+import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
+import * as ProjectMemoryStore from "./projectMemory/ProjectMemoryStore.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
@@ -126,6 +141,7 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as ResourceProtection from "./resourceProtection/SubagentResourceGovernor.ts";
+import * as KnowledgeGraphRuntime from "./knowledge-graph/runtime/KnowledgeGraphRuntime.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -158,15 +174,24 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-const EDITOR_DISCOVERY_TIMEOUT = Duration.seconds(5);
+const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
+
+const resolveDiscoveryForConfig = <A, E, R>(
+  discovery: Effect.Effect<A, E, R>,
+  onTimeout: () => A,
+) =>
+  discovery.pipe(
+    Effect.timeoutOption(CONFIG_DISCOVERY_TIMEOUT),
+    Effect.map(Option.getOrElse(onTimeout)),
+  );
 
 export const resolveAvailableEditorsForConfig = <A, E, R>(
   discovery: Effect.Effect<ReadonlyArray<A>, E, R>,
-) =>
-  discovery.pipe(
-    Effect.timeoutOption(EDITOR_DISCOVERY_TIMEOUT),
-    Effect.map(Option.getOrElse(() => [])),
-  );
+) => resolveDiscoveryForConfig(discovery, () => []);
+
+export const resolveFileManagerRevealKindForConfig = <E, R>(
+  discovery: Effect.Effect<FileManagerRevealKind | undefined, E, R>,
+) => resolveDiscoveryForConfig(discovery, () => undefined);
 
 function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
@@ -365,14 +390,14 @@ const MAX_CLIENT_APP_VERSION_LENGTH = 64;
 // Lenient by design: absent or malformed values degrade to {} so a connection
 // never fails over attribution metadata.
 function readClientConnectionOrigin(
-  request: HttpServerRequest.HttpServerRequest,
+  searchParams: Readonly<Record<string, string | ReadonlyArray<string> | undefined>>,
 ): OrchestrationClientOrigin {
-  const url = HttpServerRequest.toURL(request);
-  if (Option.isNone(url)) {
-    return {};
-  }
-  const surface = url.value.searchParams.get("clientSurface");
-  const appVersion = url.value.searchParams.get("clientAppVersion")?.trim() ?? "";
+  const firstValue = (key: string) => {
+    const value = searchParams[key];
+    return typeof value === "string" ? value : value?.[0];
+  };
+  const surface = firstValue("clientSurface");
+  const appVersion = firstValue("clientAppVersion")?.trim() ?? "";
   return {
     ...(isClientSurface(surface) ? { surface } : {}),
     ...(appVersion !== "" && appVersion.length <= MAX_CLIENT_APP_VERSION_LENGTH
@@ -392,6 +417,7 @@ const makeWsRpcLayer = (
       const crypto = yield* Crypto.Crypto;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+      const threadDeletionReactor = yield* ThreadDeletionReactor;
       // Every command dispatched on this connection carries the connecting
       // client's origin, including server-generated bootstrap sub-commands:
       // the client's request caused them.
@@ -407,6 +433,7 @@ const makeWsRpcLayer = (
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const threadTranscriptExport = yield* ThreadTranscriptExport;
+      const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
@@ -419,6 +446,8 @@ const makeWsRpcLayer = (
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+      const providerService = yield* ProviderService.ProviderService;
+      const projectMemory = yield* ProjectMemoryStore.ProjectMemoryStore;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
@@ -429,6 +458,39 @@ const makeWsRpcLayer = (
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
+      const resolveProjectMemoryScope = Effect.fn("ws.resolveProjectMemoryScope")(function* (
+        projectId: ProjectId,
+        operation: ProjectMemoryOperation,
+      ) {
+        const project = yield* projectionSnapshotQuery
+          .getProjectShellById(projectId)
+          .pipe(
+            Effect.mapError(
+              (cause) => new ProjectMemoryError({ reason: "operation_failed", operation, cause }),
+            ),
+          );
+        if (Option.isNone(project)) {
+          return yield* new ProjectMemoryError({
+            reason: "workspace_unavailable",
+            operation,
+          });
+        }
+        const firstThreadId = yield* projectionSnapshotQuery
+          .getFirstActiveThreadIdByProjectId(projectId)
+          .pipe(
+            Effect.mapError(
+              (cause) => new ProjectMemoryError({ reason: "operation_failed", operation, cause }),
+            ),
+          );
+        return {
+          projectId,
+          workspaceRoot: project.value.workspaceRoot,
+          threadId: Option.getOrElse(firstThreadId, () =>
+            ThreadId.make(`project-memory-settings:${projectId}`),
+          ),
+          actor: "root" as const,
+        };
+      });
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
       yield* Effect.addFinalizer(() =>
         Ref.get(rpcClientIds).pipe(
@@ -495,8 +557,25 @@ const makeWsRpcLayer = (
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const resourceProtection = yield* ResourceProtection.SubagentResourceGovernor;
+      const knowledgeGraph = yield* KnowledgeGraphRuntime.KnowledgeGraphRuntime;
       const usage = yield* UsageService.UsageService;
       const relayClient = yield* RelayClient.RelayClient;
+      const withRuntimeCapabilities = (providers: ReadonlyArray<ServerProvider>) =>
+        Effect.forEach(
+          providers,
+          (provider) =>
+            providerService.getCapabilities(provider.instanceId).pipe(
+              Effect.map((capabilities) => ({
+                ...provider,
+                runtimeCapabilities: {
+                  nativeThreadFork: capabilities.nativeThreadFork === true,
+                  manualCompaction: capabilities.manualCompaction === true,
+                },
+              })),
+              Effect.catch(() => Effect.succeed(provider)),
+            ),
+          { concurrency: "unbounded" },
+        );
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
           message: `The authenticated token is missing required scope: ${requiredScope}.`,
@@ -793,6 +872,7 @@ const makeWsRpcLayer = (
         gitWorkflow,
         projectSetupScriptRunner: yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner,
         refreshGitStatus,
+        drainThreadDeletionThrough: threadDeletionReactor.drainThrough,
         resolveThread: (threadId) =>
           projectionSnapshotQuery
             .getThreadShellById(threadId)
@@ -817,12 +897,20 @@ const makeWsRpcLayer = (
 
       const loadServerConfig = Effect.gen(function* () {
         const keybindingsConfig = yield* keybindings.loadConfigState;
-        const providers = yield* providerRegistry.getProviders;
+        const providers = yield* withRuntimeCapabilities(yield* providerRegistry.getProviders);
         const settings = ServerSettings.redactServerSettingsForClient(
           yield* serverSettings.getSettings,
         );
         const environment = yield* serverEnvironment.getDescriptor;
         const auth = yield* serverAuth.getDescriptor();
+        const availableEditors: ReadonlyArray<EditorId> = yield* resolveAvailableEditorsForConfig(
+          externalLauncher.resolveAvailableEditors(),
+        );
+        const fileManagerRevealKind = availableEditors.includes("file-manager")
+          ? yield* resolveFileManagerRevealKindForConfig(
+              externalLauncher.resolveFileManagerRevealKind(),
+            )
+          : undefined;
 
         return {
           environment,
@@ -832,9 +920,7 @@ const makeWsRpcLayer = (
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
           providers,
-          availableEditors: yield* resolveAvailableEditorsForConfig(
-            externalLauncher.resolveAvailableEditors(),
-          ),
+          availableEditors,
           // Same discovery-with-timeout treatment as editors: a slow probe
           // must not stall server.getConfig, so it degrades to no targets.
           remoteOpenTargets: yield* resolveAvailableEditorsForConfig(
@@ -852,6 +938,12 @@ const makeWsRpcLayer = (
           },
           settings,
           shellResumeCompletionMarker: true,
+          ...(fileManagerRevealKind === undefined
+            ? {}
+            : {
+                shellRevealInFileManager: true,
+                shellRevealInFileManagerKind: fileManagerRevealKind,
+              }),
           threadResumeCompletionMarker: true,
           threadSnapshotPagination: true,
           subagentSnapshotPagination: true,
@@ -912,7 +1004,9 @@ const makeWsRpcLayer = (
                     ),
                   )
                 : false;
-              const result = yield* dispatchNormalizedCommand(normalizedCommand);
+              const result = yield* dispatchNormalizedCommand(normalizedCommand).pipe(
+                Effect.tapError(() => cleanupFailedUploadedAttachments(command, normalizedCommand)),
+              );
               if (parkingCommand) {
                 const parkingKind = parkingCommand.type === "thread.archive" ? "archive" : "settle";
                 if (shouldStopSessionAfterCommand) {
@@ -1372,6 +1466,20 @@ const makeWsRpcLayer = (
             ).pipe(Effect.map((providers) => ({ providers }))),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.providerUploadFeedback]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerUploadFeedback,
+            providerService.uploadFeedback(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderUploadFeedbackError({
+                    threadId: input.threadId,
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "provider" },
+          ),
         [WS_METHODS.serverUpdateProvider]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverUpdateProvider,
@@ -1557,6 +1665,63 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
+          ),
+        [WS_METHODS.providerCompactThread]: ({ threadId }) =>
+          observeRpcEffect(
+            WS_METHODS.providerCompactThread,
+            providerService.compactThread(threadId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderCompactionError({
+                    reason: "failed",
+                    detail:
+                      cause instanceof Error && cause.message.trim().length > 0
+                        ? cause.message
+                        : "Provider compaction failed.",
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.projectMemoryView]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectMemoryView,
+            resolveProjectMemoryScope(input.projectId, "document-view").pipe(
+              Effect.flatMap((scope) => projectMemory.view(scope, input)),
+            ),
+            { "rpc.aggregate": "project-memory" },
+          ),
+        [WS_METHODS.projectMemoryUpdateSettings]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectMemoryUpdateSettings,
+            resolveProjectMemoryScope(input.projectId, "settings-update").pipe(
+              Effect.flatMap((scope) => projectMemory.updateSettings(scope, input)),
+            ),
+            { "rpc.aggregate": "project-memory" },
+          ),
+        [WS_METHODS.projectMemoryReplace]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectMemoryReplace,
+            resolveProjectMemoryScope(input.projectId, "document-replace").pipe(
+              Effect.flatMap((scope) => projectMemory.replaceDocument(scope, input)),
+            ),
+            { "rpc.aggregate": "project-memory" },
+          ),
+        [WS_METHODS.projectMemoryImport]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectMemoryImport,
+            resolveProjectMemoryScope(input.projectId, "import").pipe(
+              Effect.flatMap((scope) => projectMemory.import(scope, input)),
+            ),
+            { "rpc.aggregate": "project-memory" },
+          ),
+        [WS_METHODS.projectMemoryClear]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectMemoryClear,
+            resolveProjectMemoryScope(input.projectId, "document-clear").pipe(
+              Effect.flatMap((scope) => projectMemory.clearDocument(scope, input)),
+            ),
+            { "rpc.aggregate": "project-memory" },
           ),
         [WS_METHODS.serverCreateAssemblyAiStreamingToken]: ({ projectId }) =>
           observeRpcEffect(
@@ -1792,6 +1957,40 @@ const makeWsRpcLayer = (
         [WS_METHODS.harnessChatSyncStatus]: (input) =>
           observeRpcEffect(WS_METHODS.harnessChatSyncStatus, harnessChatSync.status(input), {
             "rpc.aggregate": "harnessChatSync",
+          }),
+        [WS_METHODS.knowledgeGraphSubscribe]: (input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.knowledgeGraphSubscribe,
+            knowledgeGraph.subscribe(input),
+            {
+              "rpc.aggregate": "knowledgeGraph",
+            },
+          ),
+        [WS_METHODS.knowledgeGraphQuery]: (input) =>
+          observeRpcEffect(WS_METHODS.knowledgeGraphQuery, knowledgeGraph.query(input), {
+            "rpc.aggregate": "knowledgeGraph",
+          }),
+        [WS_METHODS.knowledgeGraphNodeContent]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.knowledgeGraphNodeContent,
+            knowledgeGraph.nodeContent(input),
+            { "rpc.aggregate": "knowledgeGraph" },
+          ),
+        [WS_METHODS.knowledgeGraphRebuild]: (input) =>
+          observeRpcEffect(WS_METHODS.knowledgeGraphRebuild, knowledgeGraph.rebuild(input), {
+            "rpc.aggregate": "knowledgeGraph",
+          }),
+        [WS_METHODS.knowledgeGraphCancel]: (input) =>
+          observeRpcEffect(WS_METHODS.knowledgeGraphCancel, knowledgeGraph.cancel(input.scope), {
+            "rpc.aggregate": "knowledgeGraph",
+          }),
+        [WS_METHODS.knowledgeGraphPause]: (input) =>
+          observeRpcEffect(WS_METHODS.knowledgeGraphPause, knowledgeGraph.pause(input), {
+            "rpc.aggregate": "knowledgeGraph",
+          }),
+        [WS_METHODS.knowledgeGraphClear]: (input) =>
+          observeRpcEffect(WS_METHODS.knowledgeGraphClear, knowledgeGraph.clear(input), {
+            "rpc.aggregate": "knowledgeGraph",
           }),
         [WS_METHODS.skillsList]: (input) =>
           observeRpcEffect(WS_METHODS.skillsList, skillEngine.list(input), {
@@ -2179,6 +2378,16 @@ const makeWsRpcLayer = (
                   }),
               ),
             ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.attachmentsCreateUploadUrl]: (input) =>
+          observeRpcEffect(WS_METHODS.attachmentsCreateUploadUrl, issueAttachmentUploadUrl(input), {
+            "rpc.aggregate": "workspace",
+          }),
+        [WS_METHODS.attachmentsDelete]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.attachmentsDelete,
+            deletePendingAttachment(input.attachmentId),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.assetsCreateUrl]: (input) =>
@@ -2598,7 +2807,7 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "preview" },
           ),
-        [WS_METHODS.subscribeServerConfig]: (_input) =>
+        [WS_METHODS.subscribeServerConfig]: (input) =>
           observeRpcStreamEffect(
             WS_METHODS.subscribeServerConfig,
             Effect.gen(function* () {
@@ -2613,6 +2822,7 @@ const makeWsRpcLayer = (
                 })),
               );
               const providerStatuses = providerRegistry.streamChanges.pipe(
+                Stream.mapEffect(withRuntimeCapabilities),
                 Stream.map((providers) => ({
                   version: 1 as const,
                   type: "providerStatuses" as const,
@@ -2620,6 +2830,23 @@ const makeWsRpcLayer = (
                 })),
                 Stream.debounce(Duration.millis(PROVIDER_STATUS_DEBOUNCE_MS)),
               );
+              // The only source of published themes: the stream emits the
+              // current set before any change, so the snapshot carrying it too
+              // would just send every client the same array twice per connect.
+              // Gated on the subscriber's capability flag because an
+              // already-shipped client decodes this stream against the old
+              // event union and its whole config subscription dies on an
+              // unknown member.
+              const environmentThemeUpdates =
+                input.environmentThemes === true
+                  ? environmentTheme.streamChanges.pipe(
+                      Stream.map((themes) => ({
+                        version: 1 as const,
+                        type: "environmentThemesUpdated" as const,
+                        payload: { themes },
+                      })),
+                    )
+                  : Stream.empty;
               const settingsUpdates = serverSettings.streamChanges.pipe(
                 Stream.map((settings) => ServerSettings.redactServerSettingsForClient(settings)),
                 Stream.map((settings) => ({
@@ -2635,7 +2862,10 @@ const makeWsRpcLayer = (
 
               const liveUpdates = Stream.merge(
                 keybindingsUpdates,
-                Stream.merge(providerStatuses, settingsUpdates),
+                Stream.merge(
+                  providerStatuses,
+                  Stream.merge(settingsUpdates, environmentThemeUpdates),
+                ),
               );
 
               return Stream.concat(
@@ -2740,17 +2970,21 @@ export const websocketRpcRouteLayer = Layer.unwrap(
       "/ws",
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
+        const searchParams = yield* HttpServerRequest.ParsedSearchParams;
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
         const sessions = yield* SessionStore.SessionStore;
         const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-            failEnvironmentAuthInvalid(EnvironmentAuth.serverAuthCredentialReason(error)),
+            failEnvironmentAuthInvalid(
+              EnvironmentAuth.serverAuthCredentialReason(error),
+              EnvironmentAuth.serverAuthDpopFailureReason(error),
+            ),
           ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("internal_error", error),
           ),
         );
-        const clientOrigin = readClientConnectionOrigin(request);
+        const clientOrigin = readClientConnectionOrigin(searchParams);
         yield* sessions.recordClientConnection(session.sessionId, clientOrigin);
         const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
           disableTracing: true,

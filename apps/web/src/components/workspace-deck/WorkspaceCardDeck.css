@@ -221,6 +221,13 @@
   pointer-events: none;
 }
 
+.workspace-card-deck[data-deck-expansion-morph] .workspace-card-deck__intrinsic {
+  position: relative;
+  z-index: 1;
+  overflow: clip;
+  will-change: transform, clip-path, border-radius, opacity;
+}
+
 .workspace-card-deck[data-deck-motion="morph"] .workspace-card-deck__viewport,
 .workspace-card-deck[data-deck-expansion-morph] .workspace-card-deck__viewport,
 .workspace-card-deck[data-deck-expansion-morph] .workspace-card-deck__card,
@@ -247,21 +254,8 @@
   z-index: 3;
 }
 
-.workspace-card-deck[data-deck-motion="morph"]
-  .workspace-card-deck__card[data-transition-role="incoming"]
-  .workspace-card-deck__intrinsic,
-.workspace-card-deck[data-deck-motion="morph"]
-  .workspace-card-deck__card[data-transition-role="outgoing"]
-  .workspace-card-deck__intrinsic,
-.workspace-card-deck[data-deck-expansion-morph] .workspace-card-deck__intrinsic {
-  position: relative;
-  z-index: 1;
-  overflow: clip;
-  will-change: transform, clip-path, border-radius, opacity;
-}
-
 .workspace-card-deck [data-deck-morph-back-peek="true"] {
-  will-change: transform, opacity;
+  will-change: opacity;
 }
 
 .workspace-card-deck [data-deck-morph-surface="true"] {

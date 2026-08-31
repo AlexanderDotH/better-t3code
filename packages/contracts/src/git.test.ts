@@ -44,6 +44,16 @@ describe("TextGenerationError", () => {
         reason: "timeout",
       }),
     ).toThrow();
+
+    const rateLimited = decodeTextGenerationError({
+      _tag: "TextGenerationError",
+      operation: "enrichKnowledgeGraph",
+      detail: "Rate limited.",
+      reason: "rate-limited",
+      retryAt: 1_788_000_000_000,
+    });
+    expect(rateLimited.reason).toBe("rate-limited");
+    expect(rateLimited.retryAt).toBe(1_788_000_000_000);
   });
 });
 

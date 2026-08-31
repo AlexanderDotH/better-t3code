@@ -1,8 +1,8 @@
 import type { DailyTotals, MergedUsage } from "@t3tools/shared/usageMerge";
+import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 import {
   enumerateDays,
   enumerateHourStarts,
-  formatCount,
   formatDayShort,
   formatHourShort,
   formatPercent,
@@ -23,17 +23,23 @@ import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors } from "./usageProviders";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { mobileUsageCallMessageKey, visibleMobileContextDiagnostics } from "./usage-presentation";
 
 const WINDOW_OPTIONS = [
-  { days: 1, label: "Past 24h" },
-  { days: 7, label: "7 days" },
-  { days: 30, label: "30 days" },
-  { days: 90, label: "90 days" },
-] as const;
+  { days: 1, messageKey: "mobile.usage.past24Hours" },
+  { days: 7, messageKey: "mobile.usage.days" },
+  { days: 30, messageKey: "mobile.usage.days" },
+  { days: 90, messageKey: "mobile.usage.days" },
+] as const satisfies ReadonlyArray<{
+  readonly days: number;
+  readonly messageKey: InterfaceMessageKey;
+}>;
 
 const CHART_HEIGHT = 180;
 
 export function UsageRouteScreen() {
+  const translator = useMobileInterfaceTranslator();
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
     window: makeWindow(30),
@@ -92,12 +98,15 @@ export function UsageRouteScreen() {
   };
 
   return (
-    <AndroidScreenScaffold title="Usage">
+    <AndroidScreenScaffold title={translator.message("mobile.usage.title")}>
       <ScreenScaffoldScrollView
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshWindow} />}
       >
         <SegmentedControl
-          options={WINDOW_OPTIONS.map((option) => ({ value: option.days, label: option.label }))}
+          options={WINDOW_OPTIONS.map((option) => ({
+            value: option.days,
+            label: translator.message(option.messageKey, { count: option.days }),
+          }))}
           selected={windowDays}
           onSelect={selectWindow}
         />
@@ -106,11 +115,11 @@ export function UsageRouteScreen() {
 
         {isPending ? (
           <Text className="py-16 text-center text-base text-foreground-muted">
-            Scanning provider transcripts…
+            {translator.message("mobile.usage.scanning")}
           </Text>
         ) : environments.length === 0 ? (
           <Text className="py-16 text-center text-base text-foreground-muted">
-            Connect an environment to see usage.
+            {translator.message("mobile.usage.connectEnvironment")}
           </Text>
         ) : (
           <>
@@ -127,6 +136,8 @@ export function UsageRouteScreen() {
             />
             <ProviderSection merged={merged} metric={metric} />
             <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
+            <CallsSection merged={merged} />
+            <ContextDiagnosticsSection merged={merged} />
             <ModelsSection merged={merged} />
           </>
         )}
@@ -182,6 +193,7 @@ function ChartCard(props: {
   readonly isPast24Hours: boolean;
   readonly timeZone: string;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { merged, metric } = props;
   const colors = useProviderColors();
   const hasActivity = props.daily.some((period) => period.totalTokens > 0);
@@ -191,15 +203,17 @@ function ChartCard(props: {
       <View className="flex-row items-start justify-between gap-3">
         <View className="min-w-0 flex-1 gap-0.5">
           <Text className="text-sm text-foreground-muted">
-            {metric === "cost" ? "Raw token cost" : "Processed tokens"}
+            {translator.message(
+              metric === "cost" ? "mobile.usage.rawTokenCost" : "mobile.usage.processedTokens",
+            )}
           </Text>
           <Text className="text-4xl font-t3-bold tabular-nums text-foreground">
             {metric === "cost" ? `${formatUsd(merged.costUsd)}*` : formatTokens(merged.totalTokens)}
           </Text>
           <Text className="text-sm text-foreground-muted">
             {metric === "cost"
-              ? "* if billed at full API rate"
-              : `Across ${formatCount(merged.sessions)} sessions`}
+              ? translator.message("mobile.usage.fullApiRate")
+              : translator.message("mobile.usage.sessions", { count: merged.sessions })}
           </Text>
         </View>
         <MetricToggle metric={metric} onChange={props.onMetricChange} />
@@ -214,7 +228,9 @@ function ChartCard(props: {
         />
       ) : (
         <View style={{ height: CHART_HEIGHT }} className="items-center justify-center">
-          <Text className="text-base text-foreground-muted">No activity in this window.</Text>
+          <Text className="text-base text-foreground-muted">
+            {translator.message("mobile.usage.noActivity")}
+          </Text>
         </View>
       )}
 
@@ -251,6 +267,7 @@ function MetricToggle(props: {
   readonly metric: UsageChartMetric;
   readonly onChange: (metric: UsageChartMetric) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   return (
     <View className="flex-row overflow-hidden rounded-full bg-subtle">
       {(["cost", "tokens"] as const).map((option) => {
@@ -270,7 +287,7 @@ function MetricToggle(props: {
                   : "text-xs uppercase text-foreground-muted"
               }
             >
-              {option}
+              {translator.message(option === "cost" ? "mobile.usage.cost" : "mobile.usage.tokens")}
             </Text>
           </Pressable>
         );
@@ -283,6 +300,7 @@ function ProviderSection(props: {
   readonly merged: MergedUsage;
   readonly metric: UsageChartMetric;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { merged, metric } = props;
   const colors = useProviderColors();
   if (merged.providers.length === 0) return null;
@@ -294,7 +312,7 @@ function ProviderSection(props: {
   );
 
   return (
-    <SettingsSection title="Providers" card>
+    <SettingsSection title={translator.message("mobile.usage.providers")} card>
       {ordered.map((provider, index) => {
         const share = metric === "cost" ? provider.costShare : provider.tokenShare;
         return (
@@ -325,8 +343,14 @@ function ProviderSection(props: {
             </View>
             <Text className="text-sm text-foreground-muted">
               {metric === "cost"
-                ? `${formatPercent(share)} of cost · ${formatTokens(provider.totalTokens)} tokens`
-                : `${formatPercent(share)} of tokens · ${formatUsd(provider.costUsd)}`}
+                ? translator.message("mobile.usage.costShare", {
+                    share: formatPercent(share),
+                    tokens: formatTokens(provider.totalTokens),
+                  })
+                : translator.message("mobile.usage.tokenShare", {
+                    share: formatPercent(share),
+                    cost: formatUsd(provider.costUsd),
+                  })}
             </Text>
           </View>
         );
@@ -336,50 +360,69 @@ function ProviderSection(props: {
 }
 
 function TotalsSection(props: { readonly merged: MergedUsage; readonly isPast24Hours: boolean }) {
+  const translator = useMobileInterfaceTranslator();
   const { merged } = props;
   const activePeriods = (props.isPast24Hours ? merged.hourly : merged.daily).filter(
     (period) => period.totalTokens > 0,
   ).length;
   const periodAverage = activePeriods === 0 ? 0 : merged.totalTokens / activePeriods;
-  const observedInput = merged.uncachedInputTokens + merged.cachedInputTokens;
+  const observedInput =
+    merged.uncachedInputTokens + merged.cacheCreationTokens + merged.cachedInputTokens;
   const cachedShare = observedInput === 0 ? 0 : merged.cachedInputTokens / observedInput;
 
   return (
-    <SettingsSection title="Totals" card>
+    <SettingsSection title={translator.message("mobile.usage.totals")} card>
       <View className="flex-row flex-wrap">
         <MetricCell
-          label="Processed tokens"
-          value={formatTokens(merged.totalTokens)}
-          detail={`${formatTokens(periodAverage)} per active ${props.isPast24Hours ? "hour" : "day"}`}
+          label={translator.message("mobile.usage.newInput")}
+          value={formatTokens(merged.uncachedInputTokens)}
+          detail={translator.message("mobile.usage.cacheWrites", {
+            tokens: formatTokens(merged.cacheCreationTokens),
+          })}
         />
         <MetricCell
-          label="Cache savings"
+          label={translator.message("mobile.usage.cachedInput")}
+          value={formatTokens(merged.cachedInputTokens)}
+          detail={translator.message("mobile.usage.observedInputShare", {
+            share: formatPercent(cachedShare),
+          })}
+        />
+        <MetricCell
+          label={translator.message("mobile.usage.output")}
+          value={formatTokens(merged.outputTokens)}
+        />
+        <MetricCell
+          label={translator.message("mobile.usage.reasoning")}
+          value={formatTokens(merged.reasoningTokens)}
+          detail={translator.message("mobile.usage.includedInOutput")}
+        />
+      </View>
+      <View className="gap-2 border-t border-border-subtle p-4">
+        <SecondaryRow
+          label={translator.message("mobile.usage.processedTotal")}
+          value={formatTokens(merged.totalTokens)}
+          detail={translator.message("mobile.usage.activePeriodAverage", {
+            tokens: formatTokens(periodAverage),
+            period: translator.message(
+              props.isPast24Hours ? "mobile.usage.hour" : "mobile.usage.day",
+            ),
+          })}
+        />
+        <SecondaryRow
+          label={translator.message("mobile.usage.cacheSavings")}
           value={formatUsd(merged.costQuality.cacheSavingsUsd)}
           detail={
             merged.costUsd > 0
-              ? `${(merged.costQuality.cacheSavingsUsd / merged.costUsd).toFixed(1)}x the raw cost`
-              : "vs full input rates"
+              ? translator.message("mobile.usage.rawCostMultiple", {
+                  multiple: (merged.costQuality.cacheSavingsUsd / merged.costUsd).toFixed(1),
+                })
+              : translator.message("mobile.usage.fullInputRates")
           }
         />
-        <MetricCell
-          label="Cached input"
-          value={formatTokens(merged.cachedInputTokens)}
-          detail={`${formatPercent(cachedShare)} of observed input`}
-        />
-        <MetricCell
-          label="Uncached input"
-          value={formatTokens(merged.uncachedInputTokens)}
-          detail={`${formatTokens(merged.cacheCreationTokens)} cache writes`}
-        />
-        <MetricCell
-          label="Output"
-          value={formatTokens(merged.outputTokens)}
-          detail={`incl. ${formatTokens(merged.reasoningTokens)} reasoning`}
-        />
-        <MetricCell
-          label="Unpriced"
+        <SecondaryRow
+          label={translator.message("mobile.usage.unpriced")}
           value={formatPercent(merged.costQuality.unpricedShare)}
-          detail="of records, excluded from cost"
+          detail={translator.message("mobile.usage.unpricedDetail")}
         />
       </View>
     </SettingsSection>
@@ -389,24 +432,86 @@ function TotalsSection(props: { readonly merged: MergedUsage; readonly isPast24H
 function MetricCell(props: {
   readonly label: string;
   readonly value: string;
-  readonly detail: string;
+  readonly detail?: string;
 }) {
   return (
     <View className="w-1/2 gap-0.5 p-4">
       <Text className="text-sm text-foreground-muted">{props.label}</Text>
       <Text className="text-xl font-t3-medium tabular-nums text-foreground">{props.value}</Text>
-      <Text className="text-xs text-foreground-tertiary">{props.detail}</Text>
+      {props.detail === undefined ? null : (
+        <Text className="text-xs text-foreground-tertiary">{props.detail}</Text>
+      )}
     </View>
   );
 }
 
+function SecondaryRow(props: {
+  readonly label: string;
+  readonly value: string;
+  readonly detail: string;
+}) {
+  return (
+    <View className="flex-row items-baseline justify-between gap-3">
+      <View className="min-w-0 flex-1">
+        <Text className="text-sm text-foreground-muted">{props.label}</Text>
+        <Text className="text-xs text-foreground-tertiary">{props.detail}</Text>
+      </View>
+      <Text className="text-base font-t3-medium tabular-nums text-foreground">{props.value}</Text>
+    </View>
+  );
+}
+
+function CallsSection(props: { readonly merged: MergedUsage }) {
+  const translator = useMobileInterfaceTranslator();
+  const calls = props.merged.calls.filter(
+    (call) => call.kind !== "unknown" || call.records > 0 || call.totalTokens > 0,
+  );
+  if (!calls.some((call) => call.records > 0 || call.totalTokens > 0)) return null;
+
+  return (
+    <SettingsSection title={translator.message("mobile.usage.calls")} card>
+      <View className="flex-row flex-wrap">
+        {calls.map((call) => (
+          <MetricCell
+            key={call.kind}
+            label={translator.message(mobileUsageCallMessageKey(call.kind))}
+            value={formatTokens(call.totalTokens)}
+            detail={translator.message("mobile.usage.callCount", { count: call.records })}
+          />
+        ))}
+      </View>
+    </SettingsSection>
+  );
+}
+
+function ContextDiagnosticsSection(props: { readonly merged: MergedUsage }) {
+  const translator = useMobileInterfaceTranslator();
+  const diagnostics = props.merged.contextDiagnostics;
+  if (!Object.values(diagnostics).some((value) => value > 0)) return null;
+
+  return (
+    <SettingsSection title={translator.message("mobile.usage.contextDiagnostics")} card>
+      <View className="flex-row flex-wrap">
+        {visibleMobileContextDiagnostics(diagnostics).map((row) => (
+          <MetricCell
+            key={row.key}
+            label={translator.message(row.messageKey)}
+            value={row.tokens ? formatTokens(row.value) : translator.number(row.value)}
+          />
+        ))}
+      </View>
+    </SettingsSection>
+  );
+}
+
 function ModelsSection(props: { readonly merged: MergedUsage }) {
+  const translator = useMobileInterfaceTranslator();
   const { merged } = props;
   const colors = useProviderColors();
   if (merged.models.length === 0) return null;
 
   return (
-    <SettingsSection title="By model" card>
+    <SettingsSection title={translator.message("mobile.usage.byModel")} card>
       {merged.models.map((model, index) => (
         <View
           key={`${model.provider}:${model.model}`}
@@ -425,7 +530,10 @@ function ModelsSection(props: { readonly merged: MergedUsage }) {
               {model.model}
             </Text>
             <Text className="text-sm text-foreground-muted">
-              {formatPercent(model.costShare)} of cost · {formatTokens(model.totalTokens)} tokens
+              {translator.message("mobile.usage.costShare", {
+                share: formatPercent(model.costShare),
+                tokens: formatTokens(model.totalTokens),
+              })}
             </Text>
           </View>
           <Text className="text-base tabular-nums text-foreground">{formatUsd(model.costUsd)}</Text>
@@ -445,6 +553,7 @@ function UsageCoverageNotice(props: {
   readonly merged: MergedUsage;
   readonly isPartial: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const failed = props.environments.filter((environment) => environment.error !== null);
   const stale = props.environments.filter((environment) =>
     props.merged.staleEnvironments.includes(environment.environmentId),
@@ -463,23 +572,28 @@ function UsageCoverageNotice(props: {
     <View className="gap-1 rounded-[16px] border-continuous bg-card px-4 py-3">
       {props.isPartial ? (
         <Text className="text-sm text-foreground-muted">
-          Some environments are still reporting. Totals are partial.
+          {translator.message("mobile.usage.partial")}
         </Text>
       ) : null}
       {failed.map((environment) => (
         <Text key={environment.environmentId} className="text-sm text-foreground-muted">
-          {environment.label} could not report usage.
+          {translator.message("mobile.usage.failedEnvironment", {
+            environment: environment.label,
+          })}
         </Text>
       ))}
       {stale.map((environment) => (
         <Text key={environment.environmentId} className="text-sm text-foreground-muted">
-          {environment.label} runs an older server version and is excluded from totals.
+          {translator.message("mobile.usage.staleEnvironment", {
+            environment: environment.label,
+          })}
         </Text>
       ))}
       {duplicateSources.length > 0 ? (
         <Text className="text-sm text-foreground-muted">
-          Counted once across environments sharing a transcript directory:{" "}
-          {duplicateSources.join(", ")}
+          {translator.message("mobile.usage.duplicateSources", {
+            sources: translator.list(duplicateSources),
+          })}
         </Text>
       ) : null}
     </View>

@@ -14,6 +14,7 @@ import {
 } from "react";
 
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -134,6 +135,7 @@ function useAvailableDrawerHeight(providedHeight?: number): number {
 export function WorkspaceCardDrawerShell<TabId extends string>(
   props: WorkspaceCardDrawerShellProps<TabId>,
 ) {
+  const translate = useInterfaceTranslator().message;
   const accessibilityId = useId();
   const availableHeight = useAvailableDrawerHeight(props.availableHeight);
   const sizingMode = props.sizingMode === "content" ? "content" : "resizable";
@@ -451,7 +453,7 @@ export function WorkspaceCardDrawerShell<TabId extends string>(
         <nav
           className={cn("workspace-card-drawer__tabs", props.classNames?.tabs)}
           role="tablist"
-          aria-label={`${props.title} views`}
+          aria-label={translate("sidebar.workspaceDeck.views", { title: props.title })}
         >
           {props.tabs.map((tab) => {
             const selected = tab.id === props.activeTab;

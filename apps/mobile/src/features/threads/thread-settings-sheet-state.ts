@@ -2,8 +2,23 @@ import {
   matchesOpenRouterModelFilters,
   type OpenRouterModelFilter,
 } from "@t3tools/shared/modelCatalogFilters";
+import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 
 import type { ModelOption } from "../../lib/modelOptions";
+
+export const MOBILE_MODEL_FILTER_MIN_TOUCH_TARGET = 44;
+
+export function modelFavoriteActionMessageKey(favorite: boolean): InterfaceMessageKey {
+  return favorite ? "mobile.thread.settings.removeFavorite" : "mobile.thread.settings.addFavorite";
+}
+
+export function performModelFavoriteToggle(
+  event: { readonly stopPropagation: () => void },
+  toggleFavorite: () => void,
+): void {
+  event.stopPropagation();
+  toggleFavorite();
+}
 
 /** Large remote catalogs get a focused picker page instead of expanding inline. */
 export function providerCatalogUsesDrillIn(driver: string | undefined): boolean {

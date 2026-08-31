@@ -25,6 +25,7 @@ import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import { translateDesktopInterfaceMessage } from "../../settings/DesktopInterfaceLanguage.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronApp from "../../electron/ElectronApp.ts";
@@ -133,7 +134,12 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
       const runningDistro = config.value.runningDistro ?? null;
       bootstraps.push({
         id: instance.id,
-        label: runningDistro === null ? yield* instance.label : `WSL (${runningDistro})`,
+        label:
+          runningDistro === null
+            ? yield* instance.label
+            : translateDesktopInterfaceMessage("desktop.wsl.environmentLabel", {
+                distro: runningDistro,
+              }),
         runningDistro,
         httpBaseUrl: httpBaseUrl.href,
         wsBaseUrl: toWebSocketBaseUrl(httpBaseUrl),
@@ -248,7 +254,7 @@ export const pickProjectFavicon = DesktopIpc.makeIpcMethod({
       multiple: false,
       filters: [
         {
-          name: "Images",
+          name: translateDesktopInterfaceMessage("desktop.picker.images"),
           extensions: WORKSPACE_IMAGE_PREVIEW_EXTENSIONS.map((extension) => extension.slice(1)),
         },
       ],

@@ -1,40 +1,45 @@
 import {
-  DEFAULT_INTERFACE_LANGUAGE_PREFERENCE,
-  InterfaceLanguageSyncRecord,
-  type InterfaceLanguagePreference,
-  type InterfaceLanguageSyncRecord as InterfaceLanguageSyncRecordType,
+  InterfaceLocaleSyncRecordV1,
+  type InterfaceLanguageSyncRecord,
+  type InterfaceLocalePreferenceV1,
+  type InterfaceLocaleSyncRecordV1 as InterfaceLocaleSyncRecordV1Type,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import type { Preferences } from "../persistence/mobile-preferences";
 
-const decodeInterfaceLanguageSyncRecord = Schema.decodeUnknownSync(InterfaceLanguageSyncRecord);
+const decodeInterfaceLocaleSyncRecordV1 = Schema.decodeUnknownSync(InterfaceLocaleSyncRecordV1);
 
-export interface MobileInterfaceLanguagePreferencePatch extends Pick<
+export interface MobileInterfaceLocalePreferencePatch extends Pick<
   Preferences,
-  "interfaceLanguageSyncRecord"
+  "interfaceLocaleSyncRecordV1"
 > {
-  readonly interfaceLanguageSyncRecord: InterfaceLanguageSyncRecordType;
+  readonly interfaceLocaleSyncRecordV1: InterfaceLocaleSyncRecordV1Type;
+  readonly interfaceLanguageSyncRecord?: InterfaceLanguageSyncRecord;
 }
 
-export function resolveMobileInterfaceLanguagePreference(
-  record: InterfaceLanguageSyncRecordType | undefined,
-): InterfaceLanguagePreference {
-  return record?.preference ?? DEFAULT_INTERFACE_LANGUAGE_PREFERENCE;
+export function resolveMobileInterfaceLocalePreference(
+  record: InterfaceLocaleSyncRecordV1Type | undefined,
+): InterfaceLocalePreferenceV1 {
+  return record?.preference ?? "system";
 }
 
-export function createMobileInterfaceLanguageRecord(
-  preference: InterfaceLanguagePreference,
+export function createMobileInterfaceLocaleRecordV1(
+  preference: InterfaceLocalePreferenceV1,
   updatedAt: number,
   updateId: string,
-): InterfaceLanguageSyncRecordType {
-  return decodeInterfaceLanguageSyncRecord({ preference, updatedAt, updateId });
+): InterfaceLocaleSyncRecordV1Type {
+  return decodeInterfaceLocaleSyncRecordV1({ version: 1, preference, updatedAt, updateId });
 }
 
-export function mobileInterfaceLanguagePreferencePatch(
-  record: InterfaceLanguageSyncRecordType,
-): MobileInterfaceLanguagePreferencePatch {
-  return { interfaceLanguageSyncRecord: record };
+export function mobileInterfaceLocalePreferencePatch(
+  record: InterfaceLocaleSyncRecordV1Type,
+  legacyMirror?: InterfaceLanguageSyncRecord,
+): MobileInterfaceLocalePreferencePatch {
+  return {
+    interfaceLocaleSyncRecordV1: record,
+    ...(legacyMirror === undefined ? {} : { interfaceLanguageSyncRecord: legacyMirror }),
+  };
 }
 
 export function nextMobileInterfaceLanguageUpdatedAt(input: {

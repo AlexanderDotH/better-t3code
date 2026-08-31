@@ -23,6 +23,7 @@ import { readLocalApi } from "~/localApi";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -59,11 +60,21 @@ interface ReactionSurface {
   readonly onRefresh: () => void;
 }
 
-function TimelineBody({ body, markdown, cwd }: { body: string; markdown: boolean; cwd: string }) {
+function TimelineBody({
+  body,
+  markdown,
+  cwd,
+  environmentId,
+}: {
+  body: string;
+  markdown: boolean;
+  cwd: string;
+  environmentId: EnvironmentId;
+}) {
   return (
     <div className="mt-3">
       {markdown ? (
-        <PullRequestMarkdown text={body} cwd={cwd} />
+        <PullRequestMarkdown text={body} cwd={cwd} environmentId={environmentId} />
       ) : (
         <p className="whitespace-pre-wrap text-xs text-muted-foreground">{body}</p>
       )}
@@ -145,12 +156,13 @@ function ReviewStateBadge({ state }: { state: string }) {
 }
 
 function OpenOnHostButton({ url, onOpen }: { url: string | null; onOpen: (url: string) => void }) {
+  const translate = useInterfaceTranslator().message;
   return url === null ? null : (
     <Button
       size="icon-xs"
       variant="ghost"
       className="-mr-1 -mt-1 shrink-0 text-muted-foreground"
-      aria-label="Open activity on host"
+      aria-label={translate("pullRequest.timeline.openHost")}
       onClick={() => onOpen(url)}
     >
       <ExternalLinkIcon className="size-3" />
@@ -172,6 +184,7 @@ function ConversationCard({
   onOpen: (url: string) => void;
   reactions: ReactionSurface;
 }) {
+  const translate = useInterfaceTranslator().message;
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
@@ -189,7 +202,7 @@ function ConversationCard({
     });
     setSaving(false);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not save the comment" });
+      toastManager.add({ type: "error", title: translate("pullRequest.comment.saveFailed") });
       return;
     }
     setEditing(false);
@@ -221,7 +234,7 @@ function ConversationCard({
               size="icon-xs"
               variant="ghost"
               className="-mt-1 shrink-0 text-muted-foreground opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
-              aria-label="Edit comment"
+              aria-label={translate("pullRequest.editComment")}
               onClick={() => setEditing(true)}
             >
               <PencilIcon className="size-3" />
@@ -235,7 +248,8 @@ function ConversationCard({
           <PullRequestMarkdownEditor
             value={editable.body}
             cwd={cwd}
-            label="Edit comment"
+            environmentId={reactions.environmentId}
+            label={translate("pullRequest.editComment")}
             saving={saving}
             onSave={(body) => void save(body)}
             onCancel={() => setEditing(false)}
@@ -243,7 +257,12 @@ function ConversationCard({
         </div>
       ) : event.body ? (
         <div className="px-2 pb-2">
-          <TimelineBody body={event.body} markdown={event.markdown} cwd={cwd} />
+          <TimelineBody
+            body={event.body}
+            markdown={event.markdown}
+            cwd={cwd}
+            environmentId={reactions.environmentId}
+          />
         </div>
       ) : null}
       {reactions.canReact || event.reactions.length > 0 ? (
@@ -388,20 +407,21 @@ function CommitEvent({
 }
 
 function LifecycleEvent({ event }: { event: PullRequestTimelineEvent }) {
+  const translate = useInterfaceTranslator().message;
   const presentation =
     event.kind === "opened"
       ? {
           icon: <GitPullRequestIcon className="size-3.5" />,
-          label: "Pull request opened",
+          label: translate("pullRequest.timeline.opened"),
         }
       : event.kind === "merged"
         ? {
             icon: <GitMergeIcon className="size-3.5" />,
-            label: "Pull request merged",
+            label: translate("pullRequest.timeline.merged"),
           }
         : {
             icon: <GitPullRequestClosedIcon className="size-3.5" />,
-            label: "Pull request closed",
+            label: translate("pullRequest.timeline.closed"),
           };
 
   return (
@@ -441,6 +461,7 @@ function ReviewVerdictEvent({
   onOpen: (url: string) => void;
   reactions: ReactionSurface;
 }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <div className="group relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
       {/* Pinned rather than centred: this row grows with a body and a reaction bar, and a
@@ -472,10 +493,12 @@ function ReviewVerdictEvent({
                   />
                 }
               >
-                {pullRequestReviewOutcomeLabel(outcome)}
-                {stale ? <span className="sr-only">, before the latest commits</span> : null}
+                {pullRequestReviewOutcomeLabel(outcome, translate)}
+                {stale ? (
+                  <span className="sr-only">{translate("pullRequest.timeline.beforeLatest")}</span>
+                ) : null}
               </TooltipTrigger>
-              <TooltipPopup>{pullRequestReviewOutcomeStaleLabel(outcome)}</TooltipPopup>
+              <TooltipPopup>{pullRequestReviewOutcomeStaleLabel(outcome, translate)}</TooltipPopup>
             </Tooltip>
           </div>
           {/* The reaction bar rides this line rather than taking one of its own. Its add button
@@ -505,7 +528,12 @@ function ReviewVerdictEvent({
           {/* An approval usually carries no words. When it does they are the review, so they stay
               visible rather than being folded away with the ordinary conversation. */}
           {event.body ? (
-            <TimelineBody body={event.body} markdown={event.markdown} cwd={cwd} />
+            <TimelineBody
+              body={event.body}
+              markdown={event.markdown}
+              cwd={cwd}
+              environmentId={reactions.environmentId}
+            />
           ) : null}
         </div>
         <OpenOnHostButton url={event.url} onOpen={onOpen} />
@@ -529,6 +557,7 @@ export function PullRequestTimelineTab({
   onOpenCommit: (oid: string) => void;
   onRefresh: () => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const events = buildPullRequestTimeline(detail);
   const newestCommitAt = newestPullRequestCommitAt(detail.commits);
   const reactions: ReactionSurface = {
@@ -593,7 +622,7 @@ export function PullRequestTimelineTab({
         {events.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
             <GitPullRequestIcon className="mb-2 size-5" />
-            <p className="text-xs">No activity yet.</p>
+            <p className="text-xs">{translate("pullRequest.timeline.none")}</p>
           </div>
         ) : null}
       </div>

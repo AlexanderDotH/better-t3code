@@ -1,8 +1,12 @@
 import { ApprovalRequestId } from "@t3tools/contracts";
+import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
+import {
+  ComposerPendingUserInputPanel,
+  pendingUserInputDisclosureMessageId,
+} from "./ComposerPendingUserInputPanel";
 import type { PendingUserInput } from "../../session-logic";
 
 const prompt: PendingUserInput = {
@@ -36,6 +40,18 @@ function renderPanel() {
 }
 
 describe("ComposerPendingUserInputPanel", () => {
+  it("localizes both disclosure directions through typed message IDs", () => {
+    const german = createInterfaceTranslator({ language: "de", locale: "de-DE" }).message;
+    const french = createInterfaceTranslator({ language: "fr", locale: "fr-FR" }).message;
+
+    expect(german(pendingUserInputDisclosureMessageId(false))).toBe(
+      "Frage und Antwortoptionen ausblenden",
+    );
+    expect(french(pendingUserInputDisclosureMessageId(true))).toBe(
+      "Afficher la question et ses options",
+    );
+  });
+
   it("renders the header as a disclosure control for the question body", () => {
     const markup = renderPanel();
 
@@ -44,6 +60,7 @@ describe("ComposerPendingUserInputPanel", () => {
     expect(toggle).toContain('data-pending-user-input-toggle="expanded"');
     expect(toggle).toContain('aria-expanded="true"');
     expect(toggle).toContain('type="button"');
+    expect(toggle).toContain('title="Hide the question and its options"');
 
     const controlledId = toggle?.match(/aria-controls="([^"]+)"/)?.[1];
     expect(controlledId).toBeDefined();

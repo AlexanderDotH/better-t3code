@@ -121,6 +121,22 @@ describe("classic sidebar draft rows", () => {
         ],
       }),
     ).toBe("1 attachment");
+
+    expect(
+      resolveLegacySidebarDraftPreview({
+        ...createEmptyThreadDraft(),
+        files: [
+          {
+            type: "file",
+            id: "file-1",
+            name: "notes.txt",
+            mimeType: "text/plain",
+            sizeBytes: 12,
+            file: null,
+          },
+        ],
+      }),
+    ).toBe("1 attachment");
   });
 
   it("renders a navigable amber draft row with a discard affordance", () => {

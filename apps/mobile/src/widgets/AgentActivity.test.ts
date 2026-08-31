@@ -75,8 +75,28 @@ describe("AgentActivity widget layout", () => {
       environment as never,
     );
 
-    expect(JSON.stringify(layout)).toContain("Agentenarbeit abgeschlossen");
+    expect(JSON.stringify(layout)).toContain("Agent-Aufgabe abgeschlossen");
     expect(JSON.stringify(layout)).toContain("Fertig");
+  });
+
+  it("uses the typed French catalog for plural activity summaries", () => {
+    const layout = AgentActivity(
+      {
+        ...props,
+        language: "fr",
+        activeCount: 2,
+        activities: [
+          makeRow({}),
+          makeRow({ threadId: "thread-2", phase: "waiting_for_input", status: "Saisie" }),
+        ],
+      },
+      environment as never,
+    );
+
+    const banner = JSON.stringify(layout.banner);
+    expect(banner).toContain("2 agents actifs");
+    expect(banner).toContain("1 requiert votre attention");
+    expect(JSON.stringify(layout.compactTrailing)).toContain("Saisie");
   });
 
   it("tints each row by its own phase using the web sidebar's dark palette", () => {
@@ -225,7 +245,7 @@ describe("AgentActivity widget layout", () => {
       environment as never,
     );
     const banner = JSON.stringify(layout.banner);
-    expect(banner).toContain("Agent work completed");
+    expect(banner).toContain("Agent task completed");
     expect(banner).not.toContain("0 active");
     expect(banner).toContain("#6ee7b7"); // emerald-300 header tint
     expect(JSON.stringify(layout.compactTrailing)).toContain("Done");
@@ -246,7 +266,7 @@ describe("AgentActivity widget layout", () => {
       environment as never,
     );
     const banner = JSON.stringify(layout.banner);
-    expect(banner).toContain("Agent work failed");
+    expect(banner).toContain("Agent task failed");
     expect(banner).toContain("#fca5a5"); // red-300 header tint
     expect(JSON.stringify(layout.compactTrailing)).toContain("Failed");
     expect(JSON.stringify(layout.expandedLeading)).toContain("Failed");
@@ -270,8 +290,8 @@ describe("AgentActivity widget layout", () => {
       environment as never,
     );
     const banner = JSON.stringify(layout.banner);
-    expect(banner).toContain("Agent work failed");
-    expect(banner).not.toContain("Agent work completed");
+    expect(banner).toContain("Agent task failed");
+    expect(banner).not.toContain("Agent task completed");
     expect(banner).toContain("#fca5a5"); // red-300 header tint
     expect(JSON.stringify(layout.compactTrailing)).toContain("Failed");
     expect(JSON.stringify(layout.expandedLeading)).toContain("Failed");

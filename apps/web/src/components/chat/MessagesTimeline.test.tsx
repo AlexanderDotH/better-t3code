@@ -11,6 +11,7 @@ import {
   deriveAgentPanelModel,
   foldSubagentActivities,
 } from "@t3tools/client-runtime/state/subagentRuntime";
+import { codexFeedbackMessage } from "@t3tools/client-runtime/state/threads";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -220,7 +221,6 @@ const MESSAGE_CREATED_AT = "2026-03-17T19:12:28.000Z";
 function buildProps() {
   return {
     isWorking: false,
-    activeTurnStartedAt: null,
     listRef: createRef<LegendListRef | null>(),
     latestTurn: null,
     runningTurnId: null,
@@ -571,57 +571,123 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Fork starts here");
   });
 
-  it("animates only a newly inserted streaming assistant after the thread has committed", () => {
-    const committedMessageIds = new Set(["message-existing"]);
+  describe("initial assistant character motion eligibility", () => {
+    const scopeId = "environment-local:thread-1";
+    const runningTurnId = TurnId.make("turn-live");
+    const input = {
+      committedScopeId: scopeId,
+      committedMessageIds: new Set(["message-existing"]),
+      committedRunningTurnId: runningTurnId,
+      currentScopeId: scopeId,
+      messageId: "message-new",
+      messageTurnId: runningTurnId,
+      isStreaming: false,
+    };
 
-    expect(
-      resolveInitialStreamAnimation({
-        committedScopeId: null,
-        committedMessageIds,
-        currentScopeId: "environment-local:thread-1",
-        messageId: "message-new",
-        isStreaming: true,
-      }),
-    ).toBe(false);
-    expect(
-      resolveInitialStreamAnimation({
-        committedScopeId: "environment-local:thread-1",
-        committedMessageIds,
-        currentScopeId: "environment-local:thread-1",
-        messageId: "message-existing",
-        isStreaming: true,
-      }),
-    ).toBe(false);
-    expect(
-      resolveInitialStreamAnimation({
-        committedScopeId: "environment-local:thread-1",
-        committedMessageIds,
-        currentScopeId: "environment-local:thread-1",
-        messageId: "message-new",
-        isStreaming: false,
-      }),
-    ).toBe(false);
-    expect(
-      resolveInitialStreamAnimation({
-        committedScopeId: "environment-local:thread-1",
-        committedMessageIds,
-        currentScopeId: "environment-local:thread-1",
-        messageId: "message-new",
-        isStreaming: true,
-      }),
-    ).toBe(true);
+    it("animates a new completed assistant buffered from the previously running turn", () => {
+      expect(resolveInitialStreamAnimation(input)).toBe(true);
+    });
+
+    it("does not animate a completed assistant from an unrelated turn", () => {
+      expect(
+        resolveInitialStreamAnimation({
+          ...input,
+          messageTurnId: TurnId.make("turn-unrelated"),
+        }),
+      ).toBe(false);
+    });
+
+    it("does not replay an old assistant already committed to the thread", () => {
+      expect(
+        resolveInitialStreamAnimation({
+          ...input,
+          messageId: "message-existing",
+        }),
+      ).toBe(false);
+    });
+
+    it("does not animate completed assistants during initial hydration", () => {
+      expect(
+        resolveInitialStreamAnimation({
+          ...input,
+          committedScopeId: null,
+        }),
+      ).toBe(false);
+    });
+
+    it("does not replay a completed assistant across a thread switch", () => {
+      expect(
+        resolveInitialStreamAnimation({
+          ...input,
+          currentScopeId: "environment-local:thread-2",
+        }),
+      ).toBe(false);
+    });
+
+    it("keeps a new legacy streaming assistant eligible without a matching turn", () => {
+      expect(
+        resolveInitialStreamAnimation({
+          ...input,
+          messageTurnId: TurnId.make("turn-unrelated"),
+          isStreaming: true,
+        }),
+      ).toBe(true);
+    });
   });
 
-  it("treats a thread switch as hydration instead of replaying streamed text", () => {
-    expect(
-      resolveInitialStreamAnimation({
-        committedScopeId: "environment-local:thread-1",
-        committedMessageIds: new Set(),
-        currentScopeId: "environment-local:thread-2",
-        messageId: "message-new",
-        isStreaming: true,
-      }),
-    ).toBe(false);
+  it("renders a feedback command and its pending response as normal thread messages", () => {
+    const submission = {
+      id: MessageId.make("feedback-command"),
+      command: "/feedback The agent stopped early.",
+      createdAt: MESSAGE_CREATED_AT,
+      status: "uploading" as const,
+    };
+    const messages = [
+      codexFeedbackMessage(submission),
+      codexFeedbackMessage(submission, "assistant"),
+    ];
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={messages.map((message) => ({
+          id: message.id,
+          kind: "message" as const,
+          createdAt: message.createdAt,
+          message,
+        }))}
+      />,
+    );
+
+    expect(markup).toContain("/feedback The agent stopped early.");
+    expect(markup).toContain("Sending feedback to OpenAI...");
+  });
+
+  it("renders the returned Codex thread ID in the feedback response", () => {
+    const submission = {
+      id: MessageId.make("feedback-command"),
+      command: "/feedback The agent stopped early.",
+      createdAt: MESSAGE_CREATED_AT,
+      status: "sent" as const,
+      feedbackId: "codex-thread-1",
+    };
+    const messages = [
+      codexFeedbackMessage(submission),
+      codexFeedbackMessage(submission, "assistant"),
+    ];
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={messages.map((message) => ({
+          id: message.id,
+          kind: "message" as const,
+          createdAt: message.createdAt,
+          message,
+        }))}
+      />,
+    );
+
+    expect(markup).toContain("Feedback sent to OpenAI.");
+    expect(markup).toContain("codex-thread-1");
   });
 
   it("renders the worked-for row at assistant response text size", () => {
@@ -1003,6 +1069,158 @@ describe("MessagesTimeline", () => {
     expect(onAnchorReady).not.toHaveBeenCalled();
   });
 
+  it("renders generic attachments as download links instead of image previews", () => {
+    const entry = {
+      ...buildUserTimelineEntry("Read the report."),
+      message: {
+        ...buildUserTimelineEntry("Read the report.").message,
+        attachments: [
+          {
+            type: "file" as const,
+            id: "attachment-report-pdf",
+            name: "report.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 42,
+            previewUrl: "https://environment.test/api/assets/report.pdf",
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+
+    expect(markup).toContain(
+      '<a href="https://environment.test/api/assets/report.pdf" download="report.pdf" class="flex min-w-0 items-center gap-2 rounded-md py-1 text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70">',
+    );
+    expect(markup).not.toContain('alt="report.pdf"');
+  });
+
+  it("renders a file download button without creating its URL in advance", () => {
+    const entry = {
+      ...buildUserTimelineEntry("Read the report."),
+      message: {
+        ...buildUserTimelineEntry("Read the report.").message,
+        attachments: [
+          {
+            type: "file" as const,
+            id: "attachment-report-pdf",
+            name: "report.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 42,
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+
+    expect(markup).toContain(
+      '<button type="button" aria-label="Download report.pdf" class="flex min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70">',
+    );
+    expect(markup).not.toContain("href=");
+  });
+
+  it("does not download an optimistic file before the server supplies its attachment ID", () => {
+    const entry = {
+      ...buildUserTimelineEntry("Read the report."),
+      message: {
+        ...buildUserTimelineEntry("Read the report.").message,
+        attachments: [
+          {
+            type: "file" as const,
+            id: "composer-local-report",
+            name: "report.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 42,
+            downloadable: false,
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+
+    expect(markup).toContain("report.pdf");
+    expect(markup).not.toContain('aria-label="Download report.pdf"');
+  });
+
+  it("renders unknown attachment types as inert rows instead of crashing", () => {
+    const entry = {
+      ...buildUserTimelineEntry("Play the recording."),
+      message: {
+        ...buildUserTimelineEntry("Play the recording.").message,
+        attachments: [
+          {
+            // A newer server can introduce attachment types this build does
+            // not know. They ride the open contract member.
+            type: "recording",
+            id: "attachment-voice-memo",
+            name: "voice-memo.ogg",
+            mimeType: "audio/ogg",
+            sizeBytes: 42,
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+
+    expect(markup).toContain("voice-memo.ogg");
+    expect(markup).not.toContain('aria-label="Download voice-memo.ogg"');
+    expect(markup).not.toContain('alt="voice-memo.ogg"');
+    expect(markup).not.toContain("href=");
+  });
+
+  it("keeps reserved end space when tool work starts while reading history", () => {
+    const turnId = TurnId.make("turn-with-active-tool");
+    const firstEntry = buildUserTimelineEntry("Run the command.");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        latestTurn={{
+          turnId,
+          state: "running",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: null,
+        }}
+        runningTurnId={turnId}
+        anchorMessageId={firstEntry.message.id}
+        liveFollowEnabled={false}
+        timelineEntries={[
+          firstEntry,
+          {
+            id: "entry-active-tool",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-active-tool",
+              createdAt: MESSAGE_CREATED_AT,
+              turnId,
+              toolCallId: "call-active-tool",
+              label: "Run command",
+              tone: "tool",
+              itemType: "command_execution",
+              command: "git status",
+              toolLifecycleStatus: "inProgress",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-anchor-index="0"');
+    expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
+  });
+
   it("hands end-following back to the list once the send anchor is released", () => {
     const firstEntry = buildUserTimelineEntry("First prompt.");
     const secondEntry = {
@@ -1307,7 +1525,6 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Context compacted");
-    expect(markup).toContain("Work Log");
   });
 
   it("renders project-agent coordination activities as messages", () => {
@@ -1352,6 +1569,24 @@ describe("MessagesTimeline", () => {
           turnId: null,
           createdAt: MESSAGE_CREATED_AT,
         } as OrchestrationThreadActivity,
+        {
+          id: "activity-agent-usage",
+          tone: "info",
+          kind: "task.progress",
+          summary: "Updated subagent usage",
+          payload: {
+            taskId: "child-1",
+            agentKind: "agent",
+            usageSnapshot: true,
+            typedUsage: {
+              totalTokens: 900,
+              inputTokens: 700,
+              outputTokens: 150,
+            },
+          },
+          turnId: null,
+          createdAt: MESSAGE_CREATED_AT,
+        } as OrchestrationThreadActivity,
       ]),
     });
     const markup = renderToStaticMarkup(
@@ -1382,6 +1617,12 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('role="status"');
     expect(markup).toContain("Kicked off 4 subagents");
     expect(markup).toContain("1 working");
+    expect(markup).toContain("Input");
+    expect(markup).toContain("700");
+    expect(markup).toContain("Output");
+    expect(markup).toContain("150");
+    expect(markup).toContain("Total");
+    expect(markup).toContain("900");
     expect(markup).not.toContain("Open Agents");
   });
 
@@ -1543,13 +1784,104 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-label="Tool call failed"');
   });
 
+  it("keeps the collapsed summary icon neutral when the group ends in a failure", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-completed",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-completed",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Run tests",
+              tone: "tool",
+              itemType: "command_execution",
+              toolLifecycleStatus: "completed",
+            },
+          },
+          {
+            id: "entry-failed",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-failed",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Run lint",
+              tone: "tool",
+              itemType: "command_execution",
+              toolLifecycleStatus: "failed",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Ran 2 commands");
+    expect(markup).toContain("lucide-terminal");
+    expect(markup).not.toContain("lucide-x");
+    expect(markup).not.toContain("text-destructive");
+    expect(markup).toContain("tool call failed");
+  });
+
+  it("keeps mixed work logs neutral after a later tool call succeeds", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-failed",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-failed",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Run search",
+              tone: "tool",
+              itemType: "command_execution",
+              toolLifecycleStatus: "failed",
+            },
+          },
+          {
+            id: "entry-info",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-info",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Status updated",
+              tone: "info",
+            },
+          },
+          {
+            id: "entry-completed",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            entry: {
+              id: "work-completed",
+              createdAt: "2026-03-17T19:12:30.000Z",
+              label: "Run tests",
+              tone: "tool",
+              itemType: "command_execution",
+              toolLifecycleStatus: "completed",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Ran 2 commands and received 1 update");
+    expect(markup).not.toContain('aria-label="Hidden work includes a failure"');
+  });
+
   it("shows the animated one-line label for a live tool group", () => {
     const turnId = TurnId.make("turn-live");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
         isWorking
-        activeTurnStartedAt={MESSAGE_CREATED_AT}
         latestTurn={{
           turnId,
           state: "running",
@@ -1578,7 +1910,6 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Working for");
     expect(markup).toContain("Running pnpm");
     expect(markup).toContain("live-activity-focus");
   });
@@ -1589,7 +1920,6 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline
         {...buildProps()}
         isWorking
-        activeTurnStartedAt={MESSAGE_CREATED_AT}
         latestTurn={{
           turnId,
           state: "running",
@@ -1644,7 +1974,6 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline
         {...buildProps()}
         isWorking
-        activeTurnStartedAt={MESSAGE_CREATED_AT}
         latestTurn={{
           turnId,
           state: "running",
@@ -1675,21 +2004,6 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Running pnpm");
     expect(markup).toContain("tool call failed");
-  });
-
-  it("aligns the iconless Thinking row with the working timer", () => {
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        isWorking
-        activeTurnStartedAt={MESSAGE_CREATED_AT}
-        timelineEntries={[]}
-      />,
-    );
-
-    expect(markup).toContain("Working for");
-    expect(markup).toContain("Thinking");
-    expect(markup).toContain("gap-1.5 py-0.5 px-1");
   });
 
   it("renders the Classic three-dot working row without Thinking or a live sweep", () => {
@@ -1835,11 +2149,22 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-testid="file-diff"');
   });
 
-  it("renders a failure marker for failed tool lifecycle entries", () => {
+  it("keeps failed lifecycle entries discoverable in mixed activity summaries", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
         timelineEntries={[
+          {
+            id: "entry-info",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:27.000Z",
+            entry: {
+              id: "work-info",
+              createdAt: "2026-03-17T19:12:27.000Z",
+              label: "Status updated",
+              tone: "info",
+            },
+          },
           {
             id: "entry-1",
             kind: "work",
@@ -1857,8 +2182,45 @@ describe("MessagesTimeline", () => {
       />,
     );
 
+    expect(markup).toContain('aria-label="Received 1 update and used 1 tool, tool call failed"');
+    // Ordinary tool failures render muted, not red.
+    expect(markup).not.toContain("text-destructive");
+  });
+
+  it("keeps the red treatment for severe orchestration failures", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-info",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:27.000Z",
+            entry: {
+              id: "work-info",
+              createdAt: "2026-03-17T19:12:27.000Z",
+              label: "Status updated",
+              tone: "info",
+            },
+          },
+          {
+            id: "entry-turn-failed",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-turn-failed",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Provider turn start failed",
+              tone: "error",
+              sourceActivityKind: "provider.turn.start.failed",
+            },
+          },
+        ]}
+      />,
+    );
+
     expect(markup).toContain("lucide-x");
-    expect(markup).toContain('aria-label="Tool call failed"');
+    expect(markup).toContain("text-destructive");
   });
 
   it("renders opted-in provider reasoning as expanded, unboxed chat content", () => {

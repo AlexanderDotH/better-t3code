@@ -35,8 +35,51 @@ export interface StreamingTextMotionSnapshot {
   readonly animationTimeMs: number;
 }
 
+interface StreamingTextMotionFramePublisherOptions {
+  readonly cancelFrame: (frameId: number) => void;
+  readonly publish: (snapshot: StreamingTextMotionSnapshot) => void;
+  readonly requestFrame: (callback: FrameRequestCallback) => number;
+}
+
+export interface StreamingTextMotionFramePublisher {
+  readonly enqueue: (snapshot: StreamingTextMotionSnapshot) => void;
+  readonly flush: (snapshot: StreamingTextMotionSnapshot) => void;
+  readonly dispose: () => void;
+}
+
 const useCommitEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 const EMPTY_STREAMING_TEXT_MOTION_FRAMES: readonly StreamingTextMotionFrame[] = [];
+
+export function createStreamingTextMotionFramePublisher(
+  options: StreamingTextMotionFramePublisherOptions,
+): StreamingTextMotionFramePublisher {
+  let frameId: number | null = null;
+  let pendingSnapshot: StreamingTextMotionSnapshot | null = null;
+
+  const cancelPendingFrame = () => {
+    if (frameId !== null) options.cancelFrame(frameId);
+    frameId = null;
+    pendingSnapshot = null;
+  };
+
+  return {
+    enqueue: (snapshot) => {
+      pendingSnapshot = snapshot;
+      if (frameId !== null) return;
+      frameId = options.requestFrame(() => {
+        frameId = null;
+        const pending = pendingSnapshot;
+        pendingSnapshot = null;
+        if (pending !== null) options.publish(pending);
+      });
+    },
+    flush: (snapshot) => {
+      cancelPendingFrame();
+      options.publish(snapshot);
+    },
+    dispose: cancelPendingFrame,
+  };
+}
 
 export function advanceStreamingTextMotionCommit(
   previous: StreamingTextMotionCommitState | null,
@@ -114,6 +157,17 @@ export function useStreamingTextMotion({
   });
   const committedRef = useRef<StreamingTextMotionCommitState | null>(null);
   const cleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const publisherRef = useRef<StreamingTextMotionFramePublisher | null>(null);
+
+  if (publisherRef.current === null && typeof window !== "undefined") {
+    publisherRef.current = createStreamingTextMotionFramePublisher({
+      cancelFrame: window.cancelAnimationFrame.bind(window),
+      publish: (nextSnapshot) => {
+        setSnapshot((current) => (current.frames === nextSnapshot.frames ? current : nextSnapshot));
+      },
+      requestFrame: window.requestAnimationFrame.bind(window),
+    });
+  }
 
   const clearCleanupTimer = () => {
     if (cleanupTimerRef.current === null) return;
@@ -122,9 +176,17 @@ export function useStreamingTextMotion({
   };
 
   const publishFrames = (state: StreamingTextMotionCommitState, animationTimeMs: number) => {
-    setSnapshot((current) =>
-      current.frames === state.frames ? current : { frames: state.frames, animationTimeMs },
-    );
+    const nextSnapshot = { frames: state.frames, animationTimeMs };
+    const publisher = publisherRef.current;
+    if (publisher !== null && state.isStreaming && state.frames.length > 0) {
+      publisher.enqueue(nextSnapshot);
+      return;
+    }
+    if (publisher !== null) {
+      publisher.flush(nextSnapshot);
+      return;
+    }
+    setSnapshot((current) => (current.frames === state.frames ? current : nextSnapshot));
   };
 
   const scheduleCleanup = (state: StreamingTextMotionCommitState) => {
@@ -187,6 +249,14 @@ export function useStreamingTextMotion({
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, []);
 
+  useEffect(
+    () => () => {
+      clearCleanupTimer();
+      publisherRef.current?.dispose();
+    },
+    [],
+  );
+
   return snapshot;
 }
 
@@ -194,8 +264,7 @@ function startStreamingTextMotionCommit(
   input: StreamingTextMotionCommitInput,
   streamId: string | null,
 ): StreamingTextMotionCommitState {
-  const canAnimate =
-    streamId !== null && input.isStreaming && input.isVisible && input.animateInitialStreamChunk;
+  const canAnimate = streamId !== null && input.isVisible && input.animateInitialStreamChunk;
   const append = canAnimate ? detectStreamingTextAppend("", input.text) : null;
   const generation = append === null ? 0 : 1;
   const result =
@@ -247,7 +316,7 @@ function appendStreamingTextMotionFrame(
     nextFrame.graphemeCount,
   );
   if (activeGraphemeCount > MAX_STREAMING_TEXT_MOTION_GRAPHEMES) {
-    return frames;
+    return [nextFrame];
   }
   return [...frames, nextFrame];
 }

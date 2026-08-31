@@ -5,6 +5,13 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import {
+  getModelSelectionStringOptionValue,
+  isAutoReasoningEnabled,
+  readAutoReasoningResolution,
+  selectManualReasoningEffort,
+  stripAutoReasoning,
+} from "@t3tools/shared/model";
 
 const REASONING_OPTION_IDS = ["reasoningEffort", "effort"] as const;
 
@@ -181,6 +188,25 @@ export function resolveGeneralSubagentSelection(input: {
       ...(options.length > 0 ? { options } : {}),
     },
   };
+}
+
+export function resolveGeneralSubagentParentSelection(input: {
+  readonly selection: ModelSelection;
+  readonly activities: ReadonlyArray<{
+    readonly kind: string;
+    readonly payload: unknown;
+    readonly turnId?: string | null;
+  }>;
+  readonly parentTurnId: string | null;
+}): ModelSelection {
+  if (!isAutoReasoningEnabled(input.selection)) return input.selection;
+  const resolved = readAutoReasoningResolution(input.activities, input.parentTurnId);
+  const effort =
+    resolved?.effectiveEffort ??
+    getModelSelectionStringOptionValue(input.selection, "reasoningEffort");
+  return effort
+    ? selectManualReasoningEffort(input.selection, effort)
+    : stripAutoReasoning(input.selection);
 }
 
 export function listGeneralSubagentModels(input: {

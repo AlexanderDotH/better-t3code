@@ -20,6 +20,7 @@ export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>
   [ProviderDriverKind.make("gemini")]: GeminiIcon,
   [ProviderDriverKind.make("chatgpt")]: OpenAI,
   [ProviderDriverKind.make("openrouter")]: OpenRouterIcon,
+  [ProviderDriverKind.make("openai")]: OpenAI,
 };
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
@@ -42,6 +43,7 @@ export type ModelEsque = {
   isSelectable?: boolean | undefined;
   unavailableReason?: string | undefined;
   capabilities?: ModelCapabilities | null | undefined;
+  isUnavailable?: boolean | undefined;
 };
 
 function escapeRegExp(value: string): string {

@@ -1,4 +1,5 @@
 import type { ResizableWidthHandlers } from "~/hooks/useResizableWidth";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { cn } from "~/lib/utils";
 
 interface Props {
@@ -15,10 +16,12 @@ interface Props {
  *   VS Code / Cursor.
  */
 export function RightPanelResizeHandle({ handlers, className }: Props) {
+  const translate = useInterfaceTranslator().message;
   return (
     <div
       role="separator"
       aria-orientation="vertical"
+      aria-label={translate("browser.preview.resizePanel")}
       className={cn(
         "group absolute inset-y-0 -left-1 z-20 w-2 cursor-col-resize select-none",
         className,

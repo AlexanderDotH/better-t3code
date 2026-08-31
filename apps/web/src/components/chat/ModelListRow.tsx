@@ -9,16 +9,19 @@ import {
 } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
+import { Badge } from "../ui/badge";
 import { Kbd } from "../ui/kbd";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { modelPickerModelKey } from "./modelPickerKeys";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 export function ModelCatalogMetadata(props: {
   readonly model: ModelEsque;
   readonly providerLabel: string;
 }) {
+  const translate = useInterfaceTranslator().message;
   const contextTokens = props.model.capabilities?.contextWindow?.maxTokens;
   const pricing = props.model.capabilities?.pricing;
   const isFree = pricing?.promptUsdPerMillion === 0 && pricing.completionUsdPerMillion === 0;
@@ -43,7 +46,9 @@ export function ModelCatalogMetadata(props: {
             ·
           </span>
           <span className="shrink-0 tabular-nums">
-            {formatModelContextWindowTokens(contextTokens)} context
+            {translate("chat.model.context", {
+              tokens: formatModelContextWindowTokens(contextTokens),
+            })}
           </span>
         </>
       ) : null}
@@ -51,15 +56,17 @@ export function ModelCatalogMetadata(props: {
         <span className="flex min-w-0 items-center gap-1 overflow-hidden">
           {isFree ? (
             <span className="shrink-0 rounded-[4px] bg-emerald-500/10 px-1 py-0.5 font-medium text-emerald-700 dark:text-emerald-300/90">
-              Free
+              {translate("chat.model.free")}
             </span>
           ) : null}
           {supportsVision ? (
-            <span className="shrink-0 rounded-[4px] bg-foreground/[0.045] px-1 py-0.5">Vision</span>
+            <span className="shrink-0 rounded-[4px] bg-foreground/[0.045] px-1 py-0.5">
+              {translate("chat.model.vision")}
+            </span>
           ) : null}
           {supportsReasoning ? (
             <span className="shrink-0 rounded-[4px] bg-foreground/[0.045] px-1 py-0.5">
-              Reasoning
+              {translate("chat.model.reasoning")}
             </span>
           ) : null}
         </span>
@@ -88,11 +95,13 @@ export const ModelListRow = memo(function ModelListRow(props: {
   preferShortName?: boolean;
   useTriggerLabel?: boolean;
   showNewBadge?: boolean;
+  unavailable?: boolean;
   jumpLabel?: string | null;
   disabledReason?: string | null;
   presentation?: "compact" | "catalog";
   onToggleFavorite: () => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const isCatalogPresentation = props.presentation === "catalog";
   const showProviderContext =
     !isCatalogPresentation && (props.showProvider || Boolean(props.model.subProvider));
@@ -103,8 +112,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
         props.preferShortName ? { preferShortName: true } : undefined,
       );
   const favoriteActionLabel = props.isFavorite
-    ? `Remove ${modelDisplayName} from favorites`
-    : `Add ${modelDisplayName} to favorites`;
+    ? translate("chat.model.removeFavorite", { model: modelDisplayName })
+    : translate("chat.model.addFavorite", { model: modelDisplayName });
   const providerLabel = props.model.subProvider
     ? props.showProvider && !isCatalogPresentation
       ? `${props.providerDisplayName} · ${props.model.subProvider}`
@@ -120,7 +129,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
       contentClassName="flex w-full items-center gap-3"
       className={cn(
         "group relative w-full !min-w-0 max-w-full cursor-pointer rounded-md px-2 py-1.5 transition-[background-color,box-shadow,color]",
-        "hover:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))] data-highlighted:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))] data-selected:bg-foreground/[0.08] data-selected:text-foreground data-selected:ring-0 [&[data-highlighted][data-selected]]:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))]",
+        "hover:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))] data-highlighted:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))] data-selected:bg-foreground/[0.08] data-selected:text-foreground data-selected:ring-0 [&[data-highlighted][data-selected]]:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))]",
         isCatalogPresentation &&
           "rounded-lg border border-transparent px-2.5 py-2 hover:border-border/50 data-highlighted:border-border/60 data-selected:border-border/50 data-selected:bg-background/70",
         props.disabledReason &&
@@ -136,9 +145,9 @@ export const ModelListRow = memo(function ModelListRow(props: {
             {props.showNewBadge ? (
               <span
                 className="shrink-0 rounded border border-update/35 bg-update/15 px-0.5 py-px text-[10px] font-bold uppercase leading-none tracking-wide text-update-foreground"
-                aria-label="New model"
+                aria-label={translate("chat.model.new")}
               >
-                New
+                {translate("chat.model.newBadge")}
               </span>
             ) : null}
           </div>
@@ -160,6 +169,11 @@ export const ModelListRow = memo(function ModelListRow(props: {
               />
               <span className="truncate">{providerLabel}</span>
             </span>
+          ) : null}
+          {props.unavailable ? (
+            <Badge variant="outline" size="sm">
+              {translate("chat.model.unavailable")}
+            </Badge>
           ) : null}
         </div>
         {isCatalogPresentation ? (

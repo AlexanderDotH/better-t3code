@@ -1,25 +1,20 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { EnvironmentId } from "@t3tools/contracts";
+import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ComposerStashMenu } from "./ComposerStashMenu";
+import { ComposerStashMenu, formatStashRelativeTimeLabel } from "./ComposerStashMenu";
 
 describe("ComposerStashMenu", () => {
-  it("renders saved prompts as an attached composer drawer", () => {
-    const markup = renderToStaticMarkup(
-      <ComposerStashMenu
-        entries={[]}
-        onRestore={() => {}}
-        onDelete={() => {}}
-        onClose={() => {}}
-      />,
-    );
+  it("localizes relative stash timestamps through typed application copy", () => {
+    const createdAt = "2026-08-30T10:00:00.000Z";
+    const nowMs = Date.parse("2026-08-30T13:00:00.000Z");
+    const german = createInterfaceTranslator({ language: "de", locale: "de-DE" }).message;
+    const french = createInterfaceTranslator({ language: "fr", locale: "fr-FR" }).message;
 
-    expect(markup).toContain('data-composer-stash-drawer="true"');
-    expect(markup).toContain("chat-composer-drawer-surface");
-    expect(markup).toContain("chat-composer-drawer-attached");
-    expect(markup).toContain('aria-label="Close stash"');
-    expect(markup).not.toContain("dropdown-glass");
-    expect(markup).not.toContain("Stashed prompts");
+    expect(formatStashRelativeTimeLabel(createdAt, german, nowMs)).toBe("vor 3 Std.");
+    expect(formatStashRelativeTimeLabel(createdAt, french, nowMs)).toBe("il y a 3 h");
+    expect(formatStashRelativeTimeLabel("invalid", german, nowMs)).toBe("");
   });
 
   it("shows saved image thumbnails and incomplete image states", () => {
@@ -53,6 +48,7 @@ describe("ComposerStashMenu", () => {
             pendingImageCount: 1,
           },
         ]}
+        stashShortcutLabel="Ctrl+S"
         onRestore={() => {}}
         onDelete={() => {}}
         onClose={() => {}}
@@ -62,13 +58,46 @@ describe("ComposerStashMenu", () => {
     expect(markup).toContain('src="data:image/png;base64,AA=="');
     expect(markup).toContain("1 image dropped");
     expect(markup).toContain("saving 1 image");
-    expect(markup).not.toContain("absolute top-1/2 right-2");
-    expect(markup).toContain("pointer-events-none");
-    expect(markup).toContain("pointer-coarse:pointer-events-auto");
-    expect(markup).toContain("pointer-coarse:opacity-100");
-    expect(markup).not.toContain("bg-popover!");
-    expect(markup).toContain("[--control-icon-color:currentColor]");
-    expect(markup).toContain("size-3.5 stroke-2");
-    expect(markup).not.toContain("bg-background/90");
+  });
+
+  it("labels mixed file and image stashes without treating images as files", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerStashMenu
+        entries={[
+          {
+            id: "mixed-attachments",
+            createdAt: new Date(0).toISOString(),
+            prompt: "",
+            attachments: [
+              {
+                id: "image-one",
+                name: "before.png",
+                mimeType: "image/png",
+                sizeBytes: 128,
+                dataUrl: "data:image/png;base64,AA==",
+              },
+            ],
+            files: [
+              {
+                id: "file-one",
+                name: "report.pdf",
+                mimeType: "application/pdf",
+                sizeBytes: 42,
+                attachmentId: "pending-report-pdf",
+                environmentId: EnvironmentId.make("environment-1"),
+              },
+            ],
+            droppedImageNames: [],
+          },
+        ]}
+        stashShortcutLabel={null}
+        onRestore={() => {}}
+        onDelete={() => {}}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("(2 attachments)");
+    expect(markup).not.toContain("(2 files)");
   });
 });

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { page } from "vite-plus/test/browser";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { render } from "vitest-browser-react";
 
 import "../../index.css";
@@ -8,12 +9,33 @@ import { ChatWorkspaceDeck } from "../git-workbench/ChatWorkspaceDeck";
 import { type WorkspaceDeckCardDefinition } from "./WorkspaceCardDeck";
 import { WorkspaceCardPeek } from "./WorkspaceCardPeek";
 import {
+  __resetClientSettingsPersistenceForTests,
+  __setClientSettingsForTests,
+} from "../../hooks/useSettings";
+import {
   captureWorkspaceDeckSurface,
   WORKSPACE_DECK_CONTENT_PEEK_OPACITY,
   WORKSPACE_DECK_MORPH_DURATION_MS,
 } from "./workspaceCardDeck.morph";
 
 type CardId = "chat" | "git" | "example";
+
+beforeEach(() => {
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    betterT3Device: {
+      ...DEFAULT_CLIENT_SETTINGS.betterT3Device,
+      flags: {
+        ...DEFAULT_CLIENT_SETTINGS.betterT3Device.flags,
+        "chat.cardMorphing": true,
+      },
+    },
+  });
+});
+
+afterEach(() => {
+  __resetClientSettingsPersistenceForTests();
+});
 
 const COMPACT_CONTENT_HEIGHT: Readonly<Record<CardId, number>> = {
   chat: 166,

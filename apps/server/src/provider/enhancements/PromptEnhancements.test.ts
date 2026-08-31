@@ -1,6 +1,8 @@
+import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  applyAgentEnhancementsToProviderInput,
   buildAccumulatedDeepThinkingData,
   buildAnswerSystemPrompt,
   buildAnswerUserPrompt,
@@ -14,6 +16,83 @@ import {
 } from "./index.ts";
 
 describe("provider prompt enhancements", () => {
+  it("applies bounded Deep Thinking and Caveman policy without changing the original request", () => {
+    const original = "Implement the lifecycle fix and keep approvals intact.";
+    const out = applyAgentEnhancementsToProviderInput({
+      providerInput: original,
+      cavemanMode: "full",
+      deepThinking: {
+        enabled: true,
+        stepCount: 4,
+        refinementPasses: 1,
+        parallelEnabled: true,
+        parallelBatchSize: 2,
+        forceParallelForDurableProviders: false,
+      },
+    });
+
+    expect(out.outcome).toBe("included");
+    expect(out.providerInput).toContain("at most 4 distinct considerations");
+    expect(out.providerInput).toContain("at most 1 bounded self-review pass");
+    expect(out.providerInput).toContain("batches of at most 2");
+    expect(out.providerInput).toContain("### Caveman mode");
+    expect(out.providerInput).toContain("does not grant tools or relax approvals");
+    expect(out.providerInput?.endsWith(original)).toBe(true);
+
+    const forcedParallel = applyAgentEnhancementsToProviderInput({
+      providerInput: original,
+      cavemanMode: "off",
+      deepThinking: {
+        enabled: true,
+        stepCount: 3,
+        refinementPasses: 0,
+        parallelEnabled: true,
+        parallelBatchSize: 3,
+        forceParallelForDurableProviders: true,
+      },
+    });
+    expect(forcedParallel.providerInput).toContain(
+      "Use that bounded organization when the already-selected runtime supports it durably.",
+    );
+  });
+
+  it("returns byte-equivalent prompts when both agent enhancements are off", () => {
+    const original = "  preserve these bytes\nincluding the final newline\n";
+    const out = applyAgentEnhancementsToProviderInput({
+      providerInput: original,
+      cavemanMode: "off",
+      deepThinking: {
+        enabled: false,
+        stepCount: 8,
+        refinementPasses: 3,
+        parallelEnabled: true,
+        parallelBatchSize: 8,
+        forceParallelForDurableProviders: true,
+      },
+    });
+
+    expect(out).toEqual({ providerInput: original, outcome: "not-requested" });
+    expect(out.providerInput).toBe(original);
+  });
+
+  it("omits optional enhancement policy instead of truncating a full provider request", () => {
+    const original = "u".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+    expect(
+      applyAgentEnhancementsToProviderInput({
+        providerInput: original,
+        cavemanMode: "ultra",
+        deepThinking: {
+          enabled: true,
+          stepCount: 8,
+          refinementPasses: 3,
+          parallelEnabled: false,
+          parallelBatchSize: 1,
+          forceParallelForDurableProviders: false,
+        },
+      }),
+    ).toEqual({ providerInput: original, outcome: "omitted" });
+  });
+
   it("injects caveman prompt style only when enabled and never changes the user prompt", () => {
     const out = injectCavemanPromptStyle(
       { system: "base", user: "keep me" },

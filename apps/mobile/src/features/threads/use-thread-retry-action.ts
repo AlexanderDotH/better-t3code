@@ -5,13 +5,13 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { MessageId, OrchestrationMessage } from "@t3tools/contracts";
-import { resolveFetchMode } from "@t3tools/shared/fetchMode";
 import * as Haptics from "expo-haptics";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Alert } from "react-native";
 
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { buildMobileThreadRetryCommand, resolveMobileThreadRetryActionState } from "./thread-retry";
 
 export function useThreadRetryAction(input: {
   readonly thread: EnvironmentThreadShell | null;
@@ -35,8 +35,12 @@ export function useThreadRetryAction(input: {
           }),
     [input.messages, input.thread],
   );
-  const visible = input.supported && target !== null;
-  const available = visible && input.connected && !input.busy;
+  const { visible, available } = resolveMobileThreadRetryActionState({
+    supported: input.supported,
+    connected: input.connected,
+    busy: input.busy,
+    target,
+  });
 
   const onRetry = useCallback(
     async (messageId: MessageId) => {
@@ -53,17 +57,13 @@ export function useThreadRetryAction(input: {
       dispatchInFlightRef.current = true;
       setPendingMessageId(target.messageId);
       try {
-        const fetchMode = resolveFetchMode({ featureEnabled: input.fetchEnabled });
-        const result = await retryThreadTurn({
-          environmentId: input.thread.environmentId,
-          input: {
-            threadId: input.thread.id,
-            turnId: target.turnId,
-            messageId: target.messageId,
-            ...(fetchMode !== undefined ? { fetchMode } : {}),
-            modelSelection: input.thread.modelSelection,
-          },
-        });
+        const result = await retryThreadTurn(
+          buildMobileThreadRetryCommand({
+            thread: input.thread,
+            target,
+            fetchEnabled: input.fetchEnabled,
+          }),
+        );
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
             const error = squashAtomCommandFailure(result);

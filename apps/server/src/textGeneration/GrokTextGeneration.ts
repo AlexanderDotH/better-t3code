@@ -1,5 +1,6 @@
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -8,6 +9,7 @@ import type * as EffectAcpErrors from "effect-acp/errors";
 
 import { type GrokSettings, type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
 import { TextGenerationError } from "@t3tools/contracts";
@@ -20,6 +22,7 @@ import {
   buildPromptImprovementPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildThreadMetadataPrompt,
   buildTranscriptTranslationPrompt,
 } from "./TextGenerationPrompts.ts";
 import {
@@ -30,9 +33,11 @@ import {
 import {
   applyGrokAcpModelSelection,
   currentGrokModelIdFromSessionSetup,
+  currentGrokReasoningEffortFromSessionSetup,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
 } from "../provider/acp/GrokAcpSupport.ts";
+import { buildAutoReasoningPrompt, validateAutoReasoningDecision } from "./AutoReasoning.ts";
 
 const GROK_TIMEOUT_MS = 180_000;
 
@@ -42,6 +47,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
 ) {
+  const fileSystem = yield* FileSystem.FileSystem;
   const crypto = yield* Crypto.Crypto;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
@@ -51,11 +57,14 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
     prompt,
     outputSchemaJson,
     modelSelection,
+    environmentOverride,
   }: {
     operation:
+      | "decideAutoReasoning"
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
+      | "generateThreadMetadata"
       | "generateThreadTitle"
       | "translateTranscriptToEnglish"
       | "improvePrompt"
@@ -65,16 +74,20 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
     prompt: string;
     outputSchemaJson: S;
     modelSelection: ModelSelection;
+    environmentOverride?: NodeJS.ProcessEnv;
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
       const resolvedModel = resolveGrokAcpBaseModelId(modelSelection.model);
       const outputRef = yield* Ref.make("");
       const runtime = yield* makeGrokAcpRuntime({
         grokSettings,
-        environment,
+        environment: environmentOverride ?? environment,
         childProcessSpawner: commandSpawner,
         cwd,
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
+        ...(operation === "decideAutoReasoning"
+          ? { runtimeMode: "approval-required" as const }
+          : {}),
       }).pipe(Effect.provideService(Crypto.Crypto, crypto));
 
       yield* runtime.handleSessionUpdate((notification) => {
@@ -91,10 +104,18 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
 
       const promptResult = yield* Effect.gen(function* () {
         const started = yield* runtime.start();
+        const requestedReasoningEffort = getModelSelectionStringOptionValue(
+          modelSelection,
+          "reasoningEffort",
+        );
         yield* applyGrokAcpModelSelection({
           runtime,
           currentModelId: currentGrokModelIdFromSessionSetup(started.sessionSetupResult),
+          currentReasoningEffort: currentGrokReasoningEffortFromSessionSetup(
+            started.sessionSetupResult,
+          ),
           requestedModelId: resolvedModel,
+          requestedReasoningEffort,
           mapError: (cause) =>
             new TextGenerationError({
               operation,
@@ -164,6 +185,45 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       ),
       Effect.scoped,
     );
+
+  const decideAutoReasoning: TextGeneration.TextGeneration["Service"]["decideAutoReasoning"] =
+    Effect.fn("GrokTextGeneration.decideAutoReasoning")(function* (input) {
+      return yield* Effect.gen(function* () {
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-auto-reasoning-grok-cwd-",
+        });
+        const configHome = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-auto-reasoning-grok-config-",
+        });
+        const { prompt, outputSchema } = buildAutoReasoningPrompt(input);
+        const generated = yield* runGrokJson({
+          operation: "decideAutoReasoning",
+          cwd,
+          prompt,
+          outputSchemaJson: outputSchema,
+          modelSelection: input.modelSelection,
+          environmentOverride: {
+            ...environment,
+            HOME: configHome,
+            USERPROFILE: configHome,
+            XDG_CONFIG_HOME: configHome,
+            GROK_HOME: configHome,
+          },
+        });
+        return yield* validateAutoReasoningDecision(input.allowedEfforts, generated);
+      }).pipe(
+        Effect.mapError((cause) =>
+          isTextGenerationError(cause)
+            ? cause
+            : new TextGenerationError({
+                operation: "decideAutoReasoning",
+                detail: "Failed to prepare isolated Grok Auto Reasoning.",
+                cause,
+              }),
+        ),
+        Effect.scoped,
+      );
+    });
 
   const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
     Effect.fn("GrokTextGeneration.generateCommitMessage")(function* (input) {
@@ -259,6 +319,22 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateThreadMetadata: TextGeneration.TextGeneration["Service"]["generateThreadMetadata"] =
+    Effect.fn("GrokTextGeneration.generateThreadMetadata")(function* (input) {
+      const { prompt, outputSchema } = buildThreadMetadataPrompt(input);
+      const generated = yield* runGrokJson({
+        operation: "generateThreadMetadata",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+      return {
+        title: sanitizeThreadTitle(generated.title),
+        branch: sanitizeBranchFragment(generated.branch),
+      };
+    });
+
   const translateTranscriptToEnglish: TextGeneration.TextGeneration["Service"]["translateTranscriptToEnglish"] =
     Effect.fn("GrokTextGeneration.translateTranscriptToEnglish")(function* (input) {
       const { prompt, outputSchema } = buildTranscriptTranslationPrompt({ text: input.text });
@@ -315,13 +391,16 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
     });
 
   return {
+    decideAutoReasoning,
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
+    generateThreadMetadata,
     generateThreadTitle,
     translateTranscriptToEnglish,
     improvePrompt,
     reviewPlanParallelism,
     planFetchExploration,
+    enrichKnowledgeGraph: TextGeneration.unsupportedKnowledgeGraphEnrichment("Grok"),
   } satisfies TextGeneration.TextGeneration["Service"];
 });

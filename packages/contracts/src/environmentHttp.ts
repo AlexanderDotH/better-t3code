@@ -24,11 +24,18 @@ import {
   AuthWebSocketTicketResult,
   ServerAuthSessionMethod,
 } from "./auth.ts";
-import { AuthSessionId, SubagentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  DpopFailureReason,
+  AuthSessionId,
+  SubagentId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
   ClientOrchestrationCommand,
   DispatchResult,
+  ORCHESTRATION_MAX_THREAD_TURN_LIMIT,
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
   OrchestrationSubagentDetailSnapshot,
@@ -119,6 +126,8 @@ export class EnvironmentAuthInvalidError extends Schema.TaggedErrorClass<Environ
   {
     code: Schema.Literal("auth_invalid"),
     reason: EnvironmentAuthInvalidReason,
+    // Older servers do not send a DPoP failure category.
+    dpopFailureReason: Schema.optionalKey(DpopFailureReason),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 401 },
@@ -498,11 +507,16 @@ const EnvironmentOrchestrationSubagentSnapshotParams = Schema.Struct({
 });
 
 // Query-string window for windowed thread snapshots (GET payloads must encode
-// to strings). Both fields optional: omitting them keeps the full-snapshot
-// behavior, so pagination stays opt-in per request.
-const EnvironmentOrchestrationThreadSnapshotQuery = {
+// to strings). Both fields optional: omitting them keeps the mixed-version
+// full-snapshot behavior, so pagination stays opt-in per request. Current
+// clients are bounded at the same maximum as the WebSocket fallback request.
+export const EnvironmentOrchestrationThreadSnapshotQuery = {
   turnLimit: Schema.optional(
-    Schema.FiniteFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
+    Schema.FiniteFromString.check(
+      Schema.isInt(),
+      Schema.isGreaterThanOrEqualTo(1),
+      Schema.isLessThanOrEqualTo(ORCHESTRATION_MAX_THREAD_TURN_LIMIT),
+    ),
   ),
   beforeCursor: Schema.optional(TrimmedNonEmptyString),
 };

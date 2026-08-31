@@ -9,38 +9,20 @@ import {
 } from "../../components/AndroidScreenScaffold";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
-import { useThemeColor } from "../../lib/useThemeColor";
 import {
   mobileProjectGroupingModePatch,
   resolveMobileProjectGroupingSettings,
 } from "../../state/project-grouping";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { SettingsSection } from "./components/SettingsSection";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const GROUPING_OPTIONS: ReadonlyArray<{
   readonly mode: SidebarProjectGroupingMode;
-  readonly label: string;
-  readonly description: string;
-}> = [
-  {
-    mode: "repository",
-    label: "Group by repository",
-    description: "Matching repositories appear as one project.",
-  },
-  {
-    mode: "repository_path",
-    label: "Group by repository path",
-    description: "Keep monorepo paths separate.",
-  },
-  {
-    mode: "separate",
-    label: "Keep separate",
-    description: "Show every workspace as its own project.",
-  },
-];
+}> = [{ mode: "repository" }, { mode: "repository_path" }, { mode: "separate" }];
 
 export function SettingsProjectGroupingRouteScreen() {
-  const checkmarkColor = useThemeColor("--color-icon");
+  const translator = useMobileInterfaceTranslator();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const preferencesReady = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
@@ -49,9 +31,9 @@ export function SettingsProjectGroupingRouteScreen() {
     : null;
 
   return (
-    <AndroidScreenScaffold title="Project Grouping">
+    <AndroidScreenScaffold title={translator.message("mobile.settings.projectGrouping.title")}>
       <ScreenScaffoldScrollView contentContainerClassName="gap-3">
-        <SettingsSection title="Default grouping">
+        <SettingsSection title={translator.message("mobile.settings.projectGrouping.default")}>
           {GROUPING_OPTIONS.map((option, index) => (
             <Pressable
               key={option.mode}
@@ -69,16 +51,30 @@ export function SettingsProjectGroupingRouteScreen() {
               }
             >
               <View className="min-w-0 flex-1 gap-1">
-                <Text className="text-lg text-foreground">{option.label}</Text>
+                <Text className="text-lg text-foreground">
+                  {translator.message(
+                    option.mode === "repository"
+                      ? "mobile.settings.projectGrouping.repository"
+                      : option.mode === "repository_path"
+                        ? "mobile.settings.projectGrouping.path"
+                        : "mobile.settings.projectGrouping.separate",
+                  )}
+                </Text>
                 <Text className="text-sm leading-normal text-foreground-muted">
-                  {option.description}
+                  {translator.message(
+                    option.mode === "repository"
+                      ? "mobile.settings.projectGrouping.repositoryDescription"
+                      : option.mode === "repository_path"
+                        ? "mobile.settings.projectGrouping.pathDescription"
+                        : "mobile.settings.projectGrouping.separateDescription",
+                  )}
                 </Text>
               </View>
               {selectedMode === option.mode ? (
                 <SymbolView
                   name="checkmark"
                   size={18}
-                  tintColor={checkmarkColor}
+                  tintColorClassName={"accent-icon"}
                   type="monochrome"
                   weight="semibold"
                 />

@@ -1,6 +1,7 @@
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  makeBetterT3SettingsV1,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -9,7 +10,9 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import { ServerConfig } from "../../config.ts";
@@ -22,6 +25,7 @@ import {
   ProjectAgentCoordinator,
   ProjectAgentCoordinatorLive,
 } from "../../projectAgent/ProjectAgentCoordinator.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
@@ -41,6 +45,9 @@ const offlineProjectId = ProjectId.make("project-agent-offline-message");
 const senderThreadId = ThreadId.make("agent-offline-message-sender");
 const offlineThreadId = ThreadId.make("agent-offline-message-recipient");
 const senderTurnId = TurnId.make("turn-offline-message-sender");
+const toggleProjectId = ProjectId.make("project-agent-feature-toggle");
+const toggleThreadId = ThreadId.make("agent-feature-toggle");
+const toggleTurnId = TurnId.make("turn-feature-toggle");
 
 const config = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-project-agent-coordination-test-",
@@ -68,9 +75,89 @@ const TestLayer = ProjectAgentCoordinatorLive.pipe(
       Layer.provideMerge(SqlitePersistenceMemory),
     ),
   ),
+  Layer.provideMerge(
+    ServerSettingsService.layerTest({
+      betterT3Environment: makeBetterT3SettingsV1("existing-install-migration"),
+    }),
+  ),
 );
 
 it.layer(TestLayer)("project-agent coordination", (it) => {
+  it.effect("releases active claims when disabled and remains reversible", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const coordinator = yield* ProjectAgentCoordinator;
+      const settings = yield* ServerSettingsService;
+
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("create-feature-toggle-project"),
+        projectId: toggleProjectId,
+        title: "Toggle coordination",
+        workspaceRoot: "/tmp/project-agent-toggle",
+        defaultModelSelection: { instanceId: providerInstanceId, model: "gpt-5.6" },
+        createdAt: occurredAt,
+      });
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-feature-toggle-thread"),
+        threadId: toggleThreadId,
+        projectId: toggleProjectId,
+        title: "Toggle agent",
+        modelSelection: { instanceId: providerInstanceId, model: "gpt-5.6" },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt: occurredAt,
+      });
+      yield* engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("activate-feature-toggle-thread"),
+        threadId: toggleThreadId,
+        session: {
+          threadId: toggleThreadId,
+          status: "running",
+          providerName: "codex",
+          providerInstanceId,
+          runtimeSessionId: null,
+          runtimeMode: "full-access",
+          activeTurnId: toggleTurnId,
+          abortState: null,
+          lastError: null,
+          updatedAt: occurredAt,
+        },
+        createdAt: occurredAt,
+      });
+      const claimed = yield* coordinator.claim(toggleThreadId, {
+        action: "set",
+        summary: "Editing the toggled project",
+        claims: [{ kind: "path", path: "apps/server/src/projectAgent" }],
+      });
+      expect(claimed.accepted).toBe(true);
+
+      const releasedFiber = yield* engine.streamDomainEvents.pipe(
+        Stream.filter((event) => event.type === "project.agent-claim-released"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* settings.updateSettings({
+        betterT3Environment: { flags: { "agent.projectCoordination": false } },
+      });
+      const rejected = yield* Effect.exit(coordinator.list(toggleThreadId));
+      expect(rejected._tag).toBe("Failure");
+      if (rejected._tag === "Failure") {
+        expect(String(rejected.cause)).toContain("disabled in Better T3 settings");
+      }
+      expect(Option.isSome(yield* Fiber.join(releasedFiber))).toBe(true);
+
+      yield* settings.updateSettings({
+        betterT3Environment: { flags: { "agent.projectCoordination": true } },
+      });
+      expect((yield* coordinator.list(toggleThreadId)).peers).toHaveLength(1);
+    }),
+  );
+
   it.effect("allows exactly one concurrent overlapping claim", () =>
     Effect.gen(function* () {
       const engine = yield* OrchestrationEngineService;

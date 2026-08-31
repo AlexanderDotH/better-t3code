@@ -8,7 +8,12 @@ import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 import * as HttpApiSecurity from "effect/unstable/httpapi/HttpApiSecurity";
 import * as OpenApi from "effect/unstable/httpapi/OpenApi";
 
-import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  DpopFailureReason,
+  EnvironmentId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 
 export const RelayAgentAwarenessPlatform = Schema.Literal("ios");
@@ -38,7 +43,7 @@ export type RelayAgentAwarenessPreferences = typeof RelayAgentAwarenessPreferenc
 export const RelayApnsEnvironment = Schema.Literals(["sandbox", "production"]);
 export type RelayApnsEnvironment = typeof RelayApnsEnvironment.Type;
 
-export const RelayInterfaceLanguage = Schema.Literals(["en", "de"]);
+export const RelayInterfaceLanguage = Schema.Literals(["en", "de", "fr"]);
 export type RelayInterfaceLanguage = typeof RelayInterfaceLanguage.Type;
 
 export const RelayDeviceRegistrationRequest = Schema.Struct({
@@ -329,6 +334,9 @@ export const RelayAuthInvalidReason = Schema.Literals([
 ]);
 export type RelayAuthInvalidReason = typeof RelayAuthInvalidReason.Type;
 
+export const RelayDpopFailureReason = DpopFailureReason;
+export type RelayDpopFailureReason = typeof RelayDpopFailureReason.Type;
+
 export const RelayInternalErrorReason = Schema.Literals([
   "database_unavailable",
   "persistence_failed",
@@ -342,6 +350,8 @@ export class RelayAuthInvalidError extends Schema.TaggedErrorClass<RelayAuthInva
   {
     code: Schema.Literal("auth_invalid"),
     reason: RelayAuthInvalidReason,
+    // Older relays do not send a DPoP failure category.
+    dpopFailureReason: Schema.optionalKey(RelayDpopFailureReason),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 401 },

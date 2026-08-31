@@ -2,19 +2,25 @@ import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind, ProviderInstanceId, type ModelCapabilities } from "@t3tools/contracts";
 
 import {
+  applyClaudePromptEffortPrefix,
   buildProviderOptionSelectionsFromDescriptors,
   CODEX_CONTEXT_WINDOW_CHOICES,
   createCodexContextWindowDescriptor,
   createModelCapabilities,
   createModelSelection,
+  enableAutoReasoning,
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
+  isAutoReasoningEnabled,
   normalizeCustomModelSlug,
   normalizeModelSlug,
+  readAutoReasoningResolution,
   resolveCodexContextWindowTokens,
+  selectManualReasoningEffort,
+  stripAutoReasoning,
 } from "./model.ts";
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
@@ -150,6 +156,76 @@ describe("descriptor helpers", () => {
   });
 });
 
+describe("Auto Reasoning selections", () => {
+  const selection = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-sol", [
+    { id: "reasoningEffort", value: "high" },
+    { id: "serviceTier", value: "priority" },
+  ]);
+
+  it("enables Auto while preserving the concrete fallback effort", () => {
+    const enabled = enableAutoReasoning(selection);
+
+    expect(isAutoReasoningEnabled(enabled)).toBe(true);
+    expect(enabled.options).toEqual([
+      { id: "reasoningEffort", value: "high" },
+      { id: "serviceTier", value: "priority" },
+      { id: "t3AutoReasoning", value: true },
+    ]);
+  });
+
+  it("selects a manual effort and removes only the Auto marker", () => {
+    expect(selectManualReasoningEffort(enableAutoReasoning(selection), "medium").options).toEqual([
+      { id: "reasoningEffort", value: "medium" },
+      { id: "serviceTier", value: "priority" },
+    ]);
+  });
+
+  it("strips the T3 marker without changing provider-owned options", () => {
+    expect(stripAutoReasoning(enableAutoReasoning(selection))).toEqual(selection);
+  });
+
+  it("reads only valid content-free resolutions for the requested turn", () => {
+    const activities = [
+      {
+        kind: "runtime.warning",
+        turnId: "turn-2",
+        payload: { autoReasoningEffort: "max", autoReasoningFallback: false },
+      },
+      {
+        kind: "auto-reasoning.resolved",
+        turnId: "turn-1",
+        payload: { autoReasoningEffort: "low", autoReasoningFallback: false },
+      },
+      {
+        kind: "auto-reasoning.resolved",
+        turnId: "turn-2",
+        payload: { autoReasoningEffort: " high ", autoReasoningFallback: true },
+      },
+    ];
+
+    expect(readAutoReasoningResolution(activities, "turn-2")).toEqual({
+      effectiveEffort: "high",
+      fallback: true,
+    });
+    expect(readAutoReasoningResolution(activities, "turn-missing")).toBeNull();
+  });
+
+  it("rejects malformed resolution activities", () => {
+    expect(
+      readAutoReasoningResolution([
+        {
+          kind: "auto-reasoning.resolved",
+          payload: { autoReasoningEffort: "high", autoReasoningFallback: "false" },
+        },
+        {
+          kind: "auto-reasoning.resolved",
+          payload: { autoReasoningEffort: " ", autoReasoningFallback: false },
+        },
+      ]),
+    ).toBeNull();
+  });
+});
+
 describe("Codex context window", () => {
   it("offers stable ordered steps through exactly one million tokens", () => {
     expect(CODEX_CONTEXT_WINDOW_CHOICES).toHaveLength(20);
@@ -271,5 +347,35 @@ describe("model slug normalization", () => {
 
     expect(normalizeModelSlug("opus", claude)).toBe("claude-opus-5");
     expect(normalizeCustomModelSlug(" opus ")).toBe("opus");
+  });
+});
+
+describe("applyClaudePromptEffortPrefix", () => {
+  it("keeps slash commands intact when ultrathink is selected", () => {
+    expect(applyClaudePromptEffortPrefix("/compact", "ultrathink")).toBe("/compact");
+    expect(applyClaudePromptEffortPrefix(" /compact keep recent errors ", "ultrathink")).toBe(
+      "/compact keep recent errors",
+    );
+    expect(applyClaudePromptEffortPrefix(" /review src/model.ts ", "ultrathink")).toBe(
+      "/review src/model.ts",
+    );
+    expect(applyClaudePromptEffortPrefix("/security-review", "ultrathink")).toBe(
+      "/security-review",
+    );
+    expect(applyClaudePromptEffortPrefix("/plugin:skill run", "ultrathink")).toBe(
+      "/plugin:skill run",
+    );
+    expect(applyClaudePromptEffortPrefix("/deploy.prod to staging", "ultrathink")).toBe(
+      "/deploy.prod to staging",
+    );
+  });
+
+  it("still adds the ultrathink prefix to ordinary prompts", () => {
+    expect(applyClaudePromptEffortPrefix("Investigate this failure", "ultrathink")).toBe(
+      "Ultrathink:\nInvestigate this failure",
+    );
+    expect(applyClaudePromptEffortPrefix("/home/theo/app.ts crashed on load", "ultrathink")).toBe(
+      "Ultrathink:\n/home/theo/app.ts crashed on load",
+    );
   });
 });

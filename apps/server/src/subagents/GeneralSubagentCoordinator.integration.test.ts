@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   EventId,
+  makeBetterT3SettingsV1,
   ProviderDriverKind,
   ProviderInstanceId,
   RuntimeSessionId,
@@ -38,6 +39,8 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../provider/Services/ProviderService.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
+import * as ResourceProtection from "../resourceProtection/SubagentResourceGovernor.ts";
 import {
   GeneralSubagentCoordinator,
   GeneralSubagentCoordinatorLive,
@@ -50,6 +53,9 @@ const codexInstance = ProviderInstanceId.make("codex-work");
 const securityInstance = ProviderInstanceId.make("codex-security");
 const codexDriver = ProviderDriverKind.make("codex");
 const createdAt = "2026-08-22T12:00:00.000Z";
+const streamedCommentary =
+  "Streaming implementation commentary stays in the projected transcript. " +
+  "Detailed intermediate analysis. ".repeat(96);
 
 function provider(input: {
   readonly instanceId: typeof codexInstance;
@@ -92,6 +98,7 @@ function provider(input: {
 const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(function* (options?: {
   readonly failMessageImport?: boolean;
   readonly completeTurn?: boolean;
+  readonly resourceGovernor?: ResourceProtection.SubagentResourceGovernor["Service"];
 }) {
   const events = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const starts = yield* Ref.make<
@@ -102,6 +109,12 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
   >([]);
   const sends = yield* Ref.make<ReadonlyArray<ProviderSendTurnInput>>([]);
   const stops = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
+  const interruptTargets = yield* Ref.make<
+    ReadonlyArray<Parameters<ProviderServiceShape["interruptAbortTarget"]>[0]>
+  >([]);
+  const forceStopTargets = yield* Ref.make<
+    ReadonlyArray<Parameters<ProviderServiceShape["forceStopAbortTarget"]>[0]>
+  >([]);
   const commands = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
   const startedSignal = yield* Deferred.make<void>();
   const secondTurnSentSignal = yield* Deferred.make<void>();
@@ -121,6 +134,19 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
     runtimeSessionId,
     createdAt,
   });
+  const finalResult = (threadId: ThreadId, outcome: string) =>
+    JSON.stringify({
+      outcome,
+      changesOrFindings: [
+        {
+          path: "apps/server/src/security/review.ts",
+          details: "Implemented the isolated security review.",
+        },
+      ],
+      verification: [{ command: "vp test run security-review.test.ts", result: "1 test passed" }],
+      risksOrBlockers: [],
+      transcriptRef: `subagent:${threadId}`,
+    });
 
   const providerService = {
     startTransientSession: (threadId, input, options) =>
@@ -168,7 +194,30 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
           turnId,
           payload: {
             streamKind: "assistant_text",
-            delta: "Implemented the isolated security review and its focused test.",
+            delta: streamedCommentary,
+          },
+        });
+        yield* publish({
+          ...eventBase(input.threadId, runtimeSessionId),
+          type: "item.completed",
+          turnId,
+          payload: {
+            itemType: "assistant_message",
+            status: "completed",
+            detail: finalResult(input.threadId, "Stale assistant message must not win."),
+          },
+        });
+        yield* publish({
+          ...eventBase(input.threadId, runtimeSessionId),
+          type: "item.completed",
+          turnId,
+          payload: {
+            itemType: "assistant_message",
+            status: "completed",
+            detail: finalResult(
+              input.threadId,
+              "Implemented the isolated security review and its focused test.",
+            ),
           },
         });
         if (options?.completeTurn !== false) {
@@ -182,9 +231,12 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
         return { threadId: input.threadId, turnId };
       }),
     respondToRequest: () => Effect.void,
-    interruptAbortTarget: () => Effect.void,
-    forceStopAbortTarget: () =>
-      Effect.succeed({ outcome: "terminated", mechanism: "runtime-close" }),
+    interruptAbortTarget: (target) =>
+      Ref.update(interruptTargets, (targets) => [...targets, target]),
+    forceStopAbortTarget: (target) =>
+      Ref.update(forceStopTargets, (targets) => [...targets, target]).pipe(
+        Effect.as({ outcome: "terminated" as const, mechanism: "runtime-close" as const }),
+      ),
     stopTransientSession: (target) =>
       Ref.update(stops, (values) => [...values, target.threadId]).pipe(
         Effect.andThen(Deferred.succeed(stoppedSignal, undefined).pipe(Effect.ignore)),
@@ -264,7 +316,7 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
     latestSequence: Effect.succeed(0),
   };
   const backgroundLiveness = ThreadBackgroundLiveness.make();
-  const layer = GeneralSubagentCoordinatorLive.pipe(
+  const coordinatorLayer = GeneralSubagentCoordinatorLive.pipe(
     Layer.provideMerge(Layer.succeed(ProviderService, providerService)),
     Layer.provideMerge(Layer.succeed(ProviderRegistry, providerRegistry)),
     Layer.provideMerge(Layer.succeed(OrchestrationEngineService, engine)),
@@ -272,8 +324,20 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
     Layer.provideMerge(
       Layer.succeed(ThreadBackgroundLiveness.ThreadBackgroundLivenessService, backgroundLiveness),
     ),
+    Layer.provideMerge(
+      ServerSettingsService.layerTest({
+        betterT3Environment: makeBetterT3SettingsV1("existing-install-migration"),
+      }),
+    ),
     Layer.provideMerge(NodeServices.layer),
   );
+  const layer = options?.resourceGovernor
+    ? coordinatorLayer.pipe(
+        Layer.provideMerge(
+          Layer.succeed(ResourceProtection.SubagentResourceGovernor, options.resourceGovernor),
+        ),
+      )
+    : coordinatorLayer;
 
   const publishParentCompletion = publish({
     eventId: EventId.make("general-parent-completed"),
@@ -292,6 +356,8 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
     starts,
     sends,
     stops,
+    interruptTargets,
+    forceStopTargets,
     commands,
     startedSignal,
     secondTurnSentSignal,
@@ -300,7 +366,186 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
   };
 });
 
+const makeResourceGovernorHarness = Effect.fn(
+  "GeneralSubagentCoordinator.test.makeResourceGovernorHarness",
+)(function* () {
+  const admissions = yield* Ref.make<ReadonlyArray<ResourceProtection.SubagentAdmissionRequest>>(
+    [],
+  );
+  const cancelledThreads = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
+  const admissionRequested = yield* Deferred.make<void>();
+  const releaseAdmission = yield* Deferred.make<boolean>();
+  const governor = ResourceProtection.SubagentResourceGovernor.of({
+    awaitAdmission: (request) =>
+      Ref.update(admissions, (requests) => [...requests, request]).pipe(
+        Effect.andThen(Deferred.succeed(admissionRequested, undefined).pipe(Effect.ignore)),
+        Effect.andThen(Deferred.await(releaseAdmission)),
+      ),
+    acquireInProcessLease: () => Effect.succeed(undefined),
+    confirmSubagent: () => Effect.void,
+    releaseSubagent: () => Effect.void,
+    releaseRootTurn: () => Effect.void,
+    observe: () => Effect.void,
+    telemetryUnavailable: Effect.void,
+    registerProviderProcess: () => Effect.void,
+    unregisterProviderProcess: () => Effect.void,
+    cancelThread: (threadId) =>
+      Ref.update(cancelledThreads, (threadIds) => [...threadIds, threadId]),
+    setPolicy: () => Effect.void,
+    shutdown: Effect.void,
+    latest: Effect.die("unused resource snapshot"),
+    inProcessUsage: Effect.die("unused in-process usage"),
+    changes: Stream.empty,
+    monitoringDemand: Stream.empty,
+    subscribe: Effect.die("unused resource subscription"),
+  });
+  return {
+    governor,
+    admissions,
+    cancelledThreads,
+    admissionRequested,
+    releaseAdmission,
+  };
+});
+
 describe("GeneralSubagentCoordinator", () => {
+  it.effect("fences concurrent cancel and feature-off cleanup to the exact child runtime", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ completeTurn: false });
+      yield* Effect.gen(function* () {
+        const coordinator = yield* GeneralSubagentCoordinator;
+        const settings = yield* ServerSettingsService;
+        const spawned = yield* coordinator.spawnAgent({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+          task: "Stay active while cancellation races the feature toggle.",
+        });
+        yield* Deferred.await(harness.startedSignal);
+
+        yield* Effect.all(
+          [
+            coordinator.cancel({
+              parentThreadId,
+              callerProviderInstanceId: codexInstance,
+              agentId: spawned.agentId,
+            }),
+            settings.updateSettings({
+              betterT3Environment: { flags: { "agent.generalSubagents": false } },
+            }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        yield* Deferred.await(harness.stoppedSignal);
+
+        const [start] = yield* Ref.get(harness.starts);
+        const interruptTargets = yield* Ref.get(harness.interruptTargets);
+        expect(interruptTargets.length).toBeGreaterThan(0);
+        expect(interruptTargets).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              runtimeSessionId: start?.input.runtimeSessionId,
+              providerInstanceId: codexInstance,
+            }),
+          ]),
+        );
+        expect(
+          interruptTargets.every(
+            (target) => target.runtimeSessionId === start?.input.runtimeSessionId,
+          ),
+        ).toBe(true);
+        expect(yield* Ref.get(harness.forceStopTargets)).toEqual([]);
+        expect(yield* Ref.get(harness.stops)).toHaveLength(1);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("waits for resource admission before launching and releases ownership on cleanup", () =>
+    Effect.gen(function* () {
+      const resource = yield* makeResourceGovernorHarness();
+      const harness = yield* makeHarness({
+        completeTurn: false,
+        resourceGovernor: resource.governor,
+      });
+      yield* Effect.gen(function* () {
+        const coordinator = yield* GeneralSubagentCoordinator;
+        const spawned = yield* coordinator.spawn({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+          task: "Wait for memory, then run the focused check.",
+        });
+        yield* Deferred.await(resource.admissionRequested);
+        expect(yield* Ref.get(harness.starts)).toEqual([]);
+
+        yield* Deferred.succeed(resource.releaseAdmission, true);
+        yield* Deferred.await(harness.startedSignal);
+        const [admission] = yield* Ref.get(resource.admissions);
+        expect(admission).toMatchObject({
+          threadId: ThreadId.make(spawned.agentId),
+          providerInstanceId: codexInstance,
+        });
+
+        yield* coordinator.cancel({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+          agentId: spawned.agentId,
+        });
+        expect(yield* Ref.get(resource.cancelledThreads)).toContain(ThreadId.make(spawned.agentId));
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("drains active workers when disabled and rejects new work until re-enabled", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ completeTurn: false });
+      yield* Effect.gen(function* () {
+        const coordinator = yield* GeneralSubagentCoordinator;
+        const settings = yield* ServerSettingsService;
+        const spawned = yield* coordinator.spawnAgent({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+          task: "Keep this direct child active until the feature is disabled.",
+        });
+        yield* Deferred.await(harness.startedSignal);
+
+        yield* settings.updateSettings({
+          betterT3Environment: { flags: { "agent.generalSubagents": false } },
+        });
+        const rejected = yield* Effect.exit(
+          coordinator.spawnAgent({
+            parentThreadId,
+            callerProviderInstanceId: codexInstance,
+            task: "This work must not start while the feature is disabled.",
+          }),
+        );
+        expect(rejected._tag).toBe("Failure");
+        if (rejected._tag === "Failure") {
+          expect(String(rejected.cause)).toContain("disabled in Better T3 settings");
+        }
+        yield* Deferred.await(harness.stoppedSignal);
+
+        const retained = yield* coordinator.listAgents({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+        });
+        expect(retained.agents).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ agentId: spawned.agentId, status: "interrupted" }),
+          ]),
+        );
+
+        yield* settings.updateSettings({
+          betterT3Environment: { flags: { "agent.generalSubagents": true } },
+        });
+        const resumed = yield* coordinator.spawn({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+          task: "Run again after the reversible feature toggle is enabled.",
+        });
+        expect(resumed.status).toBe("starting");
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
   it.effect("runs a selected specialist as a full general-purpose transient agent", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
@@ -328,8 +573,24 @@ describe("GeneralSubagentCoordinator", () => {
           providerInstanceId: securityInstance,
           model: "gpt-daybreak-blue-latest",
           reasoningEffort: "max",
-          output: "Implemented the isolated security review and its focused test.",
+          result: {
+            outcome: "Implemented the isolated security review and its focused test.",
+            changesOrFindings: [
+              {
+                path: "apps/server/src/security/review.ts",
+                details: "Implemented the isolated security review.",
+              },
+            ],
+            verification: [
+              { command: "vp test run security-review.test.ts", result: "1 test passed" },
+            ],
+            risksOrBlockers: [],
+            transcriptRef: `subagent:${spawned.agentId}`,
+          },
         });
+        expect(waited.agents[0]).not.toHaveProperty("task");
+        expect(waited.agents[0]).not.toHaveProperty("output");
+        expect(JSON.stringify(waited)).not.toContain("Streaming implementation commentary");
         const start = (yield* Ref.get(harness.starts))[0]!;
         expect(start.input).toMatchObject({
           purpose: "subagent-worker",
@@ -366,10 +627,73 @@ describe("GeneralSubagentCoordinator", () => {
         expect(
           commands.some(
             (command) =>
+              command.type === "thread.message.assistant.delta" &&
+              command.delta.includes("Streaming implementation commentary"),
+          ),
+        ).toBe(true);
+        expect(
+          commands.some(
+            (command) =>
               command.type === "thread.message.import" &&
               command.message.text.includes("inspect, edit, and test"),
           ),
         ).toBe(true);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("lists compact identities and returns structured results for all eight agents", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const coordinator = yield* GeneralSubagentCoordinator;
+        const spawned = yield* Effect.forEach(
+          Array.from({ length: 8 }, (_, index) => index),
+          (index) =>
+            coordinator.spawn({
+              parentThreadId,
+              callerProviderInstanceId: codexInstance,
+              task: `Run isolated fixture task ${index + 1}.`,
+            }),
+          { concurrency: "unbounded" },
+        );
+        const waited = yield* coordinator.wait({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+          agentIds: spawned.map(({ agentId }) => agentId),
+          timeoutSeconds: 5,
+        });
+
+        expect(waited).toMatchObject({ allTerminal: true, timedOut: false });
+        expect(waited.agents).toHaveLength(8);
+        expect(waited.agents.every((agent) => !("task" in agent) && !("output" in agent))).toBe(
+          true,
+        );
+        expect(
+          waited.agents.every(
+            (agent) =>
+              agent.result?.outcome ===
+                "Implemented the isolated security review and its focused test." &&
+              agent.result.transcriptRef === `subagent:${agent.agentId}` &&
+              Object.keys(agent.result).length === 5,
+          ),
+        ).toBe(true);
+
+        const listed = yield* coordinator.listAgents({
+          parentThreadId,
+          callerProviderInstanceId: codexInstance,
+        });
+        expect(listed.agents).toHaveLength(8);
+        expect(Object.keys(listed.agents[0]!).sort()).toEqual(
+          [
+            "agentId",
+            "model",
+            "providerDriver",
+            "providerInstanceId",
+            "reasoningEffort",
+            "status",
+          ].sort(),
+        );
       }).pipe(Effect.provide(harness.layer));
     }),
   );
@@ -485,6 +809,8 @@ describe("GeneralSubagentCoordinator", () => {
         expect(sends[1]?.input).toContain(
           "Preserve the compatibility fixture while making the follow-up change.",
         );
+        expect(sends[1]?.input).toContain('"changesOrFindings"');
+        expect(sends[1]?.input).toContain(`"transcriptRef": "subagent:${spawned.agentId}"`);
 
         yield* coordinator.cancel({
           parentThreadId,

@@ -13,6 +13,10 @@ import type {
   PreviewAnnotationStyleChange,
   PreviewAnnotationSubmission,
 } from "@t3tools/contracts";
+import {
+  translateInterfaceMessage,
+  type InterfaceMessageKey,
+} from "@t3tools/shared/interfaceLanguage";
 
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
@@ -51,6 +55,11 @@ interface AnnotationSession {
 let activeSession: AnnotationSession | null = null;
 let idSequence = 0;
 let annotationTheme: DesktopPreviewAnnotationTheme | null = null;
+
+const annotationMessage = (
+  key: InterfaceMessageKey,
+  values?: Readonly<Record<string, string | number>>,
+): string => translateInterfaceMessage(annotationTheme?.interfaceLanguage ?? "en", key, values);
 
 const applyAnnotationTheme = (
   host: HTMLElement,
@@ -311,7 +320,10 @@ function createButton(label: string, title: string): HTMLButtonElement {
 }
 
 function styleControl(input: HTMLInputElement | HTMLSelectElement): void {
-  input.setAttribute("aria-label", input.getAttribute("aria-label") ?? "Style value");
+  input.setAttribute(
+    "aria-label",
+    input.getAttribute("aria-label") ?? annotationMessage("desktop.preview.annotation.styleValue"),
+  );
   input.className =
     "h-7 min-w-0 w-full appearance-none rounded-md border border-input bg-background px-2 font-mono text-xs text-foreground shadow-xs outline-none";
 }
@@ -439,8 +451,8 @@ function startAnnotation(): void {
   const composerRow = document.createElement("div");
   composerRow.className = "flex items-start gap-2 p-2";
 
-  const adjust = createButton("", "Expand annotation editor");
-  adjust.setAttribute("aria-label", "Expand annotation editor");
+  const adjust = createButton("", annotationMessage("desktop.preview.annotation.expandEditor"));
+  adjust.setAttribute("aria-label", annotationMessage("desktop.preview.annotation.expandEditor"));
   adjust.setAttribute("aria-expanded", "false");
   adjust.className +=
     " h-8 w-8 shrink-0 bg-muted p-0 text-muted-foreground hover:bg-accent hover:text-accent-foreground";
@@ -449,7 +461,7 @@ function startAnnotation(): void {
   composerRow.appendChild(adjust);
 
   const comment = document.createElement("textarea");
-  comment.placeholder = "Describe the change…";
+  comment.placeholder = annotationMessage("desktop.preview.annotation.describeChange");
   comment.rows = 1;
   comment.className =
     "min-h-8 max-h-24 min-w-0 flex-1 resize-none overflow-y-hidden border-0 border-b border-b-transparent bg-transparent px-0 py-1.5 font-sans text-sm leading-5 text-foreground outline-none ring-0 placeholder:text-muted-foreground focus:border-b-primary focus:outline-none focus:ring-0";
@@ -458,12 +470,15 @@ function startAnnotation(): void {
   const dragHandle = document.createElement("button");
   dragHandle.type = "button";
   dragHandle.textContent = "⠿";
-  dragHandle.title = "Drag annotation editor";
+  dragHandle.title = annotationMessage("desktop.preview.annotation.dragEditor");
   dragHandle.className =
     "hidden h-8 w-6 shrink-0 cursor-grab select-none border-0 bg-transparent p-0 font-sans text-lg font-bold leading-5 text-muted-foreground";
   composerRow.appendChild(dragHandle);
 
-  const submit = createButton("Attach", "Attach annotation and screenshot (Enter)");
+  const submit = createButton(
+    annotationMessage("desktop.preview.annotation.attach"),
+    annotationMessage("desktop.preview.annotation.attachTitle"),
+  );
   submit.className +=
     " h-8 shrink-0 border-primary bg-primary px-3 text-primary-foreground shadow-sm hover:bg-primary/90";
   composerRow.appendChild(submit);
@@ -609,7 +624,9 @@ function startAnnotation(): void {
     fontFamily.appendChild(option);
   }
   fontFamily.addEventListener("change", () => setStyleForSelected("font-family", fontFamily.value));
-  textSection.appendChild(createField("Font", fontFamily));
+  textSection.appendChild(
+    createField(annotationMessage("desktop.preview.annotation.font"), fontFamily),
+  );
 
   const fontSize = createUnitInput("px", "16");
   fontSize.min = "1";
@@ -617,7 +634,9 @@ function startAnnotation(): void {
   fontSize.addEventListener("input", () => {
     if (fontSize.value) setStyleForSelected("font-size", `${fontSize.value}px`);
   });
-  textSection.appendChild(createField("Font size", fontSize));
+  textSection.appendChild(
+    createField(annotationMessage("desktop.preview.annotation.fontSize"), fontSize),
+  );
 
   const fontWeight = document.createElement("select");
   for (const value of ["300", "400", "500", "600", "700", "800", "900"]) {
@@ -627,7 +646,9 @@ function startAnnotation(): void {
     fontWeight.appendChild(option);
   }
   fontWeight.addEventListener("change", () => setStyleForSelected("font-weight", fontWeight.value));
-  textSection.appendChild(createField("Font weight", fontWeight));
+  textSection.appendChild(
+    createField(annotationMessage("desktop.preview.annotation.fontWeight"), fontWeight),
+  );
 
   const lineHeight = document.createElement("input");
   lineHeight.type = "text";
@@ -635,7 +656,9 @@ function startAnnotation(): void {
   lineHeight.addEventListener("change", () => {
     if (lineHeight.value.trim()) setStyleForSelected("line-height", lineHeight.value.trim());
   });
-  textSection.appendChild(createField("Line height", lineHeight));
+  textSection.appendChild(
+    createField(annotationMessage("desktop.preview.annotation.lineHeight"), lineHeight),
+  );
 
   const createColorRow = (
     labelText: string,
@@ -657,7 +680,10 @@ function startAnnotation(): void {
       "width:20px;height:20px;padding:0;border:0;border-radius:5px;overflow:hidden;background:transparent;cursor:pointer";
     const text = document.createElement("input");
     text.type = "text";
-    text.setAttribute("aria-label", `${labelText} value`);
+    text.setAttribute(
+      "aria-label",
+      annotationMessage("desktop.preview.annotation.colorValue", { label: labelText }),
+    );
     text.className =
       "min-w-0 w-full border-0 bg-transparent font-mono text-xs text-foreground outline-none";
     color.addEventListener("input", () => {
@@ -676,8 +702,16 @@ function startAnnotation(): void {
     return { row, color, text };
   };
 
-  const textColor = createColorRow("Text color", "color", colorsSection);
-  const backgroundColor = createColorRow("Background", "background-color", colorsSection);
+  const textColor = createColorRow(
+    annotationMessage("desktop.preview.annotation.textColor"),
+    "color",
+    colorsSection,
+  );
+  const backgroundColor = createColorRow(
+    annotationMessage("desktop.preview.annotation.background"),
+    "background-color",
+    colorsSection,
+  );
 
   const opacity = document.createElement("input");
   opacity.type = "range";
@@ -687,7 +721,9 @@ function startAnnotation(): void {
   opacity.value = "1";
   opacity.style.accentColor = PRIMARY;
   opacity.addEventListener("input", () => setStyleForSelected("opacity", opacity.value));
-  colorsSection.appendChild(createField("Opacity", opacity));
+  colorsSection.appendChild(
+    createField(annotationMessage("desktop.preview.annotation.opacity"), opacity),
+  );
 
   const radius = createUnitInput("px", "0");
   radius.min = "0";
@@ -695,9 +731,15 @@ function startAnnotation(): void {
   radius.addEventListener("input", () => {
     if (radius.value) setStyleForSelected("border-radius", `${radius.value}px`);
   });
-  bordersSection.appendChild(createField("Radius", radius));
+  bordersSection.appendChild(
+    createField(annotationMessage("desktop.preview.annotation.radius"), radius),
+  );
 
-  const borderColor = createColorRow("Border color", "border-color", bordersSection);
+  const borderColor = createColorRow(
+    annotationMessage("desktop.preview.annotation.borderColor"),
+    "border-color",
+    bordersSection,
+  );
 
   const borderWidth = createUnitInput("px", "0");
   borderWidth.min = "0";
@@ -708,21 +750,33 @@ function startAnnotation(): void {
       setStyleForSelected("border-width", `${borderWidth.value}px`);
     }
   });
-  bordersSection.appendChild(createField("Border width", borderWidth));
+  bordersSection.appendChild(
+    createField(annotationMessage("desktop.preview.annotation.borderWidth"), borderWidth),
+  );
 
   const dimensions = document.createElement("div");
   dimensions.style.cssText =
     "display:grid;grid-template-columns:82px minmax(0,1fr);gap:8px;align-items:center";
   const dimensionLabel = document.createElement("div");
   dimensionLabel.className = "grid gap-2 font-sans text-xs font-medium text-muted-foreground";
-  dimensionLabel.innerHTML = "<span>Width</span><span>Height</span>";
+  for (const key of [
+    "desktop.preview.annotation.width",
+    "desktop.preview.annotation.height",
+  ] as const satisfies ReadonlyArray<InterfaceMessageKey>) {
+    const label = document.createElement("span");
+    label.textContent = annotationMessage(key);
+    dimensionLabel.appendChild(label);
+  }
   const dimensionControls = document.createElement("div");
   dimensionControls.style.cssText = "position:relative;display:grid;gap:3px;padding-left:22px";
   const widthInput = createUnitInput("px", "auto");
   const heightInput = createUnitInput("px", "auto");
   styleControl(widthInput);
   styleControl(heightInput);
-  const aspectLock = createButton("", "Lock aspect ratio");
+  const aspectLock = createButton(
+    "",
+    annotationMessage("desktop.preview.annotation.lockAspectRatio"),
+  );
   aspectLock.setAttribute("aria-pressed", "true");
   aspectLock.style.cssText +=
     ";position:absolute;left:0;top:50%;transform:translateY(-50%);width:18px;height:38px;padding:0";
@@ -787,9 +841,17 @@ function startAnnotation(): void {
     sizingSection.appendChild(createField(label, input));
     return input;
   };
-  const padding = addSpacingField("Padding", "padding", "0 0 0 0");
-  const margin = addSpacingField("Margin", "margin", "0 0 0 0");
-  const gap = addSpacingField("Gap", "gap", "0px");
+  const padding = addSpacingField(
+    annotationMessage("desktop.preview.annotation.padding"),
+    "padding",
+    "0 0 0 0",
+  );
+  const margin = addSpacingField(
+    annotationMessage("desktop.preview.annotation.margin"),
+    "margin",
+    "0 0 0 0",
+  );
+  const gap = addSpacingField(annotationMessage("desktop.preview.annotation.gap"), "gap", "0px");
 
   const syncStyleControls = (): void => {
     const first = selected.values().next().value as SelectedElement | undefined;
@@ -819,10 +881,26 @@ function startAnnotation(): void {
   };
 
   const tools: ReadonlyArray<[AnnotationTool, string, string]> = [
-    ["select", "Select", "Select elements (V)"],
-    ["marquee", "Region", "Draw a region or marquee-select elements (R)"],
-    ["draw", "Draw", "Draw freehand (D)"],
-    ["erase", "Erase", "Remove an annotation target (E)"],
+    [
+      "select",
+      annotationMessage("desktop.preview.annotation.select"),
+      annotationMessage("desktop.preview.annotation.selectTitle"),
+    ],
+    [
+      "marquee",
+      annotationMessage("desktop.preview.annotation.region"),
+      annotationMessage("desktop.preview.annotation.regionTitle"),
+    ],
+    [
+      "draw",
+      annotationMessage("desktop.preview.annotation.draw"),
+      annotationMessage("desktop.preview.annotation.drawTitle"),
+    ],
+    [
+      "erase",
+      annotationMessage("desktop.preview.annotation.erase"),
+      annotationMessage("desktop.preview.annotation.eraseTitle"),
+    ],
   ];
   for (const [candidate, label, title] of tools) {
     const button = createButton(label, title);
@@ -918,8 +996,11 @@ function startAnnotation(): void {
       stylePanel.style.display = selected.size > 0 ? "grid" : "none";
       dragHandle.style.display = "block";
       adjust.setAttribute("aria-expanded", "true");
-      adjust.title = "Collapse annotation editor";
-      adjust.setAttribute("aria-label", "Collapse annotation editor");
+      adjust.title = annotationMessage("desktop.preview.annotation.collapseEditor");
+      adjust.setAttribute(
+        "aria-label",
+        annotationMessage("desktop.preview.annotation.collapseEditor"),
+      );
       if (selected.size > 0) syncStyleControls();
     } else {
       editorExpanded = false;
@@ -927,8 +1008,11 @@ function startAnnotation(): void {
       stylePanel.style.display = "none";
       dragHandle.style.display = "none";
       adjust.setAttribute("aria-expanded", "false");
-      adjust.title = "Expand annotation editor";
-      adjust.setAttribute("aria-label", "Expand annotation editor");
+      adjust.title = annotationMessage("desktop.preview.annotation.expandEditor");
+      adjust.setAttribute(
+        "aria-label",
+        annotationMessage("desktop.preview.annotation.expandEditor"),
+      );
     }
     queueEditorLayout();
   });
@@ -1224,7 +1308,7 @@ function startAnnotation(): void {
       return;
     pendingCapture = true;
     submit.disabled = true;
-    submit.textContent = "Capturing…";
+    submit.textContent = annotationMessage("desktop.preview.annotation.capturing");
     void Promise.all(
       Array.from(selected.values()).map(async (target) => {
         const element = await captureElement(target.element);

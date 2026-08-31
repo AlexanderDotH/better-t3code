@@ -42,6 +42,14 @@ environment. A stored key takes precedence over the environment value.
 Context compression is disabled by default, including when OpenRouter would otherwise apply its
 middle-truncation transform. Enable it only when losing older middle content is acceptable.
 
+## Workspace tools
+
+OpenRouter receives T3's `workspace_context` read tool and, for writable turns, one `workspace_edit`
+tool for single-file or mixed UTF-8 write, replacement, range-edit, and delete batches. T3 executes
+the tools locally rather than asking OpenRouter to host a shell or filesystem. Plan mode, read-only
+sessions, and Fetch workers receive only the read tool. The same behavior applies when the
+controlling client is remote because the project environment remains the executor.
+
 ## Model catalog, filters, and favorites
 
 T3 shows the complete OpenRouter catalog, including entries that cannot run a T3 agent turn.

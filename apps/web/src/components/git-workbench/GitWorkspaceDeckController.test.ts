@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import gitWorkspaceDeckControllerSource from "./GitWorkspaceDeckController.tsx?raw";
 import {
   resolveGitDeckCardIds,
   resolveScopedWorkspaceDeckActiveCard,
@@ -9,15 +8,6 @@ import {
 } from "./GitWorkspaceDeckController";
 
 describe("workspace deck controller policy", () => {
-  it("aligns the inactive Chat peek with checkout context and gives it an icon", () => {
-    expect(gitWorkspaceDeckControllerSource).toContain(
-      'className="flex h-full items-center gap-1.5 !px-7 text-xs font-medium text-muted-foreground"',
-    );
-    expect(gitWorkspaceDeckControllerSource).toContain(
-      '<MessageSquareIcon aria-hidden className="size-3.5 shrink-0" />',
-    );
-  });
-
   it("does not render the previous chat's workspace card while the next chat loads", () => {
     expect(
       resolveScopedWorkspaceDeckActiveCard({

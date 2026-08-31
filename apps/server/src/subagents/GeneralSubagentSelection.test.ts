@@ -8,6 +8,7 @@ import {
 
 import {
   listGeneralSubagentModels,
+  resolveGeneralSubagentParentSelection,
   resolveGeneralSubagentSelection,
 } from "./GeneralSubagentSelection.ts";
 
@@ -96,6 +97,73 @@ const claude = provider({
 });
 
 describe("general subagent selection", () => {
+  it("inherits the resolved Auto effort while explicit child effort still wins", () => {
+    const autoSelection = {
+      instanceId: codex.instanceId,
+      model: "gpt-5.6-sol",
+      options: [
+        { id: "reasoningEffort", value: "low" as const },
+        { id: "serviceTier", value: "priority" as const },
+        { id: "t3AutoReasoning", value: true as const },
+      ],
+    };
+    const parentModelSelection = resolveGeneralSubagentParentSelection({
+      selection: autoSelection,
+      parentTurnId: "turn-current",
+      activities: [
+        {
+          kind: "auto-reasoning.resolved",
+          turnId: "turn-current",
+          payload: { autoReasoningEffort: "high", autoReasoningFallback: false },
+        },
+      ],
+    });
+
+    expect(parentModelSelection.options).toEqual([
+      { id: "reasoningEffort", value: "high" },
+      { id: "serviceTier", value: "priority" },
+    ]);
+    expect(
+      resolveGeneralSubagentSelection({
+        providers: [codex],
+        callerProviderInstanceId: codex.instanceId,
+        parentModelSelection,
+        request: { reasoningEffort: "xhigh" },
+      }),
+    ).toMatchObject({
+      status: "resolved",
+      selection: {
+        options: [
+          { id: "serviceTier", value: "priority" },
+          { id: "reasoningEffort", value: "xhigh" },
+        ],
+      },
+    });
+  });
+
+  it("uses the stored concrete fallback when the current Auto turn has no resolution", () => {
+    expect(
+      resolveGeneralSubagentParentSelection({
+        selection: {
+          instanceId: codex.instanceId,
+          model: "gpt-5.6-sol",
+          options: [
+            { id: "reasoningEffort", value: "medium" },
+            { id: "t3AutoReasoning", value: true },
+          ],
+        },
+        parentTurnId: "turn-current",
+        activities: [
+          {
+            kind: "auto-reasoning.resolved",
+            turnId: "turn-old",
+            payload: { autoReasoningEffort: "max", autoReasoningFallback: false },
+          },
+        ],
+      }).options,
+    ).toEqual([{ id: "reasoningEffort", value: "medium" }]);
+  });
+
   it("inherits the caller provider, exact model, and traits by default", () => {
     const resolution = resolveGeneralSubagentSelection({
       providers: [codex, claude],

@@ -1,9 +1,27 @@
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { render } from "vitest-browser-react";
 
 import chatStyles from "../index.css?raw";
 import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 import ChatMarkdown from "./ChatMarkdown";
+import {
+  __resetClientSettingsPersistenceForTests,
+  __setClientSettingsForTests,
+} from "../hooks/useSettings";
+
+beforeEach(() => {
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    betterT3Device: {
+      ...DEFAULT_CLIENT_SETTINGS.betterT3Device,
+      flags: {
+        ...DEFAULT_CLIENT_SETTINGS.betterT3Device.flags,
+        "chat.characterStreamingMotion": true,
+      },
+    },
+  });
+});
 
 function StreamingMarkdown({
   text,
@@ -26,6 +44,7 @@ function StreamingMarkdown({
         isStreaming={isStreaming}
         streamId={streamId}
         animateInitialStreamChunk={animateInitialStreamChunk}
+        streamingMotionEnabled
       />
     </AppAtomRegistryProvider>
   );
@@ -36,6 +55,7 @@ function animatedCharacters(container: HTMLElement): HTMLElement[] {
 }
 
 afterEach(() => {
+  __resetClientSettingsPersistenceForTests();
   document.querySelector("style[data-stream-motion-test]")?.remove();
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -66,47 +86,95 @@ describe("ChatMarkdown streamed-character reveal", () => {
     expect(streamedText).toBe("ld 👨‍👩‍👧‍👦");
   });
 
-  it("adapts inline timing without ever creating more than 160 transient nodes", async () => {
+  it("animates an approved initial buffered block after the stream already completed", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const screen = await render(
+      <StreamingMarkdown text="Buffered answer" isStreaming={false} animateInitialStreamChunk />,
+    );
+
+    expect(
+      animatedCharacters(screen.container)
+        .map((character) => character.textContent)
+        .join(""),
+    ).toBe("Bufferedanswer");
+
+    await vi.advanceTimersByTimeAsync(160);
+
+    expect(animatedCharacters(screen.container)).toHaveLength(0);
+    expect(screen.container.textContent).toContain("Buffered answer");
+  });
+
+  it("uses a shorter duration for a larger batch than for a single grapheme", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const now = vi.spyOn(performance, "now").mockReturnValue(0);
-    const screen = await render(<StreamingMarkdown text="seed" />);
+    const screen = await render(<StreamingMarkdown text="seed" streamId="single" />);
 
-    now.mockReturnValue(1_000);
-    await screen.rerender(<StreamingMarkdown text="seed!" />);
-    const slowCharacter = animatedCharacters(screen.container)[0];
-    expect(slowCharacter).toBeDefined();
-    const slowDuration = Number.parseFloat(
-      slowCharacter?.style.getPropertyValue("--stream-character-duration") ?? "",
+    now.mockReturnValue(100);
+    await screen.rerender(<StreamingMarkdown text="seed!" streamId="single" />);
+    const singleCharacter = animatedCharacters(screen.container)[0];
+    expect(singleCharacter).toBeDefined();
+    const singleDuration = Number.parseFloat(
+      singleCharacter?.style.getPropertyValue("--stream-character-duration") ?? "",
     );
 
-    now.mockReturnValue(1_001);
-    await screen.rerender(<StreamingMarkdown text="seed!?" />);
-    const activeCharacters = animatedCharacters(screen.container);
-    expect(activeCharacters.map((character) => character.textContent).join("")).toBe("!?");
-    expect(activeCharacters[0]).toBe(slowCharacter);
-    expect(activeCharacters[0]?.style.getPropertyValue("--stream-character-delay")).toBe("0ms");
-    const fastCharacter = activeCharacters.at(-1);
-    expect(fastCharacter).toBeDefined();
-    const fastDuration = Number.parseFloat(
-      fastCharacter?.style.getPropertyValue("--stream-character-duration") ?? "",
+    now.mockReturnValue(200);
+    await screen.rerender(<StreamingMarkdown text="seed" streamId="batch" />);
+    now.mockReturnValue(300);
+    await screen.rerender(<StreamingMarkdown text="seed123456789" streamId="batch" />);
+    const batchCharacters = animatedCharacters(screen.container);
+    expect(batchCharacters.map((character) => character.textContent).join("")).toBe("123456789");
+    const batchDuration = Number.parseFloat(
+      batchCharacters[0]?.style.getPropertyValue("--stream-character-duration") ?? "",
     );
 
-    expect(fastDuration).toBeLessThan(slowDuration);
-    const fastDelay = Number.parseFloat(
-      fastCharacter?.style.getPropertyValue("--stream-character-delay") ?? "",
+    expect(batchDuration).toBeLessThan(singleDuration);
+    const finalBatchDelay = Number.parseFloat(
+      batchCharacters.at(-1)?.style.getPropertyValue("--stream-character-delay") ?? "",
     );
-    expect(fastDuration + fastDelay).toBeLessThanOrEqual(160);
+    expect(batchDuration + finalBatchDelay).toBeLessThanOrEqual(160);
 
-    await screen.rerender(<StreamingMarkdown text="seed!?" isStreaming={false} />);
+    await screen.rerender(
+      <StreamingMarkdown text="seed123456789" streamId="batch" isStreaming={false} />,
+    );
     expect(
       screen.container.querySelectorAll(
         "[data-stream-text], [data-stream-word], [data-stream-character]",
       ),
     ).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
 
-    now.mockReturnValue(2_000);
-    await screen.rerender(<StreamingMarkdown text={`seed!?${"x".repeat(161)}`} />);
-    expect(animatedCharacters(screen.container)).toHaveLength(0);
+  it("bounds an oversized append to its newest 512 characters", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const screen = await render(<StreamingMarkdown text="seed" />);
+    const skippedPrefix = "a".repeat(8);
+    const boundedTail = "b".repeat(512);
+
+    await screen.rerender(<StreamingMarkdown text={`seed${skippedPrefix}${boundedTail}`} />);
+
+    const characters = animatedCharacters(screen.container);
+    expect(characters).toHaveLength(512);
+    expect(characters.map((character) => character.textContent).join("")).toBe(boundedTail);
+  });
+
+  it("renders non-Classic streaming updates without motion wrappers", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const screen = await render(
+      <ChatMarkdown text="seed" cwd={undefined} isStreaming streamId="current-message" />,
+      { wrapper: AppAtomRegistryProvider },
+    );
+
+    await screen.rerender(
+      <ChatMarkdown text="seed!" cwd={undefined} isStreaming streamId="current-message" />,
+    );
+
+    expect(
+      screen.container.querySelectorAll(
+        "[data-stream-text], [data-stream-word], [data-stream-character]",
+      ),
+    ).toHaveLength(0);
+    expect(screen.container.textContent).toContain("seed!");
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("keeps a retained list character mounted when the next provider chunk arrives", async () => {

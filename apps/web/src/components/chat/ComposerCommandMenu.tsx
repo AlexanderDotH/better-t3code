@@ -1,4 +1,5 @@
 import {
+  formatProviderSkillDisplayName,
   resolveProviderSkillSourceKind,
   type ProviderSkillSourceKind,
 } from "@t3tools/client-runtime/providerSkills";
@@ -8,9 +9,9 @@ import {
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
+import type { InterfaceMessageKey, InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import {
   BlocksIcon,
-  FolderGit2Icon,
   FolderIcon,
   PackageIcon,
   SettingsIcon,
@@ -21,8 +22,11 @@ import { memo, useLayoutEffect, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
 import { cn } from "~/lib/utils";
+import { Badge } from "../ui/badge";
 import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
 import { PierreEntryIcon } from "./PierreEntryIcon";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { ComposerBanner } from "./ComposerBanner";
 
 export type ComposerCommandItem =
   | {
@@ -67,6 +71,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   onHighlightedItemChange: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const listRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
@@ -87,9 +92,9 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         );
       }}
     >
-      <div
+      <ComposerBanner.Surface
         ref={listRef}
-        className="chat-composer-drawer-surface chat-composer-drawer-attached relative w-full overflow-hidden **:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4"
+        className="w-full overflow-hidden pb-(--chat-composer-attachment-overlap) **:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4"
         data-composer-command-drawer="true"
       >
         {props.items.length > 0 ? (
@@ -113,18 +118,18 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
             <p className="text-secondary-label text-xs">
               {props.isLoading
                 ? props.triggerKind === "skill"
-                  ? "Searching workspace skills..."
-                  : "Searching workspace files..."
+                  ? translate("chat.composer.command.searchingSkills")
+                  : translate("chat.composer.command.searchingFiles")
                 : (props.emptyStateText ??
                   (props.triggerKind === "skill"
-                    ? "No skills found. Try / to browse provider commands."
+                    ? translate("chat.composer.command.noSkills")
                     : props.triggerKind === "path"
-                      ? "No matching files or folders."
-                      : "No matching command."))}
+                      ? translate("chat.composer.command.noFiles")
+                      : translate("chat.composer.command.noCommand")))}
             </p>
           </div>
         )}
-      </div>
+      </ComposerBanner.Surface>
     </Command>
   );
 });
@@ -137,9 +142,10 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   onHighlight: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const skillSourceKind =
     props.item.type === "skill" ? resolveProviderSkillSourceKind(props.item.skill) : null;
-  const slashSkill =
+  const isSlashSkill =
     props.triggerKind === "slash-command" && props.item.type === "skill" ? props.item.skill : null;
 
   return (
@@ -166,23 +172,30 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           kind={props.item.pathKind}
           theme={props.resolvedTheme}
         />
-      ) : skillSourceKind && !slashSkill ? (
-        <SkillSourceIcon kind={skillSourceKind} />
       ) : null}
-      <span className="flex min-w-0 flex-1 items-baseline gap-3">
-        <span className="shrink-0 font-sans text-xs font-medium">
-          {slashSkill ? (
+      <span className="flex min-w-0 flex-1 items-center gap-2">
+        <span className="min-w-0 max-w-[45%] shrink-0 truncate font-sans text-xs font-medium">
+          {isSlashSkill ? (
             <>
-              <span className="text-secondary-label">skill:</span>
-              {slashSkill.name}
+              <span className="text-secondary-label">
+                {translate("chat.composer.command.skillPrefix")}
+              </span>
+              {formatProviderSkillDisplayName(isSlashSkill)}
             </>
           ) : (
             props.item.label
           )}
         </span>
-        <span className="min-w-0 flex-1 truncate text-right text-secondary-label text-xs">
+        <span className="min-w-0 max-w-[48ch] flex-1 truncate text-left text-secondary-label text-xs">
           {props.item.description}
         </span>
+        {skillSourceKind ? (
+          <SkillSourceBadge
+            kind={skillSourceKind}
+            showSkillSuffix={props.triggerKind === "skill"}
+            translate={translate}
+          />
+        ) : null}
       </span>
     </CommandItem>
   );
@@ -190,28 +203,45 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
 
 const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
   app: BlocksIcon,
-  repo: FolderGit2Icon,
+  repo: FolderIcon,
   project: FolderIcon,
   personal: UserRoundIcon,
   system: SettingsIcon,
   other: PackageIcon,
 };
 
-const SKILL_SOURCE_LABEL_BY_KIND: Record<ProviderSkillSourceKind, string> = {
-  app: "App",
-  repo: "Repo",
-  project: "Project",
-  personal: "Personal",
-  system: "System",
-  other: "Other",
-};
+const SKILL_SOURCE_MESSAGE_ID_BY_KIND = {
+  app: "chat.composer.command.source.app",
+  repo: "chat.composer.command.source.repo",
+  project: "chat.composer.command.source.project",
+  personal: "chat.composer.command.source.personal",
+  system: "chat.composer.command.source.system",
+  other: "chat.composer.command.source.provider",
+} as const satisfies Record<ProviderSkillSourceKind, InterfaceMessageKey>;
 
-function SkillSourceIcon(props: { kind: ProviderSkillSourceKind }) {
+export function composerSkillSourceLabel({
+  kind,
+  showSkillSuffix,
+  translate,
+}: {
+  readonly kind: ProviderSkillSourceKind;
+  readonly showSkillSuffix: boolean;
+  readonly translate: InterfaceTranslator["message"];
+}): string {
+  const source = translate(SKILL_SOURCE_MESSAGE_ID_BY_KIND[kind]);
+  return showSkillSuffix ? translate("chat.composer.command.sourceSkill", { source }) : source;
+}
+
+function SkillSourceBadge(props: {
+  kind: ProviderSkillSourceKind;
+  showSkillSuffix: boolean;
+  translate: InterfaceTranslator["message"];
+}) {
   const Icon = SKILL_SOURCE_ICON_BY_KIND[props.kind];
   return (
-    <>
-      <Icon aria-hidden="true" className="size-4 shrink-0 text-icon-muted" />
-      <span className="sr-only">{SKILL_SOURCE_LABEL_BY_KIND[props.kind]} skill</span>
-    </>
+    <Badge className="ms-auto" variant="secondary">
+      <Icon aria-hidden="true" className="text-current" />
+      {composerSkillSourceLabel(props)}
+    </Badge>
   );
 }

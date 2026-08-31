@@ -21,6 +21,7 @@ import {
 import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { OpenRouterIcon } from "../../Icons";
 import { Button } from "../../ui/button";
 import {
@@ -133,6 +134,8 @@ function FacetMenuTrigger(props: {
 }
 
 export function OpenRouterCatalogFilterPanel(props: OpenRouterCatalogFilterPanelProps) {
+  const translator = useInterfaceTranslator();
+  const translate = translator.message;
   const activeFilterCount = countActiveOpenRouterModelCatalogFilters(props.state);
   const isDefaultState = isDefaultOpenRouterModelCatalogFilterState(props.state);
   const selectedAuthorCount = props.state.authors.size;
@@ -143,7 +146,7 @@ export function OpenRouterCatalogFilterPanel(props: OpenRouterCatalogFilterPanel
 
   return (
     <section
-      aria-label="OpenRouter model catalog"
+      aria-label={translate("chat.catalog.label")}
       className={cn(
         "border-border/70 border-b bg-gradient-to-b from-background/45 to-transparent px-2 pb-2 pt-1.5",
         props.className,
@@ -162,15 +165,18 @@ export function OpenRouterCatalogFilterPanel(props: OpenRouterCatalogFilterPanel
           <span className="flex min-w-0 items-center gap-1.5">
             <span className="truncate text-[11px] font-semibold">{instanceDisplayName}</span>
             <span className="shrink-0 rounded-[4px] bg-foreground/[0.055] px-1 py-0.5 text-[9px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
-              Catalog
+              {translate("chat.catalog.badge")}
             </span>
           </span>
           <span
             className="mt-0.5 block text-[10px] leading-none tabular-nums text-muted-foreground/75"
             aria-live="polite"
           >
-            {props.view.matchingCount.toLocaleString()} of {props.view.totalCount.toLocaleString()}{" "}
-            models
+            {translate("chat.catalog.modelCount", {
+              count: props.view.matchingCount,
+              matching: translator.number(props.view.matchingCount),
+              total: translator.number(props.view.totalCount),
+            })}
           </span>
         </span>
         <Button
@@ -181,11 +187,11 @@ export function OpenRouterCatalogFilterPanel(props: OpenRouterCatalogFilterPanel
             !isDefaultState && "bg-foreground/[0.045] text-foreground",
           )}
           disabled={isDefaultState}
-          aria-label="Reset filters"
+          aria-label={translate("chat.catalog.resetFilters")}
           onClick={() => props.onChange(DEFAULT_OPENROUTER_MODEL_CATALOG_FILTER_STATE)}
         >
           <RotateCcwIcon className="size-3" />
-          <span>Reset</span>
+          <span>{translate("chat.catalog.reset")}</span>
           {!isDefaultState && activeFilterCount > 0 ? (
             <span className="tabular-nums opacity-60">{activeFilterCount}</span>
           ) : null}
@@ -196,7 +202,7 @@ export function OpenRouterCatalogFilterPanel(props: OpenRouterCatalogFilterPanel
         <div
           role="group"
           className="flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-          aria-label="Catalog filters"
+          aria-label={translate("chat.catalog.filters")}
         >
           {featureFacets.map((filter) => (
             <FilterToggle
@@ -208,7 +214,7 @@ export function OpenRouterCatalogFilterPanel(props: OpenRouterCatalogFilterPanel
             />
           ))}
           <FilterToggle
-            label="128K+"
+            label={translate("chat.catalog.quickContext")}
             count={quickContextFacet?.count ?? 0}
             pressed={quickContextSelected}
             onPressedChange={() =>
@@ -222,17 +228,19 @@ export function OpenRouterCatalogFilterPanel(props: OpenRouterCatalogFilterPanel
 
         <div
           className="flex min-w-0 items-center gap-1 overflow-x-auto border-border/45 border-t pt-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-          aria-label="Catalog refinement"
+          aria-label={translate("chat.catalog.refinement")}
         >
           <Menu>
             <FacetMenuTrigger
-              label={`Context: ${contextLabel(props.state.contextThreshold)}`}
+              label={translate("chat.catalog.contextPrefix", {
+                label: contextLabel(props.state.contextThreshold),
+              })}
               active={props.state.contextThreshold !== "any"}
               icon={<SlidersHorizontalIcon className="size-3" />}
             />
             <MenuPopup align="start" side="bottom" className="min-w-40">
               <MenuGroup>
-                <MenuGroupLabel>Minimum context</MenuGroupLabel>
+                <MenuGroupLabel>{translate("chat.catalog.minimumContext")}</MenuGroupLabel>
                 <MenuRadioGroup
                   value={props.state.contextThreshold}
                   onValueChange={(contextThreshold) =>
@@ -243,7 +251,7 @@ export function OpenRouterCatalogFilterPanel(props: OpenRouterCatalogFilterPanel
                     })
                   }
                 >
-                  <MenuRadioItem value="any">Any context</MenuRadioItem>
+                  <MenuRadioItem value="any">{translate("chat.catalog.anyContext")}</MenuRadioItem>
                   {OPENROUTER_MODEL_CONTEXT_THRESHOLDS.map((threshold) => (
                     <MenuRadioItem key={threshold.id} value={threshold.id}>
                       {threshold.label}
@@ -257,13 +265,17 @@ export function OpenRouterCatalogFilterPanel(props: OpenRouterCatalogFilterPanel
           {props.view.authorFacets.length > 1 ? (
             <Menu>
               <FacetMenuTrigger
-                label={selectedAuthorCount > 0 ? `Creators (${selectedAuthorCount})` : "Creators"}
+                label={
+                  selectedAuthorCount > 0
+                    ? translate("chat.catalog.creatorsCount", { count: selectedAuthorCount })
+                    : translate("chat.catalog.creators")
+                }
                 active={selectedAuthorCount > 0}
                 icon={<UsersIcon className="size-3" />}
               />
               <MenuPopup align="start" side="bottom" className="max-h-72 min-w-48">
                 <MenuGroup>
-                  <MenuGroupLabel>Model creators</MenuGroupLabel>
+                  <MenuGroupLabel>{translate("chat.catalog.modelCreators")}</MenuGroupLabel>
                   {props.view.authorFacets.map((author) => (
                     <MenuCheckboxItem
                       key={author.id}
@@ -289,7 +301,7 @@ export function OpenRouterCatalogFilterPanel(props: OpenRouterCatalogFilterPanel
                       className="w-full justify-start pointer-coarse:h-11"
                       onClick={() => props.onChange({ ...props.state, authors: new Set() })}
                     >
-                      Clear creators
+                      {translate("chat.catalog.clearCreators")}
                     </Button>
                   </>
                 ) : null}
@@ -306,7 +318,7 @@ export function OpenRouterCatalogFilterPanel(props: OpenRouterCatalogFilterPanel
                 "hover:border-border/60 hover:bg-background/60",
                 props.state.favoritesOnly && "border-border/70 bg-background text-foreground",
               )}
-              aria-label="Favorites"
+              aria-label={translate("chat.composer.favorites")}
               aria-pressed={props.state.favoritesOnly}
               onClick={() =>
                 props.onChange({ ...props.state, favoritesOnly: !props.state.favoritesOnly })
@@ -324,12 +336,14 @@ export function OpenRouterCatalogFilterPanel(props: OpenRouterCatalogFilterPanel
 
           <Menu>
             <FacetMenuTrigger
-              label={`Sort: ${sortLabel(props.state.sort)}`}
+              label={translate("chat.catalog.sortPrefix", {
+                label: sortLabel(props.state.sort),
+              })}
               active={props.state.sort !== DEFAULT_OPENROUTER_MODEL_CATALOG_FILTER_STATE.sort}
             />
             <MenuPopup align="end" side="bottom" className="min-w-40">
               <MenuGroup>
-                <MenuGroupLabel>Sort models</MenuGroupLabel>
+                <MenuGroupLabel>{translate("chat.catalog.sortModels")}</MenuGroupLabel>
                 <MenuRadioGroup
                   value={props.state.sort}
                   onValueChange={(sort) =>

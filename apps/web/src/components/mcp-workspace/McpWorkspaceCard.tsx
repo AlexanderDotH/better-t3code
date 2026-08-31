@@ -3,6 +3,7 @@ import { ArrowUpIcon, ServerIcon } from "lucide-react";
 import type { ReactNode, RefObject } from "react";
 
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -22,11 +23,8 @@ export interface McpWorkspaceCardProps {
   readonly onExpand: () => void;
 }
 
-function countLabel(value: number, singular: string, plural: string): string {
-  return `${value} ${value === 1 ? singular : plural}`;
-}
-
 export function McpWorkspaceCard(props: McpWorkspaceCardProps) {
+  const translate = useInterfaceTranslator().message;
   const live = props.summary.state === "live";
   return (
     <article
@@ -35,7 +33,11 @@ export function McpWorkspaceCard(props: McpWorkspaceCardProps) {
       data-mcp-workspace-card="true"
       data-mcp-workspace-state={props.summary.state}
       data-workspace-card-compact-surface="true"
-      aria-label={props.expanded ? "MCP workspace" : "MCP overview"}
+      aria-label={
+        props.expanded
+          ? translate("settings.mcp.workspace.title")
+          : translate("settings.mcp.workspace.overview")
+      }
     >
       <div
         className="workspace-card-deck__card-content mcp-workspace-card__content"
@@ -72,7 +74,7 @@ export function McpWorkspaceCard(props: McpWorkspaceCardProps) {
                   ref={props.expandButtonRef}
                   type="button"
                   className="mcp-workspace-card__expand"
-                  aria-label="Expand MCP workspace"
+                  aria-label={translate("settings.mcp.workspace.expand")}
                   disabled={props.expansionBlocked}
                   onClick={props.onExpand}
                 />
@@ -80,14 +82,20 @@ export function McpWorkspaceCard(props: McpWorkspaceCardProps) {
             >
               <ArrowUpIcon aria-hidden />
             </TooltipTrigger>
-            <TooltipPopup side="top">Expand MCP workspace</TooltipPopup>
+            <TooltipPopup side="top">{translate("settings.mcp.workspace.expand")}</TooltipPopup>
           </Tooltip>
         </header>
 
-        <section className="mcp-workspace-card__status" aria-label="MCP server status">
+        <section
+          className="mcp-workspace-card__status"
+          aria-label={translate("settings.mcp.workspace.serverStatus")}
+        >
           <strong>
             {live
-              ? `${props.summary.connectedCount} / ${props.summary.expectedCount} connected`
+              ? translate("settings.mcp.workspace.connected", {
+                  connected: props.summary.connectedCount,
+                  expected: props.summary.expectedCount,
+                })
               : props.summary.statusLabel}
           </strong>
           <span>{live ? props.summary.statusLabel : props.summary.freshnessLabel}</span>
@@ -95,17 +103,23 @@ export function McpWorkspaceCard(props: McpWorkspaceCardProps) {
 
         <footer className="mcp-workspace-card__metrics">
           <span>
-            {countLabel(props.summary.configuredCount, "configured server", "configured servers")}
+            {translate("settings.mcp.workspace.configuredServerCount", {
+              count: props.summary.configuredCount,
+            })}
           </span>
           <span>
             {props.summary.attentionCount > 0
-              ? `${props.summary.attentionCount} needs attention`
-              : "No known issues"}
+              ? translate("settings.mcp.workspace.needsAttention", {
+                  count: props.summary.attentionCount,
+                })
+              : translate("settings.mcp.workspace.noIssues")}
           </span>
           <span>
             {props.summary.toolCount === null
-              ? "Tools unknown"
-              : countLabel(props.summary.toolCount, "known tool", "known tools")}
+              ? translate("settings.mcp.workspace.toolsUnknown")
+              : translate("settings.mcp.workspace.knownToolCount", {
+                  count: props.summary.toolCount,
+                })}
           </span>
         </footer>
       </div>

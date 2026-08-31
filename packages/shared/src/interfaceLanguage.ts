@@ -1,6 +1,15 @@
-import type { InterfaceLanguagePreference } from "@t3tools/contracts";
+import type { InterfaceLocalePreferenceV1 } from "@t3tools/contracts";
 
-export type ResolvedInterfaceLanguage = "en" | "de";
+import {
+  getInterfaceMessageTemplate,
+  type InterfaceMessageKey,
+} from "./interfaceLanguageCatalog.ts";
+
+export { INTERFACE_MESSAGE_KEYS, isInterfaceMessageKey } from "./interfaceLanguageCatalog.ts";
+export type { InterfaceMessageKey } from "./interfaceLanguageCatalog.ts";
+export type { SettingsDiagnosticsInterfaceMessageKey } from "./interfaceLanguageCatalog.settings.diagnostics.ts";
+
+export type ResolvedInterfaceLanguage = "en" | "de" | "fr";
 
 export interface ResolvedInterfaceLocale {
   readonly language: ResolvedInterfaceLanguage;
@@ -10,7 +19,10 @@ export interface ResolvedInterfaceLocale {
 const DEFAULT_LOCALE_BY_LANGUAGE: Readonly<Record<ResolvedInterfaceLanguage, string>> = {
   en: "en-US",
   de: "de-DE",
+  fr: "fr-FR",
 };
+
+const SUPPORTED_GERMAN_LOCALES = new Set(["de-DE", "de-AT", "de-CH"]);
 
 function canonicalizeLocale(value: string): string | null {
   const candidate = value.trim().replaceAll("_", "-");
@@ -22,13 +34,23 @@ function canonicalizeLocale(value: string): string | null {
   }
 }
 
-function supportedLanguage(locale: string): ResolvedInterfaceLanguage | null {
+function resolveSupportedLocale(locale: string): ResolvedInterfaceLocale | null {
   const language = locale.split("-")[0]?.toLowerCase();
-  return language === "en" || language === "de" ? language : null;
+  if (language === "en") return { language, locale };
+  if (language === "de") {
+    return {
+      language,
+      locale: SUPPORTED_GERMAN_LOCALES.has(locale) ? locale : DEFAULT_LOCALE_BY_LANGUAGE.de,
+    };
+  }
+  if (language === "fr") {
+    return { language, locale: DEFAULT_LOCALE_BY_LANGUAGE.fr };
+  }
+  return null;
 }
 
 export function resolveInterfaceLocale(
-  preference: InterfaceLanguagePreference,
+  preference: InterfaceLocalePreferenceV1,
   systemLocales: readonly string[],
 ): ResolvedInterfaceLocale {
   if (preference !== "system") {
@@ -41,126 +63,99 @@ export function resolveInterfaceLocale(
   for (const systemLocale of systemLocales) {
     const locale = canonicalizeLocale(systemLocale);
     if (!locale) continue;
-    const language = supportedLanguage(locale);
-    if (language) return { language, locale };
+    const supported = resolveSupportedLocale(locale);
+    if (supported) return supported;
   }
 
   return { language: "en", locale: DEFAULT_LOCALE_BY_LANGUAGE.en };
 }
 
-const englishMessages = {
-  "resourceProtection.waiting.label": "Subagent waiting for memory",
-  "resourceProtection.waiting.description":
-    "The start resumes automatically when memory is available; stopping remains possible at any time.",
-  "resourceProtection.throttled.label": "Provider temporarily throttled",
-  "resourceProtection.throttled.description":
-    "T3 automatically resumes the provider after five healthy memory readings.",
-  "resourceProtection.recovering.description":
-    "The memory reserve is stabilizing; T3 automatically resumes the provider.",
-  "resourceProtection.unavailableWaiting.description":
-    "The start resumes as soon as T3 can safely measure available memory again; stopping remains possible.",
-  "resourceProtection.unavailableThrottled.description":
-    "T3 resumes the provider as soon as available memory can be measured safely again.",
-  "settings.interfaceLanguage.title": "Language",
-  "settings.interfaceLanguage.description":
-    "Choose the interface language. System follows this device; explicit choices synchronize across connected T3 environments.",
-  "settings.interfaceLanguage.system": "System",
-  "settings.interfaceLanguage.english": "English",
-  "settings.interfaceLanguage.german": "German",
-  "settings.interfaceLanguage.systemDescription": "Follow this device's preferred language.",
-  "settings.interfaceLanguage.englishDescription": "Always use English on every connected client.",
-  "settings.interfaceLanguage.germanDescription": "Always use German on every connected client.",
-  "settings.interfaceLanguage.syncing": "Syncing with connected servers…",
-  "settings.interfaceLanguage.syncFailed":
-    "Couldn’t sync to {{environments}}. Retrying automatically.",
-  "settings.interfaceLanguage.syncUnsupported":
-    "Update {{environments}} to synchronize this setting.",
-  "settings.interfaceLanguage.syncDeferred": "Waiting for {{environments}} to reconnect.",
-  "desktop.menu.file": "File",
-  "desktop.menu.view": "View",
-  "desktop.menu.help": "Help",
-  "desktop.menu.settings": "Settings...",
-  "desktop.menu.checkForUpdates": "Check for Updates...",
-  "desktop.menu.actualSize": "Actual Size",
-  "desktop.menu.zoomIn": "Zoom In",
-  "desktop.menu.zoomOut": "Zoom Out",
-  "desktop.update.upToDateTitle": "You're up to date!",
-  "desktop.update.upToDateMessage":
-    "T3 Code {{version}} is currently the newest version available.",
-  "desktop.update.checkFailedTitle": "Update check failed",
-  "desktop.update.checkFailedMessage": "Could not check for updates.",
-  "desktop.update.unknownError": "An unknown error occurred. Please try again later.",
-  "desktop.update.unavailableTitle": "Updates unavailable",
-  "desktop.update.unavailableMessage": "Automatic updates are not available right now.",
-  "common.ok": "OK",
-} as const;
+type InterfaceMessageValues = Readonly<Record<string, string | number>>;
 
-export type InterfaceMessageKey = keyof typeof englishMessages;
+function selectMessageTemplate(
+  language: ResolvedInterfaceLanguage,
+  locale: string,
+  key: InterfaceMessageKey,
+  values: InterfaceMessageValues,
+): string {
+  const template = getInterfaceMessageTemplate(language, key);
+  if (typeof template === "string") return template;
+  const count = values.count;
+  if (typeof count !== "number") return template.other;
+  return new Intl.PluralRules(locale).select(count) === "one" ? template.one : template.other;
+}
 
-const germanMessages = {
-  "resourceProtection.waiting.label": "Subagent wartet auf freien Speicher",
-  "resourceProtection.waiting.description":
-    "Der Start wird automatisch fortgesetzt, sobald Speicher verfügbar ist; Stoppen bleibt jederzeit möglich.",
-  "resourceProtection.throttled.label": "Provider vorübergehend gedrosselt",
-  "resourceProtection.throttled.description":
-    "T3 setzt den Provider nach fünf gesunden Speichermessungen automatisch fort.",
-  "resourceProtection.recovering.description":
-    "Die Speicherreserve stabilisiert sich; T3 setzt den Provider automatisch fort.",
-  "resourceProtection.unavailableWaiting.description":
-    "Der Start wird fortgesetzt, sobald T3 den verfügbaren Speicher wieder sicher messen kann; Stoppen bleibt möglich.",
-  "resourceProtection.unavailableThrottled.description":
-    "T3 setzt den Provider fort, sobald der verfügbare Speicher wieder sicher messbar ist.",
-  "settings.interfaceLanguage.title": "Sprache",
-  "settings.interfaceLanguage.description":
-    "Legt die Sprache der Oberfläche fest. „System“ folgt diesem Gerät; eine feste Auswahl wird über verbundene T3-Umgebungen synchronisiert.",
-  "settings.interfaceLanguage.system": "System",
-  "settings.interfaceLanguage.english": "Englisch",
-  "settings.interfaceLanguage.german": "Deutsch",
-  "settings.interfaceLanguage.systemDescription": "Folgt der bevorzugten Sprache dieses Geräts.",
-  "settings.interfaceLanguage.englishDescription":
-    "Verwendet auf allen verbundenen Clients immer Englisch.",
-  "settings.interfaceLanguage.germanDescription":
-    "Verwendet auf allen verbundenen Clients immer Deutsch.",
-  "settings.interfaceLanguage.syncing": "Synchronisierung mit verbundenen Servern…",
-  "settings.interfaceLanguage.syncFailed":
-    "Synchronisierung mit {{environments}} fehlgeschlagen. Ein neuer Versuch erfolgt automatisch.",
-  "settings.interfaceLanguage.syncUnsupported":
-    "{{environments}} aktualisieren, um diese Einstellung zu synchronisieren.",
-  "settings.interfaceLanguage.syncDeferred":
-    "Warten auf die erneute Verbindung mit {{environments}}.",
-  "desktop.menu.file": "Datei",
-  "desktop.menu.view": "Ansicht",
-  "desktop.menu.help": "Hilfe",
-  "desktop.menu.settings": "Einstellungen...",
-  "desktop.menu.checkForUpdates": "Nach Updates suchen...",
-  "desktop.menu.actualSize": "Tatsächliche Größe",
-  "desktop.menu.zoomIn": "Vergrößern",
-  "desktop.menu.zoomOut": "Verkleinern",
-  "desktop.update.upToDateTitle": "T3 Code ist aktuell",
-  "desktop.update.upToDateMessage":
-    "T3 Code {{version}} ist derzeit die neueste verfügbare Version.",
-  "desktop.update.checkFailedTitle": "Update-Prüfung fehlgeschlagen",
-  "desktop.update.checkFailedMessage": "Es konnte nicht nach Updates gesucht werden.",
-  "desktop.update.unknownError": "Ein unbekannter Fehler ist aufgetreten. Später erneut versuchen.",
-  "desktop.update.unavailableTitle": "Updates nicht verfügbar",
-  "desktop.update.unavailableMessage": "Automatische Updates sind derzeit nicht verfügbar.",
-  "common.ok": "OK",
-} as const satisfies Readonly<Record<InterfaceMessageKey, string>>;
+function interpolateMessage(template: string, values: InterfaceMessageValues): string {
+  return template.replace(/{{([A-Za-z0-9_]+)}}/g, (placeholder, name: string) =>
+    Object.hasOwn(values, name) ? String(values[name]) : placeholder,
+  );
+}
 
-const messages: Readonly<
-  Record<ResolvedInterfaceLanguage, Readonly<Record<InterfaceMessageKey, string>>>
-> = {
-  en: englishMessages,
-  de: germanMessages,
-};
+export interface InterfaceTranslator {
+  readonly message: (key: InterfaceMessageKey, values?: InterfaceMessageValues) => string;
+  readonly number: (value: number, options?: Intl.NumberFormatOptions) => string;
+  readonly list: (values: readonly string[], options?: Intl.ListFormatOptions) => string;
+  readonly date: (
+    value: number | Date,
+    options?: Omit<Intl.DateTimeFormatOptions, "dateStyle">,
+  ) => string;
+}
+
+export function createInterfaceTranslator(resolved: ResolvedInterfaceLocale): InterfaceTranslator {
+  return {
+    message: (key, values = {}) =>
+      interpolateMessage(
+        selectMessageTemplate(resolved.language, resolved.locale, key, values),
+        values,
+      ),
+    number: (value, options) => new Intl.NumberFormat(resolved.locale, options).format(value),
+    list: (values, options = { style: "long", type: "conjunction" }) =>
+      new Intl.ListFormat(resolved.locale, options).format(values),
+    date: (value, options) =>
+      new Intl.DateTimeFormat(resolved.locale, { dateStyle: "medium", ...options }).format(value),
+  };
+}
 
 export function translateInterfaceMessage(
   language: ResolvedInterfaceLanguage,
   key: InterfaceMessageKey,
-  values: Readonly<Record<string, string | number>> = {},
+  values: InterfaceMessageValues = {},
 ): string {
-  return Object.entries(values).reduce(
-    (message, [name, value]) => message.replaceAll(`{{${name}}}`, String(value)),
-    messages[language][key],
+  return createInterfaceTranslator({
+    language,
+    locale: DEFAULT_LOCALE_BY_LANGUAGE[language],
+  }).message(key, values);
+}
+
+const PSEUDO_CHARACTER_MAP: Readonly<Record<string, string>> = {
+  a: "à",
+  c: "ç",
+  e: "ë",
+  i: "ï",
+  o: "ö",
+  u: "ü",
+  A: "À",
+  C: "Ç",
+  E: "Ë",
+  I: "Ï",
+  O: "Ö",
+  U: "Ü",
+};
+
+function pseudoLocalizeLiteral(value: string): string {
+  return value.replace(
+    /[ACEIOUaceiou]/g,
+    (character) => PSEUDO_CHARACTER_MAP[character] ?? character,
   );
+}
+
+export function pseudoLocalizeInterfaceMessage(
+  key: InterfaceMessageKey,
+  values: InterfaceMessageValues = {},
+): string {
+  const template = selectMessageTemplate("en", "en-US", key, values);
+  const pseudoTemplate = template.replace(/(^|}})([^{}]*)(?={{|$)/g, (segment) =>
+    pseudoLocalizeLiteral(segment),
+  );
+  return `⟦${interpolateMessage(pseudoTemplate, values)}⟧`;
 }

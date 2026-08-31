@@ -1,20 +1,32 @@
-import { ProviderDriverKind, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  makeBetterT3SettingsV1,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import {
   ProviderProcessTreeControlError,
   type ProviderProcessTreeLease,
 } from "./ProviderProcessTreeController.ts";
+import { RESOURCE_GOVERNOR_MAX_WAITING_ADMISSIONS } from "./ResourceGovernorAdmissionQueue.ts";
 import {
   GIBIBYTE,
   ProviderProcessSignalError,
   SubagentResourceGovernor,
   coreReserveBytes,
+  layerLive,
   makeExactProcessSignaler,
   makeSubagentResourceGovernor,
   reservationBytesForGrowthSamples,
@@ -103,6 +115,63 @@ const driveToProviderTreeThrottle = Effect.fnUntraced(function* (
 });
 
 describe("SubagentResourceGovernor", () => {
+  it.effect("wires settings changes into reversible live admission policy", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const governor = yield* SubagentResourceGovernor;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        expect(yield* governor.awaitAdmission(request("thread-live-disabled"))).toBe(true);
+
+        const enabledChanges = yield* governor.subscribe;
+        const enabledSnapshot = yield* Stream.runHead(enabledChanges.changes).pipe(
+          Effect.forkScoped,
+        );
+        yield* settings.updateSettings({
+          betterT3Environment: { flags: { "resource.adaptiveAdmission": true } },
+        });
+        expect(Option.isSome(yield* Fiber.join(enabledSnapshot))).toBe(true);
+
+        const waiting = yield* governor
+          .awaitAdmission(request("thread-live-enabled"))
+          .pipe(Effect.forkScoped);
+        expect(waiting.pollUnsafe()).toBeUndefined();
+
+        const disabledChanges = yield* governor.subscribe;
+        const disabledSnapshot = yield* Stream.runHead(disabledChanges.changes).pipe(
+          Effect.forkScoped,
+        );
+        yield* settings.updateSettings({
+          betterT3Environment: { flags: { "resource.adaptiveAdmission": false } },
+        });
+        expect(Option.isSome(yield* Fiber.join(disabledSnapshot))).toBe(true);
+        expect(yield* Fiber.join(waiting)).toBe(true);
+      }).pipe(
+        Effect.provide(
+          layerLive.pipe(
+            Layer.provideMerge(
+              Layer.mergeAll(
+                Layer.succeed(HostProcessPlatform, "linux"),
+                NativeTelemetryClient.layerTest({
+                  health: Effect.succeed({
+                    status: "healthy",
+                    hello: Option.none(),
+                    lastSampleAt: Option.none(),
+                    lastError: Option.none(),
+                    restartCount: 0,
+                    sampleIntervalMs: 1_000,
+                  }),
+                }),
+                ServerSettings.layerTest({
+                  betterT3Environment: makeBetterT3SettingsV1("clean-install"),
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
   it("clamps the core reserve to 20 percent with 2-6 GiB bounds", () => {
     expect(coreReserveBytes(4 * GIBIBYTE)).toBe(2 * GIBIBYTE);
     expect(coreReserveBytes(16 * GIBIBYTE)).toBeCloseTo(3.2 * GIBIBYTE, 0);
@@ -246,6 +315,35 @@ describe("SubagentResourceGovernor", () => {
       yield* Fiber.join(next);
       expect((yield* governor.latest).waitingStarts).toBe(0);
     }),
+  );
+
+  it.effect(
+    "drains process waits and bypasses future starts only while adaptive admission is disabled",
+    () =>
+      Effect.gen(function* () {
+        const governor = yield* makeSubagentResourceGovernor();
+        yield* governor.observe(sample({ availableGiB: 3, sampledAtMs: 0 }));
+        const waiting = yield* governor
+          .awaitAdmission(request("thread-policy-waiting"))
+          .pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        expect(waiting.pollUnsafe()).toBeUndefined();
+
+        yield* governor.setPolicy({ adaptiveAdmission: false, processSuspension: true });
+
+        expect(yield* Fiber.join(waiting)).toBe(true);
+        expect((yield* governor.latest).waitingStarts).toBe(0);
+        expect((yield* governor.latest).reservedMemoryBytes).toBe(0);
+        expect(yield* governor.awaitAdmission(request("thread-policy-bypass"))).toBe(true);
+
+        yield* governor.setPolicy({ adaptiveAdmission: true, processSuspension: true });
+        const gatedAgain = yield* governor
+          .awaitAdmission(request("thread-policy-gated-again"))
+          .pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        expect(gatedAgain.pollUnsafe()).toBeUndefined();
+        yield* Fiber.interrupt(gatedAgain);
+      }),
   );
 
   it.effect("invalidates stale memory after telemetry loss and resumes from a fresh sample", () =>
@@ -506,6 +604,162 @@ describe("SubagentResourceGovernor", () => {
       yield* Deferred.succeed(resumeConfirmed, undefined);
       yield* Fiber.join(recoveryObservation);
       expect((yield* governor.latest).state).toBe("normal");
+    }),
+  );
+
+  it.effect(
+    "resumes an owned process-tree lease and prevents new suspension when that policy is disabled",
+    () =>
+      Effect.gen(function* () {
+        const operations: Array<string> = [];
+        let leaseSequence = 0;
+        const governor = yield* makeSubagentResourceGovernor({
+          createProcessTreeLeaseId: () => `lease-policy-${++leaseSequence}`,
+          processTreeController: {
+            suspend: (lease) => Effect.sync(() => operations.push(`suspend:${lease.leaseId}`)),
+            resume: (lease) => Effect.sync(() => operations.push(`resume:${lease.leaseId}`)),
+          },
+        });
+        const threadId = ThreadId.make("thread-suspension-policy");
+        const rootPid = 908;
+        const startTimeMs = 90_800;
+        yield* driveToProviderTreeThrottle(governor, { threadId, rootPid, startTimeMs });
+
+        yield* governor.setPolicy({ adaptiveAdmission: true, processSuspension: false });
+        expect(operations).toEqual(["suspend:lease-policy-1", "resume:lease-policy-1"]);
+
+        yield* governor.observe(
+          sample({
+            availableGiB: 3,
+            sampledAtMs: 3_000,
+            processes: growingProviderTree(rootPid, startTimeMs, 3.5),
+          }),
+        );
+        yield* governor.observe(
+          sample({
+            availableGiB: 3,
+            sampledAtMs: 4_000,
+            processes: growingProviderTree(rootPid, startTimeMs, 4.5),
+          }),
+        );
+        expect(operations).toEqual(["suspend:lease-policy-1", "resume:lease-policy-1"]);
+
+        const gated = yield* governor
+          .awaitAdmission(request("thread-admission-still-enabled"))
+          .pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        expect(gated.pollUnsafe()).toBeUndefined();
+
+        yield* governor.setPolicy({ adaptiveAdmission: true, processSuspension: true });
+        yield* governor.observe(
+          sample({
+            availableGiB: 3,
+            sampledAtMs: 5_000,
+            processes: growingProviderTree(rootPid, startTimeMs, 5.5),
+          }),
+        );
+        expect(operations).toEqual([
+          "suspend:lease-policy-1",
+          "resume:lease-policy-1",
+          "suspend:lease-policy-2",
+        ]);
+        yield* Fiber.interrupt(gated);
+        yield* governor.shutdown;
+      }),
+  );
+
+  it.effect(
+    "keeps retrying the same lease when disabling process suspension cannot resume it",
+    () =>
+      Effect.gen(function* () {
+        const resumed: Array<string> = [];
+        let resumeAttempts = 0;
+        const governor = yield* makeSubagentResourceGovernor({
+          createProcessTreeLeaseId: () => "lease-policy-resume-retry",
+          processTreeController: {
+            suspend: () => Effect.void,
+            resume: (lease) => {
+              resumed.push(lease.leaseId);
+              resumeAttempts += 1;
+              return resumeAttempts === 1
+                ? Effect.fail(
+                    new ProviderProcessTreeControlError({
+                      operation: "resume",
+                      leaseId: lease.leaseId,
+                      resumeRequired: true,
+                      cause: new Error("resume receipt unavailable"),
+                    }),
+                  )
+                : Effect.void;
+            },
+          },
+        });
+        const rootPid = 909;
+        const startTimeMs = 90_900;
+        yield* driveToProviderTreeThrottle(governor, {
+          threadId: ThreadId.make("thread-policy-resume-retry"),
+          rootPid,
+          startTimeMs,
+        });
+
+        yield* governor.setPolicy({ adaptiveAdmission: true, processSuspension: false });
+        expect(resumed).toEqual(["lease-policy-resume-retry"]);
+
+        yield* governor.observe(
+          sample({
+            availableGiB: 12,
+            sampledAtMs: 3_000,
+            processes: growingProviderTree(rootPid, startTimeMs, 2.5),
+          }),
+        );
+        expect(resumed).toEqual(["lease-policy-resume-retry", "lease-policy-resume-retry"]);
+        expect((yield* governor.latest).state).toBe("normal");
+      }),
+  );
+
+  it.effect("retries a required resume under critical pressure after suspension is disabled", () =>
+    Effect.gen(function* () {
+      const resumed: Array<string> = [];
+      let resumeAttempts = 0;
+      const governor = yield* makeSubagentResourceGovernor({
+        createProcessTreeLeaseId: () => "lease-policy-critical-resume",
+        processTreeController: {
+          suspend: () => Effect.void,
+          resume: (lease) => {
+            resumed.push(lease.leaseId);
+            resumeAttempts += 1;
+            return resumeAttempts === 1
+              ? Effect.fail(
+                  new ProviderProcessTreeControlError({
+                    operation: "resume",
+                    leaseId: lease.leaseId,
+                    resumeRequired: true,
+                    cause: new Error("first resume receipt unavailable"),
+                  }),
+                )
+              : Effect.void;
+          },
+        },
+      });
+      const rootPid = 910;
+      const startTimeMs = 91_000;
+      yield* driveToProviderTreeThrottle(governor, {
+        threadId: ThreadId.make("thread-policy-critical-resume"),
+        rootPid,
+        startTimeMs,
+      });
+
+      yield* governor.setPolicy({ adaptiveAdmission: true, processSuspension: false });
+      yield* governor.observe(
+        sample({
+          availableGiB: 3,
+          sampledAtMs: 3_000,
+          processes: growingProviderTree(rootPid, startTimeMs, 3.5),
+        }),
+      );
+
+      expect(resumed).toEqual(["lease-policy-critical-resume", "lease-policy-critical-resume"]);
+      expect((yield* governor.latest).state).not.toBe("throttled");
     }),
   );
 
@@ -1096,6 +1350,58 @@ describe("SubagentResourceGovernor", () => {
       expect(yield* Fiber.join(waiter)).toBe(false);
       expect((yield* governor.latest).state).toBe("unavailable");
     }),
+  );
+
+  it.effect(
+    "bounds the wait queue, rejects overflow, and recovers capacity through cancellation and shutdown",
+    () =>
+      Effect.gen(function* () {
+        const governor = yield* makeSubagentResourceGovernor();
+        const waiters = [];
+
+        for (let index = 0; index < RESOURCE_GOVERNOR_MAX_WAITING_ADMISSIONS; index += 1) {
+          const waiter = yield* governor
+            .awaitAdmission(request(`thread-capacity-${index}`))
+            .pipe(Effect.forkChild);
+          waiters.push(waiter);
+          yield* Effect.yieldNow;
+        }
+
+        expect((yield* governor.latest).waitingStarts).toBe(
+          RESOURCE_GOVERNOR_MAX_WAITING_ADMISSIONS,
+        );
+        expect(yield* governor.awaitAdmission(request("thread-capacity-overflow"))).toBe(false);
+        expect((yield* governor.latest).waitingStarts).toBe(
+          RESOURCE_GOVERNOR_MAX_WAITING_ADMISSIONS,
+        );
+
+        const [cancelled, ...remaining] = waiters;
+        yield* Fiber.interrupt(cancelled!);
+        expect((yield* governor.latest).waitingStarts).toBe(
+          RESOURCE_GOVERNOR_MAX_WAITING_ADMISSIONS - 1,
+        );
+
+        const replacement = yield* governor
+          .awaitAdmission(request("thread-capacity-replacement"))
+          .pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        expect((yield* governor.latest).waitingStarts).toBe(
+          RESOURCE_GOVERNOR_MAX_WAITING_ADMISSIONS,
+        );
+
+        yield* governor.shutdown;
+        expect(yield* Effect.forEach(remaining, Fiber.join)).toEqual(
+          Array.from({ length: remaining.length }, () => false),
+        );
+        expect(yield* Fiber.join(replacement)).toBe(false);
+        expect(yield* governor.latest).toMatchObject({
+          state: "unavailable",
+          waitingStarts: 0,
+          affectedThreadIds: [],
+          affectedThreadIdsTruncated: false,
+        });
+      }),
+    30_000,
   );
 
   it.effect("refuses to signal a PID whose observed start time no longer matches", () =>

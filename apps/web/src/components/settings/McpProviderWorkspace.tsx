@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import { cn } from "../../lib/utils";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Badge } from "../ui/badge";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -84,11 +85,14 @@ const PROVIDER_STATUS_DOT: Readonly<Record<McpProviderTab["statusTone"], string>
   neutral: "bg-muted-foreground/45",
 };
 
-function runtimeCountLabel(server: McpRuntimeServerView): string | null {
+function runtimeCountLabel(
+  server: McpRuntimeServerView,
+  translate: ReturnType<typeof useInterfaceTranslator>["message"],
+): string | null {
   if (server.toolCount !== undefined) {
-    return `${server.toolCount} tool${server.toolCount === 1 ? "" : "s"}`;
+    return translate("settings.mcp.runtime.toolCount", { count: server.toolCount });
   }
-  if (server.capabilities.reportsTools) return "Tools available";
+  if (server.capabilities.reportsTools) return translate("settings.mcp.provider.toolsAvailable");
   return null;
 }
 
@@ -101,12 +105,23 @@ function availableRuntimeActions(server: McpRuntimeServerView): ReadonlyArray<Mc
 }
 
 function RuntimeDetails({ server }: { readonly server: McpRuntimeServerView }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <div className="grid gap-3 border-t border-border/50 px-4 py-3 sm:px-5">
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-        {server.version ? <span>Version {server.version}</span> : null}
-        {server.resourceCount !== undefined ? <span>{server.resourceCount} resources</span> : null}
-        {server.templateCount !== undefined ? <span>{server.templateCount} templates</span> : null}
+        {server.version ? (
+          <span>{translate("settings.mcp.runtime.version", { version: server.version })}</span>
+        ) : null}
+        {server.resourceCount !== undefined ? (
+          <span>
+            {translate("settings.mcp.runtime.resourceCount", { count: server.resourceCount })}
+          </span>
+        ) : null}
+        {server.templateCount !== undefined ? (
+          <span>
+            {translate("settings.mcp.runtime.templateCount", { count: server.templateCount })}
+          </span>
+        ) : null}
       </div>
       {server.error ? (
         <p className="rounded-md bg-destructive/8 px-3 py-2 text-destructive text-xs">
@@ -114,7 +129,9 @@ function RuntimeDetails({ server }: { readonly server: McpRuntimeServerView }) {
         </p>
       ) : null}
       {server.detailsLoading ? (
-        <p className="text-muted-foreground text-xs">Loading MCP inventory...</p>
+        <p className="text-muted-foreground text-xs">
+          {translate("settings.mcp.runtime.loadingInventory")}
+        </p>
       ) : server.tools && server.tools.length > 0 ? (
         <div className="grid gap-2">
           {server.tools.map((tool) => (
@@ -127,17 +144,17 @@ function RuntimeDetails({ server }: { readonly server: McpRuntimeServerView }) {
                 <span className="font-mono text-xs font-medium">{tool.title ?? tool.name}</span>
                 {tool.readOnly ? (
                   <Badge size="sm" variant="success">
-                    Read only
+                    {translate("settings.mcp.runtime.annotation.readOnly")}
                   </Badge>
                 ) : null}
                 {tool.destructive ? (
                   <Badge size="sm" variant="warning">
-                    Destructive
+                    {translate("settings.mcp.runtime.annotation.destructive")}
                   </Badge>
                 ) : null}
                 {tool.openWorld ? (
                   <Badge size="sm" variant="outline">
-                    External access
+                    {translate("settings.mcp.provider.externalAccess")}
                   </Badge>
                 ) : null}
               </div>
@@ -148,7 +165,7 @@ function RuntimeDetails({ server }: { readonly server: McpRuntimeServerView }) {
           ))}
         </div>
       ) : server.capabilities.reportsTools ? (
-        <p className="text-muted-foreground text-xs">No tools reported by this server.</p>
+        <p className="text-muted-foreground text-xs">{translate("settings.mcp.runtime.noTools")}</p>
       ) : null}
       {server.resources && server.resources.length > 0 ? (
         <RuntimeResourceList resources={server.resources} />
@@ -165,10 +182,11 @@ function RuntimeResourceList({
 }: {
   readonly resources: ReadonlyArray<McpRuntimeResourceView>;
 }) {
+  const translate = useInterfaceTranslator().message;
   return (
-    <section className="grid gap-2" aria-label="MCP resources">
+    <section className="grid gap-2" aria-label={translate("settings.mcp.workspace.resourcesAria")}>
       <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-        Resources
+        {translate("settings.mcp.runtime.resources")}
       </h4>
       {resources.slice(0, 100).map((resource) => (
         <div key={resource.uri} className="min-w-0 rounded-lg border border-border/60 p-3">
@@ -188,7 +206,9 @@ function RuntimeResourceList({
       ))}
       {resources.length > 100 ? (
         <p className="text-muted-foreground text-xs">
-          {resources.length - 100} additional resources are not shown.
+          {translate("settings.mcp.provider.additionalResources", {
+            count: resources.length - 100,
+          })}
         </p>
       ) : null}
     </section>
@@ -200,10 +220,14 @@ function RuntimeResourceTemplateList({
 }: {
   readonly templates: ReadonlyArray<McpRuntimeResourceTemplateView>;
 }) {
+  const translate = useInterfaceTranslator().message;
   return (
-    <section className="grid gap-2" aria-label="MCP resource templates">
+    <section
+      className="grid gap-2"
+      aria-label={translate("settings.mcp.workspace.resourceTemplatesAria")}
+    >
       <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-        Resource templates
+        {translate("settings.mcp.runtime.resourceTemplates")}
       </h4>
       {templates.slice(0, 100).map((template) => (
         <div key={template.uriTemplate} className="min-w-0 rounded-lg border border-border/60 p-3">
@@ -223,7 +247,9 @@ function RuntimeResourceTemplateList({
       ))}
       {templates.length > 100 ? (
         <p className="text-muted-foreground text-xs">
-          {templates.length - 100} additional templates are not shown.
+          {translate("settings.mcp.provider.additionalTemplates", {
+            count: templates.length - 100,
+          })}
         </p>
       ) : null}
     </section>
@@ -239,10 +265,11 @@ function RuntimeServerRow(props: {
   readonly onAction: (action: McpRuntimeAction) => void;
   readonly onLoadDetails: () => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const [open, setOpen] = useState(props.initiallyOpen);
   const [autoLoadAttempted, setAutoLoadAttempted] = useState(false);
   const presentation = runtimeStatePresentation(props.server.state);
-  const countLabel = runtimeCountLabel(props.server);
+  const countLabel = runtimeCountLabel(props.server, translate);
   const hasDetails =
     props.server.capabilities.reportsTools ||
     Boolean(props.server.error || props.server.version) ||
@@ -293,7 +320,7 @@ function RuntimeServerRow(props: {
             )}
             <span className="truncate text-sm font-medium">{props.server.name}</span>
             <Badge size="sm" variant={TONE_BADGE[presentation.tone]}>
-              {presentation.label}
+              {translate(`settings.mcp.runtime.state.${props.server.state}`)}
             </Badge>
             {countLabel ? (
               <Badge size="sm" variant="secondary">
@@ -308,8 +335,8 @@ function RuntimeServerRow(props: {
             {props.server.drift ? (
               <Badge size="sm" variant="warning">
                 {props.server.drift === "pending-enable"
-                  ? "Enable next session"
-                  : "Disable next session"}
+                  ? translate("settings.mcp.provider.enableNext")
+                  : translate("settings.mcp.provider.disableNext")}
               </Badge>
             ) : null}
           </div>
@@ -332,7 +359,12 @@ function RuntimeServerRow(props: {
           {hasDetails ? (
             <CollapsibleTrigger
               className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-              aria-label={`${open ? "Hide" : "Show"} ${props.server.name} details`}
+              aria-label={translate("settings.mcp.provider.detailsAria", {
+                action: translate(
+                  open ? "settings.mcp.provider.hide" : "settings.mcp.provider.show",
+                ),
+                server: props.server.name,
+              })}
             >
               <ChevronDownIcon
                 className={cn("size-4 transition-transform", open && "rotate-180")}
@@ -360,15 +392,16 @@ function ProviderTabs(props: {
   };
   readonly onSelectProvider: (providerId: string) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   if (props.providers.length === 0) {
     return (
       <div className="p-5 text-muted-foreground text-sm">
-        No provider accounts are configured. Add one in{" "}
+        {translate("settings.mcp.provider.noneConfiguredPrefix")}{" "}
         <a
           className="font-medium text-foreground underline underline-offset-4"
           href="/settings/providers"
         >
-          Provider settings
+          {translate("settings.mcp.provider.settings")}
         </a>
         .
       </div>
@@ -379,7 +412,7 @@ function ProviderTabs(props: {
     <div
       className="overflow-x-auto border-b border-border/60 p-2"
       role="tablist"
-      aria-label="MCP provider accounts"
+      aria-label={translate("settings.mcp.provider.accounts")}
     >
       <div className="flex min-w-max gap-1">
         {props.providers.map((provider) => {
@@ -420,7 +453,9 @@ function ProviderTabs(props: {
                         "size-1.5 shrink-0 rounded-full",
                         PROVIDER_STATUS_DOT[provider.statusTone],
                       )}
-                      aria-label={`Provider status: ${provider.statusLabel}`}
+                      aria-label={translate("settings.mcp.provider.statusAria", {
+                        status: provider.statusLabel,
+                      })}
                     />
                     {selected && props.selectedRuntimeSummary ? (
                       <span className="inline-flex items-center gap-1 text-[10px] tabular-nums text-muted-foreground">
@@ -447,9 +482,9 @@ function ProviderTabs(props: {
                   {provider.account ? (
                     <RedactedSensitiveText
                       value={provider.account}
-                      ariaLabel="Toggle provider account visibility"
-                      revealTooltip="Click to reveal account"
-                      hideTooltip="Click to hide account"
+                      ariaLabel={translate("settings.mcp.provider.toggleAccount")}
+                      revealTooltip={translate("settings.mcp.provider.revealAccount")}
+                      hideTooltip={translate("settings.mcp.provider.hideAccount")}
                     />
                   ) : null}
                 </div>
@@ -478,6 +513,7 @@ function ConfiguredServerRow(props: {
   readonly onRuntimeAction: (action: McpRuntimeAction) => void;
   readonly onLoadDetails: () => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const runtimePresentation = props.runtime ? runtimeStatePresentation(props.runtime.state) : null;
   const [open, setOpen] = useState(props.focused);
   const [autoLoadAttempted, setAutoLoadAttempted] = useState(false);
@@ -539,29 +575,35 @@ function ConfiguredServerRow(props: {
             </Badge>
             {runtimePresentation && props.server.enabledForProvider ? (
               <Badge size="sm" variant={TONE_BADGE[runtimePresentation.tone]}>
-                {runtimePresentation.label}
+                {translate(`settings.mcp.runtime.state.${props.runtime!.state}`)}
               </Badge>
             ) : (
               <Badge size="sm" variant={props.server.enabledForProvider ? "secondary" : "outline"}>
-                {props.server.enabledForProvider ? "Configured" : "Off for this provider"}
+                {props.server.enabledForProvider
+                  ? translate("settings.mcp.provider.configured")
+                  : translate("settings.mcp.provider.off")}
               </Badge>
             )}
             {props.runtime?.toolCount !== undefined ? (
               <Badge size="sm" variant="secondary">
-                {props.runtime.toolCount} tool{props.runtime.toolCount === 1 ? "" : "s"}
+                {translate("settings.mcp.runtime.toolCount", {
+                  count: props.runtime.toolCount,
+                })}
               </Badge>
             ) : null}
             {props.server.secretCount > 0 ? (
               <Badge size="sm" variant="secondary">
-                {props.server.secretCount} value{props.server.secretCount === 1 ? "" : "s"}
+                {translate("settings.mcp.provider.valueCount", {
+                  count: props.server.secretCount,
+                })}
               </Badge>
             ) : null}
           </div>
           <p className="truncate text-muted-foreground text-xs">{props.server.summary}</p>
           <p className="text-[11px] text-muted-foreground/70">
-            {props.server.scopeLabel} · T3 managed
+            {props.server.scopeLabel} · {translate("settings.mcp.provider.t3Managed")}
             {!props.hasLiveContext && props.server.enabledForProvider
-              ? " · Configured for new sessions"
+              ? ` · ${translate("settings.mcp.provider.configuredNewSessions")}`
               : ""}
           </p>
           {props.runtime?.authLabel ? (
@@ -590,7 +632,12 @@ function ConfiguredServerRow(props: {
           {hasDetails ? (
             <CollapsibleTrigger
               className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-              aria-label={`${open ? "Hide" : "Show"} ${props.server.name} details`}
+              aria-label={translate("settings.mcp.provider.detailsAria", {
+                action: translate(
+                  open ? "settings.mcp.provider.hide" : "settings.mcp.provider.show",
+                ),
+                server: props.server.name,
+              })}
             >
               <ChevronDownIcon
                 className={cn("size-4 transition-transform", open && "rotate-180")}
@@ -609,6 +656,7 @@ function ConfiguredServerRow(props: {
 }
 
 export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
+  const translate = useInterfaceTranslator().message;
   const selectedProvider = props.providers.find(
     (provider) => provider.instanceId === props.selectedProviderId,
   );
@@ -678,10 +726,11 @@ export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
           {props.showRuntimeSelector !== false ? (
             <div className="grid gap-3 border-b border-border/60 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:p-5">
               <div className="min-w-0 space-y-1">
-                <p className="text-sm font-medium">Runtime session</p>
+                <p className="text-sm font-medium">
+                  {translate("settings.mcp.workspace.runtimeSession")}
+                </p>
                 <p className="text-muted-foreground text-xs">
-                  Connection health is reported by this provider session, not by an independent
-                  probe.
+                  {translate("settings.mcp.provider.runtimeDescription")}
                 </p>
               </div>
               <Select
@@ -691,16 +740,22 @@ export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
                   if (value) props.onSelectContext(value);
                 }}
               >
-                <SelectTrigger className="min-w-56" aria-label="Runtime session">
+                <SelectTrigger
+                  className="min-w-56"
+                  aria-label={translate("settings.mcp.workspace.runtimeSession")}
+                >
                   <SelectValue>
-                    {selectedContext?.label ?? "Configured for new sessions"}
+                    {selectedContext?.label ??
+                      translate("settings.mcp.provider.configuredNewSessions")}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
                   {props.contexts.map((context) => (
                     <SelectItem key={context.id} value={context.id}>
                       {context.label}
-                      {context.live ? " · Live" : " · Last known"}
+                      {context.live
+                        ? ` · ${translate("settings.mcp.provider.live")}`
+                        : ` · ${translate("settings.mcp.provider.lastKnown")}`}
                     </SelectItem>
                   ))}
                 </SelectPopup>
@@ -710,13 +765,13 @@ export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
 
           {!props.runtimeSupported ? (
             <div className="border-b border-border/60 bg-muted/30 px-4 py-3 text-muted-foreground text-xs sm:px-5">
-              This server version does not report MCP runtime status. Configuration remains
-              available, but live health and actions are disabled.
+              {translate("settings.mcp.provider.runtimeUnsupported")}
             </div>
           ) : !selectedProvider.supportsUserMcp ? (
             <div className="border-b border-border/60 bg-muted/30 px-4 py-3 text-muted-foreground text-xs sm:px-5">
-              {selectedProvider.displayName} does not support user-configured MCP servers. Its T3
-              system server is shown separately when a runtime reports it.
+              {translate("settings.mcp.provider.userMcpUnsupported", {
+                provider: selectedProvider.displayName,
+              })}
             </div>
           ) : props.runtimeError ? (
             <div className="border-b border-border/60 bg-destructive/6 px-4 py-3 text-destructive text-xs sm:px-5">
@@ -724,29 +779,29 @@ export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
             </div>
           ) : props.isLoadingRuntime ? (
             <div className="border-b border-border/60 px-5 py-3 text-muted-foreground text-xs">
-              Loading session MCP status...
+              {translate("settings.mcp.provider.loadingStatus")}
             </div>
           ) : null}
 
           {props.readOnly ? (
             <div className="border-b border-border/60 bg-muted/30 px-4 py-3 text-muted-foreground text-xs sm:px-5">
-              You have read-only access. Runtime status and configuration remain visible, but MCP
-              changes and runtime actions are disabled.
+              {translate("settings.mcp.provider.readOnly")}
             </div>
           ) : null}
 
           <div>
             <div className="border-b border-border/60 px-4 py-2.5 sm:px-5">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                T3-managed servers
+                {translate("settings.mcp.runtime.source.t3Managed")}
               </h3>
               <p className="mt-1 text-[11px] text-muted-foreground/80">
-                The switch is specific to this provider account. Edit, duplicate, and delete change
-                the shared server definition.
+                {translate("settings.mcp.provider.managedDescription")}
               </p>
             </div>
             {props.configuredServers.length === 0 && unmatchedManagedServers.length === 0 ? (
-              <div className="p-5 text-muted-foreground text-sm">No MCP servers in this scope.</div>
+              <div className="p-5 text-muted-foreground text-sm">
+                {translate("settings.mcp.provider.noServers")}
+              </div>
             ) : (
               props.configuredServers.map((server) => {
                 const runtime = managedRuntimeById.get(server.id);
@@ -797,7 +852,7 @@ export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
             <section>
               <div className="border-y border-border/60 bg-muted/20 px-4 py-2.5 sm:px-5">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Provider-managed servers
+                  {translate("settings.mcp.workspace.providerManaged")}
                 </h3>
               </div>
               {nativeServers.map((server) => (
@@ -818,7 +873,7 @@ export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
             <section>
               <div className="border-y border-border/60 bg-muted/20 px-4 py-2.5 sm:px-5">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  T3 Code System Server
+                  {translate("settings.mcp.workspace.systemServer")}
                 </h3>
               </div>
               {systemServers.map((server) => (

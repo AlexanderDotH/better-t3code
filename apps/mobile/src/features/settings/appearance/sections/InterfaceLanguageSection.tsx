@@ -1,10 +1,9 @@
-import type { InterfaceLanguagePreference } from "@t3tools/contracts";
-import { translateInterfaceMessage } from "@t3tools/shared/interfaceLanguage";
+import type { InterfaceLocalePreferenceV1 } from "@t3tools/contracts";
+import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../../../components/AppText";
 import { SymbolView } from "../../../../components/AppSymbol";
-import { useThemeColor } from "../../../../lib/useThemeColor";
 import { SettingsSection } from "../../components/SettingsSection";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 
@@ -24,32 +23,35 @@ const OPTIONS = [
     label: "settings.interfaceLanguage.german",
     description: "settings.interfaceLanguage.germanDescription",
   },
+  {
+    preference: "fr",
+    label: "settings.interfaceLanguage.french",
+    description: "settings.interfaceLanguage.frenchDescription",
+  },
 ] as const satisfies ReadonlyArray<{
-  readonly preference: InterfaceLanguagePreference;
+  readonly preference: InterfaceLocalePreferenceV1;
   readonly label:
     | "settings.interfaceLanguage.system"
     | "settings.interfaceLanguage.english"
-    | "settings.interfaceLanguage.german";
+    | "settings.interfaceLanguage.german"
+    | "settings.interfaceLanguage.french";
   readonly description:
     | "settings.interfaceLanguage.systemDescription"
     | "settings.interfaceLanguage.englishDescription"
-    | "settings.interfaceLanguage.germanDescription";
+    | "settings.interfaceLanguage.germanDescription"
+    | "settings.interfaceLanguage.frenchDescription";
 }>;
 
-function formatEnvironmentLabels(language: "en" | "de", labels: readonly string[]): string {
-  if (labels.length <= 1) return labels[0] ?? "";
-  const conjunction = language === "de" ? " und " : " and ";
-  if (labels.length === 2) return `${labels[0]}${conjunction}${labels[1]}`;
-  return `${labels.slice(0, -1).join(", ")}${conjunction}${labels.at(-1)}`;
-}
-
 export function InterfaceLanguageSection() {
-  const checkmarkColor = useThemeColor("--color-icon");
   const { interfaceLanguage } = useAppearancePreferences();
+  const translator = createInterfaceTranslator({
+    language: interfaceLanguage.language,
+    locale: interfaceLanguage.locale,
+  });
   const t = (
-    key: Parameters<typeof translateInterfaceMessage>[1],
+    key: Parameters<typeof translator.message>[0],
     values?: Readonly<Record<string, string | number>>,
-  ) => translateInterfaceMessage(interfaceLanguage.language, key, values);
+  ) => translator.message(key, values);
   const messages: string[] = [];
 
   if (interfaceLanguage.isSyncing) {
@@ -58,30 +60,21 @@ export function InterfaceLanguageSection() {
   if (interfaceLanguage.failedEnvironmentLabels.length > 0) {
     messages.push(
       t("settings.interfaceLanguage.syncFailed", {
-        environments: formatEnvironmentLabels(
-          interfaceLanguage.language,
-          interfaceLanguage.failedEnvironmentLabels,
-        ),
+        environments: translator.list(interfaceLanguage.failedEnvironmentLabels),
       }),
     );
   }
   if (interfaceLanguage.unsupportedEnvironmentLabels.length > 0) {
     messages.push(
       t("settings.interfaceLanguage.syncUnsupported", {
-        environments: formatEnvironmentLabels(
-          interfaceLanguage.language,
-          interfaceLanguage.unsupportedEnvironmentLabels,
-        ),
+        environments: translator.list(interfaceLanguage.unsupportedEnvironmentLabels),
       }),
     );
   }
   if (interfaceLanguage.deferredEnvironmentLabels.length > 0) {
     messages.push(
       t("settings.interfaceLanguage.syncDeferred", {
-        environments: formatEnvironmentLabels(
-          interfaceLanguage.language,
-          interfaceLanguage.deferredEnvironmentLabels,
-        ),
+        environments: translator.list(interfaceLanguage.deferredEnvironmentLabels),
       }),
     );
   }
@@ -115,7 +108,7 @@ export function InterfaceLanguageSection() {
             <SymbolView
               name="checkmark"
               size={18}
-              tintColor={checkmarkColor}
+              tintColorClassName={"accent-icon"}
               type="monochrome"
               weight="semibold"
             />

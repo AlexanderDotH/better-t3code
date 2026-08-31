@@ -158,10 +158,12 @@ describe("ChatGptAuthBroker", () => {
       }),
   );
 
-  it("forces file-backed credentials and strips ambient OpenAI keys from the broker child", () => {
+  it("isolates credentials and MCP config from the broker child", () => {
     expect(chatGptAuthBrokerArgs()).toEqual([
       "-c",
       'cli_auth_credentials_store="file"',
+      "-c",
+      "mcp_servers={}",
       "app-server",
       "--disable",
       "image_generation",

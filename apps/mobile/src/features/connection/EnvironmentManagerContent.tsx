@@ -6,7 +6,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
-import { useThemeColor } from "../../lib/useThemeColor";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import {
   applyShowcaseLocalEnvironmentDisplayUrls,
@@ -17,6 +16,7 @@ import {
 import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
 import { ConnectionEnvironmentRow } from "./ConnectionEnvironmentRow";
 import { environmentPairingPrefill, splitEnvironmentSections } from "./environmentSections";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 
@@ -24,6 +24,7 @@ export function EnvironmentManagerContent(props: {
   readonly onPairAgain: (environmentId: EnvironmentId) => void;
   readonly onSignIn: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const {
     connectedEnvironments,
     onChangeConnectionPairingUrl,
@@ -32,7 +33,6 @@ export function EnvironmentManagerContent(props: {
     onUpdateEnvironment,
   } = useRemoteConnections();
   const insets = useSafeAreaInsets();
-  const accentColor = useThemeColor("--color-icon-muted");
   const [expandedId, setExpandedId] = useState<EnvironmentId | null>(null);
   const { sections, localEnvironments, savedEnvironments } = useMemo(() => {
     const nextSections = splitEnvironmentSections({
@@ -105,7 +105,7 @@ export function EnvironmentManagerContent(props: {
       {savedEnvironments.length > 0 ? (
         <View collapsable={false} className="gap-3">
           <Text className="px-1 text-sm font-t3-bold uppercase text-foreground-muted">
-            Saved on this device
+            {translator.message("mobile.connection.savedOnDevice")}
           </Text>
           <View collapsable={false} className="overflow-hidden rounded-[24px] bg-card">
             {savedEnvironments.map((environment, index) => (
@@ -134,13 +134,14 @@ export function EnvironmentManagerContent(props: {
             <SymbolView
               name="point.3.connected.trianglepath.dotted"
               size={20}
-              tintColor={accentColor}
+              tintColorClassName={"accent-icon-muted"}
               type="monochrome"
             />
           </View>
           <Text className="text-center text-sm leading-normal text-foreground-muted">
-            No environments saved yet.{"\n"}Tap{" "}
-            <Text className="font-t3-bold text-foreground">+</Text> to add one.
+            {translator.message("mobile.connection.noneSaved")}
+            {"\n"}
+            {translator.message("mobile.connection.tapToAdd", { action: "+" })}
           </Text>
         </View>
       )}

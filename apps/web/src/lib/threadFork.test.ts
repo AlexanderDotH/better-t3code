@@ -41,7 +41,7 @@ describe("thread fork presentation", () => {
     });
   });
 
-  it("keeps the ordinary composer budget while the adaptive handoff is pending", () => {
+  it("keeps the ordinary composer budget while the complete handoff is pending", () => {
     expect(
       resolveFirstTurnForkBudget({
         status: "pending",

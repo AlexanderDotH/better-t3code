@@ -1,9 +1,12 @@
 import type {
+  EnvironmentId,
   ModelSelection,
+  ProviderDriverKind,
   ProviderOptionDescriptor,
   ProviderOptionSelection,
   RuntimeMode,
 } from "@t3tools/contracts";
+import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 import type { LegendListRenderItemProps } from "@legendapp/list/react-native";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import { HeaderHeightContext } from "@react-navigation/elements";
@@ -11,6 +14,7 @@ import {
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
+  isAutoReasoningEnabled,
 } from "@t3tools/shared/model";
 import {
   DEFAULT_OPENROUTER_MODEL_FILTERS,
@@ -32,7 +36,15 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ActivityIndicator, Platform, Pressable, ScrollView, TextInput, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  Platform,
+  Pressable,
+  ScrollView,
+  TextInput,
+  View,
+} from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
@@ -45,29 +57,43 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
-import { applyProviderOptionSelection } from "../../lib/providerOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
-import { useThemeColor } from "../../lib/useThemeColor";
 import { useEnvironmentServerConfig } from "../../state/entities";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { resolveMobileAgentWorkflowSettings } from "../../state/agent-workflow-settings";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import {
   NativeHeaderToolbar,
   NativeStackScreenOptions,
   nativeHeaderScrollEdgeEffects,
 } from "../../native/StackHeader";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
+import { serverEnvironment } from "../../state/server";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useNewTaskFlow } from "./new-task-flow-provider";
+import {
+  createProviderCatalogRefreshRunner,
+  providerCatalogRefreshError,
+} from "./provider-catalog-refresh";
 import {
   createNativeMailSearchToolbarItem,
   NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET,
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../layout/native-mail-search-toolbar";
-import { RUNTIME_MODE_CHOICES, selectableChoices } from "./thread-settings-options";
 import {
+  applyThreadOptionChoice,
+  RUNTIME_MODE_CHOICES,
+  threadReasoningChoices,
+} from "./thread-settings-options";
+import { threadReasoningValueLabel, type AutoReasoningStatus } from "./thread-settings-summary";
+import {
+  MOBILE_MODEL_FILTER_MIN_TOUCH_TARGET,
   filterOpenRouterProviderCatalog,
+  modelFavoriteActionMessageKey,
   modelMatchesCatalogQuery,
   pendingModelAfterPress,
+  performModelFavoriteToggle,
   providerCatalogUsesDrillIn,
   providerSectionIsCollapsed,
 } from "./thread-settings-sheet-state";
@@ -98,13 +124,13 @@ const THREAD_SETTINGS_HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects
 );
 const OPENROUTER_FILTER_LABELS: ReadonlyArray<{
   readonly id: OpenRouterModelFilter;
-  readonly label: string;
+  readonly messageKey: InterfaceMessageKey;
 }> = [
-  { id: "agent-ready", label: "Agent ready" },
-  { id: "free", label: "Free" },
-  { id: "reasoning", label: "Reasoning" },
-  { id: "vision", label: "Vision" },
-  { id: "128k", label: "128K+" },
+  { id: "agent-ready", messageKey: "mobile.thread.settings.filterAgentReady" },
+  { id: "free", messageKey: "mobile.thread.settings.filterFree" },
+  { id: "reasoning", messageKey: "mobile.thread.settings.filterReasoning" },
+  { id: "vision", messageKey: "mobile.thread.settings.filterVision" },
+  { id: "128k", messageKey: "mobile.thread.settings.filter128k" },
 ];
 
 function ModelRow(props: {
@@ -116,11 +142,10 @@ function ModelRow(props: {
   readonly isFirst: boolean;
   readonly isLast: boolean;
 }) {
-  const checkmarkColor = useThemeColor("--color-icon");
-  const subtleIconColor = useThemeColor("--color-icon-subtle");
+  const translator = useMobileInterfaceTranslator();
   return (
     <Pressable
-      accessibilityLabel={props.option.label}
+      accessibilityLabel={[props.option.label, props.option.subtitle].filter(Boolean).join(", ")}
       accessibilityHint={props.option.unavailableReason ?? undefined}
       accessibilityRole="radio"
       accessibilityState={{ checked: props.selected, disabled: !props.option.isSelectable }}
@@ -132,39 +157,42 @@ function ModelRow(props: {
         !props.option.isSelectable && "opacity-60",
       )}
     >
-      <View className="min-w-0 shrink">
-        <Text className="text-base font-t3-medium text-foreground" numberOfLines={1}>
-          {props.option.label}
-        </Text>
-        {props.option.unavailableReason ? (
-          <Text className="text-2xs text-foreground-muted" numberOfLines={2}>
-            {props.option.unavailableReason}
+      <View className="min-w-0 flex-1">
+        <View className="flex-row items-center gap-2">
+          <Text
+            className="min-w-0 shrink text-base font-t3-medium text-foreground"
+            numberOfLines={1}
+          >
+            {props.option.label}
+          </Text>
+          {props.option.isDefault ? (
+            <View className="rounded-md bg-subtle-strong px-1.5 py-0.5">
+              <Text className="text-3xs font-t3-bold text-foreground-muted">
+                {translator.message("mobile.thread.settings.default")}
+              </Text>
+            </View>
+          ) : null}
+          {props.option.isLegacy ? (
+            <View className="rounded-md bg-subtle px-1.5 py-0.5">
+              <Text className="text-3xs font-t3-bold text-foreground-muted">
+                {translator.message("mobile.thread.settings.legacy")}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+        {props.option.unavailableReason || props.option.subtitle ? (
+          <Text className="text-xs text-foreground-muted" numberOfLines={2}>
+            {props.option.unavailableReason ?? props.option.subtitle}
           </Text>
         ) : null}
       </View>
-      {props.option.isDefault ? (
-        <View className="rounded-md bg-subtle-strong px-1.5 py-0.5">
-          <Text className="text-3xs font-t3-bold text-foreground-muted">Default</Text>
-        </View>
-      ) : null}
-      {props.option.isLegacy ? (
-        <View className="rounded-md bg-subtle px-1.5 py-0.5">
-          <Text className="text-3xs font-t3-bold text-foreground-muted">Legacy</Text>
-        </View>
-      ) : null}
-      <View className="flex-1" />
       <Pressable
-        accessibilityLabel={
-          props.favorite
-            ? `Remove ${props.option.label} from favorites`
-            : `Add ${props.option.label} to favorites`
-        }
+        accessibilityLabel={translator.message(modelFavoriteActionMessageKey(props.favorite), {
+          model: props.option.label,
+        })}
         accessibilityRole="button"
         hitSlop={8}
-        onPress={(event) => {
-          event.stopPropagation();
-          props.onToggleFavorite();
-        }}
+        onPress={(event) => performModelFavoriteToggle(event, props.onToggleFavorite)}
         className="size-8 items-center justify-center rounded-full active:bg-subtle"
       >
         <SymbolView
@@ -173,7 +201,7 @@ function ModelRow(props: {
             android: props.favorite ? "star" : "star_border",
           }}
           size={17}
-          tintColor={props.favorite ? checkmarkColor : subtleIconColor}
+          tintColorClassName={props.favorite ? "accent-icon" : "accent-icon-subtle"}
           type="monochrome"
         />
       </Pressable>
@@ -181,7 +209,7 @@ function ModelRow(props: {
         <SymbolView
           name="checkmark"
           size={16}
-          tintColor={checkmarkColor}
+          tintColorClassName={"accent-icon"}
           type="monochrome"
           weight="semibold"
         />
@@ -199,7 +227,6 @@ function ProviderHeader(props: {
   readonly modelCount: number;
   readonly onPress: () => void;
 }) {
-  const iconSubtle = useThemeColor("--color-icon-subtle");
   const content = (
     <>
       <ProviderIcon provider={props.driver} size={15} />
@@ -217,7 +244,7 @@ function ProviderHeader(props: {
               props.opensCatalog ? "chevron.right" : props.collapsed ? "chevron.down" : "chevron.up"
             }
             size={12}
-            tintColor={iconSubtle}
+            tintColorClassName={"accent-icon-subtle"}
             type="monochrome"
           />
         </>
@@ -253,7 +280,6 @@ function DisclosureRow(props: {
   readonly onPress: () => void;
   readonly isLast?: boolean;
 }) {
-  const iconSubtle = useThemeColor("--color-icon-subtle");
   return (
     <Pressable
       accessibilityRole="button"
@@ -270,7 +296,12 @@ function DisclosureRow(props: {
           {props.value}
         </Text>
       ) : null}
-      <SymbolView name="chevron.right" size={12} tintColor={iconSubtle} type="monochrome" />
+      <SymbolView
+        name="chevron.right"
+        size={12}
+        tintColorClassName={"accent-icon-subtle"}
+        type="monochrome"
+      />
     </Pressable>
   );
 }
@@ -283,7 +314,6 @@ function ChoiceRow(props: {
   readonly onPress: () => void;
   readonly isLast: boolean;
 }) {
-  const checkmarkColor = useThemeColor("--color-icon");
   return (
     <Pressable
       accessibilityLabel={props.description ? `${props.label}. ${props.description}` : props.label}
@@ -305,7 +335,7 @@ function ChoiceRow(props: {
         <SymbolView
           name="checkmark"
           size={16}
-          tintColor={checkmarkColor}
+          tintColorClassName={"accent-icon"}
           type="monochrome"
           weight="semibold"
         />
@@ -342,6 +372,7 @@ type ThreadSettingsSubmenuPage =
   | { readonly kind: "runtime" };
 
 type ThreadSettingsSessionProps = {
+  readonly environmentId: EnvironmentId | null;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly selectedModel: ModelSelection | null;
   readonly onSelectModel: (option: ModelOption) => void;
@@ -354,6 +385,7 @@ type ThreadSettingsSessionProps = {
   readonly onUpdateFetchEnabled?: (enabled: boolean) => void;
   readonly onCopyTranscript?: () => Promise<void>;
   readonly transcriptExportBusy?: boolean;
+  readonly autoReasoningStatus?: AutoReasoningStatus;
 };
 
 export type ExistingThreadSettingsRouteSession = ThreadSettingsSessionProps & {
@@ -398,6 +430,7 @@ export function useExistingThreadSettingsRoutePresentation() {
 }
 
 type ThreadSettingsSessionValue = {
+  readonly environmentId: EnvironmentId | null;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly runtimeMode: RuntimeMode;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
@@ -407,6 +440,9 @@ type ThreadSettingsSessionValue = {
   readonly onCopyTranscript: (() => Promise<void>) | undefined;
   readonly transcriptExportBusy: boolean;
   readonly displayedDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
+  readonly displayedProvider: ProviderDriverKind | null;
+  readonly autoReasoningEnabled: boolean;
+  readonly autoReasoningStatus: AutoReasoningStatus | null;
   readonly providerExpansionOverrides: ReadonlySet<string>;
   readonly hasLegacyModels: boolean;
   readonly pendingModel: ModelOption | null;
@@ -484,6 +520,20 @@ function ThreadSettingsSessionProvider(
         : props.optionDescriptors,
     [pendingModel, props.optionDescriptors],
   );
+  const displayedSelection = pendingModel?.selection ?? props.selectedModel;
+  const displayedModel =
+    pendingModel ??
+    props.providerGroups
+      .flatMap((group) => group.models)
+      .find(
+        (model) =>
+          model.selection.instanceId === displayedSelection?.instanceId &&
+          model.selection.model === displayedSelection.model,
+      ) ??
+    null;
+  const displayedProvider =
+    displayedModel === null ? null : (displayedModel.providerDriver as ProviderDriverKind);
+  const autoReasoningEnabled = isAutoReasoningEnabled(displayedSelection);
 
   const hasLegacyModels = useMemo(
     () => props.providerGroups.some((group) => group.models.some((model) => model.isLegacy)),
@@ -498,20 +548,24 @@ function ThreadSettingsSessionProvider(
 
   const applyOptionChange = useCallback(
     (id: string, value: string | boolean) => {
-      const next = applyProviderOptionSelection(displayedDescriptors, { id, value });
-      if (!next) {
-        return;
-      }
+      if (!displayedSelection) return;
+      const next = applyThreadOptionChoice({
+        selection: displayedSelection,
+        descriptors: displayedDescriptors,
+        id,
+        value,
+      });
+      if (!next) return;
       if (pendingModel) {
         setPendingModel({
           ...pendingModel,
-          selection: { ...pendingModel.selection, options: next },
+          selection: next,
         });
       } else {
-        props.onUpdateOptionSelections(next);
+        props.onUpdateOptionSelections(next.options ?? []);
       }
     },
-    [displayedDescriptors, pendingModel, props.onUpdateOptionSelections],
+    [displayedDescriptors, displayedSelection, pendingModel, props.onUpdateOptionSelections],
   );
 
   const toggleProvider = useCallback((providerKey: string) => {
@@ -571,6 +625,7 @@ function ThreadSettingsSessionProvider(
 
   const value = useMemo<ThreadSettingsSessionValue>(
     () => ({
+      environmentId: props.environmentId,
       providerGroups: props.providerGroups,
       runtimeMode: props.runtimeMode,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
@@ -580,6 +635,9 @@ function ThreadSettingsSessionProvider(
       onCopyTranscript: props.onCopyTranscript,
       transcriptExportBusy: props.transcriptExportBusy === true,
       displayedDescriptors,
+      displayedProvider,
+      autoReasoningEnabled,
+      autoReasoningStatus: props.autoReasoningStatus ?? null,
       providerExpansionOverrides,
       hasLegacyModels,
       pendingModel,
@@ -605,12 +663,15 @@ function ThreadSettingsSessionProvider(
       applyOptionChange,
       commitPendingModel,
       displayedDescriptors,
+      displayedProvider,
+      autoReasoningEnabled,
       providerExpansionOverrides,
       hasLegacyModels,
       isApplied,
       isDisplayed,
       isFavorite,
       openRouterFilters,
+      props.environmentId,
       pendingModel,
       pressModel,
       providerFilter,
@@ -620,6 +681,7 @@ function ThreadSettingsSessionProvider(
       props.onUpdateFetchEnabled,
       props.onCopyTranscript,
       props.transcriptExportBusy,
+      props.autoReasoningStatus,
       props.providerGroups,
       props.runtimeMode,
       searchQuery,
@@ -811,6 +873,7 @@ function ThreadSettingsOptionsItem(props: {
   readonly animationsReady: boolean;
   readonly onOpenSubmenu: (submenu: ThreadSettingsSubmenuPage) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
   const session = useThreadSettingsSession();
   const bottomToolbarInset =
@@ -820,7 +883,9 @@ function ThreadSettingsOptionsItem(props: {
 
   return (
     <View style={{ paddingBottom: insets.bottom + bottomToolbarInset + 12 }}>
-      <Text className="px-5 pb-2 pt-2 text-sm font-t3-medium text-foreground-muted">Options</Text>
+      <Text className="px-5 pb-2 pt-2 text-sm font-t3-medium text-foreground-muted">
+        {translator.message("mobile.thread.settings.options")}
+      </Text>
       <Animated.View
         className="mx-4 overflow-hidden rounded-2xl bg-card"
         layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
@@ -838,7 +903,17 @@ function ThreadSettingsOptionsItem(props: {
               >
                 <DisclosureRow
                   label={descriptor.label}
-                  value={getProviderOptionCurrentLabel(descriptor)}
+                  value={
+                    descriptor.id === "reasoningEffort"
+                      ? threadReasoningValueLabel({
+                          autoReasoningEnabled: session.autoReasoningEnabled,
+                          manualLabel: getProviderOptionCurrentLabel(descriptor) ?? "",
+                          status: session.autoReasoningStatus,
+                          autoLabel: translator.message("chat.traits.auto"),
+                          fallbackLabel: translator.message("chat.traits.fallback"),
+                        })
+                      : getProviderOptionCurrentLabel(descriptor)
+                  }
                   onPress={() => props.onOpenSubmenu({ kind: "descriptor", id: descriptor.id })}
                 />
               </Animated.View>
@@ -862,7 +937,7 @@ function ThreadSettingsOptionsItem(props: {
         <Animated.View layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}>
           <DisclosureRow
             isLast={!session.fetchSupported}
-            label="Runtime"
+            label={translator.message("mobile.thread.settings.runtime")}
             value={
               RUNTIME_MODE_CHOICES.find((choice) => choice.mode === session.runtimeMode)?.label
             }
@@ -873,7 +948,7 @@ function ThreadSettingsOptionsItem(props: {
           <Animated.View layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}>
             <SwitchRow
               isLast
-              label="Fetch repository"
+              label={translator.message("mobile.thread.settings.fetchRepository")}
               value={session.fetchEnabled}
               onValueChange={session.onUpdateFetchEnabled}
             />
@@ -884,7 +959,7 @@ function ThreadSettingsOptionsItem(props: {
       {session.onCopyTranscript ? (
         <>
           <Text className="px-5 pb-2 pt-7 text-sm font-t3-medium text-foreground-muted">
-            Thread
+            {translator.message("mobile.thread.settings.thread")}
           </Text>
           <View className="mx-4 overflow-hidden rounded-2xl bg-card">
             <Pressable
@@ -907,7 +982,11 @@ function ThreadSettingsOptionsItem(props: {
                 />
               )}
               <Text className="text-sm font-t3-medium text-foreground">
-                {session.transcriptExportBusy ? "Copying transcript…" : "Copy complete transcript"}
+                {translator.message(
+                  session.transcriptExportBusy
+                    ? "mobile.thread.settings.copyingTranscript"
+                    : "mobile.thread.settings.copyTranscript",
+                )}
               </Text>
             </Pressable>
           </View>
@@ -917,12 +996,12 @@ function ThreadSettingsOptionsItem(props: {
       {Platform.OS !== "ios" && session.hasLegacyModels ? (
         <>
           <Text className="px-5 pb-2 pt-7 text-sm font-t3-medium text-foreground-muted">
-            Catalog
+            {translator.message("mobile.thread.settings.catalog")}
           </Text>
           <View className="mx-4 overflow-hidden rounded-2xl bg-card">
             <SwitchRow
               isLast
-              label="Legacy models"
+              label={translator.message("mobile.thread.settings.legacyModels")}
               onValueChange={session.setShowLegacy}
               value={session.showLegacy}
             />
@@ -947,6 +1026,7 @@ function CatalogFilterChip(props: {
         props.selected ? "border-foreground/20 bg-subtle-strong" : "border-border bg-card",
       )}
       onPress={props.onPress}
+      style={{ minHeight: MOBILE_MODEL_FILTER_MIN_TOUCH_TARGET }}
     >
       <Text
         className={cn(
@@ -964,29 +1044,30 @@ function OpenRouterCatalogFilterControls(props: {
   readonly favoritesOnly: boolean;
   readonly onToggleFavorites: () => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const session = useThreadSettingsSession();
   return (
     <ScrollView
-      accessibilityLabel="OpenRouter model filters"
+      accessibilityLabel={translator.message("mobile.thread.settings.modelFilters")}
       horizontal
       bounces={false}
       contentContainerClassName="gap-2 px-4 pb-2"
       showsHorizontalScrollIndicator={false}
     >
       <CatalogFilterChip
-        label="Favorites"
+        label={translator.message("mobile.thread.settings.favorites")}
         selected={props.favoritesOnly}
         onPress={props.onToggleFavorites}
       />
       <CatalogFilterChip
-        label="All"
+        label={translator.message("mobile.thread.settings.all")}
         selected={session.openRouterFilters.size === 0}
         onPress={() => session.replaceOpenRouterFilters(new Set())}
       />
       {OPENROUTER_FILTER_LABELS.map((filter) => (
         <CatalogFilterChip
           key={filter.id}
-          label={filter.label}
+          label={translator.message(filter.messageKey)}
           selected={session.openRouterFilters.has(filter.id)}
           onPress={() => session.toggleOpenRouterFilter(filter.id)}
         />
@@ -1000,6 +1081,7 @@ function ThreadSettingsMainContent(props: {
   readonly onOpenSubmenu: (submenu: ThreadSettingsSubmenuPage) => void;
   readonly onOpenProviderCatalog: (provider: ThreadSettingsProviderCatalog) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const session = useThreadSettingsSession();
   const catalogItems = useThreadSettingsCatalogItems(session);
   const [animationsReady, setAnimationsReady] = useState(false);
@@ -1039,7 +1121,9 @@ function ThreadSettingsMainContent(props: {
       } else if (item.kind === "empty") {
         content = (
           <View className="items-center px-8 py-14">
-            <Text className="text-center text-sm text-foreground-muted">No matching models</Text>
+            <Text className="text-center text-sm text-foreground-muted">
+              {translator.message("mobile.thread.settings.noMatchingModels")}
+            </Text>
           </View>
         );
       } else {
@@ -1061,7 +1145,7 @@ function ThreadSettingsMainContent(props: {
         </Animated.View>
       );
     },
-    [animationsReady, props.onOpenProviderCatalog, props.onOpenSubmenu],
+    [animationsReady, props.onOpenProviderCatalog, props.onOpenSubmenu, translator],
   );
 
   return (
@@ -1085,12 +1169,12 @@ function ThreadSettingsMainContent(props: {
           {Platform.OS === "android" ? (
             <View className="px-4 pb-2 pt-3">
               <TextInput
-                accessibilityLabel="Find a model"
+                accessibilityLabel={translator.message("mobile.thread.settings.findModel")}
                 autoCapitalize="none"
                 autoCorrect={false}
                 className="h-11 rounded-xl bg-card px-4 text-base text-foreground"
                 onChangeText={session.setSearchQuery}
-                placeholder="Find a model"
+                placeholder={translator.message("mobile.thread.settings.findModel")}
                 placeholderTextColorClassName="accent-placeholder"
                 value={session.searchQuery}
               />
@@ -1139,17 +1223,23 @@ function ThreadSettingsChoiceContent(props: {
         }
       : activeDescriptor?.type === "select"
         ? {
-            rows: selectableChoices(activeDescriptor).map((choice) => ({
-              id: choice.id,
-              label: choice.label,
-              description: undefined,
-              selected: choice.id === getProviderOptionCurrentValue(activeDescriptor),
-              onPress: () => {
-                void Haptics.selectionAsync();
-                session.applyOptionChange(activeDescriptor.id, choice.id);
-                props.onSelected();
-              },
-            })),
+            rows: threadReasoningChoices(session.displayedProvider, activeDescriptor).map(
+              (choice) => ({
+                id: choice.id,
+                label: choice.label,
+                description: "description" in choice ? choice.description : undefined,
+                selected:
+                  choice.id === "t3AutoReasoning"
+                    ? session.autoReasoningEnabled
+                    : !session.autoReasoningEnabled &&
+                      choice.id === getProviderOptionCurrentValue(activeDescriptor),
+                onPress: () => {
+                  void Haptics.selectionAsync();
+                  session.applyOptionChange(activeDescriptor.id, choice.id);
+                  props.onSelected();
+                },
+              }),
+            ),
           }
         : null;
 
@@ -1212,26 +1302,44 @@ function useThreadSettingsPickerPresentation() {
 }
 
 function ThreadSettingsModelsScreen() {
+  const translator = useMobileInterfaceTranslator();
   const session = useThreadSettingsSession();
   const presentation = useThreadSettingsPickerPresentation();
   const navigation = useNavigation<NativeStackNavigationProp<ThreadSettingsPickerStackParams>>();
   const usesNativeMailSearchToolbar = Platform.OS === "ios" && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED;
   const hasCustomCatalogFilter = session.providerFilter !== null || session.showLegacy;
+  const refreshProvidersCommand = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
+  const refreshProviderCatalog = useMemo(
+    () => createProviderCatalogRefreshRunner(refreshProvidersCommand),
+    [refreshProvidersCommand],
+  );
+  const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
+  const refreshProviders = useCallback(() => {
+    if (!session.environmentId || isRefreshingProviders) return;
+    setIsRefreshingProviders(true);
+    void refreshProviderCatalog(session.environmentId).then((result) => {
+      setIsRefreshingProviders(false);
+      const error = providerCatalogRefreshError(result);
+      if (error) Alert.alert(translator.message("mobile.thread.settings.refreshFailed"), error);
+    });
+  }, [isRefreshingProviders, refreshProviderCatalog, session.environmentId]);
   const commitAndClose = useCallback(() => {
     session.commitPendingModel();
     presentation.onClose();
   }, [presentation, session]);
   const filterMenu = useMemo(
     () => ({
-      title: "Model filters",
+      title: translator.message("mobile.thread.settings.modelFilters"),
       items: [
         {
           type: "submenu" as const,
-          title: "Provider",
+          title: translator.message("mobile.thread.settings.provider"),
           items: [
             {
               type: "action" as const,
-              title: "All providers",
+              title: translator.message("mobile.thread.settings.allProviders"),
               state: session.providerFilter === null ? ("on" as const) : ("off" as const),
               onPress: () => session.setProviderFilter(null),
             },
@@ -1248,7 +1356,7 @@ function ThreadSettingsModelsScreen() {
           ? [
               {
                 type: "action" as const,
-                title: "Show legacy models",
+                title: translator.message("mobile.thread.settings.showLegacyModels"),
                 state: session.showLegacy ? ("on" as const) : ("off" as const),
                 onPress: () => session.setShowLegacy(!session.showLegacy),
               },
@@ -1256,7 +1364,7 @@ function ThreadSettingsModelsScreen() {
           : []),
       ],
     }),
-    [session],
+    [session, translator],
   );
 
   return (
@@ -1265,13 +1373,23 @@ function ThreadSettingsModelsScreen() {
         <AndroidScreenHeader
           actions={[
             {
-              accessibilityLabel: session.pendingModel ? "Save thread settings" : "Done",
+              accessibilityLabel: translator.message("mobile.thread.settings.refreshModels"),
+              disabled: isRefreshingProviders || session.environmentId === null,
+              icon: "arrow.clockwise",
+              onPress: refreshProviders,
+            },
+            {
+              accessibilityLabel: translator.message(
+                session.pendingModel
+                  ? "mobile.thread.settings.saveA11y"
+                  : "mobile.thread.settings.done",
+              ),
               icon: "checkmark",
               onPress: commitAndClose,
             },
           ]}
           onBack={presentation.onClose}
-          title="Thread settings"
+          title={translator.message("mobile.thread.settings.title")}
         />
       ) : null}
       <NativeStackScreenOptions
@@ -1290,7 +1408,7 @@ function ThreadSettingsModelsScreen() {
                     ? "line.3.horizontal.decrease.circle.fill"
                     : "line.3.horizontal.decrease",
                   onSearchTextChange: session.setSearchQuery,
-                  placeholder: "Find a model",
+                  placeholder: translator.message("mobile.thread.settings.findModel"),
                   searchTextChangeId: "thread-settings-model-search-text",
                   showsSearchDismissButton: true,
                 }),
@@ -1305,7 +1423,7 @@ function ThreadSettingsModelsScreen() {
                   obscureBackground: false,
                   onCancelButtonPress: () => session.setSearchQuery(""),
                   onChangeText: (event) => session.setSearchQuery(event.nativeEvent.text),
-                  placeholder: "Find a model",
+                  placeholder: translator.message("mobile.thread.settings.findModel"),
                 }
               : undefined,
         }}
@@ -1320,46 +1438,61 @@ function ThreadSettingsModelsScreen() {
         onOpenSubmenu={(submenu) => {
           const title =
             submenu.kind === "runtime"
-              ? "Runtime"
+              ? translator.message("mobile.thread.settings.runtime")
               : (session.displayedDescriptors.find(
                   (descriptor) => descriptor.type === "select" && descriptor.id === submenu.id,
-                )?.label ?? "Option");
+                )?.label ?? translator.message("mobile.thread.settings.options"));
           navigation.navigate("ThreadSettingsChoice", { ...submenu, title });
         }}
       />
       <NativeHeaderToolbar placement="left">
         <NativeHeaderToolbar.Button
-          accessibilityLabel="Cancel thread settings"
-          label="Cancel"
+          accessibilityLabel={translator.message("mobile.thread.settings.cancelA11y")}
+          label={translator.message("common.cancel")}
           onPress={presentation.onClose}
         />
       </NativeHeaderToolbar>
       <NativeHeaderToolbar placement="right">
         <NativeHeaderToolbar.Button
-          accessibilityLabel={session.pendingModel ? "Save thread settings" : "Done"}
-          label={session.pendingModel ? "Save" : "Done"}
+          accessibilityLabel={translator.message("mobile.thread.settings.refreshModels")}
+          disabled={isRefreshingProviders || session.environmentId === null}
+          icon="arrow.clockwise"
+          onPress={refreshProviders}
+          separateBackground
+        />
+        <NativeHeaderToolbar.Button
+          accessibilityLabel={translator.message(
+            session.pendingModel
+              ? "mobile.thread.settings.saveA11y"
+              : "mobile.thread.settings.done",
+          )}
+          label={translator.message(
+            session.pendingModel ? "mobile.thread.settings.save" : "mobile.thread.settings.done",
+          )}
           onPress={commitAndClose}
         />
       </NativeHeaderToolbar>
       {Platform.OS === "ios" && !usesNativeMailSearchToolbar ? (
         <NativeHeaderToolbar placement="bottom">
           <NativeHeaderToolbar.Menu
-            accessibilityLabel="Filter models"
+            accessibilityLabel={translator.message("mobile.thread.settings.filterModels")}
             icon={
               hasCustomCatalogFilter
                 ? "line.3.horizontal.decrease.circle.fill"
                 : "line.3.horizontal.decrease.circle"
             }
             separateBackground
-            title="Model filters"
+            title={translator.message("mobile.thread.settings.modelFilters")}
           >
-            <NativeHeaderToolbar.Menu title="Provider">
-              <NativeHeaderToolbar.Label>Provider</NativeHeaderToolbar.Label>
+            <NativeHeaderToolbar.Menu title={translator.message("mobile.thread.settings.provider")}>
+              <NativeHeaderToolbar.Label>
+                {translator.message("mobile.thread.settings.provider")}
+              </NativeHeaderToolbar.Label>
               <NativeHeaderToolbar.MenuAction
                 isOn={session.providerFilter === null}
                 onPress={() => session.setProviderFilter(null)}
               >
-                All providers
+                {translator.message("mobile.thread.settings.allProviders")}
               </NativeHeaderToolbar.MenuAction>
               {session.providerGroups.map((group) => (
                 <NativeHeaderToolbar.MenuAction
@@ -1376,7 +1509,7 @@ function ThreadSettingsModelsScreen() {
                 isOn={session.showLegacy}
                 onPress={() => session.setShowLegacy(!session.showLegacy)}
               >
-                Show legacy models
+                {translator.message("mobile.thread.settings.showLegacyModels")}
               </NativeHeaderToolbar.MenuAction>
             ) : null}
           </NativeHeaderToolbar.Menu>
@@ -1417,6 +1550,7 @@ function OpenRouterCatalogModelRow(props: {
 
 /** OpenRouter's full remote catalog stays inside the picker on a focused page. */
 function ThreadSettingsProviderCatalogScreen() {
+  const translator = useMobileInterfaceTranslator();
   const session = useThreadSettingsSession();
   const navigation = useNavigation<NativeStackNavigationProp<ThreadSettingsPickerStackParams>>();
   const route =
@@ -1490,7 +1624,7 @@ function ThreadSettingsProviderCatalogScreen() {
             ? () => [
                 createNativeMailSearchToolbarItem({
                   onSearchTextChange: setQuery,
-                  placeholder: "Search OpenRouter models",
+                  placeholder: translator.message("mobile.thread.settings.searchOpenRouter"),
                   searchTextChangeId: "openrouter-model-search-text",
                   showsSearchDismissButton: true,
                 }),
@@ -1504,7 +1638,7 @@ function ThreadSettingsProviderCatalogScreen() {
                   obscureBackground: false,
                   onCancelButtonPress: () => setQuery(""),
                   onChangeText: (event) => setQuery(event.nativeEvent.text),
-                  placeholder: "Search OpenRouter models",
+                  placeholder: translator.message("mobile.thread.settings.searchOpenRouter"),
                 }
               : undefined,
         }}
@@ -1534,12 +1668,12 @@ function ThreadSettingsProviderCatalogScreen() {
             {Platform.OS === "android" ? (
               <View className="px-4 pb-2 pt-3">
                 <TextInput
-                  accessibilityLabel="Search OpenRouter models"
+                  accessibilityLabel={translator.message("mobile.thread.settings.searchOpenRouter")}
                   autoCapitalize="none"
                   autoCorrect={false}
                   className="h-11 rounded-xl bg-card px-4 text-base text-foreground"
                   onChangeText={setQuery}
-                  placeholder="Search OpenRouter models"
+                  placeholder={translator.message("mobile.thread.settings.searchOpenRouter")}
                   placeholderTextColorClassName="accent-placeholder"
                   value={query}
                 />
@@ -1554,7 +1688,10 @@ function ThreadSettingsProviderCatalogScreen() {
                   {providerGroup?.providerLabel ?? route.params.title}
                 </Text>
                 <Text className="text-xs text-foreground-muted">
-                  {filteredModels.length} of {totalModels} models
+                  {translator.message("mobile.thread.settings.modelCount", {
+                    visible: filteredModels.length,
+                    total: totalModels,
+                  })}
                 </Text>
               </View>
             </View>
@@ -1566,7 +1703,9 @@ function ThreadSettingsProviderCatalogScreen() {
         }
         ListEmptyComponent={
           <View className="items-center px-8 py-14">
-            <Text className="text-center text-sm text-foreground-muted">No matching models</Text>
+            <Text className="text-center text-sm text-foreground-muted">
+              {translator.message("mobile.thread.settings.noMatchingModels")}
+            </Text>
           </View>
         }
       />
@@ -1590,8 +1729,10 @@ function ThreadSettingsChoiceScreen() {
 }
 
 function ThreadSettingsPickerNavigator(props: ThreadSettingsPickerPresentation) {
-  const solidSheetBackground = String(useThemeColor("--color-sheet-solid"));
-  const foreground = String(useThemeColor("--color-foreground"));
+  const translator = useMobileInterfaceTranslator();
+  const theme = useUniwindTheme();
+  const solidSheetBackground = theme["--color-sheet-solid"];
+  const foreground = theme["--color-foreground"];
   const presentation = useMemo(
     () => ({
       onClose: props.onClose,
@@ -1624,7 +1765,10 @@ function ThreadSettingsPickerNavigator(props: ThreadSettingsPickerPresentation) 
         <ThreadSettingsPickerStack.Screen
           name="ThreadSettingsModels"
           component={ThreadSettingsModelsScreen}
-          options={{ headerBackVisible: false, title: "Thread settings" }}
+          options={{
+            headerBackVisible: false,
+            title: translator.message("mobile.thread.settings.title"),
+          }}
         />
         <ThreadSettingsPickerStack.Screen
           name="ThreadSettingsProviderCatalog"
@@ -1712,6 +1856,7 @@ export function NewTaskThreadSettingsRouteScreen() {
 
   return (
     <ThreadSettingsSessionProvider
+      environmentId={flow.selectedEnvironmentId}
       providerGroups={flow.providerGroups}
       selectedModel={flow.selectedModel}
       onSelectModel={(option) => flow.setSelectedModelKey(option.key, option.selection.options)}

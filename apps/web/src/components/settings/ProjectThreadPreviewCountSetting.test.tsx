@@ -2,6 +2,13 @@ import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+vi.mock("../../hooks/useInterfaceTranslator", async () => {
+  const { createInterfaceTranslator } = await import("@t3tools/shared/interfaceLanguage");
+  return {
+    useInterfaceTranslator: () => createInterfaceTranslator({ language: "en", locale: "en-US" }),
+  };
+});
+
 import { ProjectThreadPreviewCountSetting } from "./ProjectThreadPreviewCountSetting";
 
 describe("ProjectThreadPreviewCountSetting", () => {

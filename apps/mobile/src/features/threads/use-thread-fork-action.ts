@@ -25,7 +25,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useBranches } from "../../state/queries";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { forkBoundaryKey, resolveForkWorkspace } from "./thread-fork";
+import { buildMobileThreadForkCommand, forkBoundaryKey, resolveForkWorkspace } from "./thread-fork";
 
 export function useThreadForkAction(input: {
   readonly thread: EnvironmentThreadShell | null;
@@ -85,18 +85,14 @@ export function useThreadForkAction(input: {
       const destinationThreadId = ThreadId.make(uuidv4());
       setPendingBoundaryKey(boundaryKey);
       try {
-        const result = await forkThread({
-          environmentId: input.thread.environmentId,
-          input: {
-            threadId: destinationThreadId,
-            sourceThreadId: input.thread.id,
+        const result = await forkThread(
+          buildMobileThreadForkCommand({
+            thread: input.thread,
+            destinationThreadId,
             boundary,
-            modelSelection: input.thread.modelSelection,
-            runtimeMode: input.thread.runtimeMode,
-            interactionMode: input.thread.interactionMode,
             workspace,
-          },
-        });
+          }),
+        );
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
             const error = squashAtomCommandFailure(result);

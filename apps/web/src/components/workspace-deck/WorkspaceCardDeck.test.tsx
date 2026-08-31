@@ -1,5 +1,19 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { pseudoLocalizeInterfaceMessage } from "@t3tools/shared/interfaceLanguage";
+
+const translatorFixture = vi.hoisted(() => ({ language: "en" as "en" | "de" }));
+
+vi.mock("~/hooks/useInterfaceTranslator", async () => {
+  const { createInterfaceTranslator } = await import("@t3tools/shared/interfaceLanguage");
+  return {
+    useInterfaceTranslator: () =>
+      createInterfaceTranslator({
+        language: translatorFixture.language,
+        locale: translatorFixture.language === "de" ? "de-DE" : "en-US",
+      }),
+  };
+});
 
 import { WorkspaceCardDeck, type WorkspaceDeckCardDefinition } from "./WorkspaceCardDeck";
 import { WorkspaceCardPeek } from "./WorkspaceCardPeek";
@@ -32,7 +46,7 @@ function createCard(id: TestCardId): WorkspaceDeckCardDefinition<TestCardId> {
 const cards = [createCard("chat"), createCard("git"), createCard("example")] as const;
 
 describe("WorkspaceCardDeck", () => {
-  it("keeps every registered body mounted while exposing only the active card", () => {
+  it("mounts only the active heavy body while retaining lightweight adjacent peeks", () => {
     const html = renderToStaticMarkup(
       <WorkspaceCardDeck
         activeCard="chat"
@@ -45,20 +59,17 @@ describe("WorkspaceCardDeck", () => {
       />,
     );
 
-    expect(html.match(/data-workspace-card-body=/g)).toHaveLength(3);
-    expect(html.match(/data-workspace-card-morph-host=/g)).toHaveLength(3);
+    expect(html.match(/data-workspace-card-body=/g)).toHaveLength(1);
+    expect(html.match(/data-workspace-card-morph-host=/g)).toHaveLength(1);
     expect(html).toMatch(
       /<section[^>]*data-workspace-card-body="chat"[^>]*data-card-position="active"[^>]*aria-label="chat card"[^>]*>/,
     );
     expect(html).toMatch(
       /data-workspace-card-morph-host="chat"[^>]*aria-hidden="true"[^>]*inert=""/,
     );
-    expect(html).toMatch(
-      /<section[^>]*data-workspace-card-body="git"[^>]*data-card-position="next"[^>]*aria-hidden="true"[^>]*inert=""/,
-    );
-    expect(html).toMatch(
-      /<section[^>]*data-workspace-card-body="example"[^>]*data-card-position="previous"[^>]*aria-hidden="true"[^>]*inert=""/,
-    );
+    expect(html).not.toContain('data-workspace-card-body="git"');
+    expect(html).not.toContain('data-workspace-card-body="example"');
+    expect(html.match(/data-workspace-card-peek=/g)).toHaveLength(2);
   });
 
   it("renders previous and next peeks after the inert body stack", () => {
@@ -102,7 +113,7 @@ describe("WorkspaceCardDeck", () => {
     expect(html).toContain('data-peek-position="previous"');
   });
 
-  it("passes active and expanded state to each mounted body", () => {
+  it("passes active and expanded state only to the mounted body", () => {
     const html = renderToStaticMarkup(
       <WorkspaceCardDeck
         activeCard="git"
@@ -116,9 +127,7 @@ describe("WorkspaceCardDeck", () => {
     );
 
     expect(html).toContain('data-card-body-content="git" data-active="true" data-expanded="true"');
-    expect(html).toContain(
-      'data-card-body-content="chat" data-active="false" data-expanded="false"',
-    );
+    expect(html).not.toContain('data-card-body-content="chat"');
     expect(html).toContain('data-expanded-card="git"');
   });
 
@@ -138,7 +147,7 @@ describe("WorkspaceCardDeck", () => {
     ).toThrow(/duplicate workspace card id/i);
   });
 
-  it("supports an expanded Example card without unmounting its neighbors", () => {
+  it("supports an expanded Example card without mounting its heavy neighbors", () => {
     const html = renderToStaticMarkup(
       <WorkspaceCardDeck
         activeCard="example"
@@ -152,12 +161,16 @@ describe("WorkspaceCardDeck", () => {
     );
 
     expect(html).toContain('data-expanded-card="example"');
-    expect(html.match(/data-workspace-card-body=/g)).toHaveLength(3);
+    expect(html.match(/data-workspace-card-body=/g)).toHaveLength(1);
     expect(html.match(/data-workspace-card-peek=/g)).toHaveLength(2);
   });
 });
 
 describe("WorkspaceCardPeek", () => {
+  afterEach(() => {
+    translatorFixture.language = "en";
+  });
+
   it("provides one keyboard-accessible button across the plain peek surface", () => {
     const html = renderToStaticMarkup(
       <WorkspaceCardPeek
@@ -193,5 +206,28 @@ describe("WorkspaceCardPeek", () => {
 
     expect(html).toContain('aria-disabled="true"');
     expect(html).toContain('data-blocked="true"');
+  });
+
+  it("preserves a long pseudo-localized accessible label inside the bounded peek shell", () => {
+    translatorFixture.language = "de";
+    const pseudoLabel = Array.from({ length: 4 }, () =>
+      pseudoLocalizeInterfaceMessage("betterT3.chat.workspaceCardDeck.label"),
+    ).join(" ");
+    const html = renderToStaticMarkup(
+      <WorkspaceCardPeek
+        cardId="example"
+        label={pseudoLabel}
+        position="next"
+        blocked={false}
+        onActivate={vi.fn()}
+      >
+        <span className="min-w-0 truncate">{pseudoLabel}</span>
+      </WorkspaceCardPeek>,
+    );
+
+    expect(html).toContain(`aria-label="${pseudoLabel} öffnen"`);
+    expect(html).toContain('class="workspace-card-deck__peek-content"');
+    expect(html).toContain('class="min-w-0 truncate"');
+    expect(html.match(/data-workspace-card-peek=/g)).toHaveLength(1);
   });
 });

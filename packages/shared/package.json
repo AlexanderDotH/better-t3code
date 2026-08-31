@@ -238,6 +238,10 @@
     "./modelCatalogFilters": {
       "types": "./src/modelCatalogFilters.ts",
       "import": "./src/modelCatalogFilters.ts"
+    },
+    "./claudeCompaction": {
+      "types": "./src/claudeCompaction.ts",
+      "import": "./src/claudeCompaction.ts"
     }
   },
   "scripts": {

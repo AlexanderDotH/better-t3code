@@ -12,10 +12,24 @@ export interface ReasoningRecommendationCardCopy {
   readonly armed: boolean;
 }
 
+export const REASONING_RECOMMENDATION_CARD_CLASSES = {
+  root: "gap-2.5 rounded-[20px] border border-border bg-card p-4",
+  title: "font-t3-bold text-base text-foreground",
+  description: "font-sans text-sm leading-normal text-foreground-muted",
+  primaryAction: "items-center justify-center rounded-[14px] bg-primary px-3.5 py-2.5",
+  primaryActionLabel: "font-t3-extrabold text-sm text-primary-foreground",
+  secondaryAction: "items-center justify-center rounded-[14px] bg-subtle px-3.5 py-2.5",
+  secondaryActionLabel: "font-t3-bold text-sm text-foreground",
+} as const;
+
 export function buildReasoningRecommendationCardCopy(input: {
   readonly recommendation: ReasoningRecommendation | null;
   readonly pendingOverride: PendingReasoningOverride | null;
+  readonly autoReasoningActive?: boolean;
 }): ReasoningRecommendationCardCopy | null {
+  if (input.autoReasoningActive) {
+    return null;
+  }
   if (input.pendingOverride) {
     return {
       title: `Next turn uses ${input.pendingOverride.targetLabel}`,

@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { ProviderAuthConnectEvent } from "@t3tools/contracts";
 
 import { cn } from "../../lib/utils";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -37,7 +38,9 @@ interface ProviderSubscriptionAuthControlsProps extends ProviderSubscriptionAuth
   readonly readOnly: boolean;
 }
 
-type AuthDialog =
+type TranslateMessage = ReturnType<typeof useInterfaceTranslator>["message"];
+
+export type AuthDialog =
   | { readonly kind: "connect"; readonly state: ProviderAuthDialogState }
   | {
       readonly kind: "credential";
@@ -54,16 +57,17 @@ type AuthDialog =
 function ConnectDialogPanel({
   state,
   providerName,
+  translate,
 }: {
   readonly state: ProviderAuthDialogState;
   readonly providerName: string;
+  readonly translate: TranslateMessage;
 }) {
   if (state.status === "browser") {
     return (
       <div className="grid gap-3" data-provider-auth-state={state.status}>
         <p className="text-sm text-muted-foreground">
-          Complete {providerName} sign-in in your browser. T3 never sends the resulting credential
-          back to this client.
+          {translate("settings.providers.auth.browserDescription", { provider: providerName })}
         </p>
         <a
           href={state.authorizationUrl}
@@ -71,7 +75,8 @@ function ConnectDialogPanel({
           rel="noreferrer"
           className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground underline underline-offset-4"
         >
-          Continue in browser <ExternalLinkIcon className="size-3.5" aria-hidden />
+          {translate("settings.providers.auth.continueBrowser")}
+          <ExternalLinkIcon className="size-3.5" aria-hidden />
         </a>
       </div>
     );
@@ -80,7 +85,7 @@ function ConnectDialogPanel({
     return (
       <div className="grid gap-3" data-provider-auth-state={state.status}>
         <p className="text-sm text-muted-foreground">
-          Open the verification page on any device, then enter this one-time code.
+          {translate("settings.providers.auth.deviceDescription")}
         </p>
         <code className="w-fit rounded-lg border border-border bg-muted px-3 py-2 text-base font-semibold tracking-[0.16em] text-foreground">
           {state.userCode}
@@ -91,7 +96,8 @@ function ConnectDialogPanel({
           rel="noreferrer"
           className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground underline underline-offset-4"
         >
-          Open verification page <ExternalLinkIcon className="size-3.5" aria-hidden />
+          {translate("settings.providers.auth.openVerification")}
+          <ExternalLinkIcon className="size-3.5" aria-hidden />
         </a>
       </div>
     );
@@ -106,20 +112,20 @@ function ConnectDialogPanel({
   if (state.status === "connected") {
     return (
       <p className="text-sm text-foreground" data-provider-auth-state={state.status}>
-        {providerName} connected. Provider status will refresh automatically.
+        {translate("settings.providers.auth.connected", { provider: providerName })}
       </p>
     );
   }
   if (state.status === "cancelled") {
     return (
       <p className="text-sm text-muted-foreground" data-provider-auth-state={state.status}>
-        Sign-in was cancelled. You can retry without changing providers.
+        {translate("settings.providers.auth.cancelled")}
       </p>
     );
   }
   return (
     <p className="text-sm text-muted-foreground" data-provider-auth-state={state.status}>
-      Preparing secure {providerName} sign-in…
+      {translate("settings.providers.auth.preparing", { provider: providerName })}
     </p>
   );
 }
@@ -129,11 +135,19 @@ function authDetail(presentation: ProviderSubscriptionPresentation): string | nu
   return identity || presentation.rateLimit;
 }
 
-function authActionAriaLabel(presentation: ProviderSubscriptionPresentation): string {
-  if (presentation.action === "set-credential") {
-    return `${presentation.actionLabel} for ${presentation.providerName}`;
-  }
-  return `${presentation.actionLabel} ${presentation.providerName}`;
+function localizedActionLabel(
+  presentation: ProviderSubscriptionPresentation,
+  translate: TranslateMessage,
+): string {
+  if (presentation.action === "connect") return translate("settings.providers.auth.connect");
+  if (presentation.action === "reconnect") return translate("settings.providers.auth.reconnect");
+  if (presentation.action === "disconnect") return translate("settings.providers.auth.disconnect");
+  return translate(
+    presentation.canDisconnect || presentation.environmentCredential
+      ? "settings.providers.auth.replaceCredential"
+      : "settings.providers.auth.addCredential",
+    { label: presentation.credential?.label ?? translate("settings.providers.auth.credential") },
+  );
 }
 
 export function ProviderSubscriptionAuthControls({
@@ -145,8 +159,10 @@ export function ProviderSubscriptionAuthControls({
   onSetCredential,
   onDisconnect,
 }: ProviderSubscriptionAuthControlsProps) {
+  const translate = useInterfaceTranslator().message;
   const [dialog, setDialog] = useState<AuthDialog | null>(null);
   const detail = authDetail(presentation);
+  const actionLabel = localizedActionLabel(presentation, translate);
   const selectedFlow = presentation.flows.includes(flow) ? flow : (presentation.flows[0] ?? flow);
 
   const startConnect = () => {
@@ -157,7 +173,11 @@ export function ProviderSubscriptionAuthControls({
         state: {
           status: "failed",
           message:
-            error instanceof Error ? error.message : `${presentation.providerName} sign-in failed.`,
+            error instanceof Error
+              ? error.message
+              : translate("settings.providers.auth.signInFailed", {
+                  provider: presentation.providerName,
+                }),
         },
       }),
     );
@@ -179,7 +199,11 @@ export function ProviderSubscriptionAuthControls({
           message:
             error instanceof Error
               ? error.message
-              : `Could not save ${presentation.credential?.label ?? "credential"}.`,
+              : translate("settings.providers.auth.saveFailed", {
+                  label:
+                    presentation.credential?.label ??
+                    translate("settings.providers.auth.credential"),
+                }),
         }),
       );
   };
@@ -195,19 +219,12 @@ export function ProviderSubscriptionAuthControls({
           message:
             error instanceof Error
               ? error.message
-              : `Could not disconnect ${presentation.providerName}.`,
+              : translate("settings.providers.auth.disconnectFailed", {
+                  provider: presentation.providerName,
+                }),
         }),
       );
   };
-
-  if (readOnly) {
-    return (
-      <div className="text-xs text-muted-foreground" data-provider-auth-read-only={true}>
-        {detail ? <span>{detail} · </span> : null}
-        Authentication actions require edit access to this environment.
-      </div>
-    );
-  }
 
   const disconnecting = dialog?.kind === "disconnect" && dialog.state === "disconnecting";
   const credentialSaving = dialog?.kind === "credential" && dialog.state === "saving";
@@ -217,6 +234,86 @@ export function ProviderSubscriptionAuthControls({
       : dialog?.kind === "connect"
         ? dialog.state
         : null;
+
+  return (
+    <ProviderSubscriptionAuthControlsView
+      presentation={presentation}
+      readOnly={readOnly}
+      detail={detail}
+      actionLabel={actionLabel}
+      dialog={dialog}
+      connectState={connectState}
+      disconnecting={disconnecting}
+      credentialSaving={credentialSaving}
+      translate={translate}
+      onPrimaryAction={() => {
+        if (presentation.action === "disconnect") {
+          setDialog({ kind: "disconnect", state: "confirm" });
+          return;
+        }
+        if (presentation.action === "set-credential") {
+          setDialog({ kind: "credential", state: "entry", value: "" });
+          return;
+        }
+        startConnect();
+      }}
+      onDisconnectRequest={() => setDialog({ kind: "disconnect", state: "confirm" })}
+      onClose={() => setDialog(null)}
+      onRetry={startConnect}
+      onCredentialChange={(value) =>
+        setDialog((current) => (current?.kind === "credential" ? { ...current, value } : current))
+      }
+      onSaveCredential={saveCredential}
+      onConfirmDisconnect={confirmDisconnect}
+    />
+  );
+}
+
+export interface ProviderSubscriptionAuthControlsViewProps {
+  readonly presentation: ProviderSubscriptionPresentation;
+  readonly readOnly: boolean;
+  readonly detail: string | null;
+  readonly actionLabel: string;
+  readonly dialog: AuthDialog | null;
+  readonly connectState: ProviderAuthDialogState | null;
+  readonly disconnecting: boolean;
+  readonly credentialSaving: boolean;
+  readonly translate: TranslateMessage;
+  readonly onPrimaryAction: () => void;
+  readonly onDisconnectRequest: () => void;
+  readonly onClose: () => void;
+  readonly onRetry: () => void;
+  readonly onCredentialChange: (value: string) => void;
+  readonly onSaveCredential: () => void;
+  readonly onConfirmDisconnect: () => void;
+}
+
+export function ProviderSubscriptionAuthControlsView({
+  presentation,
+  readOnly,
+  detail,
+  actionLabel,
+  dialog,
+  connectState,
+  disconnecting,
+  credentialSaving,
+  translate,
+  onPrimaryAction,
+  onDisconnectRequest,
+  onClose,
+  onRetry,
+  onCredentialChange,
+  onSaveCredential,
+  onConfirmDisconnect,
+}: ProviderSubscriptionAuthControlsViewProps) {
+  if (readOnly) {
+    return (
+      <div className="text-xs text-muted-foreground" data-provider-auth-read-only={true}>
+        {detail ? <span>{detail} · </span> : null}
+        {translate("settings.providers.auth.readOnly")}
+      </div>
+    );
+  }
 
   return (
     <div className="grid min-w-0 max-w-full justify-items-start gap-1.5 sm:justify-items-end">
@@ -237,62 +334,61 @@ export function ProviderSubscriptionAuthControls({
           className="max-w-sm text-xs text-muted-foreground"
           data-provider-auth-environment-credential={true}
         >
-          Using the instance environment credential. Remove it from the provider environment to
-          disconnect, or save a key here to override it.
+          {translate("settings.providers.auth.environmentCredential")}
         </p>
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <Button
           size="sm"
           variant={presentation.action === "disconnect" ? "outline" : "default"}
-          onClick={() => {
-            if (presentation.action === "disconnect") {
-              setDialog({ kind: "disconnect", state: "confirm" });
-              return;
-            }
-            if (presentation.action === "set-credential") {
-              setDialog({ kind: "credential", state: "entry", value: "" });
-              return;
-            }
-            startConnect();
-          }}
-          aria-label={authActionAriaLabel(presentation)}
+          onClick={onPrimaryAction}
+          aria-label={translate("settings.providers.auth.actionAria", {
+            action: actionLabel,
+            provider: presentation.providerName,
+          })}
         >
-          {presentation.actionLabel}
+          {actionLabel}
         </Button>
         {presentation.canDisconnect && presentation.action !== "disconnect" ? (
           <Button
             size="sm"
             variant="outline"
-            onClick={() => setDialog({ kind: "disconnect", state: "confirm" })}
-            aria-label={`Disconnect ${presentation.providerName}`}
+            onClick={onDisconnectRequest}
+            aria-label={translate("settings.providers.auth.disconnectAria", {
+              provider: presentation.providerName,
+            })}
           >
-            Disconnect
+            {translate("settings.providers.auth.disconnect")}
           </Button>
         ) : null}
       </div>
 
       {dialog?.kind === "connect" ? (
-        <Dialog open onOpenChange={(open) => !open && setDialog(null)}>
+        <Dialog open onOpenChange={(open) => !open && onClose()}>
           <DialogPopup>
             <DialogHeader>
-              <DialogTitle>Connect {presentation.providerName}</DialogTitle>
+              <DialogTitle>
+                {translate("settings.providers.auth.connectTitle", {
+                  provider: presentation.providerName,
+                })}
+              </DialogTitle>
               <DialogDescription>
-                Sign in with the account this provider instance should use.
+                {translate("settings.providers.auth.connectDescription")}
               </DialogDescription>
             </DialogHeader>
             <DialogPanel>
-              {ConnectDialogPanel({
-                state: connectState ?? dialog.state,
-                providerName: presentation.providerName,
-              })}
+              <ConnectDialogPanel
+                state={connectState ?? dialog.state}
+                providerName={presentation.providerName}
+                translate={translate}
+              />
             </DialogPanel>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setDialog(null)}>
-                Close
+              <Button variant="outline" onClick={onClose}>
+                {translate("settings.common.close")}
               </Button>
               {connectState?.status === "failed" || connectState?.status === "cancelled" ? (
-                <Button onClick={startConnect}>Retry</Button>
+                <Button onClick={onRetry}>{translate("settings.common.retry")}</Button>
               ) : null}
             </DialogFooter>
           </DialogPopup>
@@ -300,15 +396,17 @@ export function ProviderSubscriptionAuthControls({
       ) : null}
 
       {dialog?.kind === "credential" && presentation.credential ? (
-        <Dialog open onOpenChange={(open) => !open && !credentialSaving && setDialog(null)}>
+        <Dialog open onOpenChange={(open) => !open && !credentialSaving && onClose()}>
           <DialogPopup>
             <DialogHeader>
               <DialogTitle>
-                {presentation.actionLabel} for {presentation.providerName}
+                {translate("settings.providers.auth.credentialTitle", {
+                  action: actionLabel,
+                  provider: presentation.providerName,
+                })}
               </DialogTitle>
               <DialogDescription>
-                The key is validated by this environment and stored only for this provider instance.
-                It is never returned to the app.
+                {translate("settings.providers.auth.credentialDescription")}
               </DialogDescription>
             </DialogHeader>
             <DialogPanel className="grid gap-2">
@@ -323,12 +421,7 @@ export function ProviderSubscriptionAuthControls({
                   disabled={credentialSaving}
                   placeholder={presentation.credential.placeholder}
                   aria-label={`${presentation.providerName} ${presentation.credential.label}`}
-                  onChange={(changeEvent) => {
-                    const value = changeEvent.currentTarget.value;
-                    setDialog((current) =>
-                      current?.kind === "credential" ? { ...current, value } : current,
-                    );
-                  }}
+                  onChange={(changeEvent) => onCredentialChange(changeEvent.currentTarget.value)}
                 />
               </label>
               {dialog.state === "failed" ? (
@@ -336,15 +429,20 @@ export function ProviderSubscriptionAuthControls({
               ) : null}
             </DialogPanel>
             <DialogFooter>
-              <Button variant="outline" disabled={credentialSaving} onClick={() => setDialog(null)}>
-                Cancel
+              <Button variant="outline" disabled={credentialSaving} onClick={onClose}>
+                {translate("settings.common.cancel")}
               </Button>
               <Button
                 disabled={credentialSaving || dialog.value.trim().length === 0}
-                onClick={saveCredential}
-                aria-label={`Save ${presentation.credential.label} for ${presentation.providerName}`}
+                onClick={onSaveCredential}
+                aria-label={translate("settings.providers.auth.saveAria", {
+                  label: presentation.credential.label,
+                  provider: presentation.providerName,
+                })}
               >
-                {credentialSaving ? "Validating…" : "Save"}
+                {credentialSaving
+                  ? translate("settings.providers.auth.validating")
+                  : translate("settings.common.save")}
               </Button>
             </DialogFooter>
           </DialogPopup>
@@ -352,13 +450,16 @@ export function ProviderSubscriptionAuthControls({
       ) : null}
 
       {dialog?.kind === "disconnect" ? (
-        <Dialog open onOpenChange={(open) => !open && !disconnecting && setDialog(null)}>
+        <Dialog open onOpenChange={(open) => !open && !disconnecting && onClose()}>
           <DialogPopup>
             <DialogHeader>
-              <DialogTitle>Disconnect {presentation.providerName}?</DialogTitle>
+              <DialogTitle>
+                {translate("settings.providers.auth.disconnectTitle", {
+                  provider: presentation.providerName,
+                })}
+              </DialogTitle>
               <DialogDescription>
-                This stops new turns for this instance, interrupts its active turns, and removes
-                only this instance&apos;s isolated credential.
+                {translate("settings.providers.auth.disconnectDescription")}
               </DialogDescription>
             </DialogHeader>
             {dialog.state === "failed" ? (
@@ -367,16 +468,20 @@ export function ProviderSubscriptionAuthControls({
               </DialogPanel>
             ) : null}
             <DialogFooter>
-              <Button variant="outline" disabled={disconnecting} onClick={() => setDialog(null)}>
-                Cancel
+              <Button variant="outline" disabled={disconnecting} onClick={onClose}>
+                {translate("settings.common.cancel")}
               </Button>
               <Button
                 variant="destructive"
                 disabled={disconnecting}
-                onClick={confirmDisconnect}
-                aria-label={`Confirm disconnect ${presentation.providerName}`}
+                onClick={onConfirmDisconnect}
+                aria-label={translate("settings.providers.auth.confirmDisconnectAria", {
+                  provider: presentation.providerName,
+                })}
               >
-                {disconnecting ? "Disconnecting…" : "Disconnect"}
+                {disconnecting
+                  ? translate("settings.providers.auth.disconnecting")
+                  : translate("settings.providers.auth.disconnect")}
               </Button>
             </DialogFooter>
           </DialogPopup>

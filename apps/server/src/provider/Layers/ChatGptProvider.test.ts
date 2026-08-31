@@ -45,6 +45,10 @@ describe("ChatGptProvider", () => {
         displayName: "ChatGPT Subscription",
         badgeLabel: "Early Access",
         status: "ready",
+        fetchWorkers: {
+          maxRecommendedWorkers: 8,
+          commandExecutionPolicy: "deny",
+        },
         auth: {
           status: "authenticated",
           accountId: "account-1",

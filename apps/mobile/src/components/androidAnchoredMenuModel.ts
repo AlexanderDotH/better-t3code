@@ -99,7 +99,10 @@ export function transitionAndroidMenu(
   };
 }
 
-export function getAndroidMenuActionAccessibility(action: MenuAction): {
+export function getAndroidMenuActionAccessibility(
+  action: MenuAction,
+  openSubmenuHint = "Opens submenu",
+): {
   readonly label: string;
   readonly hint: string | undefined;
   readonly state: {
@@ -119,7 +122,7 @@ export function getAndroidMenuActionAccessibility(action: MenuAction): {
           : undefined;
   return {
     label: action.subtitle ? `${action.title}, ${action.subtitle}` : action.title,
-    hint: hasSubmenu ? "Opens submenu" : undefined,
+    hint: hasSubmenu ? openSubmenuHint : undefined,
     state: {
       checked,
       disabled: action.attributes?.disabled ?? false,
@@ -128,7 +131,11 @@ export function getAndroidMenuActionAccessibility(action: MenuAction): {
   };
 }
 
-export function getAndroidMenuBackLabel(path: readonly MenuAction[], rootTitle?: string): string {
+export function getAndroidMenuBackLabel(
+  path: readonly MenuAction[],
+  rootTitle?: string,
+  format: (destination: string) => string = (destination) => `Back to ${destination}`,
+): string {
   const destination = path.length > 1 ? path[path.length - 2]?.title : rootTitle;
-  return `Back to ${destination ?? "menu"}`;
+  return format(destination ?? "menu");
 }

@@ -181,6 +181,14 @@ export interface WsRpcClient {
     readonly updateSettings: (
       patch: ServerSettingsPatch,
     ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.serverUpdateSettings>>;
+    readonly compactThread: RpcUnaryMethod<typeof WS_METHODS.providerCompactThread>;
+    readonly viewProjectMemory: RpcUnaryMethod<typeof WS_METHODS.projectMemoryView>;
+    readonly updateProjectMemorySettings: RpcUnaryMethod<
+      typeof WS_METHODS.projectMemoryUpdateSettings
+    >;
+    readonly replaceProjectMemory: RpcUnaryMethod<typeof WS_METHODS.projectMemoryReplace>;
+    readonly importProjectMemory: RpcUnaryMethod<typeof WS_METHODS.projectMemoryImport>;
+    readonly clearProjectMemory: RpcUnaryMethod<typeof WS_METHODS.projectMemoryClear>;
     readonly createAssemblyAiStreamingToken: RpcUnaryMethod<
       typeof WS_METHODS.serverCreateAssemblyAiStreamingToken
     >;
@@ -471,6 +479,18 @@ export function createWsRpcClient(
       getSettings: () => transport.request((client) => client[WS_METHODS.serverGetSettings]({})),
       updateSettings: (patch) =>
         transport.request((client) => client[WS_METHODS.serverUpdateSettings]({ patch })),
+      compactThread: (input) =>
+        transport.request((client) => client[WS_METHODS.providerCompactThread](input)),
+      viewProjectMemory: (input) =>
+        transport.request((client) => client[WS_METHODS.projectMemoryView](input)),
+      updateProjectMemorySettings: (input) =>
+        transport.request((client) => client[WS_METHODS.projectMemoryUpdateSettings](input)),
+      replaceProjectMemory: (input) =>
+        transport.request((client) => client[WS_METHODS.projectMemoryReplace](input)),
+      importProjectMemory: (input) =>
+        transport.request((client) => client[WS_METHODS.projectMemoryImport](input)),
+      clearProjectMemory: (input) =>
+        transport.request((client) => client[WS_METHODS.projectMemoryClear](input)),
       createAssemblyAiStreamingToken: (input) =>
         transport.request((client) =>
           client[WS_METHODS.serverCreateAssemblyAiStreamingToken](input),

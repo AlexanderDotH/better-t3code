@@ -14,6 +14,7 @@ function snapshot(state: ResourceProtectionSnapshot["state"]): ResourceProtectio
     coreReserveBytes: 6 * 1024 ** 3,
     waitingStarts: state === "waiting" ? 1 : 0,
     affectedThreadIds: [threadId],
+    affectedThreadIdsTruncated: false,
   };
 }
 

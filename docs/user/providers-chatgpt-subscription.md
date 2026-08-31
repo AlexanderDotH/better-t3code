@@ -39,6 +39,14 @@ Use **Reconnect** after an expired login or refresh failure. T3 retries a reject
 one coordinated credential refresh. A second rejection returns the instance to **Sign-in required**;
 it never falls back to Codex, an API key, another account, or another model.
 
+## Workspace tools
+
+ChatGPT Subscription receives T3's `workspace_context` read tool and, for writable turns, one
+`workspace_edit` tool for single-file or mixed UTF-8 write, replacement, range-edit, and delete
+batches. T3 executes both through its path-fenced workspace service. Plan mode, read-only sessions,
+and Fetch workers receive only the read tool. Commands remain the fallback for generated, binary,
+oversized, permission, and directory changes under the normal approval policy.
+
 ## Rate limits and concurrency
 
 The provider card reports the account's current rate-limit state and retry timing when OpenAI makes

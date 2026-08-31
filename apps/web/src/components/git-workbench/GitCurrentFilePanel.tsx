@@ -8,6 +8,8 @@ import { WorkspaceFileEditorSurface } from "~/components/files/WorkspaceFileEdit
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 
 import { GitWorkbenchConfirmation } from "./GitWorkbenchConfirmation";
 import type { GitCurrentFileState } from "./GitWorkbench.types";
@@ -24,6 +26,7 @@ interface GitCurrentFilePanelProps {
 }
 
 export function GitCurrentFilePanel({ file, onSave, readOnly }: GitCurrentFilePanelProps) {
+  const translate = useInterfaceTranslator().message;
   const [draft, setDraft] = useState(file.content);
   const [mergedDraft, setMergedDraft] = useState(file.content);
   const { resolvedTheme } = useTheme();
@@ -55,7 +58,7 @@ export function GitCurrentFilePanel({ file, onSave, readOnly }: GitCurrentFilePa
     );
   }
 
-  const disabledReason = file.readOnlyReason ?? (readOnly ? "Read-only access" : null);
+  const disabledReason = file.readOnlyReason ?? (readOnly ? translate("git.file.readOnly") : null);
   return (
     <section aria-labelledby="current-file-heading" className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
@@ -64,7 +67,7 @@ export function GitCurrentFilePanel({ file, onSave, readOnly }: GitCurrentFilePa
             {file.path}
           </h3>
           <p className="text-muted-foreground text-xs">
-            {disabledReason ?? fileSaveLabel(file.saveState)}
+            {disabledReason ?? fileSaveLabel(file.saveState, translate)}
           </p>
         </div>
         <Button
@@ -76,11 +79,11 @@ export function GitCurrentFilePanel({ file, onSave, readOnly }: GitCurrentFilePa
           }
           size="sm"
         >
-          <Save aria-hidden="true" /> Save
+          <Save aria-hidden="true" /> {translate("git.file.save")}
         </Button>
       </div>
       <WorkspaceFileEditorSurface
-        ariaLabel={`Edit ${file.path}`}
+        ariaLabel={translate("git.file.editAria", { path: file.path })}
         contentEditable={!disabledReason}
         editor={editor}
         file={{
@@ -97,8 +100,7 @@ export function GitCurrentFilePanel({ file, onSave, readOnly }: GitCurrentFilePa
       />
       {file.saveState === "buffered" ? (
         <p className="border-t bg-info/5 px-3 py-2 text-info-foreground text-xs">
-          This edit is buffered until the active agent turn settles. It has not been written to
-          disk.
+          {translate("git.file.buffered")}
         </p>
       ) : null}
     </section>
@@ -118,6 +120,7 @@ function GitCurrentFileConflict({
   onSave: GitCurrentFilePanelProps["onSave"];
   readOnly: boolean;
 }) {
+  const translate = useInterfaceTranslator().message;
   const serverContent = file.serverContent ?? file.content;
   return (
     <section aria-labelledby="file-conflict-heading" className="flex min-h-0 flex-1 flex-col p-3">
@@ -125,16 +128,16 @@ function GitCurrentFileConflict({
         <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
         <div>
           <h3 className="font-medium text-sm" id="file-conflict-heading">
-            File changed while your edit was buffered
+            {translate("git.file.conflictTitle")}
           </h3>
-          <p className="mt-1 text-xs">Review the agent version and your version before writing.</p>
+          <p className="mt-1 text-xs">{translate("git.workbench.reviewVersions")}</p>
         </div>
       </div>
       <div className="mt-3 grid min-h-0 flex-1 gap-3 @2xl/git-panel:grid-cols-3">
-        <ReadOnlyVersion content={file.baseContent} label="Base" />
-        <ReadOnlyVersion content={serverContent} label="Agent version" />
+        <ReadOnlyVersion content={file.baseContent} label={translate("git.common.base")} />
+        <ReadOnlyVersion content={serverContent} label={translate("git.workbench.agentVersion")} />
         <label className="flex min-h-40 flex-col gap-1 text-xs">
-          <span className="font-medium">Merged version</span>
+          <span className="font-medium">{translate("git.workbench.mergedVersion")}</span>
           <Textarea
             className="min-h-36 flex-1 resize-none font-mono text-xs"
             disabled={readOnly}
@@ -157,11 +160,11 @@ function GitCurrentFileConflict({
           }
           variant="outline"
         >
-          Keep agent version
+          {translate("git.file.keepAgent")}
         </Button>
         <GitWorkbenchConfirmation
-          confirmLabel="Keep my version"
-          description="Your version will replace the agent version after a local undo snapshot is created."
+          confirmLabel={translate("git.file.keepMine")}
+          description={translate("git.workbench.replaceAgentVersion")}
           disabled={readOnly}
           onConfirm={() =>
             onSave({
@@ -172,8 +175,8 @@ function GitCurrentFileConflict({
             })
           }
           phrase="KEEP MINE"
-          title={`Replace the agent version of ${file.path}?`}
-          triggerLabel="Keep my version"
+          title={translate("git.file.replaceAgentTitle", { path: file.path })}
+          triggerLabel={translate("git.file.keepMine")}
         />
         <Button
           disabled={readOnly}
@@ -186,7 +189,7 @@ function GitCurrentFileConflict({
             })
           }
         >
-          Save merged result
+          {translate("git.file.saveMerged")}
         </Button>
       </div>
     </section>
@@ -208,9 +211,12 @@ function ReadOnlyVersion({ content, label }: { content: string; label: string })
   );
 }
 
-const fileSaveLabel = (state: GitCurrentFileState["saveState"]): string => {
-  if (state === "saving") return "Saving…";
-  if (state === "saved") return "Saved";
-  if (state === "buffered") return "Buffered during active turn · Current worktree file";
-  return "Current worktree file";
+const fileSaveLabel = (
+  state: GitCurrentFileState["saveState"],
+  translate: InterfaceTranslator["message"],
+): string => {
+  if (state === "saving") return translate("git.file.state.saving");
+  if (state === "saved") return translate("git.file.state.saved");
+  if (state === "buffered") return translate("git.file.state.buffered");
+  return translate("git.file.state.current");
 };

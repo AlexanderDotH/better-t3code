@@ -18,6 +18,7 @@ import {
   createNativeServerSpeechSession,
   type NativeServerSpeechSession,
 } from "./native-server-speech-transport";
+import { shouldDeactivateNativeAssemblyAiDictation } from "./native-assembly-ai-dictation-policy";
 
 export type NativeVoiceDictationState = "idle" | "starting" | "recording" | "stopping";
 
@@ -96,16 +97,26 @@ export function useNativeAssemblyAiDictation(input: {
     void setAudioModeAsync({ allowsRecording: false }).catch(() => undefined);
   }, [audioStream.stream]);
 
-  const cancel = useCallback(() => {
+  const deactivate = useCallback(() => {
     if (stateRef.current === "idle") return;
     attemptRef.current += 1;
     abortRef.current?.abort();
     releaseAudio();
     sessionRef.current?.cancel();
-    onChangeDraftTextRef.current(originalDraftRef.current);
     reset();
     transition("idle");
   }, [releaseAudio, reset, transition]);
+
+  const cancel = useCallback(() => {
+    if (stateRef.current === "idle") return;
+    onChangeDraftTextRef.current(originalDraftRef.current);
+    deactivate();
+  }, [deactivate]);
+
+  useEffect(() => {
+    if (!shouldDeactivateNativeAssemblyAiDictation(input.configured, stateRef.current)) return;
+    deactivate();
+  }, [deactivate, input.configured]);
 
   useEffect(() => {
     return () => {

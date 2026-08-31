@@ -3,19 +3,21 @@ import { useNavigation } from "@react-navigation/native";
 import { Platform } from "react-native";
 
 import { AndroidScreenScaffold } from "../../components/AndroidScreenScaffold";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { EnvironmentManagerContent } from "../connection/EnvironmentManagerContent";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function SettingsEnvironmentsRouteScreen() {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
-  const headerIconColor = useThemeColor("--color-icon");
+  const headerIconColor = useUniwindTheme()["--color-icon"];
 
   return (
     <AndroidScreenScaffold
-      title="Environments"
+      title={translator.message("mobile.settings.environments")}
       actions={[
         {
-          accessibilityLabel: "Add environment",
+          accessibilityLabel: translator.message("mobile.connection.addEnvironment"),
           icon: "plus",
           onPress: () =>
             navigation.navigate("SettingsSheet", {
@@ -28,7 +30,7 @@ export function SettingsEnvironmentsRouteScreen() {
       {Platform.OS !== "android" ? (
         <NativeHeaderToolbar placement="right">
           <NativeHeaderToolbar.Button
-            accessibilityLabel="Add environment"
+            accessibilityLabel={translator.message("mobile.connection.addEnvironment")}
             icon="plus"
             onPress={() =>
               navigation.navigate("SettingsSheet", {

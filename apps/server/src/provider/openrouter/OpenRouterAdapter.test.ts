@@ -9,6 +9,7 @@ import {
   encodeOpenRouterPersistedHistory,
   normalizeOpenRouterAdapterRoundEvent,
   resolveOpenRouterModel,
+  buildOpenRouterSystemInstructions,
 } from "./OpenRouterAdapter.ts";
 
 const SETTINGS = {
@@ -47,6 +48,27 @@ const INCOMPATIBLE_MODEL: OpenRouterCatalogModel = {
 };
 
 describe("OpenRouter adapter boundary", () => {
+  it("prefers workspace_edit only for writable OpenRouter sessions", () => {
+    const writable = buildOpenRouterSystemInstructions({
+      cwd: "/workspace",
+      sandboxMode: "workspace-write",
+      interactionMode: "default",
+      fetchWorker: false,
+    });
+    const plan = buildOpenRouterSystemInstructions({
+      cwd: "/workspace",
+      sandboxMode: "danger-full-access",
+      interactionMode: "plan",
+      fetchWorker: false,
+    });
+
+    expect(writable).toContain("workspace_context");
+    expect(writable).toContain("workspace_edit");
+    expect(writable).toMatch(/formatters.*generators.*binaries/i);
+    expect(plan).toContain("workspace_context");
+    expect(plan).not.toContain("workspace_edit");
+  });
+
   it("gates disabled, missing-default, stale-default, and unknown requested models", () => {
     expect(resolveOpenRouterModel({ ...SETTINGS, enabled: false }, [MODEL])).toEqual({
       ok: false,

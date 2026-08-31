@@ -5,9 +5,10 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { anchoredToastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 const ANCHORED_TOAST_TIMEOUT_MS = 1000;
-const onCopy = (ref: React.RefObject<HTMLButtonElement | null>) => {
+const onCopy = (ref: React.RefObject<HTMLButtonElement | null>, title: string) => {
   if (ref.current) {
     anchoredToastManager.add({
       data: {
@@ -17,12 +18,16 @@ const onCopy = (ref: React.RefObject<HTMLButtonElement | null>) => {
         anchor: ref.current,
       },
       timeout: ANCHORED_TOAST_TIMEOUT_MS,
-      title: "Copied!",
+      title,
     });
   }
 };
 
-const onCopyError = (ref: React.RefObject<HTMLButtonElement | null>, error: Error) => {
+const onCopyError = (
+  ref: React.RefObject<HTMLButtonElement | null>,
+  error: Error,
+  title: string,
+) => {
   if (ref.current) {
     anchoredToastManager.add({
       data: {
@@ -32,7 +37,7 @@ const onCopyError = (ref: React.RefObject<HTMLButtonElement | null>, error: Erro
         anchor: ref.current,
       },
       timeout: ANCHORED_TOAST_TIMEOUT_MS,
-      title: "Failed to copy",
+      title,
       description: error.message,
     });
   }
@@ -49,10 +54,11 @@ export const MessageCopyButton = memo(function MessageCopyButton({
   variant?: "outline" | "ghost";
   className?: string;
 }) {
+  const translate = useInterfaceTranslator().message;
   const ref = useRef<HTMLButtonElement>(null);
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>({
-    onCopy: () => onCopy(ref),
-    onError: (error: Error) => onCopyError(ref, error),
+    onCopy: () => onCopy(ref, translate("chat.copy.copied")),
+    onError: (error: Error) => onCopyError(ref, error, translate("chat.copy.failed")),
     timeout: ANCHORED_TOAST_TIMEOUT_MS,
   });
 
@@ -61,7 +67,7 @@ export const MessageCopyButton = memo(function MessageCopyButton({
       <TooltipTrigger
         render={
           <Button
-            aria-label="Copy link"
+            aria-label={translate("chat.composer.copyLink")}
             disabled={isCopied}
             onClick={() => copyToClipboard(text)}
             ref={ref}
@@ -75,7 +81,7 @@ export const MessageCopyButton = memo(function MessageCopyButton({
         {isCopied ? <CheckIcon className="size-3 text-primary" /> : <CopyIcon className="size-3" />}
       </TooltipTrigger>
       <TooltipPopup>
-        <p>Copy to clipboard</p>
+        <p>{translate("chat.composer.copyClipboard")}</p>
       </TooltipPopup>
     </Tooltip>
   );

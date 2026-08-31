@@ -9,6 +9,7 @@ import type {
   ProviderInstanceId,
   ServerConfig,
 } from "@t3tools/contracts";
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArchiveIcon,
@@ -23,6 +24,7 @@ import { type ChangeEvent, type ReactNode, useDeferredValue, useMemo, useState }
 
 import { ensureEnvironmentApi } from "../../environmentApi";
 import { cn } from "../../lib/utils";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { Badge } from "../ui/badge";
@@ -60,10 +62,10 @@ interface ProjectOption {
   readonly workspaceRoot: string;
 }
 
-function formatChatDate(value: string | null): string {
-  if (value === null) return "No dated chats";
+function formatChatDate(value: string | null, translator: InterfaceTranslator): string {
+  if (value === null) return translator.message("settings.harness.noDatedChats");
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? value : translator.date(date);
 }
 
 function sourceCountLabel(input: {
@@ -71,15 +73,28 @@ function sourceCountLabel(input: {
   readonly totalMatching: number;
   readonly changedMatching: number;
   readonly countsAreComplete: boolean;
+  readonly translator: InterfaceTranslator;
 }): string {
+  const formattedVisible = input.translator.number(input.visibleCount);
+  const formattedChanged = input.translator.number(input.changedMatching);
   if (!input.countsAreComplete) {
-    const changed = input.changedMatching > 0 ? ` · ${input.changedMatching}+ updates` : "";
-    return `${input.visibleCount} shown · more available${changed}`;
+    return input.changedMatching > 0
+      ? input.translator.message("settings.harness.shownMoreUpdates", {
+          visible: formattedVisible,
+          changed: formattedChanged,
+        })
+      : input.translator.message("settings.harness.shownMore", { visible: formattedVisible });
   }
-  const chatLabel = input.totalMatching === 1 ? "chat" : "chats";
-  const changedLabel =
-    input.changedMatching === 1 ? "1 update" : `${input.changedMatching} updates`;
-  return `${input.totalMatching} ${chatLabel} · ${changedLabel}`;
+  return input.translator.message("settings.harness.sourceCounts", {
+    chats: input.translator.message("settings.harness.chatCount", {
+      count: input.totalMatching,
+      formattedCount: input.translator.number(input.totalMatching),
+    }),
+    updates: input.translator.message("settings.harness.updateCount", {
+      count: input.changedMatching,
+      formattedCount: formattedChanged,
+    }),
+  });
 }
 
 function selectionSummaryLabel(input: {
@@ -88,27 +103,48 @@ function selectionSummaryLabel(input: {
   readonly totalMatching: number;
   readonly changedMatching: number;
   readonly countsAreComplete: boolean;
+  readonly translator: InterfaceTranslator;
 }): string {
+  const values = {
+    selected: input.translator.number(
+      input.selection.mode === "only" ? input.selection.sessionIds.length : 0,
+    ),
+    excluded: input.translator.number(
+      input.selection.mode === "allMatching" ? input.selection.excludedSessionIds.length : 0,
+    ),
+    visible: input.translator.number(input.visibleCount),
+    total: input.translator.number(input.totalMatching),
+    changed: input.translator.number(input.changedMatching),
+  };
   if (input.selection.mode === "allMatching") {
     if (input.selection.excludedSessionIds.length > 0) {
-      const scope = `All matching except ${input.selection.excludedSessionIds.length}`;
       return input.countsAreComplete
-        ? `${scope} · ${input.changedMatching} changed`
-        : `${scope} · ${input.visibleCount} shown · more available`;
+        ? input.translator.message("settings.harness.allExceptComplete", values)
+        : input.translator.message("settings.harness.allExceptIncomplete", values);
     }
     return input.countsAreComplete
-      ? `All ${input.totalMatching} matching selected · ${input.changedMatching} changed`
-      : `All matching selected · ${input.visibleCount} shown · more available`;
+      ? input.translator.message("settings.harness.allSelectedComplete", values)
+      : input.translator.message("settings.harness.allSelectedIncomplete", values);
   }
-  const scope = `${input.selection.sessionIds.length} selected`;
   return input.countsAreComplete
-    ? `${scope} · ${input.totalMatching} matching · ${input.changedMatching} changed`
-    : `${scope} · ${input.visibleCount} shown · more available`;
+    ? input.translator.message("settings.harness.someSelectedComplete", values)
+    : input.translator.message("settings.harness.someSelectedIncomplete", values);
 }
 
-function syncResultSummary(result: HarnessChatSyncRunResult): string {
-  const chatLabel = result.selectedCount === 1 ? "chat" : "chats";
-  return `Synced ${result.syncedCount} of ${result.selectedCount} ${chatLabel} · ${result.messagesImported} messages imported`;
+function syncResultSummary(
+  result: HarnessChatSyncRunResult,
+  translator: InterfaceTranslator,
+): string {
+  return translator.message("settings.harness.syncSummary", {
+    synced: translator.number(result.syncedCount),
+    selected: translator.number(result.selectedCount),
+    chatNoun: translator.message(
+      result.selectedCount === 1
+        ? "settings.harness.chatNounOne"
+        : "settings.harness.chatNounOther",
+    ),
+    messages: translator.number(result.messagesImported),
+  });
 }
 
 function sourceStatusBadge(
@@ -116,48 +152,67 @@ function sourceStatusBadge(
   changedMatching: number,
   isLoading: boolean,
   countsAreComplete: boolean,
+  translator: InterfaceTranslator,
 ): ReactNode {
   if (source.status.kind === "unsupported") {
-    return <Badge variant="warning">Unavailable</Badge>;
+    return <Badge variant="warning">{translator.message("settings.harness.unavailable")}</Badge>;
   }
   if (source.status.kind === "already-local") {
-    return <Badge variant="success">Already in T3 Code</Badge>;
+    return <Badge variant="success">{translator.message("settings.harness.alreadyLocal")}</Badge>;
   }
   if (isLoading) {
-    return <Badge variant="outline">Checking</Badge>;
+    return <Badge variant="outline">{translator.message("settings.harness.checking")}</Badge>;
   }
   if (changedMatching > 0) {
     return (
       <Badge variant="info">
-        {changedMatching}
-        {countsAreComplete ? "" : "+"} changed
+        {translator.message("settings.harness.changedCount", {
+          count: changedMatching,
+          formattedCount: `${translator.number(changedMatching)}${countsAreComplete ? "" : "+"}`,
+        })}
       </Badge>
     );
   }
   if (!countsAreComplete) {
-    return <Badge variant="outline">More available</Badge>;
+    return <Badge variant="outline">{translator.message("settings.harness.moreAvailable")}</Badge>;
   }
-  return <Badge variant="outline">Up to date</Badge>;
+  return <Badge variant="outline">{translator.message("settings.harness.upToDate")}</Badge>;
 }
 
-function chatStatusBadges(chat: HarnessChatSummary) {
+function chatStatusBadges(chat: HarnessChatSummary, translator: InterfaceTranslator) {
   return (
     <span className="flex flex-wrap items-center gap-1.5">
-      {chat.activity === "active" ? <Badge variant="warning">Active elsewhere</Badge> : null}
+      {chat.activity === "active" ? (
+        <Badge variant="warning">{translator.message("settings.harness.activeElsewhere")}</Badge>
+      ) : null}
       {chat.link ? (
-        <Badge variant="outline" title={`T3 thread ${chat.link.threadId}`}>
+        <Badge
+          variant="outline"
+          title={translator.message("settings.harness.threadTitle", {
+            thread: chat.link.threadId,
+          })}
+        >
           <LinkIcon />
-          Linked
+          {translator.message("settings.harness.linked")}
         </Badge>
       ) : null}
-      {chat.hasChanges ? <Badge variant="info">Updates available</Badge> : null}
-      {chat.archived ? <Badge variant="secondary">Archived</Badge> : null}
+      {chat.hasChanges ? (
+        <Badge variant="info">{translator.message("settings.harness.updatesAvailable")}</Badge>
+      ) : null}
+      {chat.archived ? (
+        <Badge variant="secondary">{translator.message("settings.harness.archived")}</Badge>
+      ) : null}
     </span>
   );
 }
 
 function SourceUnavailable({ source }: { readonly source: HarnessChatSyncSource }) {
-  const title = source.status.kind === "already-local" ? "Already in T3 Code" : "Unavailable";
+  const translator = useInterfaceTranslator();
+  const title = translator.message(
+    source.status.kind === "already-local"
+      ? "settings.harness.alreadyLocal"
+      : "settings.harness.unavailable",
+  );
   const reason = source.status.kind === "supported" ? "" : source.status.reason;
   return (
     <div className="px-4 pb-4">
@@ -205,12 +260,15 @@ function ProviderInstancePicker({
   readonly value: ProviderInstanceId | null;
   readonly onChange?: (instanceId: ProviderInstanceId) => void;
 }) {
+  const translator = useInterfaceTranslator();
   if (source.instanceIds.length < 2 || !onChange) return null;
   return (
     <label className="flex items-center gap-2 text-xs text-muted-foreground">
-      Account
+      {translator.message("settings.harness.account")}
       <select
-        aria-label={`Provider account for ${source.label}`}
+        aria-label={translator.message("settings.harness.providerAccount", {
+          provider: source.label,
+        })}
         className="h-7 max-w-48 rounded-md border border-input bg-background px-2 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
         value={value ?? ""}
         onChange={(event) => {
@@ -239,34 +297,48 @@ function ChatRow({
   readonly selected: boolean;
   readonly onSelectedChange: (selected: boolean) => void;
 }) {
+  const translator = useInterfaceTranslator();
   const targetDescription =
     chat.targetProject.kind === "unresolved"
-      ? "Project target required"
+      ? translator.message("settings.harness.projectRequired")
       : chat.targetProject.kind === "create"
-        ? `Will create ${chat.targetProject.suggestedName}`
-        : "Project matched";
+        ? translator.message("settings.harness.willCreate", {
+            project: chat.targetProject.suggestedName,
+          })
+        : translator.message("settings.harness.projectMatched");
   return (
     <label className="flex cursor-pointer gap-3 border-t border-border/50 px-4 py-3 first:border-t-0">
       <Checkbox
-        aria-label={`Select ${chat.title}`}
+        aria-label={translator.message("settings.harness.selectChat", { chat: chat.title })}
         checked={selected}
         onCheckedChange={(checked) => onSelectedChange(Boolean(checked))}
       />
       <span className="min-w-0 flex-1 space-y-1.5">
         <span className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{chat.title}</span>
-          {chatStatusBadges(chat)}
+          {chatStatusBadges(chat, translator)}
         </span>
         {chat.preview ? (
           <span className="block truncate text-xs text-muted-foreground">{chat.preview}</span>
         ) : null}
         <span className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground/75">
           <span className="max-w-full truncate font-mono">
-            {chat.cwd ?? "No working directory"}
+            {chat.cwd ?? translator.message("settings.harness.noWorkingDirectory")}
           </span>
-          <span>{chat.messageCount} messages</span>
-          {chat.link ? <span className="font-mono">T3 thread {chat.link.threadId}</span> : null}
-          <span>{formatChatDate(chat.updatedAt)}</span>
+          <span>
+            {translator.message("settings.harness.messageCount", {
+              count: chat.messageCount,
+              formattedCount: translator.number(chat.messageCount),
+            })}
+          </span>
+          {chat.link ? (
+            <span className="font-mono">
+              {translator.message("settings.harness.threadTitle", {
+                thread: chat.link.threadId,
+              })}
+            </span>
+          ) : null}
+          <span>{formatChatDate(chat.updatedAt, translator)}</span>
           <span
             className={cn(chat.targetProject.kind === "unresolved" && "text-warning-foreground")}
           >
@@ -304,6 +376,7 @@ export function HarnessChatSyncSourceView({
   onRefresh,
   onSync,
 }: HarnessChatSyncSourceViewProps) {
+  const translator = useInterfaceTranslator();
   const visibleSessionIds = chats.map((chat) => chat.sessionId);
   const selectionState = getHarnessChatSelectionState(selection, visibleSessionIds);
   const selectionEmpty = selection.mode === "only" && selection.sessionIds.length === 0;
@@ -317,6 +390,7 @@ export function HarnessChatSyncSourceView({
     totalMatching,
     changedMatching,
     countsAreComplete,
+    translator,
   });
 
   return (
@@ -326,7 +400,7 @@ export function HarnessChatSyncSourceView({
           <div className="flex flex-wrap items-center gap-2">
             <h4 className="truncate text-sm font-semibold">{source.label}</h4>
             <Badge variant="secondary">{source.driver}</Badge>
-            {sourceStatusBadge(source, changedMatching, isLoading, countsAreComplete)}
+            {sourceStatusBadge(source, changedMatching, isLoading, countsAreComplete, translator)}
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
             {sourceCountLabel({
@@ -334,8 +408,12 @@ export function HarnessChatSyncSourceView({
               totalMatching,
               changedMatching,
               countsAreComplete,
+              translator,
             })}{" "}
-            · Last activity {formatChatDate(latestUpdatedAt)}
+            ·{" "}
+            {translator.message("settings.harness.lastActivity", {
+              date: formatChatDate(latestUpdatedAt, translator),
+            })}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -348,7 +426,9 @@ export function HarnessChatSyncSourceView({
             <Button
               size="icon-xs"
               variant="ghost"
-              aria-label={`Refresh ${source.label} chats`}
+              aria-label={translator.message("settings.harness.refreshChats", {
+                provider: source.label,
+              })}
               disabled={isFetching || isSyncing}
               onClick={onRefresh}
             >
@@ -370,7 +450,7 @@ export function HarnessChatSyncSourceView({
                 size="compact"
                 className="w-full [&_input]:pl-8"
                 inputMode="search"
-                placeholder="Search provider chats"
+                placeholder={translator.message("settings.harness.searchPlaceholder")}
                 value={searchQuery}
                 onChange={(event: ChangeEvent<HTMLInputElement>) =>
                   onSearchChange(event.currentTarget.value)
@@ -383,7 +463,7 @@ export function HarnessChatSyncSourceView({
                 onCheckedChange={(checked) => onArchiveChange(Boolean(checked))}
               />
               <ArchiveIcon className="size-3.5" />
-              Include archived
+              {translator.message("settings.harness.includeArchived")}
             </label>
           </div>
 
@@ -398,10 +478,10 @@ export function HarnessChatSyncSourceView({
             </label>
             <div className="flex items-center gap-1">
               <Button size="xs" variant="ghost-muted" onClick={onSelectAll}>
-                Select all
+                {translator.message("settings.harness.selectAll")}
               </Button>
               <Button size="xs" variant="ghost-muted" onClick={onClearAll}>
-                Clear all
+                {translator.message("settings.harness.clearAll")}
               </Button>
             </div>
           </div>
@@ -409,11 +489,11 @@ export function HarnessChatSyncSourceView({
           <div className="border-t border-border/50">
             {isLoading ? (
               <div className="px-4 py-8 text-center text-xs text-muted-foreground">
-                Reading provider chats…
+                {translator.message("settings.harness.reading")}
               </div>
             ) : chats.length === 0 ? (
               <div className="px-4 py-8 text-center text-xs text-muted-foreground">
-                No matching provider chats
+                {translator.message("settings.harness.noMatches")}
               </div>
             ) : (
               chats.map((chat) => (
@@ -432,10 +512,12 @@ export function HarnessChatSyncSourceView({
               {hasNextPage ? (
                 <Button size="sm" variant="outline" disabled={isFetching} onClick={onLoadMore}>
                   {isFetching ? <LoaderCircleIcon className="animate-spin" /> : null}
-                  View more
+                  {translator.message("settings.harness.viewMore")}
                 </Button>
               ) : (
-                <span className="text-xs text-muted-foreground">All matching chats shown</span>
+                <span className="text-xs text-muted-foreground">
+                  {translator.message("settings.harness.allShown")}
+                </span>
               )}
             </div>
             <Button
@@ -444,7 +526,9 @@ export function HarnessChatSyncSourceView({
               onClick={onSync}
             >
               {isSyncing ? <LoaderCircleIcon className="animate-spin" /> : <CloudDownloadIcon />}
-              {isSyncing ? "Syncing…" : "Sync selected"}
+              {translator.message(
+                isSyncing ? "settings.harness.syncing" : "settings.harness.syncSelected",
+              )}
             </Button>
           </div>
 
@@ -457,7 +541,7 @@ export function HarnessChatSyncSourceView({
                   : "border-success/25 bg-success/8 text-success-foreground",
               )}
             >
-              <p className="font-medium">{syncResultSummary(result)}</p>
+              <p className="font-medium">{syncResultSummary(result, translator)}</p>
               {result.failures.length > 0 ? (
                 <ul className="mt-2 space-y-1">
                   {result.failures.map((failure) => (
@@ -500,11 +584,12 @@ function MissingProjectResolver({
   readonly onProjectChange: (projectId: ProjectId) => void;
   readonly onConfirm: () => void;
 }) {
+  const translator = useInterfaceTranslator();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup aria-describedby="missing-project-resolver-description">
         <DialogHeader>
-          <DialogTitle>Choose a project</DialogTitle>
+          <DialogTitle>{translator.message("settings.harness.chooseProject")}</DialogTitle>
         </DialogHeader>
         <DialogPanel>
           <MissingProjectResolverContent
@@ -516,11 +601,11 @@ function MissingProjectResolver({
         </DialogPanel>
         <DialogFooter>
           <Button variant="outline" disabled={isSyncing} onClick={() => onOpenChange(false)}>
-            Cancel
+            {translator.message("common.cancel")}
           </Button>
           <Button disabled={selectedProjectId === null || isSyncing} onClick={onConfirm}>
             {isSyncing ? <LoaderCircleIcon className="animate-spin" /> : null}
-            Sync to project
+            {translator.message("settings.harness.syncToProject")}
           </Button>
         </DialogFooter>
       </DialogPopup>
@@ -539,24 +624,29 @@ export function MissingProjectResolverContent({
   readonly selectedProjectId: ProjectId | null;
   readonly onProjectChange: (projectId: ProjectId) => void;
 }) {
+  const translator = useInterfaceTranslator();
   return (
     <div className="space-y-4">
       <p
         id="missing-project-resolver-description"
         className="text-sm leading-relaxed text-muted-foreground"
       >
-        {unresolvedCount} selected {unresolvedCount === 1 ? "chat has" : "chats have"} no usable
-        working directory. Use one T3 Code project for all unresolved chats.
+        {translator.message("settings.harness.resolverDescription", {
+          count: translator.number(unresolvedCount),
+          chatNoun: translator.message(
+            unresolvedCount === 1 ? "settings.harness.chatHas" : "settings.harness.chatsHave",
+          ),
+        })}
       </p>
       {projects.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          Add a project in this environment before syncing these chats.
+          {translator.message("settings.harness.addProjectFirst")}
         </p>
       ) : (
         <label className="grid gap-2 text-sm font-medium">
-          Target project
+          {translator.message("settings.harness.targetProject")}
           <select
-            aria-label="Target project for unresolved chats"
+            aria-label={translator.message("settings.harness.targetProjectAria")}
             className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm font-normal outline-none focus-visible:ring-2 focus-visible:ring-ring"
             value={selectedProjectId ?? ""}
             onChange={(event) => {
@@ -567,7 +657,7 @@ export function MissingProjectResolverContent({
             }}
           >
             <option value="" disabled>
-              Select a project
+              {translator.message("settings.harness.selectProject")}
             </option>
             {projects.map((project) => (
               <option key={project.id} value={project.id}>
@@ -614,10 +704,11 @@ export function HarnessChatSyncSourceTabs({
   readonly activeSourceId: HarnessChatSyncSource["id"];
   readonly onSourceChange: (sourceId: HarnessChatSyncSource["id"]) => void;
 }) {
+  const translator = useInterfaceTranslator();
   return (
     <div
       role="tablist"
-      aria-label="Harness providers"
+      aria-label={translator.message("settings.harness.providersAria")}
       className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,11rem),1fr))] gap-1 rounded-xl border border-border/60 bg-background/30 p-1"
     >
       {sources.map((source) => {
@@ -654,6 +745,7 @@ function HarnessChatSyncSourceController({
   readonly projects: ReadonlyArray<ProjectOption>;
   readonly active: boolean;
 }) {
+  const translator = useInterfaceTranslator();
   const api = useMemo(() => ensureEnvironmentApi(environmentId), [environmentId]);
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState("");
@@ -731,7 +823,9 @@ function HarnessChatSyncSourceController({
       void queryClient.invalidateQueries({ queryKey: ["harnessChatSync", environmentId] });
     },
     onError: (error) => {
-      setErrorMessage(error instanceof Error ? error.message : "Could not sync provider chats.");
+      setErrorMessage(
+        error instanceof Error ? error.message : translator.message("settings.harness.syncFailed"),
+      );
     },
   });
   const statusMutation = useMutation({
@@ -747,7 +841,9 @@ function HarnessChatSyncSourceController({
       ),
     onError: (error) =>
       setErrorMessage(
-        error instanceof Error ? error.message : "Could not refresh provider chat status.",
+        error instanceof Error
+          ? error.message
+          : translator.message("settings.harness.refreshFailed"),
       ),
     onSettled: () => void listQuery.refetch(),
   });
@@ -787,7 +883,7 @@ function HarnessChatSyncSourceController({
           (listQuery.isError
             ? listQuery.error instanceof Error
               ? listQuery.error.message
-              : "Could not read provider chats."
+              : translator.message("settings.harness.readFailed")
             : null)
         }
         selectedProviderInstanceId={effectiveProviderInstanceId}
@@ -830,6 +926,7 @@ function HarnessChatSyncEnvironment({
   readonly environment: EnvironmentPresentation;
   readonly projects: ReadonlyArray<ProjectOption>;
 }) {
+  const translator = useInterfaceTranslator();
   const api = useMemo(
     () => ensureEnvironmentApi(environment.environmentId),
     [environment.environmentId],
@@ -849,23 +946,23 @@ function HarnessChatSyncEnvironment({
   return (
     <HarnessChatSyncEnvironmentView
       label={environment.label}
-      detail={environment.displayUrl ?? "Primary environment"}
+      detail={environment.displayUrl ?? translator.message("settings.harness.primaryEnvironment")}
       isRefreshing={sourcesQuery.isFetching}
       onRefresh={() => void sourcesQuery.refetch()}
     >
       {sourcesQuery.isLoading ? (
         <div className="rounded-xl border border-border/50 px-4 py-8 text-center text-xs text-muted-foreground">
-          Discovering provider chat history…
+          {translator.message("settings.harness.discovering")}
         </div>
       ) : sourcesQuery.isError ? (
         <div className="rounded-xl border border-destructive/25 bg-destructive/8 px-4 py-3 text-xs text-destructive">
           {sourcesQuery.error instanceof Error
             ? sourcesQuery.error.message
-            : "Could not discover provider chat history."}
+            : translator.message("settings.harness.discoverFailed")}
         </div>
       ) : sources.length === 0 ? (
         <div className="rounded-xl border border-border/50 px-4 py-8 text-center text-xs text-muted-foreground">
-          No harness chat sources are configured in this environment.
+          {translator.message("settings.harness.noSources")}
         </div>
       ) : activeSource ? (
         <>
@@ -880,7 +977,9 @@ function HarnessChatSyncEnvironment({
               <div
                 key={source.id}
                 role="tabpanel"
-                aria-label={`${source.label} chats`}
+                aria-label={translator.message("settings.harness.sourceChats", {
+                  provider: source.label,
+                })}
                 hidden={!active}
               >
                 <HarnessChatSyncSourceController
@@ -911,6 +1010,7 @@ export function HarnessChatSyncEnvironmentView({
   readonly onRefresh: () => void;
   readonly children: ReactNode;
 }) {
+  const translator = useInterfaceTranslator();
   return (
     <div className="space-y-3 rounded-2xl border border-border/70 bg-muted/10 p-3 sm:p-4">
       <div className="flex items-center justify-between gap-3 px-1">
@@ -921,7 +1021,9 @@ export function HarnessChatSyncEnvironmentView({
         <Button
           size="icon-xs"
           variant="ghost"
-          aria-label={`Refresh chat sources for ${label}`}
+          aria-label={translator.message("settings.harness.refreshSources", {
+            environment: label,
+          })}
           disabled={isRefreshing}
           onClick={onRefresh}
         >
@@ -938,6 +1040,7 @@ export function supportsHarnessChatSync(config: ServerConfig | undefined): boole
 }
 
 export function HarnessChatSyncSettings() {
+  const translator = useInterfaceTranslator();
   const { environments } = useEnvironments();
   const serverConfigs = useServerConfigs();
   const projects = useProjects();
@@ -954,8 +1057,8 @@ export function HarnessChatSyncSettings() {
       icon={<CloudDownloadIcon className="size-4" />}
     >
       <SettingsRow
-        title="Sync provider chat history"
-        description="Review Codex, Claude Code, OpenCode, and other harness sessions before adding or updating T3 Code chats. Nothing syncs until you choose Sync selected."
+        title={translator.message("settings.harness.title")}
+        description={translator.message("settings.harness.description")}
       />
       <div className="space-y-4">
         {capableEnvironments.map((environment) => (

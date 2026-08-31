@@ -18,9 +18,11 @@ import {
   buildPlanParallelismReviewPrompt,
   buildPromptImprovementPrompt,
   buildPrContentPrompt,
+  buildThreadMetadataPrompt,
   buildThreadTitlePrompt,
   buildTranscriptTranslationPrompt,
 } from "./TextGenerationPrompts.ts";
+import { buildAutoReasoningPrompt, validateAutoReasoningDecision } from "./AutoReasoning.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
   sanitizeCommitSubject,
@@ -56,9 +58,11 @@ export interface OpenRouterTextGenerationOptions {
 }
 
 type TextGenerationOperation =
+  | "decideAutoReasoning"
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
+  | "generateThreadMetadata"
   | "generateThreadTitle"
   | "translateTranscriptToEnglish"
   | "improvePrompt"
@@ -162,6 +166,18 @@ export function makeOpenRouterTextGeneration(
   });
 
   return {
+    decideAutoReasoning: Effect.fn("OpenRouterTextGeneration.decideAutoReasoning")(
+      function* (input) {
+        const { prompt, outputSchema } = buildAutoReasoningPrompt(input);
+        const generated = yield* runJson({
+          operation: "decideAutoReasoning",
+          prompt,
+          outputSchema,
+          modelSelection: input.modelSelection,
+        });
+        return yield* validateAutoReasoningDecision(input.allowedEfforts, generated);
+      },
+    ),
     generateCommitMessage: Effect.fn("OpenRouterTextGeneration.generateCommitMessage")(
       function* (input) {
         const { prompt, outputSchema } = buildCommitMessagePrompt({
@@ -218,6 +234,21 @@ export function makeOpenRouterTextGeneration(
         return { title: sanitizeThreadTitle(generated.title) };
       },
     ),
+    generateThreadMetadata: Effect.fn("OpenRouterTextGeneration.generateThreadMetadata")(
+      function* (input) {
+        const { prompt, outputSchema } = buildThreadMetadataPrompt(input);
+        const generated = yield* runJson({
+          operation: "generateThreadMetadata",
+          prompt,
+          outputSchema,
+          modelSelection: input.modelSelection,
+        });
+        return {
+          title: sanitizeThreadTitle(generated.title),
+          branch: sanitizeBranchFragment(generated.branch),
+        };
+      },
+    ),
     translateTranscriptToEnglish: Effect.fn(
       "OpenRouterTextGeneration.translateTranscriptToEnglish",
     )(function* (input) {
@@ -263,5 +294,6 @@ export function makeOpenRouterTextGeneration(
         });
       },
     ),
+    enrichKnowledgeGraph: TextGeneration.unsupportedKnowledgeGraphEnrichment("OpenRouter"),
   } satisfies TextGeneration.TextGeneration["Service"];
 }

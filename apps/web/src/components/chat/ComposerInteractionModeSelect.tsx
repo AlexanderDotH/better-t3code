@@ -5,21 +5,28 @@ import { memo } from "react";
 import { ComposerControlIcon, ComposerSelectControl } from "./ComposerControl";
 import { Select, SelectItem, SelectPopup, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 const interactionModeOptions: ReadonlyArray<ProviderInteractionMode> = ["default", "plan"];
 
 const interactionModeConfig: Record<
   ProviderInteractionMode,
-  { readonly label: string; readonly description: string; readonly icon: LucideIcon }
+  {
+    readonly labelKey: "chat.composer.interaction.build" | "chat.composer.mode.plan";
+    readonly descriptionKey:
+      | "chat.composer.interaction.buildDescription"
+      | "chat.composer.interaction.planDescription";
+    readonly icon: LucideIcon;
+  }
 > = {
   default: {
-    label: "Build",
-    description: "Work directly on the task",
+    labelKey: "chat.composer.interaction.build",
+    descriptionKey: "chat.composer.interaction.buildDescription",
     icon: BotIcon,
   },
   plan: {
-    label: "Plan",
-    description: "Explore and agree on a plan before implementation",
+    labelKey: "chat.composer.mode.plan",
+    descriptionKey: "chat.composer.interaction.planDescription",
     icon: PencilRulerIcon,
   },
 };
@@ -28,6 +35,7 @@ export const ComposerInteractionModeSelect = memo(function ComposerInteractionMo
   readonly value: ProviderInteractionMode;
   readonly onValueChange: (value: ProviderInteractionMode) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const selected = interactionModeConfig[props.value];
   const SelectedIcon = selected.icon;
 
@@ -40,10 +48,15 @@ export const ComposerInteractionModeSelect = memo(function ComposerInteractionMo
         }}
       >
         <TooltipTrigger
-          render={<ComposerSelectControl className="font-medium" aria-label="Interaction mode" />}
+          render={
+            <ComposerSelectControl
+              className="font-medium"
+              aria-label={translate("chat.composer.interactionMode")}
+            />
+          }
         >
           <ComposerControlIcon icon={SelectedIcon} />
-          <SelectValue>{selected.label}</SelectValue>
+          <SelectValue>{translate(selected.labelKey)}</SelectValue>
         </TooltipTrigger>
         <SelectPopup alignItemWithTrigger={false}>
           {interactionModeOptions.map((mode) => {
@@ -54,10 +67,10 @@ export const ComposerInteractionModeSelect = memo(function ComposerInteractionMo
                 <div className="grid min-w-0 flex-1 gap-0.5">
                   <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
                     <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                    {option.label}
+                    {translate(option.labelKey)}
                   </span>
                   <span className="text-muted-foreground text-xs leading-4">
-                    {option.description}
+                    {translate(option.descriptionKey)}
                   </span>
                 </div>
               </SelectItem>
@@ -65,7 +78,7 @@ export const ComposerInteractionModeSelect = memo(function ComposerInteractionMo
           })}
         </SelectPopup>
       </Select>
-      <TooltipPopup side="top">{selected.description}</TooltipPopup>
+      <TooltipPopup side="top">{translate(selected.descriptionKey)}</TooltipPopup>
     </Tooltip>
   );
 });

@@ -17,17 +17,9 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 import { previewBridge } from "./previewBridge";
-
-const COLOR_SCHEME_OPTIONS: ReadonlyArray<{
-  value: DesktopPreviewColorScheme;
-  label: string;
-}> = [
-  { value: "system", label: "System" },
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
-];
 
 interface Props {
   /** Active preview tab id. Tab-targeting actions are disabled without it. */
@@ -67,6 +59,7 @@ export function PreviewMoreMenu({
   nativePictureInPicture,
   onNativePictureInPicture,
 }: Props) {
+  const translate = useInterfaceTranslator().message;
   if (!previewBridge) return null;
   const bridge = previewBridge;
   const tabDisabled = !tabId || !hasWebContents;
@@ -76,6 +69,14 @@ export function PreviewMoreMenu({
   };
 
   const zoomLabel = `${Math.round(zoomFactor * 100)}%`;
+  const colorSchemeOptions: ReadonlyArray<{
+    value: DesktopPreviewColorScheme;
+    label: string;
+  }> = [
+    { value: "system", label: translate("browser.menu.system") },
+    { value: "light", label: translate("browser.menu.light") },
+    { value: "dark", label: translate("browser.menu.dark") },
+  ];
   return (
     <Menu>
       <Tooltip>
@@ -83,32 +84,41 @@ export function PreviewMoreMenu({
           render={
             <MenuTrigger
               render={
-                <Button variant="ghost" size="icon-xs" type="button" aria-label="Preview menu" />
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  type="button"
+                  aria-label={translate("browser.menu.label")}
+                />
               }
             />
           }
         >
           <MoreVertical />
         </TooltipTrigger>
-        <TooltipPopup>More</TooltipPopup>
+        <TooltipPopup>{translate("browser.menu.more")}</TooltipPopup>
       </Tooltip>
       <MenuPopup align="end" sideOffset={6} className="min-w-56">
         <MenuItem onClick={callTab(bridge.hardReload)} disabled={tabDisabled}>
-          Hard reload
+          {translate("browser.menu.hardReload")}
         </MenuItem>
         <MenuItem onClick={callTab(bridge.openDevTools)} disabled={tabDisabled}>
-          Open DevTools
+          {translate("browser.menu.openDevTools")}
         </MenuItem>
         <MenuItem onClick={onNativePictureInPicture} disabled={tabDisabled}>
           {nativePictureInPicture
-            ? "Close separate preview window"
-            : "Open separate preview window"}
+            ? translate("browser.menu.closeSeparateWindow")
+            : translate("browser.menu.openSeparateWindow")}
         </MenuItem>
         <MenuItem onClick={onToggleDeviceToolbar} disabled={tabDisabled}>
-          {deviceToolbarVisible ? "Hide device toolbar" : "Show device toolbar"}
+          {deviceToolbarVisible
+            ? translate("browser.menu.hideDeviceToolbar")
+            : translate("browser.menu.showDeviceToolbar")}
         </MenuItem>
         <MenuSub>
-          <MenuSubTrigger disabled={tabDisabled}>Appearance</MenuSubTrigger>
+          <MenuSubTrigger disabled={tabDisabled}>
+            {translate("browser.menu.appearance")}
+          </MenuSubTrigger>
           <MenuSubPopup className="min-w-32">
             <MenuRadioGroup
               value={colorScheme}
@@ -119,7 +129,7 @@ export function PreviewMoreMenu({
                   .catch(() => undefined);
               }}
             >
-              {COLOR_SCHEME_OPTIONS.map((option) => (
+              {colorSchemeOptions.map((option) => (
                 <MenuRadioItem key={option.value} value={option.value}>
                   {option.label}
                 </MenuRadioItem>
@@ -138,14 +148,14 @@ export function PreviewMoreMenu({
           className="justify-between"
           disabled={tabDisabled}
         >
-          <span>Zoom</span>
+          <span>{translate("browser.menu.zoom")}</span>
           <span className="flex items-center gap-1">
             <Button
               variant="outline"
               size="icon-xs"
               type="button"
               onClick={callTab(bridge.zoomOut)}
-              aria-label="Zoom out"
+              aria-label={translate("browser.menu.zoomOut")}
               disabled={tabDisabled}
             >
               <Minus />
@@ -158,7 +168,7 @@ export function PreviewMoreMenu({
               size="icon-xs"
               type="button"
               onClick={callTab(bridge.zoomIn)}
-              aria-label="Zoom in"
+              aria-label={translate("browser.menu.zoomIn")}
               disabled={tabDisabled}
             >
               <PlusIcon />
@@ -168,7 +178,7 @@ export function PreviewMoreMenu({
               size="icon-xs"
               type="button"
               onClick={callTab(bridge.resetZoom)}
-              aria-label="Reset zoom"
+              aria-label={translate("browser.menu.resetZoom")}
               className="[:hover,[data-pressed]]:bg-foreground/10"
               disabled={tabDisabled}
             >
@@ -178,10 +188,10 @@ export function PreviewMoreMenu({
         </MenuItem>
         <MenuSeparator />
         <MenuItem onClick={() => void bridge.clearCookies().catch(() => undefined)}>
-          Clear cookies
+          {translate("browser.menu.clearCookies")}
         </MenuItem>
         <MenuItem onClick={() => void bridge.clearCache().catch(() => undefined)}>
-          Clear cache
+          {translate("browser.menu.clearCache")}
         </MenuItem>
       </MenuPopup>
     </Menu>

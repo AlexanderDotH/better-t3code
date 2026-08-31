@@ -183,7 +183,7 @@ export function deriveProviderSettingsFields(
 
   return Object.keys(definition.settingsSchema.fields)
     .map((key, index) => ({ key, index }))
-    .toSorted(
+    .sort(
       (left, right) =>
         (orderedKeys.get(left.key) ?? orderFallbackOffset + left.index) -
         (orderedKeys.get(right.key) ?? orderFallbackOffset + right.index),

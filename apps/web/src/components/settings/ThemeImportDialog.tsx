@@ -1,6 +1,7 @@
 import { DownloadIcon, PlusIcon } from "lucide-react";
 import type { ChangeEvent, DragEvent, UIEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { cn } from "../../lib/utils";
 import {
   getCustomThemes,
@@ -96,6 +97,7 @@ function ThemeJsonEditor({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const highlightRef = useRef<HTMLPreElement>(null);
   const isPlainText = value.length > MAX_HIGHLIGHTED_JSON_LENGTH;
   const highlightedJson = useMemo(
@@ -122,7 +124,7 @@ function ThemeJsonEditor({
         </pre>
       )}
       <textarea
-        aria-label="Theme JSON"
+        aria-label={translate("settings.theme.import.json")}
         className={cn(
           "relative z-10 block min-h-44 w-full resize-y overflow-auto bg-transparent p-3 font-mono text-[12px] leading-5 caret-foreground outline-none placeholder:text-muted-foreground selection:bg-primary selection:text-primary-foreground",
           isPlainText ? "text-foreground" : "text-transparent",
@@ -155,6 +157,7 @@ export function ThemeImportDialog({
   /** Batch imports install without activating; the caller reports them. */
   onImportedMany: (themes: ReadonlyArray<ThemeDefinition>, context: { updated: boolean }) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [json, setJson] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
@@ -406,14 +409,14 @@ export function ThemeImportDialog({
         } catch {
           // Storage is failing wholesale; the error below covers it.
         }
-        setError("Theme added, but it could not be selected. Try again.");
+        setError(translate("settings.theme.import.selectFailed"));
         return;
       }
       onOpenChange(false);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "That theme file is invalid.");
+      setError(cause instanceof Error ? cause.message : translate("settings.theme.import.invalid"));
     }
-  }, [json, onImported, onOpenChange]);
+  }, [json, onImported, onOpenChange, translate]);
 
   return (
     <Dialog
@@ -425,7 +428,7 @@ export function ThemeImportDialog({
     >
       <DialogPopup className="max-w-3xl overflow-hidden">
         <DialogHeader>
-          <DialogTitle>Add a theme</DialogTitle>
+          <DialogTitle>{translate("settings.theme.import.title")}</DialogTitle>
         </DialogHeader>
         <DialogPanel className="space-y-5">
           <ThemeSearchSection
@@ -439,7 +442,7 @@ export function ThemeImportDialog({
           <div className="flex items-center gap-3" aria-hidden>
             <div className="h-px flex-1 bg-border" />
             <span className="text-muted-foreground text-[11px] uppercase tracking-wider">
-              or import a file
+              {translate("settings.theme.import.orFile")}
             </span>
             <div className="h-px flex-1 bg-border" />
           </div>
@@ -471,17 +474,17 @@ export function ThemeImportDialog({
                 type="file"
               />
             );
-            const chooseButton = (label = "Choose files") => (
+            const chooseButton = (label = translate("settings.theme.import.chooseFiles")) => (
               <Button disabled={isReading} size="sm" variant="outline" onClick={openFilePicker}>
                 <DownloadIcon />
-                {isReading ? "Reading…" : label}
+                {isReading ? translate("settings.theme.import.reading") : label}
               </Button>
             );
             const editorSection = () => (
               <div className="space-y-2">
                 <div className="flex items-baseline justify-between gap-3">
                   <label className="text-sm font-medium" htmlFor="theme-json-editor">
-                    Theme JSON
+                    {translate("settings.theme.import.json")}
                   </label>
                 </div>
                 <ThemeJsonEditor id="theme-json-editor" onChange={setJson} value={json} />
@@ -491,23 +494,25 @@ export function ThemeImportDialog({
               return (
                 <div className="space-y-3">
                   <div className="rounded-xl border border-border/70 bg-muted/20 p-3">
-                    <p className="text-sm font-medium">Already installed</p>
+                    <p className="text-sm font-medium">
+                      {translate("settings.theme.import.installed")}
+                    </p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {conflicts.map((theme) => theme.label).join(", ")}
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <Button size="sm" onClick={() => resolveConflicts("update")}>
-                      Update existing
+                      {translate("settings.theme.import.updateExisting")}
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => resolveConflicts("copy")}>
-                      Keep both
+                      {translate("settings.theme.import.keepBoth")}
                     </Button>
                     <Button size="sm" variant="ghost" onClick={() => setConflicts(null)}>
-                      Back
+                      {translate("settings.theme.import.back")}
                     </Button>
                     <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
-                      Cancel
+                      {translate("settings.common.cancel")}
                     </Button>
                   </div>
                 </div>
@@ -523,9 +528,9 @@ export function ThemeImportDialog({
                   {...dropHandlers}
                 >
                   <div className="min-w-0">
-                    <p className="text-sm font-medium">Theme file</p>
+                    <p className="text-sm font-medium">{translate("settings.theme.import.file")}</p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {fileName ?? "Drop T3 Code or VS Code .json files"}
+                      {fileName ?? translate("settings.theme.import.dropFiles")}
                     </p>
                   </div>
                   {chooseButton()}
@@ -538,11 +543,11 @@ export function ThemeImportDialog({
                     the dialog also has the search and conflict views. */}
                 <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                   <Button variant="ghost" onClick={() => onOpenChange(false)}>
-                    Cancel
+                    {translate("settings.common.cancel")}
                   </Button>
                   <Button disabled={!json.trim() || isReading} onClick={handleSubmit}>
                     <PlusIcon />
-                    Add theme
+                    {translate("settings.theme.import.add")}
                   </Button>
                 </div>
               </div>

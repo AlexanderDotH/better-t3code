@@ -1,10 +1,9 @@
 import { ChevronRightIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-
-const OLDER_PROJECTS_TOOLTIP = "No work activity for more than 7 days.";
 
 export function SidebarOlderProjectsSection(props: {
   readonly children: ReactNode;
@@ -12,6 +11,8 @@ export function SidebarOlderProjectsSection(props: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }) {
+  const translator = useInterfaceTranslator();
+  const tooltip = translator.message("sidebar.olderProjects.tooltip");
   if (props.count === 0) {
     return null;
   }
@@ -23,7 +24,7 @@ export function SidebarOlderProjectsSection(props: {
           render={
             <CollapsibleTrigger
               type="button"
-              title={OLDER_PROJECTS_TOOLTIP}
+              title={tooltip}
               data-testid="sidebar-older-projects-trigger"
               className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground data-panel-open:[&_svg]:rotate-90"
             />
@@ -33,12 +34,17 @@ export function SidebarOlderProjectsSection(props: {
             aria-hidden
             className="size-3 shrink-0 transition-transform duration-200"
           />
-          <span className="min-w-0 flex-1 truncate">Older projects</span>
-          <span className="tabular-nums" aria-label={`${props.count} older projects`}>
+          <span className="min-w-0 flex-1 truncate">
+            {translator.message("sidebar.olderProjects.label")}
+          </span>
+          <span
+            className="tabular-nums"
+            aria-label={translator.message("sidebar.olderProjects.count", { count: props.count })}
+          >
             {props.count}
           </span>
         </TooltipTrigger>
-        <TooltipPopup side="right">{OLDER_PROJECTS_TOOLTIP}</TooltipPopup>
+        <TooltipPopup side="right">{tooltip}</TooltipPopup>
       </Tooltip>
       <CollapsiblePanel data-testid="sidebar-older-projects-panel" className="mt-1">
         {props.children}

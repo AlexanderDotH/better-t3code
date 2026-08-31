@@ -1,6 +1,13 @@
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { Children, isValidElement, type ReactNode } from "react";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+vi.mock("../../hooks/useInterfaceTranslator", async () => {
+  const { createInterfaceTranslator } = await import("@t3tools/shared/interfaceLanguage");
+  return {
+    useInterfaceTranslator: () => createInterfaceTranslator({ language: "en", locale: "en-US" }),
+  };
+});
 
 import { ModelCatalogMetadata, ModelListRow } from "./ModelListRow";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";

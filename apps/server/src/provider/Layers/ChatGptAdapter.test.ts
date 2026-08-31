@@ -138,6 +138,9 @@ describe("ChatGptAdapter", () => {
         expect(requests[0]?.input).toMatchObject([
           { type: "message", role: "user", content: [{ type: "input_text", text: "Say hello." }] },
         ]);
+        expect(requests[0]?.instructions).toContain("workspace_context");
+        expect(requests[0]?.instructions).toContain("workspace_edit");
+        expect(requests[0]?.instructions).toMatch(/formatters.*generators.*binaries/i);
 
         const beforeResume = yield* adapter.readThread(threadId);
         expect(beforeResume.turns).toHaveLength(1);
@@ -157,7 +160,47 @@ describe("ChatGptAdapter", () => {
     ).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("feeds T3 tool results back into the next Responses round", () =>
+  it.effect("passes Fetch isolation into the native tool catalog", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const declarationFetchFlags: Array<boolean> = [];
+        const requests: Array<ChatGptAdapterResponseRequest> = [];
+        const adapter = yield* makeChatGptAdapter(
+          { enabled: true },
+          {
+            instanceId: ProviderInstanceId.make("chatgpt_personal"),
+            transport: fakeTransport({ requests }),
+            harness: {
+              ...noToolsHarness,
+              declarations: ({ fetchWorker }) =>
+                Effect.sync(() => {
+                  declarationFetchFlags.push(fetchWorker);
+                  return [];
+                }),
+            },
+          },
+        );
+        const threadId = ThreadId.make("chatgpt-fetch-tool-isolation");
+        yield* adapter.startSession({
+          threadId,
+          provider: ProviderDriverKind.make("chatgpt"),
+          providerInstanceId: ProviderInstanceId.make("chatgpt_personal"),
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+          sandboxMode: "read-only",
+          purpose: "fetch-worker",
+        });
+
+        yield* adapter.sendTurn({ threadId, input: "Inspect the workspace." });
+
+        expect(declarationFetchFlags).toEqual([true]);
+        expect(requests[0]?.instructions).toContain("workspace_context");
+        expect(requests[0]?.instructions).not.toContain("workspace_edit");
+      }),
+    ).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("replays completed legacy tool history without re-executing it", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const requests: Array<ChatGptAdapterResponseRequest> = [];
@@ -243,7 +286,7 @@ describe("ChatGptAdapter", () => {
           },
         );
         const threadId = ThreadId.make("chatgpt-native-tool-loop");
-        yield* adapter.startSession({
+        const session = yield* adapter.startSession({
           threadId,
           provider: ProviderDriverKind.make("chatgpt"),
           cwd: process.cwd(),
@@ -262,7 +305,21 @@ describe("ChatGptAdapter", () => {
         expect(requests).toHaveLength(2);
         expect(JSON.stringify(requests[1]?.input)).toContain("function_call_output");
         expect(JSON.stringify(requests[1]?.input)).toContain("notes.txt");
-        expect(JSON.stringify(yield* adapter.readThread(threadId))).toContain("Done.");
+        const beforeResume = yield* adapter.readThread(threadId);
+        expect(JSON.stringify(beforeResume)).toContain("Done.");
+
+        yield* adapter.stopSession(threadId);
+        yield* adapter.startSession({
+          threadId,
+          provider: ProviderDriverKind.make("chatgpt"),
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+          sandboxMode: "danger-full-access",
+          resumeCursor: session.resumeCursor,
+        });
+
+        expect(yield* adapter.readThread(threadId)).toEqual(beforeResume);
+        expect(executed).toHaveLength(1);
       }),
     ).pipe(Effect.provide(testLayer)),
   );

@@ -1,11 +1,22 @@
-import { HarnessChatSessionId, ProjectId } from "@t3tools/contracts";
+import {
+  HarnessChatSessionId,
+  HarnessChatSyncSourceId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyHarnessChatTarget,
+  buildHarnessChatSyncRunInput,
   clearHarnessChatSelection,
   createHarnessChatSelection,
   harnessChatSelectedCount,
+  harnessChatNeedsTargetResolution,
+  harnessChatStatusState,
+  harnessChatSyncOutcome,
+  HARNESS_CHAT_SYNC_PAGE_SIZE,
   isHarnessChatSelected,
   selectAllHarnessChats,
   supportsHarnessChatSync,
@@ -21,6 +32,10 @@ describe("harness chat sync settings", () => {
     expect(supportsHarnessChatSync(0)).toBe(false);
     expect(supportsHarnessChatSync(1)).toBe(true);
     expect(supportsHarnessChatSync(2)).toBe(true);
+  });
+
+  it("keeps manual history review pages bounded", () => {
+    expect(HARNESS_CHAT_SYNC_PAGE_SIZE).toBe(10);
   });
 
   it("selects every matching chat by default and keeps exclusions across pages", () => {
@@ -77,5 +92,104 @@ describe("harness chat sync settings", () => {
       ["missing-2", "project-b"],
       ["missing-3", "project-b"],
     ]);
+  });
+
+  it("requires an explicit target only for selected unresolved chats", () => {
+    const unresolvedChat = {
+      sessionId: sessionId("missing"),
+      targetProject: { kind: "unresolved" as const, sourceCwd: "/missing" },
+    };
+    expect(
+      harnessChatNeedsTargetResolution({
+        chat: unresolvedChat,
+        selection: createHarnessChatSelection(),
+        targetResolutions: new Map(),
+        unresolvedTargetProjectId: null,
+      }),
+    ).toBe(true);
+    expect(
+      harnessChatNeedsTargetResolution({
+        chat: unresolvedChat,
+        selection: createHarnessChatSelection(),
+        targetResolutions: new Map([[sessionId("missing"), projectId("target")]]),
+        unresolvedTargetProjectId: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("models active, linked, changed, archived, and partial-result states", () => {
+    expect(
+      harnessChatStatusState({
+        activity: "active",
+        link: { threadId: ThreadId.make("linked-thread") },
+        hasChanges: true,
+        archived: true,
+      }),
+    ).toEqual({
+      activeElsewhere: true,
+      linkedThreadId: "linked-thread",
+      changesAvailable: true,
+      archived: true,
+    });
+    expect(
+      harnessChatSyncOutcome({ syncedCount: 2, failedCount: 1, messagesImported: 14 }),
+    ).toEqual({
+      kind: "partial",
+      syncedCount: 2,
+      failedCount: 1,
+      messagesImported: 14,
+    });
+  });
+
+  it("builds the authoritative all-matching run after workspace resolution", () => {
+    expect(
+      buildHarnessChatSyncRunInput({
+        sourceId: HarnessChatSyncSourceId.make("codex-history"),
+        preferredInstanceId: ProviderInstanceId.make("codex-work"),
+        selection: {
+          mode: "allMatching",
+          excludedSessionIds: new Set([sessionId("excluded")]),
+        },
+        query: "release",
+        includeArchived: true,
+        targetResolutions: new Map([
+          [sessionId("missing-1"), projectId("project-a")],
+          [sessionId("missing-2"), projectId("project-b")],
+        ]),
+        unresolvedTargetProjectId: projectId("project-fallback"),
+      }),
+    ).toEqual({
+      sourceId: "codex-history",
+      providerInstanceId: "codex-work",
+      selection: {
+        mode: "allMatching",
+        query: "release",
+        includeArchived: true,
+        excludedSessionIds: ["excluded"],
+      },
+      targetResolutions: [
+        { sessionId: "missing-1", projectId: "project-a" },
+        { sessionId: "missing-2", projectId: "project-b" },
+      ],
+      unresolvedTargetProjectId: "project-fallback",
+    });
+  });
+
+  it("builds an explicit manual selection without optional routing fields", () => {
+    expect(
+      buildHarnessChatSyncRunInput({
+        sourceId: HarnessChatSyncSourceId.make("claude-history"),
+        preferredInstanceId: null,
+        selection: { mode: "only", sessionIds: new Set([sessionId("selected")]) },
+        query: "ignored for explicit selections",
+        includeArchived: false,
+        targetResolutions: new Map(),
+        unresolvedTargetProjectId: null,
+      }),
+    ).toEqual({
+      sourceId: "claude-history",
+      selection: { mode: "only", sessionIds: ["selected"] },
+      targetResolutions: [],
+    });
   });
 });

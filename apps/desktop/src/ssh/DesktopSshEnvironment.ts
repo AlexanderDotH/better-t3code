@@ -4,6 +4,7 @@ import type {
   DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
+import { translateInterfaceMessage } from "@t3tools/shared/interfaceLanguage";
 import * as SshAuth from "@t3tools/ssh/auth";
 import { discoverSshHosts } from "@t3tools/ssh/config";
 import {
@@ -25,6 +26,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
+import { readDesktopInterfaceLanguage } from "../settings/DesktopInterfaceLanguage.ts";
 
 export type DesktopSshEnvironmentRuntimeServices =
   | ChildProcessSpawner.ChildProcessSpawner
@@ -89,26 +91,31 @@ function unexpectedPasswordPromptError(error: never): never {
 export function toSshPasswordPromptError(
   cause: DesktopSshPasswordPrompts.DesktopSshPasswordPromptRequestError,
 ): SshPasswordPromptError {
+  const language = readDesktopInterfaceLanguage();
   let message: string;
   switch (cause._tag) {
     case "DesktopSshPromptRequestIdGenerationError":
-      message = "Secure randomness is unavailable.";
+      message = translateInterfaceMessage(language, "desktop.ssh.randomnessUnavailable");
       break;
     case "DesktopSshPromptWindowUnavailableError":
     case "DesktopSshPromptPresentationError":
-      message = "T3 Code window is not available for SSH authentication.";
+      message = translateInterfaceMessage(language, "desktop.ssh.windowUnavailable");
       break;
     case "DesktopSshPromptTimedOutError":
-      message = `SSH authentication timed out for ${cause.destination}.`;
+      message = translateInterfaceMessage(language, "desktop.ssh.timedOut", {
+        destination: cause.destination,
+      });
       break;
     case "DesktopSshPromptCancelledError":
-      message = `SSH authentication cancelled for ${cause.destination}.`;
+      message = translateInterfaceMessage(language, "desktop.ssh.cancelled", {
+        destination: cause.destination,
+      });
       break;
     case "DesktopSshPromptWindowClosedError":
-      message = "SSH authentication was cancelled because the app window closed.";
+      message = translateInterfaceMessage(language, "desktop.ssh.windowClosed");
       break;
     case "DesktopSshPromptServiceStoppedError":
-      message = "SSH password prompt service stopped.";
+      message = translateInterfaceMessage(language, "desktop.ssh.serviceStopped");
       break;
     default:
       return unexpectedPasswordPromptError(cause);

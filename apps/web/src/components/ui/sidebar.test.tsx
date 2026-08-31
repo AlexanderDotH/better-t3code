@@ -37,6 +37,8 @@ describe("sidebar interactive cursors", () => {
     );
 
     expect(html).toContain('data-sidebar-state="collapsed"');
+    expect(html).toContain("--workspace-titlebar-content-left:");
+    expect(html).toContain("--workspace-titlebar-content-right:");
   });
 
   it("keeps the sidebar trigger interactive inside Electron drag regions", () => {
@@ -48,6 +50,17 @@ describe("sidebar interactive cursors", () => {
 
     expect(html).toContain("[-webkit-app-region:no-drag]");
     expect(html).toContain("size-[var(--workspace-titlebar-control-size)]!");
+  });
+
+  it("mirrors the sidebar trigger icon for a right-aligned sidebar", () => {
+    const html = renderToStaticMarkup(
+      <SidebarProvider>
+        <SidebarTrigger side="right" />
+      </SidebarProvider>,
+    );
+
+    expect(html).toContain("lucide-panel-right-close");
+    expect(html).not.toContain("lucide-panel-left-close");
   });
 
   it("uses shared geometry and icon constraints for menu buttons by default", () => {

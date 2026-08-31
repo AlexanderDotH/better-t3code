@@ -18,10 +18,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { useAssetUrlState } from "~/assets/assetUrls";
-import ChatMarkdown from "~/components/ChatMarkdown";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings } from "~/hooks/useSettings";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffRendering";
@@ -42,6 +42,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 import FileBrowserPanel from "./FileBrowserPanel";
+import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import {
   type FileCommentAnnotationEntry,
   type FileCommentAnnotationGroup,
@@ -135,6 +136,7 @@ function WorkspaceImagePreview(props: {
   readonly absolutePath: string;
   readonly alt: string;
 }) {
+  const translate = useInterfaceTranslator().message;
   const assetUrl = useAssetUrlState(props.environmentId, {
     _tag: "workspace-file",
     threadId: props.threadRef.threadId,
@@ -145,7 +147,7 @@ function WorkspaceImagePreview(props: {
   if (assetUrl._tag === "Failure" || (assetUrl._tag === "Success" && failedUrl === assetUrl.url)) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
-        Unable to load workspace image.
+        {translate("browser.files.imageLoadFailed")}
       </div>
     );
   }
@@ -444,6 +446,7 @@ function EditableFileSurface({
   onPostRender,
   onPendingChange,
 }: EditableFileSurfaceProps) {
+  const translate = useInterfaceTranslator().message;
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
   const [lineAnnotations, setLineAnnotations] = useState<FileCommentLineAnnotation[]>([]);
@@ -642,7 +645,7 @@ function EditableFileSurface({
 
   return (
     <WorkspaceFileEditorSurface<FileCommentAnnotationGroup>
-      ariaLabel={`Edit ${relativePath}`}
+      ariaLabel={translate("browser.files.edit", { path: relativePath })}
       contentEditable
       editor={editor}
       file={{
@@ -718,11 +721,11 @@ function RenderedMarkdownSurface({
 
   return (
     <ScrollArea className="min-h-0 flex-1">
-      <ChatMarkdown
+      <FileMarkdownPreview
         text={contents}
         cwd={cwd}
+        relativePath={relativePath}
         threadRef={threadRef}
-        className="mx-auto max-w-4xl px-6 py-5"
         onTaskListChange={({ markerOffset, checked }) => {
           const currentContents =
             getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
@@ -760,6 +763,8 @@ export default function FilePreviewPanel({
   onOpenFile,
   onPendingChange,
 }: FilePreviewPanelProps) {
+  const translator = useInterfaceTranslator();
+  const translate = translator.message;
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -840,12 +845,13 @@ export default function FilePreviewPanel({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to open file in browser",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: translate("browser.files.openInPreviewFailed"),
+          description:
+            error instanceof Error ? error.message : translate("browser.files.errorOccurred"),
         }),
       );
     })();
-  }, [absolutePath, createAssetUrl, environmentHttpBaseUrl, openPreview, threadRef]);
+  }, [absolutePath, createAssetUrl, environmentHttpBaseUrl, openPreview, threadRef, translate]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
@@ -920,7 +926,11 @@ export default function FilePreviewPanel({
                           : null,
                       );
                     }}
-                    aria-label={renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
+                    aria-label={
+                      renderMarkdown
+                        ? translate("browser.files.showMarkdownSource")
+                        : translate("browser.files.showRenderedMarkdown")
+                    }
                     variant="ghost"
                     size="sm"
                   >
@@ -929,7 +939,9 @@ export default function FilePreviewPanel({
                 }
               />
               <TooltipPopup>
-                {renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
+                {renderMarkdown
+                  ? translate("browser.files.showMarkdownSource")
+                  : translate("browser.files.showRenderedMarkdown")}
               </TooltipPopup>
             </Tooltip>
           ) : null}
@@ -941,7 +953,7 @@ export default function FilePreviewPanel({
                     className="shrink-0"
                     pressed={false}
                     onPressedChange={handleOpenInBrowser}
-                    aria-label="Open file in preview browser"
+                    aria-label={translate("browser.files.openInPreview")}
                     variant="ghost"
                     size="sm"
                   >
@@ -949,7 +961,7 @@ export default function FilePreviewPanel({
                   </Toggle>
                 }
               />
-              <TooltipPopup>Open file in preview browser</TooltipPopup>
+              <TooltipPopup>{translate("browser.files.openInPreview")}</TooltipPopup>
             </Tooltip>
           ) : null}
           <Tooltip>
@@ -959,7 +971,11 @@ export default function FilePreviewPanel({
                   className="shrink-0"
                   pressed={explorerOpen}
                   onPressedChange={toggleExplorer}
-                  aria-label={explorerOpen ? "Hide file explorer" : "Show file explorer"}
+                  aria-label={
+                    explorerOpen
+                      ? translate("browser.files.hideExplorer")
+                      : translate("browser.files.showExplorer")
+                  }
                   variant="ghost"
                   size="sm"
                 >
@@ -968,14 +984,18 @@ export default function FilePreviewPanel({
               }
             />
             <TooltipPopup>
-              {explorerOpen ? "Hide file explorer" : "Show file explorer"}
+              {explorerOpen
+                ? translate("browser.files.hideExplorer")
+                : translate("browser.files.showExplorer")}
             </TooltipPopup>
           </Tooltip>
         </div>
       ) : null}
       {relativePath && file.data?.truncated ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-[11px] text-warning-foreground">
-          Preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()} byte file.
+          {translate("browser.files.previewTruncated", {
+            bytes: translator.number(file.data.byteLength),
+          })}
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">

@@ -1,6 +1,7 @@
 import { DownloadIcon } from "lucide-react";
 import { useSyncExternalStore } from "react";
 import type { RelayClientInstallProgressStage } from "@t3tools/contracts";
+import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 
 import {
   completeRelayClientInstallDialogClose,
@@ -9,6 +10,7 @@ import {
   subscribeRelayClientInstallDialog,
 } from "../../cloud/relayClientInstallDialog";
 import { Button } from "../ui/button";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import {
   Dialog,
   DialogDescription,
@@ -20,18 +22,19 @@ import {
 } from "../ui/dialog";
 const installSteps: ReadonlyArray<{
   readonly stage: RelayClientInstallProgressStage;
-  readonly label: string;
+  readonly label: InterfaceMessageKey;
 }> = [
-  { stage: "checking", label: "Checking current installation" },
-  { stage: "waiting_for_lock", label: "Waiting for installer" },
-  { stage: "downloading", label: "Downloading relay client" },
-  { stage: "verifying", label: "Verifying download" },
-  { stage: "installing", label: "Installing relay client" },
-  { stage: "validating", label: "Validating executable" },
-  { stage: "activating", label: "Activating installation" },
+  { stage: "checking", label: "relayInstall.stage.checking" },
+  { stage: "waiting_for_lock", label: "relayInstall.stage.waitingForLock" },
+  { stage: "downloading", label: "relayInstall.stage.downloading" },
+  { stage: "verifying", label: "relayInstall.stage.verifying" },
+  { stage: "installing", label: "relayInstall.stage.installing" },
+  { stage: "validating", label: "relayInstall.stage.validating" },
+  { stage: "activating", label: "relayInstall.stage.activating" },
 ];
 
 export function RelayClientInstallDialog() {
+  const translator = useInterfaceTranslator();
   const state = useSyncExternalStore(
     subscribeRelayClientInstallDialog,
     readRelayClientInstallDialogState,
@@ -65,12 +68,14 @@ export function RelayClientInstallDialog() {
             <DownloadIcon aria-hidden className="size-4.5 text-muted-foreground" />
           </div>
           <DialogTitle>
-            {isInstalling ? "Installing relay client" : "Install relay client?"}
+            {translator.message(
+              isInstalling ? "relayInstall.stage.installing" : "relayInstall.confirmTitle",
+            )}
           </DialogTitle>
           <DialogDescription>
             {isInstalling
-              ? "T3 Code is preparing this environment for secure access through T3 Connect."
-              : "T3 Code needs the relay client to make this environment available through T3 Connect."}
+              ? translator.message("relayInstall.installingDescription")
+              : translator.message("relayInstall.confirmDescription")}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel scrollFade={false}>
@@ -78,28 +83,34 @@ export function RelayClientInstallDialog() {
             <div className="space-y-2.5">
               <div className="flex items-center justify-between gap-3 text-sm">
                 <p aria-live="polite" className="font-medium text-foreground">
-                  {activeStep?.label}
+                  {activeStep ? translator.message(activeStep.label) : null}
                 </p>
                 <p className="shrink-0 tabular-nums text-muted-foreground">
-                  {activeStepIndex + 1} of {installSteps.length}
+                  {translator.message("relayInstall.progressCount", {
+                    current: activeStepIndex + 1,
+                    total: installSteps.length,
+                  })}
                 </p>
               </div>
               <progress
-                aria-label="Relay client installation progress"
+                aria-label={translator.message("relayInstall.progressAria")}
                 className="h-2 w-full appearance-none overflow-hidden rounded-full bg-muted [&::-moz-progress-bar]:rounded-full [&::-moz-progress-bar]:bg-primary [&::-webkit-progress-bar]:rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-primary"
                 max={installSteps.length}
                 value={activeStepIndex + 1}
               />
               <p className="text-xs leading-relaxed text-muted-foreground">
-                Keep T3 Code open while the relay client is installed.
+                {translator.message("relayInstall.keepOpen")}
               </p>
             </div>
           ) : (
             <div className="rounded-xl border border-border/70 bg-muted/35 p-3">
-              <p className="text-sm font-medium text-foreground">Managed relay client</p>
+              <p className="text-sm font-medium text-foreground">
+                {translator.message("relayInstall.managedTitle")}
+              </p>
               <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                T3 Code will download and install version{" "}
-                {view.status === "confirming" ? view.version : ""} locally.
+                {translator.message("relayInstall.versionDescription", {
+                  version: view.status === "confirming" ? view.version : "",
+                })}
               </p>
             </div>
           )}
@@ -110,10 +121,10 @@ export function RelayClientInstallDialog() {
               variant="outline"
               onClick={() => respondToRelayClientInstallConfirmation(false)}
             >
-              Cancel
+              {translator.message("common.cancel")}
             </Button>
             <Button onClick={() => respondToRelayClientInstallConfirmation(true)}>
-              Download and install
+              {translator.message("relayInstall.downloadAndInstall")}
             </Button>
           </DialogFooter>
         ) : null}

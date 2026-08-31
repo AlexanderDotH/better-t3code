@@ -1,16 +1,11 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import chatComposerSource from "./ChatComposer.tsx?raw";
 import chatViewSource from "../ChatView.tsx?raw";
-
-const indexCssPath = decodeURIComponent(new URL("../../index.css", import.meta.url).pathname);
-const readIndexCss = Effect.gen(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
-  return yield* fileSystem.readFileString(indexCssPath);
-}).pipe(Effect.provide(NodeServices.layer));
+import { ComposerBanner } from "./ComposerBanner";
+import { ComposerSurface } from "./ComposerSurface";
 
 describe("ChatComposer footer layout", () => {
   it("uses the expanded-controls preference and Codex context in the compact decision", () => {
@@ -63,38 +58,108 @@ describe("ChatComposer footer layout", () => {
 });
 
 describe("ChatComposer top-drawer layout", () => {
-  it.effect("floats approvals, pending user input, and Plan ready above the composer surface", () =>
-    Effect.gen(function* () {
-      const indexCssSource = yield* readIndexCss;
-      expect(chatComposerSource).toContain(
-        'className="chat-composer-top-drawer chat-composer-top-drawer-floating"',
-      );
-      expect(chatComposerSource).toContain("floatingDrawerHost: HTMLElement | null;");
-      expect(chatComposerSource).toContain(
-        "<ComposerDetachedDrawerPortal host={props.floatingDrawerHost}>",
-      );
-      expect(chatComposerSource).toContain("const showFloatingTasksBadge =");
-      expect(chatComposerSource).toContain('placement="floating"');
-      expect(chatComposerSource).toContain(
-        "return host ? createPortal(children, host) : children;",
-      );
-      expect(chatComposerSource).toContain(
-        "(!isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan !== null)",
-      );
-      expect(indexCssSource).toMatch(
-        /\.chat-composer-top-drawer-floating,\s*\.chat-composer-drawer-floating\s*{[^}]*--chat-composer-attachment-overlap:\s*0px;/s,
-      );
-      expect(indexCssSource).toMatch(
-        /\.chat-composer-drawer-slot\.chat-composer-drawer-floating\s*{[^}]*margin-bottom:\s*0\.5rem;/s,
-      );
-      expect(indexCssSource).toMatch(
-        /\.chat-composer-drawer-surface\.chat-composer-drawer-floating[\s\S]*?::before\s*{[^}]*border:\s*1px solid var\(--chat-composer-attached-outline\);[^}]*border-radius:\s*16px;[^}]*mask-image:\s*none;/s,
-      );
-      expect(indexCssSource).toMatch(
-        /\.chat-composer-floating-drawer-host:not\(:empty\)\s*{[^}]*padding-bottom:\s*1rem;/s,
-      );
-    }),
-  );
+  it("attaches the banner surface ahead of the main composer surface", () => {
+    const topDrawerProps = {
+      "data-chat-composer-top-drawer": "true",
+      variant: "warning",
+    } as const;
+    const html = renderToStaticMarkup(
+      createElement(
+        ComposerSurface.Shell,
+        null,
+        createElement(
+          ComposerSurface.Host,
+          null,
+          createElement(
+            "form",
+            { "data-chat-composer-form": "true" },
+            createElement(
+              ComposerBanner.Attachment,
+              null,
+              createElement(
+                ComposerBanner.Root,
+                topDrawerProps,
+                createElement(
+                  ComposerBanner.Row,
+                  null,
+                  createElement(ComposerBanner.Content, null, "Approval required"),
+                ),
+              ),
+            ),
+            createElement(ComposerSurface.Main, null, "Composer"),
+          ),
+        ),
+      ),
+    );
+
+    expect(html).toContain('data-slot="composer-shell"');
+    expect(html).toContain('data-slot="composer-host"');
+    expect(html).toContain('data-slot="composer-banner-attachment"');
+    expect(html).toContain('data-composer-banner-surface="attached"');
+    expect(html).toContain('data-chat-composer-top-drawer="true"');
+    expect(html).toContain('data-chat-composer-main-surface="true"');
+    expect(html.indexOf('data-chat-composer-top-drawer="true"')).toBeLessThan(
+      html.indexOf('data-chat-composer-main-surface="true"'),
+    );
+  });
+
+  it("routes approvals, pending input, and Plan ready through the floating bubble portal", () => {
+    const drawerStart = chatComposerSource.indexOf(
+      "{showComposerTopDrawer && (!isTasksDrawerOpen || hasBlockingComposerTopDrawer) ? (",
+    );
+    const drawerEnd = chatComposerSource.indexOf("</ComposerFloatingBubblePortal>", drawerStart);
+    const drawerSource = chatComposerSource.slice(drawerStart, drawerEnd);
+
+    expect(drawerStart).toBeGreaterThanOrEqual(0);
+    expect(drawerEnd).toBeGreaterThan(drawerStart);
+    expect(drawerSource).toContain("<ComposerBanner.Attachment>");
+    expect(drawerSource).toContain('data-chat-composer-top-drawer="true"');
+    expect(drawerSource).toContain("<ComposerPendingApprovalPanel");
+    expect(drawerSource).toContain("<ComposerPendingUserInputPanel");
+    expect(drawerSource).toContain("<ComposerPlanFollowUpBanner");
+    expect(chatComposerSource).toContain("floatingBubbleHost: HTMLElement | null;");
+    expect(chatComposerSource).toContain(
+      "<ComposerFloatingBubblePortal host={props.floatingBubbleHost}>",
+    );
+    expect(chatComposerSource).not.toContain("floatingDrawerHost");
+  });
+});
+
+describe("ChatComposer merged activity integration", () => {
+  it("lets thread sync replace stale task progress and take activity priority", () => {
+    expect(chatComposerSource).toContain(
+      "const activeTasksProgress = props.threadSyncPhase === null ? props.activeTasksProgress : null;",
+    );
+    expect(chatComposerSource).toContain(
+      "const activeTaskSteps = props.threadSyncPhase === null ? props.activeTaskSteps : null;",
+    );
+    expect(chatComposerSource).toContain('? { kind: "sync", phase: props.threadSyncPhase }');
+    expect(chatComposerSource).toContain('priority: "activity"');
+    expect(chatComposerSource).toContain("items={bannerStackItems}");
+    expect(chatComposerSource).toContain(
+      "<ComposerActivityBanner status={standaloneActivityStatus} />",
+    );
+  });
+
+  it("keeps task, stash, voice, Plan, and provider-lock controls on the composed surface", () => {
+    expect(chatComposerSource).toContain("<ComposerTasksDrawer");
+    expect(chatComposerSource).toContain("<ComposerTasksBadge");
+    expect(chatComposerSource).toContain("<ComposerStashBadge");
+    expect(chatComposerSource).toContain("<VoiceDictationControl");
+    expect(chatComposerSource).toContain("<ComposerPlanFollowUpBanner");
+    expect(chatComposerSource).toContain("lockedProvider={lockedProvider}");
+    expect(chatComposerSource).toContain("lockedContinuationGroupKey={lockedContinuationGroupKey}");
+    expect(chatComposerSource).toContain("<ComposerSurface.Main");
+  });
+
+  it("closes transient task state when its owner disappears or becomes blocked", () => {
+    expect(chatComposerSource).toContain(
+      "if (activeTasksProgress === null || activeTaskSteps === null) {\n      setIsTasksDrawerOpen(false);",
+    );
+    expect(chatComposerSource).toContain(
+      "if (hasBlockingComposerTopDrawer) {\n      setIsTasksDrawerOpen(false);",
+    );
+  });
 });
 
 describe("ChatComposer surface morph integration", () => {

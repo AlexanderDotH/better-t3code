@@ -1,4 +1,5 @@
-import { ClientSettingsSchema } from "@t3tools/contracts";
+import { resolveInterfaceLocaleSyncRecord } from "@t3tools/client-runtime/interface-language-sync";
+import { ClientSettingsSchema, type ClientSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -7,6 +8,30 @@ import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts"
 import * as DesktopApplicationMenu from "../../window/DesktopApplicationMenu.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
+
+export function didInterfaceLocaleSelectionChange(
+  previousSettings: ClientSettings | null,
+  nextSettings: ClientSettings,
+): boolean {
+  const previous = previousSettings
+    ? resolveInterfaceLocaleSyncRecord({
+        localeRecord: previousSettings.interfaceLocaleLocalRecordV1,
+        legacyRecord: previousSettings.interfaceLanguageLocalRecord,
+      })
+    : null;
+  const next = resolveInterfaceLocaleSyncRecord({
+    localeRecord: nextSettings.interfaceLocaleLocalRecordV1,
+    legacyRecord: nextSettings.interfaceLanguageLocalRecord,
+  });
+  return !(
+    previous === next ||
+    (previous !== null &&
+      next !== null &&
+      previous.preference === next.preference &&
+      previous.updatedAt === next.updatedAt &&
+      previous.updateId === next.updateId)
+  );
+}
 
 export const getClientSettings = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.GET_CLIENT_SETTINGS_CHANNEL,
@@ -26,15 +51,7 @@ export const setClientSettings = DesktopIpc.makeIpcMethod({
     const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
     const previousSettings = Option.getOrNull(yield* clientSettings.get);
     yield* clientSettings.set(settings);
-    const previousLanguageRecord = previousSettings?.interfaceLanguageLocalRecord ?? null;
-    const nextLanguageRecord = settings.interfaceLanguageLocalRecord;
-    if (
-      previousLanguageRecord?.preference === nextLanguageRecord?.preference &&
-      previousLanguageRecord?.updatedAt === nextLanguageRecord?.updatedAt &&
-      previousLanguageRecord?.updateId === nextLanguageRecord?.updateId
-    ) {
-      return;
-    }
+    if (!didInterfaceLocaleSelectionChange(previousSettings, settings)) return;
     const applicationMenu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
     yield* applicationMenu.configure;
   }),

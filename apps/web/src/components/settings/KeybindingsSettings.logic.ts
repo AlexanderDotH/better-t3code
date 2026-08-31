@@ -10,6 +10,10 @@ import {
   DEFAULT_RESOLVED_KEYBINDINGS,
   parseKeybindingWhenExpression,
 } from "@t3tools/shared/keybindings";
+import {
+  translateInterfaceMessage,
+  type InterfaceTranslator,
+} from "@t3tools/shared/interfaceLanguage";
 
 import { isMacPlatform } from "../../lib/utils";
 
@@ -75,6 +79,8 @@ function wrapWhenExpression(node: KeybindingWhenNode): string {
 
 export function parseWhenExpressionDraft(
   expression: string,
+  translate: InterfaceTranslator["message"] = (key, values) =>
+    translateInterfaceMessage("en", key, values),
 ): { ok: true; value: KeybindingWhenNode | undefined } | { ok: false; message: string } {
   const trimmed = expression.trim();
   if (trimmed.length === 0) return { ok: true, value: undefined };
@@ -83,7 +89,7 @@ export function parseWhenExpressionDraft(
   if (!ast) {
     return {
       ok: false,
-      message: "Use variables with !, &&, ||, and parentheses.",
+      message: translate("settings.application.keybindings.parseHint"),
     };
   }
 
@@ -139,6 +145,8 @@ function conflictsWithWhen(leftWhen: string, rightWhen: string): boolean {
 export function keybindingConflictLabels(
   rows: ReadonlyArray<KeybindingRow>,
   input: { readonly rowId: string; readonly key: string; readonly when: string },
+  translate: InterfaceTranslator["message"] = (key, values) =>
+    translateInterfaceMessage("en", key, values),
 ): ReadonlyArray<string> {
   if (input.key.trim().length === 0) return [];
   const conflicts: Array<string> = [];
@@ -148,7 +156,7 @@ export function keybindingConflictLabels(
       candidate.key === input.key &&
       conflictsWithWhen(candidate.when, input.when)
     ) {
-      conflicts.push(commandLabel(candidate.command));
+      conflicts.push(commandLabel(candidate.command, translate));
     }
   }
   return [...new Set(conflicts)].toSorted();
@@ -157,6 +165,8 @@ export function keybindingConflictLabels(
 export function buildKeybindingRows(
   keybindings: ResolvedKeybindingsConfig,
   query: string,
+  translate: InterfaceTranslator["message"] = (key, values) =>
+    translateInterfaceMessage("en", key, values),
 ): ReadonlyArray<KeybindingRow> {
   const normalizedQuery = query.trim().toLowerCase();
   const rows = keybindings.map((binding, index) => {
@@ -177,11 +187,15 @@ export function buildKeybindingRows(
   });
 
   const rowsWithConflicts = rows.map((row) => {
-    const conflicts = keybindingConflictLabels(rows, {
-      rowId: row.id,
-      key: row.key,
-      when: row.when,
-    });
+    const conflicts = keybindingConflictLabels(
+      rows,
+      {
+        rowId: row.id,
+        key: row.key,
+        when: row.when,
+      },
+      translate,
+    );
     return conflicts.length > 0
       ? Object.assign({}, row, { conflicts: [...new Set(conflicts)].toSorted() })
       : row;
@@ -202,7 +216,15 @@ export function buildKeybindingRows(
       row.command.toLowerCase().includes(normalizedQuery) ||
       row.key.toLowerCase().includes(normalizedQuery) ||
       row.when.toLowerCase().includes(normalizedQuery) ||
-      row.source.toLowerCase().includes(normalizedQuery)
+      translate(
+        row.source === "Default"
+          ? "settings.application.keybindings.source.default"
+          : row.source === "Custom"
+            ? "settings.application.keybindings.source.custom"
+            : "settings.application.keybindings.source.project",
+      )
+        .toLowerCase()
+        .includes(normalizedQuery)
     );
   });
 }
@@ -255,20 +277,28 @@ export function buildWhenVariableOptions(): ReadonlyArray<WhenVariableOption> {
 
 export function buildKeybindingCommandOptions(
   keybindings: ResolvedKeybindingsConfig,
+  translate: InterfaceTranslator["message"] = (key, values) =>
+    translateInterfaceMessage("en", key, values),
 ): ReadonlyArray<KeybindingCommandOption> {
   const commands = new Set<KeybindingCommand>(STATIC_KEYBINDING_COMMANDS);
   for (const binding of keybindings) {
     commands.add(binding.command);
   }
   return [...commands].toSorted((left, right) =>
-    commandLabel(left).localeCompare(commandLabel(right)),
+    commandLabel(left, translate).localeCompare(commandLabel(right, translate)),
   );
 }
 
-export function commandLabel(command: KeybindingCommand): string {
+export function commandLabel(
+  command: KeybindingCommand,
+  translate: InterfaceTranslator["message"] = (key, values) =>
+    translateInterfaceMessage("en", key, values),
+): string {
   const raw = String(command);
   if (raw.startsWith("script.") && raw.endsWith(".run")) {
-    return `Run Script: ${titleCaseCommandSegment(raw.slice("script.".length, -".run".length))}`;
+    return translate("settings.application.keybindings.runScript", {
+      name: titleCaseCommandSegment(raw.slice("script.".length, -".run".length)),
+    });
   }
   return raw.split(".").map(titleCaseCommandSegment).join(": ");
 }

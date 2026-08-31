@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
+import { translateInterfaceMessage } from "@t3tools/shared/interfaceLanguage";
 
 import {
   searchableSetting,
+  localizeSettingsSearchItems,
+  resolveSettingsSectionLabels,
   searchSettings,
   SETTINGS_SECTION_LABELS,
   SETTINGS_SEARCH_ITEMS,
@@ -37,6 +40,24 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
+  it("localizes built-in navigation, anchors, and searchable titles from typed message ids", () => {
+    const german = (key: Parameters<typeof translateInterfaceMessage>[1]) =>
+      translateInterfaceMessage("de", key);
+    const french = (key: Parameters<typeof translateInterfaceMessage>[1]) =>
+      translateInterfaceMessage("fr", key);
+
+    expect(resolveSettingsSectionLabels(german)["/settings/general"]).toBe("Allgemein");
+    expect(searchableSetting("word-wrap", german)).toEqual({
+      id: "word-wrap",
+      title: "Zeilenumbruch",
+    });
+    expect(
+      searchSettings("graphe de connaissances", localizeSettingsSearchItems(french)).map(
+        (item) => item.id,
+      ),
+    ).toEqual(["better-t3-knowledge-graph"]);
+  });
+
   it("matches only setting titles", () => {
     expect(searchSettings("word", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
     expect(searchSettings("network", ITEMS).map((item) => item.id)).toEqual(["network-access"]);
@@ -54,6 +75,14 @@ describe("searchSettings", () => {
     expect(searchSettings("update", ITEMS).map((item) => item.id)).toEqual([
       "provider-updates",
       "automatic-updates",
+    ]);
+  });
+
+  it("lists thread confirmations in panel order", () => {
+    expect(searchSettings("confirmation").map((item) => item.id)).toEqual([
+      "unpin-confirmation",
+      "archive-confirmation",
+      "delete-confirmation",
     ]);
   });
 
@@ -162,6 +191,21 @@ describe("searchSettings", () => {
     expect(searchSettings("agent browser access")[0]).toMatchObject({
       to: "/settings/integrations",
       targetId: "browser",
+    });
+  });
+
+  it("routes Better T3 feature controls to their dedicated settings page", () => {
+    expect(SETTINGS_SECTION_LABELS["/settings/better-t3"]).toBe("Better T3");
+    expect(searchSettings("Better T3")).toContainEqual({
+      id: "better-t3",
+      title: "Better T3",
+      to: "/settings/better-t3",
+    });
+    expect(searchSettings("Knowledge Graph")).toContainEqual({
+      id: "better-t3-knowledge-graph",
+      title: "Knowledge Graph",
+      to: "/settings/better-t3",
+      targetId: "knowledge.graph",
     });
   });
 });

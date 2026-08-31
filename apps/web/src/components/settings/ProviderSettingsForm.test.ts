@@ -42,11 +42,23 @@ describe("ProviderSettingsForm helpers", () => {
 
     expect(cursor).toMatchObject({
       label: "Cursor",
-      badgeLabel: "Early Access",
+      badgeMessageKey: "settings.providers.badge.earlyAccess",
     });
     expect(deriveProviderSettingsFields(cursor!).map((field) => field.key)).toEqual([
       "binaryPath",
       "apiEndpoint",
+    ]);
+  });
+
+  it("shows the auto-compaction threshold for Claude providers", () => {
+    const claude = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("claudeAgent")];
+    expect(claude).toBeDefined();
+
+    expect(deriveProviderSettingsFields(claude!).map((field) => field.key)).toEqual([
+      "binaryPath",
+      "homePath",
+      "autoCompactWindow",
+      "launchArgs",
     ]);
   });
 

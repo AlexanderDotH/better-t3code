@@ -123,6 +123,38 @@ describe("OpenRouter Chat Completions", () => {
     ),
   );
 
+  it.effect("replays structured reasoning without also duplicating the plaintext field", () =>
+    buildOpenRouterChatCompletionRequest(
+      request({
+        history: [
+          {
+            type: "assistant",
+            content: "",
+            reasoning: "Inspect the workspace.",
+            toolCalls: [{ id: "call-1", name: "read_file", arguments: '{"path":"a"}' }],
+            opaque: {
+              protocol: "chat-completions",
+              reasoningDetails: [
+                { type: "reasoning.encrypted", data: "opaque-token", id: "reasoning-1" },
+              ],
+            },
+          },
+          { type: "tool", callId: "call-1", content: "contents" },
+        ],
+      }),
+    ).pipe(
+      Effect.map((body) => {
+        expect(body.messages[1]).toMatchObject({
+          role: "assistant",
+          reasoning_details: [
+            { type: "reasoning.encrypted", data: "opaque-token", id: "reasoning-1" },
+          ],
+        });
+        expect(body.messages[1]).not.toHaveProperty("reasoning");
+      }),
+    ),
+  );
+
   it.effect("omits unsupported optional tool parameters so routing remains available", () =>
     buildOpenRouterChatCompletionRequest(
       request({

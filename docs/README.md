@@ -11,7 +11,11 @@
 - [Review usage](./user/usage.md)
 - [Customize a project icon](./user/project-settings.md)
 - [Interface language](./user/interface-language.md)
+- [Better T3 settings](./user/better-t3-settings.md)
+- [Project Knowledge Graph](./user/knowledge-graph.md)
+- [Resource protection](./user/resource-protection.md)
 - [Mobile appearance](./user/mobile-appearance.md)
+- [Environment themes](./user/environment-theme.md)
 - [Remote access](./user/remote-access.md)
 - [Container server](./user/container-server.md)
 - [Keeping app and server in sync](./user/updating.md)
@@ -22,7 +26,8 @@
 - Providers: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) ·
   [OpenCode](./user/providers-opencode.md) · [Gemini](./user/providers-gemini.md) ·
   [ChatGPT Subscription](./user/providers-chatgpt-subscription.md) ·
-  [OpenRouter](./user/providers-openrouter.md)
+  [OpenRouter](./user/providers-openrouter.md) ·
+  [OpenAI Responses](./user/providers-openai.md)
 
 Mobile app: [apps/mobile/README.md](../apps/mobile/README.md)
 
@@ -49,6 +54,11 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Remote environments](./internals/remote.md)
 - [Server updates](./internals/server-updates.md)
 - [Resource telemetry](./internals/resource-telemetry.md)
+- [Better T3 feature registry](./internals/better-t3-feature-registry.md)
+- [Project Knowledge Graph](./internals/knowledge-graph.md)
+- [Resource protection](./internals/resource-protection.md)
+- [Interface localization](./internals/interface-localization.md)
+- [Product analytics](./internals/product-analytics.md)
 - [Environment auth](./internals/environment-auth.md)
 - [T3 Connect](./internals/t3-connect.md)
 - [CI gates](./internals/ci.md)

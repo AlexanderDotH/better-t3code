@@ -2,7 +2,6 @@
 
 import {
   ArrowUpCircleIcon,
-  ChevronDownIcon,
   CopyIcon,
   DownloadIcon,
   LoaderIcon,
@@ -12,7 +11,7 @@ import {
 } from "lucide-react";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   isProviderDriverKind,
   ProviderDriverKind,
@@ -31,7 +30,6 @@ import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
-import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { DraftInput } from "../ui/draft-input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ScrollArea } from "../ui/scroll-area";
@@ -40,13 +38,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { DriverOption } from "./providerDriverMeta";
+import { providerSettingsTabClassName } from "./providerSettingsTabs";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
-import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { ProviderInstanceIcon, providerInstanceInitials } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { ProviderSubscriptionAuthBridge } from "./ProviderSubscriptionAuthBridge";
 import { deriveProviderSubscriptionPresentation } from "./ProviderSubscriptionAuth";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import type { ProviderAuthFlow } from "./ProviderSettingsPanel.logic";
 import {
   getProviderVersionAdvisoryPresentation,
@@ -80,6 +80,25 @@ function makeEnvironmentDraftRow(
     sensitive: variable.sensitive,
     ...(variable.valueRedacted !== undefined ? { valueRedacted: variable.valueRedacted } : {}),
   };
+}
+
+function providerEnvironmentsEqual(
+  left: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
+  right: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((variable, index) => {
+      const other = right[index];
+      return (
+        other !== undefined &&
+        variable.name === other.name &&
+        variable.value === other.value &&
+        variable.sensitive === other.sensitive &&
+        variable.valueRedacted === other.valueRedacted
+      );
+    })
+  );
 }
 
 /**
@@ -140,25 +159,19 @@ export function shouldRenderProviderModelsSection(driverKind: ProviderDriverKind
   return driverKind !== ProviderDriverKind.make("openrouter");
 }
 
-function ProviderAuthEmail(props: {
-  readonly email: string | undefined;
-  readonly prefix?: string;
-  readonly separator?: boolean;
-}) {
-  const trimmed = props.email?.trim();
-  if (!trimmed) return null;
+function ProviderAuthEmail(props: { readonly email: string | undefined }) {
+  const translate = useInterfaceTranslator().message;
+  const email = props.email?.trim();
+  if (!email) return null;
 
   return (
-    <span className="inline-flex min-w-0 items-center gap-1.5">
-      {props.separator ? <span aria-hidden>·</span> : null}
-      {props.prefix ? <span className="text-muted-foreground/80">{props.prefix}</span> : null}
-      <RedactedSensitiveText
-        value={trimmed}
-        ariaLabel="Toggle account email visibility"
-        revealTooltip="Click to reveal email"
-        hideTooltip="Click to hide email"
-      />
-    </span>
+    <RedactedSensitiveText
+      value={email}
+      ariaLabel={translate("settings.providers.auth.toggleEmail")}
+      revealTooltip={translate("settings.providers.auth.revealEmail")}
+      hideTooltip={translate("settings.providers.auth.hideEmail")}
+      className="max-w-full truncate"
+    />
   );
 }
 
@@ -166,9 +179,30 @@ function ProviderEnvironmentSection(props: {
   readonly environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
   readonly onChange: (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const [rows, setRows] = useState<ReadonlyArray<EnvironmentDraftRow>>(() =>
     props.environment.map(makeEnvironmentDraftRow),
   );
+  const previousEnvironmentRef = useRef(props.environment);
+  const lastPublishedEnvironmentRef = useRef<
+    ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined
+  >(undefined);
+
+  useEffect(() => {
+    const previousEnvironment = previousEnvironmentRef.current;
+    const lastPublishedEnvironment = lastPublishedEnvironmentRef.current;
+    previousEnvironmentRef.current = props.environment;
+    lastPublishedEnvironmentRef.current = undefined;
+    if (
+      previousEnvironment === props.environment ||
+      providerEnvironmentsEqual(previousEnvironment, props.environment) ||
+      (lastPublishedEnvironment !== undefined &&
+        providerEnvironmentsEqual(lastPublishedEnvironment, props.environment))
+    ) {
+      return;
+    }
+    setRows(props.environment.map(makeEnvironmentDraftRow));
+  }, [props.environment]);
 
   const publishRows = (nextRows: ReadonlyArray<EnvironmentDraftRow>) => {
     const published: ProviderInstanceEnvironmentVariable[] = [];
@@ -188,6 +222,7 @@ function ProviderEnvironmentSection(props: {
       const { id: _id, ...rest } = row;
       published.push({ ...rest, name });
     }
+    lastPublishedEnvironmentRef.current = published;
     props.onChange(published);
   };
 
@@ -214,7 +249,9 @@ function ProviderEnvironmentSection(props: {
   return (
     <div className="grid gap-2">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-xs font-medium text-foreground">Environment variables</span>
+        <span className="text-xs font-medium text-foreground">
+          {translate("settings.providers.environment.title")}
+        </span>
         <Button
           type="button"
           size="sm"
@@ -233,23 +270,27 @@ function ProviderEnvironmentSection(props: {
           }
         >
           <PlusIcon className="size-3" />
-          Add
+          {translate("settings.providers.environment.add")}
         </Button>
       </div>
       {rows.length === 0 ? (
         <p className="text-xs text-muted-foreground">
-          Add variables to pass API keys, base URLs, or other per-instance CLI settings.
+          {translate("settings.providers.environment.description")}
         </p>
       ) : (
         <div className="overflow-hidden rounded-md border border-border/70">
           <Table>
             <TableHeader className="bg-muted/25 text-[11px] text-muted-foreground">
               <TableRow className="hover:bg-transparent">
-                <TableHead>Variable</TableHead>
-                <TableHead>Value</TableHead>
-                <TableHead className="w-20">Sensitive</TableHead>
+                <TableHead>{translate("settings.providers.environment.variable")}</TableHead>
+                <TableHead>{translate("settings.providers.environment.value")}</TableHead>
+                <TableHead className="w-20">
+                  {translate("settings.providers.environment.sensitive")}
+                </TableHead>
                 <TableHead className="w-12 text-right">
-                  <span className="sr-only">Options</span>
+                  <span className="sr-only">
+                    {translate("settings.providers.environment.options")}
+                  </span>
                 </TableHead>
               </TableRow>
             </TableHeader>
@@ -263,9 +304,11 @@ function ProviderEnvironmentSection(props: {
                     <DraftInput
                       value={variable.name}
                       onCommit={(name) => updateVariable(variable.id, { name: name.trim() })}
-                      placeholder="VARIABLE_NAME"
+                      placeholder={translate("settings.providers.environment.namePlaceholder")}
                       spellCheck={false}
-                      aria-label={`Environment variable name ${index + 1}`}
+                      aria-label={translate("settings.providers.environment.nameAria", {
+                        index: index + 1,
+                      })}
                     />
                   </TableCell>
                   <TableCell>
@@ -276,11 +319,13 @@ function ProviderEnvironmentSection(props: {
                       autoComplete="off"
                       placeholder={
                         variable.valueRedacted
-                          ? "Stored secret - enter a new value to replace"
-                          : "Value"
+                          ? translate("settings.providers.environment.storedSecret")
+                          : translate("settings.providers.environment.value")
                       }
                       spellCheck={false}
-                      aria-label={`Environment variable value ${index + 1}`}
+                      aria-label={translate("settings.providers.environment.valueAria", {
+                        index: index + 1,
+                      })}
                     />
                   </TableCell>
                   <TableCell className="w-20">
@@ -296,7 +341,9 @@ function ProviderEnvironmentSection(props: {
                               : { valueRedacted: sensitive ? variable.valueRedacted : false }),
                           });
                         }}
-                        aria-label={`Mark environment variable ${variable.name || index + 1} as sensitive`}
+                        aria-label={translate("settings.providers.environment.markSensitive", {
+                          name: variable.name || index + 1,
+                        })}
                       />
                     </div>
                   </TableCell>
@@ -308,7 +355,9 @@ function ProviderEnvironmentSection(props: {
                         variant="ghost"
                         className="size-8 text-muted-foreground hover:text-destructive"
                         onClick={() => removeVariable(variable.id)}
-                        aria-label={`Remove environment variable ${variable.name || index + 1}`}
+                        aria-label={translate("settings.providers.environment.remove", {
+                          name: variable.name || index + 1,
+                        })}
                       >
                         <XIcon className="size-3.5" />
                       </Button>
@@ -321,22 +370,23 @@ function ProviderEnvironmentSection(props: {
         </div>
       )}
       <span className="text-xs text-muted-foreground">
-        Sensitive values are stored separately and are not returned to the app after saving.
+        {translate("settings.providers.environment.storage")}
       </span>
     </div>
   );
 }
 
 interface ProviderInstanceCardProps {
-  readonly environmentId: EnvironmentId;
+  readonly environmentId?: EnvironmentId | undefined;
   readonly instanceId: ProviderInstanceId;
   readonly instance: ProviderInstanceConfig;
   readonly driverOption: DriverOption | undefined;
   readonly liveProvider: ServerProvider | undefined;
-  readonly providerAuthFlow: ProviderAuthFlow;
-  readonly readOnly: boolean;
-  readonly isExpanded: boolean;
-  readonly onExpandedChange: (open: boolean) => void;
+  readonly providerAuthFlow?: ProviderAuthFlow | undefined;
+  readonly mode: "list" | "editor";
+  readonly selected?: boolean | undefined;
+  readonly onSelect?: (() => void) | undefined;
+  readonly readOnly?: boolean | undefined;
   readonly onUpdate: (nextInstance: ProviderInstanceConfig) => void;
   /**
    * Pass `undefined` to hide the delete button entirely. Built-in default
@@ -364,12 +414,9 @@ interface ProviderInstanceCardProps {
 }
 
 /**
- * A single configured provider-instance row in the Providers settings
- * section. Used for every row — both the built-in default instance for a
- * driver (rendered with `onDelete` omitted) and user-authored custom
- * instances (`onDelete` supplied). The only UI difference between the two
- * is whether the trash button is visible; every other field (display
- * name, config fields, models) behaves identically.
+ * Renders one provider instance as either a compact selectable list row or
+ * the full editor shown beside that list. Both modes use the same enabled
+ * state and provider metadata.
  *
  * Behavior notes:
  *   - `liveProvider` is matched by the caller via `instanceId`; when no
@@ -392,9 +439,10 @@ export function ProviderInstanceCard({
   driverOption,
   liveProvider,
   providerAuthFlow,
-  readOnly,
-  isExpanded,
-  onExpandedChange,
+  mode,
+  selected = false,
+  onSelect,
+  readOnly = false,
   onUpdate,
   onDelete,
   headerAction,
@@ -407,23 +455,32 @@ export function ProviderInstanceCard({
   onRunUpdate,
   isUpdating = false,
 }: ProviderInstanceCardProps) {
+  const translate = useInterfaceTranslator().message;
+  const [activeTab, setActiveTab] = useState<"configuration" | "models">("configuration");
   const enabled = resolveProviderInstanceEnabled(instance);
-  // The server-reported status wins when present; otherwise fall back to
-  // "disabled"/"warning" based on the local `enabled` flag so the dot
-  // reflects the persisted intent even before the first probe completes.
-  const statusKey: ProviderStatusKey =
-    (liveProvider?.status as ProviderStatusKey | undefined) ?? (enabled ? "warning" : "disabled");
+  // A locally disabled provider reads "Disabled" with a muted dot even if its
+  // last server status is stale. Enabled providers use the server status.
+  const statusKey: ProviderStatusKey = enabled
+    ? ((liveProvider?.status as ProviderStatusKey | undefined) ?? "warning")
+    : "disabled";
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
-  const rawSummary = getProviderSummary(liveProvider);
-  const authEmail = liveProvider?.auth.email;
-  const hasAuthenticatedEmail =
-    liveProvider?.auth.status === "authenticated" && Boolean(authEmail?.trim());
-  const authenticatedDetail = hasAuthenticatedEmail
-    ? (liveProvider?.auth.label ?? liveProvider?.auth.type ?? null)
-    : null;
-  const summary = rawSummary;
+  const summary = enabled
+    ? getProviderSummary(liveProvider, translate)
+    : { headline: translate("settings.providers.status.disabled"), detail: null };
+  const authEmail = liveProvider?.auth.email?.trim();
+  // The editor header folds the account email into the status line —
+  // "Authenticated as <email> · <plan>" — with the email redacted until its
+  // reveal toggle is clicked.
+  const isAuthenticated = enabled && liveProvider?.auth.status === "authenticated";
+  const authLabel =
+    enabled && liveProvider?.auth.status === "authenticated"
+      ? (liveProvider.auth.label ?? liveProvider.auth.type ?? null)
+      : null;
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
-  const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
+  const versionAdvisory = getProviderVersionAdvisoryPresentation(
+    liveProvider?.versionAdvisory,
+    translate,
+  );
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
   const subscriptionPresentation = deriveProviderSubscriptionPresentation({
@@ -439,15 +496,15 @@ export function ProviderInstanceCard({
     onCopy: ({ providerName }) => {
       toastManager.add({
         type: "success",
-        title: `${providerName} update command copied`,
-        description: "Run it in a terminal when you are ready to update.",
+        title: translate("settings.providers.update.copied", { provider: providerName }),
+        description: translate("settings.providers.update.runTerminal"),
       });
     },
     onError: (error, { providerName }) => {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: `Could not copy ${providerName} update command`,
+          title: translate("settings.providers.update.copyFailed", { provider: providerName }),
           description: error.message,
         }),
       );
@@ -461,6 +518,7 @@ export function ProviderInstanceCard({
   const driverKind: ProviderDriverKind | null = isProviderDriverKind(instance.driver)
     ? instance.driver
     : null;
+  const visibleTab = driverOption === undefined ? "configuration" : activeTab;
 
   const customModels = readConfigStringArray(instance.config, "customModels");
   // Server-returned models may lag behind settings writes. Treat probe
@@ -526,25 +584,21 @@ export function ProviderInstanceCard({
       displayName={displayName}
       accentColor={accentColor}
       showBadge={Boolean(accentColor)}
-      statusDotClassName={statusStyle.dot}
-      indicatorBackground="var(--card)"
       className="size-5"
       iconClassName="size-4 text-foreground/80"
       badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-[7px]"
     />
   ) : FallbackIconComponent ? (
-    <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
+    <span className="inline-flex size-5 shrink-0 items-center justify-center">
       <FallbackIconComponent className="size-4 text-foreground/80" aria-hidden />
-      <span
-        className={cn(
-          "pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-card",
-          statusStyle.dot,
-        )}
-        aria-hidden
-      />
     </span>
   ) : (
-    <span className={cn("size-2 shrink-0 rounded-full", statusStyle.dot)} />
+    <span
+      className="inline-flex size-5 shrink-0 items-center justify-center text-[10px] font-semibold leading-none text-foreground/80"
+      aria-hidden
+    >
+      {providerInstanceInitials(displayName)}
+    </span>
   );
 
   const titleHeadNode = (
@@ -558,9 +612,9 @@ export function ProviderInstanceCard({
           {instanceId}
         </code>
       ) : null}
-      {driverOption?.badgeLabel ? (
+      {driverOption?.badgeMessageKey ? (
         <Badge variant="warning" size="sm" className="shrink-0">
-          {driverOption.badgeLabel}
+          {translate(driverOption.badgeMessageKey)}
         </Badge>
       ) : null}
     </>
@@ -583,49 +637,121 @@ export function ProviderInstanceCard({
                   variant="ghost"
                   className="text-muted-foreground hover:text-destructive"
                   onClick={onDelete}
-                  aria-label={`Delete provider instance ${instanceId}`}
+                  aria-label={translate("settings.providers.instance.deleteAria", {
+                    instance: instanceId,
+                  })}
                 >
                   <Trash2Icon className="size-3" />
                 </Button>
               }
             />
-            <TooltipPopup side="top">Delete instance</TooltipPopup>
+            <TooltipPopup side="top">
+              {translate("settings.providers.instance.delete")}
+            </TooltipPopup>
           </Tooltip>
         </span>
       ) : null}
     </>
   );
 
-  const authRowNode = (
-    <p className="flex min-w-0 flex-wrap items-center gap-x-1 break-words text-[13px] leading-[1.45] text-muted-foreground/80">
-      {hasAuthenticatedEmail ? (
-        <>
-          <span>Authenticated as</span>
-          <ProviderAuthEmail email={authEmail} />
-          {authenticatedDetail ? <span>· {authenticatedDetail}</span> : null}
-        </>
-      ) : (
-        <>
-          <span>{summary.headline}</span>
-          <ProviderAuthEmail email={authEmail} separator prefix="Email" />
-        </>
-      )}
-      {summary.detail ? <span>- {summary.detail}</span> : null}
-    </p>
-  );
-
   const versionCodeNode = versionLabel ? (
     <code className="text-xs text-muted-foreground">{versionLabel}</code>
   ) : null;
 
-  return (
-    <div className="rounded-xl transition-colors hover:bg-muted/20">
-      <div className="px-3 py-3 sm:px-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0 flex-1 space-y-1">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              {titleHeadNode}
+  // Healthy and disabled rows read fine from their text; only trouble gets a dot.
+  const statusDotNode =
+    statusKey === "warning" || statusKey === "error" ? (
+      <span className={cn("size-1.5 shrink-0 rounded-full", statusStyle.dot)} aria-hidden />
+    ) : null;
+  const statusHeadlineNode = <span>{summary.headline}</span>;
+  // Trouble states carry the server's explanation (a failed probe, a shadow
+  // home entry that is not a symlink, a missing binary). Show it wherever the
+  // headline shows so the user can act without opening the editor.
+  const needsAttention = statusKey === "warning" || statusKey === "error";
+  const statusLineClassName =
+    "flex min-w-0 flex-wrap items-center gap-x-1.5 text-[13px] leading-[1.45] text-muted-foreground/80";
+
+  if (mode === "list") {
+    return (
+      <div
+        className={cn(
+          // Sidebar-style selection with a fixed row height so the list stays
+          // even; the status line clamps to two lines instead of growing.
+          "group flex h-19 items-start gap-3 rounded-md px-3 py-2 transition-colors",
+          // Foreground-alpha tint so the fill reads the same in light and dark themes.
+          selected ? "bg-foreground/8" : "hover:bg-foreground/4",
+        )}
+      >
+        <button
+          type="button"
+          className={cn(
+            "flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-sm text-left outline-none transition-opacity focus-visible:ring-2 focus-visible:ring-ring",
+            !enabled && !selected && "opacity-60 group-hover:opacity-100",
+          )}
+          onClick={onSelect}
+          aria-pressed={selected}
+        >
+          {titleIconNode}
+          <span className="min-w-0 flex-1">
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-sm font-medium text-foreground">{displayName}</span>
+              {String(instanceId) !== String(instance.driver) ? (
+                <code className="min-w-0 truncate rounded bg-muted/60 px-1 py-0.5 text-[10px] text-muted-foreground">
+                  {instanceId}
+                </code>
+              ) : null}
               {versionCodeNode}
+              {versionAdvisory ? (
+                <span
+                  role="img"
+                  aria-label={translate("settings.providers.update.available")}
+                  className="inline-flex shrink-0"
+                >
+                  <ArrowUpCircleIcon className="size-3.5 text-update-foreground" />
+                </span>
+              ) : null}
+            </span>
+            <span className="mt-0.5 flex items-start gap-1.5 text-[13px] leading-[1.45] text-muted-foreground/80">
+              {statusDotNode ? (
+                <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
+              ) : null}
+              <span className="line-clamp-2 [overflow-wrap:anywhere]">
+                {summary.headline}
+                {needsAttention && summary.detail ? ` · ${summary.detail}` : null}
+              </span>
+            </span>
+          </span>
+        </button>
+        <span className="flex h-5 shrink-0 items-center">
+          <Switch
+            checked={enabled}
+            disabled={readOnly}
+            onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
+            aria-label={translate("settings.providers.instance.enable", {
+              provider: displayName,
+            })}
+          />
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-w-0 lg:flex lg:h-full lg:min-h-0 lg:flex-col">
+      <div className="flex min-h-16 shrink-0 items-start justify-between gap-3 border-b border-border/70 px-4 py-3">
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            {titleHeadNode}
+            {versionCodeNode}
+            {/*
+              Only the write actions go inert on read-only sessions; the
+              status line below keeps its email reveal clickable.
+            */}
+            <span
+              inert={readOnly}
+              aria-disabled={readOnly || undefined}
+              className={cn("inline-flex items-center gap-2", readOnly && "opacity-50")}
+            >
               {versionAdvisory ? (
                 <Popover>
                   <PopoverTrigger
@@ -640,9 +766,9 @@ export function ProviderInstanceCard({
                             ? "text-warning hover:text-warning"
                             : "text-update-foreground hover:text-update-foreground",
                         )}
-                        aria-label="Update available — view details"
+                        aria-label={translate("settings.providers.update.viewDetails")}
                       >
-                        <ArrowUpCircleIcon className="size-3.5 [animation:bounce_2.4s_ease-in-out_infinite] motion-reduce:animate-none" />
+                        <ArrowUpCircleIcon className="size-3.5" />
                       </Button>
                     }
                   />
@@ -654,7 +780,7 @@ export function ProviderInstanceCard({
                     <div className="grid min-w-0 gap-3">
                       <div className="grid gap-0.5">
                         <p className="text-[13px] font-semibold leading-tight text-foreground">
-                          Update available
+                          {translate("settings.providers.update.available")}
                         </p>
                         <p
                           className={cn(
@@ -677,13 +803,17 @@ export function ProviderInstanceCard({
                           onClick={onRunUpdate}
                         >
                           {isUpdating ? <LoaderIcon className="animate-spin" /> : <DownloadIcon />}
-                          {isUpdating ? "Updating" : "Update now"}
+                          {translate(
+                            isUpdating
+                              ? "settings.providers.update.updating"
+                              : "settings.providers.update.now",
+                          )}
                         </Button>
                       ) : null}
                       {onRunUpdate && updateCommand ? (
                         <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                           <span aria-hidden className="h-px flex-1 bg-border" />
-                          or, update manually using
+                          {translate("settings.providers.update.manual")}
                           <span aria-hidden className="h-px flex-1 bg-border" />
                         </div>
                       ) : null}
@@ -707,13 +837,15 @@ export function ProviderInstanceCard({
                                       providerName: displayName,
                                     })
                                   }
-                                  aria-label="Copy update command"
+                                  aria-label={translate("settings.providers.update.copyCommand")}
                                 >
                                   <CopyIcon className="size-3" />
                                 </Button>
                               }
                             />
-                            <TooltipPopup side="top">Copy command</TooltipPopup>
+                            <TooltipPopup side="top">
+                              {translate("settings.providers.update.copyCommand")}
+                            </TooltipPopup>
                           </Tooltip>
                         </div>
                       ) : null}
@@ -722,11 +854,28 @@ export function ProviderInstanceCard({
                 </Popover>
               ) : null}
               {titleTailNode}
-            </div>
-            {authRowNode}
+            </span>
           </div>
-          <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
-            {subscriptionPresentation ? (
+          <p className={statusLineClassName}>
+            {statusDotNode}
+            {isAuthenticated && authEmail ? (
+              <>
+                <span>{translate("settings.providers.auth.authenticatedAs")}</span>
+                <ProviderAuthEmail email={authEmail} />
+                {authLabel ? <span>· {authLabel}</span> : null}
+              </>
+            ) : (
+              statusHeadlineNode
+            )}
+            {summary.detail && !needsAttention ? <span>· {summary.detail}</span> : null}
+          </p>
+          {summary.detail && needsAttention ? (
+            <p className="text-[13px] leading-[1.45] text-muted-foreground/80 [overflow-wrap:anywhere]">
+              {summary.detail}
+            </p>
+          ) : null}
+          {subscriptionPresentation && environmentId && providerAuthFlow ? (
+            <div className="pt-1">
               <ProviderSubscriptionAuthBridge
                 environmentId={environmentId}
                 instanceId={instanceId}
@@ -734,42 +883,61 @@ export function ProviderInstanceCard({
                 readOnly={readOnly}
                 presentation={subscriptionPresentation}
               />
-            ) : null}
-            <Button
-              size="compact"
-              variant="ghost-muted"
-              onClick={() => onExpandedChange(!isExpanded)}
-              aria-label={`Toggle ${displayName} details`}
-            >
-              <ChevronDownIcon
-                className={cn("size-3.5 transition-transform", isExpanded && "rotate-180")}
-              />
-            </Button>
-            <Switch
-              checked={enabled}
-              onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
-              aria-label={`Enable ${displayName}`}
-            />
-          </div>
+            </div>
+          ) : null}
         </div>
       </div>
 
-      <Collapsible open={isExpanded} onOpenChange={onExpandedChange}>
-        <CollapsibleContent>
-          <div className="space-y-5 px-3 pb-4 pt-2 sm:px-4">
+      <div className="flex h-11 shrink-0 border-b border-border/70 px-1">
+        <button
+          type="button"
+          aria-pressed={visibleTab === "configuration"}
+          className={providerSettingsTabClassName(visibleTab === "configuration")}
+          onClick={() => setActiveTab("configuration")}
+        >
+          {translate("settings.providers.instance.configuration")}
+        </button>
+        {driverOption !== undefined && shouldRenderProviderModelsSection(driverKind) ? (
+          <button
+            type="button"
+            aria-pressed={visibleTab === "models"}
+            className={providerSettingsTabClassName(visibleTab === "models")}
+            onClick={() => setActiveTab("models")}
+          >
+            {translate("settings.providers.instance.models")}
+          </button>
+        ) : null}
+      </div>
+
+      <div className="lg:min-h-0 lg:flex-1">
+        <ScrollArea
+          scrollFade
+          chainVerticalScroll
+          className="lg:h-full"
+          hidden={visibleTab !== "configuration"}
+        >
+          <div
+            inert={readOnly}
+            aria-disabled={readOnly || undefined}
+            className={cn("space-y-5 px-4 py-5", readOnly && "opacity-50 select-none")}
+          >
             <div>
               <label htmlFor={`provider-instance-${instanceId}-display-name`} className="block">
-                <span className="text-xs font-medium text-foreground">Display name</span>
+                <span className="text-xs font-medium text-foreground">
+                  {translate("settings.providers.instance.displayName")}
+                </span>
                 <DraftInput
                   id={`provider-instance-${instanceId}-display-name`}
                   className="mt-1.5"
                   value={instance.displayName ?? ""}
                   onCommit={updateDisplayName}
-                  placeholder={driverOption?.label ?? "Instance label"}
+                  placeholder={
+                    driverOption?.label ?? translate("settings.providers.instance.labelPlaceholder")
+                  }
                   spellCheck={false}
                 />
                 <span className="mt-1 block text-xs text-muted-foreground">
-                  Optional label shown in the provider list.
+                  {translate("settings.providers.instance.labelDescription")}
                 </span>
               </label>
             </div>
@@ -780,7 +948,7 @@ export function ProviderInstanceCard({
                 value={accentColor}
                 onCommit={updateAccentColor}
                 commitDelayMs={120}
-                description="Used to distinguish this instance in picker rails and model lists."
+                description={translate("settings.providers.instance.accentDescription")}
               />
             </div>
 
@@ -802,35 +970,40 @@ export function ProviderInstanceCard({
               />
             ) : null}
 
-            {driverOption !== undefined && shouldRenderProviderModelsSection(driverKind) ? (
-              <ProviderModelsSection
-                instanceId={instanceId}
-                driverKind={driverKind}
-                models={modelsForDisplay}
-                customModels={customModels}
-                hiddenModels={hiddenModels}
-                favoriteModels={favoriteModels}
-                modelOrder={modelOrder}
-                onChange={updateCustomModels}
-                onHiddenModelsChange={onHiddenModelsChange}
-                onFavoriteModelsChange={onFavoriteModelsChange}
-                onModelOrderChange={onModelOrderChange}
-              />
-            ) : null}
-
             {driverOption === undefined ? (
               <div>
                 <p className="text-xs text-muted-foreground">
-                  This instance uses a driver (
-                  <code className="text-foreground">{String(instance.driver)}</code>) that is not
-                  shipped with the current build. Configuration values are preserved but cannot be
-                  edited from this surface.
+                  {translate("settings.providers.instance.unknownDriver", {
+                    driver: String(instance.driver),
+                  })}
                 </p>
               </div>
             ) : null}
           </div>
-        </CollapsibleContent>
-      </Collapsible>
+        </ScrollArea>
+        {driverOption !== undefined && shouldRenderProviderModelsSection(driverKind) ? (
+          <div
+            inert={readOnly}
+            aria-disabled={readOnly || undefined}
+            className={cn("px-4 py-5 lg:h-full lg:min-h-0", readOnly && "opacity-50 select-none")}
+            hidden={visibleTab !== "models"}
+          >
+            <ProviderModelsSection
+              instanceId={instanceId}
+              driverKind={driverKind}
+              models={modelsForDisplay}
+              customModels={customModels}
+              hiddenModels={hiddenModels}
+              favoriteModels={favoriteModels}
+              modelOrder={modelOrder}
+              onChange={updateCustomModels}
+              onHiddenModelsChange={onHiddenModelsChange}
+              onFavoriteModelsChange={onFavoriteModelsChange}
+              onModelOrderChange={onModelOrderChange}
+            />
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

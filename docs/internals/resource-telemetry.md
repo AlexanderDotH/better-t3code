@@ -4,6 +4,10 @@
 
 Status: implemented
 
+Resource telemetry supplies the bounded native measurements used by
+[resource protection](resource-protection.md). The protection coordinator, admission policy, and
+process-control recovery contract are documented separately.
+
 ## Purpose
 
 Resource telemetry replaces recurring `ps`, PowerShell, `ioreg`, and `pmset`

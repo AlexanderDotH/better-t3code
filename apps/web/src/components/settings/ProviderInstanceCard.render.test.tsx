@@ -30,8 +30,7 @@ function renderProviderCard(driver: "codex" | "openrouter", config: unknown): st
       liveProvider={undefined}
       providerAuthFlow="browser"
       readOnly={false}
-      isExpanded
-      onExpandedChange={() => undefined}
+      mode="editor"
       onUpdate={() => undefined}
       hiddenModels={[]}
       favoriteModels={[]}
@@ -59,8 +58,7 @@ describe("ProviderInstanceCard model settings", () => {
     expect(markup).toContain("Maximum prompt price");
     expect(markup).not.toContain("1 model available.");
     expect(markup).not.toContain("Add @preset/t3 to favorites");
-    expect(markup).toContain("flex w-full min-w-0 flex-wrap items-center gap-2");
-    expect(markup).toContain("sm:shrink-0");
+    expect(markup).toContain("lg:flex lg:h-full lg:min-h-0 lg:flex-col");
   });
 
   it("preserves the catalog manager for non-OpenRouter providers", () => {

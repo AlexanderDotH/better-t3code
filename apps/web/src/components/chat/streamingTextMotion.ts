@@ -1,4 +1,4 @@
-export const MAX_STREAMING_TEXT_MOTION_GRAPHEMES = 160;
+export const MAX_STREAMING_TEXT_MOTION_GRAPHEMES = 512;
 export const STREAMING_TEXT_MOTION_EWMA_FACTOR = 0.35;
 
 const SLOW_RATE_GRAPHEMES_PER_SECOND = 20;
@@ -181,18 +181,18 @@ export function createStreamingTextMotionFrame({
 }: CreateStreamingTextMotionFrameInput): StreamingTextMotionFrameResult {
   const observedRate = observeStreamingTextRate(append.graphemes.length, elapsedMs, previousRate);
   const smoothedRate = smoothStreamingTextRate(previousRate, observedRate);
-  if (append.graphemes.length > MAX_STREAMING_TEXT_MOTION_GRAPHEMES) {
-    return { frame: null, smoothedRate };
-  }
+  const animatedGraphemes = append.graphemes.slice(-MAX_STREAMING_TEXT_MOTION_GRAPHEMES);
+  const sourceStart = animatedGraphemes[0]?.sourceOffset;
+  if (sourceStart === undefined) return { frame: null, smoothedRate };
 
   return {
     frame: {
-      ...calculateStreamingTextMotionTiming(smoothedRate, append.graphemes.length),
+      ...calculateStreamingTextMotionTiming(smoothedRate, animatedGraphemes.length),
       generation,
       startedAtMs,
-      sourceStart: append.sourceStart,
+      sourceStart,
       sourceEnd: append.sourceEnd,
-      graphemeCount: append.graphemes.length,
+      graphemeCount: animatedGraphemes.length,
       smoothedRate,
     },
     smoothedRate,
@@ -341,7 +341,10 @@ function observeStreamingTextRate(
   if (elapsedMs !== null && Number.isFinite(elapsedMs) && elapsedMs > 0) {
     return (graphemeCount * 1_000) / elapsedMs;
   }
-  return previousRate ?? SLOW_RATE_GRAPHEMES_PER_SECOND;
+  return (
+    previousRate ??
+    Math.min(FAST_RATE_GRAPHEMES_PER_SECOND, graphemeCount * SLOW_RATE_GRAPHEMES_PER_SECOND)
+  );
 }
 
 function isValidSourceRange(source: string, start: number, end: number): boolean {

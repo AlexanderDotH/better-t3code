@@ -10,7 +10,7 @@
  *
  *  2. **Many drivers, one registry** — the "all drivers slice" describe
  *     block below configures one instance of every shipped driver
- *     (`codex`, `chatgpt`, `openrouter`, `claudeAgent`, `cursor`, `grok`, `opencode`, `gemini`) in a single
+ *     (`codex`, `chatgpt`, `openrouter`, `openai`, `claudeAgent`, `cursor`, `grok`, `opencode`, `gemini`) in a single
  *     `ProviderInstanceConfigMap` and asserts the registry boots them all
  *     without cross-contamination. This proves the driver SPI is uniform
  *     across every provider — any driver plugs into the registry through
@@ -32,6 +32,7 @@ import {
   type CursorSettings,
   type GeminiSettings,
   type GrokSettings,
+  type OpenAiSettings,
   type OpenCodeSettings,
   type OpenRouterSettings,
   ProviderDriverKind,
@@ -58,8 +59,10 @@ import { ClaudeDriver, type ClaudeDriverEnv } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "../Drivers/CodexDriver.ts";
 import { ChatGptDriver, type ChatGptDriverEnv } from "../Drivers/ChatGptDriver.ts";
 import { CursorDriver, type CursorDriverEnv } from "../Drivers/CursorDriver.ts";
+import { OpenAiDriver, type OpenAiDriverEnv } from "../Drivers/OpenAiDriver.ts";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "../Drivers/OpenCodeDriver.ts";
 import { OpenRouterDriver, type OpenRouterDriverEnv } from "../Drivers/OpenRouterDriver.ts";
+import * as ModelManifest from "../ModelManifest.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import * as WorkspaceContext from "../../workspace/WorkspaceContext.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
@@ -139,6 +142,7 @@ const makeClaudeConfig = (overrides: Partial<ClaudeSettings>): ClaudeSettings =>
   homePath: "",
   customModels: [],
   launchArgs: "",
+  autoCompactWindow: "",
   ...overrides,
 });
 
@@ -177,12 +181,18 @@ const makeOpenRouterConfig = (overrides: Partial<OpenRouterSettings>): OpenRoute
   ...overrides,
 });
 
+const makeOpenAiConfig = (overrides: Partial<OpenAiSettings>): OpenAiSettings => ({
+  ...OpenAiDriver.defaultConfig(),
+  ...overrides,
+});
+
 describe("BUILT_IN_DRIVERS", () => {
   it("registers exactly the native providers in upstream order", () => {
     expect(BUILT_IN_DRIVERS.map((driver) => driver.driverKind)).toEqual([
       ProviderDriverKind.make("codex"),
       ProviderDriverKind.make("chatgpt"),
       ProviderDriverKind.make("openrouter"),
+      ProviderDriverKind.make("openai"),
       ProviderDriverKind.make("claudeAgent"),
       ProviderDriverKind.make("cursor"),
       ProviderDriverKind.make("grok"),
@@ -193,7 +203,7 @@ describe("BUILT_IN_DRIVERS", () => {
 });
 
 describe("deriveProviderInstanceConfigMap", () => {
-  it("hydrates exactly the eight native default instances", () => {
+  it("hydrates exactly the nine native default instances", () => {
     const configMap = deriveProviderInstanceConfigMap(DEFAULT_SERVER_SETTINGS);
 
     expect(
@@ -202,6 +212,7 @@ describe("deriveProviderInstanceConfigMap", () => {
       ["codex", "codex"],
       ["chatgpt", "chatgpt"],
       ["openrouter", "openrouter"],
+      ["openai", "openai"],
       ["claudeAgent", "claudeAgent"],
       ["cursor", "cursor"],
       ["grok", "grok"],
@@ -227,6 +238,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
     Layer.provideMerge(NoOpMcpConfigEngineLayer),
     Layer.provideMerge(SubagentResourceGovernor.layer),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+    Layer.provideMerge(ModelManifest.layerTest),
   );
 
   it.live("boots two independent codex instances from a ProviderInstanceConfigMap", () =>
@@ -403,6 +415,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       WorkspaceFileSystem.WorkspaceFileSystem.of({
         readFile: () => Effect.die("unused Gemini workspace read in disabled-driver test"),
         writeFile: () => Effect.die("unused Gemini workspace write in disabled-driver test"),
+        editFiles: () => Effect.die("unused Gemini workspace edit in disabled-driver test"),
       }),
     ),
   );
@@ -421,6 +434,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
     Layer.provideMerge(TestServerSecretStoreLayer),
     Layer.provideMerge(SubagentResourceGovernor.layer),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+    Layer.provideMerge(ModelManifest.layerTest),
   );
 
   it.live("boots every shipped driver and isolates multiple OpenRouter instances", () =>
@@ -429,6 +443,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const chatGptId = ProviderInstanceId.make("chatgpt_default");
       const openRouterId = ProviderInstanceId.make("openrouter_default");
       const openRouterWorkId = ProviderInstanceId.make("openrouter_work");
+      const openAiId = ProviderInstanceId.make("openai_default");
       const claudeId = ProviderInstanceId.make("claude_default");
       const cursorId = ProviderInstanceId.make("cursor_default");
       const grokId = ProviderInstanceId.make("grok_default");
@@ -438,6 +453,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const codexDriverKind = ProviderDriverKind.make("codex");
       const chatGptDriverKind = ProviderDriverKind.make("chatgpt");
       const openRouterDriverKind = ProviderDriverKind.make("openrouter");
+      const openAiDriverKind = ProviderDriverKind.make("openai");
       const claudeDriverKind = ProviderDriverKind.make("claudeAgent");
       const cursorDriverKind = ProviderDriverKind.make("cursor");
       const grokDriverKind = ProviderDriverKind.make("grok");
@@ -471,6 +487,12 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
             protocol: "responses",
             customModels: ["@work/preset"],
           }),
+        },
+        [openAiId]: {
+          driver: openAiDriverKind,
+          displayName: "OpenAI Responses",
+          enabled: false,
+          config: makeOpenAiConfig({}),
         },
         [claudeId]: {
           driver: claudeDriverKind,
@@ -511,6 +533,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         | CodexDriverEnv
         | ChatGptDriverEnv
         | OpenRouterDriverEnv
+        | OpenAiDriverEnv
         | ClaudeDriverEnv
         | CursorDriverEnv
         | GeminiDriverEnv
@@ -520,6 +543,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         CodexDriver,
         ChatGptDriver,
         OpenRouterDriver,
+        OpenAiDriver,
         ClaudeDriver,
         CursorDriver,
         GrokDriver,
@@ -537,13 +561,14 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(unavailable).toEqual([]);
 
       const instances = yield* registry.listInstances;
-      expect(instances).toHaveLength(9);
+      expect(instances).toHaveLength(10);
       expect(instances.map((instance) => instance.instanceId).toSorted()).toEqual(
         [
           codexId,
           chatGptId,
           openRouterId,
           openRouterWorkId,
+          openAiId,
           claudeId,
           cursorId,
           grokId,
@@ -559,6 +584,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const chatGpt = yield* registry.getInstance(chatGptId);
       const openRouter = yield* registry.getInstance(openRouterId);
       const openRouterWork = yield* registry.getInstance(openRouterWorkId);
+      const openAi = yield* registry.getInstance(openAiId);
       const claude = yield* registry.getInstance(claudeId);
       const cursor = yield* registry.getInstance(cursorId);
       const grok = yield* registry.getInstance(grokId);
@@ -568,6 +594,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(chatGpt?.driverKind).toBe(chatGptDriverKind);
       expect(openRouter?.driverKind).toBe(openRouterDriverKind);
       expect(openRouterWork?.driverKind).toBe(openRouterDriverKind);
+      expect(openAi?.driverKind).toBe(openAiDriverKind);
       expect(claude?.driverKind).toBe(claudeDriverKind);
       expect(cursor?.driverKind).toBe(cursorDriverKind);
       expect(grok?.driverKind).toBe(grokDriverKind);
@@ -577,6 +604,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(chatGpt?.displayName).toBe("ChatGPT Subscription");
       expect(openRouter?.displayName).toBe("OpenRouter");
       expect(openRouterWork?.displayName).toBe("OpenRouter Work");
+      expect(openAi?.displayName).toBe("OpenAI Responses");
       expect(openRouterWork?.adapter).not.toBe(openRouter?.adapter);
       expect(openRouterWork?.snapshot).not.toBe(openRouter?.snapshot);
       expect(openRouterWork?.textGeneration).not.toBe(openRouter?.textGeneration);
@@ -597,6 +625,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         chatGpt!.adapter,
         openRouter!.adapter,
         openRouterWork!.adapter,
+        openAi!.adapter,
         claude!.adapter,
         cursor!.adapter,
         grok!.adapter,
@@ -609,6 +638,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         chatGpt!.textGeneration,
         openRouter!.textGeneration,
         openRouterWork!.textGeneration,
+        openAi!.textGeneration,
         claude!.textGeneration,
         cursor!.textGeneration,
         grok!.textGeneration,
@@ -621,6 +651,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         chatGpt!.snapshot,
         openRouter!.snapshot,
         openRouterWork!.snapshot,
+        openAi!.snapshot,
         claude!.snapshot,
         cursor!.snapshot,
         grok!.snapshot,
@@ -666,6 +697,16 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(openRouterWorkSnapshot.enabled).toBe(false);
       expect(openRouterWorkSnapshot.continuation?.groupKey).toBe(
         `${openRouterDriverKind}:instance:${openRouterWorkId}`,
+      );
+
+      const openAiSnapshot = yield* openAi!.snapshot.getSnapshot;
+      expect(openAiSnapshot.instanceId).toBe(openAiId);
+      expect(openAiSnapshot.driver).toBe(openAiDriverKind);
+      expect(openAiSnapshot.enabled).toBe(false);
+      expect(openAiSnapshot.nativeSubagents).toBeUndefined();
+      expect(openAiSnapshot.fetchWorkers).toBeUndefined();
+      expect(openAiSnapshot.continuation?.groupKey).toBe(
+        `${openAiDriverKind}:instance:${openAiId}`,
       );
 
       const claudeSnapshot = yield* claude!.snapshot.getSnapshot;

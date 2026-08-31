@@ -8,7 +8,7 @@ import type {
 import * as Effect from "effect/Effect";
 
 import type { ProcessRunner } from "../../processRunner.ts";
-import type { NativeProviderToolResult } from "./NativeProviderAdapter.ts";
+import type { NativeProviderToolResult } from "./NativeProviderTypes.ts";
 import {
   buildNativeHarnessToolCatalog,
   makeNativeHarnessToolExecutor,
@@ -32,6 +32,7 @@ export interface NativeProviderHarness {
     readonly cwd: string;
     readonly interactionMode: ProviderInteractionMode | undefined;
     readonly sandboxMode: ProviderSandboxMode | undefined;
+    readonly fetchWorker: boolean;
   }) => Effect.Effect<
     ReadonlyArray<NativeProviderHarnessToolDefinition>,
     NativeHarnessToolPolicyError
@@ -42,6 +43,7 @@ export interface NativeProviderHarness {
     readonly toolName: string;
     readonly interactionMode: ProviderInteractionMode | undefined;
     readonly sandboxMode: ProviderSandboxMode | undefined;
+    readonly fetchWorker: boolean;
   }) => Effect.Effect<boolean, NativeHarnessToolPolicyError>;
   readonly requiresApproval: (
     toolName: string,
@@ -55,6 +57,7 @@ export interface NativeProviderHarness {
     readonly args: Readonly<Record<string, unknown>>;
     readonly cwd: string;
     readonly environment: NodeJS.ProcessEnv;
+    readonly fetchWorker: boolean;
   }) => Effect.Effect<NativeProviderToolResult, NativeHarnessToolPolicyError>;
   readonly releaseThread?: ((threadId: ThreadId) => Effect.Effect<void>) | undefined;
 }
@@ -78,8 +81,8 @@ export const makeNativeProviderHarness = Effect.fn("makeNativeProviderHarness")(
 ) {
   const executor = yield* makeNativeHarnessToolExecutor(processRunner);
   const extensionApprovalByToolName = new Map<string, boolean>();
-  const extensionsForThread = (threadId: ThreadId, cwd: string) =>
-    options?.extensionForThread
+  const extensionsForThread = (threadId: ThreadId, cwd: string, fetchWorker: boolean) =>
+    !fetchWorker && options?.extensionForThread
       ? options.extensionForThread({ threadId, cwd }).pipe(
           Effect.tap((extension) =>
             Effect.sync(() => {
@@ -97,7 +100,7 @@ export const makeNativeProviderHarness = Effect.fn("makeNativeProviderHarness")(
   return {
     declarations: (input) =>
       Effect.gen(function* () {
-        const extensions = yield* extensionsForThread(input.threadId, input.cwd);
+        const extensions = yield* extensionsForThread(input.threadId, input.cwd, input.fetchWorker);
         const declarations = yield* buildNativeHarnessToolCatalog({ ...input, extensions });
         return declarations.map(({ name, description, inputSchema }) => ({
           name,
@@ -106,7 +109,7 @@ export const makeNativeProviderHarness = Effect.fn("makeNativeProviderHarness")(
         }));
       }),
     isAvailable: (input) =>
-      extensionsForThread(input.threadId, input.cwd).pipe(
+      extensionsForThread(input.threadId, input.cwd, input.fetchWorker).pipe(
         Effect.map((extensions) => nativeHarnessToolIsAvailable({ ...input, extensions })),
       ),
     requiresApproval: (toolName, runtimeMode) => {
@@ -117,9 +120,9 @@ export const makeNativeProviderHarness = Effect.fn("makeNativeProviderHarness")(
     },
     requestType: nativeHarnessToolRequestType,
     approvalDetail: nativeHarnessToolApprovalDetail,
-    execute: ({ threadId, ...input }) =>
+    execute: ({ threadId, fetchWorker, ...input }) =>
       Effect.gen(function* () {
-        const extensions = yield* extensionsForThread(threadId, input.cwd);
+        const extensions = yield* extensionsForThread(threadId, input.cwd, fetchWorker);
         const extension = extensions.find((candidate) =>
           candidate.declarations.some((declaration) => declaration.name === input.name),
         );

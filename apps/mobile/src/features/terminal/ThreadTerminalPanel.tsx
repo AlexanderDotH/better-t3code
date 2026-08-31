@@ -4,7 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAttachedTerminalSession } from "../../state/use-terminal-session";
@@ -31,12 +31,12 @@ const DEFAULT_TERMINAL_ROWS = 24;
 export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
   props: ThreadTerminalPanelProps,
 ) {
+  const translator = useMobileInterfaceTranslator();
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const resizeTerminal = useAtomCommand(terminalEnvironment.resize, "terminal resize");
   const closeTerminal = useAtomCommand(terminalEnvironment.close, "terminal close");
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const nativeTerminalAvailable = hasNativeTerminalSurface();
-  const iconColor = useThemeColor("--color-icon");
   const terminalId = DEFAULT_TERMINAL_ID;
   const lastGridSizeRef = useRef<TerminalGridSize>({
     cols: DEFAULT_TERMINAL_COLS,
@@ -220,10 +220,14 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
       <View className="flex-row items-center justify-between border-b border-border px-3 py-2">
         <View className="min-w-0 flex-1">
           <Text className="font-t3-bold text-sm text-foreground" numberOfLines={1}>
-            Terminal
+            {translator.message("mobile.terminal.title")}
           </Text>
           <Text className="text-2xs text-foreground-muted" numberOfLines={1}>
-            {nativeTerminalAvailable ? "Native Ghostty surface" : "Text fallback active"}
+            {translator.message(
+              nativeTerminalAvailable
+                ? "mobile.terminal.nativeSurface"
+                : "mobile.terminal.textFallback",
+            )}
           </Text>
         </View>
         <View className="flex-row items-center gap-2">
@@ -236,7 +240,12 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
             className="h-8 w-8 items-center justify-center rounded-[8px] bg-subtle"
             onPress={props.onClose}
           >
-            <SymbolView name="xmark" size={13} tintColor={iconColor} type="monochrome" />
+            <SymbolView
+              name="xmark"
+              size={13}
+              tintColorClassName={"accent-icon"}
+              type="monochrome"
+            />
           </Pressable>
         </View>
       </View>

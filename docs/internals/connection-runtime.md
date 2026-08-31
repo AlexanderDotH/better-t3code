@@ -139,6 +139,12 @@ Finite requests, durable subscriptions, and commands are separate APIs:
 The Promise bridge exists only at the React/Atom boundary. Runtime and business
 logic remain Effect-native.
 
+### Thread snapshot pagination compatibility
+
+Current clients request thread history windows only when the environment advertises thread-snapshot pagination. The HTTP snapshot request and the WebSocket subscription fallback share one explicit `turnLimit` range of 1 through 150 user-anchored turns. Values above that range fail contract decoding rather than asking the server to build an unbounded current-client page.
+
+Omitting `turnLimit` deliberately preserves the pre-pagination wire contract: the server returns a full thread snapshot. That legacy full snapshot has no hard encoded-byte cap. Clients must not reinterpret an absent field as 150, because doing so would silently truncate history for mixed-version peers. Modern clients use the explicit bounded path; removing the legacy exception requires a separately versioned capability and migration.
+
 ## Platform Layers
 
 Web and mobile provide:

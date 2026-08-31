@@ -15,6 +15,10 @@
       "types": "./src/environment/index.ts",
       "default": "./src/environment/index.ts"
     },
+    "./markdown-images": {
+      "types": "./src/markdownImages.ts",
+      "default": "./src/markdownImages.ts"
+    },
     "./errors": {
       "types": "./src/errors/index.ts",
       "default": "./src/errors/index.ts"
@@ -67,6 +71,14 @@
       "types": "./src/resourceProtection.ts",
       "default": "./src/resourceProtection.ts"
     },
+    "./better-t3-status": {
+      "types": "./src/betterT3Status.ts",
+      "default": "./src/betterT3Status.ts"
+    },
+    "./knowledge-graph": {
+      "types": "./src/knowledgeGraphViewModel.ts",
+      "default": "./src/knowledgeGraphViewModel.ts"
+    },
     "./plan-implementation": {
       "types": "./src/planImplementation.ts",
       "default": "./src/planImplementation.ts"
@@ -115,6 +127,10 @@
       "types": "./src/state/agentSettings.ts",
       "default": "./src/state/agentSettings.ts"
     },
+    "./state/attachments": {
+      "types": "./src/state/attachments.ts",
+      "default": "./src/state/attachments.ts"
+    },
     "./state/connections": {
       "types": "./src/state/connections.ts",
       "default": "./src/state/connections.ts"
@@ -130,6 +146,10 @@
     "./state/git": {
       "types": "./src/state/git.ts",
       "default": "./src/state/git.ts"
+    },
+    "./state/knowledge-graph": {
+      "types": "./src/state/knowledgeGraph.ts",
+      "default": "./src/state/knowledgeGraph.ts"
     },
     "./state/models": {
       "types": "./src/state/models.ts",

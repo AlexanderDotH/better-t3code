@@ -5,7 +5,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type * as Electron from "electron";
-import { DEFAULT_INTERFACE_LANGUAGE_PREFERENCE } from "@t3tools/contracts";
+import { resolveInterfaceLocaleSyncRecord } from "@t3tools/client-runtime/interface-language-sync";
+import { DEFAULT_INTERFACE_LOCALE_PREFERENCE_V1 } from "@t3tools/contracts";
 import {
   resolveInterfaceLocale,
   translateInterfaceMessage,
@@ -20,6 +21,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
+import { setDesktopInterfaceLanguage } from "../settings/DesktopInterfaceLanguage.ts";
 
 export class DesktopApplicationMenuActionError extends Schema.TaggedErrorClass<DesktopApplicationMenuActionError>()(
   "DesktopApplicationMenuActionError",
@@ -48,6 +50,21 @@ type DesktopApplicationMenuRuntimeServices =
 const { logInfo: logUpdaterInfo } = makeComponentLogger("desktop-updater");
 
 const { logError: logMenuError } = makeComponentLogger("desktop-menu");
+
+const updateDisabledReasonMessageId = (
+  reason: DesktopUpdates.DesktopUpdateDisabledReason,
+): Parameters<typeof translateInterfaceMessage>[1] => {
+  switch (reason) {
+    case "no-update-feed":
+      return "desktop.update.disabled.noFeed";
+    case "development-build":
+      return "desktop.update.disabled.development";
+    case "disabled-by-environment":
+      return "desktop.update.disabled.environment";
+    case "linux-package-required":
+      return "desktop.update.disabled.linuxPackage";
+  }
+};
 
 const dispatchMenuAction = Effect.fn("desktop.menu.dispatchMenuAction")(function* (
   action: string,
@@ -104,7 +121,10 @@ const handleCheckForUpdatesMenuClick = (language: ResolvedInterfaceLanguage) =>
         type: "info",
         title: translateInterfaceMessage(language, "desktop.update.unavailableTitle"),
         message: translateInterfaceMessage(language, "desktop.update.unavailableMessage"),
-        detail: disabledReason.value,
+        detail: translateInterfaceMessage(
+          language,
+          updateDisabledReasonMessageId(disabledReason.value),
+        ),
         buttons: [translateInterfaceMessage(language, "common.ok")],
       });
       return;
@@ -143,11 +163,15 @@ export const make = Effect.gen(function* () {
   const configure = Effect.gen(function* () {
     const storedSettings = yield* clientSettings.get;
     const preference = Option.match(storedSettings, {
-      onNone: () => DEFAULT_INTERFACE_LANGUAGE_PREFERENCE,
+      onNone: () => DEFAULT_INTERFACE_LOCALE_PREFERENCE_V1,
       onSome: (settings) =>
-        settings.interfaceLanguageLocalRecord?.preference ?? DEFAULT_INTERFACE_LANGUAGE_PREFERENCE,
+        resolveInterfaceLocaleSyncRecord({
+          localeRecord: settings.interfaceLocaleLocalRecordV1,
+          legacyRecord: settings.interfaceLanguageLocalRecord,
+        })?.preference ?? DEFAULT_INTERFACE_LOCALE_PREFERENCE_V1,
     });
     const language = resolveInterfaceLocale(preference, [yield* electronApp.systemLocale]).language;
+    setDesktopInterfaceLanguage(language);
     const t = (key: Parameters<typeof translateInterfaceMessage>[1]) =>
       translateInterfaceMessage(language, key);
     const checkForUpdatesClick = () => {

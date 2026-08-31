@@ -6,7 +6,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderSettingsFields } from "./ProviderSettingsForm";
 import { DRIVER_OPTION_BY_VALUE, DRIVER_OPTIONS } from "./providerDriverMeta";
 import { PROVIDER_ICON_BY_PROVIDER } from "../chat/providerIconUtils";
-import { OpenRouterIcon } from "../Icons";
+import { OpenAI, OpenRouterIcon } from "../Icons";
 
 const NATIVE_PROVIDER_DRIVERS = [
   {
@@ -17,18 +17,18 @@ const NATIVE_PROVIDER_DRIVERS = [
   {
     kind: "claudeAgent",
     label: "Claude",
-    fields: ["binaryPath", "homePath", "launchArgs"],
+    fields: ["binaryPath", "homePath", "autoCompactWindow", "launchArgs"],
   },
   {
     kind: "cursor",
     label: "Cursor",
-    badgeLabel: "Early Access",
+    badgeMessageKey: "settings.providers.badge.earlyAccess",
     fields: ["binaryPath", "apiEndpoint"],
   },
   {
     kind: "grok",
     label: "Grok",
-    badgeLabel: "Early Access",
+    badgeMessageKey: "settings.providers.badge.earlyAccess",
     fields: ["binaryPath"],
   },
   {
@@ -39,19 +39,19 @@ const NATIVE_PROVIDER_DRIVERS = [
   {
     kind: "gemini",
     label: "Gemini",
-    badgeLabel: "Early Access",
+    badgeMessageKey: "settings.providers.badge.earlyAccess",
     fields: [],
   },
   {
     kind: "chatgpt",
     label: "ChatGPT Subscription",
-    badgeLabel: "Early Access",
+    badgeMessageKey: "settings.providers.badge.earlyAccess",
     fields: ["binaryPath"],
   },
   {
     kind: "openrouter",
     label: "OpenRouter",
-    badgeLabel: "Early Access",
+    badgeMessageKey: "settings.providers.badge.earlyAccess",
     fields: [
       "protocol",
       "defaultModel",
@@ -68,21 +68,29 @@ const NATIVE_PROVIDER_DRIVERS = [
       "maxRequestPriceUsd",
     ],
   },
+  {
+    kind: "openai",
+    label: "OpenAI Responses",
+    badgeMessageKey: "settings.providers.badge.earlyAccess",
+    fields: [],
+  },
 ] as const;
 
 describe("providerDriverMeta", () => {
   it("exposes all built-in provider definitions and Early Access labels", () => {
     expect(
-      DRIVER_OPTIONS.map(({ value, label, badgeLabel }) => ({
+      DRIVER_OPTIONS.map(({ value, label, badgeMessageKey }) => ({
         value,
         label,
-        ...(badgeLabel ? { badgeLabel } : {}),
+        ...(badgeMessageKey ? { badgeMessageKey } : {}),
       })),
     ).toEqual(
       NATIVE_PROVIDER_DRIVERS.map(({ kind, label, ...driver }) => ({
         value: ProviderDriverKind.make(kind),
         label,
-        ...("badgeLabel" in driver && driver.badgeLabel ? { badgeLabel: driver.badgeLabel } : {}),
+        ...("badgeMessageKey" in driver && driver.badgeMessageKey
+          ? { badgeMessageKey: driver.badgeMessageKey }
+          : {}),
       })),
     );
   });
@@ -91,6 +99,12 @@ describe("providerDriverMeta", () => {
     const openRouter = ProviderDriverKind.make("openrouter");
     expect(DRIVER_OPTION_BY_VALUE[openRouter]?.icon).toBe(OpenRouterIcon);
     expect(PROVIDER_ICON_BY_PROVIDER[openRouter]).toBe(OpenRouterIcon);
+  });
+
+  it("uses OpenAI branding for the Responses provider", () => {
+    const openAi = ProviderDriverKind.make("openai");
+    expect(DRIVER_OPTION_BY_VALUE[openAi]?.icon).toBe(OpenAI);
+    expect(PROVIDER_ICON_BY_PROVIDER[openAi]).toBe(OpenAI);
   });
 
   it("renders OpenRouter's current geometric OR mark", () => {

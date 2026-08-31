@@ -375,7 +375,7 @@ it.layer(NodeServices.layer)("thread fork planner", (it) => {
     }),
   );
 
-  it.effect("remaps turn and activity relations without retaining live session state", () =>
+  it.effect("remaps turn relations and retains a fork cursor only for the same provider", () =>
     Effect.gen(function* () {
       const readModel = yield* seedReadModel;
       const turnId = TurnId.make("turn-source");
@@ -419,9 +419,14 @@ it.layer(NodeServices.layer)("thread fork planner", (it) => {
               threadId: sourceThreadId,
               status: "running",
               providerName: "codex",
+              providerInstanceId: ProviderInstanceId.make("codex"),
               runtimeSessionId: null,
               runtimeMode: "full-access",
               activeTurnId: turnId,
+              providerForkCursor: {
+                providerThreadId: "provider-thread-source",
+                providerTurnId: "provider-turn-source",
+              },
               abortState: null,
               lastError: null,
               updatedAt: now,
@@ -481,6 +486,25 @@ it.layer(NodeServices.layer)("thread fork planner", (it) => {
       expect(forked.payload.history.messages[1]?.turnId).toBe(remappedTurn?.turnId);
       expect(forked.payload.history.activities[0]?.turnId).toBe(remappedTurn?.turnId);
       expect(forked.payload.history.activities[0]?.id).not.toBe(EventId.make("activity-source"));
+      expect(forked.payload.fork.providerForkCursor).toEqual({
+        providerThreadId: "provider-thread-source",
+        providerTurnId: "provider-turn-source",
+      });
+
+      const switchedEvents = yield* planThreadFork({
+        command: {
+          ...forkCommand("message-turn-assistant"),
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("claude"),
+            model: "claude-sonnet-5",
+          },
+        },
+        readModel,
+        sourceEvents,
+      });
+      const switchedFork = switchedEvents[1];
+      if (switchedFork.type !== "thread.forked") return;
+      expect(switchedFork.payload.fork.providerForkCursor).toBeUndefined();
     }),
   );
 

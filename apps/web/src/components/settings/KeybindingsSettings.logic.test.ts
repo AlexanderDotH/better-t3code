@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { translateInterfaceMessage } from "@t3tools/shared/interfaceLanguage";
 
 import {
   buildKeybindingRows,
@@ -124,6 +125,17 @@ describe("KeybindingsSettings.logic", () => {
     expect(commandLabel("commandPalette.toggle")).toBe("Command Palette: Toggle");
     expect(commandLabel("themeEditor.toggle")).toBe("Theme Editor: Toggle");
     expect(commandLabel("script.setup-db.run")).toBe("Run Script: Setup Db");
+  });
+
+  it("localizes app-owned keybinding copy while preserving command identifiers", () => {
+    const french: Parameters<typeof commandLabel>[1] = (key, values) =>
+      translateInterfaceMessage("fr", key, values);
+
+    expect(commandLabel("script.setup-db.run", french)).toBe("Exécuter le script : Setup Db");
+    expect(parseWhenExpressionDraft("terminalFocus &&", french)).toEqual({
+      ok: false,
+      message: "Utilisez des variables avec !, &&, || et des parenthèses.",
+    });
   });
 
   it("builds known when variable options from defaults without frontend labels", () => {

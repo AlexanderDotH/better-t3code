@@ -1,6 +1,7 @@
 import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 
+import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 import { Command, CommandFooter, CommandInput, CommandPanel } from "./ui/command";
 import { Kbd, KbdGroup } from "./ui/kbd";
 
@@ -23,7 +24,7 @@ type CommandPaletteContentProps = Omit<ComponentProps<typeof Command>, "children
  */
 export function CommandPaletteContent({
   children,
-  escapeLabel = "Close",
+  escapeLabel,
   footerActionLabel,
   footerTrailing,
   inputAccessory,
@@ -33,6 +34,8 @@ export function CommandPaletteContent({
   testId,
   ...commandProps
 }: CommandPaletteContentProps) {
+  const translator = useInterfaceTranslator();
+  const resolvedEscapeLabel = escapeLabel ?? translator.message("ui.close");
   return (
     <div className="contents" data-testid={testId}>
       <Command {...commandProps}>
@@ -50,7 +53,7 @@ export function CommandPaletteContent({
               <Kbd>
                 <ArrowDownIcon />
               </Kbd>
-              <span>Navigate</span>
+              <span>{translator.message("ui.commandPalette.navigate")}</span>
             </KbdGroup>
             {footerActionLabel !== undefined ? (
               <KbdGroup className="items-center gap-1.5">
@@ -61,12 +64,12 @@ export function CommandPaletteContent({
             {showBackHint ? (
               <KbdGroup className="items-center gap-1.5">
                 <Kbd>Backspace</Kbd>
-                <span>Back</span>
+                <span>{translator.message("ui.commandPalette.back")}</span>
               </KbdGroup>
             ) : null}
             <KbdGroup className="items-center gap-1.5">
               <Kbd>Esc</Kbd>
-              <span>{escapeLabel}</span>
+              <span>{resolvedEscapeLabel}</span>
             </KbdGroup>
           </div>
           {footerTrailing}

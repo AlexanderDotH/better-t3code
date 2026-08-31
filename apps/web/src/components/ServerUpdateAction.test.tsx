@@ -13,6 +13,11 @@ const testState = vi.hoisted(() => ({
 vi.mock("~/hooks/useCopyToClipboard", () => ({
   useCopyToClipboard: () => ({ copyToClipboard: vi.fn() }),
 }));
+vi.mock("~/hooks/useInterfaceTranslator", async () => {
+  const { createInterfaceTranslator } = await import("@t3tools/shared/interfaceLanguage");
+  const translator = createInterfaceTranslator({ language: "en", locale: "en-US" });
+  return { useInterfaceTranslator: () => translator };
+});
 vi.mock("~/state/server", () => ({
   serverEnvironment: { updateServer: Symbol("updateServer") },
 }));

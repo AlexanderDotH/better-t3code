@@ -10,6 +10,7 @@ import {
   resolveGeminiApiKey,
   type GeminiClientFactory,
 } from "../provider/GeminiClient.ts";
+import { buildAutoReasoningPrompt, validateAutoReasoningDecision } from "./AutoReasoning.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -18,6 +19,7 @@ import {
   buildPromptImprovementPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildThreadMetadataPrompt,
   buildTranscriptTranslationPrompt,
 } from "./TextGenerationPrompts.ts";
 import * as TextGeneration from "./TextGeneration.ts";
@@ -49,9 +51,11 @@ export const makeGeminiTextGeneration = Effect.fn("makeGeminiTextGeneration")((
     modelSelection,
   }: {
     operation:
+      | "decideAutoReasoning"
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
+      | "generateThreadMetadata"
       | "generateThreadTitle"
       | "translateTranscriptToEnglish"
       | "improvePrompt"
@@ -140,6 +144,19 @@ export const makeGeminiTextGeneration = Effect.fn("makeGeminiTextGeneration")((
       ),
     );
 
+  const decideAutoReasoning: TextGeneration.TextGeneration["Service"]["decideAutoReasoning"] =
+    Effect.fn("GeminiTextGeneration.decideAutoReasoning")(function* (input) {
+      const { prompt, outputSchema } = buildAutoReasoningPrompt(input);
+      const generated = yield* runGeminiJson({
+        operation: "decideAutoReasoning",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+      return yield* validateAutoReasoningDecision(input.allowedEfforts, generated);
+    });
+
   const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
     Effect.fn("GeminiTextGeneration.generateCommitMessage")(function* (input) {
       const { prompt, outputSchema } = buildCommitMessagePrompt({
@@ -219,6 +236,22 @@ export const makeGeminiTextGeneration = Effect.fn("makeGeminiTextGeneration")((
       return { title: sanitizeThreadTitle(generated.title) };
     });
 
+  const generateThreadMetadata: TextGeneration.TextGeneration["Service"]["generateThreadMetadata"] =
+    Effect.fn("GeminiTextGeneration.generateThreadMetadata")(function* (input) {
+      const { prompt, outputSchema } = buildThreadMetadataPrompt(input);
+      const generated = yield* runGeminiJson({
+        operation: "generateThreadMetadata",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+      return {
+        title: sanitizeThreadTitle(generated.title),
+        branch: sanitizeBranchFragment(generated.branch),
+      };
+    });
+
   const translateTranscriptToEnglish: TextGeneration.TextGeneration["Service"]["translateTranscriptToEnglish"] =
     Effect.fn("GeminiTextGeneration.translateTranscriptToEnglish")(function* (input) {
       const { prompt, outputSchema } = buildTranscriptTranslationPrompt({ text: input.text });
@@ -272,13 +305,16 @@ export const makeGeminiTextGeneration = Effect.fn("makeGeminiTextGeneration")((
     });
 
   return Effect.succeed({
+    decideAutoReasoning,
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
+    generateThreadMetadata,
     generateThreadTitle,
     translateTranscriptToEnglish,
     improvePrompt,
     reviewPlanParallelism,
     planFetchExploration,
+    enrichKnowledgeGraph: TextGeneration.unsupportedKnowledgeGraphEnrichment("Gemini"),
   } satisfies TextGeneration.TextGeneration["Service"]);
 });

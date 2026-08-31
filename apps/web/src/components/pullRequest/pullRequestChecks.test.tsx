@@ -1,11 +1,10 @@
 import type { EnvironmentId, ProjectId, PullRequestCheck } from "@t3tools/contracts";
-import { Children, isValidElement, type ReactNode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
 import type { EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 import { PullRequestRow } from "./PullRequestRow";
-import { pullRequestChecksState } from "./pullRequestPresentation";
+import { keyedPullRequestChecks, pullRequestChecksState } from "./pullRequestPresentation";
 
 function check(status: PullRequestCheck["status"]): PullRequestCheck {
   return { name: `check-${status}`, status, description: null, url: null };
@@ -23,18 +22,18 @@ describe("pullRequestChecksState", () => {
     expect(pullRequestChecksState([check("skipped"), check("neutral")])).toBe(null);
     expect(pullRequestChecksState([])).toBe(null);
   });
-});
 
-/** Every element of the tree the row returned, so a nested indicator can be looked for. */
-function flatten(node: ReactNode): ReadonlyArray<ReturnType<typeof Object>> {
-  const found: unknown[] = [];
-  for (const child of Children.toArray(node)) {
-    if (!isValidElement(child)) continue;
-    found.push(child);
-    found.push(...flatten((child.props as { readonly children?: ReactNode }).children));
-  }
-  return found as ReadonlyArray<ReturnType<typeof Object>>;
-}
+  it("assigns stable unique keys when the host repeats a check name", () => {
+    const passing = check("success");
+    const failing = check("failure");
+    const repeated = keyedPullRequestChecks([passing, passing, failing]);
+    const reordered = keyedPullRequestChecks([failing, passing]);
+
+    expect(new Set(repeated.map((entry) => entry.key)).size).toBe(3);
+    expect(repeated[0]?.key).toBe(reordered[1]?.key);
+    expect(repeated[2]?.key).toBe(reordered[0]?.key);
+  });
+});
 
 function entry(overrides: Partial<EnvironmentPullRequestEntry>): EnvironmentPullRequestEntry {
   return {
@@ -61,21 +60,21 @@ function entry(overrides: Partial<EnvironmentPullRequestEntry>): EnvironmentPull
   } as EnvironmentPullRequestEntry;
 }
 
-function row(overrides: Partial<EnvironmentPullRequestEntry>): ReactNode {
-  return PullRequestRow.type({
-    entry: entry(overrides),
-    selected: false,
-    showProjectTitle: false,
-    showProvider: false,
-    onSelect: () => {},
-  });
+function row(overrides: Partial<EnvironmentPullRequestEntry>): string {
+  return renderToStaticMarkup(
+    <PullRequestRow
+      entry={entry(overrides)}
+      selected={false}
+      showProjectTitle={false}
+      showProvider={false}
+      onSelect={() => {}}
+    />,
+  );
 }
 
 describe("PullRequestRow checks indicator", () => {
-  function indicators(node: ReactNode): number {
-    return flatten(node).filter(
-      (element) => (element as { type?: unknown }).type === PullRequestChecksPopover,
-    ).length;
+  function indicators(markup: string): number {
+    return markup.match(/aria-label="Checks:/g)?.length ?? 0;
   }
 
   it("shows the indicator only for a row the host reported a rollup for", () => {

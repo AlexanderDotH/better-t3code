@@ -59,6 +59,7 @@ describe("provider driver groups", () => {
       ProviderDriverKind.make("gemini"),
       ProviderDriverKind.make("chatgpt"),
       ProviderDriverKind.make("openrouter"),
+      ProviderDriverKind.make("openai"),
     ]);
   });
 

@@ -177,12 +177,11 @@ it.layer(NodeServices.layer)("production workflow policy", (it) => {
         ),
         "-Mode update",
       );
-      assert.deepEqual(publishCli.needs, [
-        "preflight",
-        "relay_public_config",
-        "build",
-        "windows_update_smoke",
-      ]);
+      assert.deepEqual(
+        publishCli.needs,
+        ["preflight", "relay_public_config", "quality", "build", "windows_update_smoke"],
+        "CLI publication must wait for quality, artifact, and signed Windows update gates",
+      );
     }),
   );
 

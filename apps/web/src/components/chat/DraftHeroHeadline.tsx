@@ -5,6 +5,7 @@ import { useCallback, useMemo } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { useClientSettings } from "~/hooks/useSettings";
 import { selectProjectGroupingSettings } from "~/logicalProject";
 import {
@@ -34,6 +35,7 @@ export function DraftHeroHeadline({
   activeProjectRef,
   activeProjectTitle,
 }: DraftHeroHeadlineProps) {
+  const translate = useInterfaceTranslator().message;
   const projects = useProjects();
   const threads = useThreadShells();
   const { environments } = useEnvironments();
@@ -104,12 +106,16 @@ export function DraftHeroHeadline({
         <TooltipTrigger
           render={
             <MenuTrigger
-              aria-label={hasResolvedProject ? "Change project" : "Choose a project"}
+              aria-label={
+                hasResolvedProject
+                  ? translate("chat.draft.changeProject")
+                  : translate("chat.draft.chooseProject")
+              }
               className="pointer-events-auto inline-block max-w-64 truncate border-foreground/60 border-b border-dotted align-baseline text-foreground transition-colors hover:border-foreground/80 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             />
           }
         >
-          {activeProjectDisplayName ?? "Choose a project"}
+          {activeProjectDisplayName ?? translate("chat.draft.chooseProject")}
         </TooltipTrigger>
         {activeProjectDisplayName ? (
           <TooltipPopup side="top" className="max-w-80">
@@ -152,7 +158,7 @@ export function DraftHeroHeadline({
         <MenuSeparator />
         <MenuItem onClick={openAddProject}>
           <FolderPlusIcon />
-          New project
+          {translate("chat.draft.newProject")}
         </MenuItem>
       </MenuPopup>
     </Menu>
@@ -162,18 +168,22 @@ export function DraftHeroHeadline({
       onClick={openAddProject}
       className="pointer-events-auto inline cursor-pointer border-muted-foreground/35 border-b border-dotted text-muted-foreground/60 transition-colors hover:border-muted-foreground/60 hover:text-muted-foreground/80 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
     >
-      {activeProjectTitle ?? "Add a project"}
+      {activeProjectTitle ?? translate("chat.draft.addProject")}
     </button>
   );
 
   return (
     <h1 className="mx-auto w-full max-w-5xl text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
       {hasResolvedProject ? (
-        <>What should we build in {projectSelector}?</>
+        <>
+          {translate("chat.draft.buildPrefix")} {projectSelector}?
+        </>
       ) : canChooseProject ? (
-        <>{projectSelector} to start</>
+        <>
+          {projectSelector} {translate("chat.draft.startSuffix")}
+        </>
       ) : (
-        <>Add a project to start</>
+        <>{translate("chat.empty.addProject")}</>
       )}
     </h1>
   );

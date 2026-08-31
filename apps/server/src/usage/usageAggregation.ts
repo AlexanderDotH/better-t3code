@@ -12,7 +12,13 @@
  *
  * @module usageAggregation
  */
-import type { UsageBucket, UsageDay, UsageResolution, UsageTokenTotals } from "@t3tools/contracts";
+import type {
+  UsageBucket,
+  UsageContextDiagnostics,
+  UsageDay,
+  UsageResolution,
+  UsageTokenTotals,
+} from "@t3tools/contracts";
 
 import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
 import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
@@ -54,6 +60,7 @@ interface MutableBucket {
   unpricedRecords: number;
   providerReportedRecords: number;
   sessions: Set<string>;
+  diagnostics?: UsageContextDiagnostics;
 }
 
 export interface AggregateOptions {
@@ -145,7 +152,7 @@ export class UsageAggregator {
             this.#hourlyWindow.sinceTimeMs +
               Math.floor((record.timestampMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS) * HOUR_MS,
           ).toISOString();
-    const key = `${day}\u0000${hourStart}\u0000${record.provider}\u0000${record.model}`;
+    const key = `${day}\u0000${hourStart}\u0000${record.provider}\u0000${record.model}\u0000${record.callKind}`;
     let bucket = this.#buckets.get(key);
     if (bucket === undefined) {
       bucket = {
@@ -174,19 +181,47 @@ export class UsageAggregator {
     if (priced.costSource === "unpriced") bucket.unpricedRecords += 1;
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
     if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
+    if (record.diagnostics !== undefined) {
+      const current = bucket.diagnostics;
+      bucket.diagnostics = {
+        nativeForks: (current?.nativeForks ?? 0) + record.diagnostics.nativeForks,
+        compactHandoffs: (current?.compactHandoffs ?? 0) + record.diagnostics.compactHandoffs,
+        totalHandoffChars: (current?.totalHandoffChars ?? 0) + record.diagnostics.totalHandoffChars,
+        compactionEvents: (current?.compactionEvents ?? 0) + record.diagnostics.compactionEvents,
+        maxContextTokens: Math.max(
+          current?.maxContextTokens ?? 0,
+          record.diagnostics.maxContextTokens,
+        ),
+        instructionChars:
+          (current?.instructionChars ?? 0) + (record.diagnostics.instructionChars ?? 0),
+        memoryInjectionChars:
+          (current?.memoryInjectionChars ?? 0) + (record.diagnostics.memoryInjectionChars ?? 0),
+        toolSchemaChars:
+          (current?.toolSchemaChars ?? 0) + (record.diagnostics.toolSchemaChars ?? 0),
+        subagentResultChars:
+          (current?.subagentResultChars ?? 0) + (record.diagnostics.subagentResultChars ?? 0),
+        toolDigestChars:
+          (current?.toolDigestChars ?? 0) + (record.diagnostics.toolDigestChars ?? 0),
+        autoRoutingChars:
+          (current?.autoRoutingChars ?? 0) + (record.diagnostics.autoRoutingChars ?? 0),
+      };
+    }
     return true;
   }
 
   finish(): AggregateResult {
     const buckets: UsageBucket[] = [];
     for (const [key, bucket] of this.#buckets) {
-      const [day = "", hourStart = "", provider = "", model = ""] = key.split("\u0000");
+      const [day = "", hourStart = "", provider = "", model = "", callKind = "unknown"] =
+        key.split("\u0000");
       buckets.push({
         day: day as UsageDay,
         ...(hourStart === "" ? {} : { hourStart }),
         provider: provider as UsageBucket["provider"],
         model,
         totals: bucket.totals,
+        callKind: callKind as UsageBucket["callKind"],
+        ...(bucket.diagnostics === undefined ? {} : { diagnostics: bucket.diagnostics }),
         costUsd: bucket.costUsd,
         cacheSavingsUsd: bucket.cacheSavingsUsd,
         costSource: resolveCostSource(bucket),
@@ -201,7 +236,8 @@ export class UsageAggregator {
         a.day.localeCompare(b.day) ||
         (a.hourStart ?? "").localeCompare(b.hourStart ?? "") ||
         a.provider.localeCompare(b.provider) ||
-        a.model.localeCompare(b.model),
+        a.model.localeCompare(b.model) ||
+        (a.callKind ?? "unknown").localeCompare(b.callKind ?? "unknown"),
     );
 
     return {

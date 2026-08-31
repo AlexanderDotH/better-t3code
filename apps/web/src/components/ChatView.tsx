@@ -1,5 +1,6 @@
 import {
   type ApprovalRequestId,
+  type ChatFileAttachment,
   DEFAULT_MODEL,
   defaultInstanceIdForDriver,
   type EnvironmentId,
@@ -19,15 +20,14 @@ import {
   type TurnId,
   type KeybindingCommand,
   OrchestrationThreadActivity,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderInteractionMode,
   ProviderDriverKind,
   RuntimeMode,
+  resolveBetterT3FeatureFlag,
   TerminalOpenInput,
 } from "@t3tools/contracts";
-import {
-  connectionStatusTitle,
-  type EnvironmentConnectionPresentation,
-} from "@t3tools/client-runtime/connection";
+import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { resolveOpenRouterBootstrapModelPatch } from "@t3tools/client-runtime/openrouter-model-selection";
 import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
 import {
@@ -50,6 +50,12 @@ import {
   type PendingReasoningOverride,
 } from "@t3tools/client-runtime/reasoning-recommendation";
 import {
+  codexFeedbackMessage,
+  parseCodexFeedbackCommand,
+  submitCodexFeedback,
+  type CodexFeedbackSubmission,
+} from "@t3tools/client-runtime/state/threads";
+import {
   parseScopedThreadKey,
   scopedThreadKey,
   scopeProjectRef,
@@ -58,6 +64,7 @@ import {
 import {
   applyClaudePromptEffortPrefix,
   createModelSelection,
+  isAutoReasoningEnabled,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
@@ -65,6 +72,10 @@ import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/proje
 import { truncate } from "@t3tools/shared/String";
 import { resolveFetchMode } from "@t3tools/shared/fetchMode";
 import { resolveDefaultThreadEnvMode } from "@t3tools/shared/threadEnvMode";
+import {
+  createInterfaceTranslator,
+  type InterfaceMessageKey,
+} from "@t3tools/shared/interfaceLanguage";
 import {
   getTerminalLabel,
   nextTerminalId,
@@ -96,6 +107,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
@@ -143,11 +155,13 @@ import {
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ChatMessage,
+  isImageAttachment,
   type SessionPhase,
   type Thread,
   type TurnDiffSummary,
 } from "../types";
 import { useTheme } from "../hooks/useTheme";
+import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
@@ -182,6 +196,7 @@ import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs, type PullRequestTabStatus } from "./RightPanelTabs";
+import { KnowledgeGraphPanelController } from "./knowledge-graph/KnowledgeGraphPanelController";
 import {
   deriveAgentPanelModel,
   foldSubagentActivities,
@@ -197,6 +212,8 @@ import {
   CheckCircle2Icon,
   ChevronDownIcon,
   GitBranchIcon,
+  InfoIcon,
+  Minimize2Icon,
   PaperclipIcon,
   RefreshCwIcon,
   WifiOffIcon,
@@ -219,7 +236,11 @@ import {
   isPlanModeAvailable,
   resolveSelectableProvider,
 } from "../providerModels";
-import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  NO_PROVIDER_MODEL_SELECTION,
+} from "../providerInstances";
 import {
   useClientSettings,
   useClientSettingsHydrated,
@@ -228,6 +249,7 @@ import {
 } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { useThreadActions } from "../hooks/useThreadActions";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { confirmTerminalClose, isTerminalCloseConfirmPending } from "../lib/terminalCloseConfirm";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
@@ -248,6 +270,8 @@ import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRo
 import {
   beginBackgroundDraftSubmissionByRef,
   clearBackgroundDraftSubmissionByRef,
+  composerDraftHasUserContent,
+  type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
   finalizePromotedDraftThreadByRef,
@@ -275,6 +299,7 @@ import { projectEnvironment } from "../state/projects";
 import { agentSettingsEnvironment } from "../state/agentSettings";
 import { useEnvironmentQuery } from "../state/query";
 import {
+  environmentServerConfigsAtom,
   primaryServerAvailableEditorsAtom,
   primaryServerKeybindingsAtom,
   primaryServerSettingsAtom,
@@ -300,6 +325,7 @@ import {
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { resolveAssemblyAiVoiceInputAvailability } from "./chat/voiceInputAvailability";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -335,14 +361,19 @@ import {
 import {
   resolveDisplayedThreadPr,
   threadChangeRequestSnapshotsAtom,
+  useLinkedThreadPullRequest,
 } from "./ThreadStatusIndicators";
-import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
-import {
-  ComposerFloatingIsland,
-  ComposerFloatingIslandSection,
-} from "./chat/ComposerFloatingIsland";
+import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import { ComposerFloatingBubble } from "./chat/ComposerFloatingBubble";
+import { resolveComposerFloatingBubbleLayout } from "./chat/composerFloatingBubble.logic";
+import { ComposerSurface } from "./chat/ComposerSurface";
 import { buildReasoningRecommendationBannerItem } from "./chat/ReasoningRecommendationBanner";
-import { ThreadSyncStatusPill } from "./chat/ThreadSyncStatusPill";
+import {
+  hasAvailableClaudeCompactionProvider,
+  hasDismissedResumeCompaction,
+  shouldOfferResumeCompaction,
+} from "./chat/ContextWindowMeter.logic";
+import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "../lib/contextWindow";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
   DRAFT_HERO_TRANSITION_DURATION_MS,
@@ -367,7 +398,9 @@ import {
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
   shouldDockDraftHeroForSubmission,
+  shouldReleaseTimelineAnchorForToolActivity,
   shouldShowBranchMismatchBanner,
+  shouldShowPlanFollowUpPrompt,
   getStartedThreadModelChangeBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
@@ -377,6 +410,7 @@ import {
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  resolveKnowledgeGraphSurfacePolicy,
   resolveSelectedSubagentId,
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftHeroState,
@@ -394,12 +428,24 @@ import {
 import type { ThreadSyncPhase } from "../threadSync";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
+import {
+  awaitAttachmentUploads,
+  getUploadedAttachments,
+  releaseDraftAttachments,
+  startAttachmentUpload,
+} from "../lib/attachmentUploadQueue";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { RightPanelSheet } from "./RightPanelSheet";
 import { ChatAgentStack } from "./ChatAgentStack";
 import { SubagentTranscriptDialog } from "./SubagentTranscriptDialog";
 import { previewEnvironment } from "../state/preview";
+import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { fileAttachmentCapabilityBlockReason } from "./chat/composerAttachmentFiles";
+import { assetEnvironment } from "../state/assets";
+import { readPreparedConnection } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
+import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { Button } from "./ui/button";
 import {
   AlertDialog,
@@ -411,19 +457,22 @@ import {
   AlertDialogTitle,
 } from "./ui/alert-dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-import { ServerUpdateAction, ServerUpdateProgress } from "./ServerUpdateAction";
+import { ServerUpdateAction } from "./ServerUpdateAction";
+import { ComposerServerUpdateStatus } from "./chat/ComposerServerUpdateStatus";
 import {
   buildVersionMismatchDismissalKey,
+  dismissServerUpdateFailure,
   dismissVersionMismatch,
+  isServerUpdateFailureDismissed,
   isVersionMismatchDismissed,
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
   serverUpdateGuidance,
 } from "../versionSkew";
-import { useAssetUrls } from "../assets/assetUrls";
+import { resolveAssetUrl, useAssetUrls } from "../assets/assetUrls";
 
-const IMAGE_ONLY_BOOTSTRAP_PROMPT =
-  "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
+const ATTACHMENT_ONLY_BOOTSTRAP_PROMPT =
+  "[User attached one or more files without additional text. Respond using the conversation context and the attached files.]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
@@ -1308,6 +1357,28 @@ function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | n
   return current.messageId === null ? current : { ...current, messageId: null };
 }
 
+function environmentConnectionStatusMessageKey(
+  connection: Pick<EnvironmentConnectionPresentation, "phase" | "error">,
+): InterfaceMessageKey {
+  if (connection.phase === "reconnecting" && connection.error) {
+    return "chat.environment.status.reconnectingAfterFailure";
+  }
+  switch (connection.phase) {
+    case "available":
+      return "chat.environment.status.available";
+    case "offline":
+      return "chat.environment.status.offline";
+    case "connecting":
+      return "chat.environment.status.connecting";
+    case "reconnecting":
+      return "chat.environment.status.reconnecting";
+    case "connected":
+      return "chat.environment.status.connected";
+    case "error":
+      return "chat.environment.status.failed";
+  }
+}
+
 function ChatViewContent(props: ChatViewProps) {
   const {
     environmentId,
@@ -1321,6 +1392,7 @@ function ChatViewContent(props: ChatViewProps) {
   const threadSyncPhase = routeKind === "server" ? (props.threadSyncPhase ?? null) : null;
   const threadDetailLoading = threadSyncPhase === "loading";
   const handleNewThread = useNewThreadHandler();
+  const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
@@ -1351,6 +1423,12 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const retryThreadTurn = useAtomCommand(threadEnvironment.retryTurn, { reportFailure: false });
+  const createAttachmentAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
+    reportFailure: false,
+  });
+  const uploadThreadFeedback = useAtomCommand(threadEnvironment.uploadFeedback, {
+    reportFailure: false,
+  });
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
@@ -1358,6 +1436,9 @@ function ChatViewContent(props: ChatViewProps) {
     reportFailure: false,
   });
   const respondToThreadUserInput = useAtomCommand(threadEnvironment.respondToUserInput, {
+    reportFailure: false,
+  });
+  const compactProviderThread = useAtomCommand(serverEnvironment.compactThread, {
     reportFailure: false,
   });
   const revertThreadCheckpoint = useAtomCommand(threadEnvironment.revertCheckpoint, {
@@ -1411,14 +1492,26 @@ function ChatViewContent(props: ChatViewProps) {
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const settings = useEnvironmentSettings(environmentId);
   const updateEnvironmentSettings = useUpdateEnvironmentSettings(environmentId);
-  const interfaceLanguage = useInterfaceLanguage().language;
+  const interfaceLocale = useInterfaceLanguage();
+  const interfaceLanguage = interfaceLocale.language;
+  const interfaceTranslator = useMemo(
+    () => createInterfaceTranslator(interfaceLocale),
+    [interfaceLocale],
+  );
+  const translate = interfaceTranslator.message;
   // New-thread defaults live in the primary environment's settings.json (the
   // settings UI never writes to remote environments), so read them from the
   // primary server rather than the thread's environment.
   const primaryServerSettings = useAtomValue(primaryServerSettingsAtom);
   const assemblyAiApiKey = settings.speechTranscription.assemblyAi.apiKey;
-  const voiceInputConfigured =
-    assemblyAiApiKey.value.trim().length > 0 || assemblyAiApiKey.valueRedacted === true;
+  const voiceServerConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const voiceInputConfigured = resolveAssemblyAiVoiceInputAvailability({
+    featureEnabled: resolveBetterT3FeatureFlag(settings.betterT3Environment, "voice.assemblyAi"),
+    environmentSettingsVersion:
+      voiceServerConfig?.environment.capabilities.environmentSettingsVersion,
+    apiKeyConfigured:
+      assemblyAiApiKey.value.trim().length > 0 || assemblyAiApiKey.valueRedacted === true,
+  }).configured;
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
   );
@@ -1443,8 +1536,16 @@ function ChatViewContent(props: ChatViewProps) {
   const reasoningRecommendationState = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.reasoningRecommendation ?? null,
   );
+  const composerHasUnsentContent = useComposerDraftStore((store) =>
+    composerDraftHasUserContent(store.getComposerDraft(composerDraftTarget)),
+  );
+  const composerHasAttachments = useComposerDraftStore((store) => {
+    const draft = store.getComposerDraft(composerDraftTarget);
+    return (draft?.images.length ?? 0) > 0 || (draft?.files.length ?? 0) > 0;
+  });
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
+  const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
   const setComposerDraftTerminalContexts = useComposerDraftStore(
     (store) => store.setTerminalContexts,
   );
@@ -1474,6 +1575,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const promptRef = useRef("");
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
+  const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
@@ -1486,6 +1588,16 @@ function ChatViewContent(props: ChatViewProps) {
   const retryDispatchInFlightRef = useRef(false);
   const [forkingBoundary, setForkingBoundary] = useState<ThreadForkBoundary | null>(null);
   const forkDispatchInFlightRef = useRef(false);
+  const [feedbackSubmissionsByThreadKey, setFeedbackSubmissionsByThreadKey] = useState<
+    Record<string, ReadonlyArray<CodexFeedbackSubmission>>
+  >({});
+  const feedbackSubmissions = useMemo(
+    () => feedbackSubmissionsByThreadKey[routeThreadKey] ?? [],
+    [feedbackSubmissionsByThreadKey, routeThreadKey],
+  );
+  const feedbackUploading = feedbackSubmissions.some(
+    (submission) => submission.status === "uploading",
+  );
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
@@ -1550,21 +1662,23 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const legendListRef = useRef<LegendListRef | null>(null);
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
-  const [composerFloatingDrawerHost, setComposerFloatingDrawerHost] =
-    useState<HTMLDivElement | null>(null);
   const [composerOverlayHeight, setComposerOverlayHeight] = useState(0);
   const composerOverlayResizeFrameRef = useRef<number | null>(null);
   const [chatColumnElement, setChatColumnElement] = useState<HTMLDivElement | null>(null);
   const [chatColumnHeight, setChatColumnHeight] = useState<number | undefined>(undefined);
   const [nonChatWorkspaceCardActive, setNonChatWorkspaceCardActive] = useState(false);
   const [workspaceCardExpanded, setWorkspaceCardExpanded] = useState(false);
+  const [composerFloatingBubbleHost, setComposerFloatingBubbleHost] =
+    useState<HTMLDivElement | null>(null);
   const [voiceRecordingActive, setVoiceRecordingActive] = useState(false);
+  const [scrollToEndClearance, setScrollToEndClearance] = useState(0);
   const isAtEndRef = useRef(true);
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightRef = useRef(false);
   const activeRouteKeyRef = useRef(routeThreadKey);
   activeRouteKeyRef.current = routeThreadKey;
+  const feedbackUploadsInFlightRef = useRef(new Set<string>());
   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
 
   useLayoutEffect(() => {
@@ -1574,6 +1688,9 @@ function ChatViewContent(props: ChatViewProps) {
       const nextHeight = Math.ceil(composerOverlayElement.getBoundingClientRect().height);
       if (nextHeight <= 0) return;
       setComposerOverlayHeight((currentHeight) =>
+        currentHeight === nextHeight ? currentHeight : nextHeight,
+      );
+      setScrollToEndClearance((currentHeight) =>
         currentHeight === nextHeight ? currentHeight : nextHeight,
       );
     };
@@ -1613,7 +1730,6 @@ function ChatViewContent(props: ChatViewProps) {
     observer.observe(chatColumnElement);
     return () => observer.disconnect();
   }, [chatColumnElement]);
-
   const terminalUiState = useTerminalUiStateStore((state) =>
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef),
   );
@@ -1796,7 +1912,7 @@ function ChatViewContent(props: ChatViewProps) {
   const selectedSubagent = Option.getOrNull(subagentState.data);
   const subagentErrorMessage =
     Option.getOrNull(subagentState.error) ??
-    (subagentState.status === "deleted" ? "This agent transcript is no longer available." : null);
+    (subagentState.status === "deleted" ? translate("chat.agent.transcript.unavailable") : null);
   const subagentTranscriptLoading =
     selectedSubagentId !== null &&
     selectedSubagent === null &&
@@ -1925,23 +2041,30 @@ function ChatViewContent(props: ChatViewProps) {
         : null,
     [activeLatestTurn, activeThread, optimisticUserMessages],
   );
-  // Reading a finished thread clears the sidebar's Done badge. The visit is
-  // stamped at the turn's completion time — not now/updatedAt — so it clears
-  // exactly the completion the user is looking at: a wake or completion that
-  // lands later still gets its signal (markThreadVisited never moves the
-  // timestamp backwards).
+  const activeRunningTurnId =
+    (activeThread?.session?.status === "running" ? activeThread.session.activeTurnId : null) ??
+    (activeLatestTurn?.state === "running" ? activeLatestTurn.turnId : null);
+  // Reading a finished thread clears its sidebar attention badge. Failures
+  // use the session status edge; successful turns use their completion time.
+  // A later completion or failure still gets its own signal because visits
+  // never move backwards.
   useEffect(() => {
-    const completedAt = serverThread?.latestTurn?.completedAt;
-    if (!serverThread?.id || !completedAt) return;
+    const visitedAt =
+      serverThread?.session?.status === "error"
+        ? serverThread.session.updatedAt
+        : serverThread?.latestTurn?.completedAt;
+    if (!serverThread?.id || !visitedAt) return;
     markThreadVisited(
       scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
-      completedAt,
+      visitedAt,
     );
   }, [
     markThreadVisited,
     serverThread?.environmentId,
     serverThread?.id,
     serverThread?.latestTurn?.completedAt,
+    serverThread?.session?.status,
+    serverThread?.session?.updatedAt,
   ]);
   useEffect(() => {
     setMountedTerminalThreadKeys((currentThreadIds) => {
@@ -2049,11 +2172,11 @@ function ChatViewContent(props: ChatViewProps) {
         );
         toastManager.add({
           type: "error",
-          title: "Could not create speech context",
+          title: translate("chat.speechIndex.createFailed"),
           description:
             basicError instanceof Error
               ? basicError.message
-              : "Basic context could not be created.",
+              : translate("chat.speechIndex.basicCreateFailed"),
         });
         return;
       }
@@ -2063,12 +2186,12 @@ function ChatViewContent(props: ChatViewProps) {
               ...current,
               state: "error",
               errorMessage:
-                error instanceof Error ? error.message : "Project indexing could not be completed.",
+                error instanceof Error ? error.message : translate("chat.speechIndex.failed"),
             }
           : current,
       );
     }
-  }, [projectSpeechPreindexDialog]);
+  }, [projectSpeechPreindexDialog, translate]);
 
   const useBasicProjectSpeechProfile = useCallback(async () => {
     const target = projectSpeechPreindexDialog;
@@ -2087,11 +2210,12 @@ function ChatViewContent(props: ChatViewProps) {
       );
       toastManager.add({
         type: "error",
-        title: "Could not create basic context",
-        description: error instanceof Error ? error.message : "Basic context could not be created.",
+        title: translate("chat.speechIndex.basicCreateTitle"),
+        description:
+          error instanceof Error ? error.message : translate("chat.speechIndex.basicCreateFailed"),
       });
     }
-  }, [projectSpeechPreindexDialog]);
+  }, [projectSpeechPreindexDialog, translate]);
   const activeEnvironmentShell = useEnvironmentQuery(
     activeThread ? environmentShell.stateAtom(activeThread.environmentId) : null,
   );
@@ -2211,13 +2335,16 @@ function ChatViewContent(props: ChatViewProps) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not reconnect environment",
-            description: error instanceof Error ? error.message : "Failed to reconnect.",
+            title: translate("chat.environment.reconnectFailedTitle"),
+            description:
+              error instanceof Error
+                ? error.message
+                : translate("chat.environment.reconnectFailedDescription"),
           }),
         );
       }
     },
-    [retryEnvironment],
+    [retryEnvironment, translate],
   );
   const logicalProjectEnvironments = useMemo(() => {
     if (!activeProject) return [];
@@ -2387,8 +2514,34 @@ function ChatViewContent(props: ChatViewProps) {
   const pullRequestsCapabilityKnown = serverConfig !== null;
   const supportsPullRequests = serverConfig?.environment.capabilities.pullRequests === true;
   const supportsThreadForking = serverConfig?.environment.capabilities.threadForking === true;
+  const knowledgeGraphVersion = serverConfig?.environment.capabilities.knowledgeGraphVersion;
+  const knowledgeGraphSurfacePolicy = resolveKnowledgeGraphSurfacePolicy({
+    hasProject: activeProject !== null,
+    knowledgeGraphVersion,
+    enabled: resolveBetterT3FeatureFlag(settings.betterT3Environment, "knowledge.graph"),
+  });
+  const knowledgeGraphAvailable = knowledgeGraphSurfacePolicy.launchAvailable;
+  useEffect(() => {
+    if (!activeThreadRef || !knowledgeGraphSurfacePolicy.closeExisting) return;
+    const graphSurface = rightPanelState.surfaces.find(
+      (surface) => surface.kind === "knowledge-graph",
+    );
+    if (graphSurface) {
+      useRightPanelStore.getState().closeSurface(activeThreadRef, graphSurface.id);
+    }
+  }, [activeThreadRef, knowledgeGraphSurfacePolicy.closeExisting, rightPanelState.surfaces]);
   const supportsInterruptedTurnRetry =
     serverConfig?.environment.capabilities.interruptedTurnRetry === true;
+  const attachmentEnvironmentConfig = environmentById.get(environmentId)?.serverConfig ?? null;
+  const attachmentUploadsCapabilityKnown = attachmentEnvironmentConfig !== null;
+  const supportsAttachmentUploads =
+    attachmentEnvironmentConfig?.environment.capabilities.attachmentUploads === true;
+  const advertisedFileAttachmentBytes =
+    attachmentEnvironmentConfig?.environment.capabilities.fileAttachments?.maxUploadBytes ?? null;
+  const maxFileAttachmentBytes =
+    advertisedFileAttachmentBytes === null
+      ? null
+      : clampFileAttachmentUploadBytes(advertisedFileAttachmentBytes);
   const versionMismatch = resolveServerConfigVersionMismatch(serverConfig);
   const versionMismatchDismissKey =
     versionMismatch && activeThread
@@ -2428,6 +2581,12 @@ function ChatViewContent(props: ChatViewProps) {
         language: interfaceLanguage,
       })
     : null;
+  const [dismissedServerUpdateState, setDismissedServerUpdateState] = useState<
+    typeof serverUpdateState | null
+  >(null);
+  const serverUpdateFailureDismissed =
+    serverUpdateState === dismissedServerUpdateState ||
+    isServerUpdateFailureDismissed(serverUpdateState);
   const systemComposerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const items: ComposerBannerStackItem[] = [];
     const updateRunning = serverUpdateState.status === "running";
@@ -2455,26 +2614,33 @@ function ChatViewContent(props: ChatViewProps) {
         items.push({
           id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
           variant: "default",
-          // Live connection status: calm styling, but it must front the stack.
-          urgent: true,
+          // Prioritize live connection progress among the notices.
+          priority: "urgent",
           icon: (
             <span
               className="size-1.5 animate-status-pulse rounded-full bg-foreground"
               aria-hidden="true"
             />
           ),
-          title: `${unavailableConnection.phase === "connecting" ? "Connecting" : "Reconnecting"} to ${activeEnvironmentUnavailableState.label}`,
-          description: "It may be finishing an update. One moment.",
+          title: translate(
+            unavailableConnection.phase === "connecting"
+              ? "chat.environment.connectingTo"
+              : "chat.environment.reconnectingTo",
+            { environment: activeEnvironmentUnavailableState.label },
+          ),
+          description: translate("chat.environment.mayBeUpdating"),
         });
       } else {
         items.push({
           id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
           variant: unavailableConnection.phase === "error" ? "error" : "warning",
           icon: <WifiOffIcon />,
-          title: `${activeEnvironmentUnavailableState.label}: ${connectionStatusTitle(unavailableConnection)}`,
+          title: translate("chat.environment.statusTitle", {
+            environment: activeEnvironmentUnavailableState.label,
+            status: translate(environmentConnectionStatusMessageKey(unavailableConnection)),
+          }),
           description:
-            unavailableConnection.error ??
-            "Reconnect this environment before sending messages or running actions.",
+            unavailableConnection.error ?? translate("chat.environment.reconnectBeforeActions"),
           actions: (
             <>
               <Button
@@ -2486,14 +2652,16 @@ function ChatViewContent(props: ChatViewProps) {
                   )
                 }
               >
-                {environmentReconnecting ? "Reconnecting..." : "Reconnect"}
+                {environmentReconnecting
+                  ? translate("chat.environment.reconnecting")
+                  : translate("chat.environment.reconnect")}
               </Button>
               <Button
                 size="xs"
                 variant="outline"
                 onClick={() => void navigate({ to: "/settings/connections" })}
               >
-                Connections
+                {translate("chat.environment.connections")}
               </Button>
             </>
           ),
@@ -2503,35 +2671,30 @@ function ChatViewContent(props: ChatViewProps) {
     if (
       serverUpdateEnvironmentId &&
       !reconnectingThroughVersionSkew &&
-      (serverUpdateState.status !== "idle" ||
-        (showVersionMismatchBanner && versionMismatch && versionMismatchDismissKey))
+      (serverUpdateState.status === "idle"
+        ? showVersionMismatchBanner
+        : !serverUpdateFailureDismissed)
     ) {
       const updateInProgress = serverUpdateState.status === "running";
       const updateFailed = serverUpdateState.status === "failed";
       items.push({
         id: `server-version:${serverUpdateEnvironmentId}`,
         variant: updateFailed ? "error" : "default",
-        // A running update is live progress the user is waiting on; only the
-        // idle "update available" offer is calm enough to stack behind.
-        urgent: updateInProgress,
-        // In-flight and failed states carry their own status dot inside
-        // ServerUpdateProgress; only the idle offer needs an icon.
-        icon:
-          updateInProgress || updateFailed ? null : (
-            <span
-              className="size-1.5 rounded-full border border-muted-foreground/40"
-              aria-hidden="true"
-            />
-          ),
+        // Prioritize update progress over passive notices, but keep activity attached.
+        priority: updateInProgress ? "urgent" : "notice",
+        icon: <InfoIcon aria-hidden />,
         title:
           updateInProgress || updateFailed ? (
-            `${updateFailed ? "Could not update" : "Updating"} ${versionMismatchServerLabel}`
+            <ComposerServerUpdateStatus
+              state={serverUpdateState}
+              serverLabel={versionMismatchServerLabel}
+            />
           ) : versionMismatch ? (
             <Tooltip>
               <TooltipTrigger
                 render={
                   <button type="button" className="cursor-help rounded-sm text-left">
-                    Server update available
+                    {translate("chat.update.available")}
                   </button>
                 }
               />
@@ -2541,14 +2704,12 @@ function ChatViewContent(props: ChatViewProps) {
               </TooltipPopup>
             </Tooltip>
           ) : (
-            "Server update available"
+            translate("chat.update.available")
           ),
         description:
-          updateInProgress || updateFailed ? (
-            <ServerUpdateProgress state={serverUpdateState} />
-          ) : versionMismatchSelfUpdate === "desktop-managed" ? (
-            serverUpdateGuidance(versionMismatchSelfUpdate, versionMismatchServerLabel)
-          ) : null,
+          !updateInProgress && !updateFailed && versionMismatchSelfUpdate === "desktop-managed"
+            ? serverUpdateGuidance(versionMismatchSelfUpdate, versionMismatchServerLabel)
+            : undefined,
         // The desktop-managed guidance is already the description; the action
         // slot would only repeat it.
         actions:
@@ -2560,14 +2721,20 @@ function ChatViewContent(props: ChatViewProps) {
               serverLabel={versionMismatchServerLabel}
               selfUpdate={versionMismatchSelfUpdate}
               targetVersion={versionMismatch.clientVersion}
-              label={updateFailed ? "Retry" : "Update"}
+              label={interfaceTranslator.message(
+                updateFailed ? "common.retry" : "serverUpdate.action.update",
+              )}
             />
           ),
-        ...(updateInProgress || updateFailed || !versionMismatchDismissKey
+        ...(updateInProgress || (!updateFailed && !versionMismatchDismissKey)
           ? {}
           : {
-              dismissLabel: "Dismiss update notice",
+              dismissLabel: translate("chat.update.dismiss"),
               onDismiss: () => {
+                if (updateFailed) {
+                  dismissServerUpdateFailure(serverUpdateState);
+                  setDismissedServerUpdateState(serverUpdateState);
+                }
                 dismissVersionMismatch(versionMismatchDismissKey);
                 setDismissedVersionMismatchKey(versionMismatchDismissKey);
               },
@@ -2591,12 +2758,15 @@ function ChatViewContent(props: ChatViewProps) {
     navigate,
     setDismissedVersionMismatchKey,
     showVersionMismatchBanner,
+    serverUpdateFailureDismissed,
     serverUpdateState,
     versionMismatch,
     versionMismatchDismissKey,
     serverUpdateEnvironmentId,
     versionMismatchSelfUpdate,
     versionMismatchServerLabel,
+    interfaceTranslator,
+    translate,
   ]);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
   const providerInstanceEntries = useMemo(
@@ -2627,6 +2797,10 @@ function ChatViewContent(props: ChatViewProps) {
   const liveSubagents = useMemo(
     () => activeThread?.subagents.filter((subagent) => subagent.historyOrigin === undefined) ?? [],
     [activeThread?.subagents],
+  );
+  const activeContextWindow = useMemo(
+    () => deriveLatestContextWindowSnapshot(threadActivities),
+    [threadActivities],
   );
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
   const turnPlans = useMemo(() => deriveTurnPlans(threadActivities), [threadActivities]);
@@ -2696,26 +2870,13 @@ function ChatViewContent(props: ChatViewProps) {
     () => deriveActivePlanState(liveThreadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, liveThreadActivities],
   );
-  // Current step for the in-chat working row: only for the running turn's own
-  // plan (deriveActivePlanState falls back to older turns' plans, which must
-  // not label fresh work). Falls back to the first pending step so an
-  // all-pending freshly written plan labels the row, matching the chip and
-  // the server's planProgress.
-  const workingStepLabel = useMemo(() => {
-    if (!activePlan || activePlan.turnId !== (activeLatestTurn?.turnId ?? null)) {
-      return null;
-    }
-    return (
-      activePlan.steps.find((step) => step.status === "inProgress")?.step ??
-      activePlan.steps.find((step) => step.status === "pending")?.step ??
-      null
-    );
-  }, [activeLatestTurn?.turnId, activePlan]);
-  const showPlanFollowUpPrompt =
-    pendingUserInputs.length === 0 &&
-    interactionMode === "plan" &&
-    latestTurnSettled &&
-    hasActionableProposedPlan(activeProposedPlan);
+  const showPlanFollowUpPrompt = shouldShowPlanFollowUpPrompt({
+    pendingUserInputCount: pendingUserInputs.length,
+    interactionMode,
+    latestTurnSettled,
+    hasActionableProposedPlan: hasActionableProposedPlan(activeProposedPlan),
+    hasComposerAttachments: composerHasAttachments,
+  });
   const activePendingApproval = pendingApprovals[0] ?? null;
   const {
     beginLocalDispatch,
@@ -2824,8 +2985,10 @@ function ChatViewContent(props: ChatViewProps) {
   const reasoningRecommendationBannerItem = useMemo(
     () =>
       buildReasoningRecommendationBannerItem({
+        translate: interfaceTranslator.message,
         recommendation: reasoningRecommendation,
         pendingOverride: validPendingReasoningOverride,
+        autoReasoningActive: isAutoReasoningEnabled(reasoningRecommendationSelection),
         onAccept: () => {
           if (activeThreadRef === null || reasoningRecommendation === null) {
             return;
@@ -2856,6 +3019,7 @@ function ChatViewContent(props: ChatViewProps) {
       }),
     [
       activeThreadRef,
+      interfaceTranslator,
       reasoningRecommendation,
       reasoningRecommendationState,
       setComposerReasoningRecommendation,
@@ -2929,11 +3093,65 @@ function ChatViewContent(props: ChatViewProps) {
     });
   }, []);
   const serverMessages = activeThread?.messages;
+  const downloadFileAttachment = useCallback(
+    async (attachment: ChatFileAttachment) => {
+      const connection = readPreparedConnection(environmentId);
+      if (!connection) {
+        toastManager.add({
+          type: "error",
+          title: interfaceTranslator.message("chat.environment.disconnected"),
+        });
+        return;
+      }
+
+      // fileName and mimeType ride in the signed claims so the download gets
+      // a real filename and Content-Type even when the anchor's `download`
+      // attribute is ignored (cross-origin environment servers).
+      const result = await createAttachmentAssetUrl({
+        environmentId,
+        input: {
+          resource: {
+            _tag: "attachment",
+            attachmentId: attachment.id,
+            fileName: attachment.name,
+            mimeType: attachment.mimeType,
+          },
+        },
+      });
+      if (result._tag === "Failure") {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          type: "error",
+          title: `Could not download ${attachment.name}`,
+          description: error instanceof Error ? error.message : "The attachment is unavailable.",
+        });
+        return;
+      }
+
+      const url = resolveAssetUrl(connection.httpBaseUrl, result.value.relativeUrl);
+      if (!url) {
+        toastManager.add({
+          type: "error",
+          title: interfaceTranslator.message("chat.attachment.downloadFailed", {
+            name: attachment.name,
+          }),
+        });
+        return;
+      }
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = attachment.name;
+      anchor.click();
+    },
+    [createAttachmentAssetUrl, environmentId],
+  );
   const serverAttachmentIds = useMemo(() => {
     const attachmentIds = new Set<string>();
     for (const message of serverMessages ?? []) {
       for (const attachment of message.attachments ?? []) {
-        attachmentIds.add(attachment.id);
+        if (isImageAttachment(attachment)) {
+          attachmentIds.add(attachment.id);
+        }
       }
     }
     return [...attachmentIds];
@@ -2997,7 +3215,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       const serverPreviewUrls = serverMessage.attachments.flatMap((attachment) =>
-        attachment.type === "image" && attachment.previewUrl ? [attachment.previewUrl] : [],
+        isImageAttachment(attachment) && attachment.previewUrl ? [attachment.previewUrl] : [],
       );
       if (
         serverPreviewUrls.length === 0 ||
@@ -3080,7 +3298,7 @@ function ChatViewContent(props: ChatViewProps) {
             let changed = false;
             let imageIndex = 0;
             const attachments = message.attachments.map((attachment) => {
-              if (attachment.type !== "image") {
+              if (!isImageAttachment(attachment)) {
                 return attachment;
               }
               const handoffPreviewUrl = handoffPreviewUrls[imageIndex];
@@ -3098,16 +3316,29 @@ function ChatViewContent(props: ChatViewProps) {
             return changed ? { ...message, attachments } : message;
           });
 
-    if (optimisticUserMessages.length === 0) {
+    const localMessages = [
+      ...optimisticUserMessages,
+      ...feedbackSubmissions.flatMap((submission) =>
+        submission.status === "interrupted"
+          ? []
+          : [codexFeedbackMessage(submission), codexFeedbackMessage(submission, "assistant")],
+      ),
+    ];
+    if (localMessages.length === 0) {
       return serverMessagesWithPreviewHandoff;
     }
     const serverIds = new Set(serverMessagesWithPreviewHandoff.map((message) => message.id));
-    const pendingMessages = optimisticUserMessages.filter((message) => !serverIds.has(message.id));
+    const pendingMessages = localMessages.filter((message) => !serverIds.has(message.id));
     if (pendingMessages.length === 0) {
       return serverMessagesWithPreviewHandoff;
     }
     return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
-  }, [attachmentPreviewHandoffByMessageId, displayServerMessages, optimisticUserMessages]);
+  }, [
+    attachmentPreviewHandoffByMessageId,
+    displayServerMessages,
+    feedbackSubmissions,
+    optimisticUserMessages,
+  ]);
   const timelineEntries = useMemo(
     () =>
       deriveTimelineEntries(
@@ -3226,6 +3457,29 @@ function ChatViewContent(props: ChatViewProps) {
     activeThread?.modelSelection.instanceId ??
     activeProject?.defaultModelSelection?.instanceId ??
     null;
+  const compactionProviderAvailable = useMemo(
+    () =>
+      hasAvailableClaudeCompactionProvider({
+        providers: applyProviderInstanceSettings(
+          deriveProviderInstanceEntries(providerStatuses),
+          settings,
+        ),
+        instanceId: activeProviderInstanceId,
+        lockedInstanceId: lockedProvider
+          ? (activeThread?.session?.providerInstanceId ??
+            activeThread?.modelSelection.instanceId ??
+            null)
+          : null,
+      }),
+    [
+      activeProviderInstanceId,
+      activeThread?.modelSelection.instanceId,
+      activeThread?.session?.providerInstanceId,
+      lockedProvider,
+      providerStatuses,
+      settings,
+    ],
+  );
   const activeProviderStatus = useMemo(() => {
     if (activeProviderInstanceId) {
       return (
@@ -3250,6 +3504,46 @@ function ChatViewContent(props: ChatViewProps) {
       ) ?? null,
     [activeThread?.session?.providerInstanceId, providerStatuses],
   );
+  const providerManualCompactionAvailable =
+    activeProviderStatus?.runtimeCapabilities?.manualCompaction === true;
+  const manualCompactionAvailable =
+    selectedProvider === "claudeAgent"
+      ? compactionProviderAvailable
+      : providerManualCompactionAvailable;
+  const handleManualProviderCompact = useCallback(async () => {
+    if (!activeThread || !providerManualCompactionAvailable) return;
+    const result = await compactProviderThread({
+      environmentId: activeThread.environmentId,
+      input: { threadId: activeThread.id },
+    });
+    if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: translate("chat.compact.unavailable"),
+        description: chatActionErrorMessage(squashAtomCommandFailure(result)),
+      }),
+    );
+  }, [activeThread, compactProviderThread, providerManualCompactionAvailable, translate]);
+  const [resumeCompactionPermanentlyDismissed, setResumeCompactionPermanentlyDismissed] =
+    useLocalStorage(
+      `t3code:resume-compaction-dismissed:${environmentId}:${activeProviderInstanceId ?? "claudeAgent"}`,
+      false,
+      Schema.Boolean,
+    );
+  const nativeResumeCompactionDismissed = useMemo(
+    () => hasDismissedResumeCompaction(threadActivities),
+    [threadActivities],
+  );
+  useEffect(() => {
+    if (nativeResumeCompactionDismissed && !resumeCompactionPermanentlyDismissed) {
+      setResumeCompactionPermanentlyDismissed(true);
+    }
+  }, [
+    nativeResumeCompactionDismissed,
+    resumeCompactionPermanentlyDismissed,
+    setResumeCompactionPermanentlyDismissed,
+  ]);
   const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
   const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
     string | null
@@ -3811,21 +4105,24 @@ function ChatViewContent(props: ChatViewProps) {
       if (result._tag === "Success") {
         toastManager.add({
           type: "success",
-          title: `Deleted action "${deletedName ?? "Unknown"}"`,
+          title: translate("chat.action.deleted", {
+            name: deletedName ?? translate("chat.action.unknown"),
+          }),
         });
       } else if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not delete action",
-            description: error instanceof Error ? error.message : "An unexpected error occurred.",
+            title: translate("chat.action.deleteFailed"),
+            description:
+              error instanceof Error ? error.message : translate("chat.action.unexpectedError"),
           }),
         );
       }
       return result;
     },
-    [activeProject, persistProjectScripts],
+    [activeProject, persistProjectScripts, translate],
   );
 
   const handleRuntimeModeChange = useCallback(
@@ -3881,6 +4178,10 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
+  const addKnowledgeGraphSurface = useCallback(() => {
+    if (!activeThreadRef || !knowledgeGraphAvailable) return;
+    useRightPanelStore.getState().open(activeThreadRef, "knowledge-graph");
+  }, [activeThreadRef, knowledgeGraphAvailable]);
   const selectSubagent = useCallback(
     (subagentId: SubagentId) => {
       if (!activeThreadKey) return;
@@ -3894,32 +4195,60 @@ function ChatViewContent(props: ChatViewProps) {
     }
   }, []);
   const openFileSurface = useCallback(
-    (relativePath: string) => {
+    (relativePath: string, line: number | null = null) => {
       if (!activeThreadRef || !activeProject) return;
-      useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
+      if (line === null) {
+        useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
+        return;
+      }
+      useRightPanelStore.getState().openFile(activeThreadRef, relativePath, line);
     },
     [activeProject, activeThreadRef],
   );
   // The thread's own change request, placed against the project it belongs to. Without a
   // project there is nothing to resolve it against, so the caller falls back to the browser.
-  const threadRepository = activeProject?.repositoryIdentity?.displayName ?? null;
+  const linkedThreadPullRequest = activeThread?.linkedPullRequest ?? null;
+  const activeProjectRepository = activeProject?.repositoryIdentity?.displayName ?? null;
+  const threadRepository = linkedThreadPullRequest?.repository ?? activeProjectRepository;
   const openThreadPullRequest = useCallback(
+    (number: number) => {
+      if (!supportsPullRequests || !activeThreadRef) {
+        return;
+      }
+      const projectId = linkedThreadPullRequest?.projectId ?? activeProject?.id;
+      const repository = linkedThreadPullRequest?.repository ?? activeProjectRepository;
+      if (projectId === undefined || repository === null) return;
+      useRightPanelStore.getState().openPullRequest(activeThreadRef, {
+        projectId,
+        repository,
+        number,
+      });
+    },
+    [
+      activeProject,
+      activeProjectRepository,
+      activeThreadRef,
+      linkedThreadPullRequest,
+      supportsPullRequests,
+    ],
+  );
+  const openProjectPullRequest = useCallback(
     (number: number) => {
       if (
         !supportsPullRequests ||
         !activeThreadRef ||
         !activeProject ||
-        threadRepository === null
+        activeProjectRepository === null
       ) {
         return;
       }
       useRightPanelStore.getState().openPullRequest(activeThreadRef, {
         projectId: activeProject.id,
-        repository: threadRepository,
+        repository: activeProjectRepository,
         number,
       });
     },
-    [activeProject, activeThreadRef, supportsPullRequests, threadRepository],
+    [activeProject, activeProjectRepository, activeThreadRef, supportsPullRequests],
   );
   const togglePreviewPanel = useCallback(() => {
     if (!activeThreadRef || !isPreviewSupportedInRuntime()) return;
@@ -4195,37 +4524,41 @@ function ChatViewContent(props: ChatViewProps) {
     cleanupRightPanelSurfaces(rightPanelState.surfaces);
     useRightPanelStore.getState().closeAllSurfaces(activeThreadRef);
   }, [activeThreadRef, cleanupRightPanelSurfaces, rightPanelState.surfaces]);
-  const copyRightPanelFilePath = useCallback((relativePath: string) => {
-    if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Failed to copy path",
-          description: "Clipboard API unavailable.",
-        }),
-      );
-      return;
-    }
-
-    void navigator.clipboard.writeText(relativePath).then(
-      () => {
-        toastManager.add({
-          type: "success",
-          title: "Path copied",
-          description: relativePath,
-        });
-      },
-      (error) => {
+  const copyRightPanelFilePath = useCallback(
+    (relativePath: string) => {
+      if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to copy path",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: translate("chat.action.pathCopyFailed"),
+            description: translate("chat.markdown.clipboardUnavailable"),
           }),
         );
-      },
-    );
-  }, []);
+        return;
+      }
+
+      void navigator.clipboard.writeText(relativePath).then(
+        () => {
+          toastManager.add({
+            type: "success",
+            title: translate("chat.action.pathCopied"),
+            description: relativePath,
+          });
+        },
+        (error) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: translate("chat.action.pathCopyFailed"),
+              description:
+                error instanceof Error ? error.message : translate("chat.header.genericError"),
+            }),
+          );
+        },
+      );
+    },
+    [translate],
+  );
   useEffect(
     () =>
       subscribePreviewAction((action) => {
@@ -4395,6 +4728,8 @@ function ChatViewContent(props: ChatViewProps) {
     liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
     setTimelineLiveFollowEnabled(true);
     pendingTimelineAnchorRef.current = null;
+    positionedTimelineAnchorRef.current = null;
+    settledTimelineAnchorRef.current = null;
     activeTimelineAnchorIndexRef.current = null;
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
@@ -4403,6 +4738,28 @@ function ChatViewContent(props: ChatViewProps) {
       void legendListRef.current?.scrollToEnd?.({ animated });
     });
   }, []);
+  useLayoutEffect(() => {
+    if (timelineScrollModeRef.current !== "anchoring-new-turn") {
+      return;
+    }
+
+    if (
+      shouldReleaseTimelineAnchorForToolActivity({
+        anchorMessageId: timelineAnchorMessageId,
+        liveFollowEnabled: timelineLiveFollowEnabled,
+        runningTurnId: activeRunningTurnId,
+        timelineEntries,
+      })
+    ) {
+      scrollToEnd();
+    }
+  }, [
+    activeRunningTurnId,
+    scrollToEnd,
+    timelineAnchorMessageId,
+    timelineEntries,
+    timelineLiveFollowEnabled,
+  ]);
   useEffect(() => {
     let removeListeners: (() => void) | null = null;
     let frame: number | null = null;
@@ -4767,21 +5124,38 @@ function ChatViewContent(props: ChatViewProps) {
   // partition (same shell, same capability gate, same PR auto-settle input)
   // so the banner and the sidebar row never disagree.
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
-  const activeComposerTasksProgress =
-    activeLatestTurn !== null && !latestTurnSettled
-      ? (activeThreadShell?.planProgress ?? null)
-      : null;
+  const activeComposerTasksProgress = useMemo(() => {
+    if (!activeLatestTurn || latestTurnSettled || activePlan?.turnId !== activeLatestTurn.turnId) {
+      return null;
+    }
+    const currentStep =
+      activePlan.steps.find((step) => step.status === "inProgress") ??
+      activePlan.steps.find((step) => step.status === "pending");
+    if (!currentStep) return null;
+    return {
+      step: currentStep.step,
+      completedSteps: activePlan.steps.filter((step) => step.status === "completed").length,
+      totalSteps: activePlan.steps.length,
+    };
+  }, [activeLatestTurn, activePlan, latestTurnSettled]);
   const activeComposerTaskSteps =
     activeComposerTasksProgress && activePlan && activePlan.turnId === activeLatestTurn?.turnId
       ? activePlan.steps
       : null;
+
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
   const autoSettleOnMerge = useClientSettings((settings) => settings.sidebarAutoSettleOnMerge);
+  const linkedPullRequestStatus = useLinkedThreadPullRequest(
+    activeThreadRef?.environmentId ?? null,
+    linkedThreadPullRequest,
+  );
   const activeThreadPr = resolveDisplayedThreadPr({
     threadBranch: activeThread?.branch ?? null,
     gitStatus: gitStatusQuery.data ?? null,
     snapshot: activeThreadKey ? changeRequestSnapshotByKey.get(activeThreadKey) : undefined,
     retainTerminalOnBranchMismatch: activeThread?.worktreePath === null,
+    linkedPullRequest: linkedThreadPullRequest,
+    linkedPullRequestStatus,
   });
   // The right panel offers the thread's own change request, so it can only offer it once the
   // branch has one; until then the picker says so rather than opening an empty panel.
@@ -4805,6 +5179,8 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
+  const supportsPinning = serverConfig?.environment.capabilities.threadPinning === true;
+  const activeThreadPinned = supportsPinning && activeThreadShell?.pinnedAt != null;
   const nowMinute = useNowMinute();
   const snoozeNow = new Date().toISOString();
   const activeThreadSnoozed =
@@ -4909,15 +5285,16 @@ function ChatViewContent(props: ChatViewProps) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to un-settle thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: translate("chat.thread.unsettleFailed"),
+            description:
+              error instanceof Error ? error.message : translate("chat.header.genericError"),
           }),
         );
       }
     } finally {
       setUnsettlingThreadKey((current) => (current === threadKey ? null : current));
     }
-  }, [activeThreadRef, unsettleThreadMutation]);
+  }, [activeThreadRef, translate, unsettleThreadMutation]);
   const unsnoozeThreadMutation = useAtomCommand(threadEnvironment.unsnooze, {
     reportFailure: false,
   });
@@ -4937,15 +5314,16 @@ function ChatViewContent(props: ChatViewProps) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to wake thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: translate("chat.thread.wakeFailed"),
+            description:
+              error instanceof Error ? error.message : translate("chat.header.genericError"),
           }),
         );
       }
     } finally {
       setUnsnoozingThreadKey((current) => (current === threadKey ? null : current));
     }
-  }, [activeThreadRef, unsnoozeThreadMutation]);
+  }, [activeThreadRef, translate, unsnoozeThreadMutation]);
   const [isRestoringThreadBranch, setIsRestoringThreadBranch] = useState(false);
   const [branchRestoreConfirmOpen, setBranchRestoreConfirmOpen] = useState(false);
   // Once revealed for a given mismatch, the banner stays mounted until the
@@ -4954,18 +5332,6 @@ function ChatViewContent(props: ChatViewProps) {
   // Dismissal lives in a module-level set (survives remounts); this tick just
   // forces a re-render so the banner leaves immediately.
   const [, setBranchMismatchDismissTick] = useState(0);
-  const composerHasDraftContent = useComposerDraftStore((store) => {
-    const draft = store.getComposerDraft(composerDraftTarget);
-    return Boolean(
-      draft &&
-      (draft.prompt.trim().length > 0 ||
-        draft.images.length > 0 ||
-        draft.terminalContexts.length > 0 ||
-        draft.elementContexts.length > 0 ||
-        draft.previewAnnotations.length > 0 ||
-        draft.reviewComments.length > 0),
-    );
-  });
   const activeBranchMismatchKey = branchMismatchKey(
     activeThread?.id ?? null,
     localCheckoutBranchMismatch,
@@ -4973,7 +5339,7 @@ function ChatViewContent(props: ChatViewProps) {
   const showBranchMismatchBanner = shouldShowBranchMismatchBanner({
     hasMismatch: localCheckoutBranchMismatch !== null,
     isDismissed: isBranchMismatchDismissedForSession(activeBranchMismatchKey),
-    composerHasContent: composerHasDraftContent,
+    composerHasContent: composerHasUnsentContent,
     wasShownForCurrentMismatch:
       revealedBranchMismatchKey !== null && revealedBranchMismatchKey === activeBranchMismatchKey,
   });
@@ -5010,7 +5376,7 @@ function ChatViewContent(props: ChatViewProps) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to switch checkout",
+            title: translate("chat.branch.switchFailed"),
             description: chatActionErrorMessage(squashAtomCommandFailure(checkoutResult)),
           }),
         );
@@ -5030,7 +5396,7 @@ function ChatViewContent(props: ChatViewProps) {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Checkout switched, but the thread could not be updated",
+              title: translate("chat.branch.threadUpdateFailed"),
               description: chatActionErrorMessage(squashAtomCommandFailure(updateResult)),
             }),
           );
@@ -5051,6 +5417,7 @@ function ChatViewContent(props: ChatViewProps) {
     localCheckoutBranchMismatch,
     scheduleComposerFocus,
     switchGitRef,
+    translate,
     updateThreadMetadata,
   ]);
   const activeHarnessSync = activeThread?.harnessSync ?? activeThreadShell?.harnessSync ?? null;
@@ -5071,10 +5438,16 @@ function ChatViewContent(props: ChatViewProps) {
       const error = squashAtomCommandFailure(result);
       setThreadError(
         activeThread.id,
-        error instanceof Error ? error.message : "Could not refresh harness session status.",
+        error instanceof Error ? error.message : translate("chat.harness.statusRefreshFailed"),
       );
     }
-  }, [activeThread, isRefreshingHarnessStatus, refreshHarnessChatStatus, setThreadError]);
+  }, [
+    activeThread,
+    isRefreshingHarnessStatus,
+    refreshHarnessChatStatus,
+    setThreadError,
+    translate,
+  ]);
   const harnessActiveBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (!activeThread || !isHarnessSessionActive || activeHarnessSync === null) return null;
     return {
@@ -5082,9 +5455,10 @@ function ChatViewContent(props: ChatViewProps) {
       variant: "warning",
       urgent: true,
       icon: <RefreshCwIcon className={cn(isRefreshingHarnessStatus && "animate-spin")} />,
-      title: `${activeHarnessSync.providerLabel} chat is active elsewhere`,
-      description:
-        "The synchronized history is available, but sending is paused until the original harness session becomes idle.",
+      title: translate("chat.harness.activeElsewhere", {
+        provider: activeHarnessSync.providerLabel,
+      }),
+      description: translate("chat.harness.sendingPaused"),
       actions: (
         <Button
           size="xs"
@@ -5092,7 +5466,9 @@ function ChatViewContent(props: ChatViewProps) {
           disabled={isRefreshingHarnessStatus}
           onClick={() => void handleRefreshHarnessStatus()}
         >
-          {isRefreshingHarnessStatus ? "Checking..." : "Check again"}
+          {isRefreshingHarnessStatus
+            ? translate("chat.harness.checking")
+            : translate("chat.harness.checkAgain")}
         </Button>
       ),
     };
@@ -5102,6 +5478,7 @@ function ChatViewContent(props: ChatViewProps) {
     handleRefreshHarnessStatus,
     isHarnessSessionActive,
     isRefreshingHarnessStatus,
+    translate,
   ]);
   // Background work (subagent fleets, workflow runs, watch loops) can outlive
   // the turn; once it settles, the composer stop button is gone, so this
@@ -5152,7 +5529,8 @@ function ChatViewContent(props: ChatViewProps) {
     const liveCount = agentPanelModel.liveCount;
     return {
       id: `background-liveness:${activeThread.id}`,
-      variant: "default",
+      variant: "activity",
+      priority: "activity",
       icon: (
         <span
           className={cn("size-1.5 rounded-full bg-foreground", working && "animate-status-pulse")}
@@ -5161,9 +5539,9 @@ function ChatViewContent(props: ChatViewProps) {
       ),
       title: working
         ? liveCount > 0
-          ? `${liveCount} ${liveCount === 1 ? "agent" : "agents"} working`
-          : "Background work"
-        : "Monitoring",
+          ? translate("chat.background.agentsWorking", { count: liveCount })
+          : translate("chat.background.work")
+        : translate("chat.background.monitoring"),
       actions: (
         <Button
           size="xs"
@@ -5171,7 +5549,9 @@ function ChatViewContent(props: ChatViewProps) {
           disabled={isStoppingBackgroundWork}
           onClick={() => void handleStopBackgroundWork()}
         >
-          {isStoppingBackgroundWork ? "Stopping..." : "Stop"}
+          {isStoppingBackgroundWork
+            ? translate("chat.background.stopping")
+            : translate("chat.background.stop")}
         </Button>
       ),
     };
@@ -5181,6 +5561,7 @@ function ChatViewContent(props: ChatViewProps) {
     agentPanelModel.liveCount,
     handleStopBackgroundWork,
     isStoppingBackgroundWork,
+    translate,
   ]);
   // A woken thread announces itself in the open view, not just the sidebar
   // pill. Dismissing marks the wake as seen (same acknowledgment as the
@@ -5193,20 +5574,12 @@ function ChatViewContent(props: ChatViewProps) {
       id: `thread-woke:${activeThread?.id ?? "unknown"}`,
       variant: "info",
       icon: <AlarmClockIcon />,
-      title: "This thread woke from snooze",
-      description: "Dismiss to clear the Woke indicator, or send a message to keep going.",
-      dismissLabel: "Dismiss Woke notification",
+      title: translate("chat.thread.wokeTitle"),
+      description: translate("chat.thread.wokeDescription"),
+      dismissLabel: translate("chat.thread.wokeDismiss"),
       onDismiss: acknowledgeActiveThreadWoke,
     };
-  }, [acknowledgeActiveThreadWoke, activeThread?.id, activeThreadWokeVisible]);
-  // The stack renders items[0] front-most and tucks the rest behind hover, so
-  // ordering is priority: urgent system banners (error/warning variants plus
-  // calm-styled live states flagged `urgent`, like update progress), then
-  // background liveness — its Stop button is the only stop affordance for
-  // settled turns, so a passive "update available" notice must not cover it —
-  // then calm system banners, the woke and branch-mismatch notices, and the
-  // informational parked-thread and reasoning banners last — they must never
-  // cover a live stop action or urgent state.
+  }, [acknowledgeActiveThreadWoke, activeThread?.id, activeThreadWokeVisible, translate]);
   const parkedThreadBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (!activeThreadSnoozed && !activeThreadSettled) {
       return null;
@@ -5216,10 +5589,10 @@ function ChatViewContent(props: ChatViewProps) {
       id: `thread-${isSnoozed ? "snoozed" : "settled"}:${activeThread?.id ?? "unknown"}`,
       variant: "info",
       icon: isSnoozed ? <AlarmClockIcon /> : <CheckCircle2Icon />,
-      title: `This thread is ${isSnoozed ? "snoozed" : "settled"}`,
+      title: translate(isSnoozed ? "chat.thread.snoozedTitle" : "chat.thread.settledTitle"),
       description: isSnoozed
-        ? "Sending a message wakes it and moves it back to Active in the sidebar."
-        : "Sending a message moves it back to Active in the sidebar.",
+        ? translate("chat.thread.snoozedDescription")
+        : translate("chat.thread.settledDescription"),
       actions: (
         <Button
           size="xs"
@@ -5231,11 +5604,11 @@ function ChatViewContent(props: ChatViewProps) {
         >
           {isSnoozed
             ? isUnsnoozing
-              ? "Waking..."
-              : "Wake now"
+              ? translate("chat.thread.waking")
+              : translate("chat.thread.wakeNow")
             : isUnsettling
-              ? "Un-settling..."
-              : "Un-settle"}
+              ? translate("chat.thread.unsettling")
+              : translate("chat.thread.unsettle")}
         </Button>
       ),
     };
@@ -5247,6 +5620,110 @@ function ChatViewContent(props: ChatViewProps) {
     handleUnsettleActiveThread,
     isUnsnoozing,
     isUnsettling,
+    translate,
+  ]);
+  // Session-scoped dismissals, one key per (thread, snapshot). A set rather
+  // than a single slot so dismissing the banner on one thread does not
+  // resurface it on another thread dismissed earlier.
+  const [dismissedResumeCompactionKeys, setDismissedResumeCompactionKeys] = useState<
+    ReadonlySet<string>
+  >(new Set());
+  const resumeCompactionKey =
+    activeThread && activeContextWindow
+      ? `${activeThread.id}:${activeContextWindow.updatedAt}`
+      : null;
+  const compactDisabled =
+    !activeThread ||
+    !activeProject ||
+    !isServerThread ||
+    !manualCompactionAvailable ||
+    isWorking ||
+    threadDetailLoading ||
+    isPreparingWorktree ||
+    activeEnvironmentUnavailable ||
+    feedbackUploading ||
+    pendingApprovals.length > 0 ||
+    pendingUserInputs.length > 0 ||
+    showPlanFollowUpPrompt ||
+    composerHasUnsentContent;
+  const compactDisabledReason = compactDisabled
+    ? composerHasUnsentContent
+      ? translate("chat.compact.clearDraftFirst")
+      : !activeProject
+        ? translate("chat.compact.chooseProjectFirst")
+        : !manualCompactionAvailable && selectedProvider === "claudeAgent"
+          ? translate("chat.compact.enableClaudeFirst")
+          : translate("chat.compact.unavailable")
+    : null;
+  const resumeCompactionBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (
+      !activeThread ||
+      !activeContextWindow ||
+      resumeCompactionKey === null ||
+      dismissedResumeCompactionKeys.has(resumeCompactionKey) ||
+      resumeCompactionPermanentlyDismissed ||
+      nativeResumeCompactionDismissed ||
+      pendingUserInputs.length > 0 ||
+      phase === "running" ||
+      !shouldOfferResumeCompaction({
+        provider: selectedProvider,
+        usedTokens: activeContextWindow.usedTokens,
+        updatedAt: activeContextWindow.updatedAt,
+        now: `${nowMinute}:00.000Z`,
+      })
+    ) {
+      return null;
+    }
+
+    const dismiss = () =>
+      setDismissedResumeCompactionKeys((keys) => new Set(keys).add(resumeCompactionKey));
+    const compactAction = (
+      <Button
+        size="xs"
+        variant="outline"
+        disabled={compactDisabled}
+        onClick={() => {
+          if (compactDisabled) return;
+          composerRef.current?.compactContext();
+        }}
+      >
+        {translate("chat.compact.action")}
+      </Button>
+    );
+    return {
+      id: `resume-compaction:${resumeCompactionKey}`,
+      variant: "info",
+      icon: <Minimize2Icon />,
+      title: translate("chat.compact.resumeTitle"),
+      description: translate("chat.compact.olderSessionTokens", {
+        tokens: formatContextWindowTokens(activeContextWindow.usedTokens),
+      }),
+      actions: compactDisabledReason ? (
+        <Tooltip>
+          <TooltipTrigger render={<span className="inline-flex">{compactAction}</span>} />
+          <TooltipPopup side="top">{compactDisabledReason}</TooltipPopup>
+        </Tooltip>
+      ) : (
+        compactAction
+      ),
+      dismissLabel: translate("chat.compact.keepFullHistory"),
+      onDismiss: dismiss,
+    };
+  }, [
+    activeContextWindow,
+    activeThread,
+    compactDisabled,
+    compactDisabledReason,
+    composerRef,
+    dismissedResumeCompactionKeys,
+    nativeResumeCompactionDismissed,
+    nowMinute,
+    pendingUserInputs.length,
+    phase,
+    resumeCompactionKey,
+    resumeCompactionPermanentlyDismissed,
+    selectedProvider,
+    translate,
   ]);
   const handleRestoreThreadBranch = useCallback(() => {
     if (gitStatusQuery.data?.hasWorkingTreeChanges) {
@@ -5256,33 +5733,31 @@ function ChatViewContent(props: ChatViewProps) {
     void handleSwitchCheckoutToThread();
   }, [gitStatusQuery.data?.hasWorkingTreeChanges, handleSwitchCheckoutToThread]);
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
-    const isUrgentSystemItem = (item: ComposerBannerStackItem) =>
-      item.urgent === true || item.variant === "error" || item.variant === "warning";
-    const urgentSystemItems = systemComposerBannerItems.filter(isUrgentSystemItem);
-    const calmSystemItems = systemComposerBannerItems.filter((item) => !isUrgentSystemItem(item));
     const harnessActiveItems = harnessActiveBannerItem === null ? [] : [harnessActiveBannerItem];
     const backgroundLivenessItems =
       backgroundLivenessBannerItem === null ? [] : [backgroundLivenessBannerItem];
+    const resumeCompactionItems =
+      resumeCompactionBannerItem === null ? [] : [resumeCompactionBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
     const reasoningItems =
       reasoningRecommendationBannerItem === null ? [] : [reasoningRecommendationBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
-        ...urgentSystemItems,
+        ...systemComposerBannerItems,
         ...harnessActiveItems,
         ...backgroundLivenessItems,
-        ...calmSystemItems,
+        ...resumeCompactionItems,
         ...wokeThreadItems,
         ...parkedThreadItems,
         ...reasoningItems,
       ];
     }
     return [
-      ...urgentSystemItems,
+      ...systemComposerBannerItems,
       ...harnessActiveItems,
       ...backgroundLivenessItems,
-      ...calmSystemItems,
+      ...resumeCompactionItems,
       ...wokeThreadItems,
       {
         id: `branch-mismatch:${activeBranchMismatchKey}`,
@@ -5290,7 +5765,9 @@ function ChatViewContent(props: ChatViewProps) {
         icon: <GitBranchIcon />,
         title: (
           <span className="flex min-w-0 items-baseline gap-1.5">
-            <span className="shrink-0 font-normal text-muted-foreground">Branch changed — was</span>
+            <span className="shrink-0 font-normal text-muted-foreground">
+              {interfaceTranslator.message("chat.branchChangedWas")}
+            </span>
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -5300,8 +5777,10 @@ function ChatViewContent(props: ChatViewProps) {
                 }
               />
               <TooltipPopup side="top" className="max-w-80">
-                This thread last ran on {localCheckoutBranchMismatch.threadBranch}. Sending will
-                continue on {localCheckoutBranchMismatch.currentBranch}.
+                {translate("chat.branch.continueOnCurrent", {
+                  previous: localCheckoutBranchMismatch.threadBranch,
+                  current: localCheckoutBranchMismatch.currentBranch,
+                })}
               </TooltipPopup>
             </Tooltip>
           </span>
@@ -5314,10 +5793,12 @@ function ChatViewContent(props: ChatViewProps) {
             disabled={isRestoringThreadBranch}
             onClick={handleRestoreThreadBranch}
           >
-            {isRestoringThreadBranch ? "Restoring..." : "Restore branch"}
+            {isRestoringThreadBranch
+              ? translate("chat.branch.restoring")
+              : translate("chat.branch.restore")}
           </Button>
         ),
-        dismissLabel: "Dismiss branch change notice",
+        dismissLabel: translate("chat.branch.dismissNotice"),
         onDismiss: () => {
           dismissBranchMismatchForSession(activeBranchMismatchKey);
           setBranchMismatchDismissTick((tick) => tick + 1);
@@ -5331,12 +5812,15 @@ function ChatViewContent(props: ChatViewProps) {
     backgroundLivenessBannerItem,
     harnessActiveBannerItem,
     handleRestoreThreadBranch,
+    interfaceTranslator,
     isRestoringThreadBranch,
     localCheckoutBranchMismatch,
     parkedThreadBannerItem,
     reasoningRecommendationBannerItem,
+    resumeCompactionBannerItem,
     showBranchMismatchBanner,
     systemComposerBannerItems,
+    translate,
     wokeThreadBannerItem,
   ]);
   useEffect(() => {
@@ -5462,6 +5946,51 @@ function ChatViewContent(props: ChatViewProps) {
       });
       if (!command) return;
 
+      if (command === "thread.settle") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!isServerThread || !activeThreadRef || !supportsSettlement) return;
+        if (activeThreadSettled) {
+          void handleUnsettleActiveThread();
+          return;
+        }
+
+        void settleThread(activeThreadRef).then((result) => {
+          if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: translate("chat.thread.settleFailed"),
+              description:
+                error instanceof Error ? error.message : translate("chat.header.genericError"),
+            }),
+          );
+        });
+        return;
+      }
+
+      if (command === "thread.pin") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!isServerThread || !activeThreadRef || !supportsPinning) return;
+        const pinned = activeThreadPinned;
+        void (pinned ? confirmAndUnpinThread(activeThreadRef) : pinThread(activeThreadRef)).then(
+          (result) => {
+            if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: pinned ? "Failed to unpin thread" : "Failed to pin thread",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          },
+        );
+        return;
+      }
+
       if (command === "terminal.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -5565,6 +6094,9 @@ function ChatViewContent(props: ChatViewProps) {
     activeProject,
     activeRightPanelSurface,
     addTerminalSurface,
+    activeThreadRef,
+    activeThreadPinned,
+    activeThreadSettled,
     terminalUiState.terminalOpen,
     terminalUiState.activeTerminalId,
     activeThreadId,
@@ -5576,13 +6108,21 @@ function ChatViewContent(props: ChatViewProps) {
     splitTerminal,
     splitPanelTerminal,
     keybindings,
+    handleUnsettleActiveThread,
+    isServerThread,
     onToggleDiff,
+    pinThread,
+    settleThread,
+    supportsPinning,
+    supportsSettlement,
+    confirmAndUnpinThread,
     toggleRightPanel,
     toggleRightPanelMaximized,
     toggleTerminalVisibility,
     composerRef,
     workspaceCardExpanded,
     nonChatWorkspaceCardActive,
+    translate,
   ]);
 
   const onRevertToTurnCount = useCallback(
@@ -5593,19 +6133,21 @@ function ChatViewContent(props: ChatViewProps) {
       if (activeEnvironmentUnavailable && activeEnvironmentUnavailableLabel) {
         setThreadError(
           activeThread.id,
-          `Reconnect ${activeEnvironmentUnavailableLabel} before reverting checkpoints.`,
+          translate("chat.checkpoint.reconnectFirst", {
+            environment: activeEnvironmentUnavailableLabel,
+          }),
         );
         return;
       }
       if (phase === "running" || isSendBusy || isConnecting) {
-        setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
+        setThreadError(activeThread.id, translate("chat.checkpoint.interruptFirst"));
         return;
       }
       const confirmed = await localApi.dialogs.confirm(
         [
-          `Revert this thread to checkpoint ${turnCount}?`,
-          "This will discard newer messages and turn diffs in this thread.",
-          "This action cannot be undone.",
+          translate("chat.checkpoint.confirm", { count: turnCount }),
+          translate("chat.checkpoint.discardNewer"),
+          translate("chat.checkpoint.irreversible"),
         ].join("\n"),
         { variant: "destructive" },
       );
@@ -5626,7 +6168,7 @@ function ChatViewContent(props: ChatViewProps) {
         const error = squashAtomCommandFailure(result);
         setThreadError(
           activeThread.id,
-          error instanceof Error ? error.message : "Failed to revert thread state.",
+          error instanceof Error ? error.message : translate("chat.checkpoint.revertFailed"),
         );
       }
       setIsRevertingCheckpoint(false);
@@ -5642,6 +6184,7 @@ function ChatViewContent(props: ChatViewProps) {
       phase,
       revertThreadCheckpoint,
       setThreadError,
+      translate,
     ],
   );
 
@@ -5659,8 +6202,8 @@ function ChatViewContent(props: ChatViewProps) {
       toastManager.add(
         stackedThreadToast({
           type: "info",
-          title: "Annotation attached to draft",
-          description: "Sending is unavailable right now. Finish the current action, then send.",
+          title: translate("chat.annotation.attachedToDraft"),
+          description: translate("chat.annotation.sendUnavailable"),
         }),
       );
     };
@@ -5670,7 +6213,8 @@ function ChatViewContent(props: ChatViewProps) {
       isImprovingPrompt ||
       isConnecting ||
       threadDetailLoading ||
-      sendInFlightRef.current
+      sendInFlightRef.current ||
+      feedbackUploadsInFlightRef.current.has(routeThreadKey)
     ) {
       notifyDirectAnnotationAttached();
       return;
@@ -5679,8 +6223,8 @@ function ChatViewContent(props: ChatViewProps) {
       toastManager.add(
         stackedThreadToast({
           type: "warning",
-          title: "Not connected: message not sent",
-          description: "Reconnecting to the environment. Try again once it is connected.",
+          title: translate("chat.send.notConnectedTitle"),
+          description: translate("chat.send.notConnectedDescription"),
         }),
       );
       return;
@@ -5700,6 +6244,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
     const {
       images: sendContextImages,
+      files: composerFiles,
       terminalContexts: composerTerminalContexts,
       elementContexts: composerElementContexts,
       previewAnnotations: sendContextPreviewAnnotations,
@@ -5721,9 +6266,17 @@ function ChatViewContent(props: ChatViewProps) {
     const turnPromptEffort = reasoningTurnSelection.applied
       ? (pendingReasoningOverride?.targetValue ?? ctxSelectedPromptEffort)
       : ctxSelectedPromptEffort;
+    const annotationImageAlreadyAttached =
+      directAnnotation?.image !== undefined &&
+      sendContextImages.some((image) => image.id === directAnnotation.image?.id);
+    // A full composer (e.g. 8 files) cannot take the annotation screenshot;
+    // over the cap the server rejects the whole turn.
+    const annotationImageAppended =
+      directAnnotation?.image !== undefined &&
+      !annotationImageAlreadyAttached &&
+      sendContextImages.length + composerFiles.length < PROVIDER_SEND_TURN_MAX_ATTACHMENTS;
     const composerImages =
-      directAnnotation?.image &&
-      !sendContextImages.some((image) => image.id === directAnnotation.image?.id)
+      directAnnotation?.image && annotationImageAppended
         ? [...sendContextImages, directAnnotation.image]
         : sendContextImages;
     const composerPreviewAnnotations =
@@ -5735,9 +6288,13 @@ function ChatViewContent(props: ChatViewProps) {
             ...sendContextPreviewAnnotations,
             {
               ...directAnnotation.annotation,
-              screenshot: directAnnotation.annotation.screenshot
-                ? { ...directAnnotation.annotation.screenshot, dataUrl: "" }
-                : null,
+              // Claim an attached crop only when the screenshot really rides
+              // along; a cap-dropped image must not produce a lying prompt.
+              screenshot:
+                directAnnotation.annotation.screenshot &&
+                (annotationImageAppended || annotationImageAlreadyAttached)
+                  ? { ...directAnnotation.annotation.screenshot, dataUrl: "" }
+                  : null,
             },
           ]
         : sendContextPreviewAnnotations;
@@ -5749,14 +6306,116 @@ function ChatViewContent(props: ChatViewProps) {
       hasSendableContent,
     } = deriveComposerSendState({
       prompt: promptForSend,
-      imageCount: composerImages.length,
+      imageCount: composerImages.length + composerFiles.length,
       terminalContexts: composerTerminalContexts,
       elementContextCount:
         composerElementContexts.length +
         composerPreviewAnnotations.length +
         composerReviewComments.length,
     });
-    if (!directAnnotation && showPlanFollowUpPrompt && activeProposedPlan) {
+    const feedbackCommand =
+      ctxSelectedProvider === "codex" &&
+      composerImages.length === 0 &&
+      composerFiles.length === 0 &&
+      sendableComposerTerminalContexts.length === 0 &&
+      composerElementContexts.length === 0 &&
+      composerPreviewAnnotations.length === 0 &&
+      composerReviewComments.length === 0
+        ? parseCodexFeedbackCommand(trimmed)
+        : null;
+    if (feedbackCommand) {
+      if (!isServerThread || activeThread.session === null) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: translate("chat.feedback.startCodexFirst"),
+            description: translate("chat.feedback.sendMessageFirst"),
+          }),
+        );
+        return;
+      }
+      feedbackUploadsInFlightRef.current.add(routeThreadKey);
+      const result = await submitCodexFeedback({
+        submission: {
+          id: newMessageId(),
+          command: trimmed,
+          createdAt: new Date().toISOString(),
+        },
+        clearDraft: () => {
+          promptRef.current = "";
+          clearComposerDraftContent(composerDraftTarget);
+          composerRef.current?.resetCursorState();
+          scrollToEnd();
+        },
+        onUpdate: (submission) => {
+          setFeedbackSubmissionsByThreadKey((current) => {
+            const existing = current[routeThreadKey] ?? [];
+            const found = existing.some((entry) => entry.id === submission.id);
+            return {
+              ...current,
+              [routeThreadKey]: found
+                ? existing.map((entry) => (entry.id === submission.id ? submission : entry))
+                : [...existing, submission],
+            };
+          });
+        },
+        upload: () =>
+          uploadThreadFeedback({
+            environmentId,
+            input: {
+              threadId: activeThread.id,
+              ...feedbackCommand,
+            },
+          }),
+      }).finally(() => {
+        feedbackUploadsInFlightRef.current.delete(routeThreadKey);
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: translate("chat.feedback.sendFailed"),
+              description: chatActionErrorMessage(squashAtomCommandFailure(result)),
+            }),
+          );
+        }
+        return;
+      }
+      const feedbackId = result.value.feedbackId;
+      toastManager.add(
+        stackedThreadToast({
+          type: "success",
+          title: translate("chat.feedback.sent"),
+          description: translate("chat.feedback.threadId", { id: feedbackId }),
+          timeout: 0,
+          actionProps: {
+            children: translate("chat.feedback.copyId"),
+            onClick: () => {
+              void writeTextToClipboard(feedbackId, "Codex feedback thread ID").catch(
+                (error: unknown) => {
+                  toastManager.add(
+                    stackedThreadToast({
+                      type: "error",
+                      title: translate("chat.feedback.copyIdFailed"),
+                      description: chatActionErrorMessage(error),
+                    }),
+                  );
+                },
+              );
+            },
+          },
+        }),
+      );
+      return;
+    }
+    if (
+      !directAnnotation &&
+      showPlanFollowUpPrompt &&
+      activeProposedPlan &&
+      composerImages.length === 0 &&
+      composerFiles.length === 0
+    ) {
       if (!trimmed) {
         await onImplementPlan(planImplementationSuggestion?.strategy ?? { kind: "standard" });
         return;
@@ -5789,6 +6448,7 @@ function ChatViewContent(props: ChatViewProps) {
     const standaloneSlashCommand =
       planModeUiEnabled &&
       composerImages.length === 0 &&
+      composerFiles.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerElementContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
@@ -5822,8 +6482,8 @@ function ChatViewContent(props: ChatViewProps) {
       toastManager.add(
         stackedThreadToast({
           type: "warning",
-          title: "Choose a project first",
-          description: "This draft no longer points to an available project.",
+          title: translate("chat.send.chooseProjectFirst"),
+          description: translate("chat.send.projectUnavailable"),
         }),
       );
       return;
@@ -5877,6 +6537,8 @@ function ChatViewContent(props: ChatViewProps) {
       }
     }
     const composerImagesSnapshot = [...composerImages];
+    const composerFilesSnapshot = [...composerFiles];
+    const composerAttachmentsSnapshot = [...composerImagesSnapshot, ...composerFilesSnapshot];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
     const composerElementContextsSnapshot = [...composerElementContexts];
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
@@ -5898,15 +6560,63 @@ function ChatViewContent(props: ChatViewProps) {
       model: ctxSelectedModel,
       models: ctxSelectedProviderModels,
       effort: turnPromptEffort,
-      text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+      text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
     });
     if (composerRef.current?.validateProviderInput(outgoingMessageText) === false) {
       return;
     }
 
+    const readLiveAttachmentCapabilities = () => {
+      const config = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId) ?? null;
+      const liveSupportsAttachmentUploads =
+        config?.environment.capabilities.attachmentUploads === true;
+      return {
+        supportsAttachmentUploads: liveSupportsAttachmentUploads,
+        fileBlockReason: fileAttachmentCapabilityBlockReason({
+          files: composerFilesSnapshot,
+          attachmentUploadsCapabilityKnown: config !== null,
+          supportsAttachmentUploads: liveSupportsAttachmentUploads,
+          maxFileAttachmentBytes:
+            config?.environment.capabilities.fileAttachments?.maxUploadBytes ?? null,
+        }),
+      };
+    };
+
+    sendInFlightRef.current = true;
+    const attachmentCapabilitiesBeforeUpload = readLiveAttachmentCapabilities();
+    if (attachmentCapabilitiesBeforeUpload.fileBlockReason !== null) {
+      sendInFlightRef.current = false;
+      setThreadError(threadIdForSend, attachmentCapabilitiesBeforeUpload.fileBlockReason);
+      return;
+    }
+    const turnUsesAttachmentUploads =
+      composerFilesSnapshot.length > 0
+        ? attachmentCapabilitiesBeforeUpload.supportsAttachmentUploads
+        : supportsAttachmentUploads;
+    if (turnUsesAttachmentUploads && composerAttachmentsSnapshot.length > 0) {
+      for (const attachment of composerAttachmentsSnapshot) {
+        startAttachmentUpload({
+          environmentId,
+          image: attachment,
+          draftTarget: composerDraftTarget,
+        });
+      }
+      await awaitAttachmentUploads(composerAttachmentsSnapshot.map((attachment) => attachment.id));
+      const attachmentCapabilitiesAfterUpload = readLiveAttachmentCapabilities();
+      if (attachmentCapabilitiesAfterUpload.fileBlockReason !== null) {
+        sendInFlightRef.current = false;
+        setThreadError(threadIdForSend, attachmentCapabilitiesAfterUpload.fileBlockReason);
+        return;
+      }
+      if (getUploadedAttachments({ environmentId, images: composerAttachmentsSnapshot }) === null) {
+        sendInFlightRef.current = false;
+        setThreadError(threadIdForSend, "Retry or remove failed uploads before sending.");
+        return;
+      }
+    }
+
     const resolvedSubmissionIntent =
       submissionIntent === "background" && isLocalDraftThread ? "background" : "foreground";
-    sendInFlightRef.current = true;
     if (
       shouldDockDraftHeroForSubmission({
         isDraftHeroState,
@@ -5929,6 +6639,16 @@ function ChatViewContent(props: ChatViewProps) {
       void dockTransition.catch(() => resolveDockStarted?.());
       await dockStarted;
     }
+
+    const attachmentCapabilitiesBeforeDispatch = readLiveAttachmentCapabilities();
+    if (attachmentCapabilitiesBeforeDispatch.fileBlockReason !== null) {
+      sendInFlightRef.current = false;
+      setThreadError(threadIdForSend, attachmentCapabilitiesBeforeDispatch.fileBlockReason);
+      setDockedDraftHeroThreadKey((currentThreadKey) =>
+        currentThreadKey === activeThreadKey ? null : currentThreadKey,
+      );
+      return;
+    }
     beginLocalDispatch({
       preparingWorktree: Boolean(baseBranchForWorktree),
       submissionIntent: resolvedSubmissionIntent,
@@ -5938,22 +6658,45 @@ function ChatViewContent(props: ChatViewProps) {
     const messageCreatedAt = new Date().toISOString();
     const fetchMode = resolveFetchMode({ featureEnabled: settings.experimentalFetch });
     const turnAttachmentsPromise = Promise.all(
-      composerImagesSnapshot.map(async (image) => ({
-        type: "image" as const,
-        name: image.name,
-        mimeType: image.mimeType,
-        sizeBytes: image.sizeBytes,
-        dataUrl: await readFileAsDataUrl(image.file),
-      })),
+      composerAttachmentsSnapshot.map(async (attachment) => {
+        if (turnUsesAttachmentUploads) {
+          const uploaded = getUploadedAttachments({ environmentId, images: [attachment] })?.[0];
+          if (!uploaded) {
+            throw new Error(`Attachment '${attachment.name}' did not finish uploading.`);
+          }
+          return uploaded;
+        }
+        if (attachment.type !== "image") {
+          throw new Error("This server does not support file attachments.");
+        }
+        return {
+          type: "image" as const,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          dataUrl: await readFileAsDataUrl(attachment.file),
+        };
+      }),
     );
-    const optimisticAttachments = composerImagesSnapshot.map((image) => ({
-      type: "image" as const,
-      id: image.id,
-      name: image.name,
-      mimeType: image.mimeType,
-      sizeBytes: image.sizeBytes,
-      previewUrl: image.previewUrl,
-    }));
+    const optimisticAttachments = composerAttachmentsSnapshot.map((attachment) =>
+      attachment.type === "image"
+        ? {
+            type: "image" as const,
+            id: attachment.id,
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.sizeBytes,
+            previewUrl: attachment.previewUrl,
+          }
+        : {
+            type: "file" as const,
+            id: attachment.id,
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.sizeBytes,
+            downloadable: false,
+          },
+    );
     const shouldAnchorFirstMessage =
       activeThread.latestTurn === null &&
       !timelineMessages.some((message) => message.role === "user");
@@ -6015,6 +6758,8 @@ function ChatViewContent(props: ChatViewProps) {
     if (!titleSeed) {
       if (firstComposerImageName) {
         titleSeed = `Image: ${firstComposerImageName}`;
+      } else if (composerFilesSnapshot[0]) {
+        titleSeed = `File: ${composerFilesSnapshot[0].name}`;
       } else if (composerTerminalContextsSnapshot.length > 0) {
         titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
       } else if (composerElementContextsSnapshot.length > 0) {
@@ -6061,7 +6806,14 @@ function ChatViewContent(props: ChatViewProps) {
       }
     }
 
-    const turnAttachmentsResult = await settlePromise(() => turnAttachmentsPromise);
+    const turnAttachmentsResult = await settlePromise(async () => {
+      const turnAttachments = await turnAttachmentsPromise;
+      const liveFileBlockReason = readLiveAttachmentCapabilities().fileBlockReason;
+      if (liveFileBlockReason !== null) {
+        throw new Error(liveFileBlockReason);
+      }
+      return turnAttachments;
+    });
     if (failure === null && turnAttachmentsResult._tag === "Failure") {
       failure = turnAttachmentsResult;
     }
@@ -6138,6 +6890,9 @@ function ChatViewContent(props: ChatViewProps) {
             pendingReasoningOverride,
           );
         }
+        if (turnUsesAttachmentUploads) {
+          releaseDraftAttachments(composerAttachmentsSnapshot);
+        }
         acknowledgeActiveThreadWoke();
         if (backgroundThreadRef) {
           markPromotedDraftThreadByRef(backgroundThreadRef);
@@ -6155,10 +6910,10 @@ function ChatViewContent(props: ChatViewProps) {
               toastManager.add(
                 stackedThreadToast({
                   type: "success",
-                  title: "Started in background",
+                  title: translate("chat.background.started"),
                   timeout: 5_000,
                   actionProps: {
-                    children: "Open",
+                    children: translate("chat.background.open"),
                     onClick: () => {
                       void navigate({
                         to: "/$environmentId/$threadId",
@@ -6177,11 +6932,11 @@ function ChatViewContent(props: ChatViewProps) {
             toastManager.add(
               stackedThreadToast({
                 type: "warning",
-                title: "Task started in the background",
+                title: translate("chat.background.taskStarted"),
                 description:
                   error instanceof Error
-                    ? `Could not open a fresh composer: ${error.message}`
-                    : "Could not open a fresh composer.",
+                    ? translate("chat.background.freshComposerError", { error: error.message })
+                    : translate("chat.background.freshComposerFailed"),
               }),
             );
           }
@@ -6193,6 +6948,7 @@ function ChatViewContent(props: ChatViewProps) {
       if (
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0 &&
+        composerFilesRef.current.length === 0 &&
         composerTerminalContextsRef.current.length === 0 &&
         composerElementContextsRef.current.length === 0 &&
         (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.previewAnnotations
@@ -6211,10 +6967,12 @@ function ChatViewContent(props: ChatViewProps) {
         promptRef.current = promptForSend;
         const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
         composerImagesRef.current = retryComposerImages;
+        composerFilesRef.current = composerFilesSnapshot;
         composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
         composerElementContextsRef.current = composerElementContextsSnapshot;
         setComposerDraftPrompt(composerDraftTarget, promptForSend);
         addComposerDraftImages(composerDraftTarget, retryComposerImages);
+        addComposerDraftFiles(composerDraftTarget, composerFilesSnapshot);
         setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
         setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
         setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
@@ -6605,6 +7363,7 @@ function ChatViewContent(props: ChatViewProps) {
       startThreadTurn,
       environmentId,
       composerRef,
+      translate,
     ],
   );
 
@@ -6791,11 +7550,11 @@ function ChatViewContent(props: ChatViewProps) {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Could not start implementation thread",
+              title: translate("chat.plan.implementationThreadFailed"),
               description:
                 error instanceof Error
                   ? error.message
-                  : "An error occurred while creating the new thread.",
+                  : translate("chat.plan.implementationThreadError"),
             }),
           );
         }
@@ -6838,9 +7597,11 @@ function ChatViewContent(props: ChatViewProps) {
         nextModelSelection: { instanceId, model },
         allowMidChatProviderSwitching,
       });
-      return reason ? `${reason.description} Start a new thread to use this model.` : null;
+      return reason
+        ? translate("chat.model.startNewThreadReason", { reason: reason.description })
+        : null;
     },
-    [activeThread, allowMidChatProviderSwitching, providerStatuses],
+    [activeThread, allowMidChatProviderSwitching, providerStatuses, translate],
   );
 
   const onProviderModelSelect = useCallback(
@@ -6916,6 +7677,7 @@ function ChatViewContent(props: ChatViewProps) {
       setComposerDraftModelSelection(
         scopeThreadRef(activeThread.environmentId, activeThread.id),
         nextModelSelection,
+        { explicit: true },
       );
       setStickyComposerModelSelection(nextModelSelection);
       scheduleComposerFocus();
@@ -7381,6 +8143,14 @@ function ChatViewContent(props: ChatViewProps) {
         newShortcutLabel={newTerminalShortcutLabel ?? undefined}
         closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
       />
+    ) : activeRightPanelSurface?.kind === "knowledge-graph" && activeProject ? (
+      <KnowledgeGraphPanelController
+        environmentId={activeThread.environmentId}
+        projectId={activeProject.id}
+        threadId={activeThread.id}
+        {...(knowledgeGraphVersion === undefined ? {} : { knowledgeGraphVersion })}
+        onOpenSource={openFileSurface}
+      />
     ) : activeRightPanelSurface?.kind === "diff" ? (
       <Suspense fallback={null}>
         <DiffPanel
@@ -7395,7 +8165,7 @@ function ChatViewContent(props: ChatViewProps) {
       <PullRequestDetailGhost />
     ) : activeRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
       <PullRequestsUnavailableState
-        title="Pull requests unavailable"
+        title={interfaceTranslator.message("chat.pullRequestsUnavailable")}
         error="Update this environment's T3 Code server to browse pull requests."
       />
     ) : activeRightPanelSurface?.kind === "pull-request" ? (
@@ -7415,7 +8185,7 @@ function ChatViewContent(props: ChatViewProps) {
         context={
           isThreadOwnPullRequest(
             {
-              projectId: activeProject?.id ?? null,
+              projectId: linkedThreadPullRequest?.projectId ?? activeProject?.id ?? null,
               repository: threadRepository,
               number: activeThreadPr?.number ?? null,
             },
@@ -7460,23 +8230,17 @@ function ChatViewContent(props: ChatViewProps) {
     setDragActive: setIsWorkspaceFileDragActive,
     addFiles: (files) => composerRef.current?.addDroppedFiles(files),
   });
-  const externalComposerDrawerAttached =
-    composerBannerItems.length > 0 || Boolean(threadSyncPhase && !activeEnvironmentUnavailable);
-  const composerFloatingIsland = (
-    <ComposerFloatingIsland portalHostRef={setComposerFloatingDrawerHost}>
-      {!workspaceCardExpanded && composerBannerItems.length > 0 ? (
-        <ComposerFloatingIslandSection>
-          <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
-        </ComposerFloatingIslandSection>
-      ) : null}
-      {!workspaceCardExpanded && threadSyncPhase && !activeEnvironmentUnavailable ? (
-        <ComposerFloatingIslandSection>
-          <ThreadSyncStatusPill phase={threadSyncPhase} />
-        </ComposerFloatingIslandSection>
-      ) : null}
-    </ComposerFloatingIsland>
+  const composerFloatingBubbleLayout = resolveComposerFloatingBubbleLayout({
+    isDraftHeroState,
+    nonChatWorkspaceCardActive,
+    workspaceCardExpanded,
+  });
+  const composerFloatingBubble = (
+    <ComposerFloatingBubble
+      active={composerFloatingBubbleLayout.visible}
+      hostRef={setComposerFloatingBubbleHost}
+    />
   );
-
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
       {rightPanelOpen && !shouldUseRightPanelSheet ? panelLayoutControls : null}
@@ -7496,9 +8260,9 @@ function ChatViewContent(props: ChatViewProps) {
         >
           {!rightPanelOpen ? panelLayoutControls : null}
           <ChatHeader
-            {...(!supportsPullRequests || threadRepository === null
+            {...(!supportsPullRequests || activeProjectRepository === null
               ? {}
-              : { onOpenPullRequest: openThreadPullRequest })}
+              : { onOpenPullRequest: openProjectPullRequest })}
             activeThreadEnvironmentId={activeThread.environmentId}
             activeThreadId={activeThread.id}
             {...(routeKind === "draft" && draftId ? { draftId } : {})}
@@ -7558,7 +8322,7 @@ function ChatViewContent(props: ChatViewProps) {
                   className="flex items-center gap-2 rounded-full border border-primary/25 bg-background/95 px-4 py-2.5 text-sm font-medium text-foreground shadow-lg"
                 >
                   <PaperclipIcon className="size-4 text-primary" aria-hidden="true" />
-                  Drop files to attach
+                  {translate("chat.dropFilesToAttach")}
                 </div>
               </div>
             ) : null}
@@ -7586,16 +8350,11 @@ function ChatViewContent(props: ChatViewProps) {
                 agentPanelModel={agentPanelModel}
                 key={activeThread.id}
                 isWorking={isWorking}
-                workingStepLabel={workingStepLabel}
                 activeTurnStartedAt={activeWorkStartedAt}
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}
                 latestTurn={activeLatestTurn}
-                runningTurnId={
-                  activeThread.session?.status === "running"
-                    ? activeThread.session.activeTurnId
-                    : null
-                }
+                runningTurnId={activeRunningTurnId}
                 turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
                 activeThreadEnvironmentId={activeThread.environmentId}
                 routeThreadKey={routeThreadKey}
@@ -7605,6 +8364,7 @@ function ChatViewContent(props: ChatViewProps) {
                 retryAction={timelineRetryAction}
                 isRevertingCheckpoint={isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
+                onFileDownload={downloadFileAttachment}
                 markdownCwd={gitCwd ?? undefined}
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
@@ -7627,17 +8387,17 @@ function ChatViewContent(props: ChatViewProps) {
               {showScrollToBottom && (
                 <div
                   className="pointer-events-none absolute left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5"
-                  style={{ bottom: composerOverlayHeight + 4 }}
+                  style={{ bottom: scrollToEndClearance + 4 }}
                 >
                   <Button
-                    aria-label="Scroll to end"
+                    aria-label={interfaceTranslator.message("chat.scrollToEnd")}
                     onClick={() => scrollToEnd(true)}
                     className="pointer-events-auto gap-1.5 rounded-full px-3 text-muted-foreground hover:text-foreground"
                     size="xs"
                     variant="glass"
                   >
                     <ChevronDownIcon className="size-3.5" />
-                    Scroll to end
+                    {translate("chat.scrollToEnd")}
                   </Button>
                 </div>
               )}
@@ -7660,14 +8420,14 @@ function ChatViewContent(props: ChatViewProps) {
               >
                 <div
                   className={cn(
-                    "relative z-10",
+                    "group/composer-stack relative z-10",
                     workspaceCardExpanded ? "pointer-events-none" : "pointer-events-auto",
                   )}
                 >
-                  {isDraftHeroState && !workspaceCardExpanded ? (
+                  {composerFloatingBubbleLayout.placement === "hero" ? (
                     <div className="absolute inset-x-0 bottom-full z-0">
                       <div
-                        className="pb-8"
+                        className="pb-8 group-has-data-[composer-shoulder-tab]/composer-stack:pb-4"
                         style={
                           forceExpandedMobileComposer
                             ? {
@@ -7681,10 +8441,10 @@ function ChatViewContent(props: ChatViewProps) {
                           activeProjectTitle={activeProject?.title ?? null}
                         />
                       </div>
-                      {composerFloatingIsland}
+                      {composerFloatingBubble}
                     </div>
                   ) : (
-                    composerFloatingIsland
+                    composerFloatingBubble
                   )}
                   <div
                     className="relative"
@@ -7743,24 +8503,16 @@ function ChatViewContent(props: ChatViewProps) {
                         onNonChatActiveChange={setNonChatWorkspaceCardActive}
                         onExpandedChange={setWorkspaceCardExpanded}
                         renderChat={({ deckEnabled, gitAvailable }) => (
-                          <div
-                            className={cn(
-                              "chat-composer-glass-shell relative",
-                              deckEnabled && "h-full",
-                              externalComposerDrawerAttached &&
-                                "chat-composer-glass-shell-attached",
-                              showComposerContextStrip &&
-                                (!deckEnabled || !gitAvailable) &&
-                                "chat-composer-glass-shell-with-context",
-                            )}
+                          <ComposerSurface.Shell
+                            contextStrip={
+                              showComposerContextStrip && (!deckEnabled || !gitAvailable)
+                            }
+                            className={cn("chat-composer-glass-shell", deckEnabled && "h-full")}
                             data-chat-workspace-card-surface="true"
                             data-workspace-card-compact-surface="true"
                           >
-                            <div
-                              className={cn(
-                                "chat-composer-glass-host relative z-10 w-full rounded-[22px]",
-                                deckEnabled && "h-full",
-                              )}
+                            <ComposerSurface.Host
+                              className={cn("chat-composer-glass-host", deckEnabled && "h-full")}
                             >
                               <div
                                 ref={attachDraftHeroComposerAnchorRef}
@@ -7771,6 +8523,11 @@ function ChatViewContent(props: ChatViewProps) {
                                   composerRef={composerRef}
                                   composerDraftTarget={composerDraftTarget}
                                   environmentId={environmentId}
+                                  attachmentUploadsCapabilityKnown={
+                                    attachmentUploadsCapabilityKnown
+                                  }
+                                  supportsAttachmentUploads={supportsAttachmentUploads}
+                                  maxFileAttachmentBytes={maxFileAttachmentBytes}
                                   routeKind={routeKind}
                                   routeThreadRef={routeThreadRef}
                                   draftId={draftId}
@@ -7789,15 +8546,17 @@ function ChatViewContent(props: ChatViewProps) {
                                   isConnecting={isConnecting}
                                   isSendBusy={isSendBusy || isImprovingPrompt}
                                   sendDisabledReason={
-                                    threadDetailLoading
-                                      ? "Messages loading"
-                                      : isHarnessSessionActive
-                                        ? "Native harness session active elsewhere"
-                                        : null
+                                    feedbackUploading
+                                      ? translate("chat.composer.sendingProgress")
+                                      : threadDetailLoading
+                                        ? translate("chat.composer.sync.loadingMessages")
+                                        : isHarnessSessionActive
+                                          ? translate("chat.harness.sendingPaused")
+                                          : null
                                   }
                                   isPreparingWorktree={isPreparingWorktree}
-                                  externalDrawerAttached={externalComposerDrawerAttached}
-                                  floatingDrawerHost={composerFloatingDrawerHost}
+                                  floatingBubbleHost={composerFloatingBubbleHost}
+                                  bannerItems={composerBannerItems}
                                   surfaceMorphScopeKey={activeThreadKey ?? "draft"}
                                   environmentUnavailable={activeEnvironmentUnavailableState}
                                   activePendingApproval={activePendingApproval}
@@ -7813,6 +8572,11 @@ function ChatViewContent(props: ChatViewProps) {
                                   activeProposedPlan={activeProposedPlan}
                                   activeTasksProgress={activeComposerTasksProgress}
                                   activeTaskSteps={activeComposerTaskSteps}
+                                  isWorking={isWorking}
+                                  activeWorkStartedAt={activeWorkStartedAt}
+                                  threadSyncPhase={
+                                    activeEnvironmentUnavailable ? null : threadSyncPhase
+                                  }
                                   runtimeMode={runtimeMode}
                                   interactionMode={interactionMode}
                                   lockedProvider={lockedProvider}
@@ -7823,6 +8587,11 @@ function ChatViewContent(props: ChatViewProps) {
                                   activeThreadModelSelection={activeThread?.modelSelection}
                                   activeThreadActivities={liveThreadActivities}
                                   firstTurnForkBudget={firstTurnForkBudget}
+                                  activeContextWindow={activeContextWindow}
+                                  compactDisabled={compactDisabled}
+                                  compactDisabledReason={compactDisabledReason}
+                                  canManualCompact={providerManualCompactionAvailable}
+                                  onManualCompact={handleManualProviderCompact}
                                   resolvedTheme={resolvedTheme}
                                   settings={settings}
                                   keybindings={keybindings}
@@ -7831,6 +8600,7 @@ function ChatViewContent(props: ChatViewProps) {
                                   voiceInputConfigured={voiceInputConfigured}
                                   promptRef={promptRef}
                                   composerImagesRef={composerImagesRef}
+                                  composerFilesRef={composerFilesRef}
                                   composerTerminalContextsRef={composerTerminalContextsRef}
                                   composerElementContextsRef={composerElementContextsRef}
                                   onSend={onSend}
@@ -7861,7 +8631,7 @@ function ChatViewContent(props: ChatViewProps) {
                                   onVoiceRecordingActiveChange={setVoiceRecordingActive}
                                 />
                               </div>
-                            </div>
+                            </ComposerSurface.Host>
                             {!deckEnabled || !gitAvailable ? (
                               <div
                                 className="min-h-0"
@@ -7874,7 +8644,7 @@ function ChatViewContent(props: ChatViewProps) {
                                 </div>
                               </div>
                             ) : null}
-                          </div>
+                          </ComposerSurface.Shell>
                         )}
                         renderGitPeek={({ blocked, position, status: gitDeckStatus }) =>
                           renderComposerContextStrip(
@@ -7910,19 +8680,18 @@ function ChatViewContent(props: ChatViewProps) {
               <AlertDialogPopup>
                 <AlertDialogHeader>
                   <AlertDialogTitle>
-                    Switch to{" "}
-                    <code className="font-medium">
-                      {localCheckoutBranchMismatch?.threadBranch ?? ""}
-                    </code>
-                    ?
+                    {translate("chat.branch.switchConfirm", {
+                      branch: localCheckoutBranchMismatch?.threadBranch ?? "",
+                    })}
                   </AlertDialogTitle>
                   <AlertDialogDescription>
-                    You have uncommitted changes. They'll carry over to the other branch, or block
-                    the switch if they conflict.
+                    {translate("chat.branch.uncommittedWarning")}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                  <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+                  <AlertDialogClose render={<Button variant="outline" />}>
+                    {interfaceTranslator.message("common.cancel")}
+                  </AlertDialogClose>
                   <Button
                     variant="default"
                     onClick={() => {
@@ -7930,7 +8699,7 @@ function ChatViewContent(props: ChatViewProps) {
                       void handleSwitchCheckoutToThread();
                     }}
                   >
-                    Switch branch
+                    {translate("chat.branch.switchAction")}
                   </Button>
                 </AlertDialogFooter>
               </AlertDialogPopup>
@@ -8003,6 +8772,16 @@ function ChatViewContent(props: ChatViewProps) {
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
           onAddPullRequest={addPullRequestSurface}
+          {...(knowledgeGraphAvailable
+            ? {
+                onAddKnowledgeGraph: addKnowledgeGraphSurface,
+                knowledgeGraphAvailable: true,
+                knowledgeGraphTitle: interfaceTranslator.message("knowledgeGraph.title"),
+                knowledgeGraphDescription: interfaceTranslator.message(
+                  "knowledgeGraph.launchDescription",
+                ),
+              }
+            : {})}
           browserAvailable={isPreviewSupportedInRuntime()}
           terminalAvailable={activeProject !== null}
           diffAvailable={isServerThread && isGitRepo}
@@ -8040,6 +8819,16 @@ function ChatViewContent(props: ChatViewProps) {
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
             onAddPullRequest={addPullRequestSurface}
+            {...(knowledgeGraphAvailable
+              ? {
+                  onAddKnowledgeGraph: addKnowledgeGraphSurface,
+                  knowledgeGraphAvailable: true,
+                  knowledgeGraphTitle: interfaceTranslator.message("knowledgeGraph.title"),
+                  knowledgeGraphDescription: interfaceTranslator.message(
+                    "knowledgeGraph.launchDescription",
+                  ),
+                }
+              : {})}
             browserAvailable={isPreviewSupportedInRuntime()}
             terminalAvailable={activeProject !== null}
             diffAvailable={isServerThread && isGitRepo}

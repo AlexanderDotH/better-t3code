@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import type { ChatGptSubscriptionTransport } from "../provider/chatgpt/ChatGptSubscriptionTransport.ts";
+import { buildAutoReasoningPrompt, validateAutoReasoningDecision } from "./AutoReasoning.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -15,6 +16,7 @@ import {
   buildPlanParallelismReviewPrompt,
   buildPromptImprovementPrompt,
   buildPrContentPrompt,
+  buildThreadMetadataPrompt,
   buildThreadTitlePrompt,
   buildTranscriptTranslationPrompt,
 } from "./TextGenerationPrompts.ts";
@@ -56,9 +58,11 @@ export const makeChatGptTextGeneration = (
 ): TextGeneration.TextGeneration["Service"] => {
   const runJson = <S extends Schema.Top>(input: {
     readonly operation:
+      | "decideAutoReasoning"
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
+      | "generateThreadMetadata"
       | "generateThreadTitle"
       | "translateTranscriptToEnglish"
       | "improvePrompt"
@@ -175,6 +179,16 @@ export const makeChatGptTextGeneration = (
     );
 
   return {
+    decideAutoReasoning: Effect.fn("ChatGptTextGeneration.decideAutoReasoning")(function* (input) {
+      const { prompt, outputSchema } = buildAutoReasoningPrompt(input);
+      const generated = yield* runJson({
+        operation: "decideAutoReasoning",
+        prompt,
+        outputSchema,
+        modelSelection: input.modelSelection,
+      });
+      return yield* validateAutoReasoningDecision(input.allowedEfforts, generated);
+    }),
     generateCommitMessage: Effect.fn("ChatGptTextGeneration.generateCommitMessage")(
       function* (input) {
         const { prompt, outputSchema } = buildCommitMessagePrompt({
@@ -229,6 +243,21 @@ export const makeChatGptTextGeneration = (
       });
       return { title: sanitizeThreadTitle(generated.title) };
     }),
+    generateThreadMetadata: Effect.fn("ChatGptTextGeneration.generateThreadMetadata")(
+      function* (input) {
+        const { prompt, outputSchema } = buildThreadMetadataPrompt(input);
+        const generated = yield* runJson({
+          operation: "generateThreadMetadata",
+          prompt,
+          outputSchema,
+          modelSelection: input.modelSelection,
+        });
+        return {
+          title: sanitizeThreadTitle(generated.title),
+          branch: sanitizeBranchFragment(generated.branch),
+        };
+      },
+    ),
     translateTranscriptToEnglish: Effect.fn("ChatGptTextGeneration.translateTranscriptToEnglish")(
       function* (input) {
         const { prompt, outputSchema } = buildTranscriptTranslationPrompt({ text: input.text });
@@ -274,5 +303,7 @@ export const makeChatGptTextGeneration = (
         });
       },
     ),
+    enrichKnowledgeGraph:
+      TextGeneration.unsupportedKnowledgeGraphEnrichment("ChatGPT Subscription"),
   } satisfies TextGeneration.TextGeneration["Service"];
 };

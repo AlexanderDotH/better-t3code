@@ -13,6 +13,11 @@ import { limitSection } from "./TextGenerationUtils.ts";
 import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
 
 const EARLIER_CONTENT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
+export const T3_METADATA_CALL_MARKER = "<t3code_metadata_call>";
+
+function metadataPrompt(prompt: string): string {
+  return `${T3_METADATA_CALL_MARKER}\n${prompt}`;
+}
 
 function policyInstruction(instruction: string | undefined): ReadonlyArray<string> {
   const trimmed = instruction?.trim();
@@ -34,28 +39,30 @@ export interface CommitMessagePromptInput {
 export function buildCommitMessagePrompt(input: CommitMessagePromptInput) {
   const wantsBranch = input.includeBranch === true;
 
-  const prompt = [
-    "You write concise git commit messages.",
-    wantsBranch
-      ? "Return a JSON object with keys: subject, body, branch."
-      : "Return a JSON object with keys: subject, body.",
-    "Rules:",
-    "- subject must be imperative, <= 72 chars, and no trailing period",
-    "- body can be empty string or short bullet points",
-    ...(wantsBranch
-      ? ["- branch must be a short semantic git branch fragment for this change"]
-      : []),
-    "- capture the primary user-visible or developer-visible change",
-    ...policyInstruction(input.policy?.commitInstructions),
-    "",
-    `Branch: ${input.branch ?? "(detached)"}`,
-    "",
-    "Staged files:",
-    limitSection(input.stagedSummary, 6_000),
-    "",
-    "Staged patch:",
-    limitSection(input.stagedPatch, 40_000),
-  ].join("\n");
+  const prompt = metadataPrompt(
+    [
+      "You write concise git commit messages.",
+      wantsBranch
+        ? "Return a JSON object with keys: subject, body, branch."
+        : "Return a JSON object with keys: subject, body.",
+      "Rules:",
+      "- subject must be imperative, <= 72 chars, and no trailing period",
+      "- body can be empty string or short bullet points",
+      ...(wantsBranch
+        ? ["- branch must be a short semantic git branch fragment for this change"]
+        : []),
+      "- capture the primary user-visible or developer-visible change",
+      ...policyInstruction(input.policy?.commitInstructions),
+      "",
+      `Branch: ${input.branch ?? "(detached)"}`,
+      "",
+      "Staged files:",
+      limitSection(input.stagedSummary, 6_000),
+      "",
+      "Staged patch:",
+      limitSection(input.stagedPatch, 40_000),
+    ].join("\n"),
+  );
 
   if (wantsBranch) {
     return {
@@ -105,29 +112,31 @@ export function buildPrContentPrompt(input: PrContentPromptInput) {
         "- under Summary, provide short bullet points",
         "- under Testing, include bullet points with concrete checks or 'Not run' where appropriate",
       ];
-  const prompt = [
-    "You write source control change request content.",
-    "Return a JSON object with keys: title, body.",
-    "Rules:",
-    "- title should be concise and specific",
-    ...bodyRules,
-    ...policyInstruction(input.policy?.changeRequestInstructions),
-    ...(changeRequestTemplate
-      ? ["", "Repository change request template:", limitSection(changeRequestTemplate, 8_000)]
-      : []),
-    "",
-    `Base branch: ${input.baseBranch}`,
-    `Head branch: ${input.headBranch}`,
-    "",
-    "Commits:",
-    limitSection(input.commitSummary, 12_000),
-    "",
-    "Diff stat:",
-    limitSection(input.diffSummary, 12_000),
-    "",
-    "Diff patch:",
-    limitSection(input.diffPatch, 40_000),
-  ].join("\n");
+  const prompt = metadataPrompt(
+    [
+      "You write source control change request content.",
+      "Return a JSON object with keys: title, body.",
+      "Rules:",
+      "- title should be concise and specific",
+      ...bodyRules,
+      ...policyInstruction(input.policy?.changeRequestInstructions),
+      ...(changeRequestTemplate
+        ? ["", "Repository change request template:", limitSection(changeRequestTemplate, 8_000)]
+        : []),
+      "",
+      `Base branch: ${input.baseBranch}`,
+      `Head branch: ${input.headBranch}`,
+      "",
+      "Commits:",
+      limitSection(input.commitSummary, 12_000),
+      "",
+      "Diff stat:",
+      limitSection(input.diffSummary, 12_000),
+      "",
+      "Diff patch:",
+      limitSection(input.diffPatch, 40_000),
+    ].join("\n"),
+  );
 
   const outputSchema = Schema.Struct({
     title: Schema.String,
@@ -179,7 +188,7 @@ function buildPromptFromMessage(input: PromptFromMessageInput): string {
     );
   }
 
-  return promptSections.join("\n");
+  return metadataPrompt(promptSections.join("\n"));
 }
 
 export function buildBranchNamePrompt(input: BranchNamePromptInput) {
@@ -216,8 +225,9 @@ export interface ThreadTitlePromptInput {
 
 // Keep shared editorial rules in these two prompts in sync. Regeneration
 // intentionally adds guidance for thread history and the previous title.
-const INITIAL_THREAD_TITLE_PROMPT = `Generate a title that will help the user recognize this T3 Code thread weeks later.
-Return JSON with exactly one key: title.
+function initialThreadTitlePrompt(responseShape: string): string {
+  return `Generate a title that will help the user recognize this T3 Code thread weeks later.
+${responseShape}
 
 Before answering, silently reduce the request to:
 - Subject: What system, feature, or problem is this really about?
@@ -239,6 +249,7 @@ Editorial rules:
 - Avoid project names already visible in the UI, quotes, labels, filler, and trailing punctuation.
 - Attachment contents are unavailable. Use only listed metadata as supporting context, and do not infer visual details.
 - When a URL is the only source of the subject, use available tools to inspect it. If it cannot be resolved, remain accurate rather than guessing.`;
+}
 
 function regenerateThreadTitlePrompt(previousTitle: string): string {
   return `Regenerate the title for an existing T3 Code thread so the user can recognize it weeks later.
@@ -305,7 +316,7 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
   let prompt: string;
   if (input.previousTitle === undefined) {
     const message = limitSection(input.message, 8_000);
-    prompt = `${INITIAL_THREAD_TITLE_PROMPT}\n\nUser message:\n${message}${threadTitlePromptSuffix(input)}`;
+    prompt = `${initialThreadTitlePrompt("Return JSON with exactly one key: title.")}\n\nUser message:\n${message}${threadTitlePromptSuffix(input)}`;
   } else {
     const message = preserveMessageEnd(input.message);
     prompt = `${regenerateThreadTitlePrompt(input.previousTitle)}\n\nThread contents:\n${message}${threadTitlePromptSuffix(input)}`;
@@ -314,7 +325,34 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
     title: Schema.String,
   });
 
-  return { prompt, outputSchema };
+  return { prompt: metadataPrompt(prompt), outputSchema };
+}
+
+export type ThreadMetadataPromptInput = Pick<
+  ThreadTitlePromptInput,
+  "message" | "attachments" | "policy"
+>;
+
+export function buildThreadMetadataPrompt(input: ThreadMetadataPromptInput) {
+  const prompt = [
+    initialThreadTitlePrompt('Return JSON with exactly two keys: "title" and "branch".'),
+    "",
+    "Branch rules:",
+    "- Describe the requested work in 2-6 short, specific words.",
+    "- Use plain words only, with no issue prefix or punctuation-heavy text.",
+    "",
+    "User message:",
+    limitSection(input.message, 8_000),
+  ].join("\n");
+  const outputSchema = Schema.Struct({
+    title: Schema.String,
+    branch: Schema.String,
+  });
+
+  return {
+    prompt: metadataPrompt(`${prompt}${threadTitlePromptSuffix(input)}`),
+    outputSchema,
+  };
 }
 
 export const TranscriptTranslationOutputSchema = Schema.Struct({
@@ -326,18 +364,20 @@ export interface TranscriptTranslationPromptInput {
 }
 
 export function buildTranscriptTranslationPrompt(input: TranscriptTranslationPromptInput) {
-  const prompt = [
-    "You translate speech transcripts into faithful, concise English.",
-    "Return a JSON object with key: text.",
-    "Rules:",
-    "- Preserve the complete meaning, intent, requirements, constraints, and tone.",
-    "- Preserve code identifiers, commands, file paths, URLs, literals, and technical terms exactly.",
-    "- Do not answer the transcript, add information, omit requirements, or expand its scope.",
-    "- Keep the result concise without removing meaningful details.",
-    "",
-    "Transcript:",
-    limitSection(input.text, 16_000),
-  ].join("\n");
+  const prompt = metadataPrompt(
+    [
+      "You translate speech transcripts into faithful, concise English.",
+      "Return a JSON object with key: text.",
+      "Rules:",
+      "- Preserve the complete meaning, intent, requirements, constraints, and tone.",
+      "- Preserve code identifiers, commands, file paths, URLs, literals, and technical terms exactly.",
+      "- Do not answer the transcript, add information, omit requirements, or expand its scope.",
+      "- Keep the result concise without removing meaningful details.",
+      "",
+      "Transcript:",
+      limitSection(input.text, 16_000),
+    ].join("\n"),
+  );
 
   return { prompt, outputSchema: TranscriptTranslationOutputSchema };
 }
@@ -351,19 +391,21 @@ export interface PromptImprovementPromptInput {
 }
 
 export function buildPromptImprovementPrompt(input: PromptImprovementPromptInput) {
-  const prompt = [
-    "You improve coding prompts for clarity and concision.",
-    "Return a JSON object with key: text.",
-    "Rules:",
-    "- Keep the same language as the original prompt.",
-    "- Preserve the original intent and every requirement, constraint, code identifier, command, file path, URL, literal, and technical term.",
-    "- Do not add scope, requirements, assumptions, solutions, implementation details, or acceptance criteria.",
-    "- Do not answer or carry out the prompt.",
-    "- Improve only wording, grammar, organization, and clarity.",
-    "",
-    "Prompt:",
-    limitSection(input.text, 16_000),
-  ].join("\n");
+  const prompt = metadataPrompt(
+    [
+      "You improve coding prompts for clarity and concision.",
+      "Return a JSON object with key: text.",
+      "Rules:",
+      "- Keep the same language as the original prompt.",
+      "- Preserve the original intent and every requirement, constraint, code identifier, command, file path, URL, literal, and technical term.",
+      "- Do not add scope, requirements, assumptions, solutions, implementation details, or acceptance criteria.",
+      "- Do not answer or carry out the prompt.",
+      "- Improve only wording, grammar, organization, and clarity.",
+      "",
+      "Prompt:",
+      limitSection(input.text, 16_000),
+    ].join("\n"),
+  );
 
   return { prompt, outputSchema: PromptImprovementOutputSchema };
 }
@@ -407,34 +449,36 @@ export function buildFetchExplorationPrompt(input: FetchExplorationPromptInput) 
     input.repositoryOrientation,
     FETCH_EXPLORATION_ORIENTATION_MAX_CHARS,
   );
-  const prompt = [
-    "You are a conservative gate for optional parallel repository exploration.",
-    "The main agent can inspect the repository with its own tools and should handle ordinary requests itself.",
-    "Return a JSON object with exactly the keys: decision, workers.",
-    "Each worker has exactly the keys: scope, questions.",
-    "Rules:",
-    "- Default to decision=skip with zero workers.",
-    "- Skip simple, narrow, or briefly investigative requests that one main agent can handle directly, even when repository reads would help.",
-    "- Always skip when the user asks the main agent to work alone or says not to use Fetch, workers, agents, subagents, or delegation.",
-    "- Words such as look into, find, check, inspect, explain, or fix do not justify workers by themselves.",
-    "- Use decision=run only when parallel discovery would materially help because the request has multiple independent investigation scopes, is genuinely broad, or explicitly requests parallel or comprehensive exploration.",
-    "- If uncertain, skip and let the main agent answer or investigate on its own.",
-    `- When Fetch is justified, use between 1 and ${input.maxRecommendedWorkers} workers.`,
-    "- Every scope must be concrete, non-overlapping, and limited to repository-read-only discovery.",
-    "- Every worker must have at least one concrete question.",
-    "- Do not assign edits, implementation, mutating commands, external actions, or nested agents.",
-    "- Choose the smallest useful worker count. One worker is valid for one unusually deep bounded scope; use two or more only for genuinely independent scopes.",
-    "- Never use three workers as a default or merely because that count is available.",
-    "- Use a larger count only for genuinely repository-wide work with independent scopes.",
-    "- Do not create duplicate, vague, observation-only, or coordination scopes.",
-    "- Return only the JSON object. Do not use tools or inspect the repository yourself.",
-    "",
-    "Original user request:",
-    userRequest,
-    "",
-    "Repository orientation:",
-    repositoryOrientation,
-  ].join("\n");
+  const prompt = metadataPrompt(
+    [
+      "You are a conservative gate for optional parallel repository exploration.",
+      "The main agent can inspect the repository with its own tools and should handle ordinary requests itself.",
+      "Return a JSON object with exactly the keys: decision, workers.",
+      "Each worker has exactly the keys: scope, questions.",
+      "Rules:",
+      "- Default to decision=skip with zero workers.",
+      "- Skip simple, narrow, or briefly investigative requests that one main agent can handle directly, even when repository reads would help.",
+      "- Always skip when the user asks the main agent to work alone or says not to use Fetch, workers, agents, subagents, or delegation.",
+      "- Words such as look into, find, check, inspect, explain, or fix do not justify workers by themselves.",
+      "- Use decision=run only when parallel discovery would materially help because the request has multiple independent investigation scopes, is genuinely broad, or explicitly requests parallel or comprehensive exploration.",
+      "- If uncertain, skip and let the main agent answer or investigate on its own.",
+      `- When Fetch is justified, use between 1 and ${input.maxRecommendedWorkers} workers.`,
+      "- Every scope must be concrete, non-overlapping, and limited to repository-read-only discovery.",
+      "- Every worker must have at least one concrete question.",
+      "- Do not assign edits, implementation, mutating commands, external actions, or nested agents.",
+      "- Choose the smallest useful worker count. One worker is valid for one unusually deep bounded scope; use two or more only for genuinely independent scopes.",
+      "- Never use three workers as a default or merely because that count is available.",
+      "- Use a larger count only for genuinely repository-wide work with independent scopes.",
+      "- Do not create duplicate, vague, observation-only, or coordination scopes.",
+      "- Return only the JSON object. Do not use tools or inspect the repository yourself.",
+      "",
+      "Original user request:",
+      userRequest,
+      "",
+      "Repository orientation:",
+      repositoryOrientation,
+    ].join("\n"),
+  );
 
   return { prompt, outputSchema: FetchExplorationOutputSchema };
 }
@@ -475,27 +519,29 @@ export function buildPlanParallelismReviewPrompt(input: PlanParallelismReviewPro
         PLAN_PARALLELISM_REVIEW_REQUEST_MAX_CHARS,
       )
     : "(not available)";
-  const prompt = [
-    "You estimate the useful number of direct child subagents for implementing a coding plan.",
-    "Return a JSON object with exactly one key: recommendedSubagents.",
-    "Rules:",
-    `- recommendedSubagents must be an integer between 2 and ${input.maxSubagents}.`,
-    "- Prefer the highest useful parallelism supported by genuinely independent, non-overlapping workstreams.",
-    "- Do not artificially stop at four when more independent workstreams exist.",
-    "- Reduce the count for sequential dependencies, shared-file conflicts, or work that must be integrated before another part starts.",
-    "- Ambiguity alone does not justify more subagents.",
-    "- Count discovery separately only when it is a substantial, independently useful workstream.",
-    "- Do not create dummy, duplicate, or observation-only roles.",
-    "- Do not count the parent agent, which retains integration and final verification.",
-    "- Do not execute the plan, use tools, inspect the filesystem, or modify files.",
-    "- Return only the JSON object. Do not include rationale, names, tasks, or workstreams.",
-    "",
-    "Originating user request:",
-    userRequest,
-    "",
-    "Proposed plan:",
-    planMarkdown,
-  ].join("\n");
+  const prompt = metadataPrompt(
+    [
+      "You estimate the useful number of direct child subagents for implementing a coding plan.",
+      "Return a JSON object with exactly one key: recommendedSubagents.",
+      "Rules:",
+      `- recommendedSubagents must be an integer between 2 and ${input.maxSubagents}.`,
+      "- Prefer the highest useful parallelism supported by genuinely independent, non-overlapping workstreams.",
+      "- Do not artificially stop at four when more independent workstreams exist.",
+      "- Reduce the count for sequential dependencies, shared-file conflicts, or work that must be integrated before another part starts.",
+      "- Ambiguity alone does not justify more subagents.",
+      "- Count discovery separately only when it is a substantial, independently useful workstream.",
+      "- Do not create dummy, duplicate, or observation-only roles.",
+      "- Do not count the parent agent, which retains integration and final verification.",
+      "- Do not execute the plan, use tools, inspect the filesystem, or modify files.",
+      "- Return only the JSON object. Do not include rationale, names, tasks, or workstreams.",
+      "",
+      "Originating user request:",
+      userRequest,
+      "",
+      "Proposed plan:",
+      planMarkdown,
+    ].join("\n"),
+  );
 
   return { prompt, outputSchema: PlanParallelismReviewOutputSchema };
 }

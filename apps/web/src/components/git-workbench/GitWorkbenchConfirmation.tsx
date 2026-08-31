@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 interface GitWorkbenchConfirmationProps {
   readonly confirmLabel: string;
@@ -24,6 +25,7 @@ export function GitWorkbenchConfirmation({
   triggerLabel,
   variant = "destructive",
 }: GitWorkbenchConfirmationProps) {
+  const translate = useInterfaceTranslator().message;
   const [open, setOpen] = useState(false);
   const [confirmation, setConfirmation] = useState("");
   const confirmed = !phrase || confirmation === phrase;
@@ -59,7 +61,7 @@ export function GitWorkbenchConfirmation({
         </p>
         {phrase ? (
           <label className="mt-3 block text-sm">
-            Type <strong>{phrase}</strong> to confirm
+            {translate("git.confirmation.typePhrase", { phrase })}
             <Input
               autoFocus
               className="mt-1"
@@ -70,7 +72,7 @@ export function GitWorkbenchConfirmation({
         ) : null}
         <div className="mt-4 flex justify-end gap-2">
           <Button onClick={() => setOpen(false)} size="sm" variant="outline">
-            Cancel
+            {translate("common.cancel")}
           </Button>
           <Button
             disabled={!confirmed}

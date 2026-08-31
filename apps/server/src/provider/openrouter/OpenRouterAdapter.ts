@@ -28,6 +28,7 @@ import {
   type NativeProviderToolResult,
   type NativeProviderTurnAdmission,
 } from "../nativeHarness/NativeProviderAdapter.ts";
+import { nativeHarnessWorkspaceInstructions } from "../nativeHarness/NativeHarnessPrompt.ts";
 import {
   NATIVE_HARNESS_MAX_TOOL_DEFINITIONS,
   NATIVE_HARNESS_MAX_TOOL_OUTPUT_BYTES,
@@ -118,6 +119,7 @@ export interface OpenRouterHarness {
     readonly cwd: string;
     readonly interactionMode: ProviderInteractionMode | undefined;
     readonly sandboxMode: ProviderSandboxMode | undefined;
+    readonly fetchWorker: boolean;
   }) => Effect.Effect<
     ReadonlyArray<OpenRouterHarnessToolDeclaration>,
     OpenRouterAdapterDependencyError
@@ -128,6 +130,7 @@ export interface OpenRouterHarness {
     readonly toolName: string;
     readonly interactionMode: ProviderInteractionMode | undefined;
     readonly sandboxMode: ProviderSandboxMode | undefined;
+    readonly fetchWorker: boolean;
   }) => Effect.Effect<boolean, OpenRouterAdapterDependencyError>;
   readonly requiresApproval: (
     toolName: string,
@@ -141,6 +144,7 @@ export interface OpenRouterHarness {
     readonly args: Readonly<Record<string, unknown>>;
     readonly cwd: string;
     readonly environment: NodeJS.ProcessEnv;
+    readonly fetchWorker: boolean;
   }) => Effect.Effect<NativeProviderToolResult, OpenRouterAdapterDependencyError>;
   readonly releaseThread?: ((threadId: ThreadId) => Effect.Effect<void>) | undefined;
 }
@@ -343,7 +347,7 @@ export const decodeOpenRouterPersistedHistory = Effect.fn("decodeOpenRouterPersi
   },
 );
 
-function systemInstructions(input: {
+export function buildOpenRouterSystemInstructions(input: {
   readonly cwd: string;
   readonly sandboxMode: ProviderSandboxMode | undefined;
   readonly interactionMode: ProviderInteractionMode | undefined;
@@ -359,6 +363,7 @@ function systemInstructions(input: {
     "You are an OpenRouter model running inside T3 Code. T3 Code owns the session, transcript, tool loop, approvals, and filesystem boundary.",
     `The trusted workspace root is ${input.cwd}.`,
     access,
+    nativeHarnessWorkspaceInstructions(input),
     input.interactionMode === "plan"
       ? "Plan mode is active: return a decision-complete plan and make no changes."
       : "Carry the request through focused verification and preserve unrelated work.",
@@ -483,6 +488,7 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
             cwd: session.cwd,
             interactionMode: input.interactionMode,
             sandboxMode: session.sandboxMode,
+            fetchWorker: session.fetchWorker,
           })
           .pipe(
             Effect.mapError((cause) =>
@@ -500,7 +506,7 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
             ...(declaration.strict === undefined ? {} : { strict: declaration.strict }),
           })),
           protocol: {
-            instructions: systemInstructions({
+            instructions: buildOpenRouterSystemInstructions({
               cwd: session.cwd,
               sandboxMode: session.sandboxMode,
               interactionMode: input.interactionMode,

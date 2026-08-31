@@ -1,4 +1,13 @@
-import type { HarnessChatSessionId, ProjectId } from "@t3tools/contracts";
+import type {
+  HarnessChatSessionId,
+  HarnessChatSummary,
+  HarnessChatSyncRunInput,
+  HarnessChatSyncSourceId,
+  ProjectId,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
+
+export const HARNESS_CHAT_SYNC_PAGE_SIZE = 10;
 
 export type HarnessChatSelectionState =
   | {
@@ -77,4 +86,77 @@ export function applyHarnessChatTarget(input: {
   const sessionIds = input.applyToAll ? input.unresolvedSessionIds : [input.sessionId];
   for (const sessionId of sessionIds) next.set(sessionId, input.projectId);
   return next;
+}
+
+export function harnessChatStatusState(
+  chat: Pick<HarnessChatSummary, "activity" | "hasChanges" | "archived"> & {
+    readonly link: null | Pick<NonNullable<HarnessChatSummary["link"]>, "threadId">;
+  },
+) {
+  return {
+    activeElsewhere: chat.activity === "active",
+    linkedThreadId: chat.link?.threadId ?? null,
+    changesAvailable: chat.hasChanges,
+    archived: chat.archived,
+  } as const;
+}
+
+export function harnessChatNeedsTargetResolution(input: {
+  readonly chat: Pick<HarnessChatSummary, "sessionId" | "targetProject">;
+  readonly selection: HarnessChatSelectionState;
+  readonly targetResolutions: ReadonlyMap<HarnessChatSessionId, ProjectId>;
+  readonly unresolvedTargetProjectId: ProjectId | null;
+}): boolean {
+  return (
+    isHarnessChatSelected(input.selection, input.chat.sessionId) &&
+    input.chat.targetProject.kind === "unresolved" &&
+    !input.targetResolutions.has(input.chat.sessionId) &&
+    input.unresolvedTargetProjectId === null
+  );
+}
+
+export function harnessChatSyncOutcome(input: {
+  readonly syncedCount: number;
+  readonly failedCount: number;
+  readonly messagesImported: number;
+}) {
+  return {
+    kind: input.failedCount > 0 ? ("partial" as const) : ("complete" as const),
+    syncedCount: input.syncedCount,
+    failedCount: input.failedCount,
+    messagesImported: input.messagesImported,
+  };
+}
+
+export function buildHarnessChatSyncRunInput(input: {
+  readonly sourceId: HarnessChatSyncSourceId;
+  readonly preferredInstanceId: ProviderInstanceId | null;
+  readonly selection: HarnessChatSelectionState;
+  readonly query: string;
+  readonly includeArchived: boolean;
+  readonly targetResolutions: ReadonlyMap<HarnessChatSessionId, ProjectId>;
+  readonly unresolvedTargetProjectId: ProjectId | null;
+}): HarnessChatSyncRunInput {
+  return {
+    sourceId: input.sourceId,
+    selection:
+      input.selection.mode === "allMatching"
+        ? {
+            mode: "allMatching",
+            query: input.query,
+            includeArchived: input.includeArchived,
+            excludedSessionIds: [...input.selection.excludedSessionIds],
+          }
+        : { mode: "only", sessionIds: [...input.selection.sessionIds] },
+    ...(input.preferredInstanceId === null
+      ? {}
+      : { providerInstanceId: input.preferredInstanceId }),
+    targetResolutions: [...input.targetResolutions].map(([sessionId, projectId]) => ({
+      sessionId,
+      projectId,
+    })),
+    ...(input.unresolvedTargetProjectId === null
+      ? {}
+      : { unresolvedTargetProjectId: input.unresolvedTargetProjectId }),
+  };
 }

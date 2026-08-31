@@ -109,6 +109,8 @@ export interface ChatGptAuthBroker {
 export const chatGptAuthBrokerArgs = (): ReadonlyArray<string> => [
   "-c",
   'cli_auth_credentials_store="file"',
+  "-c",
+  "mcp_servers={}",
   ...codexAppServerArgs(),
 ];
 

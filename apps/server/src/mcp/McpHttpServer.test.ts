@@ -25,6 +25,9 @@ import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import * as ResourceProtection from "../resourceProtection/SubagentResourceGovernor.ts";
 import * as GeneralSubagents from "../subagents/GeneralSubagentCoordinator.ts";
 import * as WorkspaceContext from "../workspace/WorkspaceContext.ts";
+import * as WorkspaceFileSystem from "../workspace/WorkspaceFileSystem.ts";
+import * as ProjectMemoryPolicy from "../projectMemory/ProjectMemoryPolicy.ts";
+import * as ProjectMemoryStore from "../projectMemory/ProjectMemoryStore.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -54,6 +57,10 @@ const workspaceOnlyInvocation: McpInvocationContext.McpInvocationScope = {
   ...invocation,
   capabilities: new Set(["workspace"]),
 };
+const workspaceWriteInvocation: McpInvocationContext.McpInvocationScope = {
+  ...invocation,
+  capabilities: new Set(["preview", "workspace", "workspace-write", "coordination"]),
+};
 const client = McpSchema.McpServerClient.of({
   clientId: 1,
   protocolVersion: "2025-06-18",
@@ -79,6 +86,40 @@ it("normalizes empty successful notification responses to accepted", () => {
     HttpServerResponse.jsonUnsafe({ jsonrpc: "2.0", id: 1, result: {} }),
   );
   expect(resultResponse.status).toBe(200);
+});
+
+it("normalizes MCP tool schemas without dropping class-backed tool metadata", () => {
+  const annotations = new McpSchema.ToolAnnotations({
+    title: "Read workspace context",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  });
+  const tool = new McpSchema.Tool({
+    name: "workspace_context",
+    title: "Workspace context",
+    description: "Reads bounded workspace context.",
+    inputSchema: { properties: { text: { type: "string" } } },
+    outputSchema: { properties: { result: { type: "string" } }, type: "object" },
+    annotations,
+    _meta: { owner: "t3" },
+  });
+
+  const normalized = McpHttpServer.normalizeMcpTool(tool);
+
+  expect(normalized).toBeInstanceOf(McpSchema.Tool);
+  expect(normalized).not.toBe(tool);
+  expect(normalized.name).toBe(tool.name);
+  expect(normalized.title).toBe(tool.title);
+  expect(normalized.description).toBe(tool.description);
+  expect(normalized.outputSchema).toEqual(tool.outputSchema);
+  expect(normalized.annotations).toEqual(annotations);
+  expect(normalized._meta).toEqual(tool._meta);
+  expect(normalized.inputSchema).toEqual({
+    properties: { text: { type: "string" } },
+    type: "object",
+  });
 });
 
 it.effect("routes Codex resource reservations through their exact lifecycle", () =>
@@ -255,7 +296,7 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
 );
 
 it.effect(
-  "keeps preview tools isolated and rejects preview-only credentials on workspace MCP",
+  "keeps read tools isolated and publishes editing only on writable workspace profiles",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -265,21 +306,36 @@ it.effect(
           truncated: false,
           warnings: [],
         };
+        const workspaceWriteTokens = new Set([
+          "workspace-write-token",
+          "workspace-write-no-memory-token",
+          "workspace-write-no-preview-token",
+          "workspace-write-no-preview-no-memory-token",
+          "workspace-write-only-token",
+          "workspace-write-only-no-memory-token",
+        ]);
         const registryLayer = Layer.succeed(McpSessionRegistry.McpSessionRegistry, {
           issue: () => Effect.die("unused"),
           resolve: (token) =>
             Effect.succeed(
-              token === "preview-token"
-                ? invocation
-                : token === "workspace-token"
-                  ? workspaceInvocation
-                  : token === "workspace-no-preview-token"
-                    ? workspaceWithoutPreviewInvocation
-                    : token === "coordination-token"
-                      ? coordinationInvocation
-                      : token === "workspace-only-token"
-                        ? workspaceOnlyInvocation
-                        : undefined,
+              workspaceWriteTokens.has(token)
+                ? workspaceWriteInvocation
+                : token === "preview-token"
+                  ? invocation
+                  : token === "workspace-token"
+                    ? workspaceInvocation
+                    : token === "workspace-no-memory-token"
+                      ? workspaceInvocation
+                      : token === "workspace-no-preview-token" ||
+                          token === "workspace-no-preview-no-memory-token"
+                        ? workspaceWithoutPreviewInvocation
+                        : token === "workspace-only-no-memory-token"
+                          ? workspaceOnlyInvocation
+                          : token === "coordination-token"
+                            ? coordinationInvocation
+                            : token === "workspace-only-token"
+                              ? workspaceOnlyInvocation
+                              : undefined,
             ),
           touch: () => Effect.void,
           revokeProviderSession: () => Effect.void,
@@ -302,6 +358,9 @@ it.effect(
         const workspaceLayer = Layer.succeed(WorkspaceContext.WorkspaceContext, {
           execute: () => Effect.succeed(emptyWorkspaceResult),
         });
+        const workspaceFileSystemLayer = Layer.succeed(WorkspaceFileSystem.WorkspaceFileSystem, {
+          editFiles: () => Effect.die("unused"),
+        } as WorkspaceFileSystem.WorkspaceFileSystem["Service"]);
         const generalSubagentLayer = Layer.succeed(
           GeneralSubagents.GeneralSubagentCoordinator,
           GeneralSubagents.GeneralSubagentCoordinator.of({
@@ -311,11 +370,18 @@ it.effect(
             cancel: () => Effect.die("unused"),
           }),
         );
+        const projectMemoryLayer = Layer.succeed(
+          ProjectMemoryStore.ProjectMemoryStore,
+          {} as ProjectMemoryStore.ProjectMemoryStoreShape,
+        );
         const routes = McpHttpServer.layer.pipe(
           Layer.provide(registryLayer),
           Layer.provide(projectionLayer),
           Layer.provide(workspaceLayer),
+          Layer.provide(workspaceFileSystemLayer),
           Layer.provide(generalSubagentLayer),
+          Layer.provide(projectMemoryLayer),
+          Layer.provide(ProjectMemoryPolicy.layer),
           Layer.provide(PreviewAutomationBroker.layer.pipe(Layer.provide(NodeServices.layer))),
         );
         yield* HttpRouter.serve(routes, {
@@ -358,6 +424,8 @@ it.effect(
 
         const rejected = yield* initialize("/mcp/workspace", "preview-token");
         expect(rejected.status).toBe(401);
+        expect((yield* initialize("/mcp/workspace-write", "workspace-token")).status).toBe(401);
+        expect((yield* initialize("/mcp/workspace-write", "expired-token")).status).toBe(401);
 
         const preview = yield* initialize("/mcp", "preview-token");
         expect(preview.status).toBe(200);
@@ -375,7 +443,10 @@ it.effect(
         expect(previewTools.map(({ name }) => name)).toContain("subagent_spawn");
         expect(previewTools.map(({ name }) => name)).toContain("subagent_wait");
         expect(previewTools.map(({ name }) => name)).toContain("subagent_cancel");
+        expect(previewTools.filter(({ name }) => name === "thread_context")).toHaveLength(1);
         expect(previewTools.map(({ name }) => name)).not.toContain("workspace_context");
+        expect(previewTools.map(({ name }) => name)).not.toContain("workspace_edit");
+        expect(previewTools.map(({ name }) => name)).not.toContain("knowledge_graph_query");
         expect(
           previewTools
             .filter(({ inputSchema }) => inputSchema.type !== "object")
@@ -408,6 +479,9 @@ it.effect(
         expect(workspaceTools.map(({ name }) => name)).toContain("preview_status");
         expect(workspaceTools.map(({ name }) => name)).toContain("project_agent_list");
         expect(workspaceTools.map(({ name }) => name)).toContain("subagent_spawn");
+        expect(workspaceTools.filter(({ name }) => name === "thread_context")).toHaveLength(1);
+        expect(workspaceTools.filter(({ name }) => name === "project_memory")).toHaveLength(1);
+        expect(workspaceTools.map(({ name }) => name)).toContain("knowledge_graph_query");
         expect(
           workspaceTools.find(({ name }) => name === "workspace_context")?.annotations,
         ).toEqual({
@@ -417,6 +491,7 @@ it.effect(
           idempotentHint: true,
           openWorldHint: false,
         });
+        expect(workspaceTools.map(({ name }) => name)).not.toContain("workspace_edit");
 
         const workspaceWithoutPreview = yield* initialize(
           "/mcp/workspace-no-preview",
@@ -430,11 +505,23 @@ it.effect(
         );
         expect(workspaceWithoutPreviewTools.map(({ name }) => name)).toContain("workspace_context");
         expect(workspaceWithoutPreviewTools.map(({ name }) => name)).toContain(
+          "knowledge_graph_query",
+        );
+        expect(workspaceWithoutPreviewTools.map(({ name }) => name)).toContain(
           "project_agent_list",
         );
         expect(workspaceWithoutPreviewTools.map(({ name }) => name)).toContain("subagent_spawn");
+        expect(
+          workspaceWithoutPreviewTools.filter(({ name }) => name === "thread_context"),
+        ).toHaveLength(1);
+        expect(
+          workspaceWithoutPreviewTools.filter(({ name }) => name === "project_memory"),
+        ).toHaveLength(1);
         expect(workspaceWithoutPreviewTools.map(({ name }) => name)).not.toContain(
           "preview_status",
+        );
+        expect(workspaceWithoutPreviewTools.map(({ name }) => name)).not.toContain(
+          "workspace_edit",
         );
 
         const coordination = yield* initialize("/mcp/coordination", "coordination-token");
@@ -446,7 +533,10 @@ it.effect(
         );
         expect(coordinationTools.map(({ name }) => name)).toContain("project_agent_list");
         expect(coordinationTools.map(({ name }) => name)).toContain("subagent_spawn");
+        expect(coordinationTools.filter(({ name }) => name === "thread_context")).toHaveLength(1);
         expect(coordinationTools.map(({ name }) => name)).not.toContain("workspace_context");
+        expect(coordinationTools.map(({ name }) => name)).not.toContain("workspace_edit");
+        expect(coordinationTools.map(({ name }) => name)).not.toContain("knowledge_graph_query");
         expect(coordinationTools.map(({ name }) => name)).not.toContain("preview_status");
 
         const workspaceOnly = yield* initialize("/mcp/workspace-only", "workspace-only-token");
@@ -456,7 +546,77 @@ it.effect(
           "workspace-only-token",
           workspaceOnly.headers["mcp-session-id"]!,
         );
-        expect(workspaceOnlyTools.map(({ name }) => name)).toEqual(["workspace_context"]);
+        expect(workspaceOnlyTools.map(({ name }) => name).toSorted()).toEqual([
+          "project_memory",
+          "thread_context",
+          "workspace_context",
+        ]);
+        const workspaceOnlyNoMemory = yield* initialize(
+          "/mcp/workspace-only-no-memory",
+          "workspace-only-no-memory-token",
+        );
+        expect(workspaceOnlyNoMemory.status).toBe(200);
+        const workspaceOnlyNoMemoryTools = yield* listTools(
+          "/mcp/workspace-only-no-memory",
+          "workspace-only-no-memory-token",
+          workspaceOnlyNoMemory.headers["mcp-session-id"]!,
+        );
+        expect(workspaceOnlyNoMemoryTools.map(({ name }) => name).toSorted()).toEqual([
+          "thread_context",
+          "workspace_context",
+        ]);
+        const readOnlyProfiles = [
+          ["/mcp", "preview-token"],
+          ["/mcp/coordination", "coordination-token"],
+          ["/mcp/workspace", "workspace-token"],
+          ["/mcp/workspace-no-memory", "workspace-no-memory-token"],
+          ["/mcp/workspace-no-preview", "workspace-no-preview-token"],
+          ["/mcp/workspace-no-preview-no-memory", "workspace-no-preview-no-memory-token"],
+          ["/mcp/workspace-only", "workspace-only-token"],
+          ["/mcp/workspace-only-no-memory", "workspace-only-no-memory-token"],
+        ] as const;
+        for (const [path, token] of readOnlyProfiles) {
+          const initialized = yield* initialize(path, token);
+          expect(initialized.status).toBe(200);
+          const tools = yield* listTools(path, token, initialized.headers["mcp-session-id"]!);
+          expect(tools.map(({ name }) => name)).not.toContain("workspace_edit");
+        }
+        const writableProfiles = [
+          ["/mcp/workspace-write", "workspace-write-token"],
+          ["/mcp/workspace-write-no-memory", "workspace-write-no-memory-token"],
+          ["/mcp/workspace-write-no-preview", "workspace-write-no-preview-token"],
+          [
+            "/mcp/workspace-write-no-preview-no-memory",
+            "workspace-write-no-preview-no-memory-token",
+          ],
+          ["/mcp/workspace-write-only", "workspace-write-only-token"],
+          ["/mcp/workspace-write-only-no-memory", "workspace-write-only-no-memory-token"],
+        ] as const;
+        for (const [path, token] of writableProfiles) {
+          const initialized = yield* initialize(path, token);
+          expect(initialized.status).toBe(200);
+          const tools = yield* listTools(path, token, initialized.headers["mcp-session-id"]!);
+          expect(tools.map(({ name }) => name)).toContain("workspace_context");
+          expect(tools.filter(({ name }) => name === "workspace_edit")).toHaveLength(1);
+          expect(tools.find(({ name }) => name === "workspace_edit")?.annotations).toEqual({
+            title: "Edit workspace files",
+            readOnlyHint: false,
+            destructiveHint: true,
+            idempotentHint: false,
+            openWorldHint: false,
+          });
+        }
+        const fullSchemaBytes = Buffer.byteLength(JSON.stringify(workspaceTools));
+        const narrowSchemaBytes = Buffer.byteLength(JSON.stringify(workspaceOnlyTools));
+        expect(narrowSchemaBytes).toBeLessThanOrEqual(fullSchemaBytes / 2);
+        expect(workspaceTools.map(({ name }) => name)).toEqual(
+          expect.arrayContaining([
+            "preview_status",
+            "knowledge_graph_query",
+            "project_agent_list",
+            "subagent_spawn",
+          ]),
+        );
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

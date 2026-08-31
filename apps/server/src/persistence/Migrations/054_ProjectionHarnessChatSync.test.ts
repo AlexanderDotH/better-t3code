@@ -12,7 +12,7 @@ it.effect("054 creates stable harness session and native message link projection
   Effect.gen(function* () {
     yield* runMigrations({ toMigrationInclusive: 53 });
 
-    const migrations = yield* runMigrations();
+    const migrations = yield* runMigrations({ toMigrationInclusive: 54 });
     assert.deepStrictEqual(
       migrations.map(([id, name]) => [id, name]),
       [[54, "ProjectionHarnessChatSync"]],

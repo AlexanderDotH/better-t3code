@@ -7,28 +7,41 @@ import { ActivityIndicator, Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
-import { useThemeColor } from "../../lib/useThemeColor";
 import {
   connectionNoticeDetail,
   connectionNoticeSupportsRetryNow,
   type ConnectionNoticePresentation,
 } from "./environmentRecoveryPresentation";
+import { type InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 type EnvironmentConnectionNoticePresentation = ConnectionNoticePresentation &
   Pick<EnvironmentConnectionPresentation, "traceId">;
 
-function noticeTitle(phase: EnvironmentConnectionPhase, environmentLabel: string): string {
+function noticeTitle(
+  phase: EnvironmentConnectionPhase,
+  environmentLabel: string,
+  translator: InterfaceTranslator,
+): string {
   switch (phase) {
     case "offline":
-      return "You are offline";
+      return translator.message("mobile.connection.offlineTitle");
     case "connecting":
-      return `Connecting to ${environmentLabel}...`;
+      return translator.message("mobile.connection.connectingTitle", {
+        environment: environmentLabel,
+      });
     case "reconnecting":
-      return `Reconnecting to ${environmentLabel}...`;
+      return translator.message("mobile.connection.reconnectingTitle", {
+        environment: environmentLabel,
+      });
     case "error":
-      return `${environmentLabel} is unavailable`;
+      return translator.message("mobile.connection.unavailableTitle", {
+        environment: environmentLabel,
+      });
     case "available":
-      return `${environmentLabel} is disconnected`;
+      return translator.message("mobile.connection.disconnectedTitle", {
+        environment: environmentLabel,
+      });
     case "connected":
       return "";
   }
@@ -40,7 +53,7 @@ export function EnvironmentConnectionNotice(props: {
   readonly resourceName: string;
   readonly onRetry: () => void;
 }) {
-  const iconColor = String(useThemeColor("--color-icon-muted"));
+  const translator = useMobileInterfaceTranslator();
   const isRetrying =
     props.connection.phase === "connecting" || props.connection.phase === "reconnecting";
 
@@ -48,27 +61,29 @@ export function EnvironmentConnectionNotice(props: {
     <View className="flex-1 items-center justify-center px-8">
       <View className="max-w-[320px] items-center gap-3">
         {isRetrying ? (
-          <ActivityIndicator size="small" color={iconColor} />
+          <ActivityIndicator size="small" colorClassName={"accent-icon-muted"} />
         ) : (
           <SymbolView
             name={props.connection.phase === "offline" ? "wifi.slash" : "bolt.horizontal.circle"}
             size={24}
-            tintColor={iconColor}
+            tintColorClassName={"accent-icon-muted"}
             type="monochrome"
           />
         )}
 
         <Text className="text-center text-lg font-t3-bold text-foreground">
-          {noticeTitle(props.connection.phase, props.environmentLabel)}
+          {noticeTitle(props.connection.phase, props.environmentLabel, translator)}
         </Text>
         <Text className="text-center text-sm leading-normal text-foreground-muted">
           {connectionNoticeDetail(props.connection, props.resourceName)}
           {props.connection.traceId ? (
             <>
-              {" Trace ID: "}
+              {translator.message("mobile.connection.traceId")}
               <Text
-                accessibilityHint="Copies the trace ID"
-                accessibilityLabel={`Copy trace ID ${props.connection.traceId}`}
+                accessibilityHint={translator.message("mobile.connection.copyTraceHint")}
+                accessibilityLabel={translator.message("mobile.connection.copyTraceWithId", {
+                  traceId: props.connection.traceId,
+                })}
                 accessibilityRole="button"
                 className="underline decoration-dotted"
                 onPress={() =>
@@ -85,12 +100,16 @@ export function EnvironmentConnectionNotice(props: {
 
         {connectionNoticeSupportsRetryNow(props.connection) ? (
           <Pressable
-            accessibilityLabel={`Retry ${props.environmentLabel}`}
+            accessibilityLabel={translator.message("mobile.connection.retryEnvironment", {
+              environment: props.environmentLabel,
+            })}
             accessibilityRole="button"
             className="mt-1 rounded-full bg-subtle px-4 py-2.5 active:opacity-70"
             onPress={props.onRetry}
           >
-            <Text className="text-sm font-t3-bold text-foreground">Retry now</Text>
+            <Text className="text-sm font-t3-bold text-foreground">
+              {translator.message("mobile.connection.retryNow")}
+            </Text>
           </Pressable>
         ) : null}
       </View>

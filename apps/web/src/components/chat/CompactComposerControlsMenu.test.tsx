@@ -1,9 +1,14 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import compactComposerControlsMenuSource from "./CompactComposerControlsMenu.tsx?raw";
-import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
+import {
+  compactComposerMenuSectionIds,
+  compactComposerPopupClassName,
+  CompactComposerControlsMenu,
+  stopCompactComposerMenuInteractionPropagation,
+  stopCompactComposerMenuNavigationKeyPropagation,
+} from "./CompactComposerControlsMenu";
 
 const renderMenu = (contextWindowMenuContent?: ReactNode) =>
   renderToStaticMarkup(
@@ -26,37 +31,57 @@ describe("CompactComposerControlsMenu", () => {
     expect(markup).toContain('data-slot="menu-trigger"');
   });
 
-  it("renders one inline popup ordered as traits, context, Mode, then Access", () => {
-    const popupStart = compactComposerControlsMenuSource.indexOf("<MenuPopup");
-    const popupSource = compactComposerControlsMenuSource.slice(popupStart);
-    const traitsIndex = popupSource.indexOf("{props.traitsMenuContent}");
-    const contextIndex = popupSource.indexOf("{props.contextWindowMenuContent}");
-    const modeIndex = popupSource.indexOf(">Mode</div>");
-    const accessIndex = popupSource.indexOf(">Access</div>");
+  it("orders traits, context, interaction mode, and runtime mode in one section model", () => {
+    expect(
+      compactComposerMenuSectionIds({
+        hasTraits: true,
+        hasContextWindow: true,
+        showInteractionMode: true,
+      }),
+    ).toEqual(["traits", "context-window", "interaction-mode", "runtime-mode"]);
 
-    expect(popupStart).toBeGreaterThanOrEqual(0);
-    expect(compactComposerControlsMenuSource.match(/<MenuPopup/g)).toHaveLength(1);
-    expect(popupSource.match(/<MenuDivider \/>/g)).toHaveLength(3);
-    expect(traitsIndex).toBeGreaterThanOrEqual(0);
-    expect(contextIndex).toBeGreaterThan(traitsIndex);
-    expect(modeIndex).toBeGreaterThan(contextIndex);
-    expect(accessIndex).toBeGreaterThan(modeIndex);
+    expect(
+      compactComposerMenuSectionIds({
+        hasTraits: false,
+        hasContextWindow: false,
+        showInteractionMode: false,
+      }),
+    ).toEqual(["runtime-mode"]);
   });
 
   it("widens only the popup that contains the context slider", () => {
-    expect(compactComposerControlsMenuSource).toContain(
-      'props.contextWindowMenuContent ? "w-72 max-w-[calc(100vw-1.5rem)]" : undefined',
-    );
+    expect(compactComposerPopupClassName(true)).toBe("w-72 max-w-[calc(100vw-1.5rem)]");
+    expect(compactComposerPopupClassName(false)).toBeUndefined();
   });
 
   it("keeps inline slider pointer and navigation-key events inside its section", () => {
-    expect(compactComposerControlsMenuSource).toContain(
-      "onPointerDown={stopMenuInteractionPropagation}",
-    );
-    expect(compactComposerControlsMenuSource).toContain("onClick={stopMenuInteractionPropagation}");
-    expect(compactComposerControlsMenuSource).toContain(
-      "onKeyDown={stopMenuNavigationKeyPropagation}",
-    );
+    const pointerStop = vi.fn();
+    const clickStop = vi.fn();
+    stopCompactComposerMenuInteractionPropagation({ stopPropagation: pointerStop });
+    stopCompactComposerMenuInteractionPropagation({ stopPropagation: clickStop });
+    expect(pointerStop).toHaveBeenCalledOnce();
+    expect(clickStop).toHaveBeenCalledOnce();
+
+    for (const key of [
+      "ArrowDown",
+      "ArrowLeft",
+      "ArrowRight",
+      "ArrowUp",
+      "End",
+      "Home",
+      "PageDown",
+      "PageUp",
+    ]) {
+      const stopPropagation = vi.fn();
+      stopCompactComposerMenuNavigationKeyPropagation({ key, stopPropagation });
+      expect(stopPropagation, key).toHaveBeenCalledOnce();
+    }
+
+    for (const key of ["Enter", "Escape", "Tab", "a"]) {
+      const stopPropagation = vi.fn();
+      stopCompactComposerMenuNavigationKeyPropagation({ key, stopPropagation });
+      expect(stopPropagation, key).not.toHaveBeenCalled();
+    }
   });
 
   it("keeps the compact popup at its existing width without context content", () => {

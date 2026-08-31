@@ -27,25 +27,29 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { agentSettingsEnvironment } from "../../state/agent-settings";
 import { useEnvironmentServerConfig } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import {
   applyHarnessChatTarget,
+  buildHarnessChatSyncRunInput,
   clearHarnessChatSelection,
   createHarnessChatSelection,
+  HARNESS_CHAT_SYNC_PAGE_SIZE,
   harnessChatSelectedCount,
+  harnessChatNeedsTargetResolution,
+  harnessChatStatusState,
+  harnessChatSyncOutcome,
   isHarnessChatSelected,
   selectAllHarnessChats,
   supportsHarnessChatSync,
   toggleHarnessChatSelection,
   type HarnessChatSelectionState,
 } from "./harness-chat-sync-settings";
-
-const PAGE_SIZE = 10;
 
 function failureMessage(result: { readonly _tag: string }, fallback: string): string {
   if (result._tag !== "Failure") return fallback;
@@ -69,9 +73,10 @@ function mergeChats(
 }
 
 function resultSummary(result: HarnessChatSyncRunResult): string {
-  const synced = `${result.syncedCount} synced`;
-  const failed = result.failedCount > 0 ? ` · ${result.failedCount} failed` : "";
-  return `${synced}${failed} · ${result.messagesImported} new messages`;
+  const outcome = harnessChatSyncOutcome(result);
+  const synced = `${outcome.syncedCount} synced`;
+  const failed = outcome.kind === "partial" ? ` · ${outcome.failedCount} failed` : "";
+  return `${synced}${failed} · ${outcome.messagesImported} new messages`;
 }
 
 function sourceSummary(input: {
@@ -109,13 +114,14 @@ function HarnessChatRow(props: {
   readonly projectsById: ReadonlyMap<ProjectId, EnvironmentProject>;
   readonly onToggle: () => void;
 }) {
-  const iconColor = useThemeColor("--color-icon");
+  const iconColor = useUniwindTheme()["--color-icon"];
+  const status = harnessChatStatusState(props.chat);
   const detailParts = [
     `${props.chat.messageCount} messages`,
-    props.chat.activity === "active" ? "Active elsewhere" : null,
-    props.chat.link !== null ? `Already linked: ${props.chat.link.threadId}` : null,
-    props.chat.hasChanges ? "Changes available" : null,
-    props.chat.archived ? "Archived" : null,
+    status.activeElsewhere ? "Active elsewhere" : null,
+    status.linkedThreadId !== null ? `Already linked: ${status.linkedThreadId}` : null,
+    status.changesAvailable ? "Changes available" : null,
+    status.archived ? "Archived" : null,
   ].filter((part): part is string => part !== null);
 
   return (
@@ -171,6 +177,7 @@ function HarnessChatTargetResolverModal(props: {
   readonly onClose: () => void;
   readonly onResolve: (projectId: ProjectId, applyToAll: boolean) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
   const [applyToAll, setApplyToAll] = useState(false);
   const sortedProjects = useMemo(
@@ -187,9 +194,13 @@ function HarnessChatTargetResolverModal(props: {
     >
       <View className="flex-1 bg-sheet">
         <View className="flex-row items-center border-b border-border px-5 py-4">
-          <Text className="flex-1 text-xl font-t3-semibold text-foreground">Choose project</Text>
+          <Text className="flex-1 text-xl font-t3-semibold text-foreground">
+            {translator.message("mobile.settings.harness.chooseProject")}
+          </Text>
           <Pressable accessibilityRole="button" onPress={props.onClose} className="px-2 py-1">
-            <Text className="text-base font-t3-medium text-foreground">Cancel</Text>
+            <Text className="text-base font-t3-medium text-foreground">
+              {translator.message("common.cancel")}
+            </Text>
           </Pressable>
         </View>
         <ScrollView
@@ -199,20 +210,24 @@ function HarnessChatTargetResolverModal(props: {
         >
           <View className="gap-1 px-2">
             <Text className="text-base font-t3-medium text-foreground">
-              {props.chat?.title ?? "Missing workspace"}
+              {props.chat?.title ?? translator.message("mobile.settings.harness.missingWorkspace")}
             </Text>
             <Text className="text-sm leading-normal text-foreground-muted">
-              The original working directory is unavailable. Select where this chat should live.
+              {translator.message("mobile.settings.harness.resolveDescription")}
             </Text>
           </View>
           {props.allowApplyToAll ? (
             <View className="flex-row items-center gap-3 rounded-[24px] bg-card p-4">
               <View className="min-w-0 flex-1">
-                <Text className="text-base text-foreground">Apply to all unresolved chats</Text>
+                <Text className="text-base text-foreground">
+                  {translator.message("mobile.settings.harness.applyAll")}
+                </Text>
                 <Text className="text-sm text-foreground-muted">
                   {props.unresolvedCount > 1
-                    ? `Use one target for ${props.unresolvedCount} selected chats.`
-                    : "Also resolve unloaded matching chats with this target."}
+                    ? translator.message("mobile.settings.harness.applySelected", {
+                        count: props.unresolvedCount,
+                      })
+                    : translator.message("mobile.settings.harness.applyUnloaded")}
                 </Text>
               </View>
               <ThemedSwitch value={applyToAll} onValueChange={setApplyToAll} />
@@ -221,7 +236,7 @@ function HarnessChatTargetResolverModal(props: {
           <View className="overflow-hidden rounded-[24px] bg-card">
             {sortedProjects.length === 0 ? (
               <Text className="p-5 text-center text-sm leading-normal text-foreground-muted">
-                Add a project in this environment before resolving this chat.
+                {translator.message("mobile.settings.harness.addProject")}
               </Text>
             ) : (
               sortedProjects.map((project, index) => (
@@ -254,6 +269,7 @@ function SupportedHarnessChatSource(props: {
   readonly onSynced: () => void;
   readonly active: boolean;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const listChats = useAtomCommand(agentSettingsEnvironment.harnessChatSync.list, {
     reportFailure: false,
   });
@@ -286,7 +302,7 @@ function SupportedHarnessChatSource(props: {
   );
   const [resolverSessionId, setResolverSessionId] = useState<HarnessChatSessionId | null>(null);
   const requestSequence = useRef(0);
-  const placeholderColor = String(useThemeColor("--color-foreground-muted"));
+  const placeholderColor = useUniwindTheme()["--color-foreground-muted"];
   const projectsById = useMemo(
     () => new Map(props.projects.map((project) => [project.id, project])),
     [props.projects],
@@ -305,7 +321,7 @@ function SupportedHarnessChatSource(props: {
           sourceId: props.source.id,
           query,
           includeArchived,
-          limit: PAGE_SIZE,
+          limit: HARNESS_CHAT_SYNC_PAGE_SIZE,
           ...(cursor === null ? {} : { cursor }),
         },
       });
@@ -339,12 +355,13 @@ function SupportedHarnessChatSource(props: {
 
   const selectedUnresolved = useMemo(
     () =>
-      chats.filter(
-        (chat) =>
-          isHarnessChatSelected(selection, chat.sessionId) &&
-          chat.targetProject.kind === "unresolved" &&
-          !targetResolutions.has(chat.sessionId) &&
-          unresolvedTargetProjectId === null,
+      chats.filter((chat) =>
+        harnessChatNeedsTargetResolution({
+          chat,
+          selection,
+          targetResolutions,
+          unresolvedTargetProjectId,
+        }),
       ),
     [chats, selection, targetResolutions, unresolvedTargetProjectId],
   );
@@ -407,28 +424,15 @@ function SupportedHarnessChatSource(props: {
       setLastResult(null);
       const result = await runSync({
         environmentId: props.environmentId,
-        input: {
+        input: buildHarnessChatSyncRunInput({
           sourceId: props.source.id,
-          selection:
-            selection.mode === "allMatching"
-              ? {
-                  mode: "allMatching",
-                  query,
-                  includeArchived,
-                  excludedSessionIds: [...selection.excludedSessionIds],
-                }
-              : { mode: "only", sessionIds: [...selection.sessionIds] },
-          ...(props.source.preferredInstanceId === null
-            ? {}
-            : { providerInstanceId: props.source.preferredInstanceId }),
-          targetResolutions: [...resolutions].map(([sessionId, projectId]) => ({
-            sessionId,
-            projectId,
-          })),
-          ...(unresolvedProjectId === null
-            ? {}
-            : { unresolvedTargetProjectId: unresolvedProjectId }),
-        },
+          preferredInstanceId: props.source.preferredInstanceId,
+          selection,
+          query,
+          includeArchived,
+          targetResolutions: resolutions,
+          unresolvedTargetProjectId: unresolvedProjectId,
+        }),
       });
       setSyncing(false);
       if (result._tag === "Failure") {
@@ -515,7 +519,7 @@ function SupportedHarnessChatSource(props: {
         <View className="gap-1 p-4">
           <Text className="text-sm text-foreground-muted">
             {loading
-              ? "Checking history…"
+              ? translator.message("mobile.settings.harness.checking")
               : sourceSummary({
                   source: props.source,
                   visibleCount: chats.length,
@@ -527,7 +531,7 @@ function SupportedHarnessChatSource(props: {
           {props.source.status.kind === "supported" &&
           !props.source.status.supportsActivityStatus ? (
             <Text className="text-xs leading-normal text-foreground-muted">
-              This harness cannot report whether a source session is active.
+              {translator.message("mobile.settings.harness.activityUnsupported")}
             </Text>
           ) : null}
         </View>
@@ -539,7 +543,7 @@ function SupportedHarnessChatSource(props: {
             className="min-w-0 flex-1 rounded-xl bg-sheet px-3 py-2 text-base text-foreground"
             onChangeText={setQueryDraft}
             onSubmitEditing={() => setQuery(queryDraft.trim())}
-            placeholder="Search chats"
+            placeholder={translator.message("mobile.settings.harness.searchChats")}
             placeholderTextColor={placeholderColor}
             returnKeyType="search"
             value={queryDraft}
@@ -553,13 +557,15 @@ function SupportedHarnessChatSource(props: {
             }}
             className="rounded-xl bg-foreground px-3 py-2"
           >
-            <Text className="font-t3-medium text-background">Search</Text>
+            <Text className="font-t3-medium text-background">
+              {translator.message("common.search")}
+            </Text>
           </Pressable>
         </View>
         <SettingsSwitchRow
           icon="archivebox.fill"
-          label="Include archived"
-          subtitle="Top-level chats only"
+          label={translator.message("mobile.settings.harness.includeArchived")}
+          subtitle={translator.message("mobile.settings.harness.topLevelOnly")}
           value={includeArchived}
           onValueChange={setIncludeArchived}
         />
@@ -569,23 +575,29 @@ function SupportedHarnessChatSource(props: {
             accessibilityRole="button"
             onPress={() => setSelection(clearHarnessChatSelection())}
           >
-            <Text className="font-t3-medium text-foreground">Clear all</Text>
+            <Text className="font-t3-medium text-foreground">
+              {translator.message("mobile.settings.harness.clearAll")}
+            </Text>
           </Pressable>
           <Pressable
             accessibilityRole="button"
             onPress={() => setSelection((current) => selectAllHarnessChats(current))}
           >
-            <Text className="font-t3-medium text-foreground">Select all</Text>
+            <Text className="font-t3-medium text-foreground">
+              {translator.message("mobile.settings.harness.selectAll")}
+            </Text>
           </Pressable>
         </View>
         {loading ? (
           <View className="items-center gap-2 border-t border-border-subtle p-6">
             <ActivityIndicator size="small" />
-            <Text className="text-sm text-foreground-muted">Loading chats…</Text>
+            <Text className="text-sm text-foreground-muted">
+              {translator.message("mobile.settings.harness.loadingChats")}
+            </Text>
           </View>
         ) : chats.length === 0 ? (
           <Text className="border-t border-border-subtle p-5 text-center text-sm text-foreground-muted">
-            No matching chats.
+            {translator.message("mobile.settings.harness.noMatches")}
           </Text>
         ) : (
           chats.map((chat) => (
@@ -608,7 +620,9 @@ function SupportedHarnessChatSource(props: {
             className="border-t border-border-subtle p-4 disabled:opacity-40"
           >
             <Text className="text-center font-t3-medium text-foreground">
-              {loadingMore ? "Loading…" : "View more"}
+              {loadingMore
+                ? translator.message("common.loading")
+                : translator.message("mobile.settings.harness.viewMore")}
             </Text>
           </Pressable>
         ) : null}
@@ -620,7 +634,9 @@ function SupportedHarnessChatSource(props: {
             className="flex-1 rounded-xl border border-border px-3 py-2 disabled:opacity-40"
           >
             <Text className="text-center font-t3-medium text-foreground">
-              {refreshingStatus ? "Refreshing…" : "Refresh status"}
+              {refreshingStatus
+                ? translator.message("mobile.settings.harness.refreshing")
+                : translator.message("mobile.settings.harness.refreshStatus")}
             </Text>
           </Pressable>
           <Pressable
@@ -631,15 +647,18 @@ function SupportedHarnessChatSource(props: {
             className="flex-1 rounded-xl bg-foreground px-3 py-2 disabled:opacity-40"
           >
             <Text className="text-center font-t3-medium text-background">
-              {syncing ? "Syncing…" : "Sync selected"}
+              {syncing
+                ? translator.message("mobile.settings.harness.syncing")
+                : translator.message("mobile.settings.harness.syncSelected")}
             </Text>
           </Pressable>
         </View>
       </SettingsSection>
       {changedMatching > 0 ? (
         <Text className="px-2 text-xs text-foreground-muted">
-          {changedMatching}
-          {countsAreComplete ? "" : "+"} matching chats have changes.
+          {translator.message("mobile.settings.harness.changedMatches", {
+            count: `${changedMatching}${countsAreComplete ? "" : "+"}`,
+          })}
         </Text>
       ) : null}
       {lastResult ? (
@@ -661,7 +680,7 @@ function SupportedHarnessChatSource(props: {
       {error ? (
         <Pressable accessibilityRole="button" onPress={() => void loadPage(null)} className="px-2">
           <Text className="text-sm leading-normal text-danger-foreground">
-            {error} Tap to retry.
+            {error} {translator.message("mobile.settings.harness.tapRetry")}
           </Text>
         </Pressable>
       ) : null}
@@ -708,6 +727,7 @@ export function HarnessChatSyncEnvironment(props: {
   readonly environmentLabel: string;
   readonly projects: ReadonlyArray<EnvironmentProject>;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const config = useEnvironmentServerConfig(props.environmentId);
   const discoverSources = useAtomCommand(agentSettingsEnvironment.harnessChatSync.sources, {
     reportFailure: false,
@@ -756,10 +776,13 @@ export function HarnessChatSyncEnvironment(props: {
   return (
     <View className="gap-4">
       <View className="gap-1 px-2">
-        <Text className="text-xl font-t3-semibold text-foreground">Harness chat sync</Text>
+        <Text className="text-xl font-t3-semibold text-foreground">
+          {translator.message("mobile.settings.harness.title")}
+        </Text>
         <Text className="text-sm leading-normal text-foreground-muted">
-          {props.environmentLabel} · Review available chats, then sync only after you confirm the
-          selection.
+          {translator.message("mobile.settings.harness.description", {
+            environment: props.environmentLabel,
+          })}
         </Text>
       </View>
       {sources === null ? (
@@ -772,14 +795,17 @@ export function HarnessChatSyncEnvironment(props: {
           >
             {loading ? <ActivityIndicator size="small" /> : null}
             <Text className="text-center text-sm text-foreground-muted">
-              {error ?? (loading ? "Finding harness chats…" : "Find harness chats")}
+              {error ??
+                (loading
+                  ? translator.message("mobile.settings.harness.finding")
+                  : translator.message("mobile.settings.harness.find"))}
             </Text>
           </Pressable>
         </SettingsSection>
       ) : sources.length === 0 ? (
         <SettingsSection card title={props.environmentLabel}>
           <Text className="p-5 text-center text-sm leading-normal text-foreground-muted">
-            No configured provider exposes a harness history source.
+            {translator.message("mobile.settings.harness.noSources")}
           </Text>
         </SettingsSection>
       ) : activeSource ? (
@@ -835,12 +861,14 @@ export function HarnessChatSyncEnvironment(props: {
           className="self-start px-2 py-1 disabled:opacity-40"
         >
           <Text className="font-t3-medium text-foreground">
-            {loading ? "Refreshing sources…" : "Refresh sources"}
+            {loading
+              ? translator.message("mobile.settings.harness.refreshingSources")
+              : translator.message("mobile.settings.harness.refreshSources")}
           </Text>
         </Pressable>
       ) : null}
       <Text className="px-2 text-xs leading-normal text-foreground-muted">
-        Sync is additive and manual. It never removes T3 history or polls in the background.
+        {translator.message("mobile.settings.harness.safety")}
       </Text>
     </View>
   );

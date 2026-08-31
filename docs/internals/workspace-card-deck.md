@@ -98,18 +98,25 @@ Hero-to-dock is the only outer-group exception: it uses a separate 180 ms transl
 when the hero state actually changes. Explicit command, stash, and task drawers morph from their
 trigger for 420 ms and exit in 360 ms.
 
-Automatic approval, question, plan, sync, banner, and error surfaces remain real immediately for
-state and accessibility, while their floating chrome enters as a droplet:
+Automatic approval, question, plan, sync, banner, task, and error surfaces remain real immediately
+for state and accessibility. They render through `ComposerFloatingBubble`, outside the active card
+body, so transient status never changes the Chat-defined compact card height. The bubble uses the
+same 22 px horizontal inset as the exposed card edges and leaves a 12 px gap above the upper edge.
+The host is one rounded glass body. Consecutive notices render as visible, individually tinted
+segments inside it and share one outer outline; internal boundaries use separators rather than
+independent rounded cards or a hidden notice stack. Info segments carry plan and decision state,
+while activity segments carry active execution and task state. Its content enters once over 180 ms
+with a small upward settle. Content-only updates do not restart the motion, and there is no mutation
+observer, cloned ghost, decorative neck, or recurring frame work. Explicit command and stash
+drawers retain their paired-trigger surface morphs. A standalone activity segment uses the fill-width
+banner contract, including when it shares the row with task progress. Its Input and Output counters
+accept only a context snapshot whose timestamp belongs to the active turn, preventing stale usage
+from flashing when the next turn starts.
 
-- At 0–22%, a narrow glass neck grows from the nearest composer seam.
-- At 22–68%, the droplet rises and expands toward its final panel rectangle.
-- At 68–84%, the neck retracts and detaches while the panel overshoots by at most 6 px or 1.5%.
-- At 84–100%, the panel settles into the existing 16 px floating-island geometry and gap.
-
-Explicit drawers use the paired trigger as their origin; automatically inserted surfaces use the
-nearest composer edge. The neck is decorative and never becomes an interactive or accessible
-element. Action-required promotion to Chat remains immediate even when the newly visible floating
-surface plays its entry motion.
+Action-required promotion to Chat remains immediate. When Git or MCP is active, or a non-Chat card
+is expanded, the bubble remains mounted with its retained state but is hidden and inert until Chat
+is interactive again. In the draft hero it is positioned above the centered card stack so its
+height does not displace the composer.
 
 ## Cancellation, accessibility, and fallback
 
@@ -127,14 +134,15 @@ only after compact geometry is available. Automatic action drawers do not delay 
 live-region content, or focus contract for decorative motion. Hidden card bodies remain inert, and
 focus is restored to the remembered destination only after an ordinary deck transition completes.
 
-`prefers-reduced-motion: reduce` bypasses scale, overshoot, droplet, and height animation and commits
+`prefers-reduced-motion: reduce` bypasses scale, overshoot, bubble entry, and height animation and commits
 the final layout immediately. Environments without `Element.animate` use the existing clipped CSS
 carousel fallback for deck switching; composer drawers settle immediately. Animation
 failure is never allowed to block state progression or leave a proxy mounted.
 
-Only active motion receives `will-change`. At most the incoming and outgoing card chrome proxies
-plus one droplet neck exist simultaneously. Geometry is measured only at state boundaries, and
-continuous blur, idle repaint loops, and frame-driven React state are prohibited.
+Only active deck or drawer motion receives `will-change`. The floating bubble has one finite CSS
+entry animation and no compositor hint after settlement. Geometry is measured only at state
+boundaries, and continuous animation, idle repaint loops, and frame-driven React state are
+prohibited.
 
 ## Ownership boundaries
 
@@ -145,9 +153,10 @@ expanded-panel collapse before ordinary selection, and promotes Chat for action-
 
 `WorkspaceCardDeck` owns deck geometry, transition roles, surface capture, proxy cleanup, and the
 CSS fallback. The shared surface morph coordinator owns geometry/keyframe calculation and animation
-lifecycle, but it does not own product state or selection policy. The floating-island integration
-owns droplet origins and decorative neck rendering; individual drawers remain responsible for their
-content, focus semantics, and trigger association.
+lifecycle, but it does not own product state or selection policy. `ComposerFloatingBubble` owns the
+external grouped shell, spacing, visibility, separators, and bounded entry motion;
+`ChatComposer` retains product state, lifecycle tone, focus semantics, and the content rendered
+through that host.
 
 `GitWorkspaceCardController` remains the only Git runtime for an active chat. It owns status,
 expansion, dialogs, mutations, and lazy workbench data while rendering through the generic

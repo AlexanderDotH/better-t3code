@@ -18,14 +18,20 @@ phone.
 ## How Tools Work
 
 Gemini receives only tools declared by T3 Code. Repository search and bounded reads use
-`workspace_context`; file writes and exact replacements go through T3's path-fenced workspace
-service; commands run through T3's bounded process runner. T3 applies the thread's permission mode
-before any protected tool executes.
+`workspace_context`; ordinary UTF-8 text changes use the matching `workspace_edit` batch tool.
+One call can write, exactly replace, splice line or character ranges, and delete files while T3
+enforces path, size, revision, and rollback rules. Commands run through T3's bounded process runner
+for formatters, generators, binaries, large files, permission changes, and directory operations.
+T3 applies the thread's permission mode before any protected tool executes.
 
 Plan mode and read-only sessions expose only `workspace_context`. A workspace-write sandbox exposes
 workspace reads and edits but no shell. Fetch workers are always read-only. Stopping a turn aborts
 the local SDK stream and any in-flight T3 tool effect; Google may still account for an API request
 that had already reached the service.
+
+Workspace operations always run on the environment that owns the project, including when chat is
+controlled through mobile, relay, or tunnel. Existing changed-file views and thread checkpoints show
+the result and provide the reverse path.
 
 Gemini's direct SDK adapter does not currently attach user MCP servers or project-agent
 coordination. Those capabilities are shown as unsupported instead of silently falling back to a

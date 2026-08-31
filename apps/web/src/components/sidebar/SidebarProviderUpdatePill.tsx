@@ -3,6 +3,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type { ServerProvider } from "@t3tools/contracts";
 import { CircleCheckIcon, DownloadIcon, LoaderIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 import { primaryServerProvidersAtom } from "../../state/server";
 import {
@@ -40,6 +41,7 @@ function latestProviderCheckedAt(
 }
 
 export function SidebarProviderUpdatePill() {
+  const translator = useInterfaceTranslator();
   const navigate = useNavigate();
   const providers = useAtomValue(primaryServerProvidersAtom);
   const [dismissedKeys, setDismissedKeys] = useState<ReadonlySet<string>>(() => new Set());
@@ -194,7 +196,7 @@ export function SidebarProviderUpdatePill() {
               <Button
                 size="icon-micro"
                 variant="ghost"
-                aria-label="Dismiss provider update notice"
+                aria-label={translator.message("sidebar.providerUpdate.dismiss")}
                 className="relative z-[1] mr-1 [--control-icon-color:currentColor] rounded-md text-inherit opacity-70 hover:bg-transparent hover:opacity-100"
                 onClick={() => startExit(displayedView.key, null, displayedView.key)}
               >
@@ -202,7 +204,9 @@ export function SidebarProviderUpdatePill() {
               </Button>
             }
           />
-          <TooltipPopup side="top">Dismiss until provider status changes</TooltipPopup>
+          <TooltipPopup side="top">
+            {translator.message("sidebar.providerUpdate.dismissUntilChange")}
+          </TooltipPopup>
         </Tooltip>
       )}
     </div>

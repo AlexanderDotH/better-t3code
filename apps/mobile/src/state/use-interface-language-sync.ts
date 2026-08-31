@@ -1,13 +1,13 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import {
-  settleInterfaceLanguageSyncWrites,
-  type InterfaceLanguageSyncWriteOutcome,
+  createInterfaceLocaleCompatibilityMirror,
+  resolveInterfaceLocaleSyncRecord,
 } from "@t3tools/client-runtime/interface-language-sync";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
-  InterfaceLanguagePreference,
-  InterfaceLanguageSyncRecord,
+  InterfaceLocalePreferenceV1,
+  InterfaceLocaleSyncRecordV1,
 } from "@t3tools/contracts";
 import {
   resolveInterfaceLocale,
@@ -19,13 +19,17 @@ import { AppState } from "react-native";
 
 import { uuidv4 } from "../lib/uuid";
 import {
-  createMobileInterfaceLanguageRecord,
-  mobileInterfaceLanguagePreferencePatch,
+  createMobileInterfaceLocaleRecordV1,
+  mobileInterfaceLocalePreferencePatch,
   nextMobileInterfaceLanguageUpdatedAt,
 } from "./interface-language-preference";
 import {
   deriveMobileInterfaceLanguageSync,
+  mobileInterfaceLanguageSyncWrites,
+  settleMobileInterfaceLanguageSyncWrites,
   type MobileInterfaceLanguageSyncEnvironment,
+  type MobileInterfaceLanguageSyncWrite,
+  type MobileInterfaceLanguageSyncWriteOutcome,
 } from "./interface-language-sync";
 import { useEnvironments } from "./environments";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "./preferences";
@@ -33,7 +37,7 @@ import { serverEnvironment } from "./server";
 import { useAtomCommand } from "./use-atom-command";
 
 export interface MobileInterfaceLanguageSyncState {
-  readonly preference: InterfaceLanguagePreference;
+  readonly preference: InterfaceLocalePreferenceV1;
   readonly language: ResolvedInterfaceLanguage;
   readonly locale: string;
   readonly isReady: boolean;
@@ -41,11 +45,11 @@ export interface MobileInterfaceLanguageSyncState {
   readonly failedEnvironmentLabels: readonly string[];
   readonly deferredEnvironmentLabels: readonly string[];
   readonly unsupportedEnvironmentLabels: readonly string[];
-  readonly setPreference: (preference: InterfaceLanguagePreference) => void;
+  readonly setPreference: (preference: InterfaceLocalePreferenceV1) => void;
 }
 
-function writeKey(record: InterfaceLanguageSyncRecord): string {
-  return `${record.updatedAt}:${record.updateId}`;
+function writeKey(write: MobileInterfaceLanguageSyncWrite<EnvironmentId>): string {
+  return `${write.kind}:${write.record.updatedAt}:${write.record.updateId}`;
 }
 
 function updateIds(
@@ -73,13 +77,14 @@ function setIds(
 }
 
 function recordMatches(
-  left: InterfaceLanguageSyncRecord | null,
-  right: InterfaceLanguageSyncRecord | null,
+  left: InterfaceLocaleSyncRecordV1 | null,
+  right: InterfaceLocaleSyncRecordV1 | null,
 ): boolean {
   return (
     left === right ||
     (left !== null &&
       right !== null &&
+      left.version === right.version &&
       left.preference === right.preference &&
       left.updatedAt === right.updatedAt &&
       left.updateId === right.updateId)
@@ -113,7 +118,8 @@ export function useInterfaceLanguageSync(): MobileInterfaceLanguageSyncState {
 
   const preferencesReady = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
   const preferences = AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : null;
-  const localRecord = preferences?.interfaceLanguageSyncRecord;
+  const localLocaleRecord = preferences?.interfaceLocaleSyncRecordV1;
+  const localLegacyRecord = preferences?.interfaceLanguageSyncRecord ?? null;
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
@@ -131,7 +137,8 @@ export function useInterfaceLanguageSync(): MobileInterfaceLanguageSyncState {
         configLoaded: environment.serverConfig !== null,
         environmentSettingsVersion:
           environment.serverConfig?.environment.capabilities.environmentSettingsVersion,
-        record: environment.serverConfig?.settings.interfaceLanguageSyncRecord ?? null,
+        localeRecord: environment.serverConfig?.settings.interfaceLocaleSyncRecordV1 ?? null,
+        legacyRecord: environment.serverConfig?.settings.interfaceLanguageSyncRecord ?? null,
       })),
     [environments],
   );
@@ -141,10 +148,11 @@ export function useInterfaceLanguageSync(): MobileInterfaceLanguageSyncState {
       deriveMobileInterfaceLanguageSync({
         preferencesReady,
         catalogReady,
-        localRecord,
+        localLocaleRecord,
+        localLegacyRecord,
         environments: syncEnvironments,
       }),
-    [catalogReady, localRecord, preferencesReady, syncEnvironments],
+    [catalogReady, localLegacyRecord, localLocaleRecord, preferencesReady, syncEnvironments],
   );
   const resolved = useMemo(
     () => resolveInterfaceLocale(sync.preference, systemLocales),
@@ -163,7 +171,7 @@ export function useInterfaceLanguageSync(): MobileInterfaceLanguageSyncState {
   useEffect(() => {
     const patch = sync.preferencePatch;
     if (patch === null) return;
-    const patchKey = patch.interfaceLanguageSyncRecord.updateId;
+    const patchKey = patch.interfaceLocaleSyncRecordV1.updateId;
     if (attemptedPreferencePatch.current === patchKey) return;
     attemptedPreferencePatch.current = patchKey;
     savePreferences(patch);
@@ -186,8 +194,8 @@ export function useInterfaceLanguageSync(): MobileInterfaceLanguageSyncState {
       setIds(setInFlightEnvironmentIds, [], resetEnvironmentIds);
     }
 
-    const writes = sync.plan.writes.filter((write) => {
-      const key = writeKey(write.record);
+    const writes = mobileInterfaceLanguageSyncWrites(sync.plan).filter((write) => {
+      const key = writeKey(write);
       if (attemptedWriteByEnvironment.current.get(write.environmentId) === key) return false;
       attemptedWriteByEnvironment.current.set(write.environmentId, key);
       return true;
@@ -199,29 +207,48 @@ export function useInterfaceLanguageSync(): MobileInterfaceLanguageSyncState {
 
     void Promise.all(
       writes.map(
-        async (write): Promise<InterfaceLanguageSyncWriteOutcome<EnvironmentId> | null> => {
+        async (write): Promise<MobileInterfaceLanguageSyncWriteOutcome<EnvironmentId> | null> => {
+          const environment = syncEnvironments.find(
+            (candidate) => candidate.environmentId === write.environmentId,
+          );
+          const legacyMirror =
+            write.kind === "locale"
+              ? createInterfaceLocaleCompatibilityMirror(
+                  write.record,
+                  environment?.legacyRecord ?? null,
+                )
+              : write.record;
           const result = await updateServerSettings({
             environmentId: write.environmentId,
-            input: { patch: { interfaceLanguageSyncRecord: write.record } },
+            input: {
+              patch:
+                write.kind === "locale"
+                  ? {
+                      interfaceLocaleSyncRecordV1: write.record,
+                      ...(legacyMirror === null
+                        ? {}
+                        : { interfaceLanguageSyncRecord: legacyMirror }),
+                    }
+                  : { interfaceLanguageSyncRecord: write.record },
+            },
           });
-          if (
-            attemptedWriteByEnvironment.current.get(write.environmentId) !== writeKey(write.record)
-          ) {
+          if (attemptedWriteByEnvironment.current.get(write.environmentId) !== writeKey(write)) {
             return null;
           }
           if (result._tag === "Success") {
-            return { environmentId: write.environmentId, status: "success" };
+            return { kind: write.kind, environmentId: write.environmentId, status: "success" };
           }
           return isAtomCommandInterrupted(result)
             ? null
-            : { environmentId: write.environmentId, status: "failure" };
+            : { kind: write.kind, environmentId: write.environmentId, status: "failure" };
         },
       ),
     ).then((results) => {
       const outcomes = results.filter(
-        (outcome): outcome is InterfaceLanguageSyncWriteOutcome<EnvironmentId> => outcome !== null,
+        (outcome): outcome is MobileInterfaceLanguageSyncWriteOutcome<EnvironmentId> =>
+          outcome !== null,
       );
-      const settlement = settleInterfaceLanguageSyncWrites(sync.plan, outcomes);
+      const settlement = settleMobileInterfaceLanguageSyncWrites(sync.plan, outcomes);
       setIds(
         setFailedEnvironmentIds,
         settlement.failedEnvironmentIds,
@@ -235,29 +262,45 @@ export function useInterfaceLanguageSync(): MobileInterfaceLanguageSyncState {
     const winner = sync.plan.winner;
     if (winner === null) return;
     const synchronizedEnvironmentIds = syncEnvironments
-      .filter((environment) => environment.connected && recordMatches(environment.record, winner))
+      .filter(
+        (environment) =>
+          environment.connected &&
+          recordMatches(
+            resolveInterfaceLocaleSyncRecord({
+              localeRecord: environment.localeRecord,
+              legacyRecord: environment.legacyRecord,
+            }),
+            winner,
+          ),
+      )
       .map((environment) => environment.environmentId);
     setIds(setFailedEnvironmentIds, [], synchronizedEnvironmentIds);
   }, [sync.plan.winner, syncEnvironments]);
 
   const setPreference = useCallback(
-    (preference: InterfaceLanguagePreference) => {
+    (preference: InterfaceLocalePreferenceV1) => {
       const updatedAt = nextMobileInterfaceLanguageUpdatedAt({
         now: Date.now(),
         winnerUpdatedAt: sync.plan.winner?.updatedAt,
         previousLocalUpdatedAt: lastLocalUpdatedAt.current,
       });
       lastLocalUpdatedAt.current = updatedAt;
-      const record = createMobileInterfaceLanguageRecord(
+      const record = createMobileInterfaceLocaleRecordV1(
         preference,
         updatedAt,
         `mobile:${uuidv4()}`,
       );
+      const legacyMirror = createInterfaceLocaleCompatibilityMirror(record, localLegacyRecord);
       attemptedPreferencePatch.current = record.updateId;
-      savePreferences(mobileInterfaceLanguagePreferencePatch(record));
+      savePreferences(
+        mobileInterfaceLocalePreferencePatch(
+          record,
+          legacyMirror === null ? undefined : legacyMirror,
+        ),
+      );
       setFailedEnvironmentIds([]);
     },
-    [savePreferences, sync.plan.winner?.updatedAt],
+    [localLegacyRecord, savePreferences, sync.plan.winner?.updatedAt],
   );
 
   const failedEnvironmentLabels = useMemo(

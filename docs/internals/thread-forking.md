@@ -2,7 +2,8 @@
 
 Thread forking creates a durable thread in the source project and copies a frozen timeline prefix
 through one completed message or proposed-plan boundary. It is an orchestration operation, not a
-client-side transcript import and not a provider-native session fork.
+client-side transcript import. Its provider continuation may use a provider-native fork when a
+compatible cursor exists.
 
 ## Contract and atomic creation
 
@@ -33,19 +34,23 @@ first native turn. A setup failure records `thread.fork-workspace-updated` with 
 the fork, and prevents the user message from being appended. Retrying the turn retries preparation
 without creating a second worktree after readiness is recorded.
 
-The first provider request always starts a fresh session. `providerTranscriptHandoff` serializes
-only client-visible frozen history, includes supported inherited attachments, and excludes private
-reasoning, provider cursors, MCP sessions, credentials, approvals, and runtime-only payloads. Fork
-creation always preserves the complete canonical prefix. On the first provider turn, the newest
-complete history entries and supported inherited attachments are fitted into the capacity left after
-the user's message and attachments. Older provider context may be omitted with an explicit handoff
-notice, but it remains present in the forked timeline. The user's message keeps the ordinary provider
-input and attachment limits.
+The planner preserves the complete canonical prefix in T3 storage and records the last compatible
+provider cursor. On the first destination turn it prefers a provider-native fork when the selected
+provider instance exposes that exact capability and cursor. Native forking avoids replaying the
+parent transcript. Changing provider instance or lacking a usable cursor selects the deterministic
+compact-handoff strategy instead.
 
-`ProviderCommandReactor` prepends this handoff exactly once. It marks the handoff complete only
-after `sendTurn` succeeds. Build or send failures leave it pending for retry, while a completed
-handoff is never added to later turns. Model or provider changes on the first turn still use the
-selected destination configuration and cannot resume the source conversation.
+`providerTranscriptHandoff` serializes only the original goal, current turn state, latest exchange,
+latest checkpoint, and inherited attachment metadata inside `<t3code_context_handoff>`. Individual
+message text is bounded while retaining both ends. Private reasoning, MCP sessions, credentials,
+approvals, and runtime-only payloads are excluded. Exact older canonical messages remain available
+through `thread_context`; compaction never deletes them from the T3 timeline.
+
+`ProviderCommandReactor` passes a compact handoff separately exactly once. `ProviderService`
+validates the user's new message and server-owned handoff independently before combining them. The
+reactor marks the handoff complete only after `sendTurn` succeeds. Build or send failures leave it
+pending for retry, while a completed handoff is never added to later turns. Provider-native
+compaction remains an adapter capability and does not change the canonical T3 history.
 
 ## Client behavior
 

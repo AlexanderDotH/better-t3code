@@ -24,6 +24,7 @@ import {
   RuntimeMode,
 } from "./orchestration.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
+import { ProjectMemoryMode } from "./projectMemory.ts";
 
 const ProviderSessionStatus = Schema.Literals([
   "connecting",
@@ -80,11 +81,38 @@ export const ProviderSessionStartInput = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   resumeCursor: Schema.optional(Schema.Unknown),
   freshSession: Schema.optional(Schema.Boolean),
+  projectMemoryMode: Schema.optional(ProjectMemoryMode),
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
   sandboxMode: Schema.optional(ProviderSandboxMode),
   runtimeMode: RuntimeMode,
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
+
+export const ProviderForkCursor = Schema.Struct({
+  providerThreadId: TrimmedNonEmptyString,
+  providerTurnId: TrimmedNonEmptyString,
+});
+export type ProviderForkCursor = typeof ProviderForkCursor.Type;
+
+export const ProviderForkStrategy = Schema.Literals(["provider-native", "compact-handoff"]);
+export type ProviderForkStrategy = typeof ProviderForkStrategy.Type;
+
+export const ProviderCompactThreadInput = Schema.Struct({ threadId: ThreadId });
+export type ProviderCompactThreadInput = typeof ProviderCompactThreadInput.Type;
+
+export class ProviderCompactionError extends Schema.TaggedErrorClass<ProviderCompactionError>()(
+  "ProviderCompactionError",
+  {
+    reason: Schema.Literals(["unavailable", "failed"]),
+    detail: TrimmedNonEmptyString,
+  },
+) {}
+
+export const ProviderTurnTranscriptHandoff = Schema.Struct({
+  text: TrimmedNonEmptyString,
+  attachments: Schema.optional(Schema.Array(ChatAttachment)),
+});
+export type ProviderTurnTranscriptHandoff = typeof ProviderTurnTranscriptHandoff.Type;
 
 export const ProviderSendTurnInput = Schema.Struct({
   threadId: ThreadId,
@@ -94,6 +122,9 @@ export const ProviderSendTurnInput = Schema.Struct({
   attachments: Schema.optional(
     Schema.Array(ChatAttachment).check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
   ),
+  // Server-owned continuation context is validated separately from the new
+  // user turn. It must never be trimmed to the composer transport limits.
+  transcriptHandoff: Schema.optional(ProviderTurnTranscriptHandoff),
   modelSelection: Schema.optional(ModelSelection),
   interactionMode: Schema.optional(ProviderInteractionMode),
 });
@@ -130,6 +161,29 @@ export const ProviderRespondToUserInputInput = Schema.Struct({
   answers: ProviderUserInputAnswers,
 });
 export type ProviderRespondToUserInputInput = typeof ProviderRespondToUserInputInput.Type;
+
+export const ProviderUploadFeedbackInput = Schema.Struct({
+  threadId: ThreadId,
+  reason: Schema.optional(TrimmedNonEmptyString),
+});
+export type ProviderUploadFeedbackInput = typeof ProviderUploadFeedbackInput.Type;
+
+export const ProviderUploadFeedbackResult = Schema.Struct({
+  feedbackId: TrimmedNonEmptyString,
+});
+export type ProviderUploadFeedbackResult = typeof ProviderUploadFeedbackResult.Type;
+
+export class ProviderUploadFeedbackError extends Schema.TaggedErrorClass<ProviderUploadFeedbackError>()(
+  "ProviderUploadFeedbackError",
+  {
+    threadId: ThreadId,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Failed to upload feedback for thread ${this.threadId}.`;
+  }
+}
 
 const ProviderEventKind = Schema.Literals(["session", "notification", "request", "error"]);
 

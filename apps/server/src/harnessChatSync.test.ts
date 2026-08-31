@@ -492,6 +492,45 @@ describe("Harness chat sync", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("preserves repeated provider cursor provenance at the public list boundary", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-harness-sync-repeated-cursor-",
+      });
+      const sourceId = HarnessChatSyncSourceId.make("custom:history:repeated-cursor");
+      const adapter: ProviderHistorySyncAdapter = {
+        list: () => Effect.succeed({ items: [], nextCursor: "repeat" }),
+        read: ({ sessionId }) => Effect.succeed({ sessionId, items: [], updatedAt: createdAt }),
+        resumeCursor: ({ sessionId }) => Effect.succeed({ resumeCursor: { sessionId } }),
+      };
+      const instance = makeHistoryInstance({
+        instanceId: "custom-repeated-cursor",
+        sourceId,
+        continuationKey: "custom:home:repeated-cursor",
+        adapter,
+      });
+
+      const error = yield* Effect.flip(
+        Effect.gen(function* () {
+          const service = yield* makeHarnessChatSync();
+          return yield* service.list({
+            sourceId,
+            query: "",
+            includeArchived: false,
+            limit: 10,
+          });
+        }).pipe(Effect.provide(makeHarnessSyncTestLayer({ baseDir, instances: [instance] }))),
+      );
+
+      expect(error).toMatchObject({
+        code: "source-unavailable",
+        message: "Could not list that harness history.",
+      });
+      expect(String(error.cause)).toContain("repeated a pagination cursor");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("returns the first native history page without scanning the remaining chats", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -589,7 +628,21 @@ describe("Harness chat sync", () => {
           cursor: first.nextCursor ?? undefined,
           limit: 10,
         });
-        return { first, second };
+        const legacyCursor = yield* service.list({
+          sourceId,
+          query: "match",
+          includeArchived: false,
+          cursor: "legacy-client-cursor",
+          limit: 10,
+        });
+        const malformedVersionedCursor = yield* service.list({
+          sourceId,
+          query: "match",
+          includeArchived: false,
+          cursor: "harness-native:not-valid-base64",
+          limit: 10,
+        });
+        return { first, second, legacyCursor, malformedVersionedCursor };
       }).pipe(
         Effect.provide(
           makeHarnessSyncTestLayer({
@@ -620,6 +673,8 @@ describe("Harness chat sync", () => {
       });
       expect(result.second.chats).toHaveLength(2);
       expect(result.second.nextCursor).toBeNull();
+      expect(result.legacyCursor).toEqual(result.first);
+      expect(result.malformedVersionedCursor).toEqual(result.first);
       expect(listRequests).toEqual([{ limit: 10 }, { cursor: "10", limit: 10 }]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -938,6 +993,88 @@ describe("Harness chat sync", () => {
       });
       expect(persistedPath).not.toBeNull();
       if (persistedPath) expect(yield* fileSystem.exists(persistedPath)).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("rejects a transcript whose native session differs without creating local state", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-harness-sync-mismatched-session-",
+      });
+      const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-harness-sync-mismatched-workspace-",
+      });
+      const sessionId = HarnessChatSessionId.make("session-expected");
+      const sourceId = HarnessChatSyncSourceId.make("custom:history:mismatched-session");
+      const commands: OrchestrationCommand[] = [];
+      const adapter: ProviderHistorySyncAdapter = {
+        list: () =>
+          Effect.succeed({
+            items: [
+              {
+                sessionId,
+                title: "Mismatched transcript",
+                preview: null,
+                cwd: workspaceRoot,
+                model: null,
+                updatedAt: createdAt,
+                archived: false,
+                isChild: false,
+                messageCount: 1,
+                activity: "idle",
+              },
+            ],
+          }),
+        read: () =>
+          Effect.succeed({
+            sessionId: "session-from-another-request",
+            items: [],
+            updatedAt: createdAt,
+          }),
+        resumeCursor: () => Effect.die("resume must not run for a mismatched transcript"),
+      };
+      const instance = makeHistoryInstance({
+        instanceId: "custom-mismatched-session",
+        sourceId,
+        continuationKey: "custom:home:mismatched-session",
+        adapter,
+      });
+
+      const result = yield* Effect.gen(function* () {
+        const service = yield* makeHarnessChatSync();
+        return yield* service.run({
+          sourceId,
+          selection: { mode: "only", sessionIds: [sessionId] },
+          targetResolutions: [],
+        });
+      }).pipe(
+        Effect.provide(
+          makeHarnessSyncTestLayer({
+            baseDir,
+            instances: [instance],
+            projects: [makeProjectShell("project-mismatched-session", workspaceRoot)],
+            commands,
+          }),
+        ),
+      );
+
+      expect(result).toMatchObject({
+        selectedCount: 1,
+        syncedCount: 0,
+        failedCount: 1,
+        threadsCreated: 0,
+        messagesImported: 0,
+      });
+      expect(result.failures).toEqual([
+        {
+          sessionId,
+          code: "history-read-failed",
+          message: "The provider returned a transcript for a different session.",
+          retryable: false,
+        },
+      ]);
+      expect(commands).toEqual([]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

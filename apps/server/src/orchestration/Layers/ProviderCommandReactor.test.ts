@@ -17,6 +17,7 @@ import {
   RuntimeSessionId,
   type ServerProvider,
   type ProviderTurnStartResult,
+  type ProjectMemoryReadResponse,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import {
@@ -77,6 +78,7 @@ import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
 import { NoOpSkillEngineLayer } from "../../skills/testUtils/NoOpSkillEngine.ts";
 import { PROJECT_AGENT_COORDINATION_INSTRUCTIONS } from "../../projectAgent/ProjectAgentInstructions.ts";
+import { ProjectMemoryStore } from "../../projectMemory/ProjectMemoryStore.ts";
 import {
   FetchWorkerCoordinator,
   type FetchRunInput,
@@ -122,6 +124,46 @@ function fetchProviderFixture(input: {
   };
 }
 
+function codexAutoReasoningProviderFixture(model: string): ServerProvider {
+  const provider = fetchProviderFixture({
+    instanceId: "codex",
+    driver: "codex",
+    models: [model],
+  });
+  return {
+    ...provider,
+    models: [
+      {
+        slug: model,
+        name: model,
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "reasoningEffort",
+              label: "Reasoning effort",
+              type: "select",
+              options: ["low", "medium", "high", "xhigh"].map((effort) => ({
+                id: effort,
+                label: effort,
+              })),
+            },
+            {
+              id: "serviceTier",
+              label: "Service tier",
+              type: "select",
+              options: ["default", "priority"].map((tier) => ({
+                id: tier,
+                label: tier,
+              })),
+            },
+          ],
+        },
+      },
+    ],
+  };
+}
+
 const deriveServerPathsSync = (baseDir: string, devUrl: URL | undefined) =>
   Effect.runSync(deriveServerPaths(baseDir, devUrl).pipe(Effect.provide(NodeServices.layer)));
 
@@ -146,7 +188,10 @@ async function waitFor(
 
 describe("ProviderCommandReactor", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderCommandReactor | ProjectionSnapshotQuery,
+    | OrchestrationEngineService
+    | ProviderCommandReactor
+    | ProjectionSnapshotQuery
+    | ServerSettingsService,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -272,6 +317,8 @@ describe("ProviderCommandReactor", () => {
     readonly projectedSubagentsBeforeStart?: ReadonlyArray<OrchestrationSubagentSummary>;
     readonly projectedActivitiesBeforeStart?: ReadonlyArray<OrchestrationThreadActivity>;
     readonly seedMatchingLiveProviderSession?: boolean;
+    readonly interruptTurnEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
+    readonly stopSessionEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -281,10 +328,20 @@ describe("ProviderCommandReactor", () => {
     readonly fetchHandoffAllowed?: boolean;
     readonly fetchInterruptHandled?: boolean;
     readonly forkBeforeStart?: boolean;
+    readonly forkProviderCursor?: {
+      readonly providerThreadId: string;
+      readonly providerTurnId: string;
+    };
+    readonly forkSessionEffect?: (
+      input: Parameters<ProviderServiceShape["forkSession"]>[0],
+    ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
     readonly forkSourceUserText?: string;
+    readonly serverSettings?: Parameters<typeof ServerSettingsService.layerTest>[0];
     readonly sendTurnEffect?: (
       execution: number,
     ) => Effect.Effect<ProviderTurnStartResult, ProviderAdapterRequestError>;
+    readonly projectMemoryRead?: ProjectMemoryReadResponse;
+    readonly decideAutoReasoningEffect?: TextGenerationShape["decideAutoReasoning"];
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -374,24 +431,28 @@ describe("ProviderCommandReactor", () => {
         );
       }),
     );
-    const interruptTurn = vi.fn((_: unknown) => Effect.void);
+    const interruptTurn = vi.fn((_: unknown) => input?.interruptTurnEffect?.() ?? Effect.void);
     const requestAbort = vi.fn<TurnAbortCoordinator["Service"]["requestAbort"]>(() => Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
-    const stopSession = vi.fn((input: unknown) =>
-      Effect.sync(() => {
-        const threadId =
-          typeof input === "object" && input !== null && "threadId" in input
-            ? (input as { threadId?: ThreadId }).threadId
-            : undefined;
-        if (!threadId) {
-          return;
-        }
-        const index = runtimeSessions.findIndex((session) => session.threadId === threadId);
-        if (index >= 0) {
-          runtimeSessions.splice(index, 1);
-        }
-      }),
+    const stopSession = vi.fn((stopInput: unknown) =>
+      (input?.stopSessionEffect?.() ?? Effect.void).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const threadId =
+              typeof stopInput === "object" && stopInput !== null && "threadId" in stopInput
+                ? (stopInput as { threadId?: ThreadId }).threadId
+                : undefined;
+            if (!threadId) {
+              return;
+            }
+            const index = runtimeSessions.findIndex((session) => session.threadId === threadId);
+            if (index >= 0) {
+              runtimeSessions.splice(index, 1);
+            }
+          }),
+        ),
+      ),
     );
     const renameBranch = vi.fn((input: unknown) =>
       Effect.succeed({
@@ -403,6 +464,11 @@ describe("ProviderCommandReactor", () => {
             ? input.newBranch
             : "renamed-branch",
       }),
+    );
+    const pruneWorktrees = vi.fn((_: { readonly cwd: string }) => Effect.void);
+    const createWorktree = vi.fn(
+      (input: { readonly refName: string; readonly path: string | null }) =>
+        Effect.succeed({ worktree: { path: input.path ?? "", refName: input.refName } }),
     );
     const refreshStatus = vi.fn((_: string) =>
       Effect.succeed({
@@ -430,6 +496,14 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
     );
+    const generateThreadMetadata = vi.fn<TextGenerationShape["generateThreadMetadata"]>((_) =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateThreadMetadata",
+          detail: "disabled in test harness",
+        }),
+      ),
+    );
     const generateThreadTitle = vi.fn<TextGenerationShape["generateThreadTitle"]>((_) =>
       Effect.fail(
         new TextGenerationError({
@@ -437,6 +511,16 @@ describe("ProviderCommandReactor", () => {
           detail: "disabled in test harness",
         }),
       ),
+    );
+    const decideAutoReasoning = vi.fn<TextGenerationShape["decideAutoReasoning"]>(
+      (request) =>
+        input?.decideAutoReasoningEffect?.(request) ??
+        Effect.fail(
+          new TextGenerationError({
+            operation: "decideAutoReasoning",
+            detail: "disabled in test harness",
+          }),
+        ),
     );
     const defaultDriver = ProviderDriverKind.make(
       String(modelSelection.instanceId).startsWith("claude")
@@ -511,12 +595,42 @@ describe("ProviderCommandReactor", () => {
     const requestFetchInterrupt = vi.fn<FetchWorkerCoordinator["Service"]["requestInterrupt"]>(() =>
       Effect.succeed(input?.fetchInterruptHandled ?? false),
     );
+    const serverSettingsLayer = ServerSettingsService.layerTest({
+      ...input?.serverSettings,
+      ...(input?.fetchModelSelection !== undefined
+        ? { fetchModelSelection: input.fetchModelSelection }
+        : {}),
+    });
+    const readProjectMemory = vi.fn(() =>
+      Effect.succeed(
+        input?.projectMemoryRead ?? {
+          mode: "provider" as const,
+          storage: null,
+          entries: [],
+          markdown: "",
+          tokenBudget: 2_560,
+          estimatedTokens: 0,
+          truncated: false,
+        },
+      ),
+    );
 
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
+    const forkSession = vi.fn((forkInput: Parameters<ProviderServiceShape["forkSession"]>[0]) =>
+      (input?.forkSessionEffect?.(forkInput) ?? unsupported()).pipe(
+        Effect.tap((session) =>
+          Effect.sync(() => {
+            runtimeSessions.push(session);
+          }),
+        ),
+      ),
+    );
     const service: ProviderServiceShape = {
       startSession: startSession as ProviderServiceShape["startSession"],
+      forkSession,
       startTransientSession: () => unsupported(),
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
+      compactThread: () => Effect.void,
       interruptTurn: interruptTurn as ProviderServiceShape["interruptTurn"],
       resolveAbortTarget: () => unsupported(),
       interruptAbortTarget: () => unsupported(),
@@ -552,6 +666,7 @@ describe("ProviderCommandReactor", () => {
         });
       },
       rollbackConversation: () => unsupported(),
+      uploadFeedback: () => unsupported(),
       get streamEvents() {
         return Stream.fromPubSub(runtimeEventPubSub);
       },
@@ -621,6 +736,8 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(
         Layer.mock(GitWorkflowService.GitWorkflowService)({
           renameBranch,
+          pruneWorktrees,
+          createWorktree,
         } satisfies Partial<GitWorkflowService.GitWorkflowService["Service"]>),
       ),
       Layer.provideMerge(
@@ -634,18 +751,15 @@ describe("ProviderCommandReactor", () => {
       ),
       Layer.provideMerge(
         Layer.mock(TextGeneration, {
+          decideAutoReasoning,
           generateBranchName,
+          generateThreadMetadata,
           generateThreadTitle,
         }),
       ),
       Layer.provideMerge(NoOpSkillEngineLayer),
-      Layer.provideMerge(
-        ServerSettingsService.layerTest(
-          input?.fetchModelSelection !== undefined
-            ? { fetchModelSelection: input.fetchModelSelection }
-            : {},
-        ),
-      ),
+      Layer.provideMerge(Layer.mock(ProjectMemoryStore)({ read: readProjectMemory })),
+      Layer.provideMerge(serverSettingsLayer),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -654,6 +768,7 @@ describe("ProviderCommandReactor", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
+    const serverSettings = await runtime.runPromise(Effect.service(ServerSettingsService));
     const runEffect = <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect);
 
     await runEffect(
@@ -684,6 +799,30 @@ describe("ProviderCommandReactor", () => {
           createdAt: now,
         }),
       );
+      const sourceTurnId = asTurnId("source-provider-turn");
+      if (input.forkProviderCursor !== undefined) {
+        await runEffect(
+          engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make("cmd-source-session-running"),
+            threadId: sourceThreadId,
+            session: {
+              threadId: sourceThreadId,
+              status: "running",
+              providerName: "codex",
+              providerInstanceId: modelSelection.instanceId,
+              runtimeSessionId: null,
+              runtimeMode: "approval-required",
+              activeTurnId: sourceTurnId,
+              providerForkCursor: input.forkProviderCursor,
+              abortState: null,
+              lastError: null,
+              updatedAt: now,
+            },
+            createdAt: now,
+          }),
+        );
+      }
       await runEffect(
         engine.dispatch({
           type: "thread.message.import",
@@ -702,7 +841,7 @@ describe("ProviderCommandReactor", () => {
                 sizeBytes: 32,
               },
             ],
-            turnId: null,
+            turnId: input.forkProviderCursor === undefined ? null : sourceTurnId,
             streaming: false,
             createdAt: now,
             updatedAt: now,
@@ -719,13 +858,36 @@ describe("ProviderCommandReactor", () => {
             role: "assistant",
             text: "source completed answer",
             attachments: [],
-            turnId: null,
+            turnId: input.forkProviderCursor === undefined ? null : sourceTurnId,
             streaming: false,
             createdAt: now,
             updatedAt: now,
           },
         }),
       );
+      if (input.forkProviderCursor !== undefined) {
+        await runEffect(
+          engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make("cmd-source-session-ready"),
+            threadId: sourceThreadId,
+            session: {
+              threadId: sourceThreadId,
+              status: "ready",
+              providerName: "codex",
+              providerInstanceId: modelSelection.instanceId,
+              runtimeSessionId: null,
+              runtimeMode: "approval-required",
+              activeTurnId: null,
+              providerForkCursor: input.forkProviderCursor,
+              abortState: null,
+              lastError: null,
+              updatedAt: now,
+            },
+            createdAt: now,
+          }),
+        );
+      }
       await runEffect(
         engine.dispatch({
           type: "thread.fork",
@@ -958,6 +1120,7 @@ describe("ProviderCommandReactor", () => {
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       readShell: () => Effect.runPromise(snapshotQuery.getShellSnapshot()),
       startSession,
+      forkSession,
       sendTurn,
       runFetch,
       fetchHandoffInputs,
@@ -968,9 +1131,15 @@ describe("ProviderCommandReactor", () => {
       respondToUserInput,
       stopSession,
       renameBranch,
+      pruneWorktrees,
+      createWorktree,
       refreshStatus,
       generateBranchName,
+      generateThreadMetadata,
       generateThreadTitle,
+      decideAutoReasoning,
+      readProjectMemory,
+      serverSettings,
       runtimeSessions,
       stateDir,
       drain,
@@ -988,6 +1157,73 @@ describe("ProviderCommandReactor", () => {
       },
     };
   }
+
+  it("applies current agent enhancement settings only to newly activated turns", async () => {
+    const harness = await createHarness({
+      serverSettings: {
+        betterT3Environment: { flags: { "agent.deepThinking": true } },
+        agentEnhancement: {
+          cavemanMode: "full",
+          deepThinking: {
+            enabled: false,
+            stepCount: 4,
+            refinementPasses: 1,
+            parallelEnabled: false,
+          },
+        },
+      },
+    });
+    const dispatchTurn = (input: { readonly command: string; readonly message: string }) =>
+      harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(input.command),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId(`${input.command}-message`),
+            role: "user",
+            text: input.message,
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:01.000Z",
+        }),
+      );
+
+    await dispatchTurn({ command: "cmd-enhanced-turn", message: "first request" });
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    const firstProviderInput = harness.sendTurn.mock.calls[0]?.[0]?.input;
+    expect(firstProviderInput).toContain("### Deep thinking");
+    expect(firstProviderInput).toContain("### Caveman mode");
+    expect(firstProviderInput?.endsWith("first request")).toBe(true);
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.interactionMode).toBe(
+      DEFAULT_PROVIDER_INTERACTION_MODE,
+    );
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      runtimeMode: "approval-required",
+    });
+
+    await harness.runEffect(
+      harness.serverSettings.updateSettings({
+        betterT3Environment: { flags: { "agent.deepThinking": false } },
+        agentEnhancement: { cavemanMode: "off" },
+      }),
+    );
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toBe(firstProviderInput);
+
+    await dispatchTurn({ command: "cmd-unenhanced-turn", message: "second request" });
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(harness.sendTurn.mock.calls[1]?.[0]?.input).toBe("second request");
+
+    const readModel = await harness.readModel();
+    const storedUserMessages =
+      readModel.threads
+        .find((thread) => thread.id === ThreadId.make("thread-1"))
+        ?.messages.filter((message) => message.role === "user")
+        .map((message) => message.text) ?? [];
+    expect(storedUserMessages).toEqual(["first request", "second request"]);
+  });
 
   it("starts a fork in a fresh provider session and completes its handoff exactly once", async () => {
     const harness = await createHarness({ forkBeforeStart: true });
@@ -1027,11 +1263,17 @@ describe("ProviderCommandReactor", () => {
       freshSession: true,
     });
     expect(harness.startSession.mock.calls[0]?.[1]).not.toHaveProperty("resumeCursor");
-    expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toContain("source question with image");
-    expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toContain("source completed answer");
-    expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toContain("new fork question");
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toBe("new fork question");
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.transcriptHandoff?.text).toContain(
+      "source question with image",
+    );
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.transcriptHandoff?.text).toContain(
+      "source completed answer",
+    );
+    expect(
+      harness.sendTurn.mock.calls[0]?.[0]?.transcriptHandoff?.attachments?.map((entry) => entry.id),
+    ).toEqual(["source-image"]);
     expect(harness.sendTurn.mock.calls[0]?.[0]?.attachments?.map((entry) => entry.id)).toEqual([
-      "source-image",
       "current-image",
     ]);
 
@@ -1072,7 +1314,110 @@ describe("ProviderCommandReactor", () => {
     expect(harness.sendTurn.mock.calls[1]?.[0]?.input).toBe("ordinary follow-up");
   });
 
-  it("fits oversized fork history around the first user prompt", async () => {
+  it("uses the persisted Codex fork cursor without injecting transcript bytes", async () => {
+    const modelSelection = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-sol", [
+      { id: "reasoningEffort", value: "max" },
+      { id: "contextWindow", value: "262144" },
+    ]);
+    const harness = await createHarness({
+      forkBeforeStart: true,
+      forkProviderCursor: {
+        providerThreadId: "provider-source-thread",
+        providerTurnId: "provider-source-turn-9",
+      },
+      threadModelSelection: modelSelection,
+      forkSessionEffect: (input) =>
+        Effect.succeed({
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          status: "ready",
+          runtimeMode: input.session.runtimeMode,
+          cwd: input.session.cwd,
+          model: input.session.modelSelection?.model,
+          threadId: input.destinationThreadId,
+          runtimeSessionId: RuntimeSessionId.make("runtime-native-fork"),
+          resumeCursor: { threadId: "provider-forked-thread" },
+          createdAt: "2026-01-01T00:00:01.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+        }),
+    });
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-native-fork-turn"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("native-fork-user-message"),
+          role: "user",
+          text: "continue natively",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.startSession).not.toHaveBeenCalled();
+    expect(harness.forkSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceThreadId: ThreadId.make("source-thread-1"),
+        destinationThreadId: ThreadId.make("thread-1"),
+        sourceProviderThreadId: "provider-source-thread",
+        lastProviderTurnId: "provider-source-turn-9",
+        session: expect.objectContaining({ modelSelection }),
+      }),
+    );
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toBe("continue natively");
+    expect(harness.sendTurn.mock.calls[0]?.[0]).not.toHaveProperty("transcriptHandoff");
+  });
+
+  it("falls back to a compact handoff when the native fork RPC fails", async () => {
+    const harness = await createHarness({
+      forkBeforeStart: true,
+      forkProviderCursor: {
+        providerThreadId: "provider-source-thread",
+        providerTurnId: "provider-source-turn-9",
+      },
+      forkSessionEffect: () =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: "codex",
+            method: "thread/fork",
+            detail: "injected native fork failure",
+          }),
+        ),
+    });
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-native-fork-fallback-turn"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("native-fork-fallback-user-message"),
+          role: "user",
+          text: "continue after failed native fork",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.forkSession).toHaveBeenCalledTimes(1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({ freshSession: true });
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toBe("continue after failed native fork");
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.transcriptHandoff?.text).toContain(
+      "source question with image",
+    );
+  });
+
+  it("passes a compact fork handoff while retaining the exact source history in projection", async () => {
     const sourceText = "source context ".repeat(10_000);
     const harness = await createHarness({
       forkBeforeStart: true,
@@ -1097,11 +1442,12 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    const providerInput = harness.sendTurn.mock.calls[0]?.[0]?.input ?? "";
-    expect(providerInput.length).toBeLessThanOrEqual(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
-    expect(providerInput).toContain("Earlier fork history was omitted");
-    expect(providerInput).toContain("source completed answer");
-    expect(providerInput).toContain("continue from the fork");
+    const request = harness.sendTurn.mock.calls[0]?.[0];
+    expect(request?.input).toBe("continue from the fork");
+    expect(request?.transcriptHandoff?.text.length).toBeLessThan(25_000);
+    expect(request?.transcriptHandoff?.text).toContain("[truncated]");
+    expect(request?.transcriptHandoff?.text).not.toContain(sourceText);
+    expect(request?.transcriptHandoff?.text).toContain("source completed answer");
 
     const readModel = await harness.readModel();
     const forkThread = readModel.threads.find((thread) => thread.id === ThreadId.make("thread-1"));
@@ -1171,8 +1517,11 @@ describe("ProviderCommandReactor", () => {
     expect(harness.startSession).toHaveBeenCalledTimes(2);
     expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({ freshSession: true });
     expect(harness.startSession.mock.calls[1]?.[1]).not.toHaveProperty("resumeCursor");
-    expect(harness.sendTurn.mock.calls[1]?.[0]?.input).toContain("source completed answer");
-    expect(harness.sendTurn.mock.calls[1]?.[0]?.input).toContain("first attempt");
+    expect(harness.sendTurn.mock.calls[1]?.[0]?.input).toBe("retry now");
+    expect(harness.sendTurn.mock.calls[1]?.[0]?.transcriptHandoff?.text).toContain(
+      "source completed answer",
+    );
+    expect(harness.sendTurn.mock.calls[1]?.[0]?.transcriptHandoff?.text).toContain("first attempt");
     await waitFor(async () => {
       readModel = await harness.readModel();
       return (
@@ -1182,7 +1531,7 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
-  it("prioritizes a full-size first fork prompt over inherited provider context", async () => {
+  it("keeps a full-size first fork prompt separate from compact inherited context", async () => {
     const harness = await createHarness({
       forkBeforeStart: true,
       forkSourceUserText: "source context ".repeat(100),
@@ -1208,6 +1557,9 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toBe(
       "u".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS),
+    );
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.transcriptHandoff?.text).toContain(
+      "source context",
     );
     await waitFor(async () => {
       const readModel = await harness.readModel();
@@ -1796,7 +2148,92 @@ describe("ProviderCommandReactor", () => {
       expect((await harness.readEvents()).length).toBe(eventCountAfterFirstReconciliation);
     });
 
-    it("starts the existing provider recovery path when the user continues an interrupted thread", async () => {
+    it("starts fresh with visible context when the user continues an errored provider turn", async () => {
+      const originalRequest = "Implement the researched ViaVersion and Folia rate-limit mode.";
+      const partialContext = "Analyzed the ViaVersion and Folia rate-limit constraints.";
+      const harness = await createHarness({
+        projectedSessionBeforeStart: {
+          status: "error",
+          providerName: "openrouter",
+          providerInstanceId: ProviderInstanceId.make("openrouter"),
+          runtimeSessionId,
+          lastError: "OpenRouter turn was stopped to protect server memory.",
+          updatedAt: projectedAt,
+          partialAssistantMessage: {
+            id: partialAssistantMessageId,
+            text: partialContext,
+            attachments: [],
+            turnId: activeTurnId,
+          },
+        },
+        threadModelSelection: {
+          instanceId: ProviderInstanceId.make("openrouter"),
+          model: "moonshotai/kimi-k3",
+        },
+      });
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.message.import",
+          commandId: CommandId.make("cmd-user-import-before-provider-error"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            id: asMessageId("user-message-before-provider-error"),
+            role: "user",
+            text: originalRequest,
+            attachments: [],
+            turnId: activeTurnId,
+            streaming: false,
+            createdAt: "2025-12-31T23:58:00.000Z",
+            updatedAt: "2025-12-31T23:58:00.000Z",
+          },
+        }),
+      );
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.make("cmd-assistant-complete-after-provider-error"),
+          threadId: ThreadId.make("thread-1"),
+          messageId: partialAssistantMessageId,
+          turnId: activeTurnId,
+          createdAt: "2026-01-01T00:00:30.000Z",
+        }),
+      );
+
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-after-provider-error"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-after-provider-error"),
+            role: "user",
+            text: "Continue with the implementation",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:01:00.000Z",
+        }),
+      );
+
+      await waitFor(() => harness.startSession.mock.calls.length === 1);
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+        provider: ProviderDriverKind.make("openrouter"),
+        providerInstanceId: ProviderInstanceId.make("openrouter"),
+        freshSession: true,
+      });
+      expect(harness.startSession.mock.calls[0]?.[1]).not.toHaveProperty("resumeCursor");
+      const request = harness.sendTurn.mock.calls[0]?.[0];
+      expect(request?.input).toBe("Continue with the implementation");
+      expect(request?.transcriptHandoff?.text).toContain(`[user]\n${originalRequest}\n[/user]`);
+      expect(request?.transcriptHandoff?.text).toContain(
+        `[assistant]\n${partialContext}\n[/assistant]`,
+      );
+    });
+
+    it("starts fresh with visible context when the user continues an interrupted thread", async () => {
+      const partialContext = "Partial response before shutdown";
       const harness = await createHarness({
         projectedSessionBeforeStart: {
           status: "running",
@@ -1805,6 +2242,11 @@ describe("ProviderCommandReactor", () => {
           runtimeSessionId,
           activeTurnId,
           updatedAt: projectedAt,
+          partialAssistantMessage: {
+            id: partialAssistantMessageId,
+            text: partialContext,
+            attachments: [],
+          },
         },
       });
 
@@ -1835,12 +2277,14 @@ describe("ProviderCommandReactor", () => {
           instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
+        freshSession: true,
       });
-      expect(harness.startSession.mock.calls[0]?.[1]).not.toHaveProperty("freshSession");
-      expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
-        threadId: ThreadId.make("thread-1"),
-        input: "Continue after restart",
-      });
+      expect(harness.startSession.mock.calls[0]?.[1]).not.toHaveProperty("resumeCursor");
+      const request = harness.sendTurn.mock.calls[0]?.[0];
+      expect(request?.input).toBe("Continue after restart");
+      expect(request?.transcriptHandoff?.text).toContain(
+        `[assistant]\n${partialContext}\n[/assistant]`,
+      );
     });
   });
 
@@ -1913,6 +2357,59 @@ describe("ProviderCommandReactor", () => {
     });
     expect(harness.startSession.mock.invocationCallOrder[0]).toBeLessThan(
       harness.runFetch.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("starts Codex with project memory isolated and sends only relevant memory as handoff", async () => {
+    const markdown = "# Project memory\n\n## Active decisions\n\nUse native forks.\n";
+    const harness = await createHarness({
+      projectMemoryRead: {
+        mode: "project",
+        storage: "workspace",
+        entries: [
+          {
+            section: "active-decisions",
+            key: "forks.native",
+            content: "Use native forks.",
+            verified: true,
+            sourceThreadId: ThreadId.make("source-thread"),
+          },
+        ],
+        markdown,
+        tokenBudget: 2_560,
+        estimatedTokens: 16,
+        truncated: false,
+      },
+    });
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-with-project-memory"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-with-project-memory"),
+          role: "user",
+          text: "continue the fork work",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.readProjectMemory).toHaveBeenCalledWith(
+      expect.objectContaining({ actor: "root", projectId: ProjectId.make("project-1") }),
+      expect.objectContaining({ query: "continue the fork work", contextWindowTokens: 128_000 }),
+    );
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      projectMemoryMode: "project",
+    });
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.input).toBe("continue the fork work");
+    expect(harness.sendTurn.mock.calls[0]?.[0]?.transcriptHandoff?.text).toBe(
+      `<t3code_project_memory>\n${markdown.trim()}\n</t3code_project_memory>`,
     );
   });
 
@@ -2577,11 +3074,24 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
-  it("generates a thread title on the first turn", async () => {
+  it("retries thread title generation after a transient failure", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
     const seededTitle = "Please investigate reconnect failures after restar...";
-    harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));
+    let attempts = 0;
+    harness.generateThreadTitle.mockReturnValue(
+      Effect.suspend(() => {
+        attempts += 1;
+        return attempts === 1
+          ? Effect.fail(
+              new TextGenerationError({
+                operation: "generateThreadTitle",
+                detail: "Claude CLI request timed out.",
+              }),
+            )
+          : Effect.succeed({ title: "Generated title" });
+      }),
+    );
 
     await Effect.runPromise(
       harness.engine.dispatch({
@@ -2625,6 +3135,7 @@ describe("ProviderCommandReactor", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Generated title");
+    expect(attempts).toBe(2);
   });
 
   it("regenerates a thread title from the current conversation", async () => {
@@ -3371,8 +3882,24 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.title).toBe("Reconnect spinner resume bug");
   });
 
-  it("generates a worktree branch name for the first turn", async () => {
-    const harness = await createHarness();
+  it("generates first-turn title and worktree branch in one metadata call", async () => {
+    const harness = await createHarness({
+      threadModelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.6",
+        options: [{ id: "reasoningEffort", value: "max" }],
+      },
+      serverSettings: {
+        textGenerationModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.6-luna",
+          options: [
+            { id: "reasoningEffort", value: "high" },
+            { id: "serviceTier", value: "priority" },
+          ],
+        },
+      },
+    });
     const now = "2026-01-01T00:00:00.000Z";
 
     await Effect.runPromise(
@@ -3380,23 +3907,16 @@ describe("ProviderCommandReactor", () => {
         type: "thread.meta.update",
         commandId: CommandId.make("cmd-thread-branch"),
         threadId: ThreadId.make("thread-1"),
+        title: "Add a safer reconnect backoff.",
         branch: "t3code/1234abcd",
         worktreePath: "/tmp/provider-project-worktree",
       }),
     );
 
-    harness.generateBranchName.mockImplementation((input: unknown) =>
+    harness.generateThreadMetadata.mockReturnValue(
       Effect.succeed({
-        branch:
-          typeof input === "object" &&
-          input !== null &&
-          "modelSelection" in input &&
-          typeof input.modelSelection === "object" &&
-          input.modelSelection !== null &&
-          "model" in input.modelSelection &&
-          typeof input.modelSelection.model === "string"
-            ? `feature/${input.modelSelection.model}`
-            : "feature/generated",
+        title: "Safer reconnect backoff",
+        branch: "safer-reconnect-backoff",
       }),
     );
 
@@ -3411,18 +3931,514 @@ describe("ProviderCommandReactor", () => {
           text: "Add a safer reconnect backoff.",
           attachments: [],
         },
+        titleSeed: "Add a safer reconnect backoff.",
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
       }),
     );
 
-    await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
+    await waitFor(() => harness.generateThreadMetadata.mock.calls.length === 1);
     await waitFor(() => harness.refreshStatus.mock.calls.length === 1);
-    expect(harness.generateBranchName.mock.calls[0]?.[0]).toMatchObject({
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return (
+        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.title ===
+        "Safer reconnect backoff"
+      );
+    });
+    expect(harness.generateThreadMetadata.mock.calls[0]?.[0]).toMatchObject({
       message: "Add a safer reconnect backoff.",
+      modelSelection: {
+        model: "gpt-5.6-luna",
+        options: [
+          { id: "serviceTier", value: "priority" },
+          { id: "reasoningEffort", value: "low" },
+        ],
+      },
+    });
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      modelSelection: {
+        model: "gpt-5.6",
+        options: [{ id: "reasoningEffort", value: "max" }],
+      },
+    });
+    expect(harness.generateBranchName).not.toHaveBeenCalled();
+    expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+    expect(harness.renameBranch).toHaveBeenCalledWith({
+      cwd: "/tmp/provider-project-worktree",
+      oldBranch: "t3code/1234abcd",
+      newBranch: "t3code/safer-reconnect-backoff",
     });
     expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe("/tmp/provider-project-worktree");
+  });
+
+  it("recreates a missing worktree from the thread branch before starting a turn", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const worktreePath = NodePath.join(harness.stateDir, "missing-worktree");
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-missing-worktree"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "feature/restore",
+        worktreePath,
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-missing-worktree"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-missing-worktree"),
+          role: "user",
+          text: "continue",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    expect(harness.pruneWorktrees).toHaveBeenCalledWith({ cwd: "/tmp/provider-project" });
+    expect(harness.createWorktree).toHaveBeenCalledWith({
+      cwd: "/tmp/provider-project",
+      refName: "feature/restore",
+      path: worktreePath,
+    });
+    expect(harness.createWorktree.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.startSession.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("resolves Auto Reasoning once per submitted user message and reuses it for retries", async () => {
+    const model = "gpt-5.6-sol";
+    const autoSelection = createModelSelection(ProviderInstanceId.make("codex"), model, [
+      { id: "reasoningEffort", value: "low" },
+      { id: "t3AutoReasoning", value: true },
+      { id: "serviceTier", value: "priority" },
+    ]);
+    const routerSelection = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-luna", [
+      { id: "reasoningEffort", value: "low" },
+      { id: "t3AutoReasoning", value: true },
+    ]);
+    let decisionCount = 0;
+    const harness = await createHarness({
+      threadModelSelection: createModelSelection(ProviderInstanceId.make("codex"), model, [
+        { id: "reasoningEffort", value: "low" },
+      ]),
+      providerSnapshots: [codexAutoReasoningProviderFixture(model)],
+      serverSettings: { autoReasoningModelSelection: routerSelection },
+      decideAutoReasoningEffect: () =>
+        Effect.sync(() =>
+          ++decisionCount === 1
+            ? {
+                effort: "high",
+                usage: { inputTokens: 120, outputTokens: 4, totalTokens: 124 },
+              }
+            : decisionCount === 2
+              ? { effort: "xhigh" }
+              : { effort: "low" },
+        ),
+    });
+    const completeMainPrompt = `${"implement carefully ".repeat(2_500)}MAIN_PROMPT_TAIL`;
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.import",
+        commandId: CommandId.make("cmd-auto-reasoning-prior-user-import"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          id: asMessageId("user-message-auto-reasoning-prior"),
+          role: "user",
+          text: "Original work items: contract and server wiring",
+          turnId: null,
+          streaming: false,
+          createdAt: "2025-12-31T23:59:58.000Z",
+          updatedAt: "2025-12-31T23:59:58.000Z",
+        },
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.import",
+        commandId: CommandId.make("cmd-auto-reasoning-prior-assistant-import"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          id: asMessageId("assistant-message-auto-reasoning-prior"),
+          role: "assistant",
+          text: "Contract and server wiring are complete.",
+          turnId: null,
+          streaming: false,
+          createdAt: "2025-12-31T23:59:59.000Z",
+          updatedAt: "2025-12-31T23:59:59.000Z",
+        },
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.interaction-mode.set",
+        commandId: CommandId.make("cmd-auto-reasoning-plan-mode"),
+        threadId: ThreadId.make("thread-1"),
+        interactionMode: "plan",
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-auto-reasoning-1"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-auto-reasoning-1"),
+          role: "user",
+          text: completeMainPrompt,
+          attachments: [
+            {
+              type: "image",
+              id: "architecture-image",
+              name: "architecture.png",
+              mimeType: "image/png",
+              sizeBytes: 42,
+            },
+          ],
+        },
+        modelSelection: autoSelection,
+        interactionMode: "plan",
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.decideAutoReasoning).toHaveBeenCalledTimes(1);
+    expect(harness.decideAutoReasoning.mock.calls[0]?.[0]).toMatchObject({
+      userPrompt: completeMainPrompt,
+      interactionMode: "plan",
+      allowedEfforts: ["low", "medium", "high", "xhigh"],
+      attachments: [
+        {
+          type: "image",
+          name: "architecture.png",
+          mimeType: "image/png",
+          sizeBytes: 42,
+        },
+      ],
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.6-luna",
+        options: [{ id: "reasoningEffort", value: "low" }],
+      },
+      conversation: [
+        { role: "user", text: "Original work items: contract and server wiring" },
+        { role: "assistant", text: "Contract and server wiring are complete." },
+      ],
+    });
+    expect(harness.decideAutoReasoning.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.startSession.mock.invocationCallOrder[0]!,
+    );
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      modelSelection: {
+        options: [
+          { id: "reasoningEffort", value: "high" },
+          { id: "serviceTier", value: "priority" },
+        ],
+      },
+    });
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      input: completeMainPrompt,
+      modelSelection: {
+        options: [
+          { id: "reasoningEffort", value: "high" },
+          { id: "serviceTier", value: "priority" },
+        ],
+      },
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.import",
+        commandId: CommandId.make("cmd-auto-reasoning-assistant-import"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          id: asMessageId("assistant-message-auto-reasoning-1"),
+          role: "assistant",
+          text: "Previous assistant result",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-01-01T00:00:01.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+        },
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-auto-reasoning-2"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-auto-reasoning-2"),
+          role: "user",
+          text: "Follow up without changing sessions",
+          attachments: [],
+        },
+        interactionMode: "default",
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(harness.decideAutoReasoning).toHaveBeenCalledTimes(2);
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.decideAutoReasoning.mock.calls[1]?.[0].conversation).toEqual([
+      { role: "user", text: "Original work items: contract and server wiring" },
+      { role: "assistant", text: "Contract and server wiring are complete." },
+      { role: "user", text: completeMainPrompt },
+      { role: "assistant", text: "Previous assistant result" },
+    ]);
+    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+      input: "Follow up without changing sessions",
+      modelSelection: {
+        options: [
+          { id: "reasoningEffort", value: "xhigh" },
+          { id: "serviceTier", value: "priority" },
+        ],
+      },
+    });
+    await waitFor(async () => {
+      const current = await harness.readModel();
+      return (
+        current.threads
+          .find((entry) => entry.id === ThreadId.make("thread-1"))
+          ?.activities.filter((activity) => activity.kind === "auto-reasoning.resolved").length ===
+        2
+      );
+    });
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.modelSelection).toEqual(autoSelection);
+    expect(
+      thread?.activities
+        .filter((activity) => activity.kind === "auto-reasoning.resolved")
+        .map((activity) => ({ turnId: activity.turnId, payload: activity.payload })),
+    ).toEqual([
+      {
+        turnId: asTurnId("turn-1"),
+        payload: {
+          autoReasoningEffort: "high",
+          autoReasoningFallback: false,
+          autoReasoningRouterModel: {
+            instanceId: "codex",
+            model: "gpt-5.6-luna",
+          },
+          autoReasoningDurationMs: expect.any(Number),
+          autoReasoningUsage: { inputTokens: 120, outputTokens: 4, totalTokens: 124 },
+        },
+      },
+      {
+        turnId: asTurnId("turn-2"),
+        payload: {
+          autoReasoningEffort: "xhigh",
+          autoReasoningFallback: false,
+          autoReasoningRouterModel: {
+            instanceId: "codex",
+            model: "gpt-5.6-luna",
+          },
+          autoReasoningDurationMs: expect.any(Number),
+          autoReasoningUsage: null,
+        },
+      },
+    ]);
+
+    const retryRuntimeSessionId = RuntimeSessionId.make("runtime-auto-reasoning-retry");
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-aborting-auto-reasoning-retry"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeSessionId: retryRuntimeSessionId,
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-2"),
+          abortState: {
+            runtimeSessionId: retryRuntimeSessionId,
+            targetTurnId: asTurnId("turn-2"),
+            phase: "interrupting",
+            requestedAt: "2026-01-01T00:00:03.000Z",
+            forceAt: "2026-01-01T00:00:08.000Z",
+          },
+          lastError: null,
+          updatedAt: "2026-01-01T00:00:03.000Z",
+        },
+        createdAt: "2026-01-01T00:00:03.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.abort.settle",
+        commandId: CommandId.make("cmd-abort-settle-auto-reasoning-retry"),
+        threadId: ThreadId.make("thread-1"),
+        runtimeSessionId: retryRuntimeSessionId,
+        turnId: asTurnId("turn-2"),
+        outcome: "cooperative",
+        settledAt: "2026-01-01T00:00:04.000Z",
+        createdAt: "2026-01-01T00:00:04.000Z",
+      }),
+    );
+
+    harness.sendTurn.mockClear();
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.retry",
+        commandId: CommandId.make("cmd-auto-reasoning-retry"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-2"),
+        messageId: asMessageId("user-message-auto-reasoning-2"),
+        createdAt: "2026-01-01T00:00:05.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await harness.drain();
+    expect(harness.decideAutoReasoning).toHaveBeenCalledTimes(2);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      modelSelection: {
+        options: [
+          { id: "reasoningEffort", value: "xhigh" },
+          { id: "serviceTier", value: "priority" },
+        ],
+      },
+    });
+  });
+
+  it("bypasses Auto Reasoning for manual Codex effort selections", async () => {
+    const model = "gpt-5.6-sol";
+    const manualSelection = createModelSelection(ProviderInstanceId.make("codex"), model, [
+      { id: "reasoningEffort", value: "high" },
+    ]);
+    const harness = await createHarness({
+      threadModelSelection: manualSelection,
+      providerSnapshots: [codexAutoReasoningProviderFixture(model)],
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-manual-reasoning"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-manual-reasoning"),
+          role: "user",
+          text: "Use my manual effort",
+          attachments: [],
+        },
+        modelSelection: manualSelection,
+        interactionMode: "default",
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.decideAutoReasoning).not.toHaveBeenCalled();
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      modelSelection: {
+        ...manualSelection,
+        options: [
+          { id: "reasoningEffort", value: "high" },
+          { id: "serviceTier", value: "default" },
+        ],
+      },
+    });
+  });
+
+  it("falls back to the stored concrete effort for an invalid routing decision", async () => {
+    const model = "gpt-5.6-sol";
+    const autoSelection = createModelSelection(ProviderInstanceId.make("codex"), model, [
+      { id: "reasoningEffort", value: "low" },
+      { id: "t3AutoReasoning", value: true },
+    ]);
+    const harness = await createHarness({
+      threadModelSelection: autoSelection,
+      providerSnapshots: [codexAutoReasoningProviderFixture(model)],
+      decideAutoReasoningEffect: () => Effect.succeed({ effort: "unsupported" }),
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-auto-reasoning-invalid"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-auto-reasoning-invalid"),
+          role: "user",
+          text: "Continue even if routing fails",
+          attachments: [],
+        },
+        interactionMode: "default",
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.decideAutoReasoning).toHaveBeenCalledTimes(1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      modelSelection: {
+        options: [
+          { id: "reasoningEffort", value: "low" },
+          { id: "serviceTier", value: "default" },
+        ],
+      },
+    });
+  });
+
+  it("uses the concrete fallback without routing when live efforts are unavailable", async () => {
+    const model = "gpt-5.6-sol";
+    const autoSelection = createModelSelection(ProviderInstanceId.make("codex"), model, [
+      { id: "reasoningEffort", value: "medium" },
+      { id: "t3AutoReasoning", value: true },
+    ]);
+    const harness = await createHarness({ threadModelSelection: autoSelection });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-auto-reasoning-unavailable"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-auto-reasoning-unavailable"),
+          role: "user",
+          text: "Fallback without a live descriptor",
+          attachments: [],
+        },
+        interactionMode: "default",
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.decideAutoReasoning).not.toHaveBeenCalled();
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      modelSelection: {
+        options: [{ id: "reasoningEffort", value: "medium" }],
+      },
+    });
   });
 
   it("canonicalizes legacy codex fast mode through session start and turn send", async () => {
@@ -3725,10 +4741,12 @@ describe("ProviderCommandReactor", () => {
         model: "gpt-5.1-codex",
       },
     });
-    const switchedInput = harness.sendTurn.mock.calls[1]?.[0]?.input;
-    expect(switchedInput).toContain("[user]\nfirst\n[/user]");
-    expect(switchedInput).toContain("[assistant]\ncompleted answer\n[/assistant]");
-    expect(switchedInput).toContain("second");
+    const switchedRequest = harness.sendTurn.mock.calls[1]?.[0];
+    expect(switchedRequest?.input).toBe("second");
+    expect(switchedRequest?.transcriptHandoff?.text).toContain("[user]\nfirst\n[/user]");
+    expect(switchedRequest?.transcriptHandoff?.text).toContain(
+      "[assistant]\ncompleted answer\n[/assistant]",
+    );
 
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
@@ -4296,7 +5314,7 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.runtimeMode).toBe("full-access");
   });
 
-  it("switches cross-driver providers with a fresh session and full transcript handoff", async () => {
+  it("switches cross-driver providers with a fresh session and compact transcript handoff", async () => {
     const oldRuntimeSessionId = RuntimeSessionId.make("runtime-codex-before-switch");
     const newRuntimeSessionId = RuntimeSessionId.make("runtime-claude-after-switch");
     const harness = await createHarness({
@@ -4358,8 +5376,10 @@ describe("ProviderCommandReactor", () => {
       freshSession: true,
     });
     expect(harness.startSession.mock.calls[1]?.[1]).not.toHaveProperty("resumeCursor");
-    expect(harness.sendTurn.mock.calls[1]?.[0]?.input).toContain("[user]\nfirst\n[/user]");
-    expect(harness.sendTurn.mock.calls[1]?.[0]?.input).toContain("second");
+    expect(harness.sendTurn.mock.calls[1]?.[0]?.input).toBe("second");
+    expect(harness.sendTurn.mock.calls[1]?.[0]?.transcriptHandoff?.text).toContain(
+      "[user]\nfirst\n[/user]",
+    );
 
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
@@ -4461,7 +5481,7 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-stopped-provider-switch"),
@@ -4480,7 +5500,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-stopped-provider-switch"),
@@ -4514,7 +5534,7 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set"),
@@ -4534,7 +5554,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.turn.interrupt",
         commandId: CommandId.make("cmd-turn-interrupt"),
@@ -4594,11 +5614,71 @@ describe("ProviderCommandReactor", () => {
     expect(harness.requestAbort).not.toHaveBeenCalled();
   });
 
+  effectIt.effect("records a server abort-lane failure without owning provider settlement", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-abort-lane-failure"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      });
+
+      harness.requestAbort.mockImplementation(() =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: "codex",
+            method: "abort.resolve-target",
+            detail: "provider session disappeared",
+          }),
+        ),
+      );
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-abort-lane-failure"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-1"),
+        createdAt: now,
+      });
+
+      yield* Effect.promise(() => harness.drain());
+
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (entry) => entry.id === ThreadId.make("thread-1"),
+      );
+      expect(thread?.session).toMatchObject({
+        status: "running",
+        activeTurnId: asTurnId("turn-1"),
+        lastError: null,
+        updatedAt: now,
+      });
+      expect(harness.stopSession).not.toHaveBeenCalled();
+      expect(
+        thread?.activities.find((activity) => activity.kind === "provider.turn.interrupt.failed"),
+      ).toMatchObject({
+        summary: "Provider turn interrupt failed",
+        payload: { detail: "provider session disappeared" },
+      });
+    }),
+  );
+
   it("starts a fresh session when only projected session state exists", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-stale"),
@@ -4616,7 +5696,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-stale"),
@@ -4653,7 +5733,7 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-missing-instance"),
@@ -4681,7 +5761,7 @@ describe("ProviderCommandReactor", () => {
       updatedAt: now,
     });
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-missing-instance"),
@@ -4806,15 +5886,15 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
-  it("surfaces stale provider approval request failures without faking approval resolution", async () => {
+  it("normalizes stale Codex approval callbacks without faking approval resolution", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
     harness.respondToRequest.mockImplementation(() =>
       Effect.fail(
         new ProviderAdapterRequestError({
           provider: ProviderDriverKind.make("codex"),
-          method: "session/request_permission",
-          detail: "Unknown pending permission request: approval-request-1",
+          method: "item/requestApproval/decision",
+          detail: "Unknown pending Codex approval request: approval-request-1",
         }),
       ),
     );

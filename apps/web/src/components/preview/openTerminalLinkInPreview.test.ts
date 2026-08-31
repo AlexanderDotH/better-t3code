@@ -33,6 +33,10 @@ const snapshot: PreviewSessionSnapshot = {
   canGoForward: false,
   updatedAt: "2026-06-20T00:00:00.000Z",
 };
+const contextMenuLabels = {
+  openInPreview: "Ouvrir dans l’aperçu",
+  openInBrowser: "Ouvrir dans le navigateur",
+};
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -49,6 +53,7 @@ describe("openTerminalLinkInPreview", () => {
       url: "http://localhost:3000/path?token=secret",
       position: { x: 12, y: 34 },
       threadRef,
+      contextMenuLabels,
       openPreview,
       localApi: {
         contextMenu: {
@@ -85,6 +90,7 @@ describe("openTerminalLinkInPreview", () => {
       url: "http://127.0.0.1:5173/",
       position: { x: 12, y: 34 },
       threadRef,
+      contextMenuLabels,
       openPreview: async () => AsyncResult.failure(cause),
       localApi: {
         contextMenu: {
@@ -115,6 +121,7 @@ describe("openTerminalLinkInPreview", () => {
       url: "http://localhost:5173/",
       position: { x: 12, y: 34 },
       threadRef,
+      contextMenuLabels,
       openPreview: async () => AsyncResult.failure(Cause.interrupt()),
       localApi: {
         contextMenu: {
@@ -126,5 +133,29 @@ describe("openTerminalLinkInPreview", () => {
 
     expect(reportError).not.toHaveBeenCalled();
     expect(fallbackToBrowser).not.toHaveBeenCalled();
+  });
+
+  it("passes caller-localized context menu labels without changing the target URL", async () => {
+    const show = vi.fn(async () => null);
+    const url = "http://localhost:5173/path?token=keep";
+
+    await openTerminalLinkInPreview({
+      url,
+      position: { x: 12, y: 34 },
+      threadRef,
+      contextMenuLabels,
+      openPreview: async () => AsyncResult.success(snapshot),
+      localApi: { contextMenu: { show } } as unknown as LocalApi,
+      fallbackToBrowser: vi.fn(),
+    });
+
+    expect(show).toHaveBeenCalledWith(
+      [
+        { id: "open-in-preview", label: contextMenuLabels.openInPreview },
+        { id: "open-in-browser", label: contextMenuLabels.openInBrowser },
+      ],
+      { x: 12, y: 34 },
+    );
+    expect(url).toBe("http://localhost:5173/path?token=keep");
   });
 });

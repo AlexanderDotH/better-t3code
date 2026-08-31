@@ -16,6 +16,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { ServerConfig } from "../../config.ts";
+import type { InProcessWorkAdmissionRequest } from "../../resourceProtection/InProcessWorkAdmission.ts";
+import * as ResourceProtection from "../../resourceProtection/SubagentResourceGovernor.ts";
 import { ProviderAdapterRequestError } from "../Errors.ts";
 import {
   makeNativeProviderAdapter,
@@ -164,6 +166,151 @@ function makeTestAdapter(input: {
 }
 
 describe("NativeProviderAdapter", () => {
+  it.effect("uses the shared in-process governor and releases its lease after a turn", () => {
+    const requests: Array<InProcessWorkAdmissionRequest> = [];
+    let releaseCount = 0;
+    const resourceLayer = Layer.mock(ResourceProtection.SubagentResourceGovernor)({
+      acquireInProcessLease: (request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return {
+            workId: request.workId,
+            reservedBytes: 1024,
+            release: Effect.sync(() => {
+              releaseCount += 1;
+            }),
+          };
+        }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const adapter = yield* makeTestAdapter({
+          executed: [],
+          rounds: [
+            [
+              {
+                type: "completed",
+                historyItems: [{ type: "assistant", text: "Done" }],
+                toolCalls: [],
+                assistantText: "Done",
+              },
+            ],
+          ],
+        });
+        const threadId = ThreadId.make("native-core-shared-admission");
+        yield* adapter.startSession({
+          threadId,
+          provider: PROVIDER,
+          providerInstanceId: INSTANCE,
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+          sandboxMode: "workspace-write",
+        });
+        yield* adapter.sendTurn({ threadId, input: "Use shared admission" });
+
+        expect(requests).toHaveLength(1);
+        expect(requests[0]).toMatchObject({
+          threadId,
+          provider: PROVIDER,
+          providerInstanceId: INSTANCE,
+        });
+        expect(requests[0]?.reservation.serializedHistoryBytes).toBeGreaterThan(0);
+        expect(requests[0]?.reservation.toolBufferBytes).toBe(1024);
+        expect(releaseCount).toBe(1);
+      }),
+    ).pipe(Effect.provide(testLayer.pipe(Layer.provideMerge(resourceLayer))));
+  });
+
+  it.effect("releases the shared in-process lease when a native turn is interrupted", () => {
+    let releaseCount = 0;
+    const resourceLayer = Layer.mock(ResourceProtection.SubagentResourceGovernor)({
+      acquireInProcessLease: (request) =>
+        Effect.succeed({
+          workId: request.workId,
+          reservedBytes: 1024,
+          release: Effect.sync(() => {
+            releaseCount += 1;
+          }),
+        }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const roundStarted = yield* Deferred.make<void>();
+        const blocked = yield* Deferred.make<void>();
+        const adapter = yield* makeTestAdapter({
+          executed: [],
+          rounds: [],
+          streamRound: () =>
+            Stream.fromEffect(
+              Deferred.succeed(roundStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(blocked)),
+                Effect.as({
+                  type: "completed" as const,
+                  historyItems: [{ type: "assistant" }],
+                  toolCalls: [],
+                }),
+              ),
+            ),
+        });
+        const threadId = ThreadId.make("native-core-shared-admission-interrupt");
+        yield* adapter.startSession({
+          threadId,
+          provider: PROVIDER,
+          providerInstanceId: INSTANCE,
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+          sandboxMode: "workspace-write",
+        });
+        const turnFiber = yield* adapter
+          .sendTurn({ threadId, input: "Interrupt shared admission" })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(roundStarted);
+        yield* adapter.interruptTurn(threadId);
+        yield* Fiber.await(turnFiber);
+        expect(releaseCount).toBe(1);
+      }),
+    ).pipe(Effect.provide(testLayer.pipe(Layer.provideMerge(resourceLayer))));
+  });
+
+  it.effect("fails before model streaming when shared admission is cancelled", () => {
+    let streamCalls = 0;
+    const resourceLayer = Layer.mock(ResourceProtection.SubagentResourceGovernor)({
+      acquireInProcessLease: () => Effect.succeed(undefined),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const adapter = yield* makeTestAdapter({
+          executed: [],
+          rounds: [],
+          streamRound: () => {
+            streamCalls += 1;
+            return Stream.empty;
+          },
+        });
+        const threadId = ThreadId.make("native-core-shared-admission-cancelled");
+        yield* adapter.startSession({
+          threadId,
+          provider: PROVIDER,
+          providerInstanceId: INSTANCE,
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+          sandboxMode: "workspace-write",
+        });
+        const failure = yield* adapter
+          .sendTurn({ threadId, input: "Cancel admission" })
+          .pipe(Effect.flip);
+        expect(failure).toMatchObject({
+          _tag: "ProviderAdapterRequestError",
+          method: "resource/admission",
+        });
+        expect(streamCalls).toBe(0);
+      }),
+    ).pipe(Effect.provide(testLayer.pipe(Layer.provideMerge(resourceLayer))));
+  });
+
   it.effect("owns start and stop lifecycle state and events", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -282,8 +429,15 @@ describe("NativeProviderAdapter", () => {
         const executed: Array<string> = [];
         const call: TestToolCall = {
           sourceId: "tool-item",
-          name: "write_file",
-          args: { path: "notes.txt" },
+          name: "workspace_edit",
+          args: {
+            changes: [
+              {
+                path: "notes.txt",
+                edits: [{ type: "write", mode: "upsert", content: "hello\n" }],
+              },
+            ],
+          },
           metadata: { callId: "call-1" },
         };
         const adapter = yield* makeTestAdapter({
@@ -342,7 +496,7 @@ describe("NativeProviderAdapter", () => {
           "accept",
         );
         yield* Fiber.join(turnFiber);
-        expect(executed).toEqual(["write_file"]);
+        expect(executed).toEqual(["workspace_edit"]);
 
         const beforeResume = yield* adapter.readThread(threadId);
         expect(beforeResume.turns).toHaveLength(1);
@@ -350,8 +504,8 @@ describe("NativeProviderAdapter", () => {
           { type: "reasoning", text: "Thinking" },
           {
             type: "file_change",
-            name: "write_file",
-            title: "write_file",
+            name: "workspace_edit",
+            title: "workspace_edit",
             detail: "written",
             output: { written: true },
           },
@@ -368,6 +522,271 @@ describe("NativeProviderAdapter", () => {
         });
         expect((yield* adapter.readThread(threadId)).turns).toEqual(beforeResume.turns);
         expect((yield* adapter.rollbackThread(threadId, 1)).turns).toEqual([]);
+      }),
+    ).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("persists an exact one MiB tool result once and returns a small model digest", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const rawOutput = `fatal error\n${"line\n".repeat(Math.ceil((1024 * 1024) / 5))}`.slice(
+          0,
+          1024 * 1024,
+        );
+        const call: TestToolCall = {
+          sourceId: "large-tool-item",
+          name: "exec_command",
+          args: { command: "generate-large-output" },
+          metadata: { callId: "large-call" },
+        };
+        const adapter = yield* makeTestAdapter({
+          executed: [],
+          requiresApproval: false,
+          execute: () =>
+            Effect.succeed({
+              ok: true,
+              itemType: "command_execution",
+              title: "Generate large output",
+              detail: "Exited with code 0",
+              output: { stdout: rawOutput, exitCode: 0, changedPaths: ["generated.txt"] },
+            }),
+          rounds: [
+            [{ type: "completed", historyItems: [{ type: "assistant" }], toolCalls: [call] }],
+            [
+              {
+                type: "completed",
+                historyItems: [{ type: "assistant", text: "Done" }],
+                toolCalls: [],
+                assistantText: "Done",
+              },
+            ],
+          ],
+        });
+        const toolEvents: Array<{
+          readonly type: "content.delta" | "item.completed";
+          readonly payload: Readonly<Record<string, unknown>>;
+        }> = [];
+        const eventFiber = yield* adapter.streamEvents.pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              if (
+                event.itemId === "large-tool-item" &&
+                (event.type === "content.delta" || event.type === "item.completed")
+              ) {
+                toolEvents.push(event);
+              }
+            }),
+          ),
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        const threadId = ThreadId.make("native-core-large-tool-result");
+        yield* adapter.startSession({
+          threadId,
+          provider: PROVIDER,
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+          sandboxMode: "workspace-write",
+        });
+        yield* adapter.sendTurn({ threadId, input: "Write it" });
+        yield* Effect.yieldNow;
+
+        expect(toolEvents).toHaveLength(1);
+        expect(toolEvents[0]).toMatchObject({
+          type: "item.completed",
+          payload: {
+            status: "completed",
+            title: "Generate large output",
+            detail: "Exited with code 0",
+            data: { stdout: rawOutput, exitCode: 0, changedPaths: ["generated.txt"] },
+          },
+        });
+        const completion = toolEvents[0]!.payload;
+        const toolItem = (yield* adapter.readThread(threadId)).turns[0]?.items[0] as {
+          readonly output: Readonly<Record<string, unknown>>;
+        };
+        expect(toolItem.output).toMatchObject({
+          ok: true,
+          status: "completed",
+          title: "Generate large output",
+          detail: "Exited with code 0",
+          exitCode: 0,
+          changedPaths: ["generated.txt"],
+          errorLines: ["fatal error"],
+          detailRef: "tool-result:large-tool-item",
+        });
+        expect(Buffer.byteLength(JSON.stringify(toolItem.output))).toBeLessThanOrEqual(16 * 1024);
+        expect(Buffer.byteLength(JSON.stringify(toolItem.output))).toBeLessThan(
+          Buffer.byteLength(JSON.stringify(completion)) / 10,
+        );
+        yield* Fiber.interrupt(eventFiber);
+      }),
+    ).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("returns a tool result at the 32 KiB boundary unchanged", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const output = { value: "x".repeat(32 * 1024 - '{"value":""}'.length) };
+        const adapter = yield* makeTestAdapter({
+          executed: [],
+          requiresApproval: false,
+          execute: () =>
+            Effect.succeed({
+              ok: true,
+              itemType: "file_change",
+              title: "Boundary",
+              detail: "Boundary",
+              output,
+            }),
+          rounds: [
+            [
+              {
+                type: "completed",
+                historyItems: [{ type: "assistant" }],
+                toolCalls: [
+                  {
+                    sourceId: "boundary-tool-item",
+                    name: "write_file",
+                    args: { path: "boundary.txt" },
+                    metadata: { callId: "boundary-call" },
+                  },
+                ],
+              },
+            ],
+            [{ type: "completed", historyItems: [{ type: "assistant" }], toolCalls: [] }],
+          ],
+        });
+        const threadId = ThreadId.make("native-core-boundary-tool-result");
+        yield* adapter.startSession({
+          threadId,
+          provider: PROVIDER,
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+          sandboxMode: "workspace-write",
+        });
+        yield* adapter.sendTurn({ threadId, input: "Write it" });
+
+        const toolItem = (yield* adapter.readThread(threadId)).turns[0]?.items[0] as {
+          readonly output: Readonly<Record<string, unknown>>;
+        };
+        expect(Buffer.byteLength(JSON.stringify(output))).toBe(32 * 1024);
+        expect(toolItem.output).toEqual(output);
+      }),
+    ).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("replays a declined approval without executing the tool", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const executed: Array<string> = [];
+        const adapter = yield* makeTestAdapter({
+          executed,
+          rounds: [
+            [
+              {
+                type: "completed",
+                historyItems: [{ type: "assistant", calls: 1 }],
+                toolCalls: [
+                  {
+                    sourceId: "declined-tool-item",
+                    name: "write_file",
+                    args: { path: "declined.txt" },
+                    metadata: { callId: "declined-call" },
+                  },
+                ],
+              },
+            ],
+            [
+              {
+                type: "completed",
+                historyItems: [{ type: "assistant", text: "Not written" }],
+                toolCalls: [],
+                assistantText: "Not written",
+              },
+            ],
+          ],
+        });
+        const threadId = ThreadId.make("native-core-declined-approval");
+        yield* adapter.startSession({
+          threadId,
+          provider: PROVIDER,
+          providerInstanceId: INSTANCE,
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+          sandboxMode: "workspace-write",
+        });
+        const openedFiber = yield* adapter.streamEvents.pipe(
+          Stream.filter((event) => event.type === "request.opened"),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        const turnFiber = yield* adapter
+          .sendTurn({ threadId, input: "Do not write it" })
+          .pipe(Effect.forkChild);
+        const opened = yield* Fiber.join(openedFiber);
+        expect(Option.isSome(opened)).toBe(true);
+        if (Option.isNone(opened) || opened.value.type !== "request.opened") return;
+        yield* adapter.respondToRequest(
+          threadId,
+          ApprovalRequestId.make(opened.value.requestId),
+          "decline",
+        );
+        yield* Fiber.join(turnFiber);
+
+        expect(executed).toEqual([]);
+        expect((yield* adapter.readThread(threadId)).turns[0]?.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "dynamic_tool_call",
+              name: "write_file",
+              output: { error: "Tool call decline." },
+            }),
+            { type: "assistant_message", text: "Not written" },
+          ]),
+        );
+      }),
+    ).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("fails closed when transport emits content after its terminal event", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const adapter = yield* makeTestAdapter({
+          executed: [],
+          rounds: [
+            [
+              {
+                type: "completed",
+                historyItems: [{ type: "assistant", text: "Terminal" }],
+                toolCalls: [],
+                assistantText: "Terminal",
+              },
+              { type: "contentDelta", kind: "assistant", delta: "late" },
+            ],
+          ],
+        });
+        const threadId = ThreadId.make("native-core-output-after-terminal");
+        yield* adapter.startSession({
+          threadId,
+          provider: PROVIDER,
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+          sandboxMode: "workspace-write",
+        });
+
+        const error = yield* adapter
+          .sendTurn({ threadId, input: "Reject late output" })
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "ProviderAdapterRequestError",
+          method: "model/stream",
+          detail: "native-test emitted output after the terminal response event.",
+        });
+        const [session] = yield* adapter.listSessions();
+        expect(session?.status).toBe("ready");
+        expect((yield* adapter.readThread(threadId)).turns).toEqual([]);
       }),
     ).pipe(Effect.provide(testLayer)),
   );

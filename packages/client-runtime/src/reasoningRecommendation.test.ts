@@ -257,6 +257,14 @@ describe("reasoning recommendation", () => {
         },
       }),
     ).toBeNull();
+    expect(
+      derive(activities, {
+        durableSelection: {
+          ...selection,
+          options: [...(selection.options ?? []), { id: "t3AutoReasoning", value: true }],
+        },
+      }),
+    ).toBeNull();
   });
 
   it("uses the highest supported lower value when High is absent", () => {

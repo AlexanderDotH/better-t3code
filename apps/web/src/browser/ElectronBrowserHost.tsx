@@ -6,6 +6,7 @@ import { useEffect, useMemo } from "react";
 
 import { isElectron } from "~/env";
 import { useTheme } from "~/hooks/useTheme";
+import { useInterfaceLanguage } from "~/interfaceLanguageSync";
 import { useActivePreviewSessions } from "~/previewStateStore";
 
 import { readPreviewAnnotationTheme } from "./annotationTheme";
@@ -15,6 +16,7 @@ import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
 export function ElectronBrowserHost() {
   const { resolvedTheme } = useTheme();
+  const interfaceLanguage = useInterfaceLanguage().language;
   const previewByThreadKey = useActivePreviewSessions();
   const sessions = useMemo(
     () =>
@@ -29,6 +31,8 @@ export function ElectronBrowserHost() {
                 previewState.serverEpoch,
                 snapshot.tabId,
               ),
+              pictureInPicture:
+                previewState.desktopByTabId[snapshot.tabId]?.pictureInPicture ?? false,
               zoomFactor: previewState.desktopByTabId[snapshot.tabId]?.zoomFactor ?? 1,
             }))
           : [];
@@ -42,7 +46,7 @@ export function ElectronBrowserHost() {
 
     let lastSerializedTheme = "";
     const syncTheme = () => {
-      const theme = readPreviewAnnotationTheme();
+      const theme = readPreviewAnnotationTheme(interfaceLanguage);
       const serializedTheme = JSON.stringify(theme);
       if (serializedTheme === lastSerializedTheme) return;
       lastSerializedTheme = serializedTheme;
@@ -67,7 +71,7 @@ export function ElectronBrowserHost() {
       observer.disconnect();
       headObserver.disconnect();
     };
-  }, [resolvedTheme]);
+  }, [interfaceLanguage, resolvedTheme]);
 
   useEffect(() => {
     const preview = window.desktopBridge?.preview;
@@ -80,7 +84,7 @@ export function ElectronBrowserHost() {
   if (!isElectron) return null;
   return (
     <div className="contents" data-electron-browser-host>
-      {sessions.map(({ threadRef, snapshot, runtimeTabId, zoomFactor }) => {
+      {sessions.map(({ threadRef, snapshot, runtimeTabId, pictureInPicture, zoomFactor }) => {
         const url = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
         return (
           <HostedBrowserWebview
@@ -90,6 +94,7 @@ export function ElectronBrowserHost() {
             runtimeTabId={runtimeTabId}
             initialUrl={url}
             viewport={snapshot.viewport ?? FILL_PREVIEW_VIEWPORT}
+            pictureInPicture={pictureInPicture}
             zoomFactor={zoomFactor}
           />
         );

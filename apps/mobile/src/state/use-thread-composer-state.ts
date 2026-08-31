@@ -1,5 +1,7 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Alert } from "react-native";
+import * as Cause from "effect/Cause";
 
 import {
   CommandId,
@@ -24,8 +26,14 @@ import {
   type ReasoningRecommendationState,
 } from "@t3tools/client-runtime/reasoning-recommendation";
 import { resolveCodexContextWindowTokens } from "@t3tools/shared/model";
+import {
+  codexFeedbackMessage,
+  parseCodexFeedbackCommand,
+  submitCodexFeedback,
+  type CodexFeedbackSubmission,
+} from "@t3tools/client-runtime/state/threads";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
-import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
@@ -36,6 +44,7 @@ import {
 } from "../lib/composerImages";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
+import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import { buildThreadFeed } from "../lib/threadActivity";
 import { appAtomRegistry } from "../state/atom-registry";
 import {
@@ -99,7 +108,7 @@ export function useThreadDraftForThread(input: {
 }
 
 export function useThreadComposerState() {
-  const { selectedThread: selectedThreadShell } = useThreadSelection();
+  const { selectedThread: selectedThreadShell, selectedEnvironmentRuntime } = useThreadSelection();
   const selectedThreadDetail = useSelectedThreadDetail();
   const composerDrafts = useAtomValue(composerDraftsAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
@@ -125,6 +134,12 @@ export function useThreadComposerState() {
       }),
     [preferences.experimentalFetch, serverConfig?.environment.capabilities.agentWorkflowVersion],
   );
+  const [feedbackSubmissionsByThreadKey, setFeedbackSubmissionsByThreadKey] = useState<
+    Record<string, ReadonlyArray<CodexFeedbackSubmission>>
+  >({});
+  const uploadThreadFeedback = useAtomCommand(threadEnvironment.uploadFeedback, {
+    reportFailure: false,
+  });
 
   useEffect(() => {
     ensureComposerDraftsLoaded();
@@ -137,14 +152,27 @@ export function useThreadComposerState() {
     () => (selectedThreadKey ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []) : []),
     [queuedMessagesByThreadKey, selectedThreadKey],
   );
-  const selectedThreadFeed = useMemo(
-    () =>
-      mergeQueuedMessagesIntoThreadFeed(
-        selectedThreadDetail ? buildThreadFeed(selectedThreadDetail) : [],
-        selectedThreadQueuedMessages,
+  const selectedThreadFeed = useMemo(() => {
+    if (!selectedThreadDetail) {
+      return [];
+    }
+    const submissions = selectedThreadKey
+      ? (feedbackSubmissionsByThreadKey[selectedThreadKey] ?? [])
+      : [];
+    const serverFeed = buildThreadFeed(selectedThreadDetail, {
+      localMessages: submissions.flatMap((submission) =>
+        submission.status === "interrupted"
+          ? []
+          : [codexFeedbackMessage(submission), codexFeedbackMessage(submission, "assistant")],
       ),
-    [selectedThreadDetail, selectedThreadQueuedMessages],
-  );
+    });
+    return mergeQueuedMessagesIntoThreadFeed(serverFeed, selectedThreadQueuedMessages);
+  }, [
+    feedbackSubmissionsByThreadKey,
+    selectedThreadDetail,
+    selectedThreadKey,
+    selectedThreadQueuedMessages,
+  ]);
 
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
   const draftMessage = selectedDraft?.text ?? "";
@@ -200,7 +228,10 @@ export function useThreadComposerState() {
     }
 
     const shouldImprovePromptBeforeSend =
-      workflowSettings.supported && preferences.improvePromptBeforeSend === true && text.length > 0;
+      workflowSettings.supported &&
+      preferences.improvePromptBeforeSend === true &&
+      text.length > 0 &&
+      parseCodexFeedbackCommand(text) === null;
     const environmentConnected = connectedEnvironments.some(
       (environment) =>
         environment.environmentId === selectedThreadShell.environmentId &&
@@ -226,6 +257,70 @@ export function useThreadComposerState() {
         return null;
       }
       text = result.value.text.trim();
+    }
+
+    const provider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
+      (entry) => entry.instanceId === thread.modelSelection.instanceId,
+    );
+    const feedbackCommand =
+      attachments.length === 0 &&
+      (provider?.driver === "codex" || thread.session?.providerName === "codex")
+        ? parseCodexFeedbackCommand(text)
+        : null;
+    if (feedbackCommand) {
+      if (thread.session === null) {
+        Alert.alert("Start a Codex thread first", "Send a message before you submit feedback.");
+        return null;
+      }
+      const metadata = makeQueuedMessageMetadata();
+      const result = await submitCodexFeedback({
+        submission: {
+          id: MessageId.make(metadata.messageId),
+          command: text,
+          createdAt: metadata.createdAt,
+        },
+        clearDraft: () => clearComposerDraftContent(threadKey),
+        onUpdate: (submission) => {
+          setFeedbackSubmissionsByThreadKey((current) => {
+            const existing = current[threadKey] ?? [];
+            const found = existing.some((entry) => entry.id === submission.id);
+            return {
+              ...current,
+              [threadKey]: found
+                ? existing.map((entry) => (entry.id === submission.id ? submission : entry))
+                : [...existing, submission],
+            };
+          });
+        },
+        upload: () =>
+          uploadThreadFeedback({
+            environmentId: selectedThreadShell.environmentId,
+            input: {
+              threadId: selectedThreadShell.id,
+              ...feedbackCommand,
+            },
+          }),
+      });
+      if (result._tag === "Failure") {
+        if (isAtomCommandInterrupted(result)) {
+          return null;
+        }
+        const error = Cause.squash(result.cause);
+        Alert.alert(
+          "Could not send feedback to OpenAI",
+          error instanceof Error ? error.message : "An error occurred.",
+        );
+        return null;
+      }
+      const feedbackId = result.value.feedbackId;
+      Alert.alert("Feedback sent to OpenAI", `Thread ID: ${feedbackId}`, [
+        { text: "OK", style: "cancel" },
+        {
+          text: "Copy ID",
+          onPress: () => copyTextWithHaptic(feedbackId, { target: "Codex feedback thread ID" }),
+        },
+      ]);
+      return null;
     }
 
     const metadata = makeQueuedMessageMetadata();
@@ -297,8 +392,10 @@ export function useThreadComposerState() {
     improvePrompt,
     connectedEnvironments,
     preferences.improvePromptBeforeSend,
+    selectedEnvironmentRuntime?.serverConfig?.providers,
     selectedThreadDetail,
     selectedThreadShell,
+    uploadThreadFeedback,
     workflowSettings.fetchMode,
     workflowSettings.supported,
   ]);

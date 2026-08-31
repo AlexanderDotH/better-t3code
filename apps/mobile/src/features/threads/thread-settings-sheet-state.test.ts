@@ -4,9 +4,12 @@ import { ProviderInstanceId, type ProviderOptionSelection } from "@t3tools/contr
 
 import type { ModelOption } from "../../lib/modelOptions";
 import {
+  MOBILE_MODEL_FILTER_MIN_TOUCH_TARGET,
   filterOpenRouterProviderCatalog,
+  modelFavoriteActionMessageKey,
   modelMatchesCatalogQuery,
   pendingModelAfterPress,
+  performModelFavoriteToggle,
   providerCatalogUsesDrillIn,
 } from "./thread-settings-sheet-state";
 
@@ -17,7 +20,7 @@ function modelOption(
   return {
     key: `codex:${model}`,
     label: model,
-    subtitle: "Codex",
+    subtitle: "",
     providerKey: "codex",
     providerLabel: "Codex",
     providerDriver: "codex",
@@ -109,6 +112,21 @@ describe("thread settings sheet state", () => {
     ).toBe(true);
   });
 
+  it("matches the upstream provider's display name", () => {
+    const model = {
+      ...modelOption("opencode/claude-fable-5"),
+      label: "Claude Fable 5",
+      subtitle: "OpenCode Zen",
+    };
+
+    expect(modelMatchesCatalogQuery({ model, providerLabel: "OpenCode", query: " ZEN " })).toBe(
+      true,
+    );
+    expect(modelMatchesCatalogQuery({ model, providerLabel: "OpenCode", query: "copilot" })).toBe(
+      false,
+    );
+  });
+
   it("clears staging when the applied model is pressed", () => {
     expect(
       pendingModelAfterPress({
@@ -141,5 +159,17 @@ describe("thread settings sheet state", () => {
         pressedIsApplied: false,
       }),
     ).toBe(pressed);
+  });
+
+  it("keeps filter controls touchable and toggles favorites without selecting the model row", () => {
+    expect(MOBILE_MODEL_FILTER_MIN_TOUCH_TARGET).toBe(44);
+    expect(modelFavoriteActionMessageKey(false)).toBe("mobile.thread.settings.addFavorite");
+    expect(modelFavoriteActionMessageKey(true)).toBe("mobile.thread.settings.removeFavorite");
+
+    const calls: string[] = [];
+    performModelFavoriteToggle({ stopPropagation: () => calls.push("stopped") }, () =>
+      calls.push("favorite"),
+    );
+    expect(calls).toEqual(["stopped", "favorite"]);
   });
 });

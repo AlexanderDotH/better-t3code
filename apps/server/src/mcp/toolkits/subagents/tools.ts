@@ -57,7 +57,7 @@ export const GeneralSubagentSpawnTool = Tool.make("subagent_spawn", {
 
 export const GeneralSubagentWaitTool = Tool.make("subagent_wait", {
   description:
-    "Wait up to 60 seconds for one or more T3 general-purpose subagents and return their latest status, output, and failure detail. Repeat while agents remain active; do not report their work as integrated until they are terminal.",
+    "Wait up to 60 seconds for one or more T3 general-purpose subagents. Terminal agents return a structured outcome, changes or findings, verification, risks or blockers, and a transcript reference. Repeat while agents remain active; do not report their work as integrated until they are terminal.",
   parameters: GeneralSubagentWaitInput,
   success: GeneralSubagentWaitResult,
   failure: GeneralSubagentError,
@@ -85,7 +85,7 @@ export const GeneralSubagentCancelTool = Tool.make("subagent_cancel", {
 
 export const GeneralSubagentListTool = Tool.make("list_agents", {
   description:
-    "List every direct T3-managed child owned by this root thread, including stable ids, provider selection, current status, transcript result, and failure detail.",
+    "List compact identity, provider, model, reasoning, and status fields for every direct T3-managed child owned by this root thread. Use wait_agent for terminal results.",
   parameters: GeneralSubagentListInput,
   success: GeneralSubagentListResult,
   failure: GeneralSubagentError,
@@ -141,7 +141,7 @@ export const GeneralSubagentFollowUpTool = Tool.make("followup_task", {
 
 export const GeneralSubagentWaitAgentTool = Tool.make("wait_agent", {
   description:
-    "Wait up to 60 seconds for one or more owned direct children to reach an idle or terminal boundary. Repeat when timedOut is true.",
+    "Wait up to 60 seconds for one or more owned direct children to reach an idle or terminal boundary. Terminal children return structured results with transcript references. Repeat when timedOut is true.",
   parameters: GeneralSubagentWaitInput,
   success: GeneralSubagentWaitResult,
   failure: GeneralSubagentError,

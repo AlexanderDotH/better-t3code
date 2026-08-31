@@ -13,7 +13,10 @@ import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@t3tools
 
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
-import { makeCodexTextGeneration } from "./CodexTextGeneration.ts";
+import {
+  classifyCodexTextGenerationModelFailure,
+  makeCodexTextGeneration,
+} from "./CodexTextGeneration.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DEFAULT_TEST_MODEL_SELECTION = createModelSelection(
@@ -38,6 +41,7 @@ function makeFakeCodexBinary(
     forbidArg?: string;
     stdinMustContain?: string;
     stdinMustNotContain?: string;
+    cwdMustDifferFrom?: string;
   },
 ) {
   return Effect.gen(function* () {
@@ -80,6 +84,14 @@ function makeFakeCodexBinary(
         "  shift",
         "done",
         'stdin_content="$(cat)"',
+        ...(input.cwdMustDifferFrom !== undefined
+          ? [
+              `if [ "$PWD" = ${JSON.stringify(input.cwdMustDifferFrom)} ]; then`,
+              '  printf "%s\\n" "routing cwd was not isolated" >&2',
+              "  exit 10",
+              "fi",
+            ]
+          : []),
         ...(input.requireArg !== undefined
           ? [
               `case " $original_args " in *" ${input.requireArg} "*) ;; *)`,
@@ -170,6 +182,7 @@ function withFakeCodexEnv<A, E, R>(
     forbidArg?: string;
     stdinMustContain?: string;
     stdinMustNotContain?: string;
+    cwdMustDifferFrom?: string;
     launchArgs?: string;
     environment?: NodeJS.ProcessEnv;
   },
@@ -184,6 +197,14 @@ function withFakeCodexEnv<A, E, R>(
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
 }
+
+it("classifies Codex Spark usage limits as rate limited", () => {
+  expect(
+    classifyCodexTextGenerationModelFailure(
+      "You've hit your usage limit for GPT-5.3-Codex-Spark. Switch to another model now, or try again at 11:47 PM.",
+    ),
+  ).toBe("rate-limited");
+});
 
 it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
   it.effect("generates and sanitizes commit messages without branch by default", () =>
@@ -210,6 +231,31 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
           expect(generated.subject.endsWith(".")).toBe(false);
           expect(generated.body).toBe("- added migration\n- updated tests");
           expect(generated.branch).toBeUndefined();
+        }),
+    ),
+  );
+
+  it.effect("routes Auto Reasoning in an isolated cwd with tools and MCP disabled", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ effort: "high" }),
+        requireArg: "--disable multi_agent -c mcp_servers={}",
+        stdinMustContain: "<t3code_auto_reasoning_call>",
+        cwdMustDifferFrom: process.cwd(),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.decideAutoReasoning({
+            cwd: process.cwd(),
+            userPrompt: "Implement the smallest correct fix.",
+            interactionMode: "default",
+            attachments: [],
+            allowedEfforts: ["low", "medium", "high"],
+            conversation: [],
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+
+          expect(result).toEqual({ effort: "high" });
         }),
     ),
   );

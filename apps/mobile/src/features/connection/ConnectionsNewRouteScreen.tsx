@@ -6,14 +6,15 @@ import * as Clipboard from "expo-clipboard";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Linking, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { ErrorBanner } from "../../components/ErrorBanner";
 import { pairingOnboardingProgressAtom } from "../../connection/onboarding";
-import { useThemeColor } from "../../lib/useThemeColor";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { ConnectionSheetButton } from "./ConnectionSheetButton";
 import {
   buildPairingUrl,
@@ -41,6 +42,7 @@ function errorMessage(error: unknown, fallback: string): string {
 export function ConnectionsNewRouteScreen({
   route,
 }: StaticScreenProps<ConnectionsNewRouteParams | undefined>) {
+  const translator = useMobileInterfaceTranslator();
   const {
     connectionPairingUrl,
     onChangeConnectionPairingUrl,
@@ -68,7 +70,7 @@ export function ConnectionsNewRouteScreen({
   const [scannerLocked, setScannerLocked] = useState(false);
   const attemptedAutoConnectRef = useRef<string | null>(null);
 
-  const headerIconColor = useThemeColor("--color-icon");
+  const headerIconColor = useUniwindTheme()["--color-icon"];
   const activePairingStage = pairingProgress?.stage ?? "validating";
   const connectDisabled =
     isSubmitting || reviewPairingUrl.length === 0 || destinationReview === null;
@@ -101,10 +103,12 @@ export function ConnectionsNewRouteScreen({
       const { host, code } = parsePairingUrl(connectionPairingUrl);
       setHostInput(host);
       setCodeInput(code);
-      setInputError(errorMessage(error, "The saved pairing details are invalid."));
+      setInputError(
+        errorMessage(error, translator.message("mobile.connection.savedPairingInvalid")),
+      );
       setFlowStep("manual");
     }
-  }, [connectionPairingUrl, preparePairingRequestForReview, routePairingUrl]);
+  }, [connectionPairingUrl, preparePairingRequestForReview, routePairingUrl, translator]);
 
   useEffect(() => {
     if (routePairingUrl.length === 0) {
@@ -117,10 +121,12 @@ export function ConnectionsNewRouteScreen({
       const { host, code } = parsePairingUrl(routePairingUrl);
       setHostInput(host);
       setCodeInput(code);
-      setInputError(errorMessage(error, "The pairing link is invalid."));
+      setInputError(
+        errorMessage(error, translator.message("mobile.connection.pairingLinkInvalid")),
+      );
       setFlowStep("manual");
     }
-  }, [preparePairingRequestForReview, routePairingUrl]);
+  }, [preparePairingRequestForReview, routePairingUrl, translator]);
 
   useEffect(() => {
     if (pairingConnectionError) {
@@ -154,21 +160,24 @@ export function ConnectionsNewRouteScreen({
 
     if (permission.canAskAgain) {
       Alert.alert(
-        "Camera access needed",
-        "Allow camera access to scan an environment pairing QR code.",
+        translator.message("mobile.connection.cameraAccessNeeded"),
+        translator.message("mobile.connection.cameraAccessDescription"),
       );
       return;
     }
 
     Alert.alert(
-      "Camera access needed",
-      "Camera access was denied for this app. Open Settings to enable it.",
+      translator.message("mobile.connection.cameraAccessNeeded"),
+      translator.message("mobile.connection.cameraAccessDenied"),
       [
-        { text: "Cancel", style: "cancel" },
-        { text: "Open Settings", onPress: () => void Linking.openSettings() },
+        { text: translator.message("common.cancel"), style: "cancel" },
+        {
+          text: translator.message("mobile.settings.notifications.openSettings"),
+          onPress: () => void Linking.openSettings(),
+        },
       ],
     );
-  }, [cameraPermission?.granted, requestCameraPermission]);
+  }, [cameraPermission?.granted, requestCameraPermission, translator]);
 
   const closeScanner = useCallback(() => {
     setShowScanner(false);
@@ -187,14 +196,19 @@ export function ConnectionsNewRouteScreen({
         setShowScanner(false);
       } catch (error) {
         Alert.alert(
-          "Invalid QR code",
-          errorMessage(error, "Scanned QR code was not recognized."),
-          [{ text: "Try again", onPress: () => setScannerLocked(false) }],
+          translator.message("mobile.connection.invalidQr"),
+          errorMessage(error, translator.message("mobile.connection.invalidQrDescription")),
+          [
+            {
+              text: translator.message("common.retry"),
+              onPress: () => setScannerLocked(false),
+            },
+          ],
           { cancelable: false },
         );
       }
     },
-    [preparePairingRequestForReview, scannerLocked],
+    [preparePairingRequestForReview, scannerLocked, translator],
   );
 
   const handlePastePairingLink = useCallback(async () => {
@@ -203,11 +217,11 @@ export function ConnectionsNewRouteScreen({
       preparePairingRequestForReview(pairingUrl);
     } catch (error) {
       Alert.alert(
-        "Pairing link not recognized",
-        errorMessage(error, "Copy a complete pairing link and try again."),
+        translator.message("mobile.connection.pairingNotRecognized"),
+        errorMessage(error, translator.message("mobile.connection.pairingCopyComplete")),
       );
     }
-  }, [preparePairingRequestForReview]);
+  }, [preparePairingRequestForReview, translator]);
 
   const connectAndClose = useCallback(
     async (pairingUrl: string, replaceWithHome: boolean) => {
@@ -234,9 +248,9 @@ export function ConnectionsNewRouteScreen({
     try {
       preparePairingRequestForReview(buildPairingUrl(hostInput, codeInput));
     } catch (error) {
-      setInputError(errorMessage(error, "Check the host and pairing code."));
+      setInputError(errorMessage(error, translator.message("mobile.connection.checkHostCode")));
     }
-  }, [codeInput, hostInput, preparePairingRequestForReview]);
+  }, [codeInput, hostInput, preparePairingRequestForReview, translator]);
 
   const handleSubmit = useCallback(async () => {
     if (reviewPairingUrl.length === 0) {
@@ -264,16 +278,24 @@ export function ConnectionsNewRouteScreen({
       <NativeStackScreenOptions
         options={{
           ...(Platform.OS === "android" ? { headerShown: false } : null),
-          title: showScanner ? "Scan QR Code" : "Add Environment",
+          title: showScanner
+            ? translator.message("mobile.connection.scanQrTitle")
+            : translator.message("mobile.connection.addEnvironment"),
         }}
       />
       {Platform.OS === "android" ? (
         <AndroidScreenHeader
-          title={showScanner ? "Scan QR Code" : "Add Environment"}
+          title={
+            showScanner
+              ? translator.message("mobile.connection.scanQrTitle")
+              : translator.message("mobile.connection.addEnvironment")
+          }
           onBack={() => navigation.goBack()}
           actions={[
             {
-              accessibilityLabel: showScanner ? "Close scanner" : "Scan QR code",
+              accessibilityLabel: showScanner
+                ? translator.message("mobile.connection.closeScanner")
+                : translator.message("mobile.connection.scanQr"),
               icon: showScanner ? "xmark" : "camera",
               onPress: () => {
                 if (showScanner) {
@@ -322,12 +344,12 @@ export function ConnectionsNewRouteScreen({
             ) : (
               <View className="items-center gap-3 rounded-[24px] border-continuous bg-card px-5 py-8">
                 <Text className="text-center text-sm leading-normal text-foreground-muted">
-                  Camera permission is required to scan a QR code.
+                  {translator.message("mobile.connection.cameraRequired")}
                 </Text>
                 <ConnectionSheetButton
                   compact
                   icon="camera"
-                  label="Allow camera"
+                  label={translator.message("mobile.connection.allowCamera")}
                   tone="secondary"
                   onPress={() => {
                     void openScanner();
@@ -339,17 +361,16 @@ export function ConnectionsNewRouteScreen({
             <View collapsable={false} className="gap-4">
               <View className="gap-1 px-1">
                 <Text className="font-t3-semibold text-lg text-foreground">
-                  Connect to your T3 Code host
+                  {translator.message("mobile.connection.connectHost")}
                 </Text>
                 <Text className="text-sm leading-normal text-foreground-muted">
-                  Scan the pairing QR code from your host, paste its pairing link, or enter the
-                  details manually.
+                  {translator.message("mobile.connection.connectInstructions")}
                 </Text>
               </View>
               <View className="gap-3 rounded-[24px] bg-card p-4">
                 <ConnectionSheetButton
                   icon="camera"
-                  label="Scan QR code"
+                  label={translator.message("mobile.connection.scanQr")}
                   tone="primary"
                   onPress={() => {
                     void openScanner();
@@ -357,14 +378,14 @@ export function ConnectionsNewRouteScreen({
                 />
                 <ConnectionSheetButton
                   icon="link"
-                  label="Paste pairing link"
+                  label={translator.message("mobile.connection.pastePairing")}
                   onPress={() => {
                     void handlePastePairingLink();
                   }}
                 />
                 <ConnectionSheetButton
                   icon="keyboard"
-                  label="Enter manually"
+                  label={translator.message("mobile.connection.enterManually")}
                   onPress={() => setFlowStep("manual")}
                 />
               </View>
@@ -373,7 +394,7 @@ export function ConnectionsNewRouteScreen({
             <View collapsable={false} className="gap-4 rounded-[24px] bg-card p-4">
               <View collapsable={false} className="gap-1.5">
                 <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
-                  Host
+                  {translator.message("mobile.connection.host")}
                 </Text>
                 <TextInput
                   autoCapitalize="none"
@@ -388,7 +409,7 @@ export function ConnectionsNewRouteScreen({
 
               <View collapsable={false} className="gap-1.5">
                 <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
-                  Pairing code
+                  {translator.message("mobile.connection.pairingCode")}
                 </Text>
                 <TextInput
                   autoCapitalize="none"
@@ -405,7 +426,7 @@ export function ConnectionsNewRouteScreen({
 
               <ConnectionSheetButton
                 icon="arrow.right"
-                label="Review environment"
+                label={translator.message("mobile.connection.review")}
                 disabled={hostInput.trim().length === 0 || codeInput.trim().length === 0}
                 tone="primary"
                 onPress={handleManualReview}
@@ -413,7 +434,7 @@ export function ConnectionsNewRouteScreen({
               <ConnectionSheetButton
                 compact
                 icon="chevron.left"
-                label="Back to options"
+                label={translator.message("mobile.connection.backToOptions")}
                 onPress={() => setFlowStep("choose")}
               />
             </View>
@@ -421,7 +442,7 @@ export function ConnectionsNewRouteScreen({
             <View collapsable={false} className="gap-4 rounded-[24px] bg-card p-4">
               <View className="gap-1.5">
                 <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
-                  Destination
+                  {translator.message("mobile.connection.destination")}
                 </Text>
                 <Text selectable className="font-t3-medium text-base text-foreground">
                   {destinationReview.destination}
@@ -430,27 +451,31 @@ export function ConnectionsNewRouteScreen({
 
               <View className="gap-1.5 rounded-2xl bg-secondary px-3.5 py-3">
                 <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
-                  Transport
+                  {translator.message("mobile.connection.transport")}
                 </Text>
                 <Text className="font-t3-semibold text-sm text-foreground">
                   {destinationReview.transport} · {destinationReview.transportDetail}
                 </Text>
                 {!destinationReview.encrypted ? (
                   <Text className="text-xs leading-normal text-foreground-muted">
-                    Only continue on a network you trust. The connection is not encrypted.
+                    {translator.message("mobile.connection.unencryptedWarning")}
                   </Text>
                 ) : null}
               </View>
 
               <Text className="text-xs leading-normal text-foreground-muted">
-                Your pairing code is hidden and will only be sent after you confirm.
+                {translator.message("mobile.connection.pairingCodeHidden")}
               </Text>
 
               {pairingErrorMessage ? <ErrorBanner message={pairingErrorMessage} /> : null}
 
               <ConnectionSheetButton
                 icon="plus"
-                label={isSubmitting ? pairingStageLabel(activePairingStage) : "Pair environment"}
+                label={
+                  isSubmitting
+                    ? pairingStageLabel(activePairingStage)
+                    : translator.message("mobile.connection.pairEnvironment")
+                }
                 disabled={connectDisabled}
                 tone="primary"
                 onPress={() => {
@@ -460,7 +485,7 @@ export function ConnectionsNewRouteScreen({
               <ConnectionSheetButton
                 compact
                 icon="pencil"
-                label="Edit details"
+                label={translator.message("mobile.connection.editDetails")}
                 disabled={isSubmitting}
                 onPress={() => setFlowStep("manual")}
               />

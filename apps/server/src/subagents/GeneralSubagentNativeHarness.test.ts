@@ -3,7 +3,10 @@ import { ProviderInstanceId, SubagentId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { GeneralSubagentCoordinator } from "./GeneralSubagentCoordinator.ts";
-import { makeGeneralSubagentNativeHarnessExtension } from "./GeneralSubagentNativeHarness.ts";
+import {
+  GENERAL_SUBAGENT_NATIVE_HARNESS_DECLARATIONS,
+  makeGeneralSubagentNativeHarnessExtension,
+} from "./GeneralSubagentNativeHarness.ts";
 
 const parentThreadId = ThreadId.make("native-harness-parent");
 const providerInstanceId = ProviderInstanceId.make("chatgpt-subscription");
@@ -67,4 +70,14 @@ it.effect("publishes the six direct-agent aliases and binds execution to its roo
       task: "Run the follow-up.",
     });
   }).pipe(Effect.provideService(GeneralSubagentCoordinator, coordinator));
+});
+
+it("describes list_agents as compact identity and status metadata", () => {
+  const description = GENERAL_SUBAGENT_NATIVE_HARNESS_DECLARATIONS.find(
+    ({ name }) => name === "list_agents",
+  )?.description;
+
+  expect(description).toContain("identity");
+  expect(description).toContain("status");
+  expect(description).not.toMatch(/transcript|task|result|failure/i);
 });

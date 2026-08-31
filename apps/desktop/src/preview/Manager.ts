@@ -7,6 +7,7 @@
  */
 import type {
   DesktopPreviewAnnotationTheme,
+  DesktopPreviewAutomationStatus,
   DesktopPreviewColorScheme,
   DesktopPreviewFavicon,
   DesktopPreviewPointerEvent,
@@ -25,11 +26,14 @@ import type {
   PreviewAutomationNetworkEntry,
   PreviewAutomationScrollInput,
   PreviewAutomationSnapshot,
-  PreviewAutomationStatus,
   PreviewAutomationTypeInput,
   PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  translateInterfaceMessage,
+  type ResolvedInterfaceLanguage,
+} from "@t3tools/shared/interfaceLanguage";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { BrowserWindow, type Session, clipboard, nativeImage, shell, webContents } from "electron";
 import * as Cause from "effect/Cause";
@@ -121,6 +125,7 @@ const AGENT_CURSOR_MOVE_MS = 160;
 const AGENT_CURSOR_CLICK_LEAD_MS = 40;
 const encodeUnknownJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const DEFAULT_ANNOTATION_THEME: DesktopPreviewAnnotationTheme = {
+  interfaceLanguage: "en",
   colorScheme: "light",
   radius: "0.625rem",
   background: "white",
@@ -140,7 +145,13 @@ const DEFAULT_ANNOTATION_THEME: DesktopPreviewAnnotationTheme = {
   fontMono: "ui-monospace, monospace",
 };
 
-export const buildPreviewPictureInPictureDataUrl = (): string => {
+export const buildPreviewPictureInPictureDataUrl = (
+  interfaceLanguage: ResolvedInterfaceLanguage = "en",
+): string => {
+  const previewAlt = translateInterfaceMessage(
+    interfaceLanguage,
+    "desktop.preview.liveBrowserPreview",
+  );
   const html = `<!doctype html>
 <html>
   <head>
@@ -157,7 +168,7 @@ export const buildPreviewPictureInPictureDataUrl = (): string => {
     </style>
   </head>
   <body>
-    <img id="preview-frame" alt="Live browser preview">
+    <img id="preview-frame" alt="${previewAlt}">
     <script>
       const frame = document.getElementById("preview-frame");
       window.previewPictureInPicture.onFrame((next) => {
@@ -405,6 +416,7 @@ type FrameCaptureConsumer = "picture-in-picture" | "recording";
 interface FrameCaptureSession {
   readonly scope: Scope.Closeable;
   readonly consumers: ReadonlySet<FrameCaptureConsumer>;
+  readonly lastPictureInPictureFrame: Buffer | null;
 }
 
 interface PictureInPictureSession {
@@ -457,6 +469,61 @@ const APP_FORWARDED_SHORTCUTS: ReadonlyArray<{
   // mod+W → close tab/panel
   { key: "w", meta: true, shift: false, control: false },
 ]);
+
+/**
+ * Protocols a preview page may open in a real popup window.
+ *
+ * `about:blank` stays out: Chromium skips browser-side navigation for it, so the
+ * child copies the guest's `contextIsolation: false` preferences and Electron
+ * gives no way to override them. Those popups keep loading in the preview tab.
+ *
+ * Deliberately not `ElectronShell.parseSafeExternalUrl`: that also admits
+ * `vscode://vscode-remote/...` deep links, which belong in `shell.openExternal`
+ * and not in a window spawned by a third-party page in the preview.
+ */
+const POPUP_PROTOCOLS = new Set(["http:", "https:"]);
+
+const isPopupUrl = (rawUrl: string): boolean => {
+  try {
+    return POPUP_PROTOCOLS.has(new URL(rawUrl).protocol);
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Preferences for a popup a preview page opens.
+ *
+ * A popup is not a webview attach, so the `will-attach-webview` hardening in
+ * `DesktopWindow` never sees it, and an unoverridden child would inherit the
+ * guest's relaxed posture: the picker preload needs `contextIsolation: false`
+ * to share `globalThis` with the previewed page, and no OAuth provider should
+ * get that. The window keeps the opener and the guest session either way.
+ */
+const POPUP_WINDOW_OPTIONS = {
+  webPreferences: {
+    contextIsolation: true,
+    nodeIntegration: false,
+    sandbox: true,
+  },
+} satisfies Electron.BrowserWindowConstructorOptions;
+
+/**
+ * Decides what a preview page's `window.open` should do.
+ *
+ * `"popup"` opens a real window, which scripted popups need: denying them makes
+ * `window.open()` return `null` (OAuth SDKs report that as a blocked popup), and
+ * navigating the preview tab instead destroys the opener the popup has to
+ * `postMessage` its result back to.
+ *
+ * `target="_blank"` links arrive as a tab disposition and keep loading in the
+ * preview tab, which is what people expect from a link inside a preview.
+ */
+export const previewWindowOpenAction = (details: {
+  readonly url: string;
+  readonly disposition: Electron.HandlerDetails["disposition"];
+}): "popup" | "navigate" =>
+  details.disposition === "new-window" && isPopupUrl(details.url) ? "popup" : "navigate";
 
 export const isPreviewRefreshShortcut = (input: Electron.Input): boolean =>
   input.type === "keyDown" &&
@@ -654,7 +721,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           return [
             undefined,
             replaceMap(sessions, (copy) => {
-              copy.set(tabId, { ...current, consumers });
+              copy.set(tabId, {
+                ...current,
+                consumers,
+                lastPictureInPictureFrame:
+                  consumer === "picture-in-picture" ? null : current.lastPictureInPictureFrame,
+              });
             }),
           ] as const;
         }
@@ -1699,6 +1771,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         ],
       });
     });
+    // A popup opens with Electron's default handler, so the page inside it could
+    // otherwise spawn native windows without limit. Nothing in an OAuth flow
+    // opens a second popup, so the chain stops at the first one.
+    const windowCreated = (window: Electron.BrowserWindow): void => {
+      window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    };
     const beforeInput = (event: Electron.Event, input: Electron.Input): void => {
       if (isPreviewRefreshShortcut(input)) {
         event.preventDefault();
@@ -1724,6 +1802,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.off("did-stop-loading", sync);
         wc.off("did-fail-load", failed as never);
         wc.off("audio-state-changed", audioStateChanged);
+        wc.off("did-create-window", windowCreated);
         wc.off("before-input-event", beforeInput);
         wc.ipc.off(HUMAN_INPUT_CHANNEL, humanInput);
         wc.ipc.off(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
@@ -1742,14 +1821,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.on("audio-state-changed", audioStateChanged);
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
         wc.ipc.on(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
-        wc.setWindowOpenHandler(({ url }) => {
+        wc.setWindowOpenHandler((details) => {
+          if (previewWindowOpenAction(details) === "popup") {
+            return { action: "allow", overrideBrowserWindowOptions: POPUP_WINDOW_OPTIONS };
+          }
           runFork(
             attemptPromise({ operation: "openPreviewWindow", tabId, webContentsId: wc.id }, () =>
-              wc.loadURL(url),
+              wc.loadURL(details.url),
             ).pipe(Effect.ignore),
           );
           return { action: "deny" };
         });
+        wc.on("did-create-window", windowCreated);
         wc.on("before-input-event", beforeInput);
       });
       yield* Ref.update(attachedRef, (attached) =>
@@ -2591,18 +2674,25 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         tabId,
         webContentsId: wc.id,
       },
-      () => image.toJPEG(RECORDING_JPEG_QUALITY).toString("base64"),
+      () => image.toJPEG(RECORDING_JPEG_QUALITY),
     );
+    const frameSession = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(tabId);
+    if (frameSession?.scope !== captureSession.scope) return;
+    const recording = frameSession.consumers.has("recording");
+    const pictureInPicture =
+      frameSession.consumers.has("picture-in-picture") &&
+      frameSession.lastPictureInPictureFrame?.equals(encoded) !== true;
+    if (!recording && !pictureInPicture) return;
     const receivedAt = yield* currentIso;
     const frame: DesktopPreviewRecordingFrame = {
       tabId,
-      data: encoded,
+      data: encoded.toString("base64"),
       width: size.width,
       height: size.height,
       receivedAt,
     };
     const deliveries: Array<Effect.Effect<void>> = [];
-    if (currentCaptureSession.consumers.has("recording")) {
+    if (recording) {
       const listeners = yield* Ref.get(recordingFrameListenersRef);
       deliveries.push(
         Effect.forEach(
@@ -2612,7 +2702,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         ),
       );
     }
-    if (currentCaptureSession.consumers.has("picture-in-picture")) {
+    if (pictureInPicture) {
       const pictureInPictureWindow = (yield* SynchronizedRef.get(pictureInPictureSessionsRef)).get(
         tabId,
       )?.window;
@@ -2662,6 +2752,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 );
               },
             );
+            yield* SynchronizedRef.update(frameCaptureSessionsRef, (sessions) => {
+              if (sessions.get(tabId) !== frameSession) return sessions;
+              return replaceMap(sessions, (copy) => {
+                copy.set(tabId, {
+                  ...frameSession,
+                  lastPictureInPictureFrame: encoded,
+                });
+              });
+            });
           }).pipe(
             Effect.catch((error) =>
               Effect.logWarning("Picture-in-picture frame delivery failed.", {
@@ -2729,6 +2828,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             copy.set(tabId, {
               scope,
               consumers: new Set([consumer]),
+              lastPictureInPictureFrame: null,
             });
           }),
         ] as const;
@@ -2883,6 +2983,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             ),
           );
         };
+        const onDidFinishLoad = () => {
+          runFork(
+            SynchronizedRef.update(frameCaptureSessionsRef, (sessions) => {
+              const current = sessions.get(tabId);
+              if (!current?.consumers.has("picture-in-picture")) return sessions;
+              return replaceMap(sessions, (copy) => {
+                copy.set(tabId, { ...current, lastPictureInPictureFrame: null });
+              });
+            }),
+          );
+        };
+        const pipWebContents = pictureInPictureWindow.webContents;
         yield* attempt(
           {
             operation: "pictureInPicture.configure",
@@ -2903,6 +3015,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 skipTransformProcessType: true,
               });
             }
+            pipWebContents.on("did-finish-load", onDidFinishLoad);
           },
         ).pipe(
           Effect.onError(() =>
@@ -2916,6 +3029,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               { discard: true },
             ),
           ),
+        );
+        yield* Scope.addFinalizer(
+          initializationScope,
+          Effect.sync(() => {
+            pipWebContents.off("did-finish-load", onDidFinishLoad);
+          }).pipe(Effect.ignore),
         );
         yield* SynchronizedRef.update(pictureInPictureSessionsRef, (sessions) =>
           replaceMap(sessions, (copy) => {
@@ -2952,13 +3071,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
 
     const initialize = Effect.gen(function* () {
+      const interfaceLanguage = (yield* Ref.get(annotationThemeRef)).interfaceLanguage ?? "en";
       yield* attemptPromise(
         {
           operation: "pictureInPicture.load",
           tabId,
           webContentsId: pictureInPictureSession.webContentsId,
         },
-        () => pictureInPictureSession.window.loadURL(buildPreviewPictureInPictureDataUrl()),
+        () =>
+          pictureInPictureSession.window.loadURL(
+            buildPreviewPictureInPictureDataUrl(interfaceLanguage),
+          ),
       );
       const currentWebContents = yield* requireWebContents(tabId);
       if (
@@ -4133,7 +4256,7 @@ export class PreviewManager extends Context.Service<
     ) => Effect.Effect<DesktopPreviewRecordingArtifact, PreviewManagerError>;
     readonly automationStatus: (
       tabId: string,
-    ) => Effect.Effect<PreviewAutomationStatus, PreviewManagerError>;
+    ) => Effect.Effect<DesktopPreviewAutomationStatus, PreviewManagerError>;
     readonly automationSnapshot: (
       tabId: string,
     ) => Effect.Effect<PreviewAutomationSnapshot, PreviewManagerError>;

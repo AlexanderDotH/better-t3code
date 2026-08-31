@@ -52,6 +52,9 @@ export const ProviderOptionSelection = Schema.Struct({
 });
 export type ProviderOptionSelection = typeof ProviderOptionSelection.Type;
 
+export const CODEX_REASONING_EFFORT_OPTION_ID = "reasoningEffort";
+export const T3_AUTO_REASONING_OPTION_ID = "t3AutoReasoning";
+
 /**
  * Legacy on-disk shape for provider option selections, kept readable by the
  * decoder so we can tolerate stored data written before the v3 array shape.

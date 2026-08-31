@@ -4,16 +4,18 @@ import { Platform } from "react-native";
 
 import { AndroidScreenScaffold } from "../../components/AndroidScreenScaffold";
 import { EnvironmentManagerContent } from "./EnvironmentManagerContent";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function ConnectionsRouteScreen() {
   const navigation = useNavigation();
+  const translator = useMobileInterfaceTranslator();
 
   return (
     <AndroidScreenScaffold
-      title="Environments"
+      title={translator.message("mobile.settings.environments")}
       actions={[
         {
-          accessibilityLabel: "Add environment",
+          accessibilityLabel: translator.message("mobile.connection.addEnvironment"),
           icon: "plus",
           onPress: () => navigation.navigate("ConnectionsNew"),
         },
@@ -22,7 +24,7 @@ export function ConnectionsRouteScreen() {
       {Platform.OS !== "android" ? (
         <NativeHeaderToolbar placement="right">
           <NativeHeaderToolbar.Button
-            accessibilityLabel="Add environment"
+            accessibilityLabel={translator.message("mobile.connection.addEnvironment")}
             icon="plus"
             onPress={() => navigation.navigate("ConnectionsNew")}
             separateBackground

@@ -6,7 +6,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import type * as Electron from "electron";
-import { DEFAULT_CLIENT_SETTINGS, type InterfaceLanguagePreference } from "@t3tools/contracts";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  type InterfaceLanguagePreference,
+  type InterfaceLocalePreferenceV1,
+} from "@t3tools/contracts";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
@@ -17,6 +21,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
+import { readDesktopInterfaceLanguage } from "../settings/DesktopInterfaceLanguage.ts";
 
 const environmentInput = {
   dirname: "/repo/apps/desktop/dist-electron",
@@ -98,7 +103,10 @@ const makeElectronMenuLayer = (
     showContextMenu: () => Effect.succeed(Option.none()),
   } satisfies ElectronMenu.ElectronMenu["Service"]);
 
-const makeDesktopClientSettingsLayer = (preference: InterfaceLanguagePreference) =>
+const makeDesktopClientSettingsLayer = (
+  preference: InterfaceLanguagePreference,
+  localePreference?: InterfaceLocalePreferenceV1,
+) =>
   DesktopClientSettings.layerTest(
     Option.some({
       ...DEFAULT_CLIENT_SETTINGS,
@@ -107,6 +115,15 @@ const makeDesktopClientSettingsLayer = (preference: InterfaceLanguagePreference)
         updatedAt: 1,
         updateId: `desktop:${preference}`,
       },
+      interfaceLocaleLocalRecordV1:
+        localePreference === undefined
+          ? null
+          : {
+              version: 1,
+              preference: localePreference,
+              updatedAt: 2,
+              updateId: `desktop-v1:${localePreference}`,
+            },
     }),
   );
 
@@ -114,6 +131,7 @@ const configureMenu = (
   selectedAction: Deferred.Deferred<string>,
   applicationMenuTemplate: Deferred.Deferred<readonly Electron.MenuItemConstructorOptions[]>,
   preference: InterfaceLanguagePreference = "en",
+  localePreference?: InterfaceLocalePreferenceV1,
 ) =>
   Effect.gen(function* () {
     const menu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
@@ -126,7 +144,7 @@ const configureMenu = (
         Layer.provideMerge(desktopUpdatesLayer),
         Layer.provideMerge(electronDialogLayer),
         Layer.provideMerge(electronAppLayer),
-        Layer.provideMerge(makeDesktopClientSettingsLayer(preference)),
+        Layer.provideMerge(makeDesktopClientSettingsLayer(preference, localePreference)),
         Layer.provideMerge(
           DesktopEnvironment.layer(environmentInput).pipe(
             Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({}))),
@@ -152,6 +170,25 @@ describe("DesktopApplicationMenu", () => {
         throw new Error("Expected Datei submenu to be an array.");
       }
       assert.isDefined(fileMenu.submenu.find((item) => item.label === "Einstellungen..."));
+    }),
+  );
+
+  it.effect("prefers the versioned French locale over its legacy compatibility mirror", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
+      yield* configureMenu(selectedAction, applicationMenuTemplate, "de", "fr");
+
+      const template = yield* Deferred.await(applicationMenuTemplate);
+      assert.equal(readDesktopInterfaceLanguage(), "fr");
+      const fileMenu = template.find((item) => item.label === "Fichier");
+      assert.isDefined(fileMenu);
+      if (!Array.isArray(fileMenu.submenu)) {
+        throw new Error("Expected Fichier submenu to be an array.");
+      }
+      assert.isDefined(fileMenu.submenu.find((item) => item.label === "Réglages..."));
     }),
   );
 

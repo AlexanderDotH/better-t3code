@@ -1,4 +1,8 @@
+import type { ForkThreadInput } from "@t3tools/client-runtime/operations";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type {
+  EnvironmentId,
+  ThreadId,
   ThreadForkBoundary,
   ThreadForkHandoffState,
   ThreadForkWorkspace,
@@ -10,6 +14,58 @@ import {
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
 } from "@t3tools/contracts";
 import { resolveDefaultThreadEnvMode } from "@t3tools/shared/threadEnvMode";
+import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
+
+type ForkSourceThread = Pick<
+  EnvironmentThreadShell,
+  "environmentId" | "id" | "projectId" | "modelSelection" | "runtimeMode" | "interactionMode"
+>;
+
+export const MOBILE_THREAD_FORK_MESSAGE_KEYS = {
+  forkHere: "mobile.thread.forkHere",
+  forkedFrom: "mobile.thread.forkedFrom",
+  forkStarts: "mobile.thread.forkStarts",
+} as const satisfies Record<string, InterfaceMessageKey>;
+
+export function mobileThreadForkingSupported(capabilities: {
+  readonly threadForking?: boolean;
+}): boolean {
+  return capabilities.threadForking === true;
+}
+
+export function buildMobileThreadForkCommand(input: {
+  readonly thread: ForkSourceThread;
+  readonly destinationThreadId: ThreadId;
+  readonly boundary: ThreadForkBoundary;
+  readonly workspace: ThreadForkWorkspace;
+}): { readonly environmentId: EnvironmentId; readonly input: ForkThreadInput } {
+  return {
+    environmentId: input.thread.environmentId,
+    input: {
+      threadId: input.destinationThreadId,
+      sourceThreadId: input.thread.id,
+      boundary: input.boundary,
+      modelSelection: input.thread.modelSelection,
+      runtimeMode: input.thread.runtimeMode,
+      interactionMode: input.thread.interactionMode,
+      workspace: input.workspace,
+    },
+  };
+}
+
+export function mobileForkedThreadRoute(input: {
+  readonly environmentId: EnvironmentId;
+  readonly destinationThreadId: ThreadId;
+}) {
+  return {
+    screen: "Thread",
+    params: {
+      environmentId: String(input.environmentId),
+      threadId: String(input.destinationThreadId),
+      focusComposer: true,
+    },
+  } as const;
+}
 
 type ForkableFeedEntry =
   | {

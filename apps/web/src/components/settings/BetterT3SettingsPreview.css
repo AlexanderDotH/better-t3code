@@ -1,0 +1,97 @@
+.better-t3-preview-animate {
+  animation: better-t3-preview-enter 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+[data-card-morphing="true"] .better-t3-preview-active-card {
+  animation: better-t3-preview-card-morph 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+[data-streaming-motion="true"] .better-t3-preview-stream-token {
+  opacity: 0;
+  animation: better-t3-preview-stream-token 360ms ease-out both;
+}
+
+[data-streaming-motion="true"] .better-t3-preview-stream-token:nth-child(2) {
+  animation-delay: 70ms;
+}
+
+[data-streaming-motion="true"] .better-t3-preview-stream-token:nth-child(3) {
+  animation-delay: 140ms;
+}
+
+[data-streaming-motion="true"] .better-t3-preview-stream-token:nth-child(4) {
+  animation-delay: 210ms;
+}
+
+[data-deep-thinking="true"] .better-t3-preview-thinking-line {
+  animation: better-t3-preview-thinking-line 460ms ease-out both;
+}
+
+[data-deep-thinking="true"] .better-t3-preview-thinking-line:nth-child(2) {
+  animation-delay: 80ms;
+}
+
+@keyframes better-t3-preview-enter {
+  from {
+    opacity: 0;
+    transform: translateY(0.25rem) scale(0.99);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes better-t3-preview-card-morph {
+  0% {
+    transform: translateY(0.35rem) scale(0.985);
+  }
+
+  62% {
+    transform: translateY(-0.125rem) scale(1.004);
+  }
+
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes better-t3-preview-stream-token {
+  from {
+    opacity: 0;
+    transform: translateY(0.2rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes better-t3-preview-thinking-line {
+  from {
+    opacity: 0;
+    transform: scaleX(0.82);
+  }
+
+  to {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .better-t3-preview-animate,
+  [data-card-morphing="true"] .better-t3-preview-active-card,
+  [data-streaming-motion="true"] .better-t3-preview-stream-token,
+  [data-deep-thinking="true"] .better-t3-preview-thinking-line {
+    animation: none;
+    transform: none;
+  }
+
+  .better-t3-preview-stream-token,
+  .better-t3-preview-thinking-line {
+    opacity: 1;
+  }
+}

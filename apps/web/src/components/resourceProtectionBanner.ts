@@ -30,6 +30,6 @@ export function buildResourceProtectionBanner(input: {
     urgent: throttled,
     title: presentation.label,
     description: presentation.description,
-    className: "resource-protection-banner-surface px-4 py-2.5 sm:px-5 sm:py-3",
+    className: "resource-protection-banner-surface",
   };
 }

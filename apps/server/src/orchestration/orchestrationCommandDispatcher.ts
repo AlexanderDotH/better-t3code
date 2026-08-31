@@ -48,6 +48,7 @@ export interface OrchestrationCommandDispatcherDependencies<
   readonly gitWorkflow: BootstrapGitWorkflow;
   readonly projectSetupScriptRunner: BootstrapSetupScriptRunner;
   readonly refreshGitStatus: (cwd: string) => Effect.Effect<void, never>;
+  readonly drainThreadDeletionThrough?: (sequence: number) => Effect.Effect<void>;
   readonly resolveThread?: (
     threadId: ThreadId,
   ) => Effect.Effect<DeferredForkThread | undefined, ResolverError>;
@@ -513,7 +514,7 @@ export function makeOrchestrationCommandDispatcher<DispatchError, UuidError, Res
 
     const bootstrapProgram = Effect.gen(function* () {
       if (bootstrap?.createThread) {
-        yield* dependencies.dispatch({
+        const created = yield* dependencies.dispatch({
           type: "thread.create",
           commandId: yield* serverCommandId("bootstrap-thread-create"),
           threadId: command.threadId,
@@ -526,6 +527,7 @@ export function makeOrchestrationCommandDispatcher<DispatchError, UuidError, Res
           worktreePath: bootstrap.createThread.worktreePath,
           createdAt: bootstrap.createThread.createdAt,
         });
+        yield* dependencies.drainThreadDeletionThrough?.(created.sequence) ?? Effect.void;
         createdThread = true;
       }
 
@@ -615,13 +617,16 @@ export function makeOrchestrationCommandDispatcher<DispatchError, UuidError, Res
               toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
             ),
           )
-        : dependencies
-            .dispatch(command)
-            .pipe(
-              Effect.mapError((cause) =>
-                toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
-              ),
-            );
+        : dependencies.dispatch(command).pipe(
+            Effect.tap(({ sequence }) =>
+              command.type === "thread.create"
+                ? (dependencies.drainThreadDeletionThrough?.(sequence) ?? Effect.void)
+                : Effect.void,
+            ),
+            Effect.mapError((cause) =>
+              toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
+            ),
+          );
 
   return { dispatch, prepareTurnWorkspace: preparePendingForkWorkspace } as const;
 }

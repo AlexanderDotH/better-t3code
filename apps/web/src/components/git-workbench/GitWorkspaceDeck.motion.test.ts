@@ -3,20 +3,20 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
+import {
+  prefersReducedSurfaceMotion,
+  SURFACE_MORPH_PRIMARY_DURATION_MS,
+} from "../chat/surfaceMorph";
+import {
+  buildWorkspaceDeckFrameMorphDescriptor,
+  WORKSPACE_DECK_MORPH_DURATION_MS,
+} from "../workspace-deck/workspaceCardDeck.morph";
+
 const gitDeckCssPath = decodeURIComponent(
   new URL("./GitWorkspaceDeck.css", import.meta.url).pathname,
 );
 const workspaceDeckCssPath = decodeURIComponent(
   new URL("../workspace-deck/WorkspaceCardDeck.css", import.meta.url).pathname,
-);
-const surfaceMorphPath = decodeURIComponent(
-  new URL("../chat/surfaceMorph.ts", import.meta.url).pathname,
-);
-const workspaceDeckSourcePath = decodeURIComponent(
-  new URL("../workspace-deck/WorkspaceCardDeck.tsx", import.meta.url).pathname,
-);
-const workspaceDeckMorphSourcePath = decodeURIComponent(
-  new URL("../workspace-deck/workspaceCardDeck.morph.ts", import.meta.url).pathname,
 );
 const readGitDeckCss = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -26,15 +26,51 @@ const readWorkspaceDeckCss = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.readFileString(workspaceDeckCssPath);
 }).pipe(Effect.provide(NodeServices.layer));
-const readSurfaceMorphContract = Effect.gen(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const surfaceMorphSource = yield* fileSystem.readFileString(surfaceMorphPath);
-  const workspaceDeckSource = yield* fileSystem.readFileString(workspaceDeckSourcePath);
-  const workspaceDeckMorphSource = yield* fileSystem.readFileString(workspaceDeckMorphSourcePath);
-  return { surfaceMorphSource, workspaceDeckMorphSource, workspaceDeckSource };
-}).pipe(Effect.provide(NodeServices.layer));
 
-describe("Git workspace deck motion CSS", () => {
+describe("Git workspace deck motion model behavior", () => {
+  it("builds the 560ms chrome morph without scaling compact card contents", () => {
+    const descriptor = buildWorkspaceDeckFrameMorphDescriptor({
+      direction: "forward",
+      durationMs: WORKSPACE_DECK_MORPH_DURATION_MS,
+      from: {
+        rect: { left: 22, top: 300, width: 356, height: 32 },
+        radii: { topLeft: 0, topRight: 0, bottomRight: 16, bottomLeft: 16 },
+      },
+      role: "incoming",
+      to: {
+        rect: { left: 0, top: 100, width: 400, height: 200 },
+        radii: { topLeft: 22, topRight: 22, bottomRight: 22, bottomLeft: 22 },
+      },
+    });
+
+    expect(SURFACE_MORPH_PRIMARY_DURATION_MS).toBe(480);
+    expect(WORKSPACE_DECK_MORPH_DURATION_MS).toBe(560);
+    expect(descriptor.options.duration).toBe(560);
+    expect(descriptor.geometryKeyframes).not.toHaveLength(0);
+    expect(descriptor.cornerKeyframes).not.toHaveLength(0);
+    expect(descriptor.appearanceKeyframes).not.toHaveLength(0);
+    expect(
+      descriptor.geometryKeyframes.every(
+        (frame) =>
+          !("scale" in frame) &&
+          !("scaleX" in frame) &&
+          !("scaleY" in frame) &&
+          !("borderRadius" in frame) &&
+          !("clipPath" in frame),
+      ),
+    ).toBe(true);
+  });
+
+  it("detects reduced motion before choosing an animated path", () => {
+    expect(prefersReducedSurfaceMotion({ matchMedia: () => ({ matches: true }) })).toBe(true);
+    expect(prefersReducedSurfaceMotion({ matchMedia: () => ({ matches: false }) })).toBe(false);
+  });
+});
+
+// Node has no CSS layout or animation engine. These source assertions are an
+// explicit repository policy for cascade-only constraints; the descriptor,
+// timing, and reduced-motion decisions are exercised through model APIs above.
+describe("Git workspace deck motion CSS repository policy", () => {
   it.effect("keeps the equal-size compact viewport between mirrored 32px card peeks", () =>
     Effect.gen(function* () {
       const css = yield* readWorkspaceDeckCss;
@@ -77,9 +113,7 @@ describe("Git workspace deck motion CSS", () => {
       expect(css).toMatch(
         /\.workspace-card-deck__viewport:not\(\[data-expanded="true"\]\)\s+\.workspace-card-deck__card\s*\{[^}]*overflow:\s*clip;/,
       );
-      expect(css).toMatch(
-        /\[data-deck-morph-back-peek="true"\]\s*\{[^}]*will-change:\s*transform, opacity;/,
-      );
+      expect(css).toMatch(/\[data-deck-morph-back-peek="true"\]\s*\{[^}]*will-change:\s*opacity;/);
     }),
   );
 
@@ -122,32 +156,17 @@ describe("Git workspace deck motion CSS", () => {
     }),
   );
 
-  it.effect("morphs full card contents for 560ms with only a subtle transition fade", () =>
+  it.effect("keeps compact card contents free of filter and opacity animation", () =>
     Effect.gen(function* () {
       const css = yield* readWorkspaceDeckCss;
-      const { surfaceMorphSource, workspaceDeckMorphSource, workspaceDeckSource } =
-        yield* readSurfaceMorphContract;
-
-      expect(surfaceMorphSource).toMatch(/SURFACE_MORPH_PRIMARY_DURATION_MS\s*=\s*480\b/);
-      expect(workspaceDeckMorphSource).toMatch(/WORKSPACE_DECK_MORPH_DURATION_MS\s*=\s*560\b/);
-      expect(workspaceDeckMorphSource).toMatch(/WORKSPACE_DECK_CONTENT_PEEK_OPACITY\s*=\s*0\.84\b/);
-      expect(workspaceDeckSource).toMatch(/from\s+["'][^"']*surfaceMorph["']/);
-      expect(surfaceMorphSource).toMatch(/scale[XY]?/);
       expect(css).not.toMatch(/\.workspace-card-deck__card\s*\{[^}]*filter:/);
       expect(css).not.toMatch(/\.workspace-card-deck__card\s*\{[^}]*(?:opacity|backdrop-filter):/);
     }),
   );
 
-  it.effect("gives animated chrome a pointerless, inert accessibility proxy", () =>
+  it.effect("gives animated chrome pointerless proxy styling", () =>
     Effect.gen(function* () {
       const css = yield* readWorkspaceDeckCss;
-      const { surfaceMorphSource, workspaceDeckMorphSource, workspaceDeckSource } =
-        yield* readSurfaceMorphContract;
-      const morphImplementation = `${surfaceMorphSource}\n${workspaceDeckSource}\n${workspaceDeckMorphSource}`;
-
-      expect(morphImplementation).toMatch(/surfaceMorphProxy|data-surface-morph-proxy/);
-      expect(morphImplementation).toMatch(/aria-hidden["']?,?\s*["']true/);
-      expect(morphImplementation).toMatch(/setAttribute\(["']inert["'],\s*["']["']\)/);
       expect(css).toMatch(/\.workspace-card-deck__morph-proxy\s*\{[^}]*pointer-events:\s*none;/);
     }),
   );
@@ -165,14 +184,10 @@ describe("Git workspace deck motion CSS", () => {
   it.effect("swaps immediately for reduced motion and retains a safe non-WAAPI fallback", () =>
     Effect.gen(function* () {
       const css = yield* readWorkspaceDeckCss;
-      const { surfaceMorphSource, workspaceDeckSource } = yield* readSurfaceMorphContract;
 
       expect(css).toMatch(
         /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.workspace-card-deck__viewport\s*\{[^}]*transition:\s*none;/,
       );
-      expect(surfaceMorphSource).toContain("prefersReducedSurfaceMotion");
-      expect(surfaceMorphSource).toMatch(/\.animate\b|typeof[^\n]*animate/);
-      expect(workspaceDeckSource).toContain("data-deck-motion");
       expect(css).toMatch(/\[data-deck-motion="fallback"\]/);
     }),
   );

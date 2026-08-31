@@ -32,6 +32,7 @@ import {
   type NativeProviderRoundEvent,
   type NativeProviderToolCall,
 } from "../nativeHarness/NativeProviderAdapter.ts";
+import { nativeHarnessWorkspaceInstructions } from "../nativeHarness/NativeHarnessPrompt.ts";
 import {
   NATIVE_HARNESS_MAX_TOOL_DEFINITIONS,
   NATIVE_HARNESS_MAX_TOOL_OUTPUT_BYTES,
@@ -171,7 +172,7 @@ function systemInstruction(input: {
     `The trusted workspace root is ${input.cwd}.`,
     role,
     access,
-    "Use workspace_context to inspect the repository before making assumptions. Batch independent searches and reads.",
+    nativeHarnessWorkspaceInstructions(input),
     "Only call tools that T3 explicitly provides. Never invent tool results or claim a change or test succeeded without evidence.",
     input.interactionMode === "plan"
       ? "Plan mode is active: return a decision-complete plan and make no changes."

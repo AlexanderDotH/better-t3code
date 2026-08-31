@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 
 import {
   RESOURCE_MONITOR_PROTOCOL_VERSION,
+  RESOURCE_PROTECTION_MAX_AFFECTED_THREAD_IDS,
   ResourceMonitorCommand,
   ResourceMonitorEvent,
   ResourceMonitorHelloEvent,
@@ -54,6 +55,37 @@ describe("resource protection contracts", () => {
     expect(decoded.state).toBe("waiting");
     expect(decoded.waitingStarts).toBe(2);
     expect(decoded.affectedThreadIds).toEqual(["thread-a", "thread-b"]);
+    expect(decoded.affectedThreadIdsTruncated).toBe(false);
+  });
+
+  it("bounds affected thread banners without silently truncating the wire payload", () => {
+    const base = {
+      state: "waiting",
+      totalMemoryBytes: 32 * 1024 ** 3,
+      availableMemoryBytes: 5 * 1024 ** 3,
+      reservedMemoryBytes: 4 * 1024 ** 3,
+      coreReserveBytes: 6 * 1024 ** 3,
+      waitingStarts: RESOURCE_PROTECTION_MAX_AFFECTED_THREAD_IDS + 1,
+    } as const;
+    const affectedThreadIds = Array.from(
+      { length: RESOURCE_PROTECTION_MAX_AFFECTED_THREAD_IDS },
+      (_, index) => `thread-${index}`,
+    );
+
+    expect(
+      decodeResourceProtectionSnapshot({
+        ...base,
+        affectedThreadIds,
+        affectedThreadIdsTruncated: true,
+      }),
+    ).toMatchObject({ affectedThreadIds, affectedThreadIdsTruncated: true });
+    expect(() =>
+      decodeResourceProtectionSnapshot({
+        ...base,
+        affectedThreadIds: [...affectedThreadIds, "thread-overflow"],
+        affectedThreadIdsTruncated: false,
+      }),
+    ).toThrow();
   });
 
   it("advertises process suspend and resume support in the protocol 4 handshake", () => {

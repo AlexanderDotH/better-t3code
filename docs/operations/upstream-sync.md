@@ -204,38 +204,31 @@ Hidden operational refs—including `refs/t3/checkpoints/*` and any Git-workbenc
 refs—are preserved in the verified bundle but are not product branches. They must not be merged to
 make an ancestry assertion pass.
 
-## Non-negotiable fork feature contract
+## Immutable integration contracts and product references
 
-Every upstream conflict and later refactor must preserve these behaviors:
+This record owns merge ancestry, recovery evidence, immutable migration identities, additive wire
+compatibility, and publication boundaries. It does not own the current Better T3 product
+specification. User-visible behavior and engineering contracts live in:
 
-- Provider/model switching hands off the complete transcript and rebinds the runtime, including
-  OpenCode with Gemini models.
-- Codex, Claude, Cursor, Grok, OpenCode, and the direct-SDK Gemini driver remain supported. An unknown persisted provider driver
-  remains inspectable instead of making historical threads undecodable.
-- Repository Fetch remains configurable across providers and uses dynamically created, read-only,
-  fenced workers with bounded concurrency, cancellation, and partial-failure reporting.
-- Parallel plan implementation continues to use provider-native subagents.
-- Subagent lifecycle is durable across replay and reconnect. Individual pills remain stacked and
-  layout-aware, completed pills stay green for 30 seconds before becoming historical, History stays
-  reachable, and transcripts remain chronological in a centered dialog.
-- Cancellation first cooperates, escalates against the exact runtime after five seconds, force-stops
-  immediately on a second click, fences replacement runtimes, and retains chat history.
-- MCP management, provider-specific runtime status, skills, `workspace_context`, and project-agent
-  coordination remain supported.
-- AssemblyAI dictation retains a live waveform, terminology profiles, and optional English output.
-- Full transcript export and local sibling-install chat import remain available.
-- Git workbench typed operations, queued operations, recovery refs, workspace deck behavior, Git
-  change indicators, and selected-folder clone destinations remain intact.
-- Older Projects uses an exact seven-day boundary and attention-aware activity, adapted to
-  upstream's current project-grouping model.
-- Fast mode, automatic runtime mode, prompt improvement, and reasoning recommendations remain
-  available.
-- Outbound PostHog product analytics remain removed. Local resource diagnostics and telemetry stay
-  available.
-- Web, desktop, and mobile clients continue to work across local, remote, relay, and tunnel
-  connections, including mixed-version connections where supported.
+- [Better T3 settings](../user/better-t3-settings.md) and the
+  [feature registry](../internals/better-t3-feature-registry.md);
+- [Project Knowledge Graph](../user/knowledge-graph.md) and its
+  [server contract](../internals/knowledge-graph.md);
+- [Resource protection](../user/resource-protection.md) and its
+  [responsibility boundaries](../internals/resource-protection.md);
+- [interface language](../user/interface-language.md) and the
+  [typed localization contract](../internals/interface-localization.md);
+- the [native provider harness](../internals/native-provider-harness.md),
+  [workspace card deck](../internals/workspace-card-deck.md), and other feature-specific user and
+  internals documents indexed by the [documentation home](../README.md).
 
-### Additive public interfaces
+When a product contract changes, update its owning document and executable tests instead of adding
+another feature checklist here. An upstream merge must preserve stable feature IDs, explicit stored
+preferences, unknown forward-compatible flags, exact-runtime and data-integrity invariants,
+mixed-version capability gates, and separately persisted derived data. It must not introduce an
+intentional breaking wire change or restore outbound product analytics.
+
+### Additive wire and persistence interfaces
 
 The merge must preserve the following fork interfaces while adopting additive upstream fields:
 
@@ -251,7 +244,8 @@ The merge must preserve the following fork interfaces while adopting additive up
   [projectAgentCoordination.ts](../../packages/contracts/src/projectAgentCoordination.ts).
 
 New contract fields require decoding defaults so older web/mobile clients and mixed-version remote
-connections keep working. This synchronization introduces no intentional breaking wire change.
+connections keep working. Feature availability is negotiated independently from stored preference,
+so an older or temporarily unavailable environment cannot erase a newer client's choice.
 
 ### Migration identity
 
@@ -294,10 +288,12 @@ The following structural decisions are explicit:
 - Retain upstream update rollback, security, correctness, and performance fixes.
 - Remove upstream outbound `AnalyticsService` product analytics again while preserving local
   resource telemetry.
-- Run fork CI on GitHub-hosted `ubuntu-24.04` and `macos-26` workers because the fork does not have
-  access to upstream's organization-scoped Blacksmith runners. Reserve 20 minutes for the full Test
-  job because the complete server matrix exceeds the former 10-minute limit on the hosted Linux
-  worker even while tests continue to pass.
+- Keep required pull-request CI in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) on
+  GitHub-hosted `ubuntu-24.04`, `macos-26`, and `windows-2025` runners. Production release jobs and
+  opt-in previews may use external runners, but they are not substitutes for the required source
+  gates. Current job ownership and packaging boundaries are documented in
+  [CI quality gates](../internals/ci.md) and
+  [fork production automation safety](./fork-production-safety.md).
 - Regenerate `routeTree.gen.ts`, dependency metadata, and `pnpm-lock.yaml`; never hand-merge
   generated output.
 - Preserve the machine-safety rules in [`AGENTS.md`](../../AGENTS.md): never manage a running T3 Code
@@ -305,11 +301,12 @@ The following structural decisions are explicit:
   the permitted user-local installation after verification.
 
 Immediately before packaging, compare the fetched `upstream/main` to the live remote again. Any new
-delta is merged normally and causes affected focused tests, the full Chromium project, and all
-CI-equivalent gates to run again. Promotion is complete only when `origin/main` equals the validated
-commit, the recorded upstream commit is a merge parent, every known custom branch tip is an
-ancestor, the worktree is clean, CI is green, and the installed user-local AppImage hash matches the
-built artifact without restarting the running application.
+delta is merged normally and causes affected focused tests and all CI-equivalent gates to run again.
+Browser, simulator, and device evidence remains a separate gate and is claimed only when its
+external runner or explicit launch permission was available. Promotion is complete only when
+`origin/main` equals the validated commit, the recorded upstream commit is a merge parent, every
+known custom branch tip is an ancestor, the worktree is clean, CI is green, and the installed
+user-local AppImage hash matches the built artifact without restarting the running application.
 
 ## August 12, 2026 synchronization
 

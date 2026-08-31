@@ -14,9 +14,14 @@ import {
   DEFAULT_INTERFACE_LANGUAGE_PREFERENCE,
   DEFAULT_PARALLEL_PLAN_REVIEW_MODEL_SELECTION,
   DEFAULT_PROJECT_THREAD_PREVIEW_COUNT,
+  ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
   InterfaceLanguagePreference,
   InterfaceLanguageSyncRecord,
+  InterfaceLocalePreferenceV1,
+  InterfaceLocaleSyncRecordV1,
+  DEFAULT_INTERFACE_LOCALE_PREFERENCE_V1,
+  OpenAiSettings,
   OpenRouterSettings,
   ProjectThreadPreviewCount,
   ProjectThreadPreviewSyncRecord,
@@ -40,6 +45,8 @@ const decodeChatVisualMode = Schema.decodeUnknownSync(ChatVisualMode);
 const decodeChatVisualModeSyncRecord = Schema.decodeUnknownSync(ChatVisualModeSyncRecord);
 const decodeInterfaceLanguagePreference = Schema.decodeUnknownSync(InterfaceLanguagePreference);
 const decodeInterfaceLanguageSyncRecord = Schema.decodeUnknownSync(InterfaceLanguageSyncRecord);
+const decodeInterfaceLocalePreferenceV1 = Schema.decodeUnknownSync(InterfaceLocalePreferenceV1);
+const decodeInterfaceLocaleSyncRecordV1 = Schema.decodeUnknownSync(InterfaceLocaleSyncRecordV1);
 const decodeChatGptSettings = Schema.decodeUnknownSync(ChatGptSettings);
 const decodeOpenRouterSettings = Schema.decodeUnknownSync(OpenRouterSettings);
 const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
@@ -47,6 +54,36 @@ const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodeProjectThreadPreviewSyncRecord = Schema.encodeSync(ProjectThreadPreviewSyncRecord);
 const encodeChatVisualModeSyncRecord = Schema.encodeSync(ChatVisualModeSyncRecord);
 const encodeInterfaceLanguageSyncRecord = Schema.encodeSync(InterfaceLanguageSyncRecord);
+const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+
+describe("ClaudeSettings auto-compaction", () => {
+  it("uses Claude's default threshold when no override is configured", () => {
+    expect(decodeClaudeSettings({}).autoCompactWindow).toBe("");
+  });
+
+  it.each(["100000", "300000", "1000000"])(
+    "accepts a supported auto-compaction threshold: %s",
+    (value) => {
+      expect(decodeClaudeSettings({ autoCompactWindow: value }).autoCompactWindow).toBe(value);
+    },
+  );
+
+  it.each(["99999", "1000001", "300k", "invalid"])(
+    "rejects an unsupported auto-compaction threshold: %s",
+    (value) => {
+      expect(() => decodeClaudeSettings({ autoCompactWindow: value })).toThrow();
+    },
+  );
+
+  it("rejects an unsupported threshold at the settings patch boundary", () => {
+    expect(() =>
+      decodeServerSettingsPatch({ providers: { claudeAgent: { autoCompactWindow: "300k" } } }),
+    ).toThrow();
+    expect(
+      decodeServerSettingsPatch({ providers: { claudeAgent: { autoCompactWindow: "300000" } } }),
+    ).toBeDefined();
+  });
+});
 
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
@@ -142,6 +179,22 @@ describe("ClientSettings glass opacity", () => {
   it.each([40, 75, 100])("accepts a glass opacity within the supported range: %s", (value) => {
     expect(decodeClientSettings({ glassOpacity: value }).glassOpacity).toBe(value);
     expect(decodeClientSettingsPatch({ glassOpacity: value }).glassOpacity).toBe(value);
+  });
+});
+
+describe("ClientSettings appearance contrast", () => {
+  it("defaults to the theme's original contrast", () => {
+    expect(decodeClientSettings({}).appearanceContrast).toBe(100);
+  });
+
+  it.each([49, 201, 92.5])("rejects an invalid appearance contrast: %s", (value) => {
+    expect(() => decodeClientSettings({ appearanceContrast: value })).toThrow();
+    expect(() => decodeClientSettingsPatch({ appearanceContrast: value })).toThrow();
+  });
+
+  it.each([50, 100, 150, 200])("accepts an appearance contrast in range: %s", (value) => {
+    expect(decodeClientSettings({ appearanceContrast: value }).appearanceContrast).toBe(value);
+    expect(decodeClientSettingsPatch({ appearanceContrast: value }).appearanceContrast).toBe(value);
   });
 });
 
@@ -338,12 +391,61 @@ describe("InterfaceLanguageSyncRecord", () => {
   });
 });
 
+describe("InterfaceLocaleSyncRecordV1", () => {
+  it("defaults new and migrated locale selectors to the system language", () => {
+    expect(DEFAULT_INTERFACE_LOCALE_PREFERENCE_V1).toBe("system");
+  });
+
+  const french = {
+    version: 1,
+    preference: "fr",
+    updatedAt: 1_787_178_500_000,
+    updateId: "device-a:fr",
+  } as const;
+
+  it("adds French only to the new versioned record", () => {
+    expect(() => decodeInterfaceLanguagePreference("fr")).toThrow();
+    expect(decodeInterfaceLocalePreferenceV1("fr")).toBe("fr");
+    expect(decodeInterfaceLocaleSyncRecordV1(french)).toEqual(french);
+  });
+
+  it("keeps the V1 local mirror nullable and the server record optional", () => {
+    expect(decodeClientSettings({}).interfaceLocaleLocalRecordV1).toBeNull();
+    expect(decodeServerSettings({}).interfaceLocaleSyncRecordV1).toBeUndefined();
+    expect(
+      decodeClientSettingsPatch({ interfaceLocaleLocalRecordV1: french })
+        .interfaceLocaleLocalRecordV1,
+    ).toEqual(french);
+    expect(
+      decodeServerSettingsPatch({ interfaceLocaleSyncRecordV1: french })
+        .interfaceLocaleSyncRecordV1,
+    ).toEqual(french);
+  });
+});
+
+describe("OpenAiSettings", () => {
+  const decodeOpenAiSettings = Schema.decodeUnknownSync(OpenAiSettings);
+
+  it("is a distinct opt-in provider with no custom endpoint fields", () => {
+    expect(decodeOpenAiSettings({})).toEqual({ enabled: false });
+    expect(decodeOpenAiSettings({ enabled: true, baseUrl: "https://example.com" })).toEqual({
+      enabled: true,
+    });
+    expect(decodeServerSettings({}).providers.openai).toEqual({ enabled: false });
+    expect(decodeServerSettingsPatch({ providers: { openai: { enabled: true } } })).toEqual({
+      providers: { openai: { enabled: true } },
+    });
+  });
+});
+
 describe("ClientSettings sidebar", () => {
   it("defaults to the current sidebar with automatic merge and inactivity settling", () => {
     const settings = decodeClientSettings({});
     expect(settings.legacySidebarEnabled).toBe(false);
     expect(settings.sidebarAutoSettleAfterDays).toBe(3);
     expect(settings.sidebarAutoSettleOnMerge).toBe(true);
+    expect(settings.sidebarPosition).toBe("left");
+    expect(decodeClientSettingsPatch({ sidebarPosition: "right" }).sidebarPosition).toBe("right");
   });
 
   it("drops the retired sidebar v2 beta keys, resetting everyone to the default", () => {
@@ -374,6 +476,12 @@ describe("ClientSettings sidebar", () => {
 
     expect(encoded.legacySidebarEnabled).toBe(true);
     expect(decodeClientSettings(encoded).legacySidebarEnabled).toBe(true);
+  });
+
+  it("keeps unpin confirmation opt-in and patchable", () => {
+    expect(decodeClientSettings({}).confirmThreadUnpin).toBe(false);
+    expect(decodeClientSettingsPatch({ confirmThreadUnpin: true }).confirmThreadUnpin).toBe(true);
+    expect(() => decodeClientSettingsPatch({ confirmThreadUnpin: "yes" })).toThrow();
   });
 
   it("allows auto-settle by inactivity to be disabled", () => {
@@ -423,6 +531,27 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
       model: "gpt-5.6-luna",
       options: [{ id: "reasoningEffort", value: "low" }],
     });
+  });
+
+  it("defaults Auto Reasoning to the shared text-generation model", () => {
+    expect(DEFAULT_SERVER_SETTINGS.autoReasoningModelSelection).toBeNull();
+    expect(decodeServerSettings({}).autoReasoningModelSelection).toBeNull();
+  });
+
+  it("round-trips an explicit Auto Reasoning decision model", () => {
+    const selection = {
+      instanceId: ProviderInstanceId.make("openai_work"),
+      model: "gpt-5.6-luna",
+      options: [{ id: "reasoningEffort", value: "low" }],
+    } as const;
+
+    expect(
+      decodeServerSettingsPatch({ autoReasoningModelSelection: selection })
+        .autoReasoningModelSelection,
+    ).toEqual(selection);
+    expect(
+      decodeServerSettingsPatch({ autoReasoningModelSelection: null }).autoReasoningModelSelection,
+    ).toBeNull();
   });
 
   it("defaults to an empty record so legacy configs without the key still decode", () => {
@@ -481,7 +610,7 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
 });
 
 describe("ServerSettings native provider boundary", () => {
-  it("hydrates defaults for exactly the eight native providers", () => {
+  it("hydrates defaults for exactly the nine native providers", () => {
     const decoded = decodeServerSettings({});
 
     expect(Object.keys(decoded.providers)).toEqual([
@@ -493,6 +622,7 @@ describe("ServerSettings native provider boundary", () => {
       "gemini",
       "chatgpt",
       "openrouter",
+      "openai",
     ]);
     expect(decoded.providers.chatgpt).toEqual({ enabled: false, binaryPath: "codex" });
     expect(decoded.providers.openrouter).toEqual(decodeOpenRouterSettings({}));
@@ -695,13 +825,13 @@ describe("AgentEnhancementSettings", () => {
 });
 
 describe("provider enabled defaults", () => {
-  it("preserves the fork provider defaults", () => {
+  it("keeps optional providers off on clean installs", () => {
     const decoded = decodeServerSettings({});
     expect(decoded.providers.codex.enabled).toBe(true);
     expect(decoded.providers.claudeAgent.enabled).toBe(true);
     expect(decoded.providers.cursor.enabled).toBe(false);
-    expect(decoded.providers.grok.enabled).toBe(true);
-    expect(decoded.providers.opencode.enabled).toBe(true);
+    expect(decoded.providers.grok.enabled).toBe(false);
+    expect(decoded.providers.opencode.enabled).toBe(false);
     expect(decoded.providers.gemini.enabled).toBe(false);
     expect(decoded.providers.openrouter.enabled).toBe(false);
   });
@@ -709,19 +839,33 @@ describe("provider enabled defaults", () => {
   it("derives per-driver defaults from the settings schemas", () => {
     expect(defaultEnabledForDriver(ProviderDriverKind.make("codex"))).toBe(true);
     expect(defaultEnabledForDriver(ProviderDriverKind.make("cursor"))).toBe(false);
-    expect(defaultEnabledForDriver(ProviderDriverKind.make("grok"))).toBe(true);
-    expect(defaultEnabledForDriver(ProviderDriverKind.make("opencode"))).toBe(true);
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("grok"))).toBe(false);
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("opencode"))).toBe(false);
     expect(defaultEnabledForDriver(ProviderDriverKind.make("gemini"))).toBe(false);
     expect(defaultEnabledForDriver(ProviderDriverKind.make("openrouter"))).toBe(false);
     // Unknown fork drivers stay enabled; their own build decides otherwise.
     expect(defaultEnabledForDriver(ProviderDriverKind.make("ollama"))).toBe(true);
   });
 
+  it("keeps Cursor enabled when an existing user explicitly opted in", () => {
+    const cursor = ProviderDriverKind.make("cursor");
+    const cursorId = ProviderInstanceId.make("cursor");
+    const decoded = decodeServerSettings({
+      providers: { cursor: { enabled: true } },
+      providerInstances: {
+        [cursorId]: { driver: cursor, enabled: true, config: {} },
+      },
+    });
+
+    expect(decoded.providers.cursor.enabled).toBe(true);
+    expect(resolveProviderInstanceEnabled(decoded.providerInstances[cursorId]!)).toBe(true);
+  });
+
   it("resolves instance enabled state with explicit false winning", () => {
     const grok = ProviderDriverKind.make("grok");
     const codex = ProviderDriverKind.make("codex");
-    // No flags anywhere: the fork driver default applies.
-    expect(resolveProviderInstanceEnabled({ driver: grok, config: {} })).toBe(true);
+    // No flags anywhere: each driver's clean-install default applies.
+    expect(resolveProviderInstanceEnabled({ driver: grok, config: {} })).toBe(false);
     expect(resolveProviderInstanceEnabled({ driver: codex, config: {} })).toBe(true);
     // Envelope flags can explicitly enable or disable a driver.
     expect(resolveProviderInstanceEnabled({ driver: grok, enabled: true, config: {} })).toBe(true);

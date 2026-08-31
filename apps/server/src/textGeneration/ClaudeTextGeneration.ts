@@ -8,7 +8,9 @@
  * @module ClaudeTextGeneration
  */
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -27,6 +29,7 @@ import {
   buildPromptImprovementPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildThreadMetadataPrompt,
   buildTranscriptTranslationPrompt,
 } from "./TextGenerationPrompts.ts";
 import {
@@ -49,8 +52,11 @@ import {
 } from "../provider/Layers/ClaudeProvider.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 import type { ClaudeGatewayModelProfile } from "../provider/Drivers/ClaudeGatewayCatalog.ts";
+import { resolveClaudeConfigDir } from "../provider/Drivers/ClaudeHome.ts";
+import { buildAutoReasoningPrompt, validateAutoReasoningDecision } from "./AutoReasoning.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
+const isTextGenerationError = Schema.is(TextGenerationError);
 
 export interface ClaudeTextGenerationOptions {
   readonly resolveGatewayModelProfile?: (
@@ -74,8 +80,11 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   environment?: NodeJS.ProcessEnv,
   options?: ClaudeTextGenerationOptions,
 ) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+  const claudeConfigDir = yield* resolveClaudeConfigDir(claudeSettings);
 
   const readStreamAsString = <E>(
     operation: string,
@@ -94,9 +103,11 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
 
   const encodeJsonForOperation = (
     operation:
+      | "decideAutoReasoning"
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
+      | "generateThreadMetadata"
       | "generateThreadTitle"
       | "translateTranscriptToEnglish"
       | "improvePrompt"
@@ -126,11 +137,14 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     prompt,
     outputSchemaJson,
     modelSelection,
+    environmentOverride,
   }: {
     operation:
+      | "decideAutoReasoning"
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
+      | "generateThreadMetadata"
       | "generateThreadTitle"
       | "translateTranscriptToEnglish"
       | "improvePrompt"
@@ -140,6 +154,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     prompt: string;
     outputSchemaJson: S;
     modelSelection: ModelSelection;
+    environmentOverride?: NodeJS.ProcessEnv;
   }): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
     const jsonSchemaStr = yield* encodeJsonForOperation(
       operation,
@@ -167,6 +182,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const fastMode =
       fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
     const settings = {
+      ...(operation === "decideAutoReasoning" ? { disableAllHooks: true } : {}),
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(!gatewayProfile && typeof fastMode === "boolean" ? { fastMode } : {}),
       ...(ultracode ? { ultracode: true } : {}),
@@ -181,6 +197,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         : undefined;
 
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* () {
+      const commandEnvironment = environmentOverride ?? claudeEnvironment;
       const spawnCommand = yield* resolveSpawnCommand(
         claudeSettings.binaryPath || "claude",
         [
@@ -197,14 +214,24 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
             : resolveClaudeApiModelId(modelSelection),
           ...(cliEffort ? ["--effort", cliEffort] : []),
           ...(settingsJson ? ["--settings", settingsJson] : []),
-          ...(operation === "planFetchExploration"
-            ? ["--disallowedTools", "*"]
-            : ["--dangerously-skip-permissions"]),
+          ...(operation === "decideAutoReasoning"
+            ? [
+                "--disallowedTools",
+                "*",
+                "--setting-sources",
+                "",
+                "--strict-mcp-config",
+                "--mcp-config",
+                "{}",
+              ]
+            : operation === "planFetchExploration"
+              ? ["--disallowedTools", "*"]
+              : ["--dangerously-skip-permissions"]),
         ],
-        { env: claudeEnvironment },
+        { env: commandEnvironment },
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: claudeEnvironment,
+        env: commandEnvironment,
         cwd,
         shell: spawnCommand.shell,
         stdin: {
@@ -294,6 +321,47 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   // ---------------------------------------------------------------------------
   // TextGeneration service methods
   // ---------------------------------------------------------------------------
+
+  const decideAutoReasoning: TextGeneration.TextGeneration["Service"]["decideAutoReasoning"] =
+    Effect.fn("ClaudeTextGeneration.decideAutoReasoning")(function* (input) {
+      return yield* Effect.gen(function* () {
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-auto-reasoning-claude-cwd-",
+        });
+        const configDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-auto-reasoning-claude-config-",
+        });
+        const credentialsSource = path.join(claudeConfigDir, ".credentials.json");
+        if (yield* fileSystem.exists(credentialsSource).pipe(Effect.orElseSucceed(() => false))) {
+          yield* fileSystem.copyFile(credentialsSource, path.join(configDir, ".credentials.json"));
+        }
+        const { prompt, outputSchema } = buildAutoReasoningPrompt(input);
+        const generated = yield* runClaudeJson({
+          operation: "decideAutoReasoning",
+          cwd,
+          prompt,
+          outputSchemaJson: outputSchema,
+          modelSelection: input.modelSelection,
+          environmentOverride: {
+            ...claudeEnvironment,
+            CLAUDE_CONFIG_DIR: configDir,
+            ENABLE_CLAUDEAI_MCP_SERVERS: "false",
+          },
+        });
+        return yield* validateAutoReasoningDecision(input.allowedEfforts, generated);
+      }).pipe(
+        Effect.mapError((cause) =>
+          isTextGenerationError(cause)
+            ? cause
+            : new TextGenerationError({
+                operation: "decideAutoReasoning",
+                detail: "Failed to prepare isolated Claude Auto Reasoning.",
+                cause,
+              }),
+        ),
+        Effect.scoped,
+      );
+    });
 
   const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
     Effect.fn("ClaudeTextGeneration.generateCommitMessage")(function* (input) {
@@ -389,6 +457,22 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       };
     });
 
+  const generateThreadMetadata: TextGeneration.TextGeneration["Service"]["generateThreadMetadata"] =
+    Effect.fn("ClaudeTextGeneration.generateThreadMetadata")(function* (input) {
+      const { prompt, outputSchema } = buildThreadMetadataPrompt(input);
+      const generated = yield* runClaudeJson({
+        operation: "generateThreadMetadata",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+      return {
+        title: sanitizeThreadTitle(generated.title),
+        branch: sanitizeBranchFragment(generated.branch),
+      };
+    });
+
   const translateTranscriptToEnglish: TextGeneration.TextGeneration["Service"]["translateTranscriptToEnglish"] =
     Effect.fn("ClaudeTextGeneration.translateTranscriptToEnglish")(function* (input) {
       const { prompt, outputSchema } = buildTranscriptTranslationPrompt({ text: input.text });
@@ -445,13 +529,16 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     });
 
   return {
+    decideAutoReasoning,
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
+    generateThreadMetadata,
     generateThreadTitle,
     translateTranscriptToEnglish,
     improvePrompt,
     reviewPlanParallelism,
     planFetchExploration,
+    enrichKnowledgeGraph: TextGeneration.unsupportedKnowledgeGraphEnrichment("Claude"),
   } satisfies TextGeneration.TextGeneration["Service"];
 });

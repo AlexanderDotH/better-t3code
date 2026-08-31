@@ -9,6 +9,7 @@ import Animated, {
 import { constrainAuxiliaryPaneWidth, type WorkspacePaneLayout } from "../../lib/layout";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspacePaneDivider } from "./workspace-pane-divider";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 /**
  * The trailing inspector column: resize divider + animated reveal.
@@ -33,6 +34,7 @@ export function WorkspaceInspectorPane(props: {
   readonly renderInspector?: () => ReactNode;
   readonly setAuxiliaryPaneWidth: (width: number) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { panes, setAuxiliaryPaneWidth } = props;
   const inspectorWidth = panes.auxiliaryPaneWidth;
   const inspectorSupported = props.renderInspector !== undefined && inspectorWidth !== null;
@@ -119,7 +121,7 @@ export function WorkspaceInspectorPane(props: {
     <>
       {inspectorVisible ? (
         <WorkspacePaneDivider
-          accessibilityLabel="Resize detail pane"
+          accessibilityLabel={translator.message("mobile.layout.resizeDetailPane")}
           currentWidth={inspectorWidth ?? 0}
           resizeDirection={-1}
           onResizeStart={beginResize}

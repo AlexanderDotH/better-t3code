@@ -21,8 +21,10 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { primaryServerKeybindingsAtom } from "~/state/server";
+import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 
 function ChatRouteGlobalShortcuts() {
+  const translator = useInterfaceTranslator();
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
   const selectedThreadKeysSize = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
@@ -116,8 +118,8 @@ function ChatRouteGlobalShortcuts() {
           toastManager.add(
             stackedThreadToast({
               type: "info",
-              title: "Preview is desktop-only",
-              description: "Open T3 Code in the desktop app to use the in-app preview.",
+              title: translator.message("cloud.preview.desktopOnlyTitle"),
+              description: translator.message("cloud.preview.desktopOnlyDescription"),
             }),
           );
           return;
@@ -168,6 +170,7 @@ function ChatRouteGlobalShortcuts() {
     routeThreadRef,
     selectedThreadKeysSize,
     legacySidebarEnabled,
+    translator,
     terminalOpen,
   ]);
 

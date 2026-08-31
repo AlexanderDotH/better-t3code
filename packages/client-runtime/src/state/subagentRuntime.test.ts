@@ -8,6 +8,7 @@ import {
   isAgentAttributedToolActivity,
   isSubagentActivityKind,
   isTimelineBypassActivity,
+  summarizeSubagentUsage,
   workflowCardMembers,
 } from "./subagentRuntime.ts";
 
@@ -585,6 +586,21 @@ describe("formatSubagentTokenCount", () => {
   });
 });
 
+describe("summarizeSubagentUsage", () => {
+  it("sums the reported input, output, and total counters without inventing missing fields", () => {
+    expect(
+      summarizeSubagentUsage([
+        { totalTokens: 900, inputTokens: 700, outputTokens: 150 },
+        { totalTokens: 600, inputTokens: 400, outputTokens: 100 },
+      ]),
+    ).toEqual({ totalTokens: 1_500, inputTokens: 1_100, outputTokens: 250 });
+
+    expect(summarizeSubagentUsage([{ totalTokens: 400 }, null])).toEqual({
+      totalTokens: 400,
+    });
+  });
+});
+
 describe("model and effort attribution", () => {
   it("carries model/effort from start rows and refines model from later rows", () => {
     const agents = fold([
@@ -601,6 +617,43 @@ describe("model and effort attribution", () => {
     expect(agents).toHaveLength(1);
     expect(agents[0]!.model).toBe("claude-sonnet-5[1m]");
     expect(agents[0]!.effort).toBe("high");
+  });
+
+  it("applies metadata-only updates without changing the current status", () => {
+    const waitingRows = [
+      activity("task.updated", {
+        taskId: "task-metadata",
+        title: "Check metadata",
+        status: "waiting",
+      }),
+      activity("task.updated", {
+        taskId: "task-metadata",
+        model: "gpt-5.6-sol",
+        effort: "high",
+      }),
+    ];
+    const waitingAgent = fold(waitingRows)[0]!;
+    expect(waitingAgent.status).toBe("waiting");
+    expect(formatSubagentModelLabel(waitingAgent.model, waitingAgent.effort)).toBe(
+      "gpt-5.6-sol · high",
+    );
+
+    const idleRows = [
+      ...waitingRows,
+      activity("task.updated", { taskId: "task-metadata", status: "idle" }),
+      activity("task.updated", { taskId: "task-metadata", model: "gpt-5.6-sol" }),
+    ];
+    expect(fold(idleRows)[0]!.status).toBe("idle");
+
+    const completedAgent = fold([
+      ...idleRows,
+      activity("task.progress", { taskId: "task-metadata", typedUsage: { totalTokens: 42 } }),
+      activity("task.completed", { taskId: "task-metadata", status: "completed" }),
+      activity("task.updated", { taskId: "task-metadata", effort: "high" }),
+    ])[0]!;
+    expect(completedAgent.status).toBe("completed");
+    expect(completedAgent.model).toBe("gpt-5.6-sol");
+    expect(completedAgent.effort).toBe("high");
   });
 
   it("formatSubagentModelLabel compacts ids and appends effort", () => {

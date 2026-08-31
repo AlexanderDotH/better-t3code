@@ -325,6 +325,31 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     ).toBe("de");
   });
 
+  it("registers the versioned French interface locale instead of its legacy mirror", () => {
+    expect(
+      makeRelayDeviceRegistrationRequest({
+        deviceId: "device-1",
+        label: "Julius's iPhone",
+        iosMajorVersion: 18,
+        notificationsEnabled: true,
+        preferences: {
+          interfaceLocaleSyncRecordV1: {
+            version: 1,
+            preference: "fr",
+            updatedAt: 20,
+            updateId: "mobile:fr",
+          },
+          interfaceLanguageSyncRecord: {
+            preference: "de",
+            updatedAt: 10,
+            updateId: "mobile:legacy-de",
+          },
+        },
+        systemLocales: ["en-US"],
+      }).language,
+    ).toBe("fr");
+  });
+
   it("routes development builds to the APNs sandbox", () => {
     expect(resolveApsEnvironment("development")).toBe("sandbox");
     expect(resolveApsEnvironment("preview")).toBe("production");

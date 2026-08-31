@@ -1,6 +1,7 @@
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { DesktopUpdateState } from "@t3tools/contracts";
+import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 
 const testState = vi.hoisted(() => ({
   addToast: vi.fn(),
@@ -11,6 +12,8 @@ vi.mock("./ui/toast", () => ({
 }));
 
 import { showDesktopUpdateDownloadedToast } from "./desktopUpdate.toast";
+
+const translator = createInterfaceTranslator({ language: "en", locale: "en-US" });
 
 type ClickableElement = ReactElement<{ readonly onClick?: () => void }>;
 
@@ -67,7 +70,7 @@ describe("showDesktopUpdateDownloadedToast", () => {
   it("opens the downloaded version's release notes", async () => {
     const openExternal = vi.fn().mockResolvedValue(true);
 
-    showDesktopUpdateDownloadedToast({ openExternal }, downloadedState());
+    showDesktopUpdateDownloadedToast({ openExternal }, downloadedState(), translator);
     const link = findReleaseNotesLink(getDescription());
     link?.props.onClick?.();
     await vi.waitFor(() => {
@@ -85,6 +88,7 @@ describe("showDesktopUpdateDownloadedToast", () => {
     showDesktopUpdateDownloadedToast(
       { openExternal },
       downloadedState({ downloadedVersion: null }),
+      translator,
     );
     findReleaseNotesLink(getDescription())?.props.onClick?.();
 
@@ -99,6 +103,7 @@ describe("showDesktopUpdateDownloadedToast", () => {
     showDesktopUpdateDownloadedToast(
       { openExternal: vi.fn() },
       downloadedState({ availableVersion: null, downloadedVersion: null }),
+      translator,
     );
 
     expect(findReleaseNotesLink(getDescription())).toBeNull();
@@ -108,7 +113,7 @@ describe("showDesktopUpdateDownloadedToast", () => {
     ["returns false", vi.fn().mockResolvedValue(false)],
     ["rejects", vi.fn().mockRejectedValue(new Error("open failed"))],
   ])("shows an error when opening release notes %s", async (_description, openExternal) => {
-    showDesktopUpdateDownloadedToast({ openExternal }, downloadedState());
+    showDesktopUpdateDownloadedToast({ openExternal }, downloadedState(), translator);
     findReleaseNotesLink(getDescription())?.props.onClick?.();
 
     await vi.waitFor(() => {

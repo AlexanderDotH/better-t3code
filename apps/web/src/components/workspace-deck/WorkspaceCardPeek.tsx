@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 import type { WorkspaceDeckPosition } from "./workspaceCardDeck.logic";
 
@@ -15,6 +16,7 @@ export interface WorkspaceCardPeekProps<CardId extends string> {
 }
 
 export function WorkspaceCardPeek<CardId extends string>(props: WorkspaceCardPeekProps<CardId>) {
+  const translate = useInterfaceTranslator().message;
   return (
     <div
       className={cn(
@@ -30,7 +32,7 @@ export function WorkspaceCardPeek<CardId extends string>(props: WorkspaceCardPee
         type="button"
         className="workspace-card-deck__peek-trigger"
         data-workspace-card-peek-trigger="true"
-        aria-label={`Open ${props.label}`}
+        aria-label={translate("sidebar.workspaceDeck.openCard", { card: props.label })}
         aria-disabled={props.blocked}
         onClick={() => {
           if (props.blocked) return;

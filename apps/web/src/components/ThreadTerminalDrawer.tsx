@@ -6,12 +6,13 @@ import {
 import { type TerminalSessionState } from "@t3tools/client-runtime/state/terminal";
 import {
   Plus,
+  Square,
   SquareSplitHorizontal,
   SquareSplitVertical,
   TerminalSquare,
   Trash2,
-  XIcon,
 } from "lucide-react";
+import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 import {
   type ContextMenuItem,
   type ResolvedKeybindingsConfig,
@@ -33,6 +34,7 @@ import {
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
+import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
@@ -42,7 +44,7 @@ import {
 } from "~/terminal/ghostty/surface";
 import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
 import { useOpenInPreferredEditor } from "../editorPreferences";
-import { isTerminalLinkActivation, resolvePathLinkTarget } from "../terminal-links";
+import { isTerminalLinkActivation, isTerminalUrl, resolvePathLinkTarget } from "../terminal-links";
 import {
   isDiffToggleShortcut,
   isTerminalClearShortcut,
@@ -259,11 +261,19 @@ export function terminalSelectionLineRange(position: {
 
 export type TerminalContextMenuAction = "add-to-chat" | "copy" | "paste";
 
+interface TerminalContextMenuLabels {
+  readonly addToChat: string;
+  readonly copy: string;
+  readonly paste: string;
+}
+
 /** Post-selection popup: just the two selection actions, always enabled. */
-export function terminalSelectionMenuItems(): ContextMenuItem<"add-to-chat" | "copy">[] {
+export function terminalSelectionMenuItems(
+  labels: Pick<TerminalContextMenuLabels, "addToChat" | "copy">,
+): ContextMenuItem<"add-to-chat" | "copy">[] {
   return [
-    { id: "add-to-chat", label: "Add to chat" },
-    { id: "copy", label: "Copy" },
+    { id: "add-to-chat", label: labels.addToChat },
+    { id: "copy", label: labels.copy },
   ];
 }
 
@@ -275,13 +285,14 @@ export function terminalSelectionMenuItems(): ContextMenuItem<"add-to-chat" | "c
  */
 export function terminalContextMenuItems(options: {
   hasSelection: boolean;
+  labels: TerminalContextMenuLabels;
 }): ContextMenuItem<TerminalContextMenuAction>[] {
   return [
-    ...terminalSelectionMenuItems().map((item) => ({
+    ...terminalSelectionMenuItems(options.labels).map((item) => ({
       ...item,
       disabled: !options.hasSelection,
     })),
-    { id: "paste", label: "Paste" },
+    { id: "paste", label: options.labels.paste },
   ];
 }
 
@@ -351,6 +362,15 @@ export function TerminalViewport({
   drawerHeight,
   keybindings,
 }: TerminalViewportProps) {
+  const translate = useInterfaceTranslator().message;
+  const contextMenuLabels = useMemo<TerminalContextMenuLabels>(
+    () => ({
+      addToChat: translate("chat.terminal.addToChat"),
+      copy: translate("chat.terminal.copy"),
+      paste: translate("chat.terminal.paste"),
+    }),
+    [translate],
+  );
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<GhosttyTerminalSurface | null>(null);
   const environmentId = threadRef.environmentId;
@@ -634,7 +654,10 @@ export function TerminalViewport({
         let clicked: TerminalContextMenuAction | null;
         try {
           clicked = await localApi.contextMenu.show(
-            terminalContextMenuItems({ hasSelection: selectionAction !== null }),
+            terminalContextMenuItems({
+              hasSelection: selectionAction !== null,
+              labels: contextMenuLabels,
+            }),
             { x: event.clientX, y: event.clientY },
           );
         } catch (error) {
@@ -674,7 +697,7 @@ export function TerminalViewport({
         const requestId = ++selectionActionRequestIdRef.current;
         openSelectionMenuRequestIdRef.current = requestId;
         const clicked = await localApi.contextMenu
-          .show(terminalSelectionMenuItems(), nextAction.position)
+          .show(terminalSelectionMenuItems(contextMenuLabels), nextAction.position)
           .finally(() => {
             if (openSelectionMenuRequestIdRef.current === requestId) {
               openSelectionMenuRequestIdRef.current = null;
@@ -749,7 +772,7 @@ export function TerminalViewport({
         if (!isTerminalLinkActivation(event)) return;
         const latestTerminal = terminalRef.current;
         if (!latestTerminal) return;
-        if (/^https?:\/\//u.test(text)) {
+        if (isTerminalUrl(text)) {
           if (!localApi) {
             writeSystemMessage(latestTerminal, "Opening links is unavailable in this browser.");
             return;
@@ -769,6 +792,10 @@ export function TerminalViewport({
             openPreview,
             localApi,
             fallbackToBrowser,
+            contextMenuLabels: {
+              openInPreview: translate("browser.preview.openInPreview"),
+              openInBrowser: translate("browser.preview.openInBrowser"),
+            },
           });
           return;
         }
@@ -904,7 +931,16 @@ export function TerminalViewport({
     };
     // autoFocus is intentionally omitted;
     // it is only read at mount time and must not trigger terminal teardown/recreation.
-  }, [cwd, environmentId, runtimeEnvKey, terminalId, threadId, worktreePath]);
+  }, [
+    contextMenuLabels,
+    cwd,
+    environmentId,
+    runtimeEnvKey,
+    terminalId,
+    threadId,
+    translate,
+    worktreePath,
+  ]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -1073,6 +1109,7 @@ export default function ThreadTerminalDrawer({
   terminalLabelsById,
   terminalLaunchLocationsById,
 }: ThreadTerminalDrawerProps) {
+  const translate = useInterfaceTranslator().message;
   const isPanel = mode === "panel";
   const [advancedTypography] = useLocalStorage(
     TYPOGRAPHY_ADVANCED_STORAGE_KEY,
@@ -1406,7 +1443,7 @@ export default function ThreadTerminalDrawer({
           />
         ) : null}
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4 py-6 text-center text-sm text-muted-foreground">
-          <p>No terminal sessions for this thread yet.</p>
+          <p>{translate("chat.terminal.none")}</p>
           <Button size="xs" variant="outline" onClick={onNewTerminalAction}>
             {newTerminalActionLabel}
           </Button>
@@ -1622,85 +1659,76 @@ export default function ThreadTerminalDrawer({
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1">
-                {resolvedTerminalGroups.map((terminalGroup, groupIndex) => {
+                {resolvedTerminalGroups.map((terminalGroup) => {
                   const isGroupActive =
                     terminalGroup.terminalIds.includes(resolvedActiveTerminalId);
                   const groupActiveTerminalId = isGroupActive
                     ? resolvedActiveTerminalId
                     : (terminalGroup.terminalIds[0] ?? resolvedActiveTerminalId);
+                  const terminalCount = terminalGroup.terminalIds.length;
+                  const isSplitGroup = terminalCount > 1;
+                  const groupLabel = !isSplitGroup
+                    ? "Single"
+                    : terminalGroup.splitDirection === "vertical"
+                      ? "Stacked"
+                      : "Side by side";
+                  const GroupIcon = !isSplitGroup
+                    ? Square
+                    : terminalGroup.splitDirection === "vertical"
+                      ? SquareSplitVertical
+                      : SquareSplitHorizontal;
 
                   return (
                     <div key={terminalGroup.id} className="pb-0.5">
                       {showGroupHeaders && (
                         <button
                           type="button"
-                          className={`flex w-full items-center rounded px-1 py-0.5 text-[10px] uppercase tracking-[0.08em] ${
+                          className={`flex h-[22px] w-full cursor-pointer items-center gap-1 rounded px-1.5 text-[11px] ${
                             isGroupActive
-                              ? "bg-accent/70 text-foreground"
-                              : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                              ? "bg-accent/50 text-foreground"
+                              : "text-muted-foreground hover:bg-accent/40 hover:text-foreground"
                           }`}
                           onClick={() => onActiveTerminalChange(groupActiveTerminalId)}
                         >
-                          Group {groupIndex + 1}
+                          <GroupIcon className="size-3 shrink-0" />
+                          <span className="min-w-0 flex-1 truncate text-left">{groupLabel}</span>
+                          <span className="text-muted-foreground/70 text-[10px] tabular-nums">
+                            {terminalCount}
+                          </span>
                         </button>
                       )}
 
-                      <div
-                        className={showGroupHeaders ? "ml-1 border-l border-border/60 pl-1.5" : ""}
-                      >
+                      <div className="flex flex-col gap-0.5">
                         {terminalGroup.terminalIds.map((terminalId) => {
                           const isActive = terminalId === resolvedActiveTerminalId;
-                          const closeTerminalLabel = `Close ${
-                            terminalLabelById.get(terminalId) ?? "terminal"
-                          }${isActive && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""}`;
+                          const terminalLabel = terminalLabelById.get(terminalId) ?? "Terminal";
+                          const closeTerminalLabel = `Close ${terminalLabel}${
+                            isActive && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""
+                          }`;
                           return (
                             <div
                               key={terminalId}
-                              className={`group flex items-center gap-1 rounded px-1 py-0.5 text-[11px] ${
+                              className={cn(
+                                "group/tab flex h-6 w-full items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
                                 isActive
                                   ? "bg-accent text-foreground"
-                                  : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                              }`}
-                            >
-                              {showGroupHeaders && (
-                                <span className="text-[10px] text-muted-foreground/80">└</span>
+                                  : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                               )}
-                              <button
-                                type="button"
-                                className="flex min-w-0 flex-1 items-center gap-1 text-left"
-                                onClick={() => onActiveTerminalChange(terminalId)}
+                            >
+                              <PanelTabCloseButton
+                                label={closeTerminalLabel}
+                                onClick={() => confirmCloseTerminal(terminalId)}
+                                tooltip={closeTerminalLabel}
                               >
                                 <TerminalSquare className="size-3 shrink-0" />
-                                <span className="truncate">
-                                  {terminalLabelById.get(terminalId) ?? "Terminal"}
-                                </span>
+                              </PanelTabCloseButton>
+                              <button
+                                type="button"
+                                className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-left"
+                                onClick={() => onActiveTerminalChange(terminalId)}
+                              >
+                                <span className="truncate">{terminalLabel}</span>
                               </button>
-                              {normalizedTerminalIds.length > 1 && (
-                                <Popover>
-                                  <PopoverTrigger
-                                    openOnHover
-                                    render={
-                                      <button
-                                        type="button"
-                                        className="inline-flex size-3.5 items-center justify-center rounded text-xs font-medium leading-none text-muted-foreground opacity-0 transition hover:bg-accent hover:text-foreground group-hover:opacity-100"
-                                        onClick={() => confirmCloseTerminal(terminalId)}
-                                        aria-label={closeTerminalLabel}
-                                      />
-                                    }
-                                  >
-                                    <XIcon className="size-2.5" />
-                                  </PopoverTrigger>
-                                  <PopoverPopup
-                                    tooltipStyle
-                                    side="bottom"
-                                    sideOffset={6}
-                                    align="center"
-                                    className="pointer-events-none select-none"
-                                  >
-                                    {closeTerminalLabel}
-                                  </PopoverPopup>
-                                </Popover>
-                              )}
                             </div>
                           );
                         })}

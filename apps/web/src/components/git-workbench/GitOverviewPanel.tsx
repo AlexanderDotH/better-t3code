@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, Clock3, GitCommitHorizontal, TriangleAlert } from "
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 import { deriveGitPrimaryAction } from "./GitWorkbench.logic";
 import { GitWorkbenchConfirmation } from "./GitWorkbenchConfirmation";
@@ -16,14 +17,14 @@ import type {
 } from "./GitWorkbench.types";
 
 const statePresentation = {
-  changed: { label: "Changed", variant: "warning" },
-  clean: { label: "Clean", variant: "success" },
-  conflicted: { label: "Conflicted", variant: "error" },
-  detached: { label: "Detached HEAD", variant: "warning" },
-  disconnected: { label: "Disconnected", variant: "outline" },
-  stale: { label: "Status stale", variant: "warning" },
-  unavailable: { label: "Git unavailable", variant: "outline" },
-  unborn: { label: "No commits yet", variant: "info" },
+  changed: { variant: "warning" },
+  clean: { variant: "success" },
+  conflicted: { variant: "error" },
+  detached: { variant: "warning" },
+  disconnected: { variant: "outline" },
+  stale: { variant: "warning" },
+  unavailable: { variant: "outline" },
+  unborn: { variant: "info" },
 } as const;
 
 interface GitOverviewPanelProps {
@@ -38,12 +39,6 @@ interface GitOverviewPanelProps {
   readonly undoSnapshots: readonly GitUndoSnapshot[];
 }
 
-const relativeUpdatedLabel = (iso: string): string => {
-  const parsed = new Date(iso);
-  if (Number.isNaN(parsed.getTime())) return "Updated time unavailable";
-  return `Updated ${parsed.toLocaleString()}`;
-};
-
 export function GitOverviewPanel({
   insights,
   onCancelQueue,
@@ -55,8 +50,26 @@ export function GitOverviewPanel({
   snapshot,
   undoSnapshots,
 }: GitOverviewPanelProps) {
+  const translator = useInterfaceTranslator();
+  const translate = translator.message;
   const presentation = statePresentation[snapshot.repositoryState];
   const primaryAction = deriveGitPrimaryAction(snapshot);
+  const primaryActionLabel =
+    primaryAction.id === "resolve-conflicts"
+      ? translate("git.overview.action.resolveConflicts")
+      : primaryAction.id === "commit-staged"
+        ? translate("git.overview.action.commitStaged", { count: snapshot.staged })
+        : primaryAction.id === "stage-all-and-commit"
+          ? translate("git.overview.action.stageAllCommit")
+          : primaryAction.id === "push"
+            ? translate("git.overview.action.push", { count: snapshot.ahead })
+            : translate("git.overview.action.viewHistory");
+  const parsedGeneratedAt = new Date(snapshot.generatedAt);
+  const updatedLabel = Number.isNaN(parsedGeneratedAt.getTime())
+    ? translate("git.overview.updatedUnavailable")
+    : translate("git.overview.updated", {
+        time: translator.date(parsedGeneratedAt, { timeStyle: "short" }),
+      });
   const runPrimaryAction = () => {
     if (primaryAction.id === "resolve-conflicts") return onNavigate("changes");
     if (primaryAction.id === "view-history") return onNavigate("history");
@@ -74,42 +87,50 @@ export function GitOverviewPanel({
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="font-semibold" id="repository-pulse-heading">
-                  Repository pulse
+                  {translate("git.overview.repositoryPulse")}
                 </h2>
-                <Badge variant={presentation.variant}>{presentation.label}</Badge>
-                {snapshot.stale ? <Badge variant="warning">Status stale</Badge> : null}
+                <Badge variant={presentation.variant}>
+                  {translate(`git.workbench.state.${snapshot.repositoryState}`)}
+                </Badge>
+                {snapshot.stale ? (
+                  <Badge variant="warning">{translate("git.overview.statusStale")}</Badge>
+                ) : null}
               </div>
               <p className="mt-1 truncate text-muted-foreground text-sm">
-                {snapshot.branch ?? "No branch"}
-                {snapshot.upstream ? ` · ${snapshot.upstream}` : " · No upstream"}
+                {snapshot.branch ?? translate("git.workbench.noBranch")}
+                {snapshot.upstream
+                  ? ` · ${snapshot.upstream}`
+                  : ` · ${translate("git.overview.noUpstream")}`}
               </p>
-              <p className="mt-1 text-muted-foreground text-xs">
-                {relativeUpdatedLabel(snapshot.generatedAt)}
-              </p>
+              <p className="mt-1 text-muted-foreground text-xs">{updatedLabel}</p>
             </div>
             <Button
               disabled={readOnly && primaryAction.id !== "view-history"}
               onClick={runPrimaryAction}
             >
-              {primaryAction.label}
+              {primaryActionLabel}
             </Button>
           </div>
 
           <dl className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <PulseStat label="Staged" value={snapshot.staged} />
-            <PulseStat label="Unstaged" value={snapshot.unstaged} />
-            <PulseStat label="Untracked" value={snapshot.untracked} />
-            <PulseStat label="Conflicts" value={snapshot.conflicts} warning />
+            <PulseStat label={translate("git.common.staged")} value={snapshot.staged} />
+            <PulseStat label={translate("git.common.unstaged")} value={snapshot.unstaged} />
+            <PulseStat label={translate("git.common.untracked")} value={snapshot.untracked} />
+            <PulseStat
+              label={translate("git.common.conflicts")}
+              value={snapshot.conflicts}
+              warning
+            />
           </dl>
 
           <div className="mt-3 flex flex-wrap gap-2 text-sm">
             <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1">
               <ArrowUp aria-hidden="true" className="size-3.5 text-success-foreground" />
-              {snapshot.ahead} ahead
+              {translate("git.workbench.aheadCount", { count: snapshot.ahead })}
             </span>
             <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1">
               <ArrowDown aria-hidden="true" className="size-3.5 text-info-foreground" />
-              {snapshot.behind} behind
+              {translate("git.workbench.behindCount", { count: snapshot.behind })}
             </span>
             {snapshot.lastCommit ? (
               <span className="inline-flex min-w-0 items-center gap-1 rounded-md bg-muted px-2 py-1">
@@ -132,7 +153,9 @@ export function GitOverviewPanel({
               target="_blank"
             >
               <Badge variant={snapshot.pullRequest.status === "merged" ? "success" : "info"}>
-                PR #{snapshot.pullRequest.number}
+                {translate("git.overview.pullRequestNumber", {
+                  number: snapshot.pullRequest.number,
+                })}
               </Badge>
               <span className="min-w-0 flex-1 truncate">{snapshot.pullRequest.title}</span>
               <span className="text-muted-foreground text-xs">{snapshot.pullRequest.status}</span>
@@ -175,6 +198,7 @@ function PulseStat({
 }
 
 function ActivityPanel({ insights }: { insights: GitRepositoryInsights | null }) {
+  const translate = useInterfaceTranslator().message;
   const max = Math.max(1, ...(insights?.activity.map((day) => day.count) ?? []));
   return (
     <section
@@ -184,12 +208,16 @@ function ActivityPanel({ insights }: { insights: GitRepositoryInsights | null })
       <div className="flex items-center gap-2">
         <Clock3 aria-hidden="true" className="size-4 text-muted-foreground" />
         <h2 className="font-semibold text-sm" id="repository-activity-heading">
-          Recent activity
+          {translate("git.overview.recentActivity")}
         </h2>
       </div>
       {insights ? (
         <>
-          <div aria-label="Repository activity" className="mt-3 flex flex-wrap gap-1" role="img">
+          <div
+            aria-label={translate("git.overview.activityAria")}
+            className="mt-3 flex flex-wrap gap-1"
+            role="img"
+          >
             {insights.activity.map((day) => (
               <span
                 aria-hidden="true"
@@ -200,13 +228,13 @@ function ActivityPanel({ insights }: { insights: GitRepositoryInsights | null })
             ))}
           </div>
           <table className="sr-only">
-            <caption>Repository activity by day</caption>
+            <caption>{translate("git.overview.activityCaption")}</caption>
             <tbody>
               {insights.activity.map((day) => (
                 <tr key={day.date}>
                   <th scope="row">{day.date}</th>
                   <td>
-                    {day.count} commits on {day.date}
+                    {translate("git.overview.commitOnDate", { count: day.count, date: day.date })}
                   </td>
                 </tr>
               ))}
@@ -214,17 +242,20 @@ function ActivityPanel({ insights }: { insights: GitRepositoryInsights | null })
           </table>
         </>
       ) : (
-        <p className="mt-3 text-muted-foreground text-sm">Activity loads when Git is open.</p>
+        <p className="mt-3 text-muted-foreground text-sm">
+          {translate("git.overview.activityDeferred")}
+        </p>
       )}
     </section>
   );
 }
 
 function ContributorPanel({ insights }: { insights: GitRepositoryInsights | null }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <section aria-labelledby="contributors-heading" className="rounded-xl border bg-card p-4">
       <h2 className="font-semibold text-sm" id="contributors-heading">
-        Top contributors
+        {translate("git.overview.topContributors")}
       </h2>
       {insights?.contributors.length ? (
         <ol className="mt-2 space-y-2">
@@ -234,27 +265,32 @@ function ContributorPanel({ insights }: { insights: GitRepositoryInsights | null
                 {index + 1}
               </span>
               <span className="min-w-0 flex-1 truncate">{contributor.name}</span>
-              <span className="text-muted-foreground">{contributor.commits} commits</span>
+              <span className="text-muted-foreground">
+                {translate("git.overview.contributorCommits", { count: contributor.commits })}
+              </span>
             </li>
           ))}
         </ol>
       ) : (
-        <p className="mt-2 text-muted-foreground text-sm">No contribution data yet.</p>
+        <p className="mt-2 text-muted-foreground text-sm">
+          {translate("git.overview.noContribution")}
+        </p>
       )}
     </section>
   );
 }
 
 function CodeMixPanel({ insights }: { insights: GitRepositoryInsights | null }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <section aria-labelledby="code-mix-heading" className="rounded-xl border bg-card p-4">
       <h2 className="font-semibold text-sm" id="code-mix-heading">
-        Code mix
+        {translate("git.overview.codeMix")}
       </h2>
       {insights?.codeMix.length ? (
         <>
           <div
-            aria-label="Tracked-language mix"
+            aria-label={translate("git.overview.trackedLanguageMix")}
             className="mt-3 flex h-2 overflow-hidden rounded-full"
             role="img"
           >
@@ -280,12 +316,15 @@ function CodeMixPanel({ insights }: { insights: GitRepositoryInsights | null }) 
             ))}
           </ul>
           <p className="mt-2 text-muted-foreground text-xs">
-            {insights.coverage.sampledFiles} tracked files · {insights.coverage.sampledCommits}{" "}
-            commits sampled{insights.coverage.truncated ? " · results truncated" : ""}
+            {translate("git.overview.coverage", {
+              files: insights.coverage.sampledFiles,
+              commits: insights.coverage.sampledCommits,
+            })}
+            {insights.coverage.truncated ? ` · ${translate("git.overview.resultsTruncated")}` : ""}
           </p>
         </>
       ) : (
-        <p className="mt-2 text-muted-foreground text-sm">No tracked source mix available.</p>
+        <p className="mt-2 text-muted-foreground text-sm">{translate("git.overview.noCodeMix")}</p>
       )}
     </section>
   );
@@ -300,6 +339,7 @@ function QueuePanel({
   onCancel: (id: string) => void;
   queue: GitQueuedWorkflow | null;
 }) {
+  const translate = useInterfaceTranslator().message;
   if (!queue) return null;
   return (
     <section
@@ -307,7 +347,7 @@ function QueuePanel({
       className="rounded-xl border border-info/24 bg-info/5 p-4"
     >
       <h2 className="font-semibold text-sm" id="queued-workflow-heading">
-        Queued workflow
+        {translate("git.operation.queuedWorkflow")}
       </h2>
       <p className="mt-1 text-sm">{queue.label}</p>
       <p className="mt-1 text-muted-foreground text-xs">{queue.status.replaceAll("-", " ")}</p>
@@ -327,7 +367,7 @@ function QueuePanel({
         size="xs"
         variant="outline"
       >
-        Cancel workflow
+        {translate("git.operation.cancelWorkflow")}
       </Button>
     </section>
   );
@@ -342,10 +382,11 @@ function UndoPanel({
   onRestore: (id: string) => void;
   snapshots: readonly GitUndoSnapshot[];
 }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <section aria-labelledby="undo-snapshots-heading" className="rounded-xl border bg-card p-4">
       <h2 className="font-semibold text-sm" id="undo-snapshots-heading">
-        Undo snapshots
+        {translate("git.operation.undoSnapshots")}
       </h2>
       {snapshots.length ? (
         <ul className="mt-2 space-y-2">
@@ -353,20 +394,22 @@ function UndoPanel({
             <li className="flex items-center gap-2" key={snapshot.id}>
               <span className="min-w-0 flex-1 truncate text-sm">{snapshot.label}</span>
               <GitWorkbenchConfirmation
-                confirmLabel="Restore snapshot"
-                description="The current repository state is snapshotted first. Remote history is not affected."
+                confirmLabel={translate("git.operation.restoreSnapshot")}
+                description={translate("git.operation.restoreDescription")}
                 disabled={disabled}
                 onConfirm={() => onRestore(snapshot.id)}
                 phrase="RESTORE"
-                title={`Restore ${snapshot.label}?`}
-                triggerLabel="Restore…"
+                title={translate("git.operation.restoreTitle", { label: snapshot.label })}
+                triggerLabel={`${translate("git.operation.restoreSnapshot")}…`}
                 variant="outline"
               />
             </li>
           ))}
         </ul>
       ) : (
-        <p className="mt-2 text-muted-foreground text-sm">No recoverable operations yet.</p>
+        <p className="mt-2 text-muted-foreground text-sm">
+          {translate("git.overview.noRecoverable")}
+        </p>
       )}
     </section>
   );

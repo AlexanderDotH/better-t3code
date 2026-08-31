@@ -11,7 +11,7 @@ import * as Option from "effect/Option";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import { projectThreadDetailSnapshot } from "./ActivityPayloadProjection.ts";
-import { normalizeDispatchCommand } from "./Normalizer.ts";
+import { cleanupFailedUploadedAttachments, normalizeDispatchCommand } from "./Normalizer.ts";
 import {
   annotateEnvironmentRequest,
   failEnvironmentInternal,
@@ -21,6 +21,7 @@ import {
 } from "../auth/http.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
+import { ThreadDeletionReactor } from "./Services/ThreadDeletionReactor.ts";
 import { makeOrchestrationCommandDispatcher } from "./orchestrationCommandDispatcher.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { ProjectSetupScriptRunner } from "../project/ProjectSetupScriptRunner.ts";
@@ -32,6 +33,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
     const orchestrationEngine = yield* OrchestrationEngineService;
+    const threadDeletionReactor = yield* ThreadDeletionReactor;
 
     return handlers
       .handle(
@@ -143,6 +145,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
                     nowIso: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
                     gitWorkflow,
                     projectSetupScriptRunner,
+                    drainThreadDeletionThrough: threadDeletionReactor.drainThrough,
                     refreshGitStatus: (cwd) =>
                       vcsStatusBroadcaster
                         .refreshStatus(cwd)
@@ -185,6 +188,9 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
             }
             return yield* orchestrationEngine.dispatch(normalizedCommand);
           }).pipe(
+            Effect.tapError(() =>
+              cleanupFailedUploadedAttachments(args.payload, normalizedCommand),
+            ),
             Effect.catchCause((cause) =>
               failEnvironmentInternal("orchestration_dispatch_failed", Cause.squash(cause)),
             ),

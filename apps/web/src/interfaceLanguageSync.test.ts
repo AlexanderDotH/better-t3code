@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   collectSystemInterfaceLocales,
   createInterfaceLanguageSyncRecord,
+  interfaceLanguagePreferenceMessageId,
   interfaceLanguageSyncStatusText,
 } from "./interfaceLanguageSync.tsx";
 
@@ -18,7 +19,27 @@ describe("web interface language", () => {
       25,
     );
 
-    expect(record).toEqual({ preference: "de", updatedAt: 26, updateId: "web:de" });
+    expect(record).toEqual({
+      version: 1,
+      preference: "de",
+      updatedAt: 26,
+      updateId: "web:de",
+    });
+  });
+
+  it("exposes all versioned locale choices, including French", () => {
+    expect(interfaceLanguagePreferenceMessageId("system")).toBe(
+      "settings.interfaceLanguage.system",
+    );
+    expect(interfaceLanguagePreferenceMessageId("en")).toBe("settings.interfaceLanguage.english");
+    expect(interfaceLanguagePreferenceMessageId("de")).toBe("settings.interfaceLanguage.german");
+    expect(interfaceLanguagePreferenceMessageId("fr")).toBe("settings.interfaceLanguage.french");
+    expect(
+      createInterfaceLanguageSyncRecord("fr", {
+        now: () => 30,
+        updateId: () => "web:fr",
+      }),
+    ).toMatchObject({ version: 1, preference: "fr", updateId: "web:fr" });
   });
 
   it("localizes synchronization status", () => {
@@ -29,5 +50,12 @@ describe("web interface language", () => {
         unsupportedEnvironmentLabels: [],
       }),
     ).toBe("Synchronisierung mit Laptop fehlgeschlagen. Ein neuer Versuch erfolgt automatisch.");
+    expect(
+      interfaceLanguageSyncStatusText("fr", {
+        failedEnvironmentLabels: ["Bureau", "Portable"],
+        deferredEnvironmentLabels: [],
+        unsupportedEnvironmentLabels: [],
+      }),
+    ).toContain("Bureau et Portable");
   });
 });

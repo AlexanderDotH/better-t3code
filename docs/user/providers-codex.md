@@ -28,6 +28,38 @@ Log in with Codex normally:
 codex login
 ```
 
+## Send feedback to OpenAI
+
+In an existing Codex thread, send `/feedback` or `/feedback` followed by a description of the
+issue. T3 Code uploads the thread and Codex logs to OpenAI and shows a thread ID that you can copy
+and share with OpenAI employees.
+
+## Workspace tools
+
+T3 gives Codex an authenticated `workspace_context` tool for batched project search and bounded
+reads. Writable sessions also receive `workspace_edit`, which can safely combine ordinary UTF-8
+file writes, exact replacements, range edits, and deletions in one call. Read-only,
+approval-required, and Fetch sessions receive only the read tool. An already-writable session can
+still list `workspace_edit` during a Plan turn, but Codex is not instructed to use it and T3 rejects
+the call before touching disk.
+
+Codex still uses its approved patch or command tools for formatters, generators, binaries, large
+files, permission changes, recursive operations, copy, and move. Changes run on the environment that
+owns the project, so local, relay, tunnel, desktop, web, and mobile clients see the same changed-file
+and checkpoint history. Use a thread checkpoint to inspect or restore an earlier workspace state.
+
+## Sub-agent models
+
+The web and desktop Agents panel shows each sub-agent's model and reasoning effort when Codex
+reports them. If Codex does not report either value, T3 Code leaves it out instead of using the
+parent agent's settings.
+
+## Approve access to other apps
+
+When a Codex tool needs access to an app such as Safari, T3 Code shows the app name and asks for
+approval. You can approve, decline, or cancel the request from the desktop app, web app, or mobile
+app. Some tools also offer approval for the current session or permanent approval.
+
 ## I Want Work And Personal Codex Accounts
 
 Use one real Codex home and one shadow home.

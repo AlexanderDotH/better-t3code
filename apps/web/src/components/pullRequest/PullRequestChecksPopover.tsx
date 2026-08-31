@@ -9,11 +9,13 @@ import { readLocalApi } from "~/localApi";
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   PullRequestCheckStatusIcon,
+  keyedPullRequestChecks,
   pullRequestCheckStatusLabel,
   pullRequestChecksStatePresentation,
   summarizePullRequestChecks,
@@ -31,6 +33,7 @@ function LazyChecksBody({
   environmentId: EnvironmentId;
   reference: PullRequestRef;
 }) {
+  const translate = useInterfaceTranslator().message;
   const detailQuery = useEnvironmentQuery(
     pullRequestEnvironment.detail({ environmentId, input: reference }),
   );
@@ -40,7 +43,9 @@ function LazyChecksBody({
   if (detailQuery.data === null) {
     return (
       <p className="text-muted-foreground text-xs">
-        {detailQuery.isPending ? "Loading checks…" : "No checks reported"}
+        {detailQuery.isPending
+          ? translate("pullRequest.checks.loading")
+          : translate("pullRequest.checks.none")}
       </p>
     );
   }
@@ -48,15 +53,14 @@ function LazyChecksBody({
 }
 
 function ChecksBody({ checks }: { checks: ReadonlyArray<PullRequestCheck> }) {
+  const translate = useInterfaceTranslator().message;
   if (checks.length === 0) {
-    return <p className="text-muted-foreground text-xs">No checks reported</p>;
+    return <p className="text-muted-foreground text-xs">{translate("pullRequest.checks.none")}</p>;
   }
   return (
     <ul className="flex flex-col gap-1">
-      {/* Keyed by position as well as by name: the host is the one that decides how many runs
-          share a name, and a repeated key is a rendering fault rather than a wrong list. */}
-      {checks.map((check, index) => (
-        <li key={`${index}:${check.name}`} className="flex items-center gap-2 text-xs">
+      {keyedPullRequestChecks(checks).map(({ check, key }) => (
+        <li key={key} className="flex items-center gap-2 text-xs">
           <PullRequestCheckStatusIcon status={check.status} />
           <Tooltip>
             <TooltipTrigger
@@ -65,7 +69,7 @@ function ChecksBody({ checks }: { checks: ReadonlyArray<PullRequestCheck> }) {
             <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
           </Tooltip>
           <span className="shrink-0 text-muted-foreground">
-            {pullRequestCheckStatusLabel(check.status)}
+            {pullRequestCheckStatusLabel(check.status, translate)}
           </span>
           {check.url === null ? null : (
             <button
@@ -73,7 +77,7 @@ function ChecksBody({ checks }: { checks: ReadonlyArray<PullRequestCheck> }) {
               className="shrink-0 text-primary hover:underline"
               onClick={() => void readLocalApi()?.shell.openExternal(check.url ?? "")}
             >
-              Details
+              {translate("pullRequest.checks.details")}
             </button>
           )}
         </li>
@@ -103,9 +107,11 @@ export function PullRequestChecksPopover({
   reference?: PullRequestRef;
   className?: string;
 }) {
+  const translate = useInterfaceTranslator().message;
   const presentation = pullRequestChecksStatePresentation(checksState);
+  const presentationLabel = translate(presentation.labelKey);
   // Counts beat the rollup's own wording where they are known, the way GitHub's own header reads.
-  const summary = checks === undefined ? null : summarizePullRequestChecks(checks);
+  const summary = checks === undefined ? null : summarizePullRequestChecks(checks, translate);
   return (
     <Popover>
       {/* A listing row is itself a button, so the trigger renders as a span: a nested button is
@@ -116,7 +122,7 @@ export function PullRequestChecksPopover({
           <span
             role="button"
             tabIndex={0}
-            aria-label={`Checks: ${presentation.label}`}
+            aria-label={translate("pullRequest.checks.aria", { status: presentationLabel })}
             className={cn("inline-flex shrink-0 cursor-pointer items-center", className)}
           />
         }
@@ -125,7 +131,7 @@ export function PullRequestChecksPopover({
         <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
       </PopoverTrigger>
       <PopoverPopup align="start" className="w-80 max-w-full" side="bottom">
-        <p className="mb-2 font-medium text-sm">{presentation.label}</p>
+        <p className="mb-2 font-medium text-sm">{presentationLabel}</p>
         {summary === null ? null : <p className="mb-2 text-muted-foreground text-xs">{summary}</p>}
         {checks !== undefined ? (
           <ChecksBody checks={checks} />

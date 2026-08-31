@@ -45,7 +45,7 @@ function declaration(
 export const GENERAL_SUBAGENT_NATIVE_HARNESS_DECLARATIONS = [
   declaration(
     "list_agents",
-    "List direct T3-managed children owned by this root thread with stable ids, provider selections, statuses, transcript results, and failure details.",
+    "List compact identity, provider selection, model, reasoning, and status metadata for direct T3-managed children owned by this root thread.",
     GeneralSubagentListInput,
     "read-only",
   ),

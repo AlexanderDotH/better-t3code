@@ -13,7 +13,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, ScrollView, Switch, TextInput, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import {
   mobileProviderCatalogModels,
   mobileProviderSettingsDefinition,
@@ -46,6 +47,7 @@ function MobileSelectField(props: {
   readonly disabled: boolean;
   readonly onCommit: (value: string) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const [open, setOpen] = useState(false);
   const selected = readProviderConfigString(
     props.value,
@@ -59,8 +61,9 @@ function MobileSelectField(props: {
     selectedOption?.label ??
     (selected ||
       (unavailable
-        ? "Load the model catalog first"
-        : (props.field.placeholder ?? "Choose an option")));
+        ? translator.message("mobile.settings.provider.loadCatalog")
+        : (props.field.placeholder ??
+          translator.message("mobile.settings.provider.chooseOption"))));
 
   return (
     <View className="gap-2">
@@ -86,7 +89,9 @@ function MobileSelectField(props: {
               {props.field.label}
             </Text>
             <Pressable accessibilityRole="button" onPress={() => setOpen(false)}>
-              <Text className="font-t3-medium text-foreground">Close</Text>
+              <Text className="font-t3-medium text-foreground">
+                {translator.message("common.close")}
+              </Text>
             </Pressable>
           </View>
           <ScrollView className="flex-1" contentContainerClassName="p-5">
@@ -139,6 +144,7 @@ function MobileTextField(props: {
   readonly disabled: boolean;
   readonly onCommit: (value: ProviderSettingsFieldValue) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const resolvedDraft = textDraft(props.field, props.value);
   const [draft, setDraft] = useState(resolvedDraft);
   const [invalid, setInvalid] = useState(false);
@@ -192,14 +198,19 @@ function MobileTextField(props: {
       />
       {props.field.control === "ordered-string-list" ? (
         <Text className="text-xs text-foreground-muted">
-          One value per line, in priority order.
+          {translator.message("mobile.settings.provider.onePerLine")}
         </Text>
       ) : null}
       {invalid ? (
         <Text className="text-xs text-destructive">
-          Enter a finite number
-          {props.field.min === undefined ? "" : ` at least ${props.field.min}`}
-          {props.field.max === undefined ? "" : ` and at most ${props.field.max}`}.
+          {translator.message("mobile.settings.provider.finiteNumber")}
+          {props.field.min === undefined
+            ? ""
+            : translator.message("mobile.settings.provider.minimum", { min: props.field.min })}
+          {props.field.max === undefined
+            ? ""
+            : translator.message("mobile.settings.provider.maximum", { max: props.field.max })}
+          .
         </Text>
       ) : null}
     </View>
@@ -212,8 +223,9 @@ function MobileSwitchField(props: {
   readonly disabled: boolean;
   readonly onCommit: (value: boolean) => void;
 }) {
-  const activeTrack = String(useThemeColor("--color-switch-active"));
-  const track = String(useThemeColor("--color-secondary-border"));
+  const theme = useUniwindTheme();
+  const activeTrack = theme["--color-switch-active"];
+  const track = theme["--color-secondary-border"];
   return (
     <View className="flex-row items-center gap-3">
       <View className="min-w-0 flex-1">
@@ -236,6 +248,7 @@ function MobileSwitchField(props: {
 }
 
 export function MobileProviderSettingsForm(props: MobileProviderSettingsFormProps) {
+  const translator = useMobileInterfaceTranslator();
   const [draftConfig, setDraftConfig] = useState(props.value);
   const definition = mobileProviderSettingsDefinition(props.provider.driver);
   const models = mobileProviderCatalogModels(props.provider);
@@ -260,7 +273,9 @@ export function MobileProviderSettingsForm(props: MobileProviderSettingsFormProp
 
   return (
     <View className="gap-4 border-t border-border-subtle pt-4">
-      <Text className="text-base font-t3-semibold text-foreground">Provider configuration</Text>
+      <Text className="text-base font-t3-semibold text-foreground">
+        {translator.message("mobile.settings.provider.configuration")}
+      </Text>
       {fields.map((field) => {
         if (field.control === "switch") {
           return (

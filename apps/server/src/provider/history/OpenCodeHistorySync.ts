@@ -344,6 +344,7 @@ function makeOpenCodeRuntimeHistoryGateway(
           binaryPath: input.settings.binaryPath,
           ...(input.settings.serverUrl ? { serverUrl: input.settings.serverUrl } : {}),
           environment: input.environment,
+          directory,
         });
         const client = input.runtime.createOpenCodeSdkClient({
           baseUrl: connection.url,

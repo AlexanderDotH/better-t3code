@@ -1,9 +1,56 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   AuthOrchestrationOperateScope,
+  DEFAULT_UNIFIED_SETTINGS,
   type AuthSessionState,
   type EnvironmentId,
+  defaultInstanceIdForDriver,
+  type ProviderDriverKind,
+  type ProviderInstanceId,
+  type UnifiedSettings,
 } from "@t3tools/contracts";
+
+export function withoutProviderInstanceKey<V>(
+  record: Readonly<Record<ProviderInstanceId, V>> | undefined,
+  key: ProviderInstanceId,
+): Record<ProviderInstanceId, V> {
+  const next = { ...record } as Record<ProviderInstanceId, V>;
+  delete next[key];
+  return next;
+}
+
+export function buildDeleteProviderInstancePatch(
+  settings: UnifiedSettings,
+  instanceId: ProviderInstanceId,
+): Pick<UnifiedSettings, "providerInstances"> {
+  return {
+    providerInstances: withoutProviderInstanceKey(settings.providerInstances, instanceId),
+  };
+}
+
+export function buildResetDefaultProviderInstancePatch(
+  settings: UnifiedSettings,
+  driverKind: ProviderDriverKind,
+): Pick<UnifiedSettings, "providerInstances" | "providers"> | null {
+  type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
+  const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
+    string,
+    LegacyProviderSettings | undefined
+  >;
+  const defaultLegacyProvider = defaultLegacyProviders[driverKind];
+  if (defaultLegacyProvider === undefined) return null;
+
+  return {
+    providers: {
+      ...settings.providers,
+      [driverKind]: defaultLegacyProvider,
+    } as typeof settings.providers,
+    providerInstances: withoutProviderInstanceKey(
+      settings.providerInstances,
+      defaultInstanceIdForDriver(driverKind),
+    ),
+  };
+}
 
 export interface ProviderEnvironmentOptionLike {
   readonly environmentId: EnvironmentId;

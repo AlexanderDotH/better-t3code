@@ -22,7 +22,7 @@ const PRESENTATION = {
   badgeLabel: "Early Access",
   showInteractionModeToggle: true,
   nativeSubagents: { toolName: "spawn_agent", maxRecommendedSubagents: 40 },
-  fetchWorkers: { maxRecommendedWorkers: 8, commandExecutionPolicy: "read-only-sandbox" },
+  fetchWorkers: { maxRecommendedWorkers: 8, commandExecutionPolicy: "deny" },
 } as const;
 
 function errorMessage(cause: unknown): string {

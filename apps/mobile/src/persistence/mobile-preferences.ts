@@ -6,13 +6,23 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import {
+  BetterT3SettingsV1,
+  bootstrapBetterT3SettingsV1,
   ChatVisualModeSyncRecord,
   type ChatVisualModeSyncRecord as ChatVisualModeSyncRecordType,
   InterfaceLanguageSyncRecord,
   type InterfaceLanguageSyncRecord as InterfaceLanguageSyncRecordType,
+  InterfaceLocaleSyncRecordV1,
+  type InterfaceLocaleSyncRecordV1 as InterfaceLocaleSyncRecordV1Type,
   ProjectThreadPreviewSyncRecord,
   type ProjectThreadPreviewSyncRecord as ProjectThreadPreviewSyncRecordType,
+  type BetterT3SettingsV1 as BetterT3SettingsV1Type,
+  DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   type SidebarProjectGroupingMode,
+  type SidebarProjectSortOrder,
+  type SidebarThreadSortOrder,
 } from "@t3tools/contracts";
 import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
 
@@ -27,8 +37,20 @@ const decodeProjectThreadPreviewSyncRecord = Schema.decodeUnknownOption(
 );
 const decodeChatVisualModeSyncRecord = Schema.decodeUnknownOption(ChatVisualModeSyncRecord);
 const decodeInterfaceLanguageSyncRecord = Schema.decodeUnknownOption(InterfaceLanguageSyncRecord);
+const decodeInterfaceLocaleSyncRecordV1 = Schema.decodeUnknownOption(InterfaceLocaleSyncRecordV1);
+const decodeBetterT3SettingsV1 = Schema.decodeUnknownOption(BetterT3SettingsV1);
+
+const MOBILE_BETTER_T3_BOOLEAN_MIRRORS = [
+  ["experimentalFetch", "agent.fetch"],
+  ["experimentalParallelPlanImplementation", "agent.parallelPlanImplementation"],
+  ["improvePromptBeforeSend", "agent.promptImprovement"],
+  ["planModeEnabled", "agent.planMode"],
+  ["legacyThreadListEnabled", "chat.classicSidebar"],
+] as const satisfies ReadonlyArray<readonly [keyof Preferences, string]>;
 
 export interface Preferences {
+  /** Device-local Better T3 registry values, including clean/existing migration provenance. */
+  readonly betterT3Device?: BetterT3SettingsV1Type;
   readonly liveActivitiesEnabled?: boolean;
   readonly experimentalFetch?: boolean;
   readonly experimentalParallelPlanImplementation?: boolean;
@@ -52,11 +74,17 @@ export interface Preferences {
   readonly chatVisualModeSyncRecord?: ChatVisualModeSyncRecordType;
   /** Offline mirror of the newest synchronized interface-language selection. */
   readonly interfaceLanguageSyncRecord?: InterfaceLanguageSyncRecordType;
+  /** Versioned locale choice with French support; the legacy record remains a compatibility mirror. */
+  readonly interfaceLocaleSyncRecordV1?: InterfaceLocaleSyncRecordV1Type;
   /** Records that Mobile transitioned from its former fixed six-row preview to default three. */
   readonly projectThreadPreviewMigrationVersion?: 1;
   /** @deprecated Kept temporarily so older OTA bundles retain the selected mode. */
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
+  readonly sidebarProjectSortOrder?: Exclude<SidebarProjectSortOrder, "manual">;
+  readonly sidebarThreadSortOrder?: SidebarThreadSortOrder;
+  readonly sidebarAutoSettleAfterDays?: number | null;
+  readonly sidebarAutoSettleOnMerge?: boolean;
   readonly autoSettleOnMerge?: boolean;
   /**
    * Device-local mirror of the web `legacySidebarEnabled` setting. Mobile has
@@ -72,6 +100,10 @@ export interface Preferences {
     readonly provider: string;
     readonly model: string;
   }>;
+  /** Undefined preserves the default expanded Settled shelf. */
+  readonly threadListV2SettledShelfExpanded?: boolean;
+  /** Undefined preserves the default collapsed Snoozed shelf. */
+  readonly threadListV2SnoozedShelfExpanded?: boolean;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedErrorClass<MobilePreferencesLoadError>()(
@@ -113,6 +145,7 @@ export class MobilePreferencesStore extends Context.Service<
 
 export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
   const preferences: {
+    betterT3Device?: BetterT3SettingsV1Type;
     liveActivitiesEnabled?: boolean;
     experimentalFetch?: boolean;
     experimentalParallelPlanImplementation?: boolean;
@@ -133,14 +166,26 @@ export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
     projectThreadPreviewSyncRecord?: ProjectThreadPreviewSyncRecordType;
     chatVisualModeSyncRecord?: ChatVisualModeSyncRecordType;
     interfaceLanguageSyncRecord?: InterfaceLanguageSyncRecordType;
+    interfaceLocaleSyncRecordV1?: InterfaceLocaleSyncRecordV1Type;
     projectThreadPreviewMigrationVersion?: 1;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
+    sidebarProjectSortOrder?: Exclude<SidebarProjectSortOrder, "manual">;
+    sidebarThreadSortOrder?: SidebarThreadSortOrder;
+    sidebarAutoSettleAfterDays?: number | null;
+    sidebarAutoSettleOnMerge?: boolean;
     autoSettleOnMerge?: boolean;
     legacyThreadListEnabled?: boolean;
     planModeEnabled?: boolean;
     modelFavorites?: ReadonlyArray<{ readonly provider: string; readonly model: string }>;
+    threadListV2SettledShelfExpanded?: boolean;
+    threadListV2SnoozedShelfExpanded?: boolean;
   } = {};
+
+  const betterT3Device = decodeBetterT3SettingsV1(parsed.betterT3Device);
+  if (Option.isSome(betterT3Device)) {
+    preferences.betterT3Device = betterT3Device.value;
+  }
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
     preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;
@@ -226,6 +271,12 @@ export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
   if (Option.isSome(interfaceLanguageSyncRecord)) {
     preferences.interfaceLanguageSyncRecord = interfaceLanguageSyncRecord.value;
   }
+  const interfaceLocaleSyncRecordV1 = decodeInterfaceLocaleSyncRecordV1(
+    parsed.interfaceLocaleSyncRecordV1,
+  );
+  if (Option.isSome(interfaceLocaleSyncRecordV1)) {
+    preferences.interfaceLocaleSyncRecordV1 = interfaceLocaleSyncRecordV1.value;
+  }
   if (parsed.projectThreadPreviewMigrationVersion === 1) {
     preferences.projectThreadPreviewMigrationVersion = 1;
   }
@@ -238,6 +289,30 @@ export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
     parsed.projectGroupingMode === "separate"
   ) {
     preferences.projectGroupingMode = parsed.projectGroupingMode;
+  }
+  if (
+    parsed.sidebarProjectSortOrder === "updated_at" ||
+    parsed.sidebarProjectSortOrder === "created_at"
+  ) {
+    preferences.sidebarProjectSortOrder = parsed.sidebarProjectSortOrder;
+  }
+  if (
+    parsed.sidebarThreadSortOrder === "updated_at" ||
+    parsed.sidebarThreadSortOrder === "created_at"
+  ) {
+    preferences.sidebarThreadSortOrder = parsed.sidebarThreadSortOrder;
+  }
+  if (
+    parsed.sidebarAutoSettleAfterDays === null ||
+    (typeof parsed.sidebarAutoSettleAfterDays === "number" &&
+      Number.isInteger(parsed.sidebarAutoSettleAfterDays) &&
+      parsed.sidebarAutoSettleAfterDays >= MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS &&
+      parsed.sidebarAutoSettleAfterDays <= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)
+  ) {
+    preferences.sidebarAutoSettleAfterDays = parsed.sidebarAutoSettleAfterDays;
+  }
+  if (typeof parsed.sidebarAutoSettleOnMerge === "boolean") {
+    preferences.sidebarAutoSettleOnMerge = parsed.sidebarAutoSettleOnMerge;
   }
   if (typeof parsed.autoSettleOnMerge === "boolean") {
     preferences.autoSettleOnMerge = parsed.autoSettleOnMerge;
@@ -271,7 +346,131 @@ export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
     }
     if (modelFavorites.length > 0) preferences.modelFavorites = modelFavorites;
   }
+  if (typeof parsed.threadListV2SettledShelfExpanded === "boolean") {
+    preferences.threadListV2SettledShelfExpanded = parsed.threadListV2SettledShelfExpanded;
+  }
+  if (typeof parsed.threadListV2SnoozedShelfExpanded === "boolean") {
+    preferences.threadListV2SnoozedShelfExpanded = parsed.threadListV2SnoozedShelfExpanded;
+  }
   return preferences;
+}
+
+export function resolveMobileSidebarSettlingPreferences(preferences: Preferences | undefined): {
+  readonly afterDays: number | null;
+  readonly onMerge: boolean;
+} {
+  return {
+    afterDays:
+      preferences?.sidebarAutoSettleAfterDays ??
+      (preferences?.sidebarAutoSettleAfterDays === null
+        ? null
+        : DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS),
+    onMerge: preferences?.sidebarAutoSettleOnMerge ?? preferences?.autoSettleOnMerge ?? true,
+  };
+}
+
+export function finalizeMobilePreferencesMigration(
+  preferences: Preferences,
+  initialization: BetterT3SettingsV1Type["initialization"],
+): Preferences & { readonly betterT3Device: BetterT3SettingsV1Type } {
+  return {
+    ...preferences,
+    betterT3Device: bootstrapBetterT3SettingsV1({
+      version: 1,
+      initialization,
+      persistedSettings: preferences.betterT3Device ?? null,
+      compatibilityFlags: [
+        ...(preferences.experimentalFetch === undefined
+          ? []
+          : [{ featureId: "agent.fetch" as const, enabled: preferences.experimentalFetch }]),
+        ...(preferences.experimentalParallelPlanImplementation === undefined
+          ? []
+          : [
+              {
+                featureId: "agent.parallelPlanImplementation" as const,
+                enabled: preferences.experimentalParallelPlanImplementation,
+              },
+            ]),
+        ...(preferences.improvePromptBeforeSend === undefined
+          ? []
+          : [
+              {
+                featureId: "agent.promptImprovement" as const,
+                enabled: preferences.improvePromptBeforeSend,
+              },
+            ]),
+        ...(preferences.planModeEnabled === undefined
+          ? []
+          : [{ featureId: "agent.planMode" as const, enabled: preferences.planModeEnabled }]),
+        ...(preferences.legacyThreadListEnabled === undefined
+          ? []
+          : [
+              {
+                featureId: "chat.classicSidebar" as const,
+                enabled: preferences.legacyThreadListEnabled,
+              },
+            ]),
+      ],
+    }),
+  };
+}
+
+type MigratedMobilePreferences = Preferences & {
+  readonly betterT3Device: BetterT3SettingsV1Type;
+};
+
+/**
+ * Keeps old preference owners and the V1 registry consistent after migration.
+ * An explicit V1 flag in the same patch is authoritative over its legacy alias.
+ */
+export function mergeMobilePreferencesPatch(
+  current: MigratedMobilePreferences,
+  patch: Partial<Preferences>,
+): MigratedMobilePreferences {
+  const { betterT3Device: betterT3DevicePatch, ...rest } = patch;
+  const explicitFlags = betterT3DevicePatch?.flags ?? {};
+  const flags = {
+    ...current.betterT3Device.flags,
+    ...explicitFlags,
+  };
+
+  for (const [legacyKey, featureId] of MOBILE_BETTER_T3_BOOLEAN_MIRRORS) {
+    const legacyValue = patch[legacyKey];
+    if (typeof legacyValue === "boolean" && !Object.hasOwn(explicitFlags, featureId)) {
+      flags[featureId] = legacyValue;
+    }
+  }
+
+  const explicitFlagCompatibilityPatch: Partial<Preferences> = {
+    ...(Object.hasOwn(explicitFlags, "agent.fetch")
+      ? { experimentalFetch: explicitFlags["agent.fetch"] }
+      : {}),
+    ...(Object.hasOwn(explicitFlags, "agent.parallelPlanImplementation")
+      ? {
+          experimentalParallelPlanImplementation: explicitFlags["agent.parallelPlanImplementation"],
+        }
+      : {}),
+    ...(Object.hasOwn(explicitFlags, "agent.promptImprovement")
+      ? { improvePromptBeforeSend: explicitFlags["agent.promptImprovement"] }
+      : {}),
+    ...(Object.hasOwn(explicitFlags, "agent.planMode")
+      ? { planModeEnabled: explicitFlags["agent.planMode"] }
+      : {}),
+    ...(Object.hasOwn(explicitFlags, "chat.classicSidebar")
+      ? { legacyThreadListEnabled: explicitFlags["chat.classicSidebar"] }
+      : {}),
+  };
+
+  return {
+    ...current,
+    ...rest,
+    ...explicitFlagCompatibilityPatch,
+    betterT3Device: {
+      ...current.betterT3Device,
+      ...betterT3DevicePatch,
+      flags,
+    },
+  };
 }
 
 export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
@@ -438,7 +637,10 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
       }
     }
 
-    return parsed === null ? {} : sanitizeMobilePreferences(parsed);
+    return finalizeMobilePreferencesMigration(
+      parsed === null ? {} : sanitizeMobilePreferences(parsed),
+      parsed === null ? "clean-install" : "existing-install-migration",
+    );
   });
 
   const load = lock
@@ -454,7 +656,7 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
             try: () => transform(current),
             catch: (cause) => new MobilePreferencesSaveError({ cause }),
           });
-          const next: Preferences = { ...current, ...patch };
+          const next = mergeMobilePreferencesPatch(current, patch);
           const payload = yield* encode(PREFERENCES_KEY, next);
           yield* saveJson(payload);
           return next;

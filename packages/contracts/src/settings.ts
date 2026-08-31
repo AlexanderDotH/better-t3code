@@ -4,6 +4,11 @@ import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { NonNegativeInt, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import {
+  BetterT3SettingsPatchV1,
+  BetterT3SettingsV1,
+  DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
+} from "./betterT3.ts";
 import { ThreadEnvMode } from "./environment.ts";
 import { McpSettings, McpServerDefinition } from "./mcp.ts";
 import {
@@ -75,6 +80,19 @@ export const InterfaceLanguageSyncRecord = Schema.Struct({
 });
 export type InterfaceLanguageSyncRecord = typeof InterfaceLanguageSyncRecord.Type;
 
+export const INTERFACE_LOCALE_SYNC_VERSION = 1 as const;
+export const InterfaceLocalePreferenceV1 = Schema.Literals(["system", "en", "de", "fr"]);
+export type InterfaceLocalePreferenceV1 = typeof InterfaceLocalePreferenceV1.Type;
+export const DEFAULT_INTERFACE_LOCALE_PREFERENCE_V1: InterfaceLocalePreferenceV1 = "system";
+
+export const InterfaceLocaleSyncRecordV1 = Schema.Struct({
+  version: Schema.Literal(INTERFACE_LOCALE_SYNC_VERSION),
+  preference: InterfaceLocalePreferenceV1,
+  updatedAt: NonNegativeInt,
+  updateId: TrimmedNonEmptyString,
+});
+export type InterfaceLocaleSyncRecordV1 = typeof InterfaceLocaleSyncRecordV1.Type;
+
 // ── Client Settings (local-only) ───────────────────────────────
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
@@ -122,6 +140,14 @@ export const GlassOpacity = Schema.Int.check(
 );
 export type GlassOpacity = typeof GlassOpacity.Type;
 export const DEFAULT_GLASS_OPACITY: GlassOpacity = 80;
+
+export const MIN_APPEARANCE_CONTRAST = 50;
+export const MAX_APPEARANCE_CONTRAST = 200;
+export const AppearanceContrast = Schema.Int.check(
+  Schema.isBetween({ minimum: MIN_APPEARANCE_CONTRAST, maximum: MAX_APPEARANCE_CONTRAST }),
+);
+export type AppearanceContrast = typeof AppearanceContrast.Type;
+export const DEFAULT_APPEARANCE_CONTRAST: AppearanceContrast = 100;
 /**
  * Font size preferences, in CSS pixels. The ranges are deliberately narrow:
  * the interface size scales every rem-based dimension in the app, so the
@@ -166,12 +192,29 @@ export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationM
 export const VoiceInputOutputLanguage = Schema.Literals(["native", "english"]);
 export type VoiceInputOutputLanguage = typeof VoiceInputOutputLanguage.Type;
 
+export const SidebarPosition = Schema.Literals(["left", "right"]);
+export type SidebarPosition = typeof SidebarPosition.Type;
+export const DEFAULT_SIDEBAR_POSITION: SidebarPosition = "left";
+
 /**
  * A user-chosen font family (a single name or a comma-separated list). Empty
  * means "use the app default"; clients compose their own fallback stacks.
  */
 export const FontFamilyPreference = Schema.String.check(Schema.isMaxLength(200));
 export type FontFamilyPreference = typeof FontFamilyPreference.Type;
+
+/**
+ * The environment's theme, set with `t3 theme set <id>`. Each client applies
+ * it once per value — live when connected, on its next connect otherwise — so
+ * setting it switches every client, while a theme a user picks in Settings
+ * afterwards sticks until the next set. Empty means "no environment theme",
+ * which is also how it is cleared.
+ */
+export const DefaultThemePreference = Schema.String.check(Schema.isMaxLength(64));
+// Deliberately absent from ServerSettingsPatch: `t3 theme set` checks that an
+// id is syntactically valid and actually resolvable, and a generic RPC patch
+// would let a client write a theme no client can resolve, bypassing both.
+export type DefaultThemePreference = typeof DefaultThemePreference.Type;
 
 /**
  * Defaults for the in-app preview browser, applied whenever a tab is opened
@@ -183,6 +226,12 @@ export const DEFAULT_BROWSER_VIEWPORT: PreviewViewportSetting = FILL_PREVIEW_VIE
 export const DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW = true;
 
 export const ClientSettingsSchema = Schema.Struct({
+  betterT3Device: BetterT3SettingsV1.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1)),
+  ),
+  appearanceContrast: AppearanceContrast.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_APPEARANCE_CONTRAST)),
+  ),
   browserDefaultViewport: PreviewViewportSetting.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_VIEWPORT)),
   ),
@@ -206,6 +255,7 @@ export const ClientSettingsSchema = Schema.Struct({
   confirmQuit: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  confirmThreadUnpin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   dismissedProviderUpdateNotificationKeys: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -219,6 +269,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   /** Local cache participating in cross-environment interface-language sync. */
   interfaceLanguageLocalRecord: Schema.NullOr(InterfaceLanguageSyncRecord).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  interfaceLocaleLocalRecordV1: Schema.NullOr(InterfaceLocaleSyncRecordV1).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   glassOpacity: GlassOpacity.pipe(
@@ -279,6 +332,7 @@ export const ClientSettingsSchema = Schema.Struct({
   // Provider-supplied reasoning stays hidden by default.
   // Users can opt into an expanded inline presentation on web and desktop.
   showReasoning: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  showSkillsInSlashMenu: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   // Legacy sidebar (the original per-project tree). Deliberately a fresh key
   // (was `sidebarV2Enabled` + `sidebarV2ConfiguredByUser`): decoding drops the
   // old keys, so everyone, including prior beta opt-outs, resets to the new
@@ -300,6 +354,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   sidebarThreadSortOrder: SidebarThreadSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_SORT_ORDER)),
+  ),
+  sidebarPosition: SidebarPosition.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_POSITION)),
   ),
   projectThreadPreviewMigrationVersion: Schema.optionalKey(Schema.Literal(1)),
   sidebarThreadPreviewCount: SidebarThreadPreviewCount.pipe(
@@ -706,6 +763,11 @@ export const OpenRouterDriverSettings = Schema.Unknown.pipe(
   ),
 );
 
+// Empty, or an integer from 100,000 to 1,000,000. Shared by the full
+// Claude settings schema and its patch so an out-of-range value fails at
+// the update that introduced it.
+const CLAUDE_AUTO_COMPACT_WINDOW_PATTERN = /^(?:|[1-9]\d{5}|1000000)$/;
+
 export const ClaudeSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -743,9 +805,23 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    autoCompactWindow: TrimmedString.check(
+      Schema.isPattern(CLAUDE_AUTO_COMPACT_WINDOW_PATTERN),
+    ).pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Auto-compact after",
+        description:
+          "Compact after 100,000 to 1,000,000 tokens. Leave empty to use Claude's default.",
+        providerSettingsForm: {
+          placeholder: "e.g. 300000",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "launchArgs"],
+    order: ["binaryPath", "homePath", "autoCompactWindow", "launchArgs"],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
@@ -788,9 +864,9 @@ export type CursorSettings = typeof CursorSettings.Type;
 
 export const GrokSettings = makeProviderSettingsSchema(
   {
-    // Enabled by default in the fork alongside Codex and Claude Agent.
+    // Off by default; users opt in from Settings.
     enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     binaryPath: makeBinaryPathSetting("grok").pipe(
@@ -823,11 +899,19 @@ export const GeminiSettings = makeProviderSettingsSchema({
 });
 export type GeminiSettings = typeof GeminiSettings.Type;
 
+export const OpenAiSettings = makeProviderSettingsSchema({
+  enabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+});
+export type OpenAiSettings = typeof OpenAiSettings.Type;
+
 export const OpenCodeSettings = makeProviderSettingsSchema(
   {
-    // Enabled by default in the fork alongside Codex, Claude Agent, and Grok.
+    // Off by default; users opt in from Settings.
     enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     binaryPath: makeBinaryPathSetting("opencode").pipe(
@@ -1038,9 +1122,13 @@ export const DEFAULT_PARALLEL_PLAN_REVIEW_MODEL_SELECTION: ModelSelection = {
 };
 
 export const ServerSettings = Schema.Struct({
+  betterT3Environment: BetterT3SettingsV1.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1)),
+  ),
   projectThreadPreviewSyncRecord: Schema.optionalKey(ProjectThreadPreviewSyncRecord),
   chatVisualModeSyncRecord: Schema.optionalKey(ChatVisualModeSyncRecord),
   interfaceLanguageSyncRecord: Schema.optionalKey(InterfaceLanguageSyncRecord),
+  interfaceLocaleSyncRecordV1: Schema.optionalKey(InterfaceLocaleSyncRecordV1),
   // Legacy token-by-token assistant output. Persisted settings and patches
   // using the former `enableAssistantStreaming` key are normalized at the
   // server boundary; current clients only receive this canonical key.
@@ -1078,6 +1166,17 @@ export const ServerSettings = Schema.Struct({
   backgroundActivityProfile: BackgroundActivityProfile.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BACKGROUND_ACTIVITY_PROFILE)),
   ),
+  defaultTheme: DefaultThemePreference.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /**
+   * When the environment's theme was last set, so clients can tell a re-set
+   * of the same value from one they already applied: `t3 theme set` must act
+   * even when it names the theme it named before. Empty on environments
+   * provisioned by builds that predate it, where clients fall back to
+   * applying once per value.
+   */
+  defaultThemeSetAt: Schema.String.check(Schema.isMaxLength(64)).pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ),
   defaultThreadEnvMode: ThreadEnvMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("local" as const satisfies ThreadEnvMode)),
   ),
@@ -1099,10 +1198,16 @@ export const ServerSettings = Schema.Struct({
       }),
     ),
   ),
+  autoReasoningModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   fetchModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   voiceTranslationModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  knowledgeGraphModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   parallelPlanReviewModelSelection: ModelSelection.pipe(
@@ -1130,6 +1235,7 @@ export const ServerSettings = Schema.Struct({
     gemini: GeminiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     chatgpt: ChatGptSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     openrouter: OpenRouterSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    openai: OpenAiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -1199,6 +1305,7 @@ export const ServerSettingsOperation = Schema.Literals([
   "normalize",
   "check-exists",
   "read-file",
+  "read-provider-history",
   "read-secret",
   "remove-secret",
   "remove-stale-secret",
@@ -1284,6 +1391,11 @@ const ClaudeSettingsPatch = Schema.Struct({
   homePath: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
   launchArgs: Schema.optionalKey(TrimmedString),
+  // Validated at the patch boundary so a typo fails the one update with a
+  // schema error instead of a generic whole-settings failure.
+  autoCompactWindow: Schema.optionalKey(
+    TrimmedString.check(Schema.isPattern(CLAUDE_AUTO_COMPACT_WINDOW_PATTERN)),
+  ),
 });
 
 const CursorSettingsPatch = Schema.Struct({
@@ -1302,6 +1414,10 @@ const GrokSettingsPatch = Schema.Struct({
 const GeminiSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const OpenAiSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
 });
 
 const OpenCodeSettingsPatch = Schema.Struct({
@@ -1334,9 +1450,11 @@ const SecretSettingValuePatch = Schema.Struct({
 
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
+  betterT3Environment: Schema.optionalKey(BetterT3SettingsPatchV1),
   projectThreadPreviewSyncRecord: Schema.optionalKey(ProjectThreadPreviewSyncRecord),
   chatVisualModeSyncRecord: Schema.optionalKey(ChatVisualModeSyncRecord),
   interfaceLanguageSyncRecord: Schema.optionalKey(InterfaceLanguageSyncRecord),
+  interfaceLocaleSyncRecordV1: Schema.optionalKey(InterfaceLocaleSyncRecordV1),
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
   /** @deprecated Use `enableLegacyTokenStreaming`. Kept for mixed-version clients. */
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
@@ -1357,10 +1475,12 @@ export const ServerSettingsPatch = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  autoReasoningModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   // Fetch selection is an atomic value: provider, model, and traits must
   // always be replaced together so a patch cannot mix two runtimes.
   fetchModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   voiceTranslationModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  knowledgeGraphModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   parallelPlanReviewModelSelection: Schema.optionalKey(ModelSelectionPatch),
   agentEnhancement: Schema.optionalKey(AgentEnhancementSettingsPatch),
   sourceControlWritingStyle: Schema.optionalKey(
@@ -1406,6 +1526,7 @@ export const ServerSettingsPatch = Schema.Struct({
       gemini: Schema.optionalKey(GeminiSettingsPatch),
       chatgpt: Schema.optionalKey(ChatGptSettingsPatch),
       openrouter: Schema.optionalKey(OpenRouterSettingsPatch),
+      openai: Schema.optionalKey(OpenAiSettingsPatch),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual
@@ -1417,6 +1538,8 @@ export const ServerSettingsPatch = Schema.Struct({
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
+  betterT3Device: Schema.optionalKey(BetterT3SettingsPatchV1),
+  appearanceContrast: Schema.optionalKey(AppearanceContrast),
   browserDefaultViewport: Schema.optionalKey(PreviewViewportSetting),
   browserDefaultZoomFactor: Schema.optionalKey(PreviewZoomFactor),
   browserDefaultAppearance: Schema.optionalKey(PreviewAppearancePreference),
@@ -1424,11 +1547,13 @@ export const ClientSettingsPatch = Schema.Struct({
   confirmQuit: Schema.optionalKey(Schema.Boolean),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
+  confirmThreadUnpin: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   experimentalFetch: Schema.optionalKey(Schema.Boolean),
   experimentalParallelPlanImplementation: Schema.optionalKey(Schema.Boolean),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
   interfaceLanguageLocalRecord: Schema.optionalKey(Schema.NullOr(InterfaceLanguageSyncRecord)),
+  interfaceLocaleLocalRecordV1: Schema.optionalKey(Schema.NullOr(InterfaceLocaleSyncRecordV1)),
   glassOpacity: Schema.optionalKey(GlassOpacity),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),
   fontSizePrompt: Schema.optionalKey(PromptFontSize),
@@ -1463,6 +1588,7 @@ export const ClientSettingsPatch = Schema.Struct({
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
   showExpandedComposerControls: Schema.optionalKey(Schema.Boolean),
   showReasoning: Schema.optionalKey(Schema.Boolean),
+  showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
@@ -1472,6 +1598,7 @@ export const ClientSettingsPatch = Schema.Struct({
   ),
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
+  sidebarPosition: Schema.optionalKey(SidebarPosition),
   projectThreadPreviewMigrationVersion: Schema.optionalKey(Schema.Literal(1)),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),

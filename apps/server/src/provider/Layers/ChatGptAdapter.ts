@@ -23,6 +23,7 @@ import {
   type NativeProviderToolResult,
   type NativeProviderTurnAdmission,
 } from "../nativeHarness/NativeProviderAdapter.ts";
+import { nativeHarnessWorkspaceInstructions } from "../nativeHarness/NativeHarnessPrompt.ts";
 
 const PROVIDER = ProviderDriverKind.make("chatgpt");
 const CHATGPT_RESUME_VERSION = 1 as const;
@@ -135,6 +136,7 @@ export interface ChatGptHarness {
     readonly cwd: string;
     readonly interactionMode: "default" | "plan" | undefined;
     readonly sandboxMode: "read-only" | "workspace-write" | "danger-full-access" | undefined;
+    readonly fetchWorker: boolean;
   }) => Effect.Effect<ReadonlyArray<ChatGptAdapterToolDefinition>, ChatGptAdapterBoundaryError>;
   readonly isAvailable: (input: {
     readonly threadId: ThreadId;
@@ -142,6 +144,7 @@ export interface ChatGptHarness {
     readonly toolName: string;
     readonly interactionMode: "default" | "plan" | undefined;
     readonly sandboxMode: "read-only" | "workspace-write" | "danger-full-access" | undefined;
+    readonly fetchWorker: boolean;
   }) => Effect.Effect<boolean, ChatGptAdapterBoundaryError>;
   readonly requiresApproval: (
     toolName: string,
@@ -155,6 +158,7 @@ export interface ChatGptHarness {
     readonly args: Readonly<Record<string, unknown>>;
     readonly cwd: string;
     readonly environment: NodeJS.ProcessEnv;
+    readonly fetchWorker: boolean;
   }) => Effect.Effect<ChatGptHarnessResult, ChatGptAdapterBoundaryError>;
   readonly releaseThread?: (threadId: ThreadId) => Effect.Effect<void>;
 }
@@ -275,6 +279,7 @@ function systemInstructions(input: {
     "You are ChatGPT running inside T3 Code. T3 Code is the harness and owns the session, transcript, tool loop, approvals, and filesystem boundary.",
     `The trusted workspace root is ${input.cwd}.`,
     access,
+    nativeHarnessWorkspaceInstructions(input),
     input.interactionMode === "plan"
       ? "Plan mode is active: return a decision-complete plan and make no changes."
       : "Carry the request through focused verification and preserve unrelated work.",
@@ -572,6 +577,7 @@ export function makeChatGptAdapter(
             cwd: session.cwd,
             interactionMode: input.interactionMode,
             sandboxMode: session.sandboxMode,
+            fetchWorker: session.fetchWorker,
           })
           .pipe(
             Effect.mapError((cause) => providerRequestError("tools/catalog", cause.detail, cause)),

@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import type { ModelSelection } from "@t3tools/contracts";
+import type { ModelSelection, TextGenerationModelFailureReason } from "@t3tools/contracts";
 
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import {
@@ -24,8 +24,7 @@ export interface PlanFetchExplorationInput {
 export interface FetchExplorationPlanningOutcome {
   readonly plan: TextGeneration.FetchExplorationPlan;
   readonly fallbackReason:
-    | "model-unavailable"
-    | "entitlement"
+    | TextGenerationModelFailureReason
     | "planner-failed"
     | "invalid-plan"
     | null;
@@ -268,13 +267,15 @@ type PlannerAttempt =
   | { readonly status: "success"; readonly plan: TextGeneration.FetchExplorationPlan }
   | {
       readonly status: "failure";
-      readonly modelReason: "model-unavailable" | "entitlement" | null;
+      readonly modelReason: TextGenerationModelFailureReason | null;
     };
 
-function fetchModelFailureReason(error: unknown): "model-unavailable" | "entitlement" | null {
+function fetchModelFailureReason(error: unknown): TextGenerationModelFailureReason | null {
   if (typeof error !== "object" || error === null || !Object.hasOwn(error, "reason")) return null;
   const reason = (error as { readonly reason?: unknown }).reason;
-  return reason === "model-unavailable" || reason === "entitlement" ? reason : null;
+  return reason === "model-unavailable" || reason === "entitlement" || reason === "rate-limited"
+    ? reason
+    : null;
 }
 
 export const requestFetchExplorationPlan = Effect.fn("FetchExplorationPlanner.requestPlan")(

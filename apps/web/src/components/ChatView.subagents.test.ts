@@ -19,13 +19,16 @@ describe("ChatView subagent integration", () => {
   it("opens transcripts through a centered dialog instead of a right-panel pane", () => {
     expect(chatViewSource).toContain("<SubagentTranscriptDialog");
     expect(chatViewSource).toContain("useEnvironmentSubagent(");
+    expect(chatViewSource).toContain('translate("chat.agent.transcript.unavailable")');
+    expect(chatViewSource).not.toContain("This agent transcript is no longer available.");
     expect(chatViewSource).not.toContain("SUBAGENT_DEDICATED_PANE_MEDIA_QUERY");
     expect(chatViewSource).not.toContain("openSubagent(");
   });
 
   it("keeps the spawn notification without reintroducing an Agents sidebar", () => {
-    expect(messagesTimelineSource).toContain("Kicked off ${agentCount}");
+    expect(messagesTimelineSource).toContain('translate("chat.timeline.subagentsStarted"');
     expect(messagesTimelineSource).toContain("data-subagent-spawn-notification");
+    expect(messagesTimelineSource).not.toContain("Kicked off ${agentCount}");
     expect(messagesTimelineSource).not.toContain("onOpenAgents");
     expect(messagesTimelineSource).not.toContain("Open Agents");
 

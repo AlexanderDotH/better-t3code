@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useTheme } from "~/hooks/useTheme";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { getLocalFileManagerName, isWindowsPlatform } from "~/lib/utils";
 import { CommandPaletteContent } from "../CommandPaletteContent";
 import type { CommandPaletteActionItem } from "../CommandPalette.logic";
@@ -18,10 +19,25 @@ import { useProjectFilePickerQuery } from "../files/projectFilesQueryState";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "../ui/command";
 import { toastManager } from "../ui/toast";
 
-function emptyMessage(query: string, error: string | null, isPending: boolean): string {
+function emptyMessage(
+  query: string,
+  error: string | null,
+  isPending: boolean,
+  translate: ReturnType<typeof useInterfaceTranslator>["message"],
+): string {
   if (error) return error;
-  if (isPending) return query.trim() ? "Searching project files…" : "Indexing project files…";
-  return query.trim() ? "No matching image files." : "No image files found.";
+  if (isPending) {
+    return translate(
+      query.trim()
+        ? "settings.projects.iconPicker.searching"
+        : "settings.projects.iconPicker.indexing",
+    );
+  }
+  return translate(
+    query.trim()
+      ? "settings.projects.iconPicker.noMatches"
+      : "settings.projects.iconPicker.noImages",
+  );
 }
 export function canPickExternalProjectFavicon(cwd: string, platform: string): boolean {
   return !isWindowsPlatform(platform) || isWindowsAbsolutePath(cwd);
@@ -36,6 +52,7 @@ export function ProjectFaviconPickerDialog(props: {
   readonly open: boolean;
   readonly projectName: string;
 }) {
+  const translator = useInterfaceTranslator();
   const [query, setQuery] = useState("");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const [isPickingExternal, setIsPickingExternal] = useState(false);
@@ -70,15 +87,15 @@ export function ProjectFaviconPickerDialog(props: {
     <CommandDialog open={props.open} onOpenChange={props.onOpenChange}>
       {props.open ? (
         <CommandDialogPopup
-          aria-label="Choose project icon"
+          aria-label={translator.message("settings.projects.iconPicker.choose")}
           className="overflow-hidden p-0"
           onBackdropPointerDown={() => props.onOpenChange(false)}
         >
           <CommandPaletteContent
-            aria-label="Choose project icon"
+            aria-label={translator.message("settings.projects.iconPicker.choose")}
             autoHighlight="always"
-            escapeLabel="Close"
-            footerActionLabel="Select icon"
+            escapeLabel={translator.message("common.close")}
+            footerActionLabel={translator.message("settings.projects.iconPicker.select")}
             footerTrailing={
               pickExternal ? (
                 <CommandFooterAction
@@ -94,19 +111,25 @@ export function ProjectFaviconPickerDialog(props: {
                       .catch((error: unknown) => {
                         toastManager.add({
                           type: "error",
-                          title: "Could not open image picker",
+                          title: translator.message("settings.projects.iconPicker.openFailed"),
                           description:
-                            error instanceof Error ? error.message : "An error occurred.",
+                            error instanceof Error
+                              ? error.message
+                              : translator.message("settings.projects.detail.error.unexpected"),
                         });
                       })
                       .finally(() => setIsPickingExternal(false));
                   }}
                 >
-                  {`Open in ${fileManagerName}`}
+                  {translator.message("settings.projects.iconPicker.openIn", {
+                    fileManager: fileManagerName,
+                  })}
                 </CommandFooterAction>
               ) : null
             }
-            inputProps={{ placeholder: "Search image files…" }}
+            inputProps={{
+              placeholder: translator.message("settings.projects.iconPicker.searchPlaceholder"),
+            }}
             mode="none"
             onItemHighlighted={(value) => {
               setHighlightedItemValue(typeof value === "string" ? value : null);
@@ -133,7 +156,12 @@ export function ProjectFaviconPickerDialog(props: {
                 props.onOpenChange(false);
                 void item.run();
               }}
-              emptyStateMessage={emptyMessage(query, result.error, result.isPending)}
+              emptyStateMessage={emptyMessage(
+                query,
+                result.error,
+                result.isPending,
+                translator.message,
+              )}
             />
           </CommandPaletteContent>
         </CommandDialogPopup>

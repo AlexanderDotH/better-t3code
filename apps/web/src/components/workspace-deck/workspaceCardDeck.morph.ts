@@ -1,19 +1,32 @@
 import {
+  buildSurfaceMorphDescriptor,
   captureSurfaceGeometry,
   type SurfaceGeometry,
   type SurfaceMorphDescriptor,
+  type SurfaceMorphDirection,
+  type SurfaceMorphCoordinator,
   type SurfaceRect,
 } from "../chat/surfaceMorph";
+import { type WorkspaceDeckDirection } from "./workspaceCardDeck.logic";
 
 export const WORKSPACE_DECK_MORPH_DURATION_MS = 560;
-export const WORKSPACE_DECK_CONTENT_PEEK_OPACITY = 0.84;
 
-const WORKSPACE_DECK_APPROACH_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
-const WORKSPACE_DECK_SETTLE_EASING = "cubic-bezier(0.33, 1, 0.68, 1)";
-const WORKSPACE_DECK_CORNER_SAMPLE_COUNT = 12;
-const WORKSPACE_DECK_APPROACH_OFFSET = 0.84;
+const WORKSPACE_DECK_FRAME_EASING = "cubic-bezier(0.4, 0, 0.2, 1)";
+const WORKSPACE_DECK_FRAME_DETACH_OFFSET = 0.12;
+const WORKSPACE_DECK_FRAME_ATTACH_OFFSET = 0.88;
+const WORKSPACE_DECK_CONTENT_HANDOFF_OFFSET = 0.22;
+const WORKSPACE_DECK_CONTENT_VISIBLE_THRESHOLD = 0.5;
+const WORKSPACE_DECK_CONTENT_CUT_EASING = "steps(1, end)";
 
 export type WorkspaceDeckMorphProxyRole = "incoming" | "outgoing";
+export type WorkspaceDeckContentHandoffRole = "incoming" | "outgoing" | "peek";
+
+export interface WorkspaceDeckFrameMorphDescriptor {
+  readonly appearanceKeyframes: readonly Keyframe[];
+  readonly cornerKeyframes: readonly Keyframe[];
+  readonly geometryKeyframes: readonly Keyframe[];
+  readonly options: KeyframeAnimationOptions;
+}
 
 export interface WorkspaceDeckChromeAppearance {
   readonly backdropFilter: string;
@@ -30,20 +43,62 @@ export interface WorkspaceDeckSurfaceSnapshot {
 
 export interface WorkspaceDeckMorphProxy {
   readonly appearanceAnimation: Animation | null;
+  readonly cornerAnimation: Animation | null;
   readonly element: HTMLDivElement;
   readonly geometryAnimation: Animation | null;
+}
+
+export interface WorkspaceDeckContentHandoffState {
+  readonly opacity: number;
+}
+
+export interface WorkspaceDeckContentHandoffMotion {
+  readonly animation: Animation;
+  readonly restoreStyles: () => void;
+}
+
+export interface WorkspaceDeckMorphIntent<CardId extends string> {
+  readonly direction: WorkspaceDeckDirection;
+  readonly fromId: CardId;
+  readonly toId: CardId;
+}
+
+export interface WorkspaceDeckMorphCapture<
+  CardId extends string,
+> extends WorkspaceDeckMorphIntent<CardId> {
+  readonly active: WorkspaceDeckSurfaceSnapshot;
+  readonly contentStates: ReadonlyMap<CardId, WorkspaceDeckContentHandoffState>;
+  readonly peeks: ReadonlyMap<CardId, WorkspaceDeckSurfaceSnapshot>;
+}
+
+export interface ActiveWorkspaceDeckMorph {
+  readonly animations: readonly Animation[];
+  readonly cleanupCallbacks: readonly (() => void)[];
+  readonly coordinators: readonly Pick<SurfaceMorphCoordinator, "dispose">[];
+  readonly contentElements: readonly HTMLElement[];
+  readonly proxies: readonly HTMLElement[];
+  readonly backPeek: HTMLElement | null;
+  readonly token: number;
+}
+
+export function disposeWorkspaceDeckMorph(morph: ActiveWorkspaceDeckMorph): void {
+  for (const animation of morph.animations) {
+    try {
+      animation.cancel();
+    } catch {
+      // Detached peek/proxy animations may already be discarded by the browser.
+    }
+  }
+  for (const coordinator of morph.coordinators) coordinator.dispose();
+  for (const cleanup of morph.cleanupCallbacks) cleanup();
+  for (const proxy of morph.proxies) proxy.remove();
+  if (morph.backPeek) delete morph.backPeek.dataset.deckMorphBackPeek;
 }
 
 export type WorkspaceDeckStyleReader = (
   element: Element,
   pseudoElement?: string,
 ) => CSSStyleDeclaration;
-
-export interface WorkspaceDeckOutgoingMotion {
-  readonly animation: Animation;
-  readonly cornerAnimation: Animation;
-  readonly restoreStyles: () => void;
-}
 
 export function captureWorkspaceDeckSurface(
   element: HTMLElement,
@@ -56,8 +111,9 @@ export function captureWorkspaceDeckSurface(
     element.closest<HTMLElement>(".chat-composer-glass-host");
   const hostStyle = glassHost ? readStyle(glassHost) : null;
   const hostOutlineStyle = glassHost ? readStyle(glassHost, "::after") : null;
+  const frameStyle = firstPaintedFrameStyle(style, beforeStyle, hostStyle, hostOutlineStyle);
   return {
-    geometry: captureSurfaceGeometry(element, () => style),
+    geometry: captureSurfaceGeometry(element, () => frameStyle),
     opacity: normalizeOpacity(style.opacity),
     appearance: {
       backdropFilter: firstPaintedBackdrop(style, beforeStyle),
@@ -69,7 +125,7 @@ export function captureWorkspaceDeckSurface(
 }
 
 export function createWorkspaceDeckMorphProxy(input: {
-  readonly descriptor: SurfaceMorphDescriptor;
+  readonly descriptor: WorkspaceDeckFrameMorphDescriptor;
   readonly from: WorkspaceDeckChromeAppearance;
   readonly host: HTMLElement;
   readonly role: WorkspaceDeckMorphProxyRole;
@@ -86,7 +142,40 @@ export function createWorkspaceDeckMorphProxy(input: {
   const appearanceAnimation = animateAppearance(element, input);
   const hostRect = input.host.getBoundingClientRect();
   const geometryAnimation = animateGeometry(element, input.descriptor, hostRect);
-  return { appearanceAnimation, element, geometryAnimation };
+  const cornerAnimation = animateCorners(element, input.descriptor);
+  return { appearanceAnimation, cornerAnimation, element, geometryAnimation };
+}
+
+export function buildWorkspaceDeckFrameMorphDescriptor(input: {
+  readonly direction: WorkspaceDeckDirection;
+  readonly durationMs: number;
+  readonly from: SurfaceGeometry;
+  readonly role: WorkspaceDeckMorphProxyRole;
+  readonly to: SurfaceGeometry;
+}): WorkspaceDeckFrameMorphDescriptor {
+  const base = buildSurfaceMorphDescriptor({
+    direction: resolveWorkspaceDeckFrameDirection(input.direction, input.role),
+    durationMs: input.durationMs,
+    from: input.from,
+    to: input.to,
+  });
+  const descriptor = adaptWorkspaceDeckFrameMorphDescriptor(base);
+  return {
+    ...descriptor,
+    cornerKeyframes: createWorkspaceDeckCornerKeyframes(input),
+  };
+}
+
+export function adaptWorkspaceDeckFrameMorphDescriptor(
+  descriptor: Pick<SurfaceMorphDescriptor, "chromeKeyframes" | "options">,
+): WorkspaceDeckFrameMorphDescriptor {
+  const geometryKeyframes = descriptor.chromeKeyframes.map(geometryOnlyKeyframe);
+  return {
+    appearanceKeyframes: geometryKeyframes.map(timelineOnlyKeyframe),
+    cornerKeyframes: descriptor.chromeKeyframes.map(cornerOnlyKeyframe),
+    geometryKeyframes,
+    options: descriptor.options,
+  };
 }
 
 export function localizeWorkspaceDeckChromeKeyframes(
@@ -116,29 +205,16 @@ export function markWorkspaceDeckMorphSurface(surface: HTMLElement): () => void 
 export function animateWorkspaceDeckBackPeek(input: {
   readonly duration: number;
   readonly element: HTMLElement;
-  readonly from: SurfaceGeometry;
-  readonly to: SurfaceGeometry;
 }): Animation {
-  const settlesAbove = input.to.rect.top < input.from.rect.top;
-  const startY = settlesAbove ? 3 : -3;
   input.element.dataset.deckMorphBackPeek = "true";
   return input.element.animate(
     [
       {
         offset: 0,
-        transform: `translate3d(0, ${startY}px, 0) scaleX(0.985)`,
-        opacity: 0.72,
-        easing: WORKSPACE_DECK_APPROACH_EASING,
-      },
-      {
-        offset: 0.82,
-        transform: `translate3d(0, ${settlesAbove ? 1 : -1}px, 0) scaleX(1.008)`,
         opacity: 1,
-        easing: WORKSPACE_DECK_SETTLE_EASING,
       },
       {
         offset: 1,
-        transform: "translate3d(0, 0, 0) scaleX(1)",
         opacity: 1,
       },
     ],
@@ -146,117 +222,81 @@ export function animateWorkspaceDeckBackPeek(input: {
   );
 }
 
-export function animateWorkspaceDeckContentFade(input: {
-  readonly duration: number;
-  readonly element: HTMLElement;
-  readonly from: number;
-  readonly to: number;
-}): Animation {
-  const from = normalizeOpacity(input.from);
-  const to = normalizeOpacity(input.to);
-  return input.element.animate(
-    [
-      { offset: 0, opacity: from, easing: WORKSPACE_DECK_APPROACH_EASING },
-      { offset: 0.72, opacity: to, easing: WORKSPACE_DECK_SETTLE_EASING },
-      { offset: 1, opacity: to },
-    ],
-    { duration: input.duration, easing: "linear", fill: "both" },
-  );
+export function captureWorkspaceDeckContentHandoffState(
+  element: HTMLElement,
+  readStyle: WorkspaceDeckStyleReader = getComputedStyle,
+): WorkspaceDeckContentHandoffState {
+  const style = readStyle(element);
+  return { opacity: normalizeOpacity(style.opacity) };
 }
 
-export function animateWorkspaceDeckCorners(input: {
+export function animateWorkspaceDeckContentHandoff(input: {
   readonly duration: number;
   readonly element: HTMLElement;
-  readonly from: SurfaceGeometry;
-  readonly fromScaleX: number;
-  readonly fromScaleY: number;
-  readonly to: SurfaceGeometry;
-  readonly toScaleX: number;
-  readonly toScaleY: number;
-}): Animation {
-  return input.element.animate(createWorkspaceDeckCornerKeyframes(input), {
+  readonly handoffOffset: number;
+  readonly role: WorkspaceDeckContentHandoffRole;
+}): WorkspaceDeckContentHandoffMotion {
+  const previous = {
+    opacity: input.element.style.opacity,
+    willChange: input.element.style.willChange,
+  };
+  input.element.style.willChange = "opacity";
+  const animation = input.element.animate(createWorkspaceDeckContentHandoffKeyframes(input), {
     duration: input.duration,
     easing: "linear",
     fill: "both",
   });
-}
-
-export function animateWorkspaceDeckOutgoing(input: {
-  readonly descriptor: SurfaceMorphDescriptor;
-  readonly element: HTMLElement;
-  readonly from: SurfaceGeometry;
-  readonly surface: HTMLElement;
-  readonly to: SurfaceGeometry;
-}): WorkspaceDeckOutgoingMotion {
-  const elementRect = input.element.getBoundingClientRect();
-  const surfaceRect = input.surface.getBoundingClientRect();
-  const start = resolveSurfaceTransform(input.from.rect, elementRect, surfaceRect);
-  const target = resolveSurfaceTransform(input.to.rect, elementRect, surfaceRect);
-  const overshootY = Math.sign(target.deltaY - start.deltaY) * 3;
-  const startTransform = formatTransform(start.deltaX, start.deltaY, start.scaleX, start.scaleY);
-  const targetTransform = formatTransform(
-    target.deltaX,
-    target.deltaY,
-    target.scaleX,
-    target.scaleY,
-  );
-  const previous = {
-    overflow: input.element.style.overflow,
-    transformOrigin: input.element.style.transformOrigin,
-    willChange: input.element.style.willChange,
-  };
-  input.element.style.overflow = "clip";
-  input.element.style.transformOrigin = "top left";
-  input.element.style.willChange = "transform, clip-path, border-radius, opacity";
-  const animation = input.element.animate(
-    [
-      {
-        offset: 0,
-        transform: startTransform,
-        easing: WORKSPACE_DECK_APPROACH_EASING,
-      },
-      {
-        offset: 0.84,
-        transform: formatTransform(
-          target.deltaX,
-          target.deltaY + overshootY,
-          target.scaleX,
-          target.scaleY,
-        ),
-        easing: WORKSPACE_DECK_SETTLE_EASING,
-      },
-      {
-        offset: 1,
-        transform: targetTransform,
-      },
-    ],
-    input.descriptor.options,
-  );
-  const cornerAnimation = animateWorkspaceDeckCorners({
-    duration: Number(input.descriptor.options.duration),
-    element: input.element,
-    from: input.from,
-    fromScaleX: start.scaleX,
-    fromScaleY: start.scaleY,
-    to: input.to,
-    toScaleX: target.scaleX,
-    toScaleY: target.scaleY,
-  });
   return {
     animation,
-    cornerAnimation,
     restoreStyles: () => {
-      input.element.style.overflow = previous.overflow;
-      input.element.style.transformOrigin = previous.transformOrigin;
+      input.element.style.opacity = previous.opacity;
       input.element.style.willChange = previous.willChange;
     },
+  };
+}
+
+function createWorkspaceDeckContentHandoffKeyframes(input: {
+  readonly handoffOffset: number;
+  readonly role: WorkspaceDeckContentHandoffRole;
+}): Keyframe[] {
+  const handoffOffset = normalizeOffset(input.handoffOffset);
+  const finalOpacity = input.role === "outgoing" ? 0 : 1;
+  if (handoffOffset === 0) {
+    return [contentHandoffKeyframe(0, finalOpacity), contentHandoffKeyframe(1, finalOpacity)];
+  }
+
+  const initialOpacity = input.role === "outgoing" ? 1 : 0;
+  return [
+    contentHandoffKeyframe(0, initialOpacity, WORKSPACE_DECK_CONTENT_CUT_EASING),
+    contentHandoffKeyframe(handoffOffset, finalOpacity),
+    contentHandoffKeyframe(1, finalOpacity),
+  ];
+}
+
+export function resolveWorkspaceDeckContentHandoffOffset(
+  outgoingState: WorkspaceDeckContentHandoffState | undefined,
+): number {
+  if (
+    outgoingState &&
+    normalizeOpacity(outgoingState.opacity) < WORKSPACE_DECK_CONTENT_VISIBLE_THRESHOLD
+  ) {
+    return 0;
+  }
+  return WORKSPACE_DECK_CONTENT_HANDOFF_OFFSET;
+}
+
+function contentHandoffKeyframe(offset: number, opacity: number, easing?: string): Keyframe {
+  return {
+    offset,
+    opacity,
+    ...(easing ? { easing } : {}),
   };
 }
 
 function animateAppearance(
   element: HTMLElement,
   input: {
-    readonly descriptor: SurfaceMorphDescriptor;
+    readonly descriptor: WorkspaceDeckFrameMorphDescriptor;
     readonly from: WorkspaceDeckChromeAppearance;
     readonly to: WorkspaceDeckChromeAppearance;
   },
@@ -270,14 +310,22 @@ function animateAppearance(
 
 function animateGeometry(
   element: HTMLElement,
-  descriptor: SurfaceMorphDescriptor,
+  descriptor: WorkspaceDeckFrameMorphDescriptor,
   hostRect: Pick<SurfaceRect, "left" | "top">,
 ): Animation | null {
   if (typeof element.animate !== "function") return null;
   return element.animate(
-    localizeWorkspaceDeckChromeKeyframes(descriptor.chromeKeyframes, hostRect),
+    localizeWorkspaceDeckChromeKeyframes(descriptor.geometryKeyframes, hostRect),
     descriptor.options,
   );
+}
+
+function animateCorners(
+  element: HTMLElement,
+  descriptor: WorkspaceDeckFrameMorphDescriptor,
+): Animation | null {
+  if (typeof element.animate !== "function") return null;
+  return element.animate([...descriptor.cornerKeyframes], descriptor.options);
 }
 
 export function createWorkspaceDeckAppearanceKeyframe(
@@ -292,14 +340,14 @@ export function createWorkspaceDeckAppearanceKeyframe(
 }
 
 export function createWorkspaceDeckAppearanceKeyframes(
-  descriptor: SurfaceMorphDescriptor,
+  descriptor: WorkspaceDeckFrameMorphDescriptor,
   from: WorkspaceDeckChromeAppearance,
   to: WorkspaceDeckChromeAppearance,
 ): Keyframe[] {
-  return descriptor.chromeKeyframes.map((timeline, index) => ({
+  return descriptor.appearanceKeyframes.map((keyframe, index) => ({
     ...createWorkspaceDeckAppearanceKeyframe(index === 0 ? from : to),
-    ...(timeline.offset === undefined ? {} : { offset: timeline.offset }),
-    ...(timeline.easing === undefined ? {} : { easing: timeline.easing }),
+    ...(keyframe.offset === undefined ? {} : { offset: keyframe.offset }),
+    ...(keyframe.easing === undefined ? {} : { easing: keyframe.easing }),
   }));
 }
 
@@ -313,126 +361,96 @@ function applyAppearance(element: HTMLElement, appearance: WorkspaceDeckChromeAp
 
 function createWorkspaceDeckCornerKeyframes(input: {
   readonly from: SurfaceGeometry;
-  readonly fromScaleX: number;
-  readonly fromScaleY: number;
+  readonly role: WorkspaceDeckMorphProxyRole;
   readonly to: SurfaceGeometry;
-  readonly toScaleX: number;
-  readonly toScaleY: number;
 }): Keyframe[] {
-  const approachFrames = Array.from(
-    { length: WORKSPACE_DECK_CORNER_SAMPLE_COUNT + 1 },
-    (_, index) => {
-      const linearProgress = index / WORKSPACE_DECK_CORNER_SAMPLE_COUNT;
-      const progress = cubicBezierProgress(linearProgress, 0.22, 1, 0.36, 1);
-      const scaleX = lerp(input.fromScaleX, input.toScaleX, progress);
-      const scaleY = lerp(input.fromScaleY, input.toScaleY, progress);
-      const radii = interpolateRadii(input.from, input.to, progress);
-      const borderRadius = formatCompensatedRadii(radii, scaleX, scaleY);
-      return {
-        offset: linearProgress * WORKSPACE_DECK_APPROACH_OFFSET,
-        borderRadius,
-        clipPath: `inset(0 round ${borderRadius})`,
-      } satisfies Keyframe;
-    },
-  );
-  const finalRadii = formatCompensatedRadii(input.to.radii, input.toScaleX, input.toScaleY);
+  const start = cornerRadiusKeyframe(input.from.radii, 0);
+  const end = cornerRadiusKeyframe(input.to.radii, 1);
+  if (input.role === "incoming") {
+    return [
+      { ...start, easing: WORKSPACE_DECK_FRAME_EASING },
+      cornerRadiusKeyframe(input.to.radii, WORKSPACE_DECK_FRAME_DETACH_OFFSET),
+      end,
+    ];
+  }
+
   return [
-    ...approachFrames,
+    { ...start, easing: WORKSPACE_DECK_FRAME_EASING },
+    cornerRadiusKeyframe(
+      uniformCornerRadii(maxCornerRadius(input.from.radii, input.to.radii)),
+      WORKSPACE_DECK_FRAME_DETACH_OFFSET,
+    ),
     {
-      offset: 1,
-      borderRadius: finalRadii,
-      clipPath: `inset(0 round ${finalRadii})`,
+      ...cornerRadiusKeyframe(
+        uniformCornerRadii(maxCornerRadius(input.from.radii, input.to.radii)),
+        WORKSPACE_DECK_FRAME_ATTACH_OFFSET,
+      ),
+      easing: WORKSPACE_DECK_FRAME_EASING,
     },
+    end,
   ];
 }
 
-function interpolateRadii(
-  from: SurfaceGeometry,
-  to: SurfaceGeometry,
-  progress: number,
-): SurfaceGeometry["radii"] {
+function maxCornerRadius(from: SurfaceGeometry["radii"], to: SurfaceGeometry["radii"]): number {
+  return Math.max(...Object.values(from), ...Object.values(to));
+}
+
+function uniformCornerRadii(radius: number): SurfaceGeometry["radii"] {
+  return { topLeft: radius, topRight: radius, bottomRight: radius, bottomLeft: radius };
+}
+
+function cornerRadiusKeyframe(radii: SurfaceGeometry["radii"], offset: number): Keyframe {
   return {
-    topLeft: lerp(from.radii.topLeft, to.radii.topLeft, progress),
-    topRight: lerp(from.radii.topRight, to.radii.topRight, progress),
-    bottomRight: lerp(from.radii.bottomRight, to.radii.bottomRight, progress),
-    bottomLeft: lerp(from.radii.bottomLeft, to.radii.bottomLeft, progress),
+    offset,
+    borderRadius: [radii.topLeft, radii.topRight, radii.bottomRight, radii.bottomLeft]
+      .map(formatPixel)
+      .join(" "),
   };
 }
 
-function formatCompensatedRadii(
-  radii: SurfaceGeometry["radii"],
-  scaleX: number,
-  scaleY: number,
-): string {
-  const horizontal = Object.values(radii).map((radius) => `${radius / safeScale(scaleX)}px`);
-  const vertical = Object.values(radii).map((radius) => `${radius / safeScale(scaleY)}px`);
-  return `${horizontal.join(" ")} / ${vertical.join(" ")}`;
+function geometryOnlyKeyframe(keyframe: Keyframe): Keyframe {
+  const geometry = { ...keyframe };
+  delete geometry.borderRadius;
+  return geometry;
 }
 
-function safeScale(value: number): number {
-  return Math.max(Math.abs(value), 0.01);
-}
-
-function lerp(from: number, to: number, progress: number): number {
-  return from + (to - from) * progress;
-}
-
-function cubicBezierProgress(
-  progress: number,
-  x1: number,
-  y1: number,
-  x2: number,
-  y2: number,
-): number {
-  if (progress <= 0) return 0;
-  if (progress >= 1) return 1;
-  let lower = 0;
-  let upper = 1;
-  for (let iteration = 0; iteration < 14; iteration += 1) {
-    const candidate = (lower + upper) / 2;
-    if (cubicBezierCoordinate(candidate, x1, x2) < progress) lower = candidate;
-    else upper = candidate;
-  }
-  return cubicBezierCoordinate((lower + upper) / 2, y1, y2);
-}
-
-function cubicBezierCoordinate(time: number, point1: number, point2: number): number {
-  const inverse = 1 - time;
-  return 3 * inverse * inverse * time * point1 + 3 * inverse * time * time * point2 + time ** 3;
-}
-
-function formatTransform(deltaX: number, deltaY: number, scaleX: number, scaleY: number): string {
-  return `translate3d(${deltaX}px, ${deltaY}px, 0) scale(${scaleX}, ${scaleY})`;
-}
-
-function ratio(value: number, reference: number): number {
-  return reference > 0 ? value / reference : 1;
-}
-
-function resolveSurfaceTransform(
-  target: SurfaceRect,
-  element: SurfaceRect,
-  surface: SurfaceRect,
-): {
-  readonly deltaX: number;
-  readonly deltaY: number;
-  readonly scaleX: number;
-  readonly scaleY: number;
-} {
-  const scaleX = ratio(target.width, surface.width);
-  const scaleY = ratio(target.height, surface.height);
+function cornerOnlyKeyframe(keyframe: Keyframe): Keyframe {
   return {
-    deltaX: target.left - element.left - (surface.left - element.left) * scaleX,
-    deltaY: target.top - element.top - (surface.top - element.top) * scaleY,
-    scaleX,
-    scaleY,
+    borderRadius: keyframe.borderRadius,
+    ...(keyframe.offset === undefined ? {} : { offset: keyframe.offset }),
+    ...(keyframe.easing === undefined ? {} : { easing: keyframe.easing }),
   };
+}
+
+function timelineOnlyKeyframe(keyframe: Keyframe): Keyframe {
+  return {
+    ...(keyframe.offset === undefined ? {} : { offset: keyframe.offset }),
+    ...(keyframe.easing === undefined ? {} : { easing: keyframe.easing }),
+  };
+}
+
+function resolveWorkspaceDeckFrameDirection(
+  direction: WorkspaceDeckDirection,
+  role: WorkspaceDeckMorphProxyRole,
+): SurfaceMorphDirection {
+  if (direction === "forward") return role === "incoming" ? "from-bottom" : "to-top";
+  return role === "incoming" ? "from-top" : "to-bottom";
+}
+
+function formatPixel(value: number): string {
+  const rounded = Math.round(value * 1_000) / 1_000;
+  return `${Object.is(rounded, -0) ? 0 : rounded}px`;
 }
 
 function normalizeOpacity(value: string | number): number {
   const parsed = typeof value === "number" ? value : Number.parseFloat(value);
   if (!Number.isFinite(parsed)) return 1;
   return Math.min(1, Math.max(0, parsed));
+}
+
+function normalizeOffset(value: number): number {
+  if (!Number.isFinite(value)) return WORKSPACE_DECK_CONTENT_HANDOFF_OFFSET;
+  return Math.min(1, Math.max(0, value));
 }
 
 function localizePixel(value: unknown, origin: number): string {
@@ -471,6 +489,28 @@ function firstPaintedShadow(...styles: readonly (CSSStyleDeclaration | null)[]):
     if (style?.boxShadow && style.boxShadow !== "none") return style.boxShadow;
   }
   return "none";
+}
+
+function firstPaintedFrameStyle(
+  fallback: CSSStyleDeclaration,
+  ...styles: readonly (CSSStyleDeclaration | null)[]
+): CSSStyleDeclaration {
+  for (const style of [fallback, ...styles]) {
+    if (style && paintsFrame(style)) return style;
+  }
+  return fallback;
+}
+
+function paintsFrame(style: CSSStyleDeclaration): boolean {
+  if (style.display === "none" || style.visibility === "hidden") return false;
+  if (normalizeOpacity(style.opacity) === 0) return false;
+  const backdrop = style.backdropFilter || style.getPropertyValue("-webkit-backdrop-filter");
+  return (
+    (backdrop !== "" && backdrop !== "none") ||
+    !isTransparentColor(style.backgroundColor) ||
+    hasPaintedBorder(style) ||
+    (style.boxShadow !== "" && style.boxShadow !== "none")
+  );
 }
 
 function hasPaintedBorder(style: CSSStyleDeclaration): boolean {

@@ -19,6 +19,17 @@ The initial order is:
 | Git        | Chat       | MCP        |
 | MCP        | Git        | Chat       |
 
+Working status, task progress, approvals, questions, and other composer notices appear in one
+rounded bubble above the upper card edge. Consecutive notices remain visible as tinted sections in
+that shared body, with separators instead of overlapping cards. Plan-ready state uses the blue info
+treatment, while active work uses its own activity treatment. The bubble does not make the three
+cards taller or move their selection edges. It disappears while Git or MCP is in front and returns
+with its state preserved when Chat becomes active again. Reduced-motion preferences show it
+immediately without the short entrance motion. Active work fills the complete bubble width and
+shows separate Input and Output token counters on the right. A down-arrow marks tokens entering the
+model, and an up-arrow marks tokens produced by it. A new turn starts both counters at zero instead
+of briefly showing the previous turn's usage.
+
 In a non-repository project, or when the server does not advertise Git workbench support, the deck
 contains only Chat and MCP. It shows one destination edge at a time and alternates the edge after
 each switch. A server without MCP workspace support still exposes the MCP card using locally
@@ -93,6 +104,27 @@ controls instead, enable **Expanded chat controls** in **Settings > Appearance**
 remain separate at ordinary desktop widths, including when the context selector is available.
 Genuinely narrow composers, or temporary wide action states, automatically return them to the
 ellipsis menu so the primary actions remain usable.
+
+### Auto Reasoning
+
+Codex models that advertise a reasoning-effort control also offer **Auto** on web, desktop, and
+mobile. Auto chooses an effective effort whenever you submit a new user message. Retrying that same
+message reuses its decision instead of running the decision model again. The last concrete level
+remains stored as the fallback, so enabling Auto does not discard a deliberate manual choice.
+Choosing Low, Medium, High, or another concrete level turns Auto off and restores the existing
+manual behavior.
+
+When you send a prompt, the configured fast decision model runs before the main Codex turn. It
+reviews the conversation origin and recent outcomes, separates the prompt into individual work
+items, discounts work explicitly reported as complete, and rates only the remaining scope. Deep
+cross-layer wiring, difficult diagnosis, persistence, concurrency, security, or heavy verification
+can justify a higher level. The decision model does not inspect project files or use tools.
+
+The control shows the durable choice and latest content-free resolution, for example
+**Auto · High**. **Fallback** appears when routing could not provide a usable decision and the saved
+concrete level was used. A stale resolution is not shown after switching back to manual. The usual
+post-turn suggestion to raise or lower reasoning is hidden while Auto is active because Auto owns
+that decision.
 
 ### Codex context window
 
@@ -255,12 +287,12 @@ disables the selector visually but retains its value.
    are Fetch-capable.
 4. The default or first model from the first available Fetch-capable provider instance.
 
-If an automatically selected Spark model reports a typed entitlement or model-unavailable error
-before workers start, T3 Code tries Luna with low reasoning once. It does not use that fallback for
-timeouts or unrelated provider failures. An explicit selection is always exact: disabling its
-provider or losing access to its model produces a visible Fetch warning, skips exploration, and
-continues the unchanged main turn without silently substituting another model. **Reset** returns the
-selection to Auto.
+If an automatically selected Spark model reports a typed entitlement, rate-limited, or
+model-unavailable error before workers start, T3 Code tries Luna with low reasoning once. It does
+not use that fallback for timeouts or unrelated provider failures. Explicit selections remain
+exact: disabling their provider or losing access to their model produces a visible Fetch warning,
+skips exploration, and continues the unchanged main turn without silently substituting another
+model. **Reset** returns the selection to Auto.
 
 Fetch is independent of the thread's main model. A Cursor turn can use Claude, Codex, Grok, Cursor,
 or OpenCode workers, and every worker in one run uses the same exact selection and model traits. A

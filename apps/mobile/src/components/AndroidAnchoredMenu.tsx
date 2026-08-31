@@ -16,7 +16,6 @@ import Animated, { FadeIn } from "react-native-reanimated";
 
 import { appBlurTargetRef } from "../lib/appBlurTarget";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
-import { useThemeColor } from "../lib/useThemeColor";
 import { cn } from "../lib/cn";
 import { type AppSymbolName, SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
@@ -28,6 +27,7 @@ import {
   visibleAndroidMenuActions,
 } from "./androidAnchoredMenuModel";
 import { OverlayPortal } from "./OverlayPortal";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 
 // Anchor position is snapshotted in window coordinates when the menu opens;
 // the overlay root measures itself the same way, and the menu is placed from
@@ -75,6 +75,7 @@ export type AndroidAnchoredMenuProps = {
  * trailing check glyph); submenus drill in under a muted parent-title header.
  */
 export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
+  const translator = useMobileInterfaceTranslator();
   const [anchor, setAnchor] = useState<AnchorSnapshot | null>(null);
   const [path, setPath] = useState<readonly MenuAction[]>([]);
   // Window frame of the overlay root, measured on layout. Anchor coordinates
@@ -90,11 +91,6 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const isDarkMode = themeAppearance === "dark";
   const keyboardVisible = useKeyboardState((state) => state.isVisible);
   const keyboardHeight = useKeyboardState((state) => state.height);
-  const rippleColor = useThemeColor("--color-subtle");
-  const iconColor = useThemeColor("--color-icon");
-  const iconSubtleColor = useThemeColor("--color-icon-subtle");
-  const dangerColor = useThemeColor("--color-danger-foreground");
-
   const close = useCallback(() => {
     setAnchor(null);
     setPath([]);
@@ -201,8 +197,12 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
       ) : (
         <Pressable
           ref={anchorRef}
-          accessibilityHint="Shows available actions"
-          accessibilityLabel={props.anchorAccessibilityLabel ?? props.title ?? "Open menu"}
+          accessibilityHint={translator.message("mobile.accessibility.showActions")}
+          accessibilityLabel={
+            props.anchorAccessibilityLabel ??
+            props.title ??
+            translator.message("mobile.accessibility.openMenu")
+          }
           accessibilityRole="button"
           accessibilityState={{ expanded: anchor !== null }}
           className={props.className}
@@ -259,8 +259,15 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                   {parent !== null ? (
                     <Pressable
                       ref={submenuBackRef}
-                      accessibilityHint={`Closes the ${parent.title} submenu`}
-                      accessibilityLabel={getAndroidMenuBackLabel(path, props.title)}
+                      accessibilityHint={translator.message("mobile.accessibility.closeSubmenu", {
+                        title: parent.title,
+                      })}
+                      accessibilityLabel={getAndroidMenuBackLabel(
+                        path,
+                        props.title,
+                        (destination) =>
+                          translator.message("mobile.accessibility.backTo", { destination }),
+                      )}
                       accessibilityRole="button"
                       className="flex-row items-center gap-1 px-3.5 pb-1 pt-2.5"
                       onPress={goBack}
@@ -268,7 +275,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                       <SymbolView
                         name="chevron.left"
                         size={11}
-                        tintColor={iconSubtleColor}
+                        tintColorClassName={"accent-icon-subtle"}
                         type="monochrome"
                       />
                       <Text className="text-xs font-t3-bold text-foreground-muted">
@@ -291,7 +298,10 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                   {levelActions.map((action, index) => {
                     const destructive = action.attributes?.destructive ?? false;
                     const disabled = action.attributes?.disabled ?? false;
-                    const accessibility = getAndroidMenuActionAccessibility(action);
+                    const accessibility = getAndroidMenuActionAccessibility(
+                      action,
+                      translator.message("mobile.accessibility.openSubmenu"),
+                    );
                     const hasSubmenu = accessibility.state.expanded !== undefined;
                     return (
                       <Pressable
@@ -301,10 +311,9 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                         accessibilityLabel={accessibility.label}
                         accessibilityRole="menuitem"
                         accessibilityState={accessibility.state}
-                        android_ripple={{ color: rippleColor }}
                         disabled={disabled}
                         className={cn(
-                          "min-h-11 flex-row items-center gap-2.5 px-3.5 py-2.5",
+                          "min-h-11 flex-row items-center gap-2.5 px-3.5 py-2.5 active:bg-subtle",
                           disabled && "opacity-45",
                         )}
                         onPress={() => onPressItem(action)}
@@ -329,21 +338,23 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                           <SymbolView
                             name="chevron.right"
                             size={13}
-                            tintColor={iconSubtleColor}
+                            tintColorClassName={"accent-icon-subtle"}
                             type="monochrome"
                           />
                         ) : action.state === "on" ? (
                           <SymbolView
                             name="checkmark"
                             size={15}
-                            tintColor={iconColor}
+                            tintColorClassName={"accent-icon"}
                             type="monochrome"
                           />
                         ) : action.image ? (
                           <SymbolView
                             name={action.image as AppSymbolName}
                             size={15}
-                            tintColor={destructive ? dangerColor : iconColor}
+                            tintColorClassName={
+                              destructive ? "accent-danger-foreground" : "accent-icon"
+                            }
                             type="monochrome"
                           />
                         ) : null}

@@ -43,6 +43,19 @@ it("publishes a general-purpose asynchronous delegation toolkit", () => {
     },
     required: ["task"],
   });
+  const listResult = Tool.getJsonSchemaFromSchema(GeneralSubagentListTool.successSchema);
+  const waitResult = Tool.getJsonSchemaFromSchema(GeneralSubagentWaitTool.successSchema);
+  expect(Object.keys(listResult.properties.agents.items.properties).sort()).toEqual(
+    [
+      "agentId",
+      "model",
+      "providerDriver",
+      "providerInstanceId",
+      "reasoningEffort",
+      "status",
+    ].sort(),
+  );
+  expect(waitResult).toHaveProperty("properties.agents.items.properties.result");
   expect(Context.get(GeneralSubagentModelsTool.annotations, Tool.Readonly)).toBe(true);
   expect(Context.get(GeneralSubagentSpawnTool.annotations, Tool.Readonly)).toBe(false);
   expect(Context.get(GeneralSubagentSpawnTool.annotations, Tool.Idempotent)).toBe(false);

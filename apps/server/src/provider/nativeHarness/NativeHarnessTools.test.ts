@@ -1,22 +1,26 @@
 import { describe, expect, it } from "@effect/vitest";
+import { WorkspaceEditError, WorkspaceEditInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+
+import * as WorkspaceContext from "../../workspace/WorkspaceContext.ts";
+import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 
 import {
-  NATIVE_HARNESS_APPLY_PATCH_TOOL,
   NATIVE_HARNESS_EXEC_COMMAND_TOOL,
   NATIVE_HARNESS_MAX_TOOL_DEFINITIONS,
   NATIVE_HARNESS_MAX_TOOL_OUTPUT_BYTES,
-  NATIVE_HARNESS_REPLACE_TEXT_TOOL,
   NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
-  NATIVE_HARNESS_WRITE_FILE_TOOL,
-  applyNativeHarnessExactPatch,
+  NATIVE_HARNESS_WORKSPACE_EDIT_TOOL,
   buildNativeHarnessToolCatalog,
   enforceNativeHarnessToolResultLimit,
   nativeHarnessCommandEnvironment,
   nativeHarnessToolDeclarations,
+  nativeHarnessToolIsAvailable,
   nativeHarnessToolRequiresApproval,
   type NativeHarnessToolDeclaration,
 } from "./NativeHarnessTools.ts";
+import { makeNativeHarnessWorkspaceToolExecutor } from "./NativeHarnessWorkspaceTools.ts";
 
 function extensionTool(name: string): NativeHarnessToolDeclaration {
   return {
@@ -46,12 +50,7 @@ describe("NativeHarnessTools", () => {
         interactionMode: "default",
         sandboxMode: "workspace-write",
       }).map(({ name }) => name),
-    ).toEqual([
-      NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
-      NATIVE_HARNESS_WRITE_FILE_TOOL,
-      NATIVE_HARNESS_REPLACE_TEXT_TOOL,
-      NATIVE_HARNESS_APPLY_PATCH_TOOL,
-    ]);
+    ).toEqual([NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL, NATIVE_HARNESS_WORKSPACE_EDIT_TOOL]);
     expect(
       nativeHarnessToolDeclarations({
         interactionMode: "default",
@@ -59,12 +58,144 @@ describe("NativeHarnessTools", () => {
       }).map(({ name }) => name),
     ).toEqual([
       NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
-      NATIVE_HARNESS_WRITE_FILE_TOOL,
-      NATIVE_HARNESS_REPLACE_TEXT_TOOL,
-      NATIVE_HARNESS_APPLY_PATCH_TOOL,
+      NATIVE_HARNESS_WORKSPACE_EDIT_TOOL,
       NATIVE_HARNESS_EXEC_COMMAND_TOOL,
     ]);
   });
+
+  it("advertises the shared workspace contracts", () => {
+    const declarations = nativeHarnessToolDeclarations({
+      interactionMode: "default",
+      sandboxMode: "workspace-write",
+    });
+    const workspaceContext = declarations.find(
+      (declaration) => declaration.name === NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
+    );
+    const workspaceEdit = declarations.find(
+      (declaration) => declaration.name === NATIVE_HARNESS_WORKSPACE_EDIT_TOOL,
+    );
+
+    expect(workspaceContext?.description).toContain(
+      "Searches or reads spanning multiple regular UTF-8 files MUST use batched `workspace_context` calls, using the fewest calls its limits allow; do not use shell text readers/searchers.",
+    );
+    expect(workspaceEdit?.inputSchema).toEqual(
+      Schema.toJsonSchemaDocument(WorkspaceEditInput).schema,
+    );
+    expect(declarations.map(({ name }) => name)).not.toContain("write_file");
+    expect(declarations.map(({ name }) => name)).not.toContain("replace_text");
+    expect(declarations.map(({ name }) => name)).not.toContain("apply_patch");
+    expect(
+      nativeHarnessToolIsAvailable({
+        toolName: "write_file",
+        interactionMode: "default",
+        sandboxMode: "workspace-write",
+      }),
+    ).toBe(false);
+  });
+
+  it.effect("delegates one mixed workspace_edit batch and returns only compact summaries", () =>
+    Effect.gen(function* () {
+      const requests: Array<unknown> = [];
+      const execute = makeNativeHarnessWorkspaceToolExecutor(
+        {
+          execute: () => Effect.die("workspace_context should not run"),
+        } as WorkspaceContext.WorkspaceContext["Service"],
+        {
+          readFile: () => Effect.die("legacy read should not run"),
+          writeFile: () => Effect.die("legacy write should not run"),
+          editFiles: (request) =>
+            Effect.sync(() => {
+              requests.push(request);
+              return {
+                changes: [
+                  { path: "src/a.ts", action: "updated", edit_count: 1 },
+                  { path: "src/b.ts", action: "deleted", edit_count: 1 },
+                ],
+              } as const;
+            }),
+        } as WorkspaceFileSystem.WorkspaceFileSystem["Service"],
+      );
+      const args = {
+        changes: [
+          {
+            path: "src/a.ts",
+            edits: [{ type: "replace", old_text: "old", new_text: "new" }],
+          },
+          { path: "src/b.ts", edits: [{ type: "delete" }] },
+        ],
+      } as const;
+
+      const result = yield* execute({
+        name: NATIVE_HARNESS_WORKSPACE_EDIT_TOOL,
+        args,
+        cwd: "/workspace",
+        environment: {},
+      });
+
+      expect(requests).toEqual([{ workspaceRoot: "/workspace", input: args }]);
+      expect(result).toMatchObject({
+        ok: true,
+        itemType: "file_change",
+        output: {
+          changes: [
+            { path: "src/a.ts", action: "updated", edit_count: 1 },
+            { path: "src/b.ts", action: "deleted", edit_count: 1 },
+          ],
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain("old");
+      expect(JSON.stringify(result)).not.toContain("new");
+    }),
+  );
+
+  it.effect("returns structured workspace_edit failures without submitted contents", () =>
+    Effect.gen(function* () {
+      const execute = makeNativeHarnessWorkspaceToolExecutor(
+        {
+          execute: () => Effect.die("workspace_context should not run"),
+        } as WorkspaceContext.WorkspaceContext["Service"],
+        {
+          readFile: () => Effect.die("legacy read should not run"),
+          writeFile: () => Effect.die("legacy write should not run"),
+          editFiles: () =>
+            Effect.fail(
+              new WorkspaceEditError({
+                reason: "revision_conflict",
+                path: "src/a.ts",
+                change_index: 0,
+                expected_revision: `sha256:${"a".repeat(64)}`,
+                actual_revision: `sha256:${"b".repeat(64)}`,
+              }),
+            ),
+        } as WorkspaceFileSystem.WorkspaceFileSystem["Service"],
+      );
+
+      const result = yield* execute({
+        name: NATIVE_HARNESS_WORKSPACE_EDIT_TOOL,
+        args: {
+          changes: [
+            {
+              path: "src/a.ts",
+              edits: [{ type: "write", mode: "overwrite", content: "secret contents" }],
+            },
+          ],
+        },
+        cwd: "/workspace",
+        environment: {},
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        itemType: "file_change",
+        output: {
+          reason: "revision_conflict",
+          path: "src/a.ts",
+          change_index: 0,
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain("secret contents");
+    }),
+  );
 
   it.effect("rejects duplicate names and catalogs above ninety definitions", () =>
     Effect.gen(function* () {
@@ -107,36 +238,16 @@ describe("NativeHarnessTools", () => {
     }),
   );
 
-  it("applies an ordered exact patch without accepting ambiguous hunks", () => {
-    expect(
-      applyNativeHarnessExactPatch("alpha\nbeta\ngamma\n", [
-        { oldText: "alpha", newText: "one", replaceAll: false },
-        { oldText: "gamma", newText: "three", replaceAll: false },
-      ]),
-    ).toEqual({ ok: true, contents: "one\nbeta\nthree\n", replacements: 2 });
-    expect(
-      applyNativeHarnessExactPatch("same same", [
-        { oldText: "same", newText: "changed", replaceAll: false },
-      ]),
-    ).toMatchObject({ ok: false, reason: "ambiguous" });
-  });
-
-  it("reports oversized tool output instead of passing more than one MiB to the model", () => {
-    const result = enforceNativeHarnessToolResultLimit({
+  it("preserves oversized tool output for terminal persistence", () => {
+    const full = {
       ok: true,
       itemType: "mcp_tool_call",
       title: "large-result",
       detail: "large-result",
       output: { value: "x".repeat(NATIVE_HARNESS_MAX_TOOL_OUTPUT_BYTES) },
-    });
-    expect(result).toMatchObject({
-      ok: false,
-      title: "large-result",
-      output: { error: expect.stringContaining("1 MiB") },
-    });
-    expect(Buffer.byteLength(JSON.stringify(result.output))).toBeLessThanOrEqual(
-      NATIVE_HARNESS_MAX_TOOL_OUTPUT_BYTES,
-    );
+    } as const;
+
+    expect(enforceNativeHarnessToolResultLimit(full)).toBe(full);
   });
 
   it("maps approvals and strips provider credentials from bounded shell commands", () => {
@@ -144,10 +255,10 @@ describe("NativeHarnessTools", () => {
       nativeHarnessToolRequiresApproval(NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL, "approval-required"),
     ).toBe(false);
     expect(
-      nativeHarnessToolRequiresApproval(NATIVE_HARNESS_WRITE_FILE_TOOL, "approval-required"),
+      nativeHarnessToolRequiresApproval(NATIVE_HARNESS_WORKSPACE_EDIT_TOOL, "approval-required"),
     ).toBe(true);
     expect(
-      nativeHarnessToolRequiresApproval(NATIVE_HARNESS_APPLY_PATCH_TOOL, "auto-accept-edits"),
+      nativeHarnessToolRequiresApproval(NATIVE_HARNESS_WORKSPACE_EDIT_TOOL, "auto-accept-edits"),
     ).toBe(false);
     expect(
       nativeHarnessToolRequiresApproval(NATIVE_HARNESS_EXEC_COMMAND_TOOL, "auto-accept-edits"),

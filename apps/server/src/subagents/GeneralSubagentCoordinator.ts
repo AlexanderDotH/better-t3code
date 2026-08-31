@@ -1,22 +1,13 @@
 import {
-  ApprovalRequestId,
-  CommandId,
-  EventId,
   MessageId,
-  RuntimeSessionId,
-  SubagentId,
-  ThreadId,
-  type IsoDateTime,
+  resolveBetterT3FeatureFlag,
   type ModelSelection,
-  type OrchestrationSubagentStatus,
-  type OrchestrationSubagentSummary,
-  type ProviderDriverKind,
+  type OrchestrationThreadActivity,
   type ProviderInstanceId,
-  type ProviderRuntimeEvent,
-  type RuntimeMode,
+  type SubagentId,
+  type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
-import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -33,15 +24,32 @@ import * as Stream from "effect/Stream";
 
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { runtimeEventToActivities } from "../orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { ThreadBackgroundLivenessService } from "../orchestration/ThreadBackgroundLiveness.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ProviderService } from "../provider/Services/ProviderService.ts";
 import * as ResourceProtection from "../resourceProtection/SubagentResourceGovernor.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import {
   listGeneralSubagentModels,
+  resolveGeneralSubagentParentSelection,
   resolveGeneralSubagentSelection,
 } from "./GeneralSubagentSelection.ts";
+import { buildGeneralSubagentPrompt } from "./GeneralSubagentPolicy.ts";
+import {
+  generalSubagentActionSnapshot as actionSnapshot,
+  generalSubagentIdentity as identity,
+  generalSubagentIsBusy as workerIsBusy,
+  generalSubagentSnapshot as snapshot,
+  makeActiveGeneralSubagent,
+  makeGeneralSubagentStateStore,
+  type ActiveGeneralSubagent,
+} from "./GeneralSubagentState.ts";
+import {
+  GENERAL_SUBAGENT_ABORT_FORCE_DELAY,
+  makeGeneralSubagentTransport,
+} from "./GeneralSubagentTransport.ts";
+import { makeGeneralSubagentProjection } from "./GeneralSubagentProjection.ts";
+import { makeGeneralSubagentLifecycle } from "./GeneralSubagentLifecycle.ts";
 
 import {
   GeneralSubagentCancelInput,
@@ -55,67 +63,25 @@ import {
   GeneralSubagentModelsResult,
   GeneralSubagentSendMessageInput,
   GeneralSubagentSendMessageResult,
-  type GeneralSubagentSnapshot,
   GeneralSubagentSpawnInput,
   GeneralSubagentSpawnResult,
   GeneralSubagentWaitInput,
   GeneralSubagentWaitResult,
 } from "./GeneralSubagentProtocol.ts";
 
+export {
+  assistantTextFromCompletedItem,
+  buildGeneralSubagentFollowUpPrompt,
+  buildGeneralSubagentPrompt,
+  generalSubagentApprovalAction,
+  parseGeneralSubagentFinalResult,
+} from "./GeneralSubagentPolicy.ts";
+export type { GeneralSubagentApprovalAction } from "./GeneralSubagentPolicy.ts";
+export { GENERAL_SUBAGENT_ABORT_FORCE_DELAY } from "./GeneralSubagentTransport.ts";
+
 export const GENERAL_SUBAGENT_TIMEOUT = Duration.minutes(30);
-export const GENERAL_SUBAGENT_ABORT_FORCE_DELAY = Duration.seconds(5);
-export const GENERAL_SUBAGENT_OUTPUT_MAX_CHARS = 64_000;
 export const GENERAL_SUBAGENT_MAX_DIRECT_CHILDREN = 40;
-const GENERAL_SUBAGENT_TRANSCRIPT_FLUSH_CHARS = 2_048;
-const GENERAL_SUBAGENT_RESULT_LIMIT = 256;
-const OUTPUT_TRUNCATION_MARKER = "\n... [subagent output truncated at 64,000 characters]";
 const isGeneralSubagentError = Schema.is(GeneralSubagentError);
-
-export type GeneralSubagentApprovalAction = "accept" | "decline" | "fail-agent";
-
-export function buildGeneralSubagentPrompt(input: {
-  readonly task: string;
-  readonly parentThreadId: string;
-}): string {
-  return `T3 GENERAL-PURPOSE SUBAGENT
-
-You are a direct implementation agent delegated by the root thread ${input.parentThreadId}. Work in the same workspace and under the root thread's existing project claims.
-
-Your task:
-${input.task}
-
-Execution contract:
-- Complete this concrete scope end to end. You may inspect, edit, and test files when the task requires it and the inherited runtime permissions allow it.
-- Keep changes inside this scope, preserve unrelated and concurrent work, and coordinate through the parent result instead of widening ownership.
-- Use focused verification proportionate to the change. Report exact files changed, tests run, results, and any remaining risk.
-- Do not ask the user questions; return blockers and required decisions to the parent agent.
-- Do not spawn nested agents.
-- Do not claim the parent task is complete. Return your scoped outcome so the parent can integrate and verify it.`;
-}
-
-export function buildGeneralSubagentFollowUpPrompt(input: {
-  readonly task: string;
-  readonly messages: ReadonlyArray<string>;
-}): string {
-  const mailbox =
-    input.messages.length === 0
-      ? ""
-      : `\n\nMessages queued by the parent and delivered at this safe boundary:\n${input.messages
-          .map((message, index) => `${index + 1}. ${message}`)
-          .join("\n")}`;
-  return `T3 DIRECT SUBAGENT FOLLOW-UP
-
-Continue in the existing provider session. Complete this follow-up task end to end:
-${input.task}${mailbox}
-
-Keep the same execution contract: remain within the delegated scope, do not spawn nested agents, verify focused work, and return the scoped outcome to the parent.`;
-}
-
-export function generalSubagentApprovalAction(requestType: string): GeneralSubagentApprovalAction {
-  if (requestType === "tool_user_input") return "fail-agent";
-  if (requestType === "file_read_approval") return "accept";
-  return "decline";
-}
 
 export interface GeneralSubagentCaller {
   readonly parentThreadId: ThreadId;
@@ -160,103 +126,6 @@ export class GeneralSubagentCoordinator extends Context.Service<
   GeneralSubagentCoordinatorShape
 >()("t3/subagents/GeneralSubagentCoordinator") {}
 
-type GeneralSubagentOutcomeStatus = "completed" | "interrupted" | "error" | "timed-out";
-
-interface GeneralSubagentOutcome {
-  readonly status: GeneralSubagentOutcomeStatus;
-  readonly detail?: string;
-}
-
-interface ActiveGeneralSubagent {
-  readonly parentThreadId: ThreadId;
-  readonly parentTurnId: TurnId | null;
-  readonly parentRuntimeSessionId: RuntimeSessionId | null;
-  readonly parentProviderInstanceId: ProviderInstanceId | null;
-  readonly syntheticThreadId: ThreadId;
-  readonly runtimeSessionId: RuntimeSessionId;
-  readonly subagentId: SubagentId;
-  assistantMessageId: MessageId;
-  task: string;
-  readonly selection: ModelSelection;
-  readonly providerDriver: ProviderDriverKind;
-  readonly cwd: string;
-  readonly runtimeMode: RuntimeMode;
-  terminal: Deferred.Deferred<GeneralSubagentOutcome>;
-  completed: Deferred.Deferred<void>;
-  wake: Deferred.Deferred<void>;
-  readonly disposed: Deferred.Deferred<void>;
-  readonly retainSession: boolean;
-  readonly followUps: Array<{ readonly task: string }>;
-  readonly mailbox: string[];
-  summary: OrchestrationSubagentSummary;
-  turnId: TurnId | null;
-  turnSequence: number;
-  turnActive: boolean;
-  sessionStarted: boolean;
-  cancelled: boolean;
-  disposeRequested: boolean;
-  disposing: boolean;
-  finalizing: boolean;
-  finalized: boolean;
-  output: string;
-  outputTruncated: boolean;
-  detail: string | null;
-  transcriptBuffer: string;
-  assistantProjected: boolean;
-  lastProgressFingerprint: string | null;
-}
-
-function terminalStatus(event: ProviderRuntimeEvent): GeneralSubagentOutcomeStatus | null {
-  if (event.type === "turn.aborted") return "interrupted";
-  if (event.type === "turn.completed") {
-    if (event.payload.state === "completed") return "completed";
-    if (event.payload.state === "interrupted" || event.payload.state === "cancelled") {
-      return "interrupted";
-    }
-    return "error";
-  }
-  if (event.type === "session.exited") return "error";
-  if (event.type === "session.state.changed" && event.payload.state === "error") return "error";
-  return null;
-}
-
-function terminalDetail(event: ProviderRuntimeEvent): string | undefined {
-  if (event.type === "turn.aborted") return event.payload.reason;
-  if (event.type === "turn.completed") {
-    return event.payload.errorMessage ?? event.payload.stopReason ?? undefined;
-  }
-  if (event.type === "session.exited") return event.payload.reason;
-  if (event.type === "session.state.changed") return event.payload.reason;
-  return undefined;
-}
-
-function appendOutput(worker: ActiveGeneralSubagent, delta: string): void {
-  if (worker.outputTruncated || delta.length === 0) return;
-  const available = GENERAL_SUBAGENT_OUTPUT_MAX_CHARS - worker.output.length;
-  if (delta.length <= available) {
-    worker.output += delta;
-    return;
-  }
-  const retained = Math.max(0, available - OUTPUT_TRUNCATION_MARKER.length);
-  worker.output += `${delta.slice(0, retained)}${OUTPUT_TRUNCATION_MARKER}`.slice(0, available);
-  worker.outputTruncated = true;
-}
-
-export function assistantTextFromCompletedItem(event: ProviderRuntimeEvent): string | undefined {
-  if (event.type !== "item.completed" || event.payload.itemType !== "assistant_message") {
-    return undefined;
-  }
-  if (event.payload.detail) return event.payload.detail;
-  const data = event.payload.data;
-  if (typeof data !== "object" || data === null || !("text" in data)) return undefined;
-  return typeof data.text === "string" && data.text.length > 0 ? data.text : undefined;
-}
-
-function orchestrationStatus(status: GeneralSubagentOutcomeStatus): OrchestrationSubagentStatus {
-  if (status === "timed-out") return "error";
-  return status;
-}
-
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const providerService = yield* ProviderService;
@@ -264,745 +133,37 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
+  const settings = yield* ServerSettingsService;
   const resourceGovernor = Option.getOrUndefined(
     yield* Effect.serviceOption(ResourceProtection.SubagentResourceGovernor),
   );
+  const transport = makeGeneralSubagentTransport({
+    providerService,
+    ...(resourceGovernor ? { resourceGovernor } : {}),
+  });
   const coordinatorScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
     Scope.close(scope, Exit.void),
   );
-  const workersById = new Map<SubagentId, ActiveGeneralSubagent>();
-  const workersByThread = new Map<ThreadId, ActiveGeneralSubagent>();
-  const settledOrder: SubagentId[] = [];
+  const state = makeGeneralSubagentStateStore();
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
-
-  const commandId = Effect.fn("GeneralSubagentCoordinator.commandId")(function* (
-    worker: ActiveGeneralSubagent,
-    tag: string,
-  ) {
-    return CommandId.make(
-      `server:general-subagent:${worker.subagentId}:${tag}:${yield* crypto.randomUUIDv4}`,
-    );
+  const projection = makeGeneralSubagentProjection({
+    randomUUIDv4: crypto.randomUUIDv4,
+    orchestrationEngine,
+    threadBackgroundLiveness,
   });
-
-  const dispatchSummary = Effect.fn("GeneralSubagentCoordinator.dispatchSummary")(function* (
-    worker: ActiveGeneralSubagent,
-    summary: OrchestrationSubagentSummary,
-  ) {
-    worker.summary = summary;
-    yield* orchestrationEngine.dispatch({
-      type: "thread.subagent.upsert",
-      commandId: yield* commandId(worker, "summary"),
-      threadId: worker.parentThreadId,
-      subagent: summary,
-      createdAt: summary.updatedAt,
-    });
+  const { commandId, dispatchSummary } = projection;
+  const lifecycle = makeGeneralSubagentLifecycle({
+    state,
+    transport,
+    projection,
+    orchestrationEngine,
+    threadBackgroundLiveness,
+    coordinatorScope,
+    nowIso,
+    timeout: GENERAL_SUBAGENT_TIMEOUT,
   });
-
-  const dispatchState = Effect.fn("GeneralSubagentCoordinator.dispatchState")(function* (
-    worker: ActiveGeneralSubagent,
-    status: OrchestrationSubagentStatus,
-    statusMessage: string | null,
-    updatedAt: IsoDateTime,
-  ) {
-    yield* orchestrationEngine.dispatch({
-      type: "thread.subagent.state.set",
-      commandId: yield* commandId(worker, `state-${status}`),
-      threadId: worker.parentThreadId,
-      subagentId: worker.subagentId,
-      status,
-      statusMessage,
-      updatedAt,
-    });
-  });
-
-  const dispatchProgress = Effect.fn("GeneralSubagentCoordinator.dispatchProgress")(function* (
-    worker: ActiveGeneralSubagent,
-    progress: { readonly kind: string; readonly summary: string; readonly detail: string | null },
-    updatedAt: IsoDateTime,
-  ) {
-    const fingerprint = `${progress.kind}\u0000${progress.summary}\u0000${progress.detail ?? ""}`;
-    if (worker.lastProgressFingerprint === fingerprint) return;
-    yield* orchestrationEngine.dispatch({
-      type: "thread.subagent.progress.set",
-      commandId: yield* commandId(worker, "progress"),
-      threadId: worker.parentThreadId,
-      subagentId: worker.subagentId,
-      progress: { ...progress, createdAt: updatedAt },
-      updatedAt,
-    });
-    worker.lastProgressFingerprint = fingerprint;
-  });
-
-  const flushTranscript = Effect.fn("GeneralSubagentCoordinator.flushTranscript")(function* (
-    worker: ActiveGeneralSubagent,
-    createdAt: IsoDateTime,
-  ) {
-    if (worker.transcriptBuffer.length === 0) return;
-    const delta = worker.transcriptBuffer;
-    yield* orchestrationEngine.dispatch({
-      type: "thread.message.assistant.delta",
-      commandId: yield* commandId(worker, "assistant-delta"),
-      threadId: worker.parentThreadId,
-      subagentId: worker.subagentId,
-      messageId: worker.assistantMessageId,
-      delta,
-      ...(worker.turnId !== null ? { turnId: worker.turnId } : {}),
-      createdAt,
-    });
-    worker.transcriptBuffer = worker.transcriptBuffer.slice(delta.length);
-    worker.assistantProjected = true;
-  });
-
-  const completeTranscript = Effect.fn("GeneralSubagentCoordinator.completeTranscript")(function* (
-    worker: ActiveGeneralSubagent,
-    createdAt: IsoDateTime,
-  ) {
-    yield* flushTranscript(worker, createdAt);
-    if (!worker.assistantProjected) return;
-    yield* orchestrationEngine.dispatch({
-      type: "thread.message.assistant.complete",
-      commandId: yield* commandId(worker, "assistant-complete"),
-      threadId: worker.parentThreadId,
-      subagentId: worker.subagentId,
-      messageId: worker.assistantMessageId,
-      ...(worker.turnId !== null ? { turnId: worker.turnId } : {}),
-      createdAt,
-    });
-  });
-
-  const appendActivity = Effect.fn("GeneralSubagentCoordinator.appendActivity")(function* (
-    worker: ActiveGeneralSubagent,
-    event: ProviderRuntimeEvent,
-  ) {
-    const activities = runtimeEventToActivities(event);
-    yield* Effect.forEach(
-      activities,
-      (activity) =>
-        commandId(worker, "activity").pipe(
-          Effect.flatMap((activityCommandId) =>
-            orchestrationEngine.dispatch({
-              type: "thread.activity.append",
-              commandId: activityCommandId,
-              threadId: worker.parentThreadId,
-              subagentId: worker.subagentId,
-              activity: {
-                ...activity,
-                id: EventId.make(`general:${worker.subagentId}:${activity.id}`),
-                payload: {
-                  ...(typeof activity.payload === "object" && activity.payload !== null
-                    ? activity.payload
-                    : { value: activity.payload }),
-                  eventId: event.eventId,
-                  provider: event.provider,
-                  providerInstanceId: event.providerInstanceId ?? null,
-                  runtimeSessionId: event.runtimeSessionId ?? null,
-                  canonicalPayload: event.payload,
-                },
-              },
-              createdAt: activity.createdAt,
-            }),
-          ),
-        ),
-      { concurrency: 1, discard: true },
-    );
-    const first = activities[0];
-    if (first) {
-      yield* dispatchProgress(
-        worker,
-        { kind: first.kind, summary: first.summary, detail: null },
-        event.createdAt,
-      );
-    }
-  });
-
-  const settleWorker = (
-    worker: ActiveGeneralSubagent,
-    status: GeneralSubagentOutcomeStatus,
-    detail?: string,
-  ) =>
-    Deferred.succeed(worker.terminal, {
-      status,
-      ...(detail?.trim() ? { detail: detail.trim() } : {}),
-    }).pipe(Effect.ignore);
-
-  const abortTarget = (worker: ActiveGeneralSubagent) => ({
-    threadId: worker.syntheticThreadId,
-    runtimeSessionId: worker.runtimeSessionId,
-    turnId: worker.turnId,
-    providerInstanceId: worker.selection.instanceId,
-  });
-
-  const interruptWorker = (worker: ActiveGeneralSubagent) =>
-    Effect.gen(function* () {
-      if (resourceGovernor) {
-        yield* resourceGovernor.cancelThread(worker.syntheticThreadId).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("General subagent resource cancellation failed", {
-              subagentId: worker.subagentId,
-              cause: Cause.pretty(cause),
-            }),
-          ),
-        );
-      }
-      if (!worker.sessionStarted) return;
-      yield* providerService.interruptAbortTarget(abortTarget(worker)).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("General subagent cooperative interrupt failed", {
-            subagentId: worker.subagentId,
-            runtimeSessionId: worker.runtimeSessionId,
-            cause: Cause.pretty(cause),
-          }),
-        ),
-      );
-    });
-
-  const forceStopWorker = (worker: ActiveGeneralSubagent) =>
-    worker.sessionStarted
-      ? providerService.forceStopAbortTarget(abortTarget(worker)).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("General subagent force stop failed", {
-              subagentId: worker.subagentId,
-              runtimeSessionId: worker.runtimeSessionId,
-              cause: Cause.pretty(cause),
-            }),
-          ),
-          Effect.timeoutOption(GENERAL_SUBAGENT_ABORT_FORCE_DELAY),
-          Effect.asVoid,
-        )
-      : Effect.void;
-
-  const handleApproval = Effect.fn("GeneralSubagentCoordinator.handleApproval")(function* (
-    worker: ActiveGeneralSubagent,
-    event: Extract<ProviderRuntimeEvent, { type: "request.opened" }>,
-  ) {
-    const action = generalSubagentApprovalAction(event.payload.requestType);
-    if (action === "fail-agent") {
-      worker.cancelled = true;
-      yield* interruptWorker(worker);
-      yield* settleWorker(worker, "error", "General subagents cannot ask hidden user questions.");
-      return;
-    }
-    if (!event.requestId) {
-      yield* settleWorker(worker, "error", "General subagent emitted an approval without an id.");
-      return;
-    }
-    const responded = yield* Effect.exit(
-      providerService.respondToRequest({
-        threadId: worker.syntheticThreadId,
-        requestId: ApprovalRequestId.make(event.requestId),
-        decision: action,
-      }),
-    );
-    if (Exit.isFailure(responded)) {
-      yield* settleWorker(
-        worker,
-        "error",
-        `General subagent approval handling failed: ${Cause.pretty(responded.cause)}`,
-      );
-    }
-  });
-
-  const handleWorkerEvent = Effect.fn("GeneralSubagentCoordinator.handleWorkerEvent")(function* (
-    event: ProviderRuntimeEvent,
-  ) {
-    if (
-      (event.type === "turn.completed" || event.type === "turn.aborted") &&
-      event.turnId !== undefined
-    ) {
-      const rootWorkers = [...workersByThread.values()].filter(
-        (worker) =>
-          !worker.finalizing &&
-          !worker.finalized &&
-          worker.parentThreadId === event.threadId &&
-          worker.parentTurnId === event.turnId &&
-          (worker.parentRuntimeSessionId === null ||
-            event.runtimeSessionId === undefined ||
-            worker.parentRuntimeSessionId === event.runtimeSessionId) &&
-          (worker.parentProviderInstanceId === null ||
-            event.providerInstanceId === undefined ||
-            worker.parentProviderInstanceId === event.providerInstanceId),
-      );
-      yield* Effect.forEach(
-        rootWorkers,
-        (worker) => {
-          worker.cancelled = true;
-          worker.disposeRequested = true;
-          return interruptWorker(worker).pipe(
-            Effect.andThen(
-              settleWorker(worker, "interrupted", "The parent turn completed before the subagent."),
-            ),
-            Effect.andThen(Deferred.succeed(worker.wake, undefined).pipe(Effect.ignore)),
-          );
-        },
-        { concurrency: "unbounded", discard: true },
-      );
-    }
-
-    const worker = workersByThread.get(event.threadId);
-    if (!worker || worker.finalized) return;
-    if (event.runtimeSessionId !== worker.runtimeSessionId) return;
-    if (
-      event.providerInstanceId !== undefined &&
-      event.providerInstanceId !== worker.selection.instanceId
-    ) {
-      return;
-    }
-
-    if (event.type === "request.opened") yield* handleApproval(worker, event);
-    if (event.type === "user-input.requested") {
-      worker.cancelled = true;
-      yield* interruptWorker(worker);
-      yield* settleWorker(worker, "error", "General subagents cannot ask hidden user questions.");
-    }
-    if (event.type === "turn.started" && event.turnId) worker.turnId = event.turnId;
-    if (event.type === "session.exited") worker.sessionStarted = false;
-    if (event.type === "content.delta" && event.payload.streamKind === "assistant_text") {
-      appendOutput(worker, event.payload.delta);
-      worker.transcriptBuffer += event.payload.delta;
-    }
-    const completedAssistantText = assistantTextFromCompletedItem(event);
-    if (worker.output.length === 0 && completedAssistantText !== undefined) {
-      appendOutput(worker, completedAssistantText);
-      worker.transcriptBuffer += completedAssistantText;
-    }
-
-    yield* Effect.gen(function* () {
-      yield* appendActivity(worker, event);
-      if (event.type === "thread.started" && event.payload.providerThreadId) {
-        yield* dispatchSummary(worker, {
-          ...worker.summary,
-          providerThreadId: event.payload.providerThreadId,
-          updatedAt: event.createdAt,
-        });
-      }
-      if (event.type === "turn.started") {
-        yield* dispatchState(worker, "running", null, event.createdAt);
-      }
-      if (event.type === "content.delta" && event.payload.streamKind === "assistant_text") {
-        if (worker.transcriptBuffer.length >= GENERAL_SUBAGENT_TRANSCRIPT_FLUSH_CHARS) {
-          yield* flushTranscript(worker, event.createdAt);
-        }
-        yield* dispatchProgress(
-          worker,
-          { kind: "subagent.output", summary: "Writing delegated result", detail: null },
-          event.createdAt,
-        );
-      }
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("General subagent event projection failed", {
-          eventId: event.eventId,
-          subagentId: worker.subagentId,
-          cause: Cause.pretty(cause),
-        }),
-      ),
-    );
-
-    const status = terminalStatus(event);
-    if (status) yield* settleWorker(worker, status, terminalDetail(event));
-  });
-
-  yield* Stream.runForEach(providerService.streamEvents, (event) =>
-    handleWorkerEvent(event).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("General subagent event handling failed", {
-          eventId: event.eventId,
-          cause: Cause.pretty(cause),
-        }),
-      ),
-    ),
-  ).pipe(Effect.forkIn(coordinatorScope));
-
-  const snapshot = (worker: ActiveGeneralSubagent): GeneralSubagentSnapshot => ({
-    agentId: worker.subagentId,
-    status: worker.summary.status,
-    providerInstanceId: worker.selection.instanceId,
-    providerDriver: worker.providerDriver,
-    model: worker.selection.model,
-    reasoningEffort: worker.summary.reasoningEffort,
-    task: worker.task,
-    output: worker.output.trim().length > 0 ? worker.output : null,
-    detail: worker.detail,
-  });
-
-  const pruneSettled = () => {
-    while (settledOrder.length > GENERAL_SUBAGENT_RESULT_LIMIT) {
-      const evicted = settledOrder.shift();
-      if (evicted !== undefined) workersById.delete(evicted);
-    }
-  };
-
-  const cleanupWorker = Effect.fn("GeneralSubagentCoordinator.cleanupWorker")(function* (
-    worker: ActiveGeneralSubagent,
-  ) {
-    if (resourceGovernor) {
-      yield* resourceGovernor.cancelThread(worker.syntheticThreadId).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("General subagent resource cleanup failed", {
-            subagentId: worker.subagentId,
-            cause: Cause.pretty(cause),
-          }),
-        ),
-      );
-    }
-    if (worker.sessionStarted) {
-      const target = {
-        threadId: worker.syntheticThreadId,
-        runtimeSessionId: worker.runtimeSessionId,
-        providerInstanceId: worker.selection.instanceId,
-      };
-      const stopped = yield* providerService
-        .stopTransientSession(target)
-        .pipe(Effect.exit, Effect.timeoutOption(GENERAL_SUBAGENT_ABORT_FORCE_DELAY));
-      if (Option.isNone(stopped) || Exit.isFailure(stopped.value)) {
-        yield* forceStopWorker(worker);
-      }
-      worker.sessionStarted = false;
-    }
-  });
-
-  const disposeWorker = Effect.fn("GeneralSubagentCoordinator.disposeWorker")(function* (
-    worker: ActiveGeneralSubagent,
-  ) {
-    if (worker.finalized) return;
-    if (worker.disposing) {
-      yield* Deferred.await(worker.disposed);
-      return;
-    }
-    worker.disposing = true;
-    yield* cleanupWorker(worker).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          workersByThread.delete(worker.syntheticThreadId);
-          settledOrder.push(worker.subagentId);
-          pruneSettled();
-          worker.turnActive = false;
-          worker.finalizing = false;
-          worker.finalized = true;
-          worker.disposing = false;
-        }).pipe(
-          Effect.andThen(Deferred.succeed(worker.completed, undefined).pipe(Effect.ignore)),
-          Effect.andThen(Deferred.succeed(worker.disposed, undefined).pipe(Effect.ignore)),
-        ),
-      ),
-    );
-  });
-
-  const finalizeWorker = Effect.fn("GeneralSubagentCoordinator.finalizeWorker")(function* (
-    worker: ActiveGeneralSubagent,
-    outcome: GeneralSubagentOutcome,
-    cleanupAfter: boolean,
-  ) {
-    if (worker.finalizing || worker.finalized) return;
-    worker.finalizing = true;
-    yield* Effect.gen(function* () {
-      worker.detail = outcome.detail?.trim() || null;
-      const completedAt = yield* nowIso;
-      yield* completeTranscript(worker, completedAt).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("General subagent transcript finalization failed", {
-            subagentId: worker.subagentId,
-            cause: Cause.pretty(cause),
-          }),
-        ),
-      );
-      const status = orchestrationStatus(outcome.status);
-      const finalSummary: OrchestrationSubagentSummary = {
-        ...worker.summary,
-        status,
-        statusMessage:
-          outcome.status === "timed-out"
-            ? "General subagent timed out after thirty minutes."
-            : outcome.detail?.trim() || null,
-        latestProgress: {
-          kind: `subagent.${outcome.status}`,
-          summary:
-            outcome.status === "completed"
-              ? "Delegated work complete"
-              : outcome.status === "interrupted"
-                ? "Delegated work interrupted"
-                : outcome.status === "timed-out"
-                  ? "Delegated work timed out"
-                  : "Delegated work failed",
-          detail: outcome.detail?.trim() || null,
-          createdAt: completedAt,
-        },
-        latestTurn:
-          worker.turnId === null
-            ? worker.summary.latestTurn
-            : {
-                turnId: worker.turnId,
-                state:
-                  outcome.status === "completed"
-                    ? "completed"
-                    : outcome.status === "interrupted"
-                      ? "interrupted"
-                      : "error",
-                requestedAt: worker.summary.startedAt,
-                startedAt: worker.summary.startedAt,
-                completedAt,
-                assistantMessageId: worker.assistantProjected ? worker.assistantMessageId : null,
-              },
-        updatedAt: completedAt,
-        completedAt,
-      };
-      worker.summary = finalSummary;
-      threadBackgroundLiveness.recordTaskLiveness({
-        threadId: worker.parentThreadId,
-        taskId: worker.subagentId,
-        taskType: "subagent",
-        status,
-        kind: "completed",
-      });
-      yield* dispatchSummary(worker, finalSummary);
-      worker.turnActive = false;
-      worker.finalizing = false;
-      if (cleanupAfter) {
-        yield* disposeWorker(worker);
-        return;
-      }
-      if (worker.followUps.length === 0) {
-        yield* Deferred.succeed(worker.completed, undefined).pipe(Effect.ignore);
-      }
-    }).pipe(
-      Effect.onError(() =>
-        Effect.sync(() => {
-          worker.turnActive = false;
-          worker.finalizing = false;
-        }),
-      ),
-    );
-  });
-
-  const runWorkerLifecycle = Effect.fn("GeneralSubagentCoordinator.runWorkerLifecycle")(function* (
-    worker: ActiveGeneralSubagent,
-    prompt: string,
-  ) {
-    if (resourceGovernor && !worker.sessionStarted) {
-      const admitted = yield* resourceGovernor.awaitAdmission({
-        threadId: worker.syntheticThreadId,
-        provider: worker.providerDriver,
-        providerInstanceId: worker.selection.instanceId,
-        configurationKey: ResourceProtection.resourceConfigurationKey([
-          "general-subagent",
-          worker.providerDriver,
-          worker.selection.instanceId,
-          worker.selection,
-        ]),
-      });
-      if (!admitted) {
-        return {
-          status: "interrupted",
-          detail: "General subagent was cancelled while waiting for free memory.",
-        } satisfies GeneralSubagentOutcome;
-      }
-    }
-    if (worker.cancelled) {
-      return {
-        status: "interrupted",
-        detail: "General subagent was cancelled before its provider session started.",
-      } satisfies GeneralSubagentOutcome;
-    }
-
-    if (!worker.sessionStarted) {
-      worker.sessionStarted = true;
-      const started = yield* Effect.exit(
-        providerService.startTransientSession(
-          worker.syntheticThreadId,
-          {
-            threadId: worker.syntheticThreadId,
-            purpose: "subagent-worker",
-            runtimeSessionId: worker.runtimeSessionId,
-            providerInstanceId: worker.selection.instanceId,
-            cwd: worker.cwd,
-            modelSelection: worker.selection,
-            freshSession: worker.turnSequence === 0,
-            runtimeMode: worker.runtimeMode,
-          },
-          { workspaceContextThreadId: worker.parentThreadId, mcpMode: "full" },
-        ),
-      );
-      if (Exit.isFailure(started)) {
-        worker.sessionStarted = false;
-        return {
-          status: worker.cancelled ? "interrupted" : "error",
-          detail: Cause.pretty(started.cause),
-        } satisfies GeneralSubagentOutcome;
-      }
-      if (started.value.runtimeSessionId !== worker.runtimeSessionId) {
-        worker.sessionStarted = false;
-        return {
-          status: "error",
-          detail: "Transient provider session returned a mismatched runtime generation.",
-        } satisfies GeneralSubagentOutcome;
-      }
-    }
-
-    worker.turnActive = true;
-    const sent = yield* Effect.exit(
-      providerService.sendTurn({
-        threadId: worker.syntheticThreadId,
-        input: prompt,
-        modelSelection: worker.selection,
-        interactionMode: "default",
-      }),
-    );
-    if (Exit.isFailure(sent)) {
-      return { status: "error", detail: Cause.pretty(sent.cause) } satisfies GeneralSubagentOutcome;
-    }
-    worker.turnId = sent.value.turnId;
-    const updatedAt = yield* nowIso;
-    yield* dispatchSummary(worker, {
-      ...worker.summary,
-      status: "running",
-      latestTurn: {
-        turnId: sent.value.turnId,
-        state: "running",
-        requestedAt: updatedAt,
-        startedAt: updatedAt,
-        completedAt: null,
-        assistantMessageId: null,
-      },
-      updatedAt,
-    });
-    return yield* Deferred.await(worker.terminal);
-  });
-
-  const runWorker = Effect.fn("GeneralSubagentCoordinator.runWorker")(function* (
-    worker: ActiveGeneralSubagent,
-  ) {
-    const result = yield* runWorkerLifecycle(
-      worker,
-      buildGeneralSubagentPrompt({ task: worker.task, parentThreadId: worker.parentThreadId }),
-    ).pipe(Effect.timeoutOption(GENERAL_SUBAGENT_TIMEOUT));
-    if (Option.isSome(result)) {
-      yield* finalizeWorker(worker, result.value, true);
-      return;
-    }
-    yield* forceStopWorker(worker);
-    yield* finalizeWorker(
-      worker,
-      {
-        status: "timed-out",
-        detail: "Thirty-minute general subagent lifecycle timeout.",
-      },
-      true,
-    );
-  });
-
-  const prepareFollowUpTurn = Effect.fn("GeneralSubagentCoordinator.prepareFollowUpTurn")(
-    function* (worker: ActiveGeneralSubagent, task: string) {
-      worker.turnSequence += 1;
-      worker.task = task;
-      worker.turnId = null;
-      worker.turnActive = false;
-      worker.cancelled = false;
-      worker.output = "";
-      worker.outputTruncated = false;
-      worker.detail = null;
-      worker.transcriptBuffer = "";
-      worker.assistantProjected = false;
-      worker.lastProgressFingerprint = null;
-      worker.assistantMessageId = MessageId.make(
-        `${worker.subagentId}:assistant:${worker.turnSequence}`,
-      );
-      worker.terminal = yield* Deferred.make<GeneralSubagentOutcome>();
-      const startedAt = yield* nowIso;
-      const messages = worker.mailbox.splice(0, worker.mailbox.length);
-      const prompt = buildGeneralSubagentFollowUpPrompt({ task, messages });
-      worker.summary = {
-        ...worker.summary,
-        task,
-        status: "starting",
-        statusMessage: null,
-        latestProgress: null,
-        latestTurn: null,
-        startedAt,
-        updatedAt: startedAt,
-        completedAt: null,
-      };
-      threadBackgroundLiveness.recordTaskLiveness({
-        threadId: worker.parentThreadId,
-        taskId: worker.subagentId,
-        taskType: "subagent",
-        status: "starting",
-        kind: "started",
-      });
-      yield* dispatchSummary(worker, worker.summary);
-      yield* orchestrationEngine.dispatch({
-        type: "thread.message.import",
-        commandId: yield* commandId(worker, `follow-up-${worker.turnSequence}`),
-        threadId: worker.parentThreadId,
-        subagentId: worker.subagentId,
-        message: {
-          id: MessageId.make(`${worker.subagentId}:user:${worker.turnSequence}`),
-          role: "user",
-          text: prompt,
-          turnId: null,
-          streaming: false,
-          createdAt: startedAt,
-          updatedAt: startedAt,
-        },
-      });
-      return prompt;
-    },
-  );
-
-  const takeFollowUp = Effect.fn("GeneralSubagentCoordinator.takeFollowUp")(function* (
-    worker: ActiveGeneralSubagent,
-  ) {
-    const queued = worker.followUps.shift();
-    if (queued) return Option.some(queued);
-    const signalled = yield* Deferred.await(worker.wake).pipe(
-      Effect.timeoutOption(GENERAL_SUBAGENT_TIMEOUT),
-    );
-    worker.wake = yield* Deferred.make<void>();
-    if (Option.isNone(signalled)) return Option.none<(typeof worker.followUps)[number]>();
-    return Option.fromNullishOr(worker.followUps.shift());
-  });
-
-  const runRetainedWorker = Effect.fn("GeneralSubagentCoordinator.runRetainedWorker")(function* (
-    worker: ActiveGeneralSubagent,
-  ) {
-    let prompt = buildGeneralSubagentPrompt({
-      task: worker.task,
-      parentThreadId: worker.parentThreadId,
-    });
-    while (!worker.disposeRequested) {
-      const result = yield* runWorkerLifecycle(worker, prompt).pipe(
-        Effect.timeoutOption(GENERAL_SUBAGENT_TIMEOUT),
-      );
-      if (Option.isNone(result)) {
-        worker.disposeRequested = true;
-        yield* forceStopWorker(worker);
-        yield* finalizeWorker(
-          worker,
-          { status: "timed-out", detail: "Thirty-minute general subagent lifecycle timeout." },
-          true,
-        );
-        return;
-      }
-      yield* finalizeWorker(worker, result.value, worker.disposeRequested);
-      if (worker.finalized || worker.disposeRequested) {
-        if (!worker.finalized) yield* disposeWorker(worker);
-        return;
-      }
-
-      const followUp = yield* takeFollowUp(worker);
-      if (Option.isNone(followUp)) {
-        worker.disposeRequested = true;
-        yield* disposeWorker(worker);
-        return;
-      }
-      if (worker.disposeRequested) {
-        yield* disposeWorker(worker);
-        return;
-      }
-      prompt = yield* prepareFollowUpTurn(worker, followUp.value.task);
-    }
-    yield* disposeWorker(worker);
-  });
-
+  const { cancelWorker, finalizeWorker, runRetainedWorker, runWorker, settleWorker } = lifecycle;
+  yield* lifecycle.startEventHandling;
   const resolveParent = Effect.fn("GeneralSubagentCoordinator.resolveParent")(function* (
     parentThreadId: ThreadId,
   ) {
@@ -1027,6 +188,19 @@ const make = Effect.gen(function* () {
     };
   });
 
+  const parentModelSelection = (parent: {
+    readonly thread: {
+      readonly modelSelection: ModelSelection;
+      readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
+    };
+    readonly parentTurnId: TurnId | null;
+  }) =>
+    resolveGeneralSubagentParentSelection({
+      selection: parent.thread.modelSelection,
+      activities: parent.thread.activities,
+      parentTurnId: parent.parentTurnId,
+    });
+
   const publicError =
     (operation: string) =>
     (cause: unknown): GeneralSubagentError =>
@@ -1037,6 +211,26 @@ const make = Effect.gen(function* () {
             detail: `${operation} failed: ${cause instanceof Error ? cause.message : String(cause)}`,
           });
 
+  const ensureFeatureEnabled = Effect.fn("GeneralSubagentCoordinator.ensureFeatureEnabled")(
+    function* () {
+      const current = yield* settings.getSettings.pipe(
+        Effect.mapError(
+          (cause) =>
+            new GeneralSubagentError({
+              reason: "operation-failed",
+              detail: `Reading Better T3 settings failed: ${cause.message}`,
+            }),
+        ),
+      );
+      if (!resolveBetterT3FeatureFlag(current.betterT3Environment, "agent.generalSubagents")) {
+        return yield* new GeneralSubagentError({
+          reason: "operation-failed",
+          detail: "General subagents are disabled in Better T3 settings.",
+        });
+      }
+    },
+  );
+
   const listModelsEffect = Effect.fn("GeneralSubagentCoordinator.listModels")(function* (
     input: GeneralSubagentCaller,
   ) {
@@ -1046,7 +240,7 @@ const make = Effect.gen(function* () {
       providers: listGeneralSubagentModels({
         providers,
         callerProviderInstanceId: input.callerProviderInstanceId,
-        parentModelSelection: parent.thread.modelSelection,
+        parentModelSelection: parentModelSelection(parent),
       }),
     };
   });
@@ -1057,7 +251,7 @@ const make = Effect.gen(function* () {
     input: GeneralSubagentCaller & GeneralSubagentSpawnInput,
     retainSession: boolean,
   ) {
-    if (workersByThread.has(input.parentThreadId)) {
+    if (state.getByThread(input.parentThreadId)) {
       return yield* new GeneralSubagentError({
         reason: "nested-spawn-disabled",
         detail: "Direct T3-managed children cannot spawn nested agents in this release.",
@@ -1068,7 +262,7 @@ const make = Effect.gen(function* () {
     const resolution = resolveGeneralSubagentSelection({
       providers,
       callerProviderInstanceId: input.callerProviderInstanceId,
-      parentModelSelection: parent.thread.modelSelection,
+      parentModelSelection: parentModelSelection(parent),
       request: {
         ...(input.providerInstanceId !== undefined
           ? { providerInstanceId: input.providerInstanceId }
@@ -1085,90 +279,26 @@ const make = Effect.gen(function* () {
     }
 
     const uuid = yield* crypto.randomUUIDv4;
-    const id = `general:${input.parentThreadId}:${uuid}`;
-    const syntheticThreadId = ThreadId.make(id);
-    const runtimeSessionId = RuntimeSessionId.make(`runtime:${id}`);
-    const subagentId = SubagentId.make(id);
-    const assistantMessageId = MessageId.make(`${id}:assistant`);
-    const terminal = yield* Deferred.make<GeneralSubagentOutcome>();
-    const completed = yield* Deferred.make<void>();
-    const wake = yield* Deferred.make<void>();
-    const disposed = yield* Deferred.make<void>();
     const startedAt = yield* nowIso;
-    const reasoningEffort =
-      getModelSelectionStringOptionValue(resolution.selection, "reasoningEffort") ??
-      getModelSelectionStringOptionValue(resolution.selection, "effort");
-    const summary: OrchestrationSubagentSummary = {
-      id: subagentId,
-      origin: "t3-managed",
-      providerInstanceId: resolution.selection.instanceId,
-      providerDriver: resolution.provider.driver,
-      providerThreadId: syntheticThreadId,
-      parentId: null,
-      path: `general/${uuid}`,
-      name: input.name ?? "General subagent",
-      nickname: null,
-      role: "General",
-      task: input.task,
-      model: resolution.selection.model,
-      reasoningEffort: reasoningEffort ?? null,
-      depth: 1,
-      status: "starting",
-      statusMessage: null,
-      latestProgress: null,
-      latestTurn: null,
-      startedAt,
-      updatedAt: startedAt,
-      completedAt: null,
-    };
-    const worker: ActiveGeneralSubagent = {
+    const { worker, summary, reasoningEffort } = yield* makeActiveGeneralSubagent({
+      uuid,
       parentThreadId: input.parentThreadId,
       parentTurnId: parent.parentTurnId,
       parentRuntimeSessionId: parent.parentRuntimeSessionId,
       parentProviderInstanceId: parent.parentProviderInstanceId,
-      syntheticThreadId,
-      runtimeSessionId,
-      subagentId,
-      assistantMessageId,
-      task: input.task,
       selection: resolution.selection,
       providerDriver: resolution.provider.driver,
       cwd: parent.cwd,
       runtimeMode: parent.thread.runtimeMode,
-      terminal,
-      completed,
-      wake,
-      disposed,
       retainSession,
-      followUps: [],
-      mailbox: [],
-      summary,
-      turnId: null,
-      turnSequence: 0,
-      turnActive: false,
-      sessionStarted: false,
-      cancelled: false,
-      disposeRequested: false,
-      disposing: false,
-      finalizing: false,
-      finalized: false,
-      output: "",
-      outputTruncated: false,
-      detail: null,
-      transcriptBuffer: "",
-      assistantProjected: false,
-      lastProgressFingerprint: null,
-    };
-    const admission = yield* Effect.sync(() => {
-      if (workersByThread.has(input.parentThreadId)) return "nested" as const;
-      const liveDirectChildren = [...workersById.values()].filter(
-        (candidate) => candidate.parentThreadId === input.parentThreadId && !candidate.finalized,
-      ).length;
-      if (liveDirectChildren >= GENERAL_SUBAGENT_MAX_DIRECT_CHILDREN) return "limit" as const;
-      workersById.set(subagentId, worker);
-      workersByThread.set(syntheticThreadId, worker);
-      return "admitted" as const;
+      task: input.task,
+      ...(input.name !== undefined ? { name: input.name } : {}),
+      startedAt,
     });
+    const { subagentId } = worker;
+    const admission = yield* Effect.sync(() =>
+      state.admit(worker, GENERAL_SUBAGENT_MAX_DIRECT_CHILDREN),
+    );
     if (admission === "nested") {
       return yield* new GeneralSubagentError({
         reason: "nested-spawn-disabled",
@@ -1194,6 +324,7 @@ const make = Effect.gen(function* () {
         const prompt = buildGeneralSubagentPrompt({
           task: input.task,
           parentThreadId: input.parentThreadId,
+          agentId: subagentId,
         });
         yield* orchestrationEngine.dispatch({
           type: "thread.message.import",
@@ -1201,7 +332,7 @@ const make = Effect.gen(function* () {
           threadId: input.parentThreadId,
           subagentId,
           message: {
-            id: MessageId.make(`${id}:user`),
+            id: MessageId.make(`${subagentId}:user`),
             role: "user",
             text: prompt,
             turnId: null,
@@ -1222,9 +353,7 @@ const make = Effect.gen(function* () {
           }),
         ),
       );
-      workersById.delete(subagentId);
-      const settledIndex = settledOrder.lastIndexOf(subagentId);
-      if (settledIndex >= 0) settledOrder.splice(settledIndex, 1);
+      state.forget(worker);
       return yield* new GeneralSubagentError({ reason: "spawn-failed", detail });
     }
     const lifecycle = retainSession ? runRetainedWorker(worker) : runWorker(worker);
@@ -1249,21 +378,25 @@ const make = Effect.gen(function* () {
       providerInstanceId: resolution.selection.instanceId,
       providerDriver: resolution.provider.driver,
       model: resolution.selection.model,
-      reasoningEffort: reasoningEffort ?? null,
+      reasoningEffort,
     };
   });
   const spawn: GeneralSubagentCoordinatorShape["spawn"] = (input) =>
-    spawnWorkerEffect(input, false).pipe(
+    ensureFeatureEnabled().pipe(
+      Effect.andThen(spawnWorkerEffect(input, false)),
       Effect.mapError(publicError("Spawning the general subagent")),
     );
   const spawnAgent: GeneralSubagentCoordinatorShape["spawnAgent"] = (input) =>
-    spawnWorkerEffect(input, true).pipe(Effect.mapError(publicError("Spawning the direct agent")));
+    ensureFeatureEnabled().pipe(
+      Effect.andThen(spawnWorkerEffect(input, true)),
+      Effect.mapError(publicError("Spawning the direct agent")),
+    );
 
   const resolveOwnedWorkers = Effect.fn("GeneralSubagentCoordinator.resolveOwnedWorkers")(
     function* (parentThreadId: ThreadId, agentIds: ReadonlyArray<SubagentId>) {
       const workers: ActiveGeneralSubagent[] = [];
       for (const agentId of agentIds) {
-        const worker = workersById.get(agentId);
+        const worker = state.getById(agentId);
         if (!worker || worker.parentThreadId !== parentThreadId) {
           return yield* new GeneralSubagentError({
             reason: "agent-unavailable",
@@ -1275,13 +408,6 @@ const make = Effect.gen(function* () {
       return workers;
     },
   );
-
-  const workerIsBusy = (worker: ActiveGeneralSubagent): boolean =>
-    !worker.finalized &&
-    (worker.turnActive ||
-      worker.followUps.length > 0 ||
-      worker.summary.status === "starting" ||
-      worker.summary.status === "running");
 
   const wait: GeneralSubagentCoordinatorShape["wait"] = Effect.fn(
     "GeneralSubagentCoordinator.wait",
@@ -1316,43 +442,18 @@ const make = Effect.gen(function* () {
         detail: `General subagent '${input.agentId}' is not available.`,
       });
     }
-    if (worker.finalized) {
-      return { agent: snapshot(worker), cancelled: false };
-    }
-    worker.cancelled = true;
-    worker.disposeRequested = true;
-    yield* interruptWorker(worker).pipe(
-      Effect.timeoutOption(GENERAL_SUBAGENT_ABORT_FORCE_DELAY),
-      Effect.asVoid,
-    );
-    yield* settleWorker(worker, "interrupted", "Cancelled by the parent agent.");
-    yield* Deferred.succeed(worker.wake, undefined).pipe(Effect.ignore);
-    yield* Deferred.await(worker.disposed).pipe(
-      Effect.timeoutOption(GENERAL_SUBAGENT_ABORT_FORCE_DELAY),
-      Effect.asVoid,
-    );
-    if (!worker.finalized) {
-      yield* forceStopWorker(worker);
-      if (!worker.finalizing) {
-        yield* finalizeWorker(
-          worker,
-          { status: "interrupted", detail: "Cancelled by the parent agent." },
-          true,
-        );
-      } else {
-        yield* disposeWorker(worker);
-      }
-    }
-    return { agent: snapshot(worker), cancelled: true };
+    const cancelled = yield* cancelWorker(worker, "Cancelled by the parent agent.");
+    return { agent: actionSnapshot(worker), cancelled };
   });
   const cancel: GeneralSubagentCoordinatorShape["cancel"] = (input) =>
     cancelEffect(input).pipe(Effect.mapError(publicError("Cancelling the general subagent")));
 
   const listAgents: GeneralSubagentCoordinatorShape["listAgents"] = (input) =>
     Effect.succeed({
-      agents: [...workersById.values()]
+      agents: state
+        .all()
         .filter((worker) => worker.parentThreadId === input.parentThreadId)
-        .map(snapshot),
+        .map(identity),
     });
 
   const sendMessageEffect = Effect.fn("GeneralSubagentCoordinator.sendMessage")(function* (
@@ -1366,10 +467,13 @@ const make = Effect.gen(function* () {
       });
     }
     worker.mailbox.push(input.message);
-    return { agent: snapshot(worker), queued: true };
+    return { agent: actionSnapshot(worker), queued: true };
   });
   const sendMessage: GeneralSubagentCoordinatorShape["sendMessage"] = (input) =>
-    sendMessageEffect(input).pipe(Effect.mapError(publicError("Messaging the direct agent")));
+    ensureFeatureEnabled().pipe(
+      Effect.andThen(sendMessageEffect(input)),
+      Effect.mapError(publicError("Messaging the direct agent")),
+    );
 
   const followUpEffect = Effect.fn("GeneralSubagentCoordinator.followUp")(function* (
     input: GeneralSubagentCaller & GeneralSubagentFollowUpInput,
@@ -1386,10 +490,13 @@ const make = Effect.gen(function* () {
     }
     worker.followUps.push({ task: input.task });
     yield* Deferred.succeed(worker.wake, undefined).pipe(Effect.ignore);
-    return { agent: snapshot(worker), queued: true };
+    return { agent: actionSnapshot(worker), queued: true };
   });
   const followUp: GeneralSubagentCoordinatorShape["followUp"] = (input) =>
-    followUpEffect(input).pipe(Effect.mapError(publicError("Following up with the direct agent")));
+    ensureFeatureEnabled().pipe(
+      Effect.andThen(followUpEffect(input)),
+      Effect.mapError(publicError("Following up with the direct agent")),
+    );
 
   const interruptAgentEffect = Effect.fn("GeneralSubagentCoordinator.interruptAgent")(function* (
     input: GeneralSubagentCaller & GeneralSubagentInterruptInput,
@@ -1401,23 +508,43 @@ const make = Effect.gen(function* () {
         detail: `Direct agent '${input.agentId}' has no reusable session.`,
       });
     }
-    if (!workerIsBusy(worker)) return { agent: snapshot(worker), interrupted: false };
+    if (!workerIsBusy(worker)) return { agent: actionSnapshot(worker), interrupted: false };
     worker.cancelled = true;
-    yield* interruptWorker(worker).pipe(
-      Effect.timeoutOption(GENERAL_SUBAGENT_ABORT_FORCE_DELAY),
-      Effect.asVoid,
-    );
+    yield* transport
+      .interrupt(worker)
+      .pipe(Effect.timeoutOption(GENERAL_SUBAGENT_ABORT_FORCE_DELAY), Effect.asVoid);
     yield* settleWorker(worker, "interrupted", "Interrupted by the parent agent.");
     yield* Deferred.await(worker.completed).pipe(
       Effect.timeoutOption(GENERAL_SUBAGENT_ABORT_FORCE_DELAY),
       Effect.asVoid,
     );
-    return { agent: snapshot(worker), interrupted: true };
+    return { agent: actionSnapshot(worker), interrupted: true };
   });
   const interruptAgent: GeneralSubagentCoordinatorShape["interruptAgent"] = (input) =>
     interruptAgentEffect(input).pipe(Effect.mapError(publicError("Interrupting the direct agent")));
 
   const waitAgent: GeneralSubagentCoordinatorShape["waitAgent"] = wait;
+
+  yield* settings.streamChanges.pipe(
+    Stream.map((next) =>
+      resolveBetterT3FeatureFlag(next.betterT3Environment, "agent.generalSubagents"),
+    ),
+    Stream.changes,
+    Stream.filter((enabled) => !enabled),
+    Stream.runForEach(() =>
+      Effect.forEach(
+        state.all().filter((worker) => !worker.finalized),
+        (worker) => cancelWorker(worker, "General subagents were disabled in Better T3 settings."),
+        { concurrency: "unbounded", discard: true },
+      ),
+    ),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("General subagent feature reconciliation failed", {
+        cause: Cause.pretty(cause),
+      }),
+    ),
+    Effect.forkIn(coordinatorScope),
+  );
 
   return GeneralSubagentCoordinator.of({
     listModels,
