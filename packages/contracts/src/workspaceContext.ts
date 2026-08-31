@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { WorkspaceRevision } from "./workspaceEdit.ts";
 
 export const WORKSPACE_CONTEXT_MAX_QUERIES = 8;
 export const WORKSPACE_CONTEXT_MAX_READS = 12;
@@ -88,6 +89,7 @@ export const WorkspaceContextReadResult = Schema.Union([
     lineEnd: PositiveInt,
     text: Schema.String,
     truncated: Schema.Boolean,
+    revision: Schema.optional(WorkspaceRevision),
   }),
   Schema.Struct({
     status: Schema.Literal("error"),

@@ -1,15 +1,22 @@
 import * as Crypto from "effect/Crypto";
 import { Atom } from "effect/unstable/reactivity";
+import { WS_METHODS } from "@t3tools/contracts";
 
-import { createAtomCommandScheduler, createEnvironmentCommand } from "./runtime.ts";
+import {
+  createAtomCommandScheduler,
+  createEnvironmentCommand,
+  createEnvironmentRpcCommand,
+} from "./runtime.ts";
 import {
   type ArchiveThreadInput,
   type CreateThreadInput,
   type DeleteThreadInput,
+  type ForkThreadInput,
   type InterruptThreadTurnInput,
   type RespondToThreadApprovalInput,
   type RespondToThreadUserInputInput,
   type RevertThreadCheckpointInput,
+  type RetryThreadTurnInput,
   type SetThreadInteractionModeInput,
   type SetThreadRuntimeModeInput,
   type PinThreadInput,
@@ -26,9 +33,11 @@ import {
   archiveThread,
   createThread,
   deleteThread,
+  forkThread,
   interruptThreadTurn,
   respondToThreadApproval,
   respondToThreadUserInput,
+  retryThreadTurn,
   revertThreadCheckpoint,
   setThreadInteractionMode,
   setThreadRuntimeMode,
@@ -50,10 +59,12 @@ export type {
   ArchiveThreadInput,
   CreateThreadInput,
   DeleteThreadInput,
+  ForkThreadInput,
   InterruptThreadTurnInput,
   RespondToThreadApprovalInput,
   RespondToThreadUserInputInput,
   RevertThreadCheckpointInput,
+  RetryThreadTurnInput,
   SetThreadInteractionModeInput,
   SetThreadRuntimeModeInput,
   PinThreadInput,
@@ -82,6 +93,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
       execute: (input: CreateThreadInput) => createThread(input),
+      scheduler,
+      concurrency,
+    }),
+    fork: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:fork",
+      execute: (input: ForkThreadInput) => forkThread(input),
       scheduler,
       concurrency,
     }),
@@ -169,6 +186,12 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    retryTurn: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:retry-turn",
+      execute: (input: RetryThreadTurnInput) => retryThreadTurn(input),
+      scheduler,
+      concurrency,
+    }),
     interruptTurn: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:interrupt-turn",
       execute: (input: InterruptThreadTurnInput) => interruptThreadTurn(input),
@@ -196,6 +219,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     stopSession: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:stop-session",
       execute: (input: StopThreadSessionInput) => stopThreadSession(input),
+      scheduler,
+      concurrency,
+    }),
+    uploadFeedback: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:upload-feedback",
+      tag: WS_METHODS.providerUploadFeedback,
       scheduler,
       concurrency,
     }),

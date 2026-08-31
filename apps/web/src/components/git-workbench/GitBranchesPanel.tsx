@@ -4,6 +4,7 @@ import { GitBranchPlus, GitFork, RefreshCw, RotateCcw } from "lucide-react";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 import { GitWorkbenchConfirmation } from "./GitWorkbenchConfirmation";
 import type { GitBranch, GitWorkbenchOperationInput } from "./GitWorkbench.types";
@@ -27,6 +28,7 @@ export function GitBranchesPanel({
   onSwitchBranch,
   readOnly,
 }: GitBranchesPanelProps) {
+  const translate = useInterfaceTranslator().message;
   const [branchName, setBranchName] = useState("");
   const [resetOid, setResetOid] = useState(headOid ?? "");
   const [resetMode, setResetMode] = useState<"hard" | "mixed" | "soft">("soft");
@@ -37,10 +39,10 @@ export function GitBranchesPanel({
         <div className="flex flex-wrap items-center justify-between gap-2 border-b p-3">
           <div>
             <h2 className="font-semibold text-sm" id="branches-heading">
-              Branches
+              {translate("git.branches.title")}
             </h2>
             <p className="text-muted-foreground text-xs">
-              Switching is revalidated against the current worktree.
+              {translate("git.branches.switchingDescription")}
             </p>
           </div>
         </div>
@@ -54,11 +56,17 @@ export function GitBranchesPanel({
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-center gap-2">
                   <span className="truncate text-sm">{branch.name}</span>
-                  {branch.current ? <Badge variant="success">Current</Badge> : null}
-                  {branch.remote ? <Badge variant="outline">Remote</Badge> : null}
+                  {branch.current ? (
+                    <Badge variant="success">{translate("git.common.current")}</Badge>
+                  ) : null}
+                  {branch.remote ? (
+                    <Badge variant="outline">{translate("git.branches.remote")}</Badge>
+                  ) : null}
                 </div>
                 <p className="truncate font-mono text-muted-foreground text-xs">
-                  {branch.oid ? branch.oid.slice(0, 10) : "Revision available after checkout"}
+                  {branch.oid
+                    ? branch.oid.slice(0, 10)
+                    : translate("git.branches.revisionAfterCheckout")}
                   {branch.upstream ? ` · ${branch.upstream}` : ""}
                 </p>
               </div>
@@ -71,7 +79,7 @@ export function GitBranchesPanel({
                       size="xs"
                       variant="outline"
                     >
-                      Switch
+                      {translate("git.branches.switch")}
                     </Button>
                   ) : null}
                   <Button
@@ -80,7 +88,7 @@ export function GitBranchesPanel({
                     size="xs"
                     variant="outline"
                   >
-                    Rebase onto
+                    {translate("git.branches.rebaseOnto")}
                   </Button>
                   <Button
                     disabled={readOnly}
@@ -88,7 +96,7 @@ export function GitBranchesPanel({
                     size="xs"
                     variant="outline"
                   >
-                    Interactive…
+                    {translate("git.branches.interactive")}
                   </Button>
                 </>
               ) : null}
@@ -100,19 +108,19 @@ export function GitBranchesPanel({
       <div className="space-y-4">
         {readOnly ? (
           <div className="rounded-xl border border-info/24 bg-info/5 p-3 text-info-foreground text-sm">
-            Read-only access: repository mutations are unavailable.
+            {translate("git.branches.readOnly")}
           </div>
         ) : null}
         <section aria-labelledby="create-branch-heading" className="rounded-xl border bg-card p-4">
           <div className="flex items-center gap-2">
             <GitBranchPlus aria-hidden="true" className="size-4" />
             <h2 className="font-semibold text-sm" id="create-branch-heading">
-              Create branch
+              {translate("git.branches.create")}
             </h2>
           </div>
           <div className="mt-3 flex gap-2">
             <Input
-              aria-label="New branch name"
+              aria-label={translate("git.branches.newName")}
               disabled={readOnly}
               onChange={(event) => setBranchName(event.currentTarget.value)}
               placeholder="feature/my-change"
@@ -125,7 +133,7 @@ export function GitBranchesPanel({
                 setBranchName("");
               }}
             >
-              Create
+              {translate("git.branches.createAction")}
             </Button>
           </div>
         </section>
@@ -134,11 +142,11 @@ export function GitBranchesPanel({
           <div className="flex items-center gap-2">
             <RotateCcw aria-hidden="true" className="size-4" />
             <h2 className="font-semibold text-sm" id="reset-heading">
-              Reset current branch
+              {translate("git.branches.resetCurrent")}
             </h2>
           </div>
           <label className="mt-3 block text-xs">
-            Target commit
+            {translate("git.operation.targetCommit")}
             <Input
               className="mt-1 font-mono"
               disabled={readOnly}
@@ -147,16 +155,16 @@ export function GitBranchesPanel({
             />
           </label>
           <label className="mt-2 block text-xs">
-            Reset mode
+            {translate("git.operation.resetMode")}
             <select
               className="mt-1 h-8 w-full rounded-md border bg-background px-2 text-sm"
               disabled={readOnly}
               onChange={(event) => setResetMode(event.currentTarget.value as typeof resetMode)}
               value={resetMode}
             >
-              <option value="soft">Soft — keep index and worktree</option>
-              <option value="mixed">Mixed — reset index</option>
-              <option value="hard">Hard — replace index and worktree</option>
+              <option value="soft">{translate("git.branches.resetSoft")}</option>
+              <option value="mixed">{translate("git.branches.resetMixed")}</option>
+              <option value="hard">{translate("git.branches.resetHard")}</option>
             </select>
           </label>
           <div className="mt-3 flex justify-end">
@@ -167,17 +175,20 @@ export function GitBranchesPanel({
                 size="sm"
                 variant="outline"
               >
-                <RefreshCw aria-hidden="true" /> Reset soft
+                <RefreshCw aria-hidden="true" /> {translate("git.branches.resetSoftAction")}
               </Button>
             ) : (
               <GitWorkbenchConfirmation
-                confirmLabel={`Reset ${resetMode}`}
-                description="A local undo snapshot is created first. Hard reset replaces worktree content; mixed reset replaces the index."
+                confirmLabel={translate("git.branches.resetAction", { mode: resetMode })}
+                description={translate("git.branches.resetDescription")}
                 disabled={readOnly || resetOid.length === 0}
                 onConfirm={reset}
                 phrase={resetMode === "hard" ? "RESET" : undefined}
-                title={`Reset ${resetMode} to ${resetOid.slice(0, 12)}?`}
-                triggerLabel={`Reset ${resetMode}…`}
+                title={translate("git.branches.resetTitle", {
+                  mode: resetMode,
+                  target: resetOid.slice(0, 12),
+                })}
+                triggerLabel={`${translate("git.branches.resetAction", { mode: resetMode })}…`}
               />
             )}
           </div>

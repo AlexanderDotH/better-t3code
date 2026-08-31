@@ -21,10 +21,12 @@ import {
   PlugZapIcon,
   SearchIcon,
   Settings2Icon,
+  SlidersHorizontalIcon,
   SparklesIcon,
   XIcon,
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -42,6 +44,8 @@ import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3Conne
 import { SidebarUtilityMenu } from "../sidebar/SidebarChrome";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
+  localizeSettingsSearchItems,
+  resolveSettingsSectionLabels,
   searchSettings,
   SETTINGS_SECTION_LABELS,
   type SettingsPath,
@@ -56,6 +60,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/appearance": PaletteIcon,
   "/settings/keybindings": KeyboardIcon,
   "/settings/providers": BotIcon,
+  "/settings/better-t3": SlidersHorizontalIcon,
   "/settings/skills": SparklesIcon,
   "/settings/mcp": PlugZapIcon,
   "/settings/integrations": BlocksIcon,
@@ -82,13 +87,25 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
 }
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
+  const translate = useInterfaceTranslator().message;
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeResultIndex, setActiveResultIndex] = useState(0);
-  const results = useMemo(() => searchSettings(query), [query]);
+  const sectionLabels = useMemo(() => resolveSettingsSectionLabels(translate), [translate]);
+  const searchItems = useMemo(() => localizeSettingsSearchItems(translate), [translate]);
+  const navItems = useMemo(
+    () =>
+      (Object.keys(sectionLabels) as SettingsPath[]).map((to) => ({
+        to,
+        label: sectionLabels[to],
+        icon: SETTINGS_SECTION_ICONS[to],
+      })),
+    [sectionLabels],
+  );
+  const results = useMemo(() => searchSettings(query, searchItems), [query, searchItems]);
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
 
@@ -204,8 +221,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 setActiveResultIndex(0);
               }}
               onKeyDown={handleSearchKeyDown}
-              placeholder="Search"
-              aria-label="Search settings"
+              placeholder={translate("settings.application.search.placeholder")}
+              aria-label={translate("settings.application.search.aria")}
               role="combobox"
               aria-autocomplete="list"
               aria-expanded={isSearching && hasResults}
@@ -223,7 +240,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 size="icon-micro"
                 variant="ghost"
                 className="shrink-0 text-sidebar-muted-foreground hover:bg-sidebar-control-surface hover:text-sidebar-foreground"
-                aria-label="Clear settings search"
+                aria-label={translate("settings.application.search.clearAria")}
                 onClick={() => {
                   clearSearch();
                   searchInputRef.current?.focus();
@@ -240,14 +257,18 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
               role="status"
               className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
             >
-              No settings found
+              {translate("settings.application.search.empty")}
             </p>
           ) : null}
           <SidebarMenu
             className="ps-px"
             id={isSearching && hasResults ? "settings-search-results" : undefined}
             role={isSearching && hasResults ? "listbox" : undefined}
-            aria-label={isSearching && hasResults ? "Settings search results" : undefined}
+            aria-label={
+              isSearching && hasResults
+                ? translate("settings.application.search.resultsAria")
+                : undefined
+            }
           >
             {isSearching
               ? results.map((item, index) => (
@@ -269,13 +290,13 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                           {item.title}
                         </span>
                         <span className="block truncate text-[11px] text-sidebar-muted-foreground/75">
-                          {SETTINGS_SECTION_LABELS[item.to]}
+                          {sectionLabels[item.to]}
                         </span>
                       </span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))
-              : SETTINGS_NAV_ITEMS.map((item) => {
+              : navItems.map((item) => {
                   const Icon = item.icon;
                   const isActive = pathname === item.to || pathname.startsWith(`${item.to}/`);
                   return (

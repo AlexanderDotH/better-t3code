@@ -8,6 +8,7 @@ import {
   resolveWorkspaceDeckActiveCard,
   resolveWorkspaceDeckCompactHeight,
   resolveWorkspaceDeckDirection,
+  resolveWorkspaceDeckMorphRoles,
   resolveWorkspaceDeckRoles,
   resolveWorkspaceDeckSelection,
 } from "./workspaceCardDeck.logic";
@@ -79,6 +80,22 @@ describe("workspace card roles", () => {
 });
 
 describe("workspace card selection", () => {
+  it("maps a lower-peek selection into one foreground morph and one masked rotation", () => {
+    expect(resolveWorkspaceDeckMorphRoles(repositoryCards, "chat", "git")).toEqual([
+      { id: "chat", from: "active", to: "previous", morph: "outgoing" },
+      { id: "git", from: "next", to: "active", morph: "incoming" },
+      { id: "example", from: "previous", to: "next", morph: "orbiting" },
+    ]);
+  });
+
+  it("mirrors the three-card morph when the upper peek is selected", () => {
+    expect(resolveWorkspaceDeckMorphRoles(repositoryCards, "chat", "example")).toEqual([
+      { id: "chat", from: "active", to: "next", morph: "outgoing" },
+      { id: "git", from: "next", to: "previous", morph: "orbiting" },
+      { id: "example", from: "previous", to: "active", morph: "incoming" },
+    ]);
+  });
+
   it("resolves direction from the exposed previous and next positions", () => {
     expect(resolveWorkspaceDeckDirection(repositoryCards, "chat", "git")).toBe("forward");
     expect(resolveWorkspaceDeckDirection(repositoryCards, "chat", "example")).toBe("backward");
@@ -153,7 +170,7 @@ describe("workspace card selection", () => {
     });
   });
 
-  it("locks normal selection while a shuffle is active", () => {
+  it("lets the latest user selection replace an active shuffle", () => {
     expect(
       resolveWorkspaceDeckSelection({
         cardIds: repositoryCards,
@@ -162,11 +179,11 @@ describe("workspace card selection", () => {
         transitionActive: true,
       }),
     ).toEqual({
-      activeCard: "git",
-      cancelTransition: false,
-      changed: false,
-      direction: null,
-      selectionMode: null,
+      activeCard: "example",
+      cancelTransition: true,
+      changed: true,
+      direction: "forward",
+      selectionMode: "animate",
     });
   });
 

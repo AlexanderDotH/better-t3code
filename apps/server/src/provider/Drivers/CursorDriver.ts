@@ -25,11 +25,14 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { McpConfigEngine, toAcpMcpServers } from "../../mcp/McpConfigEngine.ts";
 import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
+import { buildCursorAcpSpawnInput } from "../acp/CursorAcpSupport.ts";
 import { ProviderDriverError } from "../Errors.ts";
+import { makeAcpHistorySync } from "../history/AcpHistorySync.ts";
 import { makeCursorAdapter } from "../Layers/CursorAdapter.ts";
 import {
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
+  CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
   enrichCursorSnapshot,
 } from "../Layers/CursorProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
@@ -39,6 +42,7 @@ import {
   type ProviderDriver,
   type ProviderInstance,
 } from "../ProviderDriver.ts";
+import { makeInstanceHistorySyncSource } from "../Services/ProviderHistorySync.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
@@ -108,6 +112,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
+      const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
       const mcpConfigEngine = yield* McpConfigEngine;
@@ -123,6 +128,21 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies CursorSettings;
+      const historySyncSource = makeInstanceHistorySyncSource({
+        driverKind: DRIVER_KIND,
+        instanceId,
+        continuationKey: continuationIdentity.continuationKey,
+        displayName: displayName ?? "Cursor",
+        capabilities: { search: true, archived: false, resume: true, activity: false },
+      });
+      const historySync = makeAcpHistorySync({
+        source: historySyncSource,
+        defaultCwd: serverConfig.cwd,
+        spawn: buildCursorAcpSpawnInput(effectiveConfig, serverConfig.cwd, processEnv),
+        childProcessSpawner: spawner,
+        authMethodId: "cursor_login",
+        clientCapabilities: CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
+      });
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
@@ -198,6 +218,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         enabled,
         snapshot,
         adapter,
+        historySync,
         textGeneration,
       } satisfies ProviderInstance;
     }),

@@ -14,6 +14,8 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import { ServerConfig } from "../../config.ts";
+import type { InProcessWorkAdmissionRequest } from "../../resourceProtection/InProcessWorkAdmission.ts";
+import * as ResourceProtection from "../../resourceProtection/SubagentResourceGovernor.ts";
 import type { GeminiClient } from "../GeminiClient.ts";
 import type { GeminiHarnessToolExecutor } from "./GeminiHarness.ts";
 import { makeGeminiAdapter } from "./GeminiAdapter.ts";
@@ -73,6 +75,58 @@ function fakeClient(input: {
 }
 
 describe("GeminiAdapter", () => {
+  it.effect("uses shared Native admission for Gemini and releases the lease", () => {
+    const requests: Array<InProcessWorkAdmissionRequest> = [];
+    let releaseCount = 0;
+    const resourceLayer = Layer.mock(ResourceProtection.SubagentResourceGovernor)({
+      acquireInProcessLease: (request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return {
+            workId: request.workId,
+            reservedBytes: 1024,
+            release: Effect.sync(() => {
+              releaseCount += 1;
+            }),
+          };
+        }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const adapter = yield* makeGeminiAdapter(
+          { enabled: true, customModels: [] },
+          {
+            environment: { GOOGLE_API_KEY: "test-key" },
+            clientFactory: () =>
+              fakeClient({ requests: [], rounds: [[response({ text: "Done." })]] }),
+            toolExecutor: {
+              execute: () => Effect.die("No tool should run for a text-only Gemini turn"),
+            },
+          },
+        );
+        const threadId = ThreadId.make("gemini-shared-native-admission");
+        yield* adapter.startSession({
+          threadId,
+          provider: ProviderDriverKind.make("gemini"),
+          providerInstanceId: ProviderInstanceId.make("gemini"),
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+          sandboxMode: "read-only",
+        });
+        yield* adapter.sendTurn({ threadId, input: "Use the shared resource governor." });
+
+        expect(requests).toHaveLength(1);
+        expect(requests[0]).toMatchObject({
+          threadId,
+          provider: ProviderDriverKind.make("gemini"),
+          providerInstanceId: ProviderInstanceId.make("gemini"),
+        });
+        expect(releaseCount).toBe(1);
+      }),
+    ).pipe(Effect.provide(testLayer.pipe(Layer.provideMerge(resourceLayer))));
+  });
+
   it.effect("runs the official SDK tool loop through T3 and resumes T3-owned history", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -85,8 +139,15 @@ describe("GeminiAdapter", () => {
               response({
                 functionCall: {
                   id: "call-write",
-                  name: "write_file",
-                  args: { path: "notes.txt", contents: "hello" },
+                  name: "workspace_edit",
+                  args: {
+                    changes: [
+                      {
+                        path: "notes.txt",
+                        edits: [{ type: "write", mode: "upsert", content: "hello" }],
+                      },
+                    ],
+                  },
                 },
               }),
             ],
@@ -99,9 +160,11 @@ describe("GeminiAdapter", () => {
             return Effect.succeed({
               ok: true,
               itemType: "file_change",
-              title: "Write notes.txt",
-              detail: "5 bytes written",
-              output: { path: "notes.txt", bytesWritten: 5 },
+              title: "Workspace edit",
+              detail: "1 file changed",
+              output: {
+                changes: [{ path: "notes.txt", action: "created", edit_count: 1 }],
+              },
             });
           },
         };
@@ -126,8 +189,15 @@ describe("GeminiAdapter", () => {
 
         expect(executed).toEqual([
           {
-            name: "write_file",
-            args: { path: "notes.txt", contents: "hello" },
+            name: "workspace_edit",
+            args: {
+              changes: [
+                {
+                  path: "notes.txt",
+                  edits: [{ type: "write", mode: "upsert", content: "hello" }],
+                },
+              ],
+            },
           },
         ]);
         expect(requests).toHaveLength(2);
@@ -135,6 +205,9 @@ describe("GeminiAdapter", () => {
         expect(JSON.stringify(secondContents)).toContain("functionResponse");
         expect(JSON.stringify(secondContents)).toContain("notes.txt");
         expect(requests[0]?.config?.systemInstruction).toContain("T3 Code is the harness");
+        expect(requests[0]?.config?.systemInstruction).toContain("workspace_context");
+        expect(requests[0]?.config?.systemInstruction).toContain("workspace_edit");
+        expect(requests[0]?.config?.systemInstruction).toMatch(/formatters.*generators.*binaries/i);
 
         const beforeResume = yield* adapter.readThread(threadId);
         expect(beforeResume.turns).toHaveLength(1);
@@ -270,6 +343,8 @@ describe("GeminiAdapter", () => {
         expect(
           requests[0]?.config?.tools?.[0]?.functionDeclarations?.map(({ name }) => name),
         ).toEqual(["workspace_context"]);
+        expect(requests[0]?.config?.systemInstruction).toContain("workspace_context");
+        expect(requests[0]?.config?.systemInstruction).not.toContain("workspace_edit");
         expect(JSON.stringify(requests[1]?.contents)).toContain(
           "Tool 'exec_command' is not available in this session mode.",
         );

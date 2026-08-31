@@ -2,12 +2,16 @@ import {
   WorkspaceContextError,
   WorkspaceContextInput,
   WorkspaceContextResult,
+  WorkspaceEditError,
+  WorkspaceEditInput,
+  WorkspaceEditResult,
 } from "@t3tools/contracts";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as WorkspaceContext from "../../../workspace/WorkspaceContext.ts";
+import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
@@ -30,3 +34,23 @@ export const WorkspaceContextTool = Tool.make("workspace_context", {
   .annotate(Tool.OpenWorld, false);
 
 export const WorkspaceToolkit = Toolkit.make(WorkspaceContextTool);
+
+export const WorkspaceEditTool = Tool.make("workspace_edit", {
+  description:
+    "Apply one authenticated batch of ordered UTF-8 text edits across one or more workspace files. Supports whole-file writes, exact replacements, line or Unicode code-point splices, prepend, append, and file deletion. The server selects the trusted workspace root; callers cannot override it.",
+  parameters: WorkspaceEditInput,
+  success: WorkspaceEditResult,
+  failure: WorkspaceEditError,
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+    WorkspaceFileSystem.WorkspaceFileSystem,
+  ],
+})
+  .annotate(Tool.Title, "Edit workspace files")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, false);
+
+export const WorkspaceEditToolkit = Toolkit.make(WorkspaceEditTool);

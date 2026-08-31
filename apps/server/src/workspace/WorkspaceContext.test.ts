@@ -234,6 +234,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceContextLive", (it) 
             lineEnd: 3,
             text: "line-2\nline-3",
             truncated: false,
+            revision: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
           });
           expect(result.reads[1]).toMatchObject({
             status: "ok",
@@ -244,6 +245,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceContextLive", (it) 
           expect(result.reads[2]).toMatchObject({ status: "error", error: "not_found" });
           expect(result.reads[3]).toMatchObject({ status: "error", error: "binary" });
           expect(result.reads[4]).toMatchObject({ status: "ok", truncated: true });
+          expect(result.reads[4]).not.toHaveProperty("revision");
           expect(result.reads[5]).toMatchObject({ status: "error", error: "unreadable" });
         }),
     );

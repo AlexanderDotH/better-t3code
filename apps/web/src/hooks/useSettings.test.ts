@@ -4,10 +4,115 @@ import {
   ProviderInstanceId,
   type ServerSettings,
 } from "@t3tools/contracts";
-import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import { type ClientSettingsPatch, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeEnvironmentSettings, resolveEnvironmentIdentificationMode } from "./useSettings";
+import { resolveThreadSidebarLayout } from "../components/ThreadSidebarSelection";
+import {
+  mergeClientSettingsPatch,
+  mergeEnvironmentSettings,
+  resolveEnvironmentIdentificationMode,
+} from "./useSettings";
+
+const CLIENT_BETTER_T3_MIRROR_CASES = [
+  ["experimentalFetch", "agent.fetch"],
+  ["experimentalParallelPlanImplementation", "agent.parallelPlanImplementation"],
+  ["planModeEnabled", "agent.planMode"],
+  ["improvePromptBeforeSend", "agent.promptImprovement"],
+  ["showExpandedComposerControls", "agent.expandedComposerControls"],
+  ["showReasoning", "agent.reasoningVisibility"],
+  ["legacySidebarEnabled", "chat.classicSidebar"],
+] as const;
+
+describe("mergeClientSettingsPatch", () => {
+  it("keeps Better T3 initialization and unrelated flags for a sparse toggle patch", () => {
+    const current = {
+      ...DEFAULT_CLIENT_SETTINGS,
+      betterT3Device: {
+        version: 1 as const,
+        initialization: "existing-install-migration" as const,
+        flags: { "chat.cardMorphing": true },
+      },
+    };
+
+    const next = mergeClientSettingsPatch(current, {
+      betterT3Device: { flags: { "chat.workspaceCardDeck": false } },
+    });
+
+    expect(next.betterT3Device).toEqual({
+      version: 1,
+      initialization: "existing-install-migration",
+      flags: {
+        "chat.cardMorphing": true,
+        "chat.workspaceCardDeck": false,
+      },
+    });
+  });
+
+  it.each(CLIENT_BETTER_T3_MIRROR_CASES)(
+    "repairs %s legacy writes into the %s V1 flag",
+    (legacyKey, featureId) => {
+      const next = mergeClientSettingsPatch(DEFAULT_CLIENT_SETTINGS, {
+        [legacyKey]: true,
+      } as ClientSettingsPatch);
+
+      expect(next[legacyKey]).toBe(true);
+      expect(next.betterT3Device.flags[featureId]).toBe(true);
+    },
+  );
+
+  it.each(CLIENT_BETTER_T3_MIRROR_CASES)(
+    "mirrors explicit %s V1 writes back to %s for older consumers",
+    (legacyKey, featureId) => {
+      const next = mergeClientSettingsPatch(DEFAULT_CLIENT_SETTINGS, {
+        betterT3Device: { flags: { [featureId]: true } },
+      });
+
+      expect(next.betterT3Device.flags[featureId]).toBe(true);
+      expect(next[legacyKey]).toBe(true);
+    },
+  );
+
+  it.each(CLIENT_BETTER_T3_MIRROR_CASES)(
+    "lets an explicit V1 flag win over a conflicting %s value for %s",
+    (legacyKey, featureId) => {
+      const next = mergeClientSettingsPatch(DEFAULT_CLIENT_SETTINGS, {
+        [legacyKey]: true,
+        betterT3Device: { flags: { [featureId]: false } },
+      } as ClientSettingsPatch);
+
+      expect(next[legacyKey]).toBe(false);
+      expect(next.betterT3Device.flags[featureId]).toBe(false);
+    },
+  );
+
+  it("keeps sequential Classic sidebar writes consistent for the actual layout consumer", () => {
+    const oldPageWrite = mergeClientSettingsPatch(DEFAULT_CLIENT_SETTINGS, {
+      legacySidebarEnabled: true,
+    });
+    expect(resolveThreadSidebarLayout(oldPageWrite.legacySidebarEnabled)).toBe("classic");
+    expect(oldPageWrite.betterT3Device.flags["chat.classicSidebar"]).toBe(true);
+
+    const newPageWrite = mergeClientSettingsPatch(oldPageWrite, {
+      betterT3Device: { flags: { "chat.classicSidebar": false } },
+    });
+    expect(resolveThreadSidebarLayout(newPageWrite.legacySidebarEnabled)).toBe("current");
+    expect(newPageWrite.betterT3Device.flags["chat.classicSidebar"]).toBe(false);
+
+    const mixedVersionWrite = mergeClientSettingsPatch(newPageWrite, {
+      legacySidebarEnabled: true,
+      betterT3Device: { flags: { "chat.classicSidebar": false } },
+    });
+    expect(resolveThreadSidebarLayout(mixedVersionWrite.legacySidebarEnabled)).toBe("current");
+    expect(mixedVersionWrite.betterT3Device.flags["chat.classicSidebar"]).toBe(false);
+
+    const oldPageWriteAgain = mergeClientSettingsPatch(mixedVersionWrite, {
+      legacySidebarEnabled: true,
+    });
+    expect(resolveThreadSidebarLayout(oldPageWriteAgain.legacySidebarEnabled)).toBe("classic");
+    expect(oldPageWriteAgain.betterT3Device.flags["chat.classicSidebar"]).toBe(true);
+  });
+});
 
 describe("resolveEnvironmentIdentificationMode", () => {
   it("keeps identification hidden until client settings hydrate", () => {

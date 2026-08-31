@@ -10,6 +10,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/
 import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 import {
   useAllEnvironmentShellsBootstrapped,
   useProjects,
@@ -83,18 +84,21 @@ function IndexDraftLanding() {
 }
 
 function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
+  const translator = useInterfaceTranslator();
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       <Empty className="flex-1">
         <EmptyHeader className="max-w-md">
-          <EmptyTitle className="text-foreground text-xl">Couldn’t start a new thread</EmptyTitle>
+          <EmptyTitle className="text-foreground text-xl">
+            {translator.message("ui.thread.startFailed")}
+          </EmptyTitle>
           <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
-            The project is still available. Try opening the draft again.
+            {translator.message("ui.thread.startFailedDescription")}
           </EmptyDescription>
           <div className="mt-5 flex justify-center">
             <Button size="sm" onClick={onRetry}>
               <RotateCcwIcon className="size-4" />
-              Try again
+              {translator.message("ui.thread.tryAgain")}
             </Button>
           </div>
         </EmptyHeader>
@@ -104,6 +108,7 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
 }
 
 function NoProjectsHero() {
+  const translator = useInterfaceTranslator();
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
 
   return (
@@ -113,15 +118,15 @@ function NoProjectsHero() {
           <div className="w-full max-w-lg px-8 py-12">
             <EmptyHeader className="max-w-none">
               <EmptyTitle className="text-foreground text-2xl sm:text-3xl">
-                What should we work on?
+                {translator.message("ui.project.emptyTitle")}
               </EmptyTitle>
               <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
-                Add a project to start your first thread.
+                {translator.message("ui.project.emptyDescription")}
               </EmptyDescription>
               <div className="mt-6 flex justify-center">
                 <Button size="sm" onClick={openAddProject}>
                   <PlusIcon className="size-4" />
-                  Add project
+                  {translator.message("ui.project.add")}
                 </Button>
               </div>
             </EmptyHeader>
@@ -138,6 +143,7 @@ export const Route = createFileRoute("/_chat/")({
 
 function HostedStaticOnboardingState() {
   const cloudEnabled = hasCloudPublicConfig();
+  const translator = useInterfaceTranslator();
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
@@ -157,17 +163,21 @@ function HostedStaticOnboardingState() {
                 <LinkIcon className="size-5" />
               </div>
               <EmptyTitle className="text-foreground text-xl">
-                Connect an environment to get started
+                {translator.message("cloud.onboarding.title")}
               </EmptyTitle>
               <EmptyDescription className="mt-2 text-sm leading-relaxed text-muted-foreground/78">
                 {cloudEnabled
-                  ? "Sign in to T3 Connect to connect a linked environment through its managed tunnel, or add a reachable backend manually."
-                  : "Add a reachable backend manually to start working from this browser."}
+                  ? translator.message("cloud.onboarding.cloudDescription")
+                  : translator.message("cloud.onboarding.manualDescription")}
               </EmptyDescription>
               <div className="mt-6 flex justify-center">
                 <Button render={<Link to="/settings/connections" />} size="sm">
                   <PlusIcon className="size-4" />
-                  {cloudEnabled ? "Open Connections" : "Add environment"}
+                  {translator.message(
+                    cloudEnabled
+                      ? "cloud.onboarding.openConnections"
+                      : "cloud.onboarding.addEnvironment",
+                  )}
                 </Button>
               </div>
             </EmptyHeader>

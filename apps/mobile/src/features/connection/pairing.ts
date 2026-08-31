@@ -1,7 +1,21 @@
-import { readHostedPairingRequest } from "@t3tools/shared/remote";
+import { readHostedPairingRequest, resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import * as Schema from "effect/Schema";
 
+import type { PairingOnboardingStage } from "../../connection/onboarding";
+
 const MOBILE_PAIRING_URL_PARAM = "pairingUrl";
+
+export interface PairingDestinationReview {
+  readonly destination: string;
+  readonly transport: "HTTP" | "HTTPS";
+  readonly encrypted: boolean;
+  readonly transportDetail: "Encrypted connection" | "Unencrypted HTTP connection";
+}
+
+export interface PairingRouteParams {
+  readonly pairingUrl?: string;
+  readonly autoConnect?: string;
+}
 
 function isIpLiteral(host: string): boolean {
   try {
@@ -68,6 +82,65 @@ export function parsePairingUrl(url: string): { host: string; code: string } {
   } catch {
     return { host: trimmed, code: "" };
   }
+}
+
+export function describePairingDestination(pairingUrl: string): PairingDestinationReview {
+  const { host, code } = parsePairingUrl(pairingUrl);
+  if (host.trim().length === 0) {
+    throw new Error("Enter a host address.");
+  }
+  if (code.trim().length === 0) {
+    throw new Error("Enter a pairing code.");
+  }
+
+  const target = resolveRemotePairingTarget({ pairingUrl: buildPairingUrl(host, code) });
+  const destination = target.httpBaseUrl.replace(/\/$/, "");
+  const encrypted = new URL(target.httpBaseUrl).protocol === "https:";
+  return {
+    destination,
+    transport: encrypted ? "HTTPS" : "HTTP",
+    encrypted,
+    transportDetail: encrypted ? "Encrypted connection" : "Unencrypted HTTP connection",
+  };
+}
+
+export function resolvePairingRouteIntent(
+  params: PairingRouteParams,
+  isDevelopment: boolean,
+): { readonly pairingUrl: string; readonly shouldAutoConnect: boolean } {
+  const pairingUrl = params.pairingUrl?.trim() ?? "";
+  const autoConnectRequested = params.autoConnect === "1" || params.autoConnect === "true";
+  return {
+    pairingUrl,
+    shouldAutoConnect: isDevelopment && pairingUrl.length > 0 && autoConnectRequested,
+  };
+}
+
+const PAIRING_STAGE_LABELS = {
+  validating: "Validating details...",
+  "checking-host": "Checking host...",
+  "validating-code": "Validating pairing code...",
+  saving: "Saving environment...",
+} satisfies Record<PairingOnboardingStage, string>;
+
+const PAIRING_FAILURE_GUIDANCE = {
+  validating: "Check the host address and pairing code.",
+  "checking-host":
+    "Could not reach this host. Check that the address is correct and reachable from this device.",
+  "validating-code":
+    "The host was found, but the pairing code was rejected or expired. Generate a new pairing code and try again.",
+  saving: "The host accepted the pairing code, but this device could not save the environment.",
+} satisfies Record<PairingOnboardingStage, string>;
+
+export function pairingStageLabel(stage: PairingOnboardingStage): string {
+  return PAIRING_STAGE_LABELS[stage];
+}
+
+export function pairingFailureMessage(stage: PairingOnboardingStage, detail: string): string {
+  const trimmedDetail = detail.trim();
+  return trimmedDetail.length === 0
+    ? PAIRING_FAILURE_GUIDANCE[stage]
+    : `${PAIRING_FAILURE_GUIDANCE[stage]} ${trimmedDetail}`;
 }
 
 export function extractPairingUrlFromQrPayload(payload: string): string {

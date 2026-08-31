@@ -22,6 +22,8 @@ import type {
   ProviderSessionStartInput,
   ProviderStopSessionInput,
   RuntimeSessionId,
+  ProviderUploadFeedbackInput,
+  ProviderUploadFeedbackResult,
   ThreadId,
   TurnId,
   ProviderTurnStartResult,
@@ -32,6 +34,7 @@ import type * as Stream from "effect/Stream";
 
 import type { ProviderServiceError } from "../Errors.ts";
 import type { ProviderAdapterCapabilities, ProviderForceStopResult } from "./ProviderAdapter.ts";
+import type { ProviderNativeThreadForkInput } from "./ProviderAdapter.ts";
 import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
 
 export interface ProviderAbortTarget {
@@ -75,6 +78,11 @@ export interface ProviderServiceShape {
     input: ProviderSessionStartInput,
   ) => Effect.Effect<ProviderSession, ProviderServiceError>;
 
+  /** Fork a provider-native conversation into a new durable T3 session. */
+  readonly forkSession: (
+    input: ProviderNativeThreadForkInput,
+  ) => Effect.Effect<ProviderSession, ProviderServiceError>;
+
   /**
    * Start a fresh provider runtime without creating a durable session binding.
    * Callers reserve the runtime id before startup so early events can be
@@ -92,6 +100,12 @@ export interface ProviderServiceShape {
   readonly sendTurn: (
     input: ProviderSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, ProviderServiceError>;
+
+  /** Request provider-native compaction for an active thread. */
+  readonly compactThread: (
+    threadId: ThreadId,
+    expectedRuntimeSessionId?: RuntimeSessionId,
+  ) => Effect.Effect<void, ProviderServiceError>;
 
   /**
    * Interrupt a running provider turn.
@@ -165,6 +179,13 @@ export interface ProviderServiceShape {
     readonly threadId: ThreadId;
     readonly numTurns: number;
   }) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
+   * Upload a thread and return the provider's shareable feedback identifier.
+   */
+  readonly uploadFeedback: (
+    input: ProviderUploadFeedbackInput,
+  ) => Effect.Effect<ProviderUploadFeedbackResult, ProviderServiceError>;
 
   /**
    * Canonical provider runtime event stream.

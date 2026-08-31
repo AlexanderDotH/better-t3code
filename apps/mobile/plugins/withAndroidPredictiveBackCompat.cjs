@@ -55,50 +55,54 @@ function insertAfter(contents, anchor, insertion, description) {
   return contents.slice(0, end) + insertion + contents.slice(end);
 }
 
+function patchMainActivity(contents, language = "kt") {
+  if (language !== "kt") {
+    throw new Error("withAndroidPredictiveBackCompat: MainActivity must be Kotlin.");
+  }
+  if (contents.includes("predictiveBackCompatCallback")) {
+    return contents;
+  }
+
+  let patched = insertAfter(
+    contents,
+    "import android.os.Bundle",
+    "\nimport androidx.activity.OnBackPressedCallback",
+    "the android.os.Bundle import",
+  );
+  patched = insertAfter(
+    patched,
+    "class MainActivity : ReactActivity() {",
+    CALLBACK_PROPERTY,
+    "the MainActivity class declaration",
+  );
+  patched = insertAfter(
+    patched,
+    "super.onCreate(null)",
+    CALLBACK_REGISTRATION,
+    "the super.onCreate call",
+  );
+
+  if (!patched.includes("override fun invokeDefaultOnBackPressed() {")) {
+    throw new Error(
+      "withAndroidPredictiveBackCompat: could not find invokeDefaultOnBackPressed in MainActivity — the Expo template changed; update the plugin anchors.",
+    );
+  }
+
+  return patched.replace("override fun invokeDefaultOnBackPressed() {", INVOKE_DEFAULT_WRAPPER);
+}
+
 module.exports = function withAndroidPredictiveBackCompat(config) {
   if (config.android?.predictiveBackGestureEnabled !== true) {
     return config;
   }
 
   return withMainActivity(config, (nextConfig) => {
-    let contents = nextConfig.modResults.contents;
-    if (nextConfig.modResults.language !== "kt") {
-      throw new Error("withAndroidPredictiveBackCompat: MainActivity must be Kotlin.");
-    }
-    if (contents.includes("predictiveBackCompatCallback")) {
-      return nextConfig;
-    }
-
-    contents = insertAfter(
-      contents,
-      "import android.os.Bundle",
-      "\nimport androidx.activity.OnBackPressedCallback",
-      "the android.os.Bundle import",
+    nextConfig.modResults.contents = patchMainActivity(
+      nextConfig.modResults.contents,
+      nextConfig.modResults.language,
     );
-    contents = insertAfter(
-      contents,
-      "class MainActivity : ReactActivity() {",
-      CALLBACK_PROPERTY,
-      "the MainActivity class declaration",
-    );
-    contents = insertAfter(
-      contents,
-      "super.onCreate(null)",
-      CALLBACK_REGISTRATION,
-      "the super.onCreate call",
-    );
-
-    if (!contents.includes("override fun invokeDefaultOnBackPressed() {")) {
-      throw new Error(
-        "withAndroidPredictiveBackCompat: could not find invokeDefaultOnBackPressed in MainActivity — the Expo template changed; update the plugin anchors.",
-      );
-    }
-    contents = contents.replace(
-      "override fun invokeDefaultOnBackPressed() {",
-      INVOKE_DEFAULT_WRAPPER,
-    );
-
-    nextConfig.modResults.contents = contents;
     return nextConfig;
   });
 };
+
+module.exports.patchMainActivity = patchMainActivity;

@@ -12,6 +12,7 @@ import {
   changeRequestAutoSettles,
   effectiveSettled,
   hasQueuedTurnStart,
+  resolveThreadSidebarLifecycle,
   threadLastActivityAt,
   type ChangeRequestStateLike,
 } from "./threadSettled.ts";
@@ -432,6 +433,65 @@ describe("effectiveSettled", () => {
 
     expect(effectiveSettled(boundary, { now: NOW, autoSettleAfterDays: 3 })).toBe(false);
     expect(effectiveSettled(stale, { now: NOW, autoSettleAfterDays: null })).toBe(false);
+  });
+});
+
+describe("resolveThreadSidebarLifecycle", () => {
+  it("uses one snoozed, pinned, settled, active precedence for every sidebar", () => {
+    const parked = {
+      ...makeShell({ settledOverride: "settled", activityAt: STALE }),
+      pinnedAt: "2026-04-09T12:00:00.000Z",
+      snoozedAt: "2026-04-09T13:00:00.000Z",
+      snoozedUntil: "2026-04-11T00:00:00.000Z",
+    };
+    const options = {
+      now: NOW,
+      autoSettleAfterDays: 3,
+      supportsSettlement: true,
+      supportsSnooze: true,
+    } as const;
+
+    expect(resolveThreadSidebarLifecycle(parked, options)).toBe("snoozed");
+    expect(resolveThreadSidebarLifecycle(parked, { ...options, supportsSnooze: false })).toBe(
+      "pinned",
+    );
+    expect(
+      resolveThreadSidebarLifecycle(
+        { ...parked, pinnedAt: null, snoozedAt: null, snoozedUntil: null },
+        options,
+      ),
+    ).toBe("settled");
+    expect(
+      resolveThreadSidebarLifecycle(
+        {
+          ...parked,
+          pinnedAt: null,
+          settledAt: null,
+          settledOverride: null,
+          snoozedAt: null,
+          snoozedUntil: null,
+        },
+        { ...options, autoSettleAfterDays: null },
+      ),
+    ).toBe("active");
+  });
+
+  it("keeps unsupported lifecycle fields visible as active data", () => {
+    const parked = {
+      ...makeShell({ settledOverride: "settled", activityAt: STALE }),
+      pinnedAt: null,
+      snoozedAt: "2026-04-09T13:00:00.000Z",
+      snoozedUntil: "2026-04-11T00:00:00.000Z",
+    };
+
+    expect(
+      resolveThreadSidebarLifecycle(parked, {
+        now: NOW,
+        autoSettleAfterDays: 3,
+        supportsSettlement: false,
+        supportsSnooze: false,
+      }),
+    ).toBe("active");
   });
 });
 

@@ -22,20 +22,29 @@ function snapshot(state: "normal" | "waiting" | "throttled" | "recovering" | "un
 describe("resource protection presentation", () => {
   it("shows a waiting message only on the affected thread", () => {
     expect(resolveResourceProtectionPresentation(snapshot("waiting"), affectedThread)?.label).toBe(
-      "Subagent wartet auf freien Speicher",
+      "Subagent waiting for memory",
     );
     expect(
       resolveResourceProtectionPresentation(snapshot("waiting"), ThreadId.make("thread-other")),
     ).toBeNull();
   });
 
-  it("uses the throttling message throughout recovery", () => {
+  it("uses the English throttling message by default throughout recovery", () => {
     expect(
       resolveResourceProtectionPresentation(snapshot("throttled"), affectedThread)?.label,
-    ).toBe("Provider vorübergehend gedrosselt");
+    ).toBe("Provider temporarily throttled");
     expect(
       resolveResourceProtectionPresentation(snapshot("recovering"), affectedThread)?.label,
-    ).toBe("Provider vorübergehend gedrosselt");
+    ).toBe("Provider temporarily throttled");
+  });
+
+  it("uses German copy when the client resolves German", () => {
+    expect(
+      resolveResourceProtectionPresentation(snapshot("throttled"), affectedThread, "de"),
+    ).toMatchObject({
+      label: "Provider vorübergehend gedrosselt",
+      description: "T3 setzt den Provider nach fünf gesunden Speichermessungen automatisch fort.",
+    });
   });
 
   it("stays silent in normal state", () => {

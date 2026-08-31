@@ -1,4 +1,5 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
+import { formatModelContextWindowTokens } from "@t3tools/shared/model";
 import { memo } from "react";
 import { StarIcon } from "lucide-react";
 import {
@@ -8,11 +9,71 @@ import {
 } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
+import { Badge } from "../ui/badge";
 import { Kbd } from "../ui/kbd";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { modelPickerModelKey } from "./modelPickerKeys";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+
+export function ModelCatalogMetadata(props: {
+  readonly model: ModelEsque;
+  readonly providerLabel: string;
+}) {
+  const translate = useInterfaceTranslator().message;
+  const contextTokens = props.model.capabilities?.contextWindow?.maxTokens;
+  const pricing = props.model.capabilities?.pricing;
+  const isFree = pricing?.promptUsdPerMillion === 0 && pricing.completionUsdPerMillion === 0;
+  const supportsVision = props.model.capabilities?.inputModalities?.includes("image") === true;
+  const supportsReasoning =
+    props.model.capabilities?.optionDescriptors?.some(
+      (descriptor) => descriptor.id === "reasoningEffort" && descriptor.type === "select",
+    ) === true;
+  const hasFeatureBadges = isFree || supportsVision || supportsReasoning;
+
+  return (
+    <div
+      className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden text-[10px] leading-none text-muted-foreground/70"
+      data-model-picker-catalog-metadata="true"
+    >
+      <span className="max-w-[38%] shrink-0 truncate font-medium text-muted-foreground">
+        {props.providerLabel}
+      </span>
+      {contextTokens ? (
+        <>
+          <span className="shrink-0 opacity-35" aria-hidden="true">
+            ·
+          </span>
+          <span className="shrink-0 tabular-nums">
+            {translate("chat.model.context", {
+              tokens: formatModelContextWindowTokens(contextTokens),
+            })}
+          </span>
+        </>
+      ) : null}
+      {hasFeatureBadges ? (
+        <span className="flex min-w-0 items-center gap-1 overflow-hidden">
+          {isFree ? (
+            <span className="shrink-0 rounded-[4px] bg-emerald-500/10 px-1 py-0.5 font-medium text-emerald-700 dark:text-emerald-300/90">
+              {translate("chat.model.free")}
+            </span>
+          ) : null}
+          {supportsVision ? (
+            <span className="shrink-0 rounded-[4px] bg-foreground/[0.045] px-1 py-0.5">
+              {translate("chat.model.vision")}
+            </span>
+          ) : null}
+          {supportsReasoning ? (
+            <span className="shrink-0 rounded-[4px] bg-foreground/[0.045] px-1 py-0.5">
+              {translate("chat.model.reasoning")}
+            </span>
+          ) : null}
+        </span>
+      ) : null}
+    </div>
+  );
+}
 
 export const ModelListRow = memo(function ModelListRow(props: {
   index: number;
@@ -34,12 +95,29 @@ export const ModelListRow = memo(function ModelListRow(props: {
   preferShortName?: boolean;
   useTriggerLabel?: boolean;
   showNewBadge?: boolean;
+  unavailable?: boolean;
   jumpLabel?: string | null;
   disabledReason?: string | null;
+  presentation?: "compact" | "catalog";
   onToggleFavorite: () => void;
 }) {
+  const translate = useInterfaceTranslator().message;
+  const isCatalogPresentation = props.presentation === "catalog";
+  const showProviderContext =
+    !isCatalogPresentation && (props.showProvider || Boolean(props.model.subProvider));
+  const modelDisplayName = props.useTriggerLabel
+    ? getTriggerDisplayModelLabel(props.model)
+    : getDisplayModelName(
+        props.model,
+        props.preferShortName ? { preferShortName: true } : undefined,
+      );
+  const favoriteActionLabel = props.isFavorite
+    ? translate("chat.model.removeFavorite", { model: modelDisplayName })
+    : translate("chat.model.addFavorite", { model: modelDisplayName });
   const providerLabel = props.model.subProvider
-    ? `${props.providerDisplayName} · ${props.model.subProvider}`
+    ? props.showProvider && !isCatalogPresentation
+      ? `${props.providerDisplayName} · ${props.model.subProvider}`
+      : props.model.subProvider
     : props.providerDisplayName;
 
   const row = (
@@ -51,7 +129,9 @@ export const ModelListRow = memo(function ModelListRow(props: {
       contentClassName="flex w-full items-center gap-3"
       className={cn(
         "group relative w-full !min-w-0 max-w-full cursor-pointer rounded-md px-2 py-1.5 transition-[background-color,box-shadow,color]",
-        "hover:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))] data-highlighted:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))] data-selected:bg-foreground/[0.08] data-selected:text-foreground data-selected:ring-0 [&[data-highlighted][data-selected]]:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))]",
+        "hover:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))] data-highlighted:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))] data-selected:bg-foreground/[0.08] data-selected:text-foreground data-selected:ring-0 [&[data-highlighted][data-selected]]:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))]",
+        isCatalogPresentation &&
+          "rounded-lg border border-transparent px-2.5 py-2 hover:border-border/50 data-highlighted:border-border/60 data-selected:border-border/50 data-selected:bg-background/70",
         props.disabledReason &&
           "data-disabled:pointer-events-auto data-disabled:cursor-not-allowed data-disabled:hover:bg-transparent",
       )}
@@ -60,23 +140,18 @@ export const ModelListRow = memo(function ModelListRow(props: {
         <div className="flex min-w-0 items-center gap-2">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <span className="min-w-0 truncate text-xs font-medium leading-snug">
-              {props.useTriggerLabel
-                ? getTriggerDisplayModelLabel(props.model)
-                : getDisplayModelName(
-                    props.model,
-                    props.preferShortName ? { preferShortName: true } : undefined,
-                  )}
+              {modelDisplayName}
             </span>
             {props.showNewBadge ? (
               <span
                 className="shrink-0 rounded border border-update/35 bg-update/15 px-0.5 py-px text-[10px] font-bold uppercase leading-none tracking-wide text-update-foreground"
-                aria-label="New model"
+                aria-label={translate("chat.model.new")}
               >
-                New
+                {translate("chat.model.newBadge")}
               </span>
             ) : null}
           </div>
-          {props.showProvider ? (
+          {showProviderContext ? (
             <span
               className="flex min-w-0 max-w-[46%] shrink items-center gap-1.5 text-xs font-normal leading-snug text-muted-foreground/70"
               data-model-picker-provider-label="inline"
@@ -95,7 +170,15 @@ export const ModelListRow = memo(function ModelListRow(props: {
               <span className="truncate">{providerLabel}</span>
             </span>
           ) : null}
+          {props.unavailable ? (
+            <Badge variant="outline" size="sm">
+              {translate("chat.model.unavailable")}
+            </Badge>
+          ) : null}
         </div>
+        {isCatalogPresentation ? (
+          <ModelCatalogMetadata model={props.model} providerLabel={providerLabel} />
+        ) : null}
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">
@@ -119,8 +202,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
                 onKeyDown={(event) => {
                   event.stopPropagation();
                 }}
-                disabled={Boolean(props.disabledReason)}
-                aria-label={props.isFavorite ? "Remove from favorites" : "Add to favorites"}
+                aria-label={favoriteActionLabel}
               >
                 <StarIcon
                   className={cn(
@@ -132,7 +214,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
             }
           />
           <TooltipPopup side="top" align="center">
-            {props.isFavorite ? "Remove from favorites" : "Add to favorites"}
+            {favoriteActionLabel}
           </TooltipPopup>
         </Tooltip>
       </div>

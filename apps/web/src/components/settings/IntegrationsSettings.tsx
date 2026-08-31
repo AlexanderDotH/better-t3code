@@ -23,9 +23,11 @@ import {
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { InfoIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { isElectron } from "../../env";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 import { Button } from "../ui/button";
 import { NumberField, NumberFieldGroup, NumberFieldInput } from "../ui/number-field";
@@ -66,11 +68,13 @@ const RESPONSIVE_SEED_SIZE = { width: 1280, height: 800 } as const;
 
 const NO_GROUPING: Intl.NumberFormatOptions = { useGrouping: false };
 
-const APPEARANCE_LABELS: Readonly<Record<PreviewAppearancePreference, string>> = {
-  system: "System",
-  light: "Light",
-  dark: "Dark",
-};
+const appearanceLabels = (
+  translator: InterfaceTranslator,
+): Readonly<Record<PreviewAppearancePreference, string>> => ({
+  system: translator.message("settings.integrations.system"),
+  light: translator.message("settings.integrations.light"),
+  dark: translator.message("settings.integrations.dark"),
+});
 
 const zoomLabel = (zoomFactor: number) => `${Math.round(zoomFactor * 100)}%`;
 
@@ -90,11 +94,17 @@ const viewportSelectValue = (viewport: PreviewViewportSetting): string => {
  * back to printing the raw stored value ("fill") because the options are built
  * inline instead of from an `items` map.
  */
-const viewportSelectLabel = (viewport: PreviewViewportSetting): string => {
+const viewportSelectLabel = (
+  viewport: PreviewViewportSetting,
+  translator: InterfaceTranslator,
+): string => {
   const value = viewportSelectValue(viewport);
-  if (value === FILL_VALUE) return "Fill panel";
-  if (value === RESPONSIVE_VALUE) return "Responsive";
-  return PREVIEW_VIEWPORT_PRESETS.find((preset) => preset.id === value)?.label ?? "Responsive";
+  if (value === FILL_VALUE) return translator.message("settings.integrations.fillPanel");
+  if (value === RESPONSIVE_VALUE) return translator.message("settings.integrations.responsive");
+  return (
+    PREVIEW_VIEWPORT_PRESETS.find((preset) => preset.id === value)?.label ??
+    translator.message("settings.integrations.responsive")
+  );
 };
 
 const isValidDimension = (value: number) =>
@@ -117,6 +127,7 @@ const rotateViewport = (
 });
 
 function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
+  const translator = useInterfaceTranslator();
   const viewport = useClientSettings((settings) => settings.browserDefaultViewport);
   const updateSettings = useUpdatePrimarySettings();
 
@@ -168,11 +179,11 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
   return (
     <SettingsRow
       {...searchableSetting("browser-default-viewport")}
-      description="The viewport a browser tab opens at, for both you and agents. Fill sizes the page to the panel; any other choice opens the device toolbar at that size."
+      description={translator.message("settings.integrations.viewportDescription")}
       resetAction={
         !disabled && viewport._tag !== DEFAULT_BROWSER_VIEWPORT._tag ? (
           <SettingResetButton
-            label="default browser viewport"
+            label={translator.message("settings.integrations.defaultViewport")}
             onClick={() => updateSettings({ browserDefaultViewport: DEFAULT_BROWSER_VIEWPORT })}
           />
         ) : null
@@ -187,15 +198,21 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
             <SelectTrigger
               size="sm"
               className="w-full min-w-0 sm:w-44"
-              aria-label="Default browser viewport"
+              aria-label={translator.message("settings.integrations.defaultViewport")}
             >
-              <SelectValue>{viewportSelectLabel(viewport)}</SelectValue>
+              <SelectValue>{viewportSelectLabel(viewport, translator)}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false} className="min-w-64">
-              <SelectItem value={FILL_VALUE}>Fill panel</SelectItem>
-              <SelectItem value={RESPONSIVE_VALUE}>Responsive</SelectItem>
+              <SelectItem value={FILL_VALUE}>
+                {translator.message("settings.integrations.fillPanel")}
+              </SelectItem>
+              <SelectItem value={RESPONSIVE_VALUE}>
+                {translator.message("settings.integrations.responsive")}
+              </SelectItem>
               <SelectGroup>
-                <SelectGroupLabel>Standard</SelectGroupLabel>
+                <SelectGroupLabel>
+                  {translator.message("settings.integrations.standard")}
+                </SelectGroupLabel>
                 {PREVIEW_VIEWPORT_PRESETS.map((preset) => (
                   <SelectItem key={preset.id} value={preset.id}>
                     <span className="flex w-full items-center justify-between gap-5">
@@ -224,7 +241,9 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
                 onValueCommitted={(value) => commitDimension("width", value)}
               >
                 <NumberFieldGroup>
-                  <NumberFieldInput aria-label="Default viewport width" />
+                  <NumberFieldInput
+                    aria-label={translator.message("settings.integrations.viewportWidth")}
+                  />
                 </NumberFieldGroup>
               </NumberField>
               <span className="text-xs text-muted-foreground">×</span>
@@ -239,7 +258,9 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
                 onValueCommitted={(value) => commitDimension("height", value)}
               >
                 <NumberFieldGroup>
-                  <NumberFieldInput aria-label="Default viewport height" />
+                  <NumberFieldInput
+                    aria-label={translator.message("settings.integrations.viewportHeight")}
+                  />
                 </NumberFieldGroup>
               </NumberField>
               <Tooltip>
@@ -249,9 +270,11 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
                       size="icon-sm"
                       variant="ghost-muted"
                       disabled={disabled}
-                      aria-label={`Rotate to ${
-                        presentedSize.height >= presentedSize.width ? "landscape" : "portrait"
-                      }`}
+                      aria-label={translator.message(
+                        presentedSize.height >= presentedSize.width
+                          ? "settings.integrations.rotateLandscape"
+                          : "settings.integrations.rotatePortrait",
+                      )}
                       onClick={() =>
                         updateSettings({ browserDefaultViewport: rotateViewport(sized) })
                       }
@@ -260,7 +283,9 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
                     </Button>
                   }
                 />
-                <TooltipPopup side="top">Rotate</TooltipPopup>
+                <TooltipPopup side="top">
+                  {translator.message("settings.integrations.rotate")}
+                </TooltipPopup>
               </Tooltip>
             </div>
           ) : null}
@@ -271,17 +296,18 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
 }
 
 function BrowserZoomSetting({ disabled }: { readonly disabled: boolean }) {
+  const translator = useInterfaceTranslator();
   const zoomFactor = useClientSettings((settings) => settings.browserDefaultZoomFactor);
   const updateSettings = useUpdatePrimarySettings();
 
   return (
     <SettingsRow
       {...searchableSetting("browser-default-zoom")}
-      description="Page zoom applied to new browser tabs."
+      description={translator.message("settings.integrations.zoomDescription")}
       resetAction={
         !disabled && zoomFactor !== DEFAULT_PREVIEW_ZOOM_FACTOR ? (
           <SettingResetButton
-            label="default browser zoom"
+            label={translator.message("settings.integrations.defaultZoom")}
             onClick={() =>
               updateSettings({ browserDefaultZoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR })
             }
@@ -297,7 +323,10 @@ function BrowserZoomSetting({ disabled }: { readonly disabled: boolean }) {
             if (next !== undefined) updateSettings({ browserDefaultZoomFactor: next });
           }}
         >
-          <SelectTrigger className="w-full sm:w-40" aria-label="Default browser zoom">
+          <SelectTrigger
+            className="w-full sm:w-40"
+            aria-label={translator.message("settings.integrations.defaultZoom")}
+          >
             <SelectValue>{zoomLabel(zoomFactor)}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -314,17 +343,19 @@ function BrowserZoomSetting({ disabled }: { readonly disabled: boolean }) {
 }
 
 function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) {
+  const translator = useInterfaceTranslator();
+  const labels = appearanceLabels(translator);
   const appearance = useClientSettings((settings) => settings.browserDefaultAppearance);
   const updateSettings = useUpdatePrimarySettings();
 
   return (
     <SettingsRow
       {...searchableSetting("browser-default-appearance")}
-      description="The color scheme pages are told to prefer. System follows your OS setting."
+      description={translator.message("settings.integrations.appearanceDescription")}
       resetAction={
         !disabled && appearance !== DEFAULT_PREVIEW_APPEARANCE ? (
           <SettingResetButton
-            label="default browser appearance"
+            label={translator.message("settings.integrations.defaultAppearance")}
             onClick={() => updateSettings({ browserDefaultAppearance: DEFAULT_PREVIEW_APPEARANCE })}
           />
         ) : null
@@ -339,11 +370,14 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
             }
           }}
         >
-          <SelectTrigger className="w-full sm:w-40" aria-label="Default browser appearance">
-            <SelectValue>{APPEARANCE_LABELS[appearance]}</SelectValue>
+          <SelectTrigger
+            className="w-full sm:w-40"
+            aria-label={translator.message("settings.integrations.defaultAppearance")}
+          >
+            <SelectValue>{labels[appearance]}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
-            {Object.entries(APPEARANCE_LABELS).map(([value, label]) => (
+            {Object.entries(labels).map(([value, label]) => (
               <SelectItem hideIndicator key={value} value={value}>
                 {label}
               </SelectItem>
@@ -356,22 +390,23 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
 }
 
 function AgentBrowserAccessSetting() {
+  const translator = useInterfaceTranslator();
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
 
   return (
     <SettingsRow
       {...searchableSetting("agent-browser-access")}
-      description="Let agents open and drive the preview browser. When off, the browser tools and the instructions describing them are withheld from agent sessions. Your own browser panel is unaffected."
+      description={translator.message("settings.integrations.agentAccessDescription")}
       status={
         settings.enableAgentBrowserAccess
           ? undefined
-          : "Applies to sessions started from now on; a running agent keeps the tools it was given."
+          : translator.message("settings.integrations.agentAccessStatus")
       }
       resetAction={
         settings.enableAgentBrowserAccess !== DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess ? (
           <SettingResetButton
-            label="agent browser access"
+            label={translator.message("settings.integrations.agentAccess")}
             onClick={() =>
               updateSettings({
                 enableAgentBrowserAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess,
@@ -386,7 +421,7 @@ function AgentBrowserAccessSetting() {
           onCheckedChange={(checked) =>
             updateSettings({ enableAgentBrowserAccess: Boolean(checked) })
           }
-          aria-label="Allow agent browser access"
+          aria-label={translator.message("settings.integrations.allowAgentAccess")}
         />
       }
     />
@@ -394,17 +429,18 @@ function AgentBrowserAccessSetting() {
 }
 
 function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled: boolean }) {
+  const translator = useInterfaceTranslator();
   const autoShow = useClientSettings((settings) => settings.browserAutoShowFloatingPreview);
   const updateSettings = useUpdatePrimarySettings();
 
   return (
     <SettingsRow
       {...searchableSetting("browser-auto-show-floating-preview")}
-      description="Pop the floating preview into view when an agent opens a browser. An agent that explicitly asks to show or hide its preview still gets what it asked for."
+      description={translator.message("settings.integrations.autoShowDescription")}
       resetAction={
         !disabled && autoShow !== DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW ? (
           <SettingResetButton
-            label="auto-show floating preview"
+            label={translator.message("settings.integrations.autoShow")}
             onClick={() =>
               updateSettings({
                 browserAutoShowFloatingPreview: DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW,
@@ -420,7 +456,7 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
           onCheckedChange={(checked) =>
             updateSettings({ browserAutoShowFloatingPreview: Boolean(checked) })
           }
-          aria-label="Auto-show floating preview"
+          aria-label={translator.message("settings.integrations.autoShow")}
         />
       }
     />
@@ -442,11 +478,12 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
  * hadn't.
  */
 function DesktopOnlyBrowserDefaults({ children }: { readonly children: ReactNode }) {
+  const translator = useInterfaceTranslator();
   return (
     <div className="rounded-xl border border-border/60 bg-muted/20 py-1.5">
       <div className="flex items-start gap-2 px-3 py-2 text-[12px] leading-relaxed text-muted-foreground sm:px-4">
         <InfoIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
-        <p>Only available in the desktop app.</p>
+        <p>{translator.message("settings.integrations.desktopOnly")}</p>
       </div>
       <div className="[&_h3]:opacity-64 [&_p]:opacity-64">{children}</div>
     </div>
@@ -454,6 +491,7 @@ function DesktopOnlyBrowserDefaults({ children }: { readonly children: ReactNode
 }
 
 export function IntegrationsSettingsPanel() {
+  const translator = useInterfaceTranslator();
   // Client-local preview defaults are editable only where the preview exists.
   const previewDefaultsDisabled = !isElectron;
   const previewDefaults = (
@@ -467,7 +505,7 @@ export function IntegrationsSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection id="browser" title="Browser">
+      <SettingsSection id="browser" title={translator.message("settings.integrations.browser")}>
         {/* Server-authoritative, so it stays editable on every client and sits
             outside the block covering the desktop-only defaults. */}
         <AgentBrowserAccessSetting />

@@ -1,4 +1,29 @@
+import {
+  matchesOpenRouterModelFilters,
+  type OpenRouterModelFilter,
+} from "@t3tools/shared/modelCatalogFilters";
+import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
+
 import type { ModelOption } from "../../lib/modelOptions";
+
+export const MOBILE_MODEL_FILTER_MIN_TOUCH_TARGET = 44;
+
+export function modelFavoriteActionMessageKey(favorite: boolean): InterfaceMessageKey {
+  return favorite ? "mobile.thread.settings.removeFavorite" : "mobile.thread.settings.addFavorite";
+}
+
+export function performModelFavoriteToggle(
+  event: { readonly stopPropagation: () => void },
+  toggleFavorite: () => void,
+): void {
+  event.stopPropagation();
+  toggleFavorite();
+}
+
+/** Large remote catalogs get a focused picker page instead of expanding inline. */
+export function providerCatalogUsesDrillIn(driver: string | undefined): boolean {
+  return driver === "openrouter";
+}
 
 /** Match the terms a user can actually see or recognize in the model picker. */
 export function modelMatchesCatalogQuery(input: {
@@ -17,6 +42,27 @@ export function modelMatchesCatalogQuery(input: {
     input.model.selection.model,
     input.providerLabel,
   ].some((value) => value.toLocaleLowerCase().includes(query));
+}
+
+/** Compose OpenRouter's provider-owned capability filters with picker-local state. */
+export function filterOpenRouterProviderCatalog(input: {
+  readonly models: ReadonlyArray<ModelOption>;
+  readonly providerLabel: string;
+  readonly query: string;
+  readonly filters: ReadonlySet<OpenRouterModelFilter>;
+  readonly favoritesOnly: boolean;
+  readonly isFavorite: (model: ModelOption) => boolean;
+}): ReadonlyArray<ModelOption> {
+  return input.models.filter(
+    (model) =>
+      (!input.favoritesOnly || input.isFavorite(model)) &&
+      matchesOpenRouterModelFilters(model, input.filters) &&
+      modelMatchesCatalogQuery({
+        model,
+        providerLabel: input.providerLabel,
+        query: input.query,
+      }),
+  );
 }
 
 /** Preserve staged provider options when the highlighted model is tapped again. */

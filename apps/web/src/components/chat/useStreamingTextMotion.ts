@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   createStreamingTextMotionFrame,
   detectStreamingTextAppend,
+  MAX_STREAMING_TEXT_MOTION_GRAPHEMES,
   type StreamingTextMotionFrame,
 } from "./streamingTextMotion";
 
@@ -26,15 +27,59 @@ export interface StreamingTextMotionCommitState {
   readonly generation: number;
   readonly smoothedRate: number | undefined;
   readonly committedAtMs: number;
-  readonly frame: StreamingTextMotionFrame | null;
+  readonly frames: readonly StreamingTextMotionFrame[];
 }
 
-interface FrameDeadline {
-  readonly frame: StreamingTextMotionFrame;
-  readonly atMs: number;
+export interface StreamingTextMotionSnapshot {
+  readonly frames: readonly StreamingTextMotionFrame[];
+  readonly animationTimeMs: number;
+}
+
+interface StreamingTextMotionFramePublisherOptions {
+  readonly cancelFrame: (frameId: number) => void;
+  readonly publish: (snapshot: StreamingTextMotionSnapshot) => void;
+  readonly requestFrame: (callback: FrameRequestCallback) => number;
+}
+
+export interface StreamingTextMotionFramePublisher {
+  readonly enqueue: (snapshot: StreamingTextMotionSnapshot) => void;
+  readonly flush: (snapshot: StreamingTextMotionSnapshot) => void;
+  readonly dispose: () => void;
 }
 
 const useCommitEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+const EMPTY_STREAMING_TEXT_MOTION_FRAMES: readonly StreamingTextMotionFrame[] = [];
+
+export function createStreamingTextMotionFramePublisher(
+  options: StreamingTextMotionFramePublisherOptions,
+): StreamingTextMotionFramePublisher {
+  let frameId: number | null = null;
+  let pendingSnapshot: StreamingTextMotionSnapshot | null = null;
+
+  const cancelPendingFrame = () => {
+    if (frameId !== null) options.cancelFrame(frameId);
+    frameId = null;
+    pendingSnapshot = null;
+  };
+
+  return {
+    enqueue: (snapshot) => {
+      pendingSnapshot = snapshot;
+      if (frameId !== null) return;
+      frameId = options.requestFrame(() => {
+        frameId = null;
+        const pending = pendingSnapshot;
+        pendingSnapshot = null;
+        if (pending !== null) options.publish(pending);
+      });
+    },
+    flush: (snapshot) => {
+      cancelPendingFrame();
+      options.publish(snapshot);
+    },
+    dispose: cancelPendingFrame,
+  };
+}
 
 export function advanceStreamingTextMotionCommit(
   previous: StreamingTextMotionCommitState | null,
@@ -64,7 +109,12 @@ export function advanceStreamingTextMotionCommit(
     elapsedMs: input.nowMs - previous.committedAtMs,
     generation,
     previousRate: previous.smoothedRate,
+    startedAtMs: input.nowMs,
   });
+  const activeFrames = clearCompletedStreamingTextMotionSequence(
+    previous,
+    input.nowMs,
+  ).frames.filter((frame) => frame.sourceEnd <= append.sourceStart);
   return {
     streamId,
     text: input.text,
@@ -73,18 +123,26 @@ export function advanceStreamingTextMotionCommit(
     generation,
     smoothedRate: result.smoothedRate,
     committedAtMs: input.nowMs,
-    frame: result.frame,
+    frames:
+      result.frame === null
+        ? activeFrames
+        : appendStreamingTextMotionFrame(activeFrames, result.frame),
   };
 }
 
-export function clearStreamingTextMotionFrame(
+export function clearCompletedStreamingTextMotionSequence(
   state: StreamingTextMotionCommitState,
-  generation: number,
+  nowMs: number,
 ): StreamingTextMotionCommitState {
-  if (state.frame?.generation !== generation) {
+  // react-markdown keys equal custom tags by sibling order. Removing an older
+  // frame while a newer one is active shifts those keys and remounts its fade.
+  if (
+    state.frames.length === 0 ||
+    state.frames.some((frame) => nowMs < frame.startedAtMs + frame.revealDeadlineMs)
+  ) {
     return state;
   }
-  return { ...state, frame: null };
+  return { ...state, frames: EMPTY_STREAMING_TEXT_MOTION_FRAMES };
 }
 
 export function useStreamingTextMotion({
@@ -92,11 +150,24 @@ export function useStreamingTextMotion({
   streamId,
   isStreaming,
   animateInitialStreamChunk,
-}: UseStreamingTextMotionOptions): StreamingTextMotionFrame | null {
-  const [frame, setFrame] = useState<StreamingTextMotionFrame | null>(null);
+}: UseStreamingTextMotionOptions): StreamingTextMotionSnapshot {
+  const [snapshot, setSnapshot] = useState<StreamingTextMotionSnapshot>({
+    frames: EMPTY_STREAMING_TEXT_MOTION_FRAMES,
+    animationTimeMs: 0,
+  });
   const committedRef = useRef<StreamingTextMotionCommitState | null>(null);
   const cleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const deadlineRef = useRef<FrameDeadline | null>(null);
+  const publisherRef = useRef<StreamingTextMotionFramePublisher | null>(null);
+
+  if (publisherRef.current === null && typeof window !== "undefined") {
+    publisherRef.current = createStreamingTextMotionFramePublisher({
+      cancelFrame: window.cancelAnimationFrame.bind(window),
+      publish: (nextSnapshot) => {
+        setSnapshot((current) => (current.frames === nextSnapshot.frames ? current : nextSnapshot));
+      },
+      requestFrame: window.requestAnimationFrame.bind(window),
+    });
+  }
 
   const clearCleanupTimer = () => {
     if (cleanupTimerRef.current === null) return;
@@ -104,24 +175,36 @@ export function useStreamingTextMotion({
     cleanupTimerRef.current = null;
   };
 
-  const scheduleCleanup = (nextFrame: StreamingTextMotionFrame, nowMs: number) => {
+  const publishFrames = (state: StreamingTextMotionCommitState, animationTimeMs: number) => {
+    const nextSnapshot = { frames: state.frames, animationTimeMs };
+    const publisher = publisherRef.current;
+    if (publisher !== null && state.isStreaming && state.frames.length > 0) {
+      publisher.enqueue(nextSnapshot);
+      return;
+    }
+    if (publisher !== null) {
+      publisher.flush(nextSnapshot);
+      return;
+    }
+    setSnapshot((current) => (current.frames === state.frames ? current : nextSnapshot));
+  };
+
+  const scheduleCleanup = (state: StreamingTextMotionCommitState) => {
     clearCleanupTimer();
-    const existingDeadline = deadlineRef.current;
-    const atMs =
-      existingDeadline?.frame === nextFrame
-        ? existingDeadline.atMs
-        : nowMs + nextFrame.revealDeadlineMs;
-    deadlineRef.current = { frame: nextFrame, atMs };
+    const atMs = streamingTextMotionSequenceDeadline(state.frames);
+    if (atMs === null) return;
     cleanupTimerRef.current = setTimeout(
       () => {
         const committed = committedRef.current;
-        if (deadlineRef.current?.frame !== nextFrame || committed?.frame !== nextFrame) return;
-        committedRef.current = clearStreamingTextMotionFrame(committed, nextFrame.generation);
-        deadlineRef.current = null;
+        if (committed === null) return;
+        const nowMs = readNowMs();
+        const next = clearCompletedStreamingTextMotionSequence(committed, nowMs);
+        committedRef.current = next;
         cleanupTimerRef.current = null;
-        setFrame((current) => (current === nextFrame ? null : current));
+        publishFrames(next, nowMs);
+        scheduleCleanup(next);
       },
-      Math.max(0, atMs - readNowMs()),
+      Math.max(1, atMs - readNowMs()),
     );
   };
 
@@ -136,14 +219,8 @@ export function useStreamingTextMotion({
       nowMs,
     });
     committedRef.current = next;
-    setFrame((current) => (current === next.frame ? current : next.frame));
-
-    if (next.frame === null) {
-      clearCleanupTimer();
-      deadlineRef.current = null;
-    } else {
-      scheduleCleanup(next.frame, nowMs);
-    }
+    publishFrames(next, nowMs);
+    scheduleCleanup(next);
 
     return clearCleanupTimer;
   }, [animateInitialStreamChunk, isStreaming, streamId, text]);
@@ -165,23 +242,29 @@ export function useStreamingTextMotion({
       });
       committedRef.current = next;
       clearCleanupTimer();
-      deadlineRef.current = null;
-      setFrame(null);
+      publishFrames(next, readNowMs());
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, []);
 
-  return frame;
+  useEffect(
+    () => () => {
+      clearCleanupTimer();
+      publisherRef.current?.dispose();
+    },
+    [],
+  );
+
+  return snapshot;
 }
 
 function startStreamingTextMotionCommit(
   input: StreamingTextMotionCommitInput,
   streamId: string | null,
 ): StreamingTextMotionCommitState {
-  const canAnimate =
-    streamId !== null && input.isStreaming && input.isVisible && input.animateInitialStreamChunk;
+  const canAnimate = streamId !== null && input.isVisible && input.animateInitialStreamChunk;
   const append = canAnimate ? detectStreamingTextAppend("", input.text) : null;
   const generation = append === null ? 0 : 1;
   const result =
@@ -192,6 +275,7 @@ function startStreamingTextMotionCommit(
           elapsedMs: null,
           generation,
           previousRate: undefined,
+          startedAtMs: input.nowMs,
         });
 
   return {
@@ -202,7 +286,7 @@ function startStreamingTextMotionCommit(
     generation,
     smoothedRate: result?.smoothedRate,
     committedAtMs: input.nowMs,
-    frame: result?.frame ?? null,
+    frames: result?.frame ? [result.frame] : EMPTY_STREAMING_TEXT_MOTION_FRAMES,
   };
 }
 
@@ -219,8 +303,33 @@ function resetStreamingTextMotionCommit(
     generation: previous.generation,
     smoothedRate: undefined,
     committedAtMs: input.nowMs,
-    frame: null,
+    frames: EMPTY_STREAMING_TEXT_MOTION_FRAMES,
   };
+}
+
+function appendStreamingTextMotionFrame(
+  frames: readonly StreamingTextMotionFrame[],
+  nextFrame: StreamingTextMotionFrame,
+): readonly StreamingTextMotionFrame[] {
+  const activeGraphemeCount = frames.reduce(
+    (total, frame) => total + frame.graphemeCount,
+    nextFrame.graphemeCount,
+  );
+  if (activeGraphemeCount > MAX_STREAMING_TEXT_MOTION_GRAPHEMES) {
+    return [nextFrame];
+  }
+  return [...frames, nextFrame];
+}
+
+function streamingTextMotionSequenceDeadline(
+  frames: readonly StreamingTextMotionFrame[],
+): number | null {
+  let deadline: number | null = null;
+  for (const frame of frames) {
+    const frameDeadline = frame.startedAtMs + frame.revealDeadlineMs;
+    deadline = deadline === null ? frameDeadline : Math.max(deadline, frameDeadline);
+  }
+  return deadline;
 }
 
 function isRepeatedCommit(

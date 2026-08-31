@@ -24,6 +24,7 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
     },
     reportedCostUsd: null,
     dedupeKey: "msg_1:",
+    callKind: "root",
     ...overrides,
   };
 }
@@ -40,14 +41,46 @@ describe("scan cache round trip", () => {
   it("restores records unchanged", () => {
     const original = cacheWith([
       ["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5" })]],
-      ["/b.jsonl", 200, [record({ sessionId: "session-b", reportedCostUsd: 1.5 })]],
+      [
+        "/b.jsonl",
+        200,
+        [
+          record({
+            sessionId: "session-b",
+            reportedCostUsd: 1.5,
+            diagnostics: {
+              nativeForks: 1,
+              compactHandoffs: 1,
+              totalHandoffChars: 256,
+              compactionEvents: 2,
+              maxContextTokens: 200_000,
+              instructionChars: 1_000,
+              memoryInjectionChars: 2_000,
+              toolSchemaChars: 3_000,
+              subagentResultChars: 4_000,
+              toolDigestChars: 5_000,
+              autoRoutingChars: 6_000,
+            },
+            callKind: "auto-reasoning",
+          }),
+        ],
+      ],
     ]);
+    original.set("/grok.jsonl", {
+      size: 40,
+      mtimeMs: 300,
+      provider: "grok",
+      records: [
+        record({ provider: "grok", model: "grok-4.5-build", dedupeKey: "s:p:grok-4.5-build" }),
+      ],
+    });
 
     const restored = decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(original))));
 
-    expect(restored.size).toBe(2);
+    expect(restored.size).toBe(3);
     expect(restored.get("/a.jsonl")).toEqual(original.get("/a.jsonl"));
     expect(restored.get("/b.jsonl")).toEqual(original.get("/b.jsonl"));
+    expect(restored.get("/grok.jsonl")).toEqual(original.get("/grok.jsonl"));
   });
 
   it("interns repeated model and session strings", () => {
@@ -57,6 +90,19 @@ describe("scan cache round trip", () => {
 
     expect(encoded.models).toEqual(["claude-fable-5"]);
     expect(encoded.sessions).toEqual(["session-a"]);
+  });
+
+  it("maps an in-memory legacy record without call attribution to unknown", () => {
+    const { callKind: _callKind, ...legacy } = record();
+    const restored = decodeScanCache(
+      JSON.parse(
+        JSON.stringify(
+          encodeScanCache(cacheWith([["/legacy.jsonl", 100, [legacy as UsageRecord]]])),
+        ),
+      ),
+    );
+
+    expect(restored.get("/legacy.jsonl")?.records[0]?.callKind).toBe("unknown");
   });
 
   it("treats a corrupt or foreign document as an empty cache", () => {

@@ -762,6 +762,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.fork":
+      return yield* new OrchestrationCommandInvariantError({
+        commandType: command.type,
+        detail: "Thread forks must be planned from the persisted source event stream.",
+      });
+
     case "thread.delete": {
       const thread = yield* requireThread({
         readModel,
@@ -1266,6 +1272,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(branch !== undefined ? { branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(command.linkedPullRequest !== undefined
+            ? { linkedPullRequest: command.linkedPullRequest }
+            : {}),
           updatedAt: occurredAt,
         },
       };
@@ -1348,6 +1357,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (targetThread.harnessSync?.activity === "active") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' is active in another harness and cannot start a turn.`,
+        });
+      }
       const sourceProposedPlan = command.sourceProposedPlan;
       const sourceThread = sourceProposedPlan
         ? yield* requireThread({
@@ -1364,6 +1379,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `Proposed plan '${sourceProposedPlan.planId}' does not exist on thread '${sourceProposedPlan.threadId}'.`,
+        });
+      }
+      if (sourcePlan?.historyOrigin !== undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Proposed plan '${sourcePlan.id}' belongs to frozen fork history and cannot be implemented.`,
         });
       }
       if (sourceThread && sourceThread.projectId !== targetThread.projectId) {
@@ -1426,6 +1447,100 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         commandId: command.commandId,
       });
       return [...lifecycleResetEvents, userMessageEvent, turnStartRequestedEvent];
+    }
+
+    case "thread.turn.retry": {
+      const targetThread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (targetThread.harnessSync?.activity === "active") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' is active in another harness and cannot retry a turn.`,
+        });
+      }
+
+      const latestTurn = targetThread.latestTurn;
+      const latestUserMessage = targetThread.messages.findLast(
+        (message) => message.role === "user" && message.historyOrigin === undefined,
+      );
+      const latestLocalMessage = targetThread.messages.findLast(
+        (message) => message.historyOrigin === undefined,
+      );
+      const hasAssistantOutput = targetThread.messages.some(
+        (message) =>
+          command.turnId !== null &&
+          message.role === "assistant" &&
+          message.turnId === command.turnId &&
+          message.historyOrigin === undefined,
+      );
+      const sessionBusy =
+        targetThread.session?.status === "starting" ||
+        targetThread.session?.status === "running" ||
+        targetThread.session?.abortState != null;
+      const concreteInterruptedRetry =
+        command.turnId !== null &&
+        latestTurn !== null &&
+        latestTurn.turnId === command.turnId &&
+        latestTurn.state === "interrupted" &&
+        latestTurn.assistantMessageId === null &&
+        latestTurn.historyOrigin === undefined &&
+        latestUserMessage?.id === command.messageId &&
+        !latestUserMessage.streaming &&
+        Date.parse(latestUserMessage.createdAt) <= Date.parse(latestTurn.requestedAt) &&
+        !hasAssistantOutput &&
+        !sessionBusy;
+      const resultlessPendingRetry =
+        command.turnId === null &&
+        latestUserMessage?.id === command.messageId &&
+        !latestUserMessage.streaming &&
+        latestLocalMessage?.id === command.messageId &&
+        targetThread.session !== null &&
+        targetThread.session.activeTurnId === null &&
+        !sessionBusy &&
+        Date.parse(targetThread.session.updatedAt) >= Date.parse(latestUserMessage.createdAt) &&
+        (latestTurn === null ||
+          Date.parse(latestTurn.requestedAt) < Date.parse(latestUserMessage.createdAt));
+      if (!concreteInterruptedRetry && !resultlessPendingRetry) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Retry target for user message '${command.messageId}' is not an interrupted result-less turn.`,
+        });
+      }
+
+      const turnStartRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          resultOnly: true,
+          ...(command.turnId !== null ? { retryOfTurnId: command.turnId } : {}),
+          ...(command.fetchMode !== undefined ? { fetchMode: command.fetchMode } : {}),
+          ...(command.modelSelection !== undefined
+            ? { modelSelection: command.modelSelection }
+            : {}),
+          runtimeMode: targetThread.runtimeMode,
+          interactionMode: targetThread.interactionMode,
+          ...(concreteInterruptedRetry && latestTurn?.sourceProposedPlan !== undefined
+            ? { sourceProposedPlan: latestTurn.sourceProposedPlan }
+            : {}),
+          createdAt: command.createdAt,
+        },
+      };
+      const lifecycleResetEvents = yield* makeThreadLifecycleResetEvents({
+        thread: targetThread,
+        occurredAt: command.createdAt,
+        commandId: command.commandId,
+      });
+      return [...lifecycleResetEvents, turnStartRequestedEvent];
     }
 
     case "thread.turn.interrupt": {
@@ -1503,11 +1618,20 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.checkpoint.revert": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const targetCheckpoint = thread.checkpoints.find(
+        (checkpoint) => checkpoint.checkpointTurnCount === command.turnCount,
+      );
+      if (targetCheckpoint?.historyOrigin !== undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Checkpoint turn ${command.turnCount} belongs to frozen fork history and cannot be reverted.`,
+        });
+      }
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1641,6 +1765,74 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         : [unsettledEvent, sessionSetEvent];
     }
 
+    case "thread.fork.workspace.update": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.fork === undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' is not a fork.`,
+        });
+      }
+      const validReady =
+        command.status === "ready" && command.preparedAt !== null && command.lastError === null;
+      const validError =
+        command.status === "error" && command.preparedAt === null && command.lastError !== null;
+      if (!validReady && !validError) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail:
+            "Fork workspace readiness requires preparedAt without lastError; an error requires lastError without preparedAt.",
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.fork-workspace-updated",
+        payload: {
+          threadId: command.threadId,
+          status: command.status,
+          preparedAt: command.preparedAt,
+          lastError: command.lastError,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.fork.handoff.complete": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.fork === undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' is not a fork.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.completedAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.fork-handoff-completed",
+        payload: {
+          threadId: command.threadId,
+          completedAt: command.completedAt,
+        },
+      };
+    }
+
     case "thread.turn.abort.settle": {
       const thread = yield* requireThread({
         readModel,
@@ -1762,6 +1954,72 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           streaming: false,
           createdAt: command.message.createdAt,
           updatedAt: command.message.updatedAt,
+        },
+      };
+    }
+
+    case "thread.harness-sync.link": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.lastSyncedAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.harness-sync-linked",
+        payload: {
+          threadId: command.threadId,
+          projectId: thread.projectId,
+          sourceId: command.sourceId,
+          continuationKey: command.continuationKey,
+          nativeSessionId: command.nativeSessionId,
+          providerInstanceId: thread.harnessSync?.providerInstanceId ?? command.providerInstanceId,
+          providerLabel:
+            thread.harnessSync !== undefined &&
+            thread.harnessSync !== null &&
+            thread.harnessSync.providerInstanceId !== command.providerInstanceId
+              ? thread.harnessSync.providerLabel
+              : command.providerLabel,
+          activity: command.activity,
+          sourceUpdatedAt: command.sourceUpdatedAt,
+          lastSyncedAt: command.lastSyncedAt,
+        },
+      };
+    }
+
+    case "thread.harness-sync.message.import": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.message.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.harness-sync-message-imported",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.message.id,
+          role: command.message.role,
+          text: command.message.text,
+          ...(command.message.attachments !== undefined
+            ? { attachments: command.message.attachments }
+            : {}),
+          turnId: command.message.turnId,
+          streaming: false,
+          createdAt: command.message.createdAt,
+          updatedAt: command.message.updatedAt,
+          nativeMessageId: command.nativeMessageId,
+          linkedAt: command.linkedAt,
         },
       };
     }

@@ -1,6 +1,7 @@
 import { CircleOff, LoaderCircle } from "lucide-react";
 
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 import { GitBranchesPanel } from "./GitBranchesPanel";
 import { GitChangesPanel } from "./GitChangesPanel";
@@ -11,6 +12,7 @@ import { GitWorkbenchTabs } from "./GitWorkbenchTabs";
 import type { GitWorkbenchPanelProps } from "./GitWorkbench.types";
 
 export function GitWorkbenchPanel(props: GitWorkbenchPanelProps) {
+  const translate = useInterfaceTranslator().message;
   const operationAttention = (props.operation ? 1 : 0) + (props.queue ? 1 : 0);
   const showTabs = props.showTabs !== false;
   const documentSized =
@@ -20,7 +22,7 @@ export function GitWorkbenchPanel(props: GitWorkbenchPanelProps) {
   const refreshing = props.loading && props.snapshot !== null;
   return (
     <section
-      aria-label="Git workbench"
+      aria-label={translate("git.workbench.title")}
       className="@container/git-panel flex h-fit max-h-full w-full min-h-0 flex-col overflow-hidden bg-background"
       data-git-workbench=""
       data-git-workbench-layout="content"
@@ -54,7 +56,9 @@ export function GitWorkbenchPanel(props: GitWorkbenchPanelProps) {
         data-git-workbench-view-frame="true"
       >
         <div
-          aria-label={showTabs ? undefined : `${props.activeTab} Git view`}
+          aria-label={
+            showTabs ? undefined : translate("git.workbench.viewAria", { view: props.activeTab })
+          }
           aria-labelledby={showTabs ? `git-workbench-tab-${props.activeTab}` : undefined}
           className={cn(
             "min-h-0",
@@ -85,7 +89,7 @@ export function GitWorkbenchPanel(props: GitWorkbenchPanelProps) {
               aria-hidden="true"
               className="size-3 animate-spin motion-reduce:animate-none"
             />
-            Refreshing Git
+            {translate("git.workbench.refreshing")}
           </div>
         ) : null}
       </div>
@@ -181,6 +185,7 @@ function ActivePanel(
 }
 
 function LoadingWorkbench() {
+  const translate = useInterfaceTranslator().message;
   return (
     <div
       className="grid min-h-48 w-full place-content-center gap-2 text-center text-muted-foreground"
@@ -191,12 +196,13 @@ function LoadingWorkbench() {
         aria-hidden="true"
         className="mx-auto size-6 animate-spin motion-reduce:animate-none"
       />
-      <p className="text-sm">Loading repository state…</p>
+      <p className="text-sm">{translate("git.workbench.loadingState")}</p>
     </div>
   );
 }
 
 function UnavailableWorkbench({ upgradeRequired }: { readonly upgradeRequired: boolean }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <div
       className="grid min-h-48 w-full place-content-center gap-2 p-6 text-center text-muted-foreground"
@@ -204,12 +210,14 @@ function UnavailableWorkbench({ upgradeRequired }: { readonly upgradeRequired: b
     >
       <CircleOff aria-hidden="true" className="mx-auto size-7" />
       <p className="font-medium text-foreground text-sm">
-        {upgradeRequired ? "Server upgrade required" : "Git workbench unavailable"}
+        {upgradeRequired
+          ? translate("git.workbench.upgradeRequired")
+          : translate("git.workbench.unavailable")}
       </p>
       <p className="max-w-sm text-xs">
         {upgradeRequired
-          ? "This server does not advertise Git workbench version 1. Existing source-control shortcuts remain available."
-          : "This environment may not contain a Git repository. Existing source-control shortcuts remain available."}
+          ? translate("git.workbench.upgradeDescription")
+          : translate("git.workbench.unavailableDescription")}
       </p>
     </div>
   );

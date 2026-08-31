@@ -83,6 +83,7 @@ import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../
 import { SidebarInset } from "../components/ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { useLiveRefresh } from "../hooks/useLiveRefresh";
+import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 import {
   selectActiveRightPanelSurface,
   selectSelectedRightPanelSurface,
@@ -139,18 +140,18 @@ export interface PullRequestsSearch {
 }
 
 // The state filters wear the same glyphs the rows do, so the two read as one vocabulary.
-const INVOLVEMENT_TABS = [
-  { value: "all", label: "All", Icon: LayersIcon },
-  { value: "reviewing", label: "Reviewing", Icon: EyeIcon },
-  { value: "authored", label: "Authored", Icon: PenLineIcon },
-] as const satisfies ReadonlyArray<PullRequestFilterOption<PullRequestInvolvement>>;
+const INVOLVEMENT_TAB_DEFINITIONS = [
+  { value: "all", labelKey: "pullRequest.filter.all", Icon: LayersIcon },
+  { value: "reviewing", labelKey: "pullRequest.filter.involvement.reviewing", Icon: EyeIcon },
+  { value: "authored", labelKey: "pullRequest.filter.involvement.authored", Icon: PenLineIcon },
+] as const;
 
-const STATE_TABS = [
-  { value: "all", label: "All", Icon: LayersIcon },
-  { value: "open", label: "Open", Icon: GitPullRequestIcon },
-  { value: "closed", label: "Closed", Icon: GitPullRequestClosedIcon },
-  { value: "merged", label: "Merged", Icon: GitMergeIcon },
-] as const satisfies ReadonlyArray<PullRequestFilterOption<PullRequestListState>>;
+const STATE_TAB_DEFINITIONS = [
+  { value: "all", labelKey: "pullRequest.filter.all", Icon: LayersIcon },
+  { value: "open", labelKey: "pullRequest.filter.state.open", Icon: GitPullRequestIcon },
+  { value: "closed", labelKey: "pullRequest.filter.state.closed", Icon: GitPullRequestClosedIcon },
+  { value: "merged", labelKey: "pullRequest.filter.state.merged", Icon: GitMergeIcon },
+] as const;
 
 /** Long enough that a keystroke does not become a request, short enough to feel answered. */
 const SEARCH_DEBOUNCE_MS = 250;
@@ -221,6 +222,17 @@ export const Route = createFileRoute("/_chat/pull-requests")({
 });
 
 function PullRequestsRouteView() {
+  const translate = useInterfaceTranslator().message;
+  const involvementTabs: ReadonlyArray<PullRequestFilterOption<PullRequestInvolvement>> =
+    INVOLVEMENT_TAB_DEFINITIONS.map(({ labelKey, ...option }) => ({
+      ...option,
+      label: translate(labelKey),
+    }));
+  const stateTabs: ReadonlyArray<PullRequestFilterOption<PullRequestListState>> =
+    STATE_TAB_DEFINITIONS.map(({ labelKey, ...option }) => ({
+      ...option,
+      label: translate(labelKey),
+    }));
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const { environments } = useEnvironments();
@@ -1300,7 +1312,7 @@ function PullRequestsRouteView() {
       rightPanelAvailable={rightPanelAvailable}
       rightPanelOpen={rightPanelState.isOpen}
       rightPanelShortcutLabel={null}
-      rightPanelUnavailableLabel="Select a pull request first"
+      rightPanelUnavailableLabel={translate("pullRequest.detail.selectFirst")}
       onToggleTerminal={() => undefined}
       onToggleRightPanel={toggleRightPanel}
     />
@@ -1330,8 +1342,8 @@ function PullRequestsRouteView() {
         <PullRequestListGhost rows={7} />
       ) : !pullRequestsSupported ? (
         <PullRequestsUnavailableState
-          title="Pull requests unavailable"
-          error="Update your T3 Code servers to browse pull requests."
+          title={translate("pullRequest.unavailable")}
+          error={translate("pullRequest.unavailable.updateServers")}
         />
       ) : firstLoad ? (
         <PullRequestListGhost rows={7} />
@@ -1400,9 +1412,9 @@ function PullRequestsRouteView() {
 
       {listQuery.error && listData !== null ? (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs">
-          <span>The latest request failed. Showing the last pull requests loaded.</span>
+          <span>{translate("pullRequest.staleFallback")}</span>
           <Button size="xs" variant="outline" onClick={() => listQuery.refresh()}>
-            Retry
+            {translate("common.retry")}
           </Button>
         </div>
       ) : null}
@@ -1411,7 +1423,7 @@ function PullRequestsRouteView() {
           {loadingMore ? (
             <span className="flex items-center gap-2">
               <LoaderIcon aria-hidden className="size-3.5 animate-spin" />
-              Loading more
+              {translate("pullRequest.loading.more")}
             </span>
           ) : null}
         </div>
@@ -1423,7 +1435,7 @@ function PullRequestsRouteView() {
   // kind force the hostname to tell them apart.
   const hostEntries = hosts.length > 0 ? hosts : expectedHosts;
   const hostMenuOptions: ReadonlyArray<PullRequestFilterOption<string>> = [
-    { value: "", label: "All hosts", Icon: LayersIcon },
+    { value: "", label: translate("pullRequest.filter.allHosts"), Icon: LayersIcon },
     ...hostEntries.map((entry) => {
       // `expectedHosts` stands in before the server has answered, and nothing is known to be
       // unreadable yet; once the summaries arrive they carry whether each one could be read.
@@ -1434,14 +1446,14 @@ function PullRequestsRouteView() {
         Icon: getSourceControlPresentationForKind(entry.kind).Icon,
         ...(summary === undefined || summary.configured
           ? {}
-          : { unavailable: summary.detail ?? "This host could not be read." }),
+          : { unavailable: summary.detail ?? translate("pullRequest.filter.hostUnreadable") }),
       };
     }),
   ];
   // The same shape the host pills take, so the two groups read as one control. A local
   // connection wears the screen it is on; every other server wears a server.
   const serverMenuOptions: ReadonlyArray<PullRequestFilterOption<string>> = [
-    { value: "", label: "All servers", Icon: LayersIcon },
+    { value: "", label: translate("pullRequest.filter.allServers"), Icon: LayersIcon },
     ...capableEnvironments.map((environment) => ({
       value: environment.environmentId,
       label: environment.label,
@@ -1451,10 +1463,10 @@ function PullRequestsRouteView() {
   const filtersMenu = (
     <PullRequestFiltersMenu
       state={search.state}
-      stateOptions={STATE_TABS}
+      stateOptions={stateTabs}
       onState={(state) => updateListScope({ state })}
       involvement={search.involvement}
-      involvementOptions={INVOLVEMENT_TABS}
+      involvementOptions={involvementTabs}
       onInvolvement={(involvement) => updateListScope({ involvement })}
       filters={menuFilters}
       onFilters={(next) =>
@@ -1501,6 +1513,13 @@ function PullRequestsRouteView() {
       !pullRequestsSupported || rightPanelState.isOpen ? null : (
         <span aria-hidden className="w-7 shrink-0 sm:w-5" />
       ),
+    titlebarControls:
+      // While the panel is closed the strip lives inside the header: a no-drag
+      // descendant beats the header's desktop drag-region, where a floating
+      // sibling loses (app-region hit-testing ignores z-index). Open, it moves
+      // back out to the route container, which spans the panel too, so the
+      // toggle keeps one fixed top-right anchor and never jumps sideways.
+      pullRequestsSupported && !rightPanelState.isOpen ? openPanelControls : null,
     rightPanelOpen: rightPanelState.isOpen,
     listBody,
   };
@@ -1542,7 +1561,7 @@ function PullRequestsRouteView() {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       <div className="relative flex min-h-0 flex-1">
-        {pullRequestsSupported ? openPanelControls : null}
+        {pullRequestsSupported && rightPanelState.isOpen ? openPanelControls : null}
         <PullRequestsColumn {...columnProps} />
 
         {rightPanelState.isOpen && activePullRequestSurface && panelEnvironmentId !== null ? (
@@ -1693,6 +1712,7 @@ function ExpandableSearch({
    */
   onFocusWithin?: (focused: boolean) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const containerRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!open) return;
@@ -1725,7 +1745,7 @@ function ExpandableSearch({
     <Button
       size="icon-sm"
       variant="ghost"
-      aria-label="Search pull requests"
+      aria-label={translate("pullRequest.search")}
       onClick={() => onOpenChange(true)}
     >
       <SearchIcon className="size-4" />
@@ -1755,6 +1775,7 @@ function PullRequestsColumn({
   searchInput,
   filtersMenu,
   rightPanelControl,
+  titlebarControls,
   rightPanelOpen,
   listBody,
 }: {
@@ -1771,9 +1792,21 @@ function PullRequestsColumn({
   searchInput: ReactNode;
   filtersMenu: ReactNode;
   rightPanelControl: ReactNode;
+  titlebarControls: ReactNode;
   rightPanelOpen: boolean;
   listBody: ReactNode;
 }) {
+  const translate = useInterfaceTranslator().message;
+  const involvementTabs: ReadonlyArray<PullRequestFilterOption<PullRequestInvolvement>> =
+    INVOLVEMENT_TAB_DEFINITIONS.map(({ labelKey, ...option }) => ({
+      ...option,
+      label: translate(labelKey),
+    }));
+  const stateTabs: ReadonlyArray<PullRequestFilterOption<PullRequestListState>> =
+    STATE_TAB_DEFINITIONS.map(({ labelKey, ...option }) => ({
+      ...option,
+      label: translate(labelKey),
+    }));
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const markerRef = useRef<HTMLDivElement | null>(null);
   const [condensed, setCondensed] = useState(false);
@@ -1834,34 +1867,43 @@ function PullRequestsColumn({
     // content surface that lets it show reads as a different background than every thread.
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
       {/* A closed right panel leaves this column full-width, so the shared header
-          reserves native window controls. While the panel is open, the column ends
-          at the panel and the absolute controls strip owns the top-right corner. */}
-      <WorkspacePageHeader electron={isElectron} reserveNativeControls={!rightPanelOpen}>
+          reserves native window controls and hosts the controls strip itself: on
+          desktop the header is a drag-region, and only a no-drag descendant wins
+          clicks from it - a floating sibling loses to app-region hit-testing no
+          matter its z-index. While the panel is open, the strip mounts back at
+          the route level, whose box spans the panel too, so the toggle keeps one
+          fixed top-right anchor. */}
+      <WorkspacePageHeader
+        electron={isElectron}
+        reserveNativeControls={!rightPanelOpen}
+        className="relative bg-background"
+      >
+        {titlebarControls}
         {condensed ? (
-          <WorkspaceBreadcrumb ariaLabel="Pull request scope">
+          <WorkspaceBreadcrumb ariaLabel={translate("pullRequest.breadcrumb.scope")}>
             {/* The page name remains the foreground anchor in both states; the live filters are
                 its compact scope, grouped as the second crumb rather than pretending each menu
                 is a separate page in the hierarchy. */}
             <WorkspaceBreadcrumbItem current>
-              <h1 className="truncate">Pull Requests</h1>
+              <h1 className="truncate">{translate("pullRequest.title")}</h1>
             </WorkspaceBreadcrumbItem>
             <WorkspaceBreadcrumbSeparator />
             <WorkspaceBreadcrumbItem className="gap-1.5 overflow-hidden">
               <CompactFilterMenu
-                label="Filter by state"
+                label={translate("pullRequest.filter.state")}
                 value={state}
-                options={STATE_TABS}
+                options={stateTabs}
                 onChange={onState}
               />
               <CompactFilterMenu
-                label="Filter by involvement"
+                label={translate("pullRequest.filter.involvement")}
                 value={involvement}
-                options={INVOLVEMENT_TABS}
+                options={involvementTabs}
                 onChange={onInvolvement}
               />
               {hostMenuOptions.length > 2 ? (
                 <CompactFilterMenu
-                  label="Filter by host"
+                  label={translate("pullRequest.filter.host")}
                   value={host ?? ""}
                   options={hostMenuOptions}
                   onChange={(next) => onHost(next === "" ? undefined : next)}
@@ -1870,9 +1912,9 @@ function PullRequestsColumn({
             </WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
         ) : (
-          <WorkspaceBreadcrumb ariaLabel="Pull requests breadcrumb">
+          <WorkspaceBreadcrumb ariaLabel={translate("pullRequest.breadcrumb.aria")}>
             <WorkspaceBreadcrumbItem current>
-              <h1 className="truncate">Pull Requests</h1>
+              <h1 className="truncate">{translate("pullRequest.title")}</h1>
             </WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
         )}
@@ -1931,11 +1973,12 @@ function PullRequestRefreshControl({
   refreshing: boolean;
   onRefresh: () => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <Button
       size={compact ? "icon-sm" : "icon"}
       variant={compact ? "ghost" : "outline"}
-      aria-label="Refresh pull requests"
+      aria-label={translate("pullRequest.refresh")}
       onClick={onRefresh}
       disabled={refreshing}
     >

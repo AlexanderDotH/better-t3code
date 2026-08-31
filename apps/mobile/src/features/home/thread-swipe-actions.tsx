@@ -33,6 +33,12 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/AppText";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import {
+  resolveThreadSwipeSecondaryAction,
+  type ThreadSwipeActionModel,
+  type ThreadSwipeSecondaryActionModel,
+} from "./thread-swipe-action-model";
 
 // Wide enough for the longest action label ("Unarchive").
 const ACTION_ITEM_WIDTH = 58;
@@ -49,65 +55,20 @@ export const THREAD_SWIPE_SPRING = {
   stiffness: 330,
 };
 
-interface ThreadSwipeAction {
-  readonly accessibilityLabel: string;
-  readonly icon: ComponentProps<typeof SymbolView>["name"];
-  readonly label: string;
-  readonly menu?: {
-    readonly actions: MenuAction[];
-    readonly onPressAction: NonNullable<ComponentProps<typeof ControlPillMenu>["onPressAction"]>;
-    readonly title?: string;
-  };
-  readonly onPress: () => void;
-}
+type ThreadSwipeAction = ThreadSwipeActionModel<
+  ComponentProps<typeof SymbolView>["name"],
+  MenuAction,
+  Parameters<NonNullable<ComponentProps<typeof ControlPillMenu>["onPressAction"]>>[0]
+>;
 
-interface ThreadSwipeSecondaryAction extends ThreadSwipeAction {
-  readonly backgroundColor: string;
-}
+type ThreadSwipeSecondaryAction = ThreadSwipeSecondaryActionModel<
+  ComponentProps<typeof SymbolView>["name"],
+  MenuAction,
+  Parameters<NonNullable<ComponentProps<typeof ControlPillMenu>["onPressAction"]>>[0]
+>;
 
 function swipeActionsWidth(hasSecondaryAction: boolean) {
   return hasSecondaryAction ? THREAD_SWIPE_ACTIONS_WIDTH : ACTION_ITEM_WIDTH;
-}
-
-/** `undefined` keeps the v1 Delete default; `null` means one action only. */
-function resolveSecondaryAction(input: {
-  readonly close: () => void;
-  readonly onDelete: () => void;
-  readonly secondaryAction: ThreadSwipeAction | null | undefined;
-  readonly threadTitle: string;
-}): ThreadSwipeSecondaryAction | null {
-  if (input.secondaryAction === null) return null;
-  if (input.secondaryAction === undefined) {
-    return {
-      accessibilityLabel: `Delete ${input.threadTitle}`,
-      backgroundColor: "#ff2d55",
-      icon: "trash",
-      label: "Delete",
-      onPress: () => {
-        input.close();
-        input.onDelete();
-      },
-    };
-  }
-  const action = input.secondaryAction;
-  return {
-    ...action,
-    backgroundColor: "#5856d6",
-    menu:
-      action.menu === undefined
-        ? undefined
-        : {
-            ...action.menu,
-            onPressAction: (event) => {
-              input.close();
-              action.menu?.onPressAction(event);
-            },
-          },
-    onPress: () => {
-      input.close();
-      action.onPress();
-    },
-  };
 }
 
 /**
@@ -256,6 +217,7 @@ export function ThreadSwipeable(props: {
   >["simultaneousWithExternalGesture"];
   readonly threadTitle: string;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const swipeableRef = useRef<SwipeableMethods | null>(null);
   const fullSwipeArmedRef = useRef(false);
   const hasSecondaryAction = props.secondaryAction !== null;
@@ -339,11 +301,15 @@ export function ThreadSwipeable(props: {
               props.primaryAction.onPress();
             },
           }}
-          secondaryAction={resolveSecondaryAction({
+          secondaryAction={resolveThreadSwipeSecondaryAction({
             close: () => methods.close(),
+            deleteAccessibilityLabel: translator.message("mobile.thread.deleteNamed", {
+              thread: props.threadTitle,
+            }),
+            deleteIcon: "trash",
+            deleteLabel: translator.message("mobile.thread.delete"),
             onDelete: props.onDelete,
             secondaryAction: props.secondaryAction,
-            threadTitle: props.threadTitle,
           })}
           translation={translation}
         />
@@ -370,34 +336,45 @@ function SwipeActionButton(props: {
   readonly stretchesOnFullSwipe: boolean;
   readonly translation: SharedValue<number>;
 }) {
+  const {
+    actionsWidth,
+    entryRange: [entryRangeStart, entryRangeEnd],
+    fullSwipeThreshold,
+    stretchesOnFullSwipe,
+    translation,
+  } = props;
   const circleSize = props.compact ? COMPACT_ACTION_CIRCLE_SIZE : ACTION_CIRCLE_SIZE;
   const iconSize = props.compact ? COMPACT_ACTION_ICON_SIZE : ACTION_ICON_SIZE;
   const actionStyle = useAnimatedStyle(() => {
-    const reveal = Math.max(-props.translation.value, 0);
-    const entryProgress = interpolate(reveal, props.entryRange, [0, 1], Extrapolation.CLAMP);
-    const stretch = Math.max(reveal - props.actionsWidth, 0);
+    const reveal = Math.max(-translation.value, 0);
+    const entryProgress = interpolate(
+      reveal,
+      [entryRangeStart, entryRangeEnd],
+      [0, 1],
+      Extrapolation.CLAMP,
+    );
+    const stretch = Math.max(reveal - actionsWidth, 0);
     const fullSwipeProgress = interpolate(
       reveal,
-      [props.actionsWidth, props.fullSwipeThreshold + 20],
+      [actionsWidth, fullSwipeThreshold + 20],
       [0, 1],
       Extrapolation.CLAMP,
     );
 
     return {
-      opacity: props.stretchesOnFullSwipe ? entryProgress : entryProgress * (1 - fullSwipeProgress),
+      opacity: stretchesOnFullSwipe ? entryProgress : entryProgress * (1 - fullSwipeProgress),
       transform: [
         {
           translateX:
-            interpolate(entryProgress, [0, 1], [22, 0]) -
-            (props.stretchesOnFullSwipe ? 0 : stretch),
+            interpolate(entryProgress, [0, 1], [22, 0]) - (stretchesOnFullSwipe ? 0 : stretch),
         },
         { scale: interpolate(entryProgress, [0, 1], [0.78, 1]) },
       ],
     };
   });
   const circleStyle = useAnimatedStyle(() => {
-    const reveal = Math.max(-props.translation.value, 0);
-    const stretch = props.stretchesOnFullSwipe ? Math.max(reveal - props.actionsWidth, 0) : 0;
+    const reveal = Math.max(-translation.value, 0);
+    const stretch = stretchesOnFullSwipe ? Math.max(reveal - actionsWidth, 0) : 0;
 
     return {
       transform: [{ translateX: -stretch }],
@@ -405,11 +382,11 @@ function SwipeActionButton(props: {
     };
   });
   const iconStyle = useAnimatedStyle(() => {
-    const reveal = Math.max(-props.translation.value, 0);
-    const stretch = props.stretchesOnFullSwipe ? Math.max(reveal - props.actionsWidth, 0) : 0;
+    const reveal = Math.max(-translation.value, 0);
+    const stretch = stretchesOnFullSwipe ? Math.max(reveal - actionsWidth, 0) : 0;
     const armedProgress = interpolate(
       reveal,
-      [props.fullSwipeThreshold, props.fullSwipeThreshold + 20],
+      [fullSwipeThreshold, fullSwipeThreshold + 20],
       [0, 1],
       Extrapolation.CLAMP,
     );
@@ -419,16 +396,16 @@ function SwipeActionButton(props: {
     };
   });
   const labelStyle = useAnimatedStyle(() => {
-    if (!props.stretchesOnFullSwipe) {
+    if (!stretchesOnFullSwipe) {
       return { opacity: 1 };
     }
 
-    const reveal = Math.max(-props.translation.value, 0);
-    const stretch = Math.max(reveal - props.actionsWidth, 0);
+    const reveal = Math.max(-translation.value, 0);
+    const stretch = Math.max(reveal - actionsWidth, 0);
     return {
       opacity: interpolate(
         reveal,
-        [props.fullSwipeThreshold - 24, props.fullSwipeThreshold],
+        [fullSwipeThreshold - 24, fullSwipeThreshold],
         [1, 0],
         Extrapolation.CLAMP,
       ),
@@ -532,17 +509,17 @@ export function ThreadSwipeActions(props: {
   readonly secondaryAction: ThreadSwipeSecondaryAction | null;
   readonly translation: SharedValue<number>;
 }) {
-  const secondaryAction = props.secondaryAction;
+  const { fullSwipeThreshold, onFullSwipeArmedChange, secondaryAction, translation } = props;
   const fullSwipeIsPrimary = props.fullSwipeAction === "primary" || secondaryAction === null;
   const actionsWidth = swipeActionsWidth(secondaryAction !== null);
   useAnimatedReaction(
-    () => -props.translation.value >= props.fullSwipeThreshold,
+    () => -translation.value >= fullSwipeThreshold,
     (armed, previous) => {
       if (armed !== previous) {
-        runOnJS(props.onFullSwipeArmedChange)(armed);
+        runOnJS(onFullSwipeArmedChange)(armed);
       }
     },
-    [props.fullSwipeThreshold, props.onFullSwipeArmedChange],
+    [fullSwipeThreshold, onFullSwipeArmedChange, translation],
   );
 
   return (

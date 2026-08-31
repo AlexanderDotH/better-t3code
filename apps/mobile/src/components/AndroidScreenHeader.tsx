@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
 import { cn } from "../lib/cn";
-import { useThemeColor } from "../lib/useThemeColor";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 
 export interface AndroidHeaderAction {
   readonly accessibilityLabel: string;
@@ -14,15 +14,21 @@ export interface AndroidHeaderAction {
   readonly disabled?: boolean;
 }
 
+export interface AndroidScreenHeaderProps {
+  readonly title: string;
+  readonly subtitle?: string | null;
+  readonly actions?: ReadonlyArray<AndroidHeaderAction>;
+  readonly trailing?: ReactNode;
+  readonly onBack?: () => void;
+  readonly embedded?: boolean;
+}
+
 export function AndroidHeaderIconButton(props: {
   readonly accessibilityLabel: string;
   readonly icon: AppSymbolName;
   readonly onPress?: () => void;
   readonly disabled?: boolean;
 }) {
-  const foregroundColor = useThemeColor("--color-foreground");
-  const disabledColor = useThemeColor("--color-icon-subtle");
-
   return (
     <Pressable
       accessibilityLabel={props.accessibilityLabel}
@@ -38,23 +44,16 @@ export function AndroidHeaderIconButton(props: {
       <SymbolView
         name={props.icon}
         size={20}
-        tintColor={props.disabled ? disabledColor : foregroundColor}
+        tintColorClassName={props.disabled ? "accent-icon-subtle" : "accent-foreground"}
         type="monochrome"
       />
     </Pressable>
   );
 }
 
-export function AndroidScreenHeader(props: {
-  readonly title: string;
-  readonly subtitle?: string | null;
-  readonly actions?: ReadonlyArray<AndroidHeaderAction>;
-  readonly trailing?: ReactNode;
-  readonly onBack?: () => void;
-  readonly embedded?: boolean;
-}) {
+export function AndroidScreenHeader(props: AndroidScreenHeaderProps) {
   const insets = useSafeAreaInsets();
-  const foregroundColor = useThemeColor("--color-foreground");
+  const translator = useMobileInterfaceTranslator();
 
   return (
     <View
@@ -66,7 +65,7 @@ export function AndroidScreenHeader(props: {
       <View className="min-h-12 flex-row items-center gap-2">
         {props.onBack ? (
           <Pressable
-            accessibilityLabel="Navigate up"
+            accessibilityLabel={translator.message("mobile.accessibility.navigateUp")}
             accessibilityRole="button"
             hitSlop={8}
             onPress={props.onBack}
@@ -75,7 +74,7 @@ export function AndroidScreenHeader(props: {
             <SymbolView
               name="chevron.left"
               size={24}
-              tintColor={foregroundColor}
+              tintColorClassName={"accent-foreground"}
               type="monochrome"
             />
           </Pressable>
@@ -110,8 +109,6 @@ export function AndroidScreenHeader(props: {
   );
 }
 
-export function AndroidSheetHeader(
-  props: Omit<Parameters<typeof AndroidScreenHeader>[0], "embedded">,
-) {
+export function AndroidSheetHeader(props: Omit<AndroidScreenHeaderProps, "embedded">) {
   return <AndroidScreenHeader {...props} embedded />;
 }

@@ -22,6 +22,7 @@ import {
   useUpdateClientSettings,
   useUpdatePrimarySettings,
 } from "../../hooks/useSettings";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { cn } from "../../lib/utils";
 import {
   getCustomModelOptionsByInstance,
@@ -53,56 +54,71 @@ type EnvironmentProfileState = {
 };
 
 type ProjectAction = "index" | "basic";
-type ProfileStatus = "Not indexed" | "Indexed" | "Basic context" | "Unavailable";
+type ProfileStatus = "not-indexed" | "indexed" | "basic" | "unavailable";
 
 function projectKey(environmentId: EnvironmentId, projectId: ProjectId): string {
   return JSON.stringify([environmentId, projectId]);
 }
 
-function formatUpdatedAt(value: string): string {
+function formatUpdatedAt(value: string, format: (date: Date) => string): string {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? value : format(date);
 }
 
 function profileStatus(
   environmentState: EnvironmentProfileState | undefined,
   profile: ProjectSpeechProfile | undefined,
 ): ProfileStatus {
-  if (environmentState?.status === "error") return "Unavailable";
-  if (profile?.source === "indexed") return "Indexed";
-  if (profile?.source === "basic") return "Basic context";
-  return environmentState?.status === "ready" ? "Not indexed" : "Unavailable";
+  if (environmentState?.status === "error") return "unavailable";
+  if (profile?.source === "indexed") return "indexed";
+  if (profile?.source === "basic") return "basic";
+  return environmentState?.status === "ready" ? "not-indexed" : "unavailable";
 }
 
 function ProfileStatusBadge({ status }: { readonly status: ProfileStatus }) {
+  const translate = useInterfaceTranslator().message;
   const variant =
-    status === "Indexed"
+    status === "indexed"
       ? "success"
-      : status === "Basic context"
+      : status === "basic"
         ? "info"
-        : status === "Unavailable"
+        : status === "unavailable"
           ? "warning"
           : "outline";
+  const messageId =
+    status === "not-indexed"
+      ? "settings.voice.profile.status.notIndexed"
+      : status === "indexed"
+        ? "settings.voice.profile.status.indexed"
+        : status === "basic"
+          ? "settings.voice.profile.status.basic"
+          : "settings.voice.profile.status.unavailable";
 
   return (
     <Badge variant={variant} size="sm">
-      {status}
+      {translate(messageId)}
     </Badge>
   );
 }
 
 function ProfilePayload({ profile }: { readonly profile: ProjectSpeechProfile }) {
+  const translator = useInterfaceTranslator();
+  const translate = translator.message;
   return (
     <div className="space-y-4">
       <div className="space-y-1.5">
-        <h5 className="text-xs font-medium text-foreground">AssemblyAI prompt</h5>
+        <h5 className="text-xs font-medium text-foreground">
+          {translate("settings.voice.profile.prompt")}
+        </h5>
         <pre className="whitespace-pre-wrap break-words rounded-lg border bg-muted/30 p-3 font-sans text-xs leading-relaxed text-foreground">
           {profile.contextPrompt}
         </pre>
       </div>
 
       <div className="space-y-1.5">
-        <h5 className="text-xs font-medium text-foreground">Keyterms</h5>
+        <h5 className="text-xs font-medium text-foreground">
+          {translate("settings.voice.profile.keyterms")}
+        </h5>
         {profile.keyterms.length > 0 ? (
           <div className="flex flex-wrap gap-1.5">
             {profile.keyterms.map((keyterm) => (
@@ -112,12 +128,16 @@ function ProfilePayload({ profile }: { readonly profile: ProjectSpeechProfile })
             ))}
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground">No keyterms.</p>
+          <p className="text-xs text-muted-foreground">
+            {translate("settings.voice.profile.noKeyterms")}
+          </p>
         )}
       </div>
 
       <div className="space-y-1.5">
-        <h5 className="text-xs font-medium text-foreground">Technologies</h5>
+        <h5 className="text-xs font-medium text-foreground">
+          {translate("settings.voice.profile.technologies")}
+        </h5>
         {profile.technologies.length > 0 ? (
           <div className="flex flex-wrap gap-1.5">
             {profile.technologies.map((technology) => (
@@ -127,7 +147,9 @@ function ProfilePayload({ profile }: { readonly profile: ProjectSpeechProfile })
             ))}
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground">No technologies detected.</p>
+          <p className="text-xs text-muted-foreground">
+            {translate("settings.voice.profile.noTechnologies")}
+          </p>
         )}
       </div>
 
@@ -139,7 +161,12 @@ function ProfilePayload({ profile }: { readonly profile: ProjectSpeechProfile })
       ) : null}
 
       <p className="text-[11px] text-muted-foreground">
-        Updated <time dateTime={profile.updatedAt}>{formatUpdatedAt(profile.updatedAt)}</time>
+        {translate("settings.voice.profile.updated")}{" "}
+        <time dateTime={profile.updatedAt}>
+          {formatUpdatedAt(profile.updatedAt, (date) =>
+            translator.date(date, { timeStyle: "short" }),
+          )}
+        </time>
       </p>
     </div>
   );
@@ -164,18 +191,22 @@ function ProjectSpeechProfileRow({
   readonly onIndex: () => void;
   readonly onUseBasicContext: () => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const profile =
     environmentState?.status === "error" ? undefined : environmentState?.profiles.get(project.id);
   const status = profileStatus(environmentState, profile);
   const isBusy = busyAction !== undefined;
-  const indexLabel = profile?.source === "indexed" ? "Reindex" : "Index";
+  const reindex = profile?.source === "indexed";
+  const indexLabel = translate(
+    reindex ? "settings.voice.profile.reindex" : "settings.voice.profile.index",
+  );
 
   return (
     <Collapsible open={open} onOpenChange={onOpenChange}>
       <div className="border-t border-border/60 first:border-t-0">
         <CollapsibleTrigger
           className="flex w-full items-center gap-3 px-4 py-3.5 text-left sm:px-5"
-          aria-label={`Toggle ${project.title} speech profile`}
+          aria-label={translate("settings.voice.profile.toggle", { project: project.title })}
         >
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -207,18 +238,18 @@ function ProjectSpeechProfileRow({
           <div className="space-y-4 border-t border-border/60 px-4 py-4 sm:px-5">
             {environmentState?.status === "error" ? (
               <p className="text-xs text-muted-foreground">
-                This project&apos;s speech profile is unavailable. Refresh the environment and try
-                again.
+                {translate("settings.voice.profile.unavailable")}
               </p>
             ) : profile ? (
               <ProfilePayload profile={profile} />
             ) : environmentState?.status === "ready" ? (
               <p className="text-xs text-muted-foreground">
-                No speech profile exists for this project. Index it to generate repository-aware
-                AssemblyAI context, or use basic context based on the project metadata.
+                {translate("settings.voice.profile.missing")}
               </p>
             ) : (
-              <p className="text-xs text-muted-foreground">Loading this project&apos;s profile.</p>
+              <p className="text-xs text-muted-foreground">
+                {translate("settings.voice.profile.loading")}
+              </p>
             )}
 
             <div className="flex flex-wrap gap-2">
@@ -226,22 +257,35 @@ function ProjectSpeechProfileRow({
                 size="sm"
                 disabled={isBusy}
                 aria-busy={busyAction === "index"}
-                aria-label={`${indexLabel} ${project.title} speech profile`}
+                aria-label={translate("settings.voice.profile.indexAria", {
+                  action: indexLabel,
+                  project: project.title,
+                })}
                 onClick={onIndex}
               >
                 {busyAction === "index" ? <Spinner className="size-3.5" /> : null}
-                {busyAction === "index" ? `${indexLabel}ing…` : indexLabel}
+                {busyAction === "index"
+                  ? translate(
+                      reindex
+                        ? "settings.voice.profile.reindexing"
+                        : "settings.voice.profile.indexing",
+                    )
+                  : indexLabel}
               </Button>
               <Button
                 size="sm"
                 variant="outline"
                 disabled={isBusy || profile?.source === "basic"}
                 aria-busy={busyAction === "basic"}
-                aria-label={`Use basic context for ${project.title}`}
+                aria-label={translate("settings.voice.profile.basicAria", {
+                  project: project.title,
+                })}
                 onClick={onUseBasicContext}
               >
                 {busyAction === "basic" ? <Spinner className="size-3.5" /> : null}
-                {busyAction === "basic" ? "Creating…" : "Use basic context"}
+                {busyAction === "basic"
+                  ? translate("settings.voice.profile.creating")
+                  : translate("settings.voice.profile.basic")}
               </Button>
             </div>
           </div>
@@ -252,6 +296,8 @@ function ProjectSpeechProfileRow({
 }
 
 export function VoiceInputSettings() {
+  const translator = useInterfaceTranslator();
+  const translate = translator.message;
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const updateClientSettings = useUpdateClientSettings();
@@ -396,14 +442,14 @@ export function VoiceInputSettings() {
           ...current,
           [key]:
             action === "index"
-              ? "Could not index this project. Try again."
-              : "Could not create basic context for this project. Try again.",
+              ? translate("settings.voice.profile.indexFailed")
+              : translate("settings.voice.profile.basicFailed"),
         }));
       } finally {
         setBusyActionByProject((current) => ({ ...current, [key]: undefined }));
       }
     },
-    [refreshEnvironmentProfiles],
+    [refreshEnvironmentProfiles, translate],
   );
 
   const isRefreshing = projectEnvironmentIds.some(
@@ -412,15 +458,22 @@ export function VoiceInputSettings() {
 
   return (
     <>
-      <SettingsSection title="Voice input" icon={<MicIcon className="size-3.5" />}>
+      <SettingsSection
+        title={translate("settings.voice.title")}
+        icon={<MicIcon className="size-3.5" />}
+      >
         <SettingsRow
-          title="AssemblyAI API key"
-          description="Used server-side to mint short-lived browser streaming tokens for live voice transcription. The key is stored in the local secret store and is never sent to the web app."
-          status={assemblyAiApiKeyConfigured ? "Configured" : "Missing key"}
+          title={translate("settings.voice.apiKey.title")}
+          description={translate("settings.voice.apiKey.description")}
+          status={translate(
+            assemblyAiApiKeyConfigured
+              ? "settings.voice.apiKey.configured"
+              : "settings.voice.apiKey.missing",
+          )}
           resetAction={
             assemblyAiApiKeyConfigured ? (
               <SettingResetButton
-                label="AssemblyAI API key"
+                label={translate("settings.voice.apiKey.title")}
                 onClick={() =>
                   updateSettings({
                     speechTranscription: {
@@ -439,10 +492,14 @@ export function VoiceInputSettings() {
               nativeInput
               type="password"
               value={assemblyAiApiKey.value}
-              placeholder={assemblyAiApiKey.valueRedacted ? "Saved API key" : "aai_..."}
+              placeholder={
+                assemblyAiApiKey.valueRedacted
+                  ? translate("settings.voice.apiKey.saved")
+                  : "aai_..."
+              }
               autoComplete="off"
               spellCheck={false}
-              aria-label="AssemblyAI API key"
+              aria-label={translate("settings.voice.apiKey.title")}
               onCommit={(value) =>
                 updateSettings({
                   speechTranscription: {
@@ -456,8 +513,8 @@ export function VoiceInputSettings() {
           }
         />
         <SettingsRow
-          title="Output language"
-          description="Keep dictated text in its spoken language, or translate the final transcript to English."
+          title={translate("settings.voice.output.title")}
+          description={translate("settings.voice.output.description")}
           control={
             <Select
               value={settings.voiceInputOutputLanguage}
@@ -467,25 +524,34 @@ export function VoiceInputSettings() {
                 }
               }}
             >
-              <SelectTrigger className="w-full sm:w-44" aria-label="Voice input output language">
+              <SelectTrigger
+                className="w-full sm:w-44"
+                aria-label={translate("settings.voice.output.aria")}
+              >
                 <SelectValue>
-                  {settings.voiceInputOutputLanguage === "native" ? "Native" : "English"}
+                  {translate(
+                    settings.voiceInputOutputLanguage === "native"
+                      ? "settings.voice.output.native"
+                      : "settings.voice.output.english",
+                  )}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end">
-                <SelectItem value="native">Native</SelectItem>
-                <SelectItem value="english">English</SelectItem>
+                <SelectItem value="native">{translate("settings.voice.output.native")}</SelectItem>
+                <SelectItem value="english">
+                  {translate("settings.voice.output.english")}
+                </SelectItem>
               </SelectPopup>
             </Select>
           }
         />
         <SettingsRow
-          title="Voice post-processing model"
-          description="Model used only for optional English translation after you stop recording. AssemblyAI still handles live speech recognition. By default, this follows the global text generation model."
+          title={translate("settings.voice.model.title")}
+          description={translate("settings.voice.model.description")}
           resetAction={
             settings.voiceTranslationModelSelection !== null ? (
               <SettingResetButton
-                label="voice post-processing model"
+                label={translate("settings.voice.model.resetLabel")}
                 onClick={() => updateSettings({ voiceTranslationModelSelection: null })}
               />
             ) : null
@@ -499,7 +565,7 @@ export function VoiceInputSettings() {
               modelOptionsByInstance={modelOptionsByInstance}
               triggerVariant="outline"
               triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
-              triggerAriaLabel="Voice post-processing model"
+              triggerAriaLabel={translate("settings.voice.model.title")}
               onInstanceModelChange={(instanceId, model) =>
                 updateSettings({
                   voiceTranslationModelSelection: createModelSelection(instanceId, model),
@@ -511,13 +577,13 @@ export function VoiceInputSettings() {
       </SettingsSection>
 
       <SettingsSection
-        title="Project speech context"
+        title={translate("settings.voice.context.title")}
         icon={<FolderSearchIcon className="size-3.5" />}
         headerAction={
           <Button
             size="icon-xs"
             variant="ghost"
-            aria-label="Refresh project speech profiles"
+            aria-label={translate("settings.voice.context.refresh")}
             disabled={projectEnvironmentIds.length === 0}
             onClick={() => void refreshProfiles()}
           >
@@ -527,7 +593,7 @@ export function VoiceInputSettings() {
       >
         {projectGroups.length === 0 ? (
           <div className="px-4 py-6 text-center text-xs text-muted-foreground sm:px-5">
-            No T3 projects are available.
+            {translate("settings.voice.context.noProjects")}
           </div>
         ) : (
           projectGroups.map((group) => {
@@ -539,7 +605,9 @@ export function VoiceInputSettings() {
                     {group.label}
                   </h3>
                   <span className="shrink-0 text-[11px] text-muted-foreground">
-                    {group.projects.length} {group.projects.length === 1 ? "project" : "projects"}
+                    {translate("settings.voice.context.projectCount", {
+                      count: group.projects.length,
+                    })}
                   </span>
                 </div>
                 {environmentState?.status === "error" ? (
@@ -547,7 +615,7 @@ export function VoiceInputSettings() {
                     className="border-t border-border/60 px-4 py-2 text-xs text-destructive sm:px-5"
                     role="alert"
                   >
-                    Speech profiles are unavailable for this environment. Try refreshing.
+                    {translate("settings.voice.context.environmentUnavailable")}
                   </p>
                 ) : null}
                 <div className="border-t border-border/60">

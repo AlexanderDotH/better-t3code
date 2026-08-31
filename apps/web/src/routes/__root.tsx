@@ -21,6 +21,9 @@ import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPrompt
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
+import { useDefaultThemeAdoption } from "../hooks/useDefaultTheme";
+import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
+import { useEnvironmentThemeSync } from "../hooks/useEnvironmentTheme";
 import { Button } from "../components/ui/button";
 import {
   AnchoredToastProvider,
@@ -30,6 +33,7 @@ import {
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
+import { applyAppearanceContrast } from "~/appearanceContrast";
 import { useClientSettings } from "../hooks/useSettings";
 import { PlanAgentSelectionHeal } from "../planAgentSelectionHeal";
 import {
@@ -131,6 +135,8 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         <DocumentTitleSync />
+        <ContrastAppearanceSync />
+        <EnvironmentThemeSync />
         <GlassAppearanceSync />
         <FontAppearanceSync />
         {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
@@ -150,6 +156,25 @@ function RootRouteView() {
       </AnchoredToastProvider>
     </ToastProvider>
   );
+}
+
+/** Follows the palette the primary environment's machine publishes, if any. */
+function EnvironmentThemeSync() {
+  useEnvironmentThemeSync();
+  // Ordered after the palette sync so a first-run client adopting the
+  // environment's own theme finds it already in the library.
+  useDefaultThemeAdoption();
+  return null;
+}
+
+function ContrastAppearanceSync() {
+  const appearanceContrast = useClientSettings((settings) => settings.appearanceContrast);
+
+  useEffect(() => {
+    applyAppearanceContrast(document.documentElement, appearanceContrast);
+  }, [appearanceContrast]);
+
+  return null;
 }
 
 function GlassAppearanceSync() {
@@ -240,8 +265,9 @@ function HostedStaticEnvironmentBootstrap() {
 }
 
 function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
-  const message = errorMessage(error);
-  const details = errorDetails(error);
+  const translator = useInterfaceTranslator();
+  const message = errorMessage(error, translator.message("root.error.unexpected"));
+  const details = errorDetails(error, translator.message("root.error.noDetails"));
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">
@@ -255,23 +281,27 @@ function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
           {APP_DISPLAY_NAME}
         </p>
         <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
-          Something went wrong.
+          {translator.message("root.error.title")}
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{message}</p>
 
         <div className="mt-5 flex flex-wrap gap-2">
           <Button size="sm" onClick={() => reset()}>
-            Try again
+            {translator.message("cloud.action.tryAgain")}
           </Button>
           <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
-            Reload app
+            {translator.message("cloud.action.reloadApp")}
           </Button>
         </div>
 
         <details className="group mt-5 overflow-hidden rounded-lg border border-border/70 bg-background/55">
           <summary className="cursor-pointer list-none px-3 py-2 text-xs font-medium text-muted-foreground">
-            <span className="group-open:hidden">Show error details</span>
-            <span className="hidden group-open:inline">Hide error details</span>
+            <span className="group-open:hidden">
+              {translator.message("root.error.showDetails")}
+            </span>
+            <span className="hidden group-open:inline">
+              {translator.message("root.error.hideDetails")}
+            </span>
           </summary>
           <pre className="max-h-56 overflow-auto border-t border-border/70 bg-background/80 px-3 py-2 text-xs text-foreground/85">
             {details}
@@ -282,7 +312,7 @@ function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
   );
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
   }
@@ -291,10 +321,10 @@ function errorMessage(error: unknown): string {
     return error;
   }
 
-  return "An unexpected router error occurred.";
+  return fallback;
 }
 
-function errorDetails(error: unknown): string {
+function errorDetails(error: unknown, fallback: string): string {
   if (error instanceof Error) {
     return error.stack ?? error.message;
   }
@@ -306,7 +336,7 @@ function errorDetails(error: unknown): string {
   try {
     return JSON.stringify(error, null, 2);
   } catch {
-    return "No additional error details are available.";
+    return fallback;
   }
 }
 
@@ -319,6 +349,7 @@ function AuthenticatedTracingBootstrap() {
 }
 
 function EventRouter() {
+  const translator = useInterfaceTranslator();
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -386,8 +417,8 @@ function EventRouter() {
     if (decision._tag === "Success") {
       toastManager.add({
         type: "success",
-        title: "Keybindings updated",
-        description: "Keybindings configuration reloaded successfully.",
+        title: translator.message("root.keybindings.updatedTitle"),
+        description: translator.message("root.keybindings.updatedDescription"),
       });
       return;
     }
@@ -395,11 +426,11 @@ function EventRouter() {
     toastManager.add(
       stackedThreadToast({
         type: "warning",
-        title: "Invalid keybindings configuration",
+        title: translator.message("root.keybindings.invalidTitle"),
         description: decision.message,
         actionVariant: "outline",
         actionProps: {
-          children: "Open keybindings.json",
+          children: translator.message("root.keybindings.openAction"),
           onClick: () => {
             if (!serverConfig || !primaryEnvironment) {
               return;
@@ -424,9 +455,11 @@ function EventRouter() {
               toastManager.add(
                 stackedThreadToast({
                   type: "error",
-                  title: "Unable to open keybindings file",
+                  title: translator.message("root.keybindings.openFailedTitle"),
                   description:
-                    error instanceof Error ? error.message : "Unknown error opening file.",
+                    error instanceof Error
+                      ? error.message
+                      : translator.message("root.keybindings.openFailedFallback"),
                 }),
               );
             })();

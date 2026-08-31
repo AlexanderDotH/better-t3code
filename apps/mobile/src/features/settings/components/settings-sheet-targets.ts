@@ -4,6 +4,7 @@ export type SettingsSheetTarget =
   | "SettingsProjects"
   | "SettingsArchive"
   | "SettingsAppearance"
+  | "SettingsBetterT3"
   | "SettingsProjectGrouping"
   | "SettingsClientStorage"
   | "SettingsUsage";

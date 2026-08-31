@@ -95,13 +95,22 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(first.environmentId).toBe(second.environmentId);
       expect(second.capabilities.repositoryIdentity).toBe(true);
       expect(second.capabilities.connectionProbe).toBe(true);
+      expect(second.capabilities.attachmentUploads).toBe(true);
+      expect(second.capabilities.fileAttachments).toEqual({ maxUploadBytes: 50 * 1024 * 1024 });
       expect(second.capabilities.pullRequests).toBe(true);
       expect(second.capabilities.threadTitleRegeneration).toBe(true);
       expect(second.capabilities.mcpWorkspaceVersion).toBe(1);
       expect(second.capabilities.agentWorkflowVersion).toBe(1);
-      expect(second.capabilities.environmentSettingsVersion).toBe(3);
+      expect(second.capabilities.environmentSettingsVersion).toBe(5);
       expect(second.capabilities.projectSettingsVersion).toBe(1);
+      expect(second.capabilities.harnessChatSyncVersion).toBe(1);
+      expect(second.capabilities.knowledgeGraphVersion).toBe(1);
+      expect(second.capabilities.resourceProtectionVersion).toBe(1);
+      expect(second.capabilities.resourceDiagnosticsVersion).toBe(1);
       expect(second.capabilities.midChatProviderSwitching).toBe(true);
+      expect(second.capabilities.threadForking).toBe(true);
+      expect(second.capabilities.interruptedTurnRetry).toBe(true);
+      expect(second.capabilities.threadPullRequestLinking).toBe(true);
       expect(second.capabilities.agentActivityPublishing).toBe(false);
     }),
   );

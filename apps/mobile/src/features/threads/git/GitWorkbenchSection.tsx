@@ -11,12 +11,19 @@ import { gitWorkbenchEnvironment } from "../../../state/git-workbench";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { useEnvironmentQuery } from "../../../state/query";
 import { gitWorkbenchChangeRows, type GitWorkbenchChangeRow } from "./git-workbench-changes";
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
+import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
 
-function fileStatusLabel(row: GitWorkbenchChangeRow<GitWorkbenchFile>): string {
-  if (row.file.conflicted) return "Conflict";
-  if (row.file.untracked) return "Untracked";
-  if (row.source === "staged") return `Staged · ${row.file.kind}`;
-  return `Working tree · ${row.file.kind}`;
+function fileStatusLabel(
+  row: GitWorkbenchChangeRow<GitWorkbenchFile>,
+  translator: InterfaceTranslator,
+): string {
+  if (row.file.conflicted) return translator.message("mobile.git.conflict");
+  if (row.file.untracked) return translator.message("mobile.git.untracked");
+  if (row.source === "staged") {
+    return translator.message("mobile.git.stagedKind", { kind: row.file.kind });
+  }
+  return translator.message("mobile.git.workingTreeKind", { kind: row.file.kind });
 }
 
 function WorkbenchButton(props: {
@@ -54,6 +61,7 @@ export function GitWorkbenchSection(props: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string | null;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const target =
     props.enabled && props.cwd
       ? { environmentId: props.environmentId, input: { cwd: props.cwd } }
@@ -124,8 +132,10 @@ export function GitWorkbenchSection(props: {
         if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
           Alert.alert(
-            "Could not update changes",
-            error instanceof Error ? error.message : "The Git change could not be applied.",
+            translator.message("mobile.git.updateFailed"),
+            error instanceof Error
+              ? error.message
+              : translator.message("mobile.git.updateFailedDescription"),
           );
         }
         return;
@@ -142,6 +152,7 @@ export function GitWorkbenchSection(props: {
       refreshWorkbench,
       selected,
       snapshot,
+      translator,
     ],
   );
 
@@ -152,7 +163,9 @@ export function GitWorkbenchSection(props: {
       <View className="rounded-[22px] border border-border bg-card p-4">
         <Text className="text-sm text-foreground-muted">
           {workbench.error ??
-            (workbench.isPending ? "Loading Git workbench…" : "Git workbench unavailable.")}
+            (workbench.isPending
+              ? translator.message("mobile.git.loadingWorkbench")
+              : translator.message("mobile.git.workbenchUnavailable"))}
         </Text>
       </View>
     );
@@ -171,9 +184,11 @@ export function GitWorkbenchSection(props: {
       <View className="gap-3 rounded-[22px] border border-border bg-card p-4">
         <View className="flex-row items-center gap-3">
           <View className="min-w-0 flex-1 gap-0.5">
-            <Text className="text-base font-t3-semibold text-foreground">Repository workbench</Text>
+            <Text className="text-base font-t3-semibold text-foreground">
+              {translator.message("mobile.git.workbench")}
+            </Text>
             <Text className="text-sm text-foreground-muted">
-              {totals.staged} staged · {totals.unstaged} unstaged · {totals.untracked} untracked
+              {translator.message("mobile.git.fileCounts", totals)}
             </Text>
           </View>
           <Text className="text-sm text-foreground-muted">
@@ -183,7 +198,7 @@ export function GitWorkbenchSection(props: {
         {snapshot.operation.kind !== "none" ? (
           <View className="rounded-xl bg-amber-500/10 px-3 py-2">
             <Text className="text-sm font-t3-medium text-amber-600">
-              {snapshot.operation.kind} in progress
+              {snapshot.operation.kind} {translator.message("mobile.git.inProgress")}
               {snapshot.operation.currentStep && snapshot.operation.totalSteps
                 ? ` · ${snapshot.operation.currentStep}/${snapshot.operation.totalSteps}`
                 : ""}
@@ -192,7 +207,9 @@ export function GitWorkbenchSection(props: {
         ) : null}
         {snapshot.lastCommit ? (
           <View className="gap-0.5 border-t border-border-subtle pt-3">
-            <Text className="text-sm text-foreground-muted">Last commit</Text>
+            <Text className="text-sm text-foreground-muted">
+              {translator.message("mobile.git.lastCommit")}
+            </Text>
             <Text className="text-sm font-t3-medium text-foreground" numberOfLines={2}>
               {snapshot.lastCommit.shortOid} · {snapshot.lastCommit.subject}
             </Text>
@@ -202,11 +219,13 @@ export function GitWorkbenchSection(props: {
 
       <View className="overflow-hidden rounded-[22px] border border-border bg-card">
         <View className="px-4 py-3">
-          <Text className="text-sm font-t3-semibold text-foreground">Changes</Text>
+          <Text className="text-sm font-t3-semibold text-foreground">
+            {translator.message("mobile.git.changes")}
+          </Text>
         </View>
         {rows.length === 0 ? (
           <Text className="border-t border-border-subtle p-4 text-sm text-foreground-muted">
-            Working tree clean.
+            {translator.message("mobile.git.clean")}
           </Text>
         ) : (
           rows.map((row) => {
@@ -230,16 +249,22 @@ export function GitWorkbenchSection(props: {
                       +{stats.insertions} −{stats.deletions}
                     </Text>
                   </View>
-                  <Text className="text-xs text-foreground-muted">{fileStatusLabel(row)}</Text>
+                  <Text className="text-xs text-foreground-muted">
+                    {fileStatusLabel(row, translator)}
+                  </Text>
                 </Pressable>
                 {expanded ? (
                   <View className="gap-3 border-t border-border-subtle bg-subtle/40 px-4 py-3">
                     {diff.error ? (
                       <Text className="text-sm text-red-500">{diff.error}</Text>
                     ) : !diffReady ? (
-                      <Text className="text-sm text-foreground-muted">Loading diff…</Text>
+                      <Text className="text-sm text-foreground-muted">
+                        {translator.message("mobile.review.loadingDiff")}
+                      </Text>
                     ) : diff.data.binary ? (
-                      <Text className="text-sm text-foreground-muted">Binary file</Text>
+                      <Text className="text-sm text-foreground-muted">
+                        {translator.message("mobile.git.binaryFile")}
+                      </Text>
                     ) : (
                       <View className="max-h-56 gap-1 overflow-hidden rounded-xl bg-screen p-3">
                         {diff.data.hunks.slice(0, 5).map((hunk) => (
@@ -275,28 +300,32 @@ export function GitWorkbenchSection(props: {
                       {row.source === "staged" ? (
                         <WorkbenchButton
                           disabled={!diffReady || applying}
-                          label="Unstage"
+                          label={translator.message("mobile.git.unstage")}
                           onPress={() => void apply("unstage")}
                         />
                       ) : (
                         <>
                           <WorkbenchButton
                             disabled={!diffReady || applying || row.file.conflicted}
-                            label="Stage"
+                            label={translator.message("mobile.git.stage")}
                             onPress={() => void apply("stage")}
                           />
                           <WorkbenchButton
                             destructive
                             disabled={!diffReady || applying || row.file.conflicted}
-                            label="Discard"
+                            label={translator.message("mobile.git.discard")}
                             onPress={() =>
                               Alert.alert(
-                                row.file.untracked ? "Delete untracked file?" : "Discard changes?",
+                                row.file.untracked
+                                  ? translator.message("mobile.git.deleteUntrackedTitle")
+                                  : translator.message("mobile.git.discardTitle"),
                                 row.file.path,
                                 [
-                                  { text: "Cancel", style: "cancel" },
+                                  { text: translator.message("common.cancel"), style: "cancel" },
                                   {
-                                    text: row.file.untracked ? "Delete" : "Discard",
+                                    text: row.file.untracked
+                                      ? translator.message("mobile.git.delete")
+                                      : translator.message("mobile.git.discard"),
                                     style: "destructive",
                                     onPress: () => void apply("discard"),
                                   },
@@ -317,7 +346,9 @@ export function GitWorkbenchSection(props: {
 
       <View className="overflow-hidden rounded-[22px] border border-border bg-card">
         <View className="px-4 py-3">
-          <Text className="text-sm font-t3-semibold text-foreground">Recent history</Text>
+          <Text className="text-sm font-t3-semibold text-foreground">
+            {translator.message("mobile.git.recentHistory")}
+          </Text>
         </View>
         {history.data?.items.map((commit) => (
           <View key={commit.oid} className="gap-0.5 border-t border-border-subtle px-4 py-3">
@@ -330,7 +361,7 @@ export function GitWorkbenchSection(props: {
           </View>
         )) ?? (
           <Text className="border-t border-border-subtle p-4 text-sm text-foreground-muted">
-            {history.error ?? "Loading history…"}
+            {history.error ?? translator.message("mobile.git.loadingHistory")}
           </Text>
         )}
       </View>

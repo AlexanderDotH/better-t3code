@@ -9,6 +9,7 @@ import { memo, useCallback } from "react";
 import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { cn } from "../../lib/utils";
 import { useEnvironments } from "../../state/environments";
 import {
@@ -27,6 +28,7 @@ import {
   SidebarMenuItem,
   SidebarTrigger,
   useSidebar,
+  useSidebarSide,
 } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
@@ -38,6 +40,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron: boolean;
 }) {
   const stageLabel = useEnvironmentStageLabel();
+  const side = useSidebarSide();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const backdropVariant = resolveSidebarStageBackdropVariant(
     stageLabel,
@@ -52,6 +55,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
     <SidebarHeader
       className={cn(
         "@container/sidebar-header relative h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center px-3 py-0 md:px-0",
+        side === "right" && "flex-row-reverse",
         isElectron && "drag-region",
       )}
     >
@@ -64,7 +68,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           backdropVariant && resolveSidebarStageFocusRingOffsetClass(backdropVariant),
         )}
       />
-      <SidebarBrand onBackdrop={backdropVariant !== null} />
+      <SidebarBrand onBackdrop={backdropVariant !== null} side={side} />
       {pillLabel ? (
         <Badge
           className="relative z-10 ml-1 rounded-full px-1.5 text-muted-foreground"
@@ -79,12 +83,16 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   );
 });
 
-function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
+function SidebarBrand({ onBackdrop, side }: { onBackdrop: boolean; side: "left" | "right" }) {
+  const translator = useInterfaceTranslator();
   return (
     <Link
-      aria-label="Go to threads"
+      aria-label={translator.message("sidebar.navigation.goToThreads")}
       className={cn(
-        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink-0 items-center gap-1 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
+        "relative z-10 hidden h-7 w-fit min-w-0 shrink-0 items-center gap-1 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
+        side === "left"
+          ? "ml-[var(--workspace-titlebar-content-left)]"
+          : "mr-[var(--workspace-titlebar-content-right)]",
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/"
@@ -144,6 +152,7 @@ function SidebarUtilityItem({
 }
 
 export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
+  const translator = useInterfaceTranslator();
   const navigate = useNavigate();
   const canGoBack = useCanGoBack();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -151,11 +160,13 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     select: (location) =>
       /^\/settings(?:\/|$)/.test(location.pathname)
         ? "settings"
-        : location.pathname === "/usage"
-          ? "usage"
-          : location.pathname === "/pull-requests"
-            ? "pull-requests"
-            : null,
+        : /^\/projects\/[^/]+\/?$/.test(location.pathname)
+          ? "project-settings"
+          : location.pathname === "/usage"
+            ? "usage"
+            : location.pathname === "/pull-requests"
+              ? "pull-requests"
+              : null,
   });
   const { environments } = useEnvironments();
   // The page reads every connected server, so one of them offering pull requests is enough for
@@ -199,26 +210,26 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
         <SidebarMenuItem className="min-w-0 flex-1">
           <SidebarMenuButton onClick={handleBackClick}>
             <ArrowLeftIcon />
-            <span>Back</span>
+            <span>{translator.message("sidebar.navigation.back")}</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
       ) : (
         <>
           <SidebarUtilityItem
             icon={<SettingsIcon />}
-            label="Settings"
+            label={translator.message("sidebar.navigation.settings")}
             onClick={handleSettingsClick}
           />
           {pullRequestsSupported ? (
             <SidebarUtilityItem
               icon={<GitPullRequestIcon />}
-              label="Pull Requests"
+              label={translator.message("sidebar.navigation.pullRequests")}
               onClick={handlePullRequestsClick}
             />
           ) : null}
           <SidebarUtilityItem
             icon={<ChartNoAxesColumnIcon />}
-            label="Usage"
+            label={translator.message("sidebar.navigation.usage")}
             onClick={handleUsageClick}
           />
         </>

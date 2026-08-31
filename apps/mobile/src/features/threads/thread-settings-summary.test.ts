@@ -1,6 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { threadSettingsSummaryLabel } from "./thread-settings-summary";
+import {
+  readAutoReasoningStatus,
+  threadReasoningValueLabel,
+  threadSettingsSummaryLabel,
+} from "./thread-settings-summary";
 
 describe("threadSettingsSummaryLabel", () => {
   it("shows Fetch in the compact composer summary when enabled", () => {
@@ -8,10 +12,39 @@ describe("threadSettingsSummaryLabel", () => {
       threadSettingsSummaryLabel({
         modelLabel: "Sol",
         optionDescriptors: [],
-        runtimeMode: "auto",
+        runtimeMode: "approval-required",
         interactionMode: "default",
         fetchEnabled: true,
       }),
-    ).toBe("Sol · Auto · Fetch");
+    ).toBe("Sol · Supervised · Fetch");
+  });
+
+  it("shows the same Auto effective and fallback status as web", () => {
+    const autoReasoning = readAutoReasoningStatus([
+      {
+        kind: "runtime.warning",
+        payload: { autoReasoningEffort: "low", autoReasoningFallback: true },
+      },
+      {
+        kind: "auto-reasoning.resolved",
+        payload: { autoReasoningEffort: "high", autoReasoningFallback: true },
+      },
+    ] as never);
+    expect(
+      threadSettingsSummaryLabel({
+        modelLabel: "Sol",
+        optionDescriptors: [],
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        autoReasoning: autoReasoning!,
+      }),
+    ).toBe("Sol · Auto · High · Fallback · Supervised");
+    expect(
+      threadReasoningValueLabel({
+        autoReasoningEnabled: false,
+        manualLabel: "Medium",
+        status: autoReasoning,
+      }),
+    ).toBe("Medium");
   });
 });

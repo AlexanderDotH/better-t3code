@@ -2,9 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   GEMINI_EXEC_COMMAND_TOOL,
-  GEMINI_REPLACE_TEXT_TOOL,
   GEMINI_WORKSPACE_CONTEXT_TOOL,
-  GEMINI_WRITE_FILE_TOOL,
+  GEMINI_WORKSPACE_EDIT_TOOL,
   geminiHarnessCommandEnvironment,
   geminiToolDeclarations,
   geminiToolIsAvailable,
@@ -27,7 +26,14 @@ describe("GeminiHarness", () => {
       geminiToolDeclarations({ interactionMode: "default", sandboxMode: "workspace-write" }).map(
         (tool) => tool.name,
       ),
-    ).toEqual([GEMINI_WORKSPACE_CONTEXT_TOOL, GEMINI_WRITE_FILE_TOOL, GEMINI_REPLACE_TEXT_TOOL]);
+    ).toEqual([GEMINI_WORKSPACE_CONTEXT_TOOL, GEMINI_WORKSPACE_EDIT_TOOL]);
+    expect(
+      geminiToolIsAvailable({
+        toolName: "write_file",
+        interactionMode: "default",
+        sandboxMode: "workspace-write",
+      }),
+    ).toBe(false);
     expect(
       geminiToolIsAvailable({
         toolName: GEMINI_EXEC_COMMAND_TOOL,
@@ -48,8 +54,8 @@ describe("GeminiHarness", () => {
     expect(geminiToolRequiresApproval(GEMINI_WORKSPACE_CONTEXT_TOOL, "approval-required")).toBe(
       false,
     );
-    expect(geminiToolRequiresApproval(GEMINI_WRITE_FILE_TOOL, "approval-required")).toBe(true);
-    expect(geminiToolRequiresApproval(GEMINI_REPLACE_TEXT_TOOL, "auto-accept-edits")).toBe(false);
+    expect(geminiToolRequiresApproval(GEMINI_WORKSPACE_EDIT_TOOL, "approval-required")).toBe(true);
+    expect(geminiToolRequiresApproval(GEMINI_WORKSPACE_EDIT_TOOL, "auto-accept-edits")).toBe(false);
     expect(geminiToolRequiresApproval(GEMINI_EXEC_COMMAND_TOOL, "auto-accept-edits")).toBe(true);
     expect(geminiToolRequiresApproval(GEMINI_EXEC_COMMAND_TOOL, "auto")).toBe(true);
     expect(geminiToolRequiresApproval(GEMINI_EXEC_COMMAND_TOOL, "full-access")).toBe(false);

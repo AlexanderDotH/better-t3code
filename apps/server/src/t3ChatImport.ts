@@ -502,6 +502,10 @@ export const makeT3ChatImport = Effect.fn("makeT3ChatImport")(function* (options
     const available: ChatAttachment[] = [];
     for (const attachment of attachments) {
       const relativePath = attachmentRelativePath(attachment);
+      if (relativePath === null) {
+        skipped += 1;
+        continue;
+      }
       const sourcePath = path.join(sourceDirectory, relativePath);
       const targetPath = path.join(config.attachmentsDir, relativePath);
       const exists = yield* fileSystem.exists(sourcePath).pipe(Effect.orElseSucceed(() => false));

@@ -1,15 +1,20 @@
 import type { ContextMenuItem, PreviewSessionSnapshot, PullRequestState } from "@t3tools/contracts";
+import {
+  translateInterfaceMessage,
+  type InterfaceMessageKey,
+  type InterfaceTranslator,
+} from "@t3tools/shared/interfaceLanguage";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
   FileDiff,
   Files,
   GitPullRequest,
   Globe2,
+  NetworkIcon,
   Plus,
   TerminalSquare,
   Volume2,
   VolumeOff,
-  X,
 } from "lucide-react";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
@@ -32,6 +37,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Kbd } from "~/components/ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "~/components/ui/menu";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { faviconUrlForOrigin } from "~/lib/favicon";
 import { useTheme } from "~/hooks/useTheme";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
@@ -40,6 +46,7 @@ import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanel
 import { FaviconImage } from "./preview/PreviewFaviconIcon";
 import { previewBridge } from "./preview/previewBridge";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
+import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -72,11 +79,15 @@ interface RightPanelTabsProps {
   onAddDiff: () => void;
   onAddFiles: () => void;
   onAddPullRequest: () => void;
+  onAddKnowledgeGraph?: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
+  knowledgeGraphAvailable?: boolean;
+  knowledgeGraphTitle?: string;
+  knowledgeGraphDescription?: string;
   pullRequestStatuses?: Readonly<Record<string, PullRequestTabStatus>>;
   children: ReactNode;
 }
@@ -89,13 +100,14 @@ export interface PullRequestTabStatus {
   isDraft: boolean;
 }
 
-const SURFACE_DISABLED_REASONS = {
-  browser: "Browser previews are only available in the T3 Code desktop app.",
-  terminal: "Terminal surfaces are only available from a project thread.",
-  files: "Files are only available when a project is open.",
-  diff: "Diff is only available for server threads in Git repositories.",
-  pullRequest: "This thread's branch has no pull request yet.",
-} as const;
+const SURFACE_DISABLED_REASON_KEYS = {
+  browser: "ui.rightPanel.disabled.browser",
+  terminal: "ui.rightPanel.disabled.terminal",
+  files: "ui.rightPanel.disabled.files",
+  diff: "ui.rightPanel.disabled.diff",
+  pullRequest: "ui.rightPanel.disabled.pullRequest",
+  knowledgeGraph: "ui.rightPanel.disabled.knowledgeGraph",
+} as const satisfies Readonly<Record<string, InterfaceMessageKey>>;
 
 /** Overlays that must win over the launcher's letter shortcuts. */
 const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
@@ -110,13 +122,14 @@ const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
 ].join(",");
 
 /** One-line unavailability hints for the empty-state cards. */
-const SURFACE_UNAVAILABLE_HINTS = {
-  browser: "Only available in the desktop app.",
-  terminal: "Available when a project is open.",
-  files: "Available when a project is open.",
-  diff: "Available for Git repositories.",
-  pullRequest: "No pull request on this branch yet.",
-} as const;
+const SURFACE_UNAVAILABLE_HINT_KEYS = {
+  browser: "ui.rightPanel.hint.browser",
+  terminal: "ui.rightPanel.hint.project",
+  files: "ui.rightPanel.hint.project",
+  diff: "ui.rightPanel.hint.diff",
+  pullRequest: "ui.rightPanel.hint.pullRequest",
+  knowledgeGraph: "ui.rightPanel.hint.knowledgeGraph",
+} as const satisfies Readonly<Record<string, InterfaceMessageKey>>;
 
 type TabContextMenuAction =
   | "copy-path"
@@ -144,13 +157,17 @@ function previewTabIdOf(
  * resolve while the preview manager's createTab is still in flight, and muting
  * then fails with a PreviewTabNotFoundError nothing surfaces to the user.
  */
-export function tabMuteMenuItem(input: {
-  overlay: DesktopPreviewOverlay | null;
-  canResolveRuntimeTabId: boolean;
-}): { label: string; disabled: boolean } {
+export function tabMuteMenuItem(
+  input: {
+    overlay: DesktopPreviewOverlay | null;
+    canResolveRuntimeTabId: boolean;
+  },
+  translate: InterfaceTranslator["message"] = (key, values) =>
+    translateInterfaceMessage("en", key, values),
+): { label: string; disabled: boolean } {
   const muted = input.overlay?.audioMuted ?? false;
   return {
-    label: muted ? "Unmute tab" : "Mute tab",
+    label: translate(muted ? "ui.rightPanel.tab.unmute" : "ui.rightPanel.tab.mute"),
     disabled: input.overlay === null || !input.canResolveRuntimeTabId,
   };
 }
@@ -244,61 +261,81 @@ function RightPanelEmptyState(props: {
   onAddDiff: () => void;
   onAddFiles: () => void;
   onAddPullRequest: () => void;
+  onAddKnowledgeGraph?: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
+  knowledgeGraphTitle?: string;
+  knowledgeGraphDescription?: string;
 }) {
+  const translator = useInterfaceTranslator();
   // -1 means no highlight: it only appears on hover or arrow use.
   const [highlight, setHighlight] = useState(-1);
 
   const actions = [
     {
-      label: "Browser",
-      description: "Open a local app or URL.",
+      label: translator.message("ui.rightPanel.surface.browser"),
+      description: translator.message("ui.rightPanel.surface.browserDescription"),
       icon: Globe2,
       shortcut: "B",
       available: props.browserAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.browser,
+      disabledReason: translator.message(SURFACE_UNAVAILABLE_HINT_KEYS.browser),
       onClick: props.onAddBrowser,
     },
     {
-      label: "Terminal",
-      description: "Start a shell in this workspace.",
+      label: translator.message("ui.rightPanel.surface.terminal"),
+      description: translator.message("ui.rightPanel.surface.terminalDescription"),
       icon: TerminalSquare,
       shortcut: "T",
       available: props.terminalAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.terminal,
+      disabledReason: translator.message(SURFACE_UNAVAILABLE_HINT_KEYS.terminal),
       onClick: props.onAddTerminal,
     },
     {
-      label: "Files",
-      description: "Browse and read workspace files.",
+      label: translator.message("ui.rightPanel.surface.files"),
+      description: translator.message("ui.rightPanel.surface.filesDescription"),
       icon: Files,
       shortcut: "F",
       available: props.filesAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.files,
+      disabledReason: translator.message(SURFACE_UNAVAILABLE_HINT_KEYS.files),
       onClick: props.onAddFiles,
     },
     {
-      label: "Diff",
-      description: "Review changes in this thread.",
+      label: translator.message("ui.rightPanel.surface.diff"),
+      description: translator.message("ui.rightPanel.surface.diffDescription"),
       icon: FileDiff,
       shortcut: "D",
       available: props.diffAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.diff,
+      disabledReason: translator.message(SURFACE_UNAVAILABLE_HINT_KEYS.diff),
       onClick: props.onAddDiff,
     },
     {
-      label: "Pull request",
-      description: "Open this branch's pull request.",
+      label: translator.message("ui.rightPanel.surface.pullRequest"),
+      description: translator.message("ui.rightPanel.surface.pullRequestDescription"),
       icon: GitPullRequest,
       shortcut: "P",
       available: props.pullRequestAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.pullRequest,
+      disabledReason: translator.message(SURFACE_UNAVAILABLE_HINT_KEYS.pullRequest),
       onClick: props.onAddPullRequest,
     },
+    ...(props.onAddKnowledgeGraph
+      ? [
+          {
+            label:
+              props.knowledgeGraphTitle ?? translator.message("betterT3.knowledge.graph.label"),
+            description:
+              props.knowledgeGraphDescription ??
+              translator.message("knowledgeGraph.launchDescription"),
+            icon: NetworkIcon,
+            shortcut: "K",
+            available: true,
+            disabledReason: translator.message(SURFACE_UNAVAILABLE_HINT_KEYS.knowledgeGraph),
+            onClick: props.onAddKnowledgeGraph,
+          },
+        ]
+      : []),
   ] as const;
 
   type SurfaceAction = (typeof actions)[number];
@@ -381,7 +418,7 @@ function RightPanelEmptyState(props: {
       ref={focusOnMount}
       tabIndex={0}
       onKeyDown={handleKeyDown}
-      aria-label="Open a surface"
+      aria-label={translator.message("ui.rightPanel.openSurface")}
       data-surface-launcher-keys={availableActions.map((action) => action.shortcut).join("")}
       className={cn(
         "flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 pt-6 outline-none",
@@ -392,9 +429,11 @@ function RightPanelEmptyState(props: {
     >
       <div className="relative w-full max-w-lg">
         <div className="absolute inset-x-0 bottom-full mb-5 text-center">
-          <h3 className="font-medium text-foreground text-sm">Open a surface</h3>
+          <h3 className="font-medium text-foreground text-sm">
+            {translator.message("ui.rightPanel.openSurface")}
+          </h3>
           <p className="mt-1 text-muted-foreground text-xs">
-            Choose what to show in the right panel.
+            {translator.message("ui.rightPanel.chooseSurface")}
           </p>
         </div>
         <div className="grid grid-cols-2 gap-2">
@@ -454,12 +493,15 @@ export function rightPanelSurfaceTitle(
   surface: RightPanelSurface,
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
   terminalLabelsById: ReadonlyMap<string, string>,
+  knowledgeGraphTitle = translateInterfaceMessage("en", "betterT3.knowledge.graph.label"),
+  translate: InterfaceTranslator["message"] = (key, values) =>
+    translateInterfaceMessage("en", key, values),
 ): string {
   switch (surface.kind) {
     case "diff":
-      return "Diff";
+      return translate("ui.rightPanel.surface.diff");
     case "files":
-      return "Files";
+      return translate("ui.rightPanel.surface.files");
     case "file":
       return surface.relativePath.slice(surface.relativePath.lastIndexOf("/") + 1);
     case "terminal":
@@ -469,14 +511,18 @@ export function rightPanelSurfaceTitle(
       );
     case "pull-request":
       return `#${surface.number}`;
+    case "knowledge-graph":
+      return knowledgeGraphTitle;
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
-      if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
+      if (!snapshot || snapshot.navStatus._tag === "Idle") {
+        return translate("ui.rightPanel.surface.browser");
+      }
       if (snapshot.navStatus.title.trim().length > 0) return snapshot.navStatus.title;
       try {
-        return new URL(snapshot.navStatus.url).host || "Browser";
+        return new URL(snapshot.navStatus.url).host || translate("ui.rightPanel.surface.browser");
       } catch {
-        return "Browser";
+        return translate("ui.rightPanel.surface.browser");
       }
     }
   }
@@ -552,10 +598,13 @@ function SurfaceIcon({
                 : "text-muted-foreground";
       return <GitPullRequest className={cn("size-3 shrink-0", toneClassName)} />;
     }
+    case "knowledge-graph":
+      return <NetworkIcon className="size-3 shrink-0" />;
   }
 }
 
 export function RightPanelTabs(props: RightPanelTabsProps) {
+  const translator = useInterfaceTranslator();
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
@@ -563,45 +612,58 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
   const addSurfaceActions = [
     {
-      label: "Browser",
+      label: translator.message("ui.rightPanel.surface.browser"),
       icon: Globe2,
       shortcut: "B",
       available: props.browserAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.browser,
+      disabledReason: translator.message(SURFACE_DISABLED_REASON_KEYS.browser),
       onClick: props.onAddBrowser,
     },
     {
-      label: "Terminal",
+      label: translator.message("ui.rightPanel.surface.terminal"),
       icon: TerminalSquare,
       shortcut: "T",
       available: props.terminalAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.terminal,
+      disabledReason: translator.message(SURFACE_DISABLED_REASON_KEYS.terminal),
       onClick: props.onAddTerminal,
     },
     {
-      label: "Files",
+      label: translator.message("ui.rightPanel.surface.files"),
       icon: Files,
       shortcut: "F",
       available: props.filesAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.files,
+      disabledReason: translator.message(SURFACE_DISABLED_REASON_KEYS.files),
       onClick: props.onAddFiles,
     },
     {
-      label: "Diff",
+      label: translator.message("ui.rightPanel.surface.diff"),
       icon: FileDiff,
       shortcut: "D",
       available: props.diffAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.diff,
+      disabledReason: translator.message(SURFACE_DISABLED_REASON_KEYS.diff),
       onClick: props.onAddDiff,
     },
     {
-      label: "Pull request",
+      label: translator.message("ui.rightPanel.surface.pullRequest"),
       icon: GitPullRequest,
       shortcut: "P",
       available: props.pullRequestAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.pullRequest,
+      disabledReason: translator.message(SURFACE_DISABLED_REASON_KEYS.pullRequest),
       onClick: props.onAddPullRequest,
     },
+    ...(props.onAddKnowledgeGraph
+      ? [
+          {
+            label:
+              props.knowledgeGraphTitle ?? translator.message("betterT3.knowledge.graph.label"),
+            icon: NetworkIcon,
+            shortcut: "K",
+            available: props.knowledgeGraphAvailable === true,
+            disabledReason: translator.message(SURFACE_DISABLED_REASON_KEYS.knowledgeGraph),
+            onClick: props.onAddKnowledgeGraph,
+          },
+        ]
+      : []),
   ] as const;
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -626,7 +688,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
       const items: ContextMenuItem<TabContextMenuAction>[] = [];
       if (surface.kind === "file") {
-        items.push({ id: "copy-path", label: "Copy path" });
+        items.push({
+          id: "copy-path",
+          label: translator.message("ui.rightPanel.menu.copyPath"),
+        });
       }
       const menuPreviewTabId = previewTabIdOf(surface, props.previewSessions);
       // Desktop overlay state only arrives once the preview manager has created
@@ -641,27 +706,30 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         // point, so the item is offered whenever the tab is mutable at all.
         items.push({
           id: "toggle-mute",
-          ...tabMuteMenuItem({
-            overlay: menuOverlay,
-            canResolveRuntimeTabId: props.previewRuntimeTabId !== undefined,
-          }),
+          ...tabMuteMenuItem(
+            {
+              overlay: menuOverlay,
+              canResolveRuntimeTabId: props.previewRuntimeTabId !== undefined,
+            },
+            translator.message,
+          ),
         });
       }
       items.push(
-        { id: "close", label: "Close" },
+        { id: "close", label: translator.message("ui.rightPanel.menu.close") },
         {
           id: "close-others",
-          label: "Close others",
+          label: translator.message("ui.rightPanel.menu.closeOthers"),
           disabled: props.surfaces.length <= 1,
         },
         {
           id: "close-to-right",
-          label: "Close to the right",
+          label: translator.message("ui.rightPanel.menu.closeRight"),
           disabled: surfaceIndex >= props.surfaces.length - 1,
         },
         {
           id: "close-all",
-          label: "Close all",
+          label: translator.message("ui.rightPanel.menu.closeAll"),
           disabled: props.surfaces.length === 0,
         },
       );
@@ -699,7 +767,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           break;
       }
     },
-    [props],
+    [props, translator],
   );
   const handleTabMouseDown = useCallback((event: ReactMouseEvent) => {
     if (event.button !== 1) return;
@@ -754,6 +822,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 surface,
                 props.previewSessions,
                 props.terminalLabelsById,
+                props.knowledgeGraphTitle ?? translator.message("betterT3.knowledge.graph.label"),
+                translator.message,
               );
               const previewTabId = previewTabIdOf(surface, props.previewSessions);
               // Desktop state is keyed by the session id, but desktop actions
@@ -778,29 +848,24 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                   )}
                 >
-                  <button
-                    type="button"
-                    className="cursor-pointer group/close relative flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
-                    aria-label={`Close ${title}`}
+                  <PanelTabCloseButton
+                    label={translator.message("ui.rightPanel.tab.closeAria", { title })}
                     onClick={() => props.onCloseSurface(surface)}
                   >
-                    <span className="relative flex size-3 items-center justify-center group-hover/tab:hidden group-focus-visible/close:hidden">
-                      <SurfaceIcon
-                        surface={surface}
-                        sessions={props.previewSessions}
-                        desktopByTabId={props.desktopByTabId}
-                        theme={resolvedTheme}
-                        pullRequestStatuses={props.pullRequestStatuses}
+                    <SurfaceIcon
+                      surface={surface}
+                      sessions={props.previewSessions}
+                      desktopByTabId={props.desktopByTabId}
+                      theme={resolvedTheme}
+                      pullRequestStatuses={props.pullRequestStatuses}
+                    />
+                    {pending ? (
+                      <span
+                        className="absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full bg-current"
+                        aria-hidden
                       />
-                      {pending ? (
-                        <span
-                          className="absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full bg-current"
-                          aria-hidden
-                        />
-                      ) : null}
-                    </span>
-                    <X className="hidden size-3 group-hover/tab:block group-focus-visible/close:block" />
-                  </button>
+                    ) : null}
+                  </PanelTabCloseButton>
                   {audio === "none" || !audioRuntimeTabId ? null : (
                     <Tooltip>
                       <TooltipTrigger
@@ -808,7 +873,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                           <button
                             type="button"
                             className="cursor-pointer flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
-                            aria-label={audio === "muted" ? `Unmute ${title}` : `Mute ${title}`}
+                            aria-label={translator.message(
+                              audio === "muted"
+                                ? "ui.rightPanel.tab.unmuteAria"
+                                : "ui.rightPanel.tab.muteAria",
+                              { title },
+                            )}
                             onClick={(event) => {
                               // Sibling of the close button, inside a tab that
                               // activates on click: keep this to the toggle.
@@ -826,7 +896,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                           </button>
                         }
                       />
-                      <TooltipPopup>{audio === "muted" ? "Unmute tab" : "Mute tab"}</TooltipPopup>
+                      <TooltipPopup>
+                        {translator.message(
+                          audio === "muted" ? "ui.rightPanel.tab.unmute" : "ui.rightPanel.tab.mute",
+                        )}
+                      </TooltipPopup>
                     </Tooltip>
                   )}
                   <Tooltip>
@@ -851,7 +925,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 <MenuTrigger
                   render={
                     <Button
-                      aria-label="Add panel surface"
+                      aria-label={translator.message("ui.rightPanel.addSurface")}
                       className="size-6 shrink-0 text-muted-foreground hover:text-foreground"
                       size="icon-xs"
                       variant="ghost"
@@ -897,6 +971,13 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
             onAddPullRequest={props.onAddPullRequest}
+            {...(props.onAddKnowledgeGraph
+              ? {
+                  onAddKnowledgeGraph: props.onAddKnowledgeGraph,
+                  knowledgeGraphTitle: props.knowledgeGraphTitle,
+                  knowledgeGraphDescription: props.knowledgeGraphDescription,
+                }
+              : {})}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}

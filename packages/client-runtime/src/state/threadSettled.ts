@@ -358,6 +358,41 @@ export function effectiveSettled(
   );
 }
 
+export type ThreadSidebarLifecycle = "active" | "pinned" | "settled" | "snoozed";
+
+export interface ThreadSidebarLifecycleOptions {
+  readonly now: string;
+  readonly autoSettleAfterDays: number | null;
+  readonly autoSettleOnMerge?: boolean;
+  readonly changeRequest?: ChangeRequestSettleSource | null;
+  readonly supportsSettlement: boolean;
+  readonly supportsSnooze: boolean;
+}
+
+export function resolveThreadSidebarLifecycle(
+  shell: OrchestrationThreadShell,
+  options: ThreadSidebarLifecycleOptions,
+): ThreadSidebarLifecycle {
+  if (options.supportsSnooze && effectiveSnoozed(shell, { now: options.now })) {
+    return "snoozed";
+  }
+  if (shell.pinnedAt != null) return "pinned";
+  if (
+    options.supportsSettlement &&
+    effectiveSettled(shell, {
+      now: options.now,
+      autoSettleAfterDays: options.autoSettleAfterDays,
+      ...(options.autoSettleOnMerge === undefined
+        ? {}
+        : { autoSettleOnMerge: options.autoSettleOnMerge }),
+      ...(options.changeRequest === undefined ? {} : { changeRequest: options.changeRequest }),
+    })
+  ) {
+    return "settled";
+  }
+  return "active";
+}
+
 const HOUR_MS = 60 * 60 * 1_000;
 const EVENING_HOUR = 18;
 const MORNING_HOUR = 9;

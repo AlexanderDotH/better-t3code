@@ -11,40 +11,57 @@ T3 server, scoped to one provider session, and passed directly to the provider a
 
 ## Endpoints and toolsets
 
-The HTTP server exposes five profiles:
+The HTTP server exposes two non-workspace profiles and twelve workspace profiles:
 
-| Endpoint                    | Tools                                                                      |
-| --------------------------- | -------------------------------------------------------------------------- |
-| `/mcp`                      | Preview, project-agent coordination, and general-subagent tools            |
-| `/mcp/coordination`         | Project-agent coordination and general-subagent tools                      |
-| `/mcp/workspace`            | `/mcp` plus the read-only `workspace_context` tool                         |
-| `/mcp/workspace-no-preview` | Workspace context, project-agent coordination, and general-subagent tools  |
-| `/mcp/workspace-only`       | Only `workspace_context`; reserved for constrained transient Fetch workers |
+| Endpoint                                    | Workspace tools                       | Other tools                                                                             |
+| ------------------------------------------- | ------------------------------------- | --------------------------------------------------------------------------------------- |
+| `/mcp`                                      | None                                  | Preview, `thread_context`, project coordination, and general subagents                  |
+| `/mcp/coordination`                         | None                                  | `thread_context`, project coordination, and general subagents                           |
+| `/mcp/workspace`                            | `workspace_context`                   | Preview, `thread_context`, coordination, subagents, project memory, and Knowledge Graph |
+| `/mcp/workspace-no-memory`                  | `workspace_context`                   | Preview, `thread_context`, coordination, subagents, and Knowledge Graph                 |
+| `/mcp/workspace-no-preview`                 | `workspace_context`                   | `thread_context`, coordination, subagents, project memory, and Knowledge Graph          |
+| `/mcp/workspace-no-preview-no-memory`       | `workspace_context`                   | `thread_context`, coordination, subagents, and Knowledge Graph                          |
+| `/mcp/workspace-only`                       | `workspace_context`                   | `thread_context` and project memory                                                     |
+| `/mcp/workspace-only-no-memory`             | `workspace_context`                   | `thread_context`                                                                        |
+| `/mcp/workspace-write`                      | `workspace_context`, `workspace_edit` | Preview, `thread_context`, coordination, subagents, project memory, and Knowledge Graph |
+| `/mcp/workspace-write-no-memory`            | `workspace_context`, `workspace_edit` | Preview, `thread_context`, coordination, subagents, and Knowledge Graph                 |
+| `/mcp/workspace-write-no-preview`           | `workspace_context`, `workspace_edit` | `thread_context`, coordination, subagents, project memory, and Knowledge Graph          |
+| `/mcp/workspace-write-no-preview-no-memory` | `workspace_context`, `workspace_edit` | `thread_context`, coordination, subagents, and Knowledge Graph                          |
+| `/mcp/workspace-write-only`                 | `workspace_context`, `workspace_edit` | `thread_context` and project memory                                                     |
+| `/mcp/workspace-write-only-no-memory`       | `workspace_context`, `workspace_edit` | `thread_context`                                                                        |
 
 The endpoint in a provider's generated MCP configuration determines its maximum toolset. A
-credential issued for the preview endpoint cannot be used to obtain workspace tools from
-`/mcp/workspace`.
+credential issued for the preview endpoint cannot be used to obtain workspace tools from a
+workspace endpoint. The six existing workspace profiles remain read-only. Their `workspace-write`
+counterparts add the mutation schema only when that session may edit files, which keeps it out of
+Fetch and approval-required tool catalogs.
+
+Profile selection follows enabled features, preview access, and the project's effective memory
+mode. Project memory is advertised only in `project` mode. Codex currently uses these deterministic
+profiles because its runtime does not advertise native deferred-tool loading; T3 does not infer
+that capability from a model name.
 
 Provider support follows the adapter's MCP transport capability:
 
-| Provider driver     | Internal MCP transport         | Issued endpoint  |
-| ------------------- | ------------------------------ | ---------------- |
-| Codex               | Native MCP configuration       | `/mcp/workspace` |
-| Claude              | Per-session MCP configuration  | `/mcp/workspace` |
-| Cursor              | Per-session MCP configuration  | `/mcp/workspace` |
-| OpenCode            | Per-session MCP configuration  | `/mcp/workspace` |
-| Grok                | Preview-only MCP configuration | `/mcp`           |
-| Gemini              | Direct T3 function-tool bridge | None             |
-| Unregistered driver | No adapter transport           | None             |
+| Provider driver     | Delivery                       | Workspace editing                        |
+| ------------------- | ------------------------------ | ---------------------------------------- |
+| Codex               | Native MCP configuration       | Authenticated writable workspace profile |
+| Claude              | Per-session MCP configuration  | Authenticated writable workspace profile |
+| Cursor              | Per-session MCP configuration  | Authenticated writable workspace profile |
+| OpenCode            | Per-session MCP configuration  | Authenticated writable workspace profile |
+| ChatGPT             | Direct T3 function-tool bridge | Shared `workspace_edit` contract         |
+| OpenRouter          | Direct T3 function-tool bridge | Shared `workspace_edit` contract         |
+| OpenAI              | Direct T3 function-tool bridge | Shared `workspace_edit` contract         |
+| Gemini              | Direct T3 function-tool bridge | Shared `workspace_edit` contract         |
+| Grok                | Preview-only MCP configuration | Unsupported                              |
+| Unregistered driver | No adapter transport           | Unsupported                              |
 
-MCP-capable built-in drivers receive project-agent coordination and general-subagent tools. Gemini instead uses a direct
-T3-owned function-tool bridge for bounded workspace reads and mutations, so no MCP credential is
-issued to its SDK client and Gemini cannot initiate T3-managed delegation. It can still run as a
-selected general subagent because its direct harness supports normal coding work. The distinction
-also keeps `workspace_context` out of the advertised MCP
-tool list for Grok and unsupported drivers instead of allowing a tool call that can only fail. An
-explicit instance for an unregistered driver remains visible as unavailable, but no adapter exists
-to receive an internal MCP credential.
+MCP-capable built-in drivers receive project-agent coordination and general-subagent tools. The
+server-owned ChatGPT, OpenRouter, OpenAI, and Gemini harnesses instead expose the same workspace
+contracts as direct function tools. Gemini receives no MCP credential and cannot initiate
+T3-managed delegation, though it can still run as a selected general subagent. Grok remains
+preview-only, so it receives neither workspace tool. An explicit instance for an unregistered
+driver remains visible as unavailable, but no adapter exists to receive an internal MCP credential.
 
 ## Credentials and authorization
 
@@ -63,6 +80,11 @@ the endpoint capability. The invocation context made available to handlers conta
 - the credential's capabilities and issue time
 
 Neither MCP input nor the provider can choose a workspace root.
+
+`workspace_edit` additionally requires the `workspace-write` capability. The server issues that
+capability only for a non-Fetch session whose runtime and sandbox permit workspace mutation. Before
+each edit, the handler re-resolves the authenticated thread and rejects stale credentials, inactive
+turns, approval-required or read-only runtimes, and Plan interaction mode before touching disk.
 
 ## Project-agent coordination
 
@@ -129,8 +151,8 @@ declined. A general worker therefore never creates an invisible approval prompt 
 
 ## Trusted workspace resolution
 
-`workspace_context` resolves the authenticated thread and its project from the orchestration read
-model. The effective root is:
+The workspace tools resolve the authenticated thread and its project from the orchestration read
+model. Their effective root is:
 
 ```ts
 thread.worktreePath ?? project.workspaceRoot;
@@ -144,7 +166,8 @@ size checks.
 
 `workspace_context` is a read-only batching tool for repository discovery. One call can contain up
 to eight independent path/content queries and twelve targeted file reads. Queries support `path`,
-`content`, and combined `auto` modes. Reads use one-indexed inclusive line ranges.
+`content`, and combined `auto` modes. Reads use one-indexed inclusive line ranges. A successful
+targeted read includes a content revision suitable for a later `workspace_edit` revision guard.
 
 Tool annotations declare it read-only, non-destructive, idempotent, and closed-world. It cannot
 write files or execute arbitrary commands.
@@ -185,9 +208,94 @@ context, an unavailable root, and path escapes fail the whole tool call.
 Local tracing records the selected backend, duration, result counts, and truncation state. Query
 strings, file contents, and full filesystem paths are not logged.
 
+## `workspace_edit`
+
+`workspace_edit` is the single UTF-8 mutation tool for both one-file changes and mixed batches. Its
+`changes` array groups ordered edits by unique project-relative path. A representative batch can
+edit one file, create another, and remove a third in one call:
+
+Tool annotations declare it non-read-only, destructive, non-idempotent, and closed-world.
+
+```json
+{
+  "changes": [
+    {
+      "path": "src/example.ts",
+      "expected_revision": "sha256:...",
+      "edits": [
+        {
+          "type": "replace",
+          "old_text": "const oldValue = 1;",
+          "new_text": "const newValue = 2;",
+          "occurrence": "one"
+        }
+      ]
+    },
+    {
+      "path": "src/generated.ts",
+      "edits": [
+        {
+          "type": "write",
+          "mode": "upsert",
+          "content": "export const generated = true;\n"
+        }
+      ]
+    },
+    {
+      "path": "src/obsolete.ts",
+      "edits": [{ "type": "delete", "if_missing": "error" }]
+    }
+  ]
+}
+```
+
+The edit variants are:
+
+- `write` creates, overwrites, or upserts a complete file.
+- `replace` performs exact literal replacement, requiring one match by default or all matches with
+  an optional expected count.
+- `splice` replaces one-based inclusive line ranges, zero-based end-exclusive Unicode code-point
+  ranges, or the start/end anchor used for prepend and append. Empty content removes a range, while
+  a zero-width code-point range inserts content.
+- `delete` removes one regular file and can either reject or ignore a missing file.
+
+Each call accepts at most 64 paths and 256 edits. Each existing or resulting file may be at most
+1 MiB and the batch working set at most 8 MiB. The service rejects duplicate paths, invalid or
+ambiguous edits, revision conflicts, binaries, symlinks, directories, path escapes, and invalid
+ranges before the first mutation. Existing permissions are preserved and writes create missing
+parent directories. Results contain only compact path, action, edit-count, and revision summaries.
+Submitted or resulting file contents are never echoed.
+
+### Commit and recovery boundary
+
+The workspace filesystem serializes batches per workspace root. It resolves and snapshots all
+paths, applies every ordered edit in memory, rechecks revisions, and stages writes before commit.
+An ordinary mid-commit failure rolls captured originals back. If an external concurrent edit makes
+complete rollback unsafe, the failure names the exact `uncertain_paths` for manual inspection.
+
+This is transactional error recovery, not crash-level multi-file atomicity. A host or process crash
+can interrupt a multi-file commit. The existing pre-turn and completed-turn Git checkpoints remain
+the observable reverse path: clients show changed files and diffs and can restore a checkpoint.
+Formatters, generators, binaries, files over the limit, permission changes, recursive operations,
+globs, regular expressions, copy, and move continue through approved provider command tools.
+
+## Provider, client, and connection boundary
+
+Codex, Claude, Cursor, and OpenCode receive writable authenticated MCP profiles when their session
+mode permits edits. ChatGPT Subscription, OpenRouter, OpenAI Responses, and Gemini receive the
+identical contract through the direct harness. Fetch workers and read-only sessions receive only
+`workspace_context`; Grok does not support internal workspace tools.
+
+No client RPC, setting, feature flag, command-palette action, keybinding, or database migration is
+added. Web, hosted web, desktop, and mobile already project provider tool activity, changed files,
+Git diffs, and checkpoints. Local, relay, tunnel, and other remote clients behave the same because
+the authenticated server in the environment that owns the workspace resolves and performs every
+operation.
+
 ## Workspace picker invalidation
 
-The UI file picker keeps its existing native path index. File writes, completed checkpoints, and
-checkpoint reverts only invalidate a cached picker index; they do not synchronously rescan it. The
-next picker list or search lazily creates a fresh index, keeping mutation and turn-finalization paths
-independent from scan latency.
+The UI file picker keeps its existing native path index. A successful workspace-edit batch
+invalidates the cached picker index once, regardless of its file count. Completed checkpoints and
+checkpoint reverts use the same lazy invalidation rather than synchronously rescanning. The next
+picker list or search creates a fresh index, keeping mutation and turn-finalization paths independent
+from scan latency.

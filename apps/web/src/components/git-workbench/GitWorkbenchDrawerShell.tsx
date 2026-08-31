@@ -1,4 +1,5 @@
 import type { ReactNode, RefObject } from "react";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 import {
   WorkspaceCardDrawerShell,
@@ -12,14 +13,6 @@ export type GitWorkbenchDrawerTabId =
   | "history"
   | "branches"
   | "operations";
-
-const WORKBENCH_TABS: readonly WorkspaceCardDrawerTab<GitWorkbenchDrawerTabId>[] = [
-  { id: "overview", label: "Overview" },
-  { id: "changes", label: "Changes" },
-  { id: "history", label: "History" },
-  { id: "branches", label: "Branches" },
-  { id: "operations", label: "Operations" },
-];
 
 export interface GitWorkbenchDrawerShellProps {
   readonly open: boolean;
@@ -39,18 +32,26 @@ export interface GitWorkbenchDrawerShellProps {
 }
 
 export function GitWorkbenchDrawerShell(props: GitWorkbenchDrawerShellProps) {
+  const translate = useInterfaceTranslator().message;
+  const workbenchTabs: readonly WorkspaceCardDrawerTab<GitWorkbenchDrawerTabId>[] = [
+    { id: "overview", label: translate("git.workbench.tab.overview") },
+    { id: "changes", label: translate("git.workbench.tab.changes") },
+    { id: "history", label: translate("git.workbench.tab.history") },
+    { id: "branches", label: translate("git.workbench.tab.branches") },
+    { id: "operations", label: translate("git.workbench.tab.operations") },
+  ];
   const tabs =
     props.showOperationsTab === false && props.activeTab !== "operations"
-      ? WORKBENCH_TABS.slice(0, -1)
-      : WORKBENCH_TABS;
+      ? workbenchTabs.slice(0, -1)
+      : workbenchTabs;
   return (
     <WorkspaceCardDrawerShell
       activeTab={props.activeTab}
-      ariaLabel="Git workbench"
-      collapseLabel="Collapse Git workbench"
+      ariaLabel={translate("git.workbench.title")}
+      collapseLabel={translate("git.workbench.collapse")}
       sizingMode="content"
       tabs={tabs}
-      title="Git workbench"
+      title={translate("git.workbench.title")}
       open={props.open}
       {...(props.availableHeight === undefined ? {} : { availableHeight: props.availableHeight })}
       {...(props.className === undefined ? {} : { className: props.className })}

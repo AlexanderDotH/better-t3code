@@ -1,4 +1,6 @@
 import {
+  HarnessChatSessionId,
+  HarnessChatSyncSourceId,
   McpRuntimeServerKey,
   McpServerId,
   ProviderInstanceId,
@@ -31,6 +33,7 @@ function rpcClientWithMcp(mcp: Record<string, unknown>): WsRpcClient {
     git: {},
     review: {},
     chatImport: {},
+    harnessChatSync: {},
     skills: {},
     mcp,
     orchestration: {},
@@ -87,5 +90,74 @@ describe("MCP environment API", () => {
     expect(listener).toHaveBeenCalledWith(change);
     stop();
     expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+});
+
+describe("harness chat sync environment API", () => {
+  it("forwards every history operation to the selected environment client", async () => {
+    const sourceId = HarnessChatSyncSourceId.make("codex-home");
+    const sessionId = HarnessChatSessionId.make("session-1");
+    const sources = vi.fn(async () => ({ sources: [] }));
+    const list = vi.fn(async () => ({
+      chats: [],
+      nextCursor: null,
+      totalMatching: 0,
+      changedMatching: 0,
+    }));
+    const run = vi.fn(async () => ({
+      selectedCount: 0,
+      syncedCount: 0,
+      failedCount: 0,
+      threadsCreated: 0,
+      threadsUpdated: 0,
+      messagesImported: 0,
+      attachmentsImported: 0,
+      attachmentsSkipped: 0,
+      items: [],
+      failures: [],
+    }));
+    const status = vi.fn(async () => ({ statuses: [] }));
+    const api = createEnvironmentApi({
+      terminal: {},
+      projects: {},
+      filesystem: {},
+      assets: {},
+      sourceControl: {},
+      vcs: {},
+      git: {},
+      review: {},
+      chatImport: {},
+      harnessChatSync: { sources, list, run, status },
+      skills: {},
+      mcp: {},
+      orchestration: {},
+      plan: {},
+      preview: {},
+    } as unknown as WsRpcClient);
+    const listInput = {
+      sourceId,
+      query: "release",
+      includeArchived: false,
+      limit: 25,
+    } as const;
+    const runInput = {
+      sourceId,
+      selection: {
+        mode: "only" as const,
+        sessionIds: [sessionId],
+      },
+      targetResolutions: [],
+    };
+    const statusInput = { sourceId, sessionIds: [sessionId] };
+
+    await api.harnessChatSync.sources({});
+    await api.harnessChatSync.list(listInput);
+    await api.harnessChatSync.run(runInput);
+    await api.harnessChatSync.status(statusInput);
+
+    expect(sources).toHaveBeenCalledWith({});
+    expect(list).toHaveBeenCalledWith(listInput);
+    expect(run).toHaveBeenCalledWith(runInput);
+    expect(status).toHaveBeenCalledWith(statusInput);
   });
 });

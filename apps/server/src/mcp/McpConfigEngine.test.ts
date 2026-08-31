@@ -522,9 +522,10 @@ effectIt.layer(NodeServices.layer)("McpConfigEngineLive", (it) => {
         providerInstanceId: ProviderInstanceId.make("claudeAgent"),
         enabled: false,
       });
+      const configuredProviderIds = Object.keys(DEFAULT_SERVER_SETTINGS.providers);
       expect(disabledForClaude.servers[0]?.providerRouting).toEqual({
         mode: "selected",
-        instanceIds: ["codex", "cursor", "grok", "opencode", "gemini"],
+        instanceIds: configuredProviderIds.filter((instanceId) => instanceId !== "claudeAgent"),
       });
       expect(
         yield* engine.resolveActiveServers({
@@ -552,7 +553,10 @@ effectIt.layer(NodeServices.layer)("McpConfigEngineLive", (it) => {
       });
       expect(reenabledForClaude.servers[0]?.providerRouting).toEqual({
         mode: "selected",
-        instanceIds: ["codex", "cursor", "grok", "opencode", "gemini", "claudeAgent"],
+        instanceIds: [
+          ...configuredProviderIds.filter((instanceId) => instanceId !== "claudeAgent"),
+          "claudeAgent",
+        ],
       });
 
       yield* engine.setEnabled(McpServerId.make("github"), false);

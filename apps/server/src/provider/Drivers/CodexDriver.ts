@@ -37,10 +37,16 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { McpConfigEngine } from "../../mcp/McpConfigEngine.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
+import { makeLiveCodexHistorySyncAdapter } from "../history/CodexHistorySync.ts";
 import { checkCodexProviderStatus, makePendingCodexProvider } from "../Layers/CodexProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import * as ModelManifest from "../ModelManifest.ts";
 import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
+import {
+  makeInstanceHistorySyncSource,
+  makeSupportedProviderHistorySync,
+} from "../Services/ProviderHistorySync.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
@@ -61,6 +67,12 @@ import {
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
+const HISTORY_SYNC_CAPABILITIES = {
+  search: true,
+  archived: true,
+  resume: true,
+  activity: true,
+} as const;
 const UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "@openai/codex",
@@ -80,6 +92,7 @@ export type CodexDriverEnv =
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | McpConfigEngine
+  | ModelManifest.ModelManifest
   | Path.Path
   | ProviderEventLoggers
   | ServerConfig
@@ -118,10 +131,12 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const { cwd } = yield* ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
       const mcpConfigEngine = yield* McpConfigEngine;
+      const modelManifest = yield* ModelManifest.ModelManifest;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const homeLayout = yield* resolveCodexHomeLayout(config);
       const continuationIdentity = codexContinuationIdentity(homeLayout);
@@ -147,6 +162,23 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         enabled,
         homePath: homeLayout.effectiveHomePath ?? "",
       } satisfies CodexSettings;
+      const historySource = makeInstanceHistorySyncSource({
+        driverKind: DRIVER_KIND,
+        instanceId,
+        continuationKey: continuationIdentity.continuationKey,
+        displayName: displayName ?? "Codex",
+        capabilities: HISTORY_SYNC_CAPABILITIES,
+      });
+      const historyAdapter = yield* makeLiveCodexHistorySyncAdapter({
+        sourceId: historySource.sourceId,
+        config: effectiveConfig,
+        environment: processEnv,
+        cwd,
+      });
+      const historySync = makeSupportedProviderHistorySync({
+        source: historySource,
+        adapter: historyAdapter,
+      });
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
@@ -177,8 +209,19 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       // in as instance rebuilds from the registry rather than in-place
       // updates. Pre-provide `ChildProcessSpawner` so the check fits
       // `makeManagedServerProvider.checkProvider`'s `R = never`.
-      const checkProvider = checkCodexProviderStatus(effectiveConfig, undefined, processEnv).pipe(
-        Effect.map(stampIdentity),
+      // Kick the TTL-gated manifest refresh in the background and classify
+      // with the in-memory manifest, so a slow or hung fetch never delays the
+      // provider check. A refresh that lands mid-probe applies on the next one.
+      const checkProvider = modelManifest.refreshInBackground.pipe(
+        Effect.andThen(
+          Effect.zipWith(
+            checkCodexProviderStatus(effectiveConfig, undefined, processEnv),
+            modelManifest.current,
+            (draft, manifest) =>
+              stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),
+            { concurrent: true },
+          ),
+        ),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
@@ -188,7 +231,12 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
-          makePendingCodexProvider(settings.provider).pipe(Effect.map(stampIdentity)),
+          Effect.zipWith(
+            makePendingCodexProvider(settings.provider),
+            modelManifest.current,
+            (draft, manifest) =>
+              stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),
+          ),
         checkProvider,
         enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
           enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
@@ -218,6 +266,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         enabled,
         snapshot,
         adapter,
+        historySync,
         textGeneration,
       } satisfies ProviderInstance;
     }),

@@ -21,6 +21,7 @@ type TimelineEntry =
       readonly id: string;
       readonly createdAt: string;
       readonly sequence: number;
+      readonly historyOrdinal: number | null;
       readonly value: OrchestrationThread["messages"][number];
     }
   | {
@@ -28,6 +29,7 @@ type TimelineEntry =
       readonly id: string;
       readonly createdAt: string;
       readonly sequence: number;
+      readonly historyOrdinal: number | null;
       readonly value: OrchestrationThreadActivity;
     };
 
@@ -92,6 +94,7 @@ function timelineEntries(thread: OrchestrationThread): TimelineEntry[] {
     id: value.id,
     createdAt: value.createdAt,
     sequence: Number.MAX_SAFE_INTEGER,
+    historyOrdinal: value.historyOrigin?.ordinal ?? null,
     value,
   }));
   const activities: TimelineEntry[] = thread.activities.map((value) => ({
@@ -99,9 +102,15 @@ function timelineEntries(thread: OrchestrationThread): TimelineEntry[] {
     id: value.id,
     createdAt: value.createdAt,
     sequence: value.sequence ?? Number.MAX_SAFE_INTEGER,
+    historyOrdinal: value.historyOrigin?.ordinal ?? null,
     value,
   }));
   return [...messages, ...activities].toSorted((left, right) => {
+    if (left.historyOrdinal !== null && right.historyOrdinal !== null) {
+      return left.historyOrdinal - right.historyOrdinal;
+    }
+    if (left.historyOrdinal !== null) return -1;
+    if (right.historyOrdinal !== null) return 1;
     const timestampOrder = left.createdAt.localeCompare(right.createdAt);
     if (timestampOrder !== 0) return timestampOrder;
     const sequenceOrder = left.sequence - right.sequence;
@@ -129,6 +138,7 @@ function renderMessage(entry: Extract<TimelineEntry, { kind: "message" }>): stri
     streaming: message.streaming,
     createdAt: message.createdAt,
     updatedAt: message.updatedAt,
+    historyOrigin: message.historyOrigin ?? null,
     ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
   };
   const parts = [
@@ -174,6 +184,7 @@ function renderActivity(entry: Extract<TimelineEntry, { kind: "activity" }>): st
     sequence: activity.sequence ?? null,
     createdAt: activity.createdAt,
     payload: activity.payload,
+    historyOrigin: activity.historyOrigin ?? null,
   };
   const parts = [`### ${activity.createdAt} · ${activityLabel(activity)}`, ""];
   if (reasoningText !== null) {
@@ -281,6 +292,7 @@ export function renderThreadTranscriptMarkdown(
       updatedAt: thread.updatedAt,
       archivedAt: thread.archivedAt,
       deletedAt: thread.deletedAt,
+      fork: thread.fork ?? null,
     },
     project,
   };

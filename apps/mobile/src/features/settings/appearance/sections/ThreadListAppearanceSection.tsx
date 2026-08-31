@@ -4,7 +4,6 @@ import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../../../components/AppText";
 import { SymbolView } from "../../../../components/AppSymbol";
-import { useThemeColor } from "../../../../lib/useThemeColor";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../../state/preferences";
 import { SettingsSection } from "../../components/SettingsSection";
 import {
@@ -12,9 +11,10 @@ import {
   resolveMobileThreadListLayout,
   THREAD_LIST_LAYOUT_OPTIONS,
 } from "../threadListAppearance";
+import { useMobileInterfaceTranslator } from "../../../../localization/useMobileInterfaceTranslator";
 
 export function ThreadListAppearanceSection() {
-  const checkmarkColor = useThemeColor("--color-icon");
+  const translator = useMobileInterfaceTranslator();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const preferencesReady = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
@@ -23,7 +23,7 @@ export function ThreadListAppearanceSection() {
     : null;
 
   return (
-    <SettingsSection card title="Thread list layout">
+    <SettingsSection card title={translator.message("mobile.appearance.threadListLayout")}>
       {THREAD_LIST_LAYOUT_OPTIONS.map((option, index) => (
         <Pressable
           key={option.layout}
@@ -50,7 +50,7 @@ export function ThreadListAppearanceSection() {
             <SymbolView
               name="checkmark"
               size={18}
-              tintColor={checkmarkColor}
+              tintColorClassName={"accent-icon"}
               type="monochrome"
               weight="semibold"
             />

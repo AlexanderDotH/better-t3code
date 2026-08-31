@@ -41,6 +41,18 @@ import { useTheme } from "./useTheme";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
+const CLIENT_BETTER_T3_BOOLEAN_MIRRORS = [
+  ["experimentalFetch", "agent.fetch"],
+  ["experimentalParallelPlanImplementation", "agent.parallelPlanImplementation"],
+  ["planModeEnabled", "agent.planMode"],
+  ["improvePromptBeforeSend", "agent.promptImprovement"],
+  ["showExpandedComposerControls", "agent.expandedComposerControls"],
+  ["showReasoning", "agent.reasoningVisibility"],
+  ["legacySidebarEnabled", "chat.classicSidebar"],
+] as const satisfies ReadonlyArray<
+  readonly [keyof ClientSettingsPatch, keyof ClientSettings["betterT3Device"]["flags"]]
+>;
+
 type UnifiedSettingsPatch = ServerSettingsPatch & ClientSettingsPatch;
 
 const clientSettingsListeners = new Set<() => void>();
@@ -149,6 +161,62 @@ function persistClientSettings(settings: ClientSettings): void {
         ...safeErrorLogAttributes(error),
       });
     });
+}
+
+export function mergeClientSettingsPatch(
+  current: ClientSettings,
+  patch: ClientSettingsPatch,
+): ClientSettings {
+  const { betterT3Device: betterT3DevicePatch, ...rest } = patch;
+  const explicitFlags = betterT3DevicePatch?.flags ?? {};
+  const flags = {
+    ...current.betterT3Device.flags,
+    ...explicitFlags,
+  };
+
+  for (const [legacyKey, featureId] of CLIENT_BETTER_T3_BOOLEAN_MIRRORS) {
+    const legacyValue = patch[legacyKey];
+    if (typeof legacyValue === "boolean" && !Object.hasOwn(explicitFlags, featureId)) {
+      flags[featureId] = legacyValue;
+    }
+  }
+
+  const explicitFlagCompatibilityPatch: ClientSettingsPatch = {
+    ...(Object.hasOwn(explicitFlags, "agent.fetch")
+      ? { experimentalFetch: explicitFlags["agent.fetch"] }
+      : {}),
+    ...(Object.hasOwn(explicitFlags, "agent.parallelPlanImplementation")
+      ? {
+          experimentalParallelPlanImplementation: explicitFlags["agent.parallelPlanImplementation"],
+        }
+      : {}),
+    ...(Object.hasOwn(explicitFlags, "agent.planMode")
+      ? { planModeEnabled: explicitFlags["agent.planMode"] }
+      : {}),
+    ...(Object.hasOwn(explicitFlags, "agent.promptImprovement")
+      ? { improvePromptBeforeSend: explicitFlags["agent.promptImprovement"] }
+      : {}),
+    ...(Object.hasOwn(explicitFlags, "agent.expandedComposerControls")
+      ? { showExpandedComposerControls: explicitFlags["agent.expandedComposerControls"] }
+      : {}),
+    ...(Object.hasOwn(explicitFlags, "agent.reasoningVisibility")
+      ? { showReasoning: explicitFlags["agent.reasoningVisibility"] }
+      : {}),
+    ...(Object.hasOwn(explicitFlags, "chat.classicSidebar")
+      ? { legacySidebarEnabled: explicitFlags["chat.classicSidebar"] }
+      : {}),
+  };
+
+  return {
+    ...current,
+    ...rest,
+    ...explicitFlagCompatibilityPatch,
+    betterT3Device: {
+      ...current.betterT3Device,
+      ...betterT3DevicePatch,
+      flags,
+    },
+  };
 }
 
 // ── Key sets for routing patches ─────────────────────────────────────
@@ -413,10 +481,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
         }
       }
       if (Object.keys(clientPatch).length > 0) {
-        persistClientSettings({
-          ...getClientSettingsSnapshot(),
-          ...clientPatch,
-        });
+        persistClientSettings(mergeClientSettingsPatch(getClientSettingsSnapshot(), clientPatch));
       }
     },
     [environmentId, persistServerSettings],
@@ -435,10 +500,7 @@ export function useUpdatePrimarySettings() {
 
 export function useUpdateClientSettings() {
   return useCallback((patch: ClientSettingsPatch) => {
-    persistClientSettings({
-      ...getClientSettingsSnapshot(),
-      ...patch,
-    });
+    persistClientSettings(mergeClientSettingsPatch(getClientSettingsSnapshot(), patch));
   }, []);
 }
 

@@ -5,6 +5,7 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { readEnvironmentApi } from "~/environmentApi";
 import { writeClipboardText } from "~/lib/clipboard";
 import { copyThreadTranscript } from "~/lib/copyThreadTranscript";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -12,10 +13,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 const COPIED_STATE_DURATION_MS = 1_500;
 
 type CopyState = "idle" | "loading" | "copied";
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "An unexpected export error occurred.";
-}
 
 export const ChatTranscriptCopyButton = memo(function ChatTranscriptCopyButton({
   environmentId,
@@ -28,6 +25,7 @@ export const ChatTranscriptCopyButton = memo(function ChatTranscriptCopyButton({
   readonly activeTurnInProgress: boolean;
   readonly environmentUnavailable: boolean;
 }) {
+  const translate = useInterfaceTranslator().message;
   const [state, setState] = useState<CopyState>("idle");
   const requestInFlightRef = useRef(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -62,8 +60,8 @@ export const ChatTranscriptCopyButton = memo(function ChatTranscriptCopyButton({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to export chat",
-          description: "The thread environment is not connected.",
+          title: translate("chat.transcript.exportFailed"),
+          description: translate("chat.transcript.environmentDisconnected"),
           data: { threadRef: { environmentId, threadId } },
         }),
       );
@@ -91,8 +89,10 @@ export const ChatTranscriptCopyButton = memo(function ChatTranscriptCopyButton({
       toastManager.add(
         stackedThreadToast({
           type: "success",
-          title: "Complete chat copied",
-          description: `${transcript.fileName} is unredacted Markdown.`,
+          title: translate("chat.transcript.copied"),
+          description: translate("chat.transcript.unredactedMarkdown", {
+            file: transcript.fileName,
+          }),
           data: { threadRef: { environmentId, threadId } },
         }),
       );
@@ -103,26 +103,27 @@ export const ChatTranscriptCopyButton = memo(function ChatTranscriptCopyButton({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to copy complete chat",
-          description: errorMessage(error),
+          title: translate("chat.transcript.copyFailed"),
+          description:
+            error instanceof Error ? error.message : translate("chat.transcript.unexpectedError"),
           data: { threadRef: { environmentId, threadId } },
         }),
       );
     } finally {
       requestInFlightRef.current = false;
     }
-  }, [activeTurnInProgress, environmentId, environmentUnavailable, threadId]);
+  }, [activeTurnInProgress, environmentId, environmentUnavailable, threadId, translate]);
 
   const disabled = environmentUnavailable || activeTurnInProgress || state !== "idle";
   const tooltip = environmentUnavailable
-    ? "Reconnect the thread environment before exporting."
+    ? translate("chat.transcript.reconnectBeforeExport")
     : activeTurnInProgress
-      ? "Wait for the active turn to finish before exporting."
+      ? translate("chat.transcript.waitForTurn")
       : state === "loading"
-        ? "Preparing the complete transcript…"
+        ? translate("chat.transcript.preparing")
         : state === "copied"
-          ? "Complete transcript copied"
-          : "Copy complete unredacted chat transcript";
+          ? translate("chat.transcript.completeCopied")
+          : translate("chat.transcript.copyComplete");
 
   return (
     <Tooltip>

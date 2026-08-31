@@ -1,8 +1,11 @@
 import { assert, it } from "@effect/vitest";
 import { ProjectId, type OrchestrationProjectShell, type ProjectEntry } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
@@ -106,6 +109,7 @@ function serviceLayer(options: {
   readonly resolveProject?: (projectId: ProjectId) => Option.Option<OrchestrationProjectShell>;
   readonly list: WorkspaceEntries.WorkspaceEntries["Service"]["list"];
   readonly readFile: WorkspaceFileSystem.WorkspaceFileSystem["Service"]["readFile"];
+  readonly scan?: ProjectSpeechWorkspaceScanner.ProjectSpeechWorkspaceScanner["Service"]["scan"];
 }) {
   const migratedSqlite = Layer.effectDiscard(runMigrations()).pipe(
     Layer.provideMerge(NodeSqliteClient.layerMemory()),
@@ -267,6 +271,69 @@ it.effect("persists a basic profile with a non-secret warning when scanning fail
   ),
 );
 
+it.effect("persists a basic profile and remains usable when the workspace scanner defects", () => {
+  let scanCalls = 0;
+
+  return Effect.gen(function* () {
+    const profiles = yield* ProjectSpeechProfiles.ProjectSpeechProfiles;
+    const store = yield* ProjectSpeechProfileStore.ProjectSpeechProfileStore;
+
+    const fallback = yield* profiles.index(projectId);
+
+    assert.strictEqual(fallback.source, "basic");
+    assert.strictEqual(fallback.warning, ProjectSpeechProfiles.INDEX_FALLBACK_WARNING);
+    assert.strictEqual(scanCalls, 1);
+    const persisted = yield* store.get(projectId);
+    assert.deepStrictEqual(Option.getOrThrow(persisted), fallback);
+    assert.deepStrictEqual(yield* profiles.list(), [fallback]);
+  }).pipe(
+    Effect.provide(
+      serviceLayer({
+        list: () => Effect.die("native workspace search index must not run"),
+        scan: () => {
+          scanCalls += 1;
+          return Effect.die("unexpected workspace scanner defect");
+        },
+        readFile: () => Effect.die("must not read"),
+      }),
+    ),
+  );
+});
+
+it.effect("falls back to basic context after five seconds without scanning twice", () =>
+  Effect.gen(function* () {
+    const scanStarted = yield* Deferred.make<void>();
+    let scanCalls = 0;
+    const indexFiber = yield* Effect.gen(function* () {
+      const profiles = yield* ProjectSpeechProfiles.ProjectSpeechProfiles;
+      return yield* profiles.index(projectId);
+    }).pipe(
+      Effect.provide(
+        serviceLayer({
+          list: () => Effect.die("native workspace search index must not run"),
+          scan: () => {
+            scanCalls += 1;
+            return Deferred.succeed(scanStarted, undefined).pipe(Effect.andThen(Effect.never));
+          },
+          readFile: () => Effect.die("must not read"),
+        }),
+      ),
+      Effect.forkChild,
+    );
+    yield* Deferred.await(scanStarted);
+
+    yield* TestClock.adjust("5 seconds");
+
+    const completed = indexFiber.pollUnsafe();
+    assert.isDefined(completed);
+    if (completed === undefined) return;
+    const fallback = yield* Fiber.join(indexFiber);
+    assert.strictEqual(fallback.source, "basic");
+    assert.strictEqual(fallback.warning, ProjectSpeechProfiles.INDEX_FALLBACK_WARNING);
+    assert.strictEqual(scanCalls, 1);
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
 it.effect(
   "reuses persisted context and creates a basic context without reading source files when absent",
   () => {
@@ -290,7 +357,7 @@ it.effect(
       const otherProjectId = ProjectId.make("project-context-basic");
       const basicContext = yield* profiles.contextForProject(otherProjectId);
       assert.strictEqual(basicContext.source, "basic");
-      assert.strictEqual(listCalls, 2);
+      assert.strictEqual(listCalls, 1);
       const persistedBasic = yield* store.get(otherProjectId);
       assert.strictEqual(Option.getOrThrow(persistedBasic).source, "basic");
     }).pipe(

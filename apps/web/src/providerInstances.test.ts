@@ -5,6 +5,7 @@ import {
   deriveProviderEntriesByEnvironment,
   deriveProviderInstanceEntries,
   getDefaultProviderInstanceModel,
+  isProviderInstancePickerBrowsable,
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
   resolveDefaultProviderModelSelection,
@@ -68,6 +69,53 @@ describe("isProviderInstancePickerReady", () => {
     ]);
 
     expect(entry && isProviderInstancePickerReady(entry)).toBe(true);
+  });
+});
+
+describe("isProviderInstancePickerBrowsable", () => {
+  it("keeps an authenticated warning instance with selectable models available for setup", () => {
+    const [entry] = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("openrouter"),
+        instanceId: "openrouter",
+        status: "warning",
+        models: [model("openai/gpt-5.5")],
+      }),
+    ]);
+
+    expect(entry && isProviderInstancePickerReady(entry)).toBe(false);
+    expect(entry && isProviderInstancePickerBrowsable(entry)).toBe(true);
+  });
+
+  it("does not expose warning instances without an authenticated selectable catalog", () => {
+    const [unauthenticated, emptyCatalog, incompatibleCatalog] = deriveProviderInstanceEntries([
+      {
+        ...provider({
+          provider: ProviderDriverKind.make("openrouter"),
+          instanceId: "openrouter_unauthenticated",
+          status: "warning",
+          models: [model("openai/gpt-5.5")],
+        }),
+        auth: { status: "unauthenticated" },
+      },
+      provider({
+        provider: ProviderDriverKind.make("openrouter"),
+        instanceId: "openrouter_empty",
+        status: "warning",
+      }),
+      provider({
+        provider: ProviderDriverKind.make("openrouter"),
+        instanceId: "openrouter_incompatible",
+        status: "warning",
+        models: [{ ...model("openai/image-only"), isSelectable: false }],
+      }),
+    ]);
+
+    expect(unauthenticated && isProviderInstancePickerBrowsable(unauthenticated)).toBe(false);
+    expect(emptyCatalog && isProviderInstancePickerBrowsable(emptyCatalog)).toBe(false);
+    expect(incompatibleCatalog && isProviderInstancePickerBrowsable(incompatibleCatalog)).toBe(
+      false,
+    );
   });
 });
 
@@ -373,6 +421,20 @@ describe("getDefaultProviderInstanceModel", () => {
 
     expect(getDefaultProviderInstanceModel(providers, ProviderInstanceId.make("claudeAgent"))).toBe(
       "claude-opus-4-8",
+    );
+  });
+
+  it("never falls back to a model marked non-selectable", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("openrouter"),
+        instanceId: "openrouter",
+        models: [{ ...model("openai/no-tools"), isSelectable: false }, model("openai/gpt-agent")],
+      }),
+    ];
+
+    expect(getDefaultProviderInstanceModel(providers, ProviderInstanceId.make("openrouter"))).toBe(
+      "openai/gpt-agent",
     );
   });
 

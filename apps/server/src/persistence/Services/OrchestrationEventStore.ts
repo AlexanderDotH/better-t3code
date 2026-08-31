@@ -9,7 +9,7 @@
  *
  * @module OrchestrationEventStore
  */
-import { OrchestrationEvent } from "@t3tools/contracts";
+import { OrchestrationEvent, type ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
@@ -47,11 +47,34 @@ export interface OrchestrationEventStoreShape {
   ) => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError>;
 
   /**
+   * Read the complete event stream for one thread in global sequence order.
+   *
+   * The stream is page-backed so callers can reconstruct an exact historical
+   * boundary without loading unrelated project or thread events.
+   */
+  readonly readByThreadId: (
+    threadId: ThreadId,
+  ) => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError>;
+
+  /**
    * Read all events from the beginning of the stream.
    *
    * @returns Stream containing all stored events.
    */
   readonly readAll: () => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError>;
+
+  /**
+   * Check whether an aggregate has an event of the given type after a sequence.
+   *
+   * Used during replay to tell whether a later event supersedes the one being
+   * applied, without streaming the rest of the log.
+   */
+  readonly hasEventAfter: (input: {
+    readonly aggregateKind: OrchestrationEvent["aggregateKind"];
+    readonly aggregateId: string;
+    readonly type: OrchestrationEvent["type"];
+    readonly sequenceExclusive: number;
+  }) => Effect.Effect<boolean, OrchestrationEventStoreError>;
 }
 
 /**

@@ -35,11 +35,14 @@ import {
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { OpenCodeRuntime } from "../opencodeRuntime.ts";
+import { makeOpenCodeHistorySync } from "../history/OpenCodeHistorySync.ts";
+import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
   type ProviderInstance,
 } from "../ProviderDriver.ts";
+import { makeInstanceHistorySyncSource } from "../Services/ProviderHistorySync.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
@@ -148,6 +151,20 @@ export const makeOpenCodeBackedDriver = ({
           continuationGroupKey: continuationIdentity.continuationKey,
         });
         const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
+        const historySyncSource = makeInstanceHistorySyncSource({
+          driverKind,
+          instanceId,
+          continuationKey: continuationIdentity.continuationKey,
+          displayName: displayName ?? driverDisplayName,
+          capabilities: { search: true, archived: true, resume: true, activity: true },
+        });
+        const historySync = makeOpenCodeHistorySync({
+          source: historySyncSource,
+          runtime: openCodeRuntime,
+          settings: effectiveConfig,
+          environment: processEnv,
+          defaultCwd: serverConfig.cwd,
+        });
         const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           update,
           {
@@ -155,6 +172,15 @@ export const makeOpenCodeBackedDriver = ({
             env: processEnv,
           },
         );
+
+        const serverOwner = yield* OpenCodeServerOwner.make({
+          binaryPath: effectiveConfig.binaryPath,
+          directory: serverConfig.cwd,
+          ...(effectiveConfig.serverPassword
+            ? { serverPassword: effectiveConfig.serverPassword }
+            : {}),
+          environment: processEnv,
+        });
 
         const adapter = yield* makeOpenCodeAdapter(effectiveConfig, {
           provider: driverKind,
@@ -171,13 +197,19 @@ export const makeOpenCodeBackedDriver = ({
               ),
             ),
         });
-        const textGeneration = yield* makeOpenCodeTextGeneration(effectiveConfig, processEnv);
+        const textGeneration = yield* makeOpenCodeTextGeneration(effectiveConfig).pipe(
+          Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
+        );
 
         const checkProvider = checkOpenCodeProviderStatus(
           effectiveConfig,
           serverConfig.cwd,
           processEnv,
-        ).pipe(Effect.map(stampIdentity), Effect.provideService(OpenCodeRuntime, openCodeRuntime));
+        ).pipe(
+          Effect.map(stampIdentity),
+          Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
+          Effect.provideService(OpenCodeRuntime, openCodeRuntime),
+        );
         const snapshotSettings = makeProviderSnapshotSettingsSource(
           effectiveConfig,
           serverSettings,
@@ -190,6 +222,8 @@ export const makeOpenCodeBackedDriver = ({
           getSettings: snapshotSettings.getSettings,
           streamSettings: snapshotSettings.streamSettings,
           haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+          checkProviderOnSettingsChange: () => false,
+          refreshOnInterval: false,
           initialSnapshot: (settings) =>
             makePendingOpenCodeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
           checkProvider,
@@ -221,6 +255,7 @@ export const makeOpenCodeBackedDriver = ({
           enabled,
           snapshot,
           adapter,
+          historySync,
           textGeneration,
         } satisfies ProviderInstance;
       }),

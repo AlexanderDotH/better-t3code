@@ -52,6 +52,7 @@ import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import {
   type CodexSessionRuntimeOptions,
+  type CodexSessionRuntimeForkInput,
   type CodexSessionRuntimeSendTurnInput,
   type CodexSessionRuntimeShape,
   type CodexMcpServerStatus,
@@ -650,6 +651,10 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
       threadId: this.options.threadId,
       cwd: this.options.cwd,
       ...(this.options.model ? { model: this.options.model } : {}),
+      ...(this.options.providerInstanceId
+        ? { providerInstanceId: this.options.providerInstanceId }
+        : {}),
+      ...(this.options.resumeCursor ? { resumeCursor: this.options.resumeCursor } : {}),
       createdAt: this.now,
       updatedAt: this.now,
     } satisfies ProviderSession),
@@ -681,6 +686,20 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
         threadId: "provider-thread-1",
         turns: [],
       }),
+  );
+
+  public readonly forkThreadImpl = vi.fn((_input: CodexSessionRuntimeForkInput) =>
+    Promise.resolve({
+      threadId: "provider-child",
+      model: "gpt-5.6-sol",
+      reasoningEffort: "high",
+    }),
+  );
+
+  public readonly compactThreadImpl = vi.fn(() => Promise.resolve(undefined));
+
+  public readonly uploadFeedbackImpl = vi.fn((_reason?: string) =>
+    Promise.resolve({ threadId: "provider-thread-1" }),
   );
 
   public readonly respondToRequestImpl = vi.fn(
@@ -735,6 +754,16 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
 
   rollbackThread(numTurns: number) {
     return Effect.promise(() => this.rollbackThreadImpl(numTurns));
+  }
+
+  forkThread(input: CodexSessionRuntimeForkInput) {
+    return Effect.promise(() => this.forkThreadImpl(input));
+  }
+
+  compactThread = Effect.promise(() => this.compactThreadImpl());
+
+  uploadFeedback(reason?: string) {
+    return Effect.promise(() => this.uploadFeedbackImpl(reason));
   }
 
   respondToRequest(requestId: ApprovalRequestId, decision: ProviderApprovalDecision) {
@@ -908,6 +937,45 @@ validationLayer("CodexAdapterLive validation", (it) => {
         threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
       });
+    }),
+  );
+
+  it.effect("isolates project/off memory modes and restores provider-native memory", () =>
+    Effect.gen(function* () {
+      validationRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-project-memory"),
+        projectMemoryMode: "project",
+        runtimeMode: "full-access",
+      });
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-memory-off"),
+        projectMemoryMode: "off",
+        runtimeMode: "full-access",
+      });
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-provider-memory"),
+        projectMemoryMode: "provider",
+        runtimeMode: "full-access",
+      });
+
+      NodeAssert.deepStrictEqual(
+        validationRuntimeFactory.factory.mock.calls[0]?.[0]?.appServerArgs,
+        ["-c", "memories.use_memories=false", "-c", "memories.generate_memories=false"],
+      );
+      NodeAssert.deepStrictEqual(
+        validationRuntimeFactory.factory.mock.calls[1]?.[0]?.appServerArgs,
+        ["-c", "memories.use_memories=false", "-c", "memories.generate_memories=false"],
+      );
+      NodeAssert.equal(
+        validationRuntimeFactory.factory.mock.calls[2]?.[0]?.appServerArgs,
+        undefined,
+      );
     }),
   );
 
@@ -1167,6 +1235,94 @@ const sessionErrorLayer = it.layer(
 );
 
 sessionErrorLayer("CodexAdapterLive session errors", (it) => {
+  it.effect("advertises native thread forking and manual compaction", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+
+      NodeAssert.deepStrictEqual(adapter.capabilities, {
+        sessionModelSwitch: "in-session",
+        mcp: "nativeConfig",
+        nativeThreadFork: true,
+        manualCompaction: true,
+      });
+    }),
+  );
+
+  it.effect("forks the provider thread into a resumed destination without replaying a turn", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const sourceThreadId = asThreadId("thread-native-fork-source");
+      const destinationThreadId = asThreadId("thread-native-fork-destination");
+      const modelSelection = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-sol", [
+        { id: "reasoningEffort", value: "high" },
+        { id: "contextWindow", value: "262144" },
+      ]);
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: sourceThreadId,
+        runtimeMode: "full-access",
+        modelSelection,
+      });
+      const sourceRuntime = sessionRuntimeFactory.lastRuntime;
+      NodeAssert.ok(sourceRuntime);
+      sourceRuntime.sendTurnImpl.mockClear();
+
+      const destination = yield* adapter.forkSession({
+        sourceThreadId,
+        destinationThreadId,
+        sourceProviderThreadId: "provider-parent-exact",
+        lastProviderTurnId: "provider-turn-7",
+        session: {
+          provider: ProviderDriverKind.make("codex"),
+          threadId: destinationThreadId,
+          runtimeMode: "full-access",
+          modelSelection,
+        },
+      });
+      const destinationRuntime = sessionRuntimeFactory.lastRuntime;
+      NodeAssert.ok(destinationRuntime);
+      NodeAssert.notStrictEqual(destinationRuntime, sourceRuntime);
+
+      NodeAssert.deepStrictEqual(sourceRuntime.forkThreadImpl.mock.calls, [
+        [
+          {
+            sourceProviderThreadId: "provider-parent-exact",
+            lastProviderTurnId: "provider-turn-7",
+          },
+        ],
+      ]);
+      NodeAssert.deepStrictEqual(sourceRuntime.sendTurnImpl.mock.calls, []);
+      NodeAssert.deepStrictEqual(destinationRuntime.options.resumeCursor, {
+        threadId: "provider-child",
+      });
+      NodeAssert.equal(destinationRuntime.options.model, "gpt-5.6-sol");
+      NodeAssert.equal(destinationRuntime.options.reasoningEffort, "high");
+      NodeAssert.equal(destinationRuntime.options.contextWindow, 262_144);
+      NodeAssert.deepStrictEqual(destination.resumeCursor, { threadId: "provider-child" });
+    }),
+  );
+
+  it.effect("compacts only the runtime covered by the supplied lease", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-manual-compact");
+      const session = yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const runtime = sessionRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      runtime.compactThreadImpl.mockClear();
+      NodeAssert.ok(session.runtimeSessionId);
+
+      yield* adapter.compactThread(threadId, session.runtimeSessionId);
+      yield* adapter.compactThread(threadId, RuntimeSessionId.make("stale-runtime"));
+
+      NodeAssert.equal(runtime.compactThreadImpl.mock.calls.length, 1);
+    }),
+  );
+
   it.effect("maps missing adapter sessions to ProviderAdapterSessionNotFoundError", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
@@ -1182,6 +1338,42 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       NodeAssert.equal(result.failure._tag, "ProviderAdapterSessionNotFoundError");
       NodeAssert.equal(result.failure.provider, "codex");
       NodeAssert.equal(result.failure.threadId, "sess-missing");
+    }),
+  );
+
+  it.effect("uploads feedback for the active Codex thread", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-feedback");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const runtime = sessionRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+
+      const result = yield* adapter.uploadFeedback({
+        threadId,
+        reason: "The agent stopped early.",
+      });
+
+      NodeAssert.deepStrictEqual(result, { feedbackId: "provider-thread-1" });
+      NodeAssert.deepStrictEqual(runtime.uploadFeedbackImpl.mock.calls, [
+        ["The agent stopped early."],
+      ]);
+    }),
+  );
+
+  it.effect("rejects feedback for an unknown Codex thread", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const result = yield* adapter
+        .uploadFeedback({ threadId: asThreadId("thread-feedback-missing") })
+        .pipe(Effect.result);
+
+      NodeAssert.equal(result._tag, "Failure");
+      NodeAssert.equal(result.failure._tag, "ProviderAdapterSessionNotFoundError");
     }),
   );
 
@@ -1820,6 +2012,166 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("carries child model metadata through every task event", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 16)).pipe(
+        Effect.forkChild,
+      );
+
+      const cases = [
+        ["collabAgent/started", {}],
+        ["collabAgent/activity", { activityKind: "started" }],
+        ["collabAgent/turnStarted", {}],
+        ["collabAgent/turnCompleted", { turn: { status: "completed" } }],
+        ["collabAgent/statusChanged", { status: { type: "active", activeFlags: [] } }],
+        ["collabAgent/tokenUsage", { tokenUsage: { total: { totalTokens: 42 } } }],
+        ["collabAgent/item", { item: { type: "commandExecution", command: "pwd" } }],
+        ["collabAgent/closed", {}],
+        ["collabAgent/metadataUpdated", {}],
+      ] as const;
+
+      for (const [index, [method, extra]] of cases.entries()) {
+        yield* runtime.emit({
+          id: asEventId(`evt-child-model-${index}`),
+          kind: "notification",
+          provider: ProviderDriverKind.make("codex"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+          method,
+          threadId: asThreadId("thread-1"),
+          turnId: asTurnId("turn-1"),
+          payload: {
+            agentThreadId: "child-model",
+            agentPath: "/root/model-check",
+            model: " gpt-5.6-sol ",
+            effort: " high ",
+            ...extra,
+          },
+        });
+      }
+      yield* runtime.emit({
+        id: asEventId("evt-child-model-blank"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "collabAgent/metadataUpdated",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          agentThreadId: "child-model",
+          model: "  ",
+          effort: "",
+        },
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const taskEvents = events.filter(
+        (event) =>
+          event.type === "task.started" ||
+          event.type === "task.updated" ||
+          event.type === "task.progress",
+      );
+      NodeAssert.deepStrictEqual(
+        taskEvents.map((event) => event.type),
+        [
+          "task.started",
+          "task.started",
+          "task.updated",
+          "task.updated",
+          "task.updated",
+          "task.progress",
+          "task.progress",
+          "task.updated",
+          "task.updated",
+          "task.updated",
+        ],
+      );
+      for (const event of taskEvents.slice(0, -1)) {
+        const payload = event.payload as Record<string, unknown>;
+        NodeAssert.equal(payload.model, "gpt-5.6-sol");
+        NodeAssert.equal(payload.effort, "high");
+      }
+
+      NodeAssert.deepStrictEqual(
+        events
+          .filter((event) => event.type === "subagent.state.changed")
+          .map((event) => event.payload.state),
+        ["starting", "starting", "running", "completed", "running", "interrupted"],
+      );
+      const metadataPayload = taskEvents[8]?.payload as Record<string, unknown>;
+      NodeAssert.equal("status" in metadataPayload, false);
+      const blankMetadataPayload = taskEvents[9]?.payload as Record<string, unknown>;
+      NodeAssert.equal("status" in blankMetadataPayload, false);
+      NodeAssert.equal("model" in blankMetadataPayload, false);
+      NodeAssert.equal("effort" in blankMetadataPayload, false);
+    }),
+  );
+
+  it.effect("does not reactivate an idle child after a parent interaction", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 6)).pipe(
+        Effect.forkChild,
+      );
+
+      const childEvent = (id: string, method: string, payload: Record<string, unknown>) => ({
+        id: asEventId(id),
+        kind: "notification" as const,
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method,
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        payload,
+      });
+
+      yield* runtime.emit(
+        childEvent("evt-child-running", "collabAgent/turnStarted", {
+          agentThreadId: "child-1",
+          agentPath: "/root/audit",
+        }),
+      );
+      yield* runtime.emit(
+        childEvent("evt-child-idle", "collabAgent/turnCompleted", {
+          agentThreadId: "child-1",
+          agentPath: "/root/audit",
+          turn: { status: "completed" },
+        }),
+      );
+      yield* runtime.emit(
+        childEvent("evt-child-interacted", "collabAgent/activity", {
+          agentThreadId: "child-1",
+          agentPath: "/root/audit",
+          activityKind: "interacted",
+        }),
+      );
+      yield* runtime.emit(
+        childEvent("evt-other-child-running", "collabAgent/turnStarted", {
+          agentThreadId: "child-2",
+          agentPath: "/root/other",
+        }),
+      );
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      NodeAssert.deepStrictEqual(
+        events
+          .filter((event) => event.type === "task.updated")
+          .map((event) => ({ taskId: event.payload.taskId, status: event.payload.status })),
+        [
+          { taskId: "child-1", status: "running" },
+          { taskId: "child-1", status: "idle" },
+          { taskId: "child-2", status: "running" },
+        ],
+      );
+      NodeAssert.deepStrictEqual(
+        events
+          .filter((event) => event.type === "subagent.state.changed")
+          .map((event) => event.payload.state),
+        ["running", "completed", "running"],
+      );
+    }),
+  );
+
   it.effect("maps completed agent message items to canonical item.completed events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
@@ -2266,6 +2618,79 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         return;
       }
       NodeAssert.equal(firstEvent.value.payload.requestType, "command_execution_approval");
+    }),
+  );
+
+  it.effect("maps MCP elicitation requests into app access approvals", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-mcp-elicitation"),
+        kind: "request",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-08-24T00:00:00.000Z",
+        method: "mcpServer/elicitation/request",
+        requestKind: "mcp-elicitation",
+        requestId: ApprovalRequestId.make("req-safari"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          mode: "form",
+          message: "Allow ChatGPT to use Safari?",
+          serverName: "computer-use",
+          threadId: "provider-thread-1",
+          turnId: "turn-1",
+          _meta: { app_name: "Safari", persist: ["session", "always"] },
+          requestedSchema: { type: "object", properties: {} },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "request.opened") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.payload.requestType, "mcp_elicitation_approval");
+      NodeAssert.equal(firstEvent.value.payload.appName, "Safari");
+      NodeAssert.equal(firstEvent.value.payload.detail, "Allow ChatGPT to use Safari?");
+      NodeAssert.deepStrictEqual(firstEvent.value.payload.options, [
+        { decision: "cancel", label: "Cancel" },
+        { decision: "decline", label: "Decline" },
+        { decision: "acceptForSession", label: "Always allow this session" },
+        { decision: "acceptAlways", label: "Always allow" },
+        { decision: "accept", label: "Approve" },
+      ]);
+    }),
+  );
+
+  it.effect("preserves MCP elicitation type when an app access request resolves", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-mcp-elicitation-resolved"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-08-24T00:00:00.000Z",
+        method: "item/requestApproval/decision",
+        requestKind: "mcp-elicitation",
+        requestId: ApprovalRequestId.make("req-safari"),
+        payload: { decision: "acceptAlways" },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "request.resolved") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.payload.requestType, "mcp_elicitation_approval");
+      NodeAssert.equal(firstEvent.value.payload.decision, "acceptAlways");
     }),
   );
 

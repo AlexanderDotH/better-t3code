@@ -15,15 +15,19 @@ import {
   useKeyboardState,
 } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useThemeColor } from "../../lib/useThemeColor";
-import { themeColorWithAlpha } from "../../lib/mobileTheme";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useFontFamily } from "../../lib/useFontFamily";
 
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { EnvironmentId, ProjectId, ProviderDriverKind } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderDriverKind,
+  resolveBetterT3FeatureFlag,
+} from "@t3tools/contracts";
 
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import {
@@ -38,6 +42,8 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { ComposerSurface } from "./ThreadComposer";
+import { ComposerCommandPopover } from "./ComposerCommandPopover";
+import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
@@ -46,7 +52,6 @@ import {
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
-import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   clearComposerDraftContent,
   clearNewTaskComposerDraftContent,
@@ -76,22 +81,38 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { NativeVoiceDictationControl } from "./NativeVoiceDictationControl";
 import { useNativeAssemblyAiDictation } from "./use-native-assembly-ai-dictation";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
   readonly worktreePath: string | null;
 }) {
-  const iconColor = useThemeColor("--color-icon-muted");
-
   if (props.workspaceMode === "local" && props.worktreePath === null) {
-    return <SymbolView name="folder" size={16} tintColor={iconColor} type="monochrome" />;
+    return (
+      <SymbolView
+        name="folder"
+        size={16}
+        tintColorClassName={"accent-icon-muted"}
+        type="monochrome"
+      />
+    );
   }
 
   return (
     <View className="size-4">
-      <SymbolView name="folder" size={16} tintColor={iconColor} type="monochrome" />
+      <SymbolView
+        name="folder"
+        size={16}
+        tintColorClassName={"accent-icon-muted"}
+        type="monochrome"
+      />
       <View className="absolute -right-1 -bottom-1">
-        <SymbolView name="arrow.triangle.branch" size={9} tintColor={iconColor} type="monochrome" />
+        <SymbolView
+          name="arrow.triangle.branch"
+          size={9}
+          tintColorClassName={"accent-icon-muted"}
+          type="monochrome"
+        />
       </View>
     </View>
   );
@@ -107,6 +128,7 @@ export function NewTaskDraftScreen(props: {
   /** Durable native share inbox item to merge into this project draft. */
   readonly incomingShareId?: string;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const projects = useProjects();
   const createProjectThread = useCreateProjectThread();
   const flow = useNewTaskFlow();
@@ -119,7 +141,6 @@ export function NewTaskDraftScreen(props: {
     reserveShare,
   } = useIncomingShare();
   const insets = useSafeAreaInsets();
-  const { themeAppearance: colorScheme } = useAppearancePreferences();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const controlsBottomPadding = Math.max(insets.bottom, 10);
   const keyboardOpenedOffset = Math.max(0, controlsBottomPadding - 8);
@@ -156,8 +177,15 @@ export function NewTaskDraftScreen(props: {
     preferences.voiceInputOutputLanguage === "english" ? "english" : "native";
   const assemblyAiKey =
     selectedEnvironmentServerConfig?.settings.speechTranscription.assemblyAi.apiKey;
+  const assemblyAiEnabled =
+    selectedEnvironmentServerConfig !== null &&
+    resolveBetterT3FeatureFlag(
+      selectedEnvironmentServerConfig.settings.betterT3Environment,
+      "voice.assemblyAi",
+    );
   const voiceConfigured =
     selectedProject !== null &&
+    assemblyAiEnabled &&
     (selectedEnvironmentServerConfig?.environment.capabilities.environmentSettingsVersion ?? 0) >=
       1 &&
     (assemblyAiKey?.valueRedacted === true || (assemblyAiKey?.value.trim().length ?? 0) > 0);
@@ -257,6 +285,19 @@ export function NewTaskDraftScreen(props: {
   const isIncomingShareTransferPending = Boolean(
     incomingShare && cancelledIncomingShareId !== props.incomingShareId,
   );
+  const composerMenu = useComposerCommandMenu({
+    draftMessage: flow.prompt,
+    environmentId: selectedProject?.environmentId ?? null,
+    projectCwd:
+      (flow.workspaceMode === "worktree"
+        ? selectedProject?.workspaceRoot
+        : (flow.selectedWorktreePath ?? selectedProject?.workspaceRoot)) || null,
+    selectedProviderStatus: flow.selectedProviderStatus,
+    hasThread: false,
+    enabled: isComposerFocused && !isIncomingShareTransferPending,
+    onChangeDraftMessage: flow.setPrompt,
+    onUpdateInteractionMode: flow.planModeEnabled ? flow.setInteractionMode : undefined,
+  });
   usePreventRemove(
     (isIncomingShareTransferPending && !isProjectPickerReturnActive) || isCancellingShareImport,
     () => undefined,
@@ -344,13 +385,9 @@ export function NewTaskDraftScreen(props: {
     };
   }, [props.pendingTaskId, cancelEditingPendingTask]);
 
-  const foregroundColor = useThemeColor("--color-foreground");
-  const sheetColor = String(useThemeColor("--color-sheet"));
-  const projectUnderlineColor = useThemeColor("--color-foreground-muted");
+  const foregroundColor = useUniwindTheme()["--color-foreground"];
   const regularFontFamily = useFontFamily("regular");
   const bodyText = useScaledTextRole("body");
-  const sheetFadeOpaque = sheetColor;
-  const sheetFadeTransparent = themeColorWithAlpha(sheetColor, 0);
 
   // A new navigation to this mounted screen delivers a fresh initialProjectRef
   // reference — treat it as a new request and let it apply again.
@@ -525,11 +562,13 @@ export function NewTaskDraftScreen(props: {
       const warnings = [...incomingShare.warnings];
       if (skippedAttachmentCount > 0) {
         warnings.push(
-          `${skippedAttachmentCount} shared image${skippedAttachmentCount === 1 ? " was" : "s were"} skipped because this draft reached the attachment limit.`,
+          translator.message("mobile.thread.importImageLimit", {
+            count: skippedAttachmentCount,
+          }),
         );
       }
       if (warnings.length > 0) {
-        Alert.alert("Some shared content was skipped", warnings.join("\n"));
+        Alert.alert(translator.message("mobile.thread.importSkippedTitle"), warnings.join("\n"));
       }
       shareImportDraftBackupRef.current.delete(importKey);
     })()
@@ -538,11 +577,13 @@ export function NewTaskDraftScreen(props: {
           return;
         }
         Alert.alert(
-          "Could not import shared content",
-          error instanceof Error ? error.message : "The shared content could not be saved.",
+          translator.message("mobile.thread.importFailed"),
+          error instanceof Error
+            ? error.message
+            : translator.message("mobile.thread.importSaveFailed"),
           [
             {
-              text: "Cancel import",
+              text: translator.message("mobile.thread.cancelImport"),
               style: "cancel",
               onPress: () => {
                 const cancelImport = async (): Promise<void> => {
@@ -575,13 +616,13 @@ export function NewTaskDraftScreen(props: {
                       return;
                     }
                     Alert.alert(
-                      "Could not cancel import",
+                      translator.message("mobile.thread.importCancelFailed"),
                       cancelError instanceof Error
                         ? cancelError.message
-                        : "The shared content could not be restored safely.",
+                        : translator.message("mobile.thread.importRestoreFailed"),
                       [
                         {
-                          text: "Retry import",
+                          text: translator.message("mobile.thread.retryImport"),
                           onPress: () => {
                             cancellingShareImportKeyRef.current = null;
                             setIsCancellingShareImport(false);
@@ -589,7 +630,7 @@ export function NewTaskDraftScreen(props: {
                           },
                         },
                         {
-                          text: "Retry cancel",
+                          text: translator.message("mobile.thread.retryCancel"),
                           onPress: () => void cancelImport(),
                         },
                       ],
@@ -601,7 +642,7 @@ export function NewTaskDraftScreen(props: {
               },
             },
             {
-              text: "Retry",
+              text: translator.message("common.retry"),
               onPress: () => setShareImportAttempt((attempt) => attempt + 1),
             },
           ],
@@ -918,17 +959,21 @@ export function NewTaskDraftScreen(props: {
         {Platform.OS === "android" ? (
           <>
             <NativeStackScreenOptions options={{ headerShown: false }} />
-            <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
+            <AndroidScreenHeader
+              title={translator.message("mobile.thread.newThread")}
+              onBack={() => navigation.goBack()}
+            />
           </>
         ) : (
-          <NativeStackScreenOptions options={{ title: "Loading task" }} />
+          <NativeStackScreenOptions
+            options={{ title: translator.message("mobile.thread.loadingTask") }}
+          />
         )}
       </View>
     );
   }
 
   const isAndroid = Platform.OS === "android";
-  const isDarkMode = colorScheme === "dark";
   const canStart =
     Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
@@ -949,12 +994,14 @@ export function NewTaskDraftScreen(props: {
       multiline
       scrollEnabled
       value={flow.prompt}
-      skills={flow.selectedProviderSkills}
+      skills={flow.selectedProviderStatus?.skills ?? []}
+      selection={composerMenu.selection}
       onChangeText={flow.setPrompt}
+      onSelectionChange={composerMenu.onSelectionChange}
       onFocus={() => setIsComposerFocused(true)}
       onBlur={() => setIsComposerFocused(false)}
       onPasteImages={(uris) => void handleNativePasteImages(uris)}
-      placeholder="Ask anything…"
+      placeholder={translator.message("mobile.thread.askAnything")}
       singleLineCentered={false}
       contentInsetVertical={0}
       style={{
@@ -997,21 +1044,21 @@ export function NewTaskDraftScreen(props: {
     <View className="items-center gap-6 px-6" testID="new-task-hero">
       <View className="w-full items-center gap-1.5">
         <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
-          What should we build
+          {translator.message("mobile.thread.whatBuild")}
         </Text>
         <View className="max-w-full flex-row items-center justify-center">
-          <Text className="text-2xl font-t3-medium tracking-tight text-foreground">in </Text>
+          <Text className="text-2xl font-t3-medium tracking-tight text-foreground">
+            {translator.message("mobile.thread.inProject")}{" "}
+          </Text>
           <Pressable
-            accessibilityHint="Opens the project picker"
-            accessibilityLabel={`Change project from ${selectedProject.title}`}
+            accessibilityHint={translator.message("mobile.thread.openProjectPicker")}
+            accessibilityLabel={translator.message("mobile.thread.changeProject", {
+              project: selectedProject.title,
+            })}
             accessibilityRole="button"
             disabled={isIncomingShareTransferPending}
             onPress={chooseProject}
-            className="min-w-0 max-w-[250px] active:opacity-65"
-            style={{
-              borderBottomColor: projectUnderlineColor,
-              borderBottomWidth: 1,
-            }}
+            className="min-w-0 max-w-[250px] border-b border-foreground-muted active:opacity-65"
           >
             <Text
               className="text-2xl font-t3-medium tracking-tight text-foreground"
@@ -1025,11 +1072,15 @@ export function NewTaskDraftScreen(props: {
       </View>
 
       <ComposerInlineControl
-        accessibilityLabel={`Environment: ${selectedEnvironmentLabel}`}
+        accessibilityLabel={translator.message("mobile.thread.environmentLabel", {
+          environment: selectedEnvironmentLabel,
+        })}
         chevronDirection="right"
         disabled={isIncomingShareTransferPending}
         icon="desktopcomputer"
-        label={`on ${selectedEnvironmentLabel}`}
+        label={translator.message("mobile.thread.onEnvironment", {
+          environment: selectedEnvironmentLabel,
+        })}
         maxWidth={260}
         onPress={
           flow.environments.length > 1 ? () => openContextPicker("NewTaskEnvironment") : undefined
@@ -1060,7 +1111,11 @@ export function NewTaskDraftScreen(props: {
   const workspaceControls = (
     <View className="flex-row items-center gap-1 px-2">
       <ComposerInlineControl
-        accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`}
+        accessibilityHint={translator.message(
+          flow.workspaceMode === "local"
+            ? "mobile.thread.switchWorktree"
+            : "mobile.thread.switchCheckout",
+        )}
         accessibilityLabel={workspaceLabel}
         disabled={isIncomingShareTransferPending}
         iconNode={
@@ -1076,11 +1131,17 @@ export function NewTaskDraftScreen(props: {
       />
 
       <ComposerInlineControl
-        accessibilityLabel={`${flow.workspaceMode === "worktree" ? "Base branch" : "Branch"}: ${selectedBranchLabel}`}
+        accessibilityLabel={`${translator.message(
+          flow.workspaceMode === "worktree" ? "mobile.thread.baseBranch" : "mobile.thread.branch",
+        )}: ${selectedBranchLabel}`}
         chevronDirection="right"
         disabled={isIncomingShareTransferPending}
         icon="arrow.triangle.branch"
-        label={showBranchLoading ? "Loading branches…" : selectedBranchLabel}
+        label={
+          showBranchLoading
+            ? translator.message("mobile.thread.loadingBranches")
+            : selectedBranchLabel
+        }
         maxWidth={190}
         onPress={() => openContextPicker("NewTaskBranch")}
       />
@@ -1089,11 +1150,20 @@ export function NewTaskDraftScreen(props: {
 
   const composerDock = (
     <View className="bg-sheet px-4 pt-1" style={{ paddingBottom: controlsBottomPadding }}>
+      {composerMenu.trigger && composerMenu.items.length > 0 ? (
+        <View className="mb-2">
+          <ComposerCommandPopover
+            items={composerMenu.items}
+            triggerKind={composerMenu.trigger.kind}
+            isLoading={composerMenu.isLoading}
+            onSelect={composerMenu.onSelect}
+          />
+        </View>
+      ) : null}
       <View className="pb-1">{workspaceControls}</View>
 
       <ComposerSurface
         animateLayout={false}
-        isDarkMode={isDarkMode}
         style={{
           borderRadius: 26,
           minHeight: 140,
@@ -1117,33 +1187,30 @@ export function NewTaskDraftScreen(props: {
         {promptEditor}
 
         <ComposerToolbarRow paddingBottom={0} paddingHorizontal={0} paddingTop={4}>
-          <ComposerToolbarScroller
-            fadeOpaque={sheetFadeOpaque}
-            fadeTransparent={sheetFadeTransparent}
-            contentPaddingRight={8}
-          >
+          <ComposerToolbarScroller contentPaddingRight={8} fadeSurface="sheet">
             <ComposerToolbarButton
-              accessibilityLabel="Add attachment"
+              accessibilityLabel={translator.message("mobile.thread.addAttachment")}
               disabled={isIncomingShareTransferPending}
               icon="plus"
               onPress={() => void handlePickImages()}
               showChevron={false}
             />
-            {voiceConfigured || voiceDictation.active ? (
-              <NativeVoiceDictationControl
-                state={voiceDictation.state}
-                audioWaveform={voiceDictation.audioWaveform}
-                disabled={
-                  !environmentConnected || isIncomingShareTransferPending || isImprovingPrompt
-                }
-                onStart={voiceDictation.start}
-                onStop={voiceDictation.stop}
-                onCancel={voiceDictation.cancel}
-              />
-            ) : null}
+            <NativeVoiceDictationControl
+              state={voiceDictation.state}
+              audioWaveform={voiceDictation.audioWaveform}
+              disabled={
+                selectedProject === null ||
+                !environmentConnected ||
+                isIncomingShareTransferPending ||
+                isImprovingPrompt
+              }
+              onStart={voiceDictation.start}
+              onStop={voiceDictation.stop}
+              onCancel={voiceDictation.cancel}
+            />
             {workflowSettings.supported && flow.prompt.trim().length > 0 ? (
               <ComposerToolbarButton
-                accessibilityLabel="Improve prompt"
+                accessibilityLabel={translator.message("mobile.thread.improvePrompt")}
                 icon={isImprovingPrompt ? undefined : { ios: "sparkles", android: "auto_awesome" }}
                 disabled={isImprovingPrompt || voiceDictation.active}
                 onPress={() => void handleImprovePrompt()}
@@ -1151,20 +1218,31 @@ export function NewTaskDraftScreen(props: {
               />
             ) : null}
             <ComposerInlineControl
-              accessibilityLabel="Model and reasoning settings"
+              accessibilityLabel={translator.message("mobile.thread.modelReasoning")}
               disabled={isIncomingShareTransferPending}
               emphasized
               iconNode={
                 <ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />
               }
-              label={flow.selectedModelOption?.label ?? "Choose model"}
+              label={
+                flow.selectedModelOption?.label ??
+                translator.message("mobile.settings.agents.chooseModel")
+              }
               maxWidth={152}
               onPress={settingsSheetPresentation.open}
             />
             {flow.planModeEnabled ? (
               <ComposerInlineControl
-                accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}
-                accessibilityLabel={`Interaction mode: ${flow.interactionMode === "plan" ? "Plan" : "Build"}`}
+                accessibilityHint={translator.message("mobile.thread.switchMode", {
+                  mode: translator.message(
+                    flow.interactionMode === "plan" ? "mobile.thread.build" : "mobile.thread.plan",
+                  ),
+                })}
+                accessibilityLabel={translator.message("mobile.thread.interactionMode", {
+                  mode: translator.message(
+                    flow.interactionMode === "plan" ? "mobile.thread.plan" : "mobile.thread.build",
+                  ),
+                })}
                 disabled={isIncomingShareTransferPending}
                 emphasized
                 icon={
@@ -1172,7 +1250,9 @@ export function NewTaskDraftScreen(props: {
                     ? { ios: "list.bullet.clipboard", android: "auto_awesome" }
                     : { ios: "hammer", android: "construction" }
                 }
-                label={flow.interactionMode === "plan" ? "Plan" : "Build"}
+                label={translator.message(
+                  flow.interactionMode === "plan" ? "mobile.thread.plan" : "mobile.thread.build",
+                )}
                 onPress={() =>
                   flow.setInteractionMode(flow.interactionMode === "plan" ? "default" : "plan")
                 }
@@ -1182,7 +1262,11 @@ export function NewTaskDraftScreen(props: {
           </ComposerToolbarScroller>
           <ComposerToolbarButton
             accessibilityLabel={
-              flow.submitting ? "Starting task" : environmentConnected ? "Start task" : "Queue task"
+              flow.submitting
+                ? translator.message("mobile.thread.startingTask")
+                : environmentConnected
+                  ? translator.message("mobile.thread.startTask")
+                  : translator.message("mobile.thread.queueTask")
             }
             disabled={!canStart}
             icon={environmentConnected ? "arrow.up" : "tray.and.arrow.up"}
@@ -1199,7 +1283,10 @@ export function NewTaskDraftScreen(props: {
     return (
       <View className="flex-1 bg-sheet" collapsable={false}>
         <NativeStackScreenOptions options={{ headerShown: false }} />
-        <AndroidScreenHeader title="New task" onBack={closeNewTask} />
+        <AndroidScreenHeader
+          title={translator.message("mobile.navigation.newTask")}
+          onBack={closeNewTask}
+        />
         {heroViewport}
 
         <KeyboardStickyView
@@ -1223,8 +1310,8 @@ export function NewTaskDraftScreen(props: {
       />
       <NativeHeaderToolbar placement="left">
         <NativeHeaderToolbar.Button
-          accessibilityLabel="Cancel new task"
-          label="Cancel"
+          accessibilityLabel={translator.message("mobile.thread.cancelNewTask")}
+          label={translator.message("common.cancel")}
           onPress={closeNewTask}
         />
       </NativeHeaderToolbar>

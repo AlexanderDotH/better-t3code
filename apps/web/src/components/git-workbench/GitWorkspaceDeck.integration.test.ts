@@ -1,160 +1,262 @@
-import { describe, expect, it } from "vite-plus/test";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { createElement, type ComponentProps, type ReactNode, type RefObject } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import branchToolbarSource from "../BranchToolbar.tsx?raw";
-import branchSelectorSource from "../BranchToolbarBranchSelector.tsx?raw";
-import environmentSelectorSource from "../BranchToolbarEnvironmentSelector.tsx?raw";
-import envModeSelectorSource from "../BranchToolbarEnvModeSelector.tsx?raw";
-import chatViewSource from "../ChatView.tsx?raw";
-import compactCardSource from "./GitCompactCard.tsx?raw";
-import deckControllerSource from "./GitWorkspaceDeckController.tsx?raw";
-import drawerShellSource from "./GitWorkbenchDrawerShell.tsx?raw";
-import changesIndicatorSource from "./GitWorkspaceChangesIndicator.tsx?raw";
+const rendered = vi.hoisted(() => ({
+  compactCard: null as Record<string, unknown> | null,
+  deck: null as Record<string, unknown> | null,
+  drawer: null as Record<string, unknown> | null,
+  mcpProvider: null as Record<string, unknown> | null,
+}));
 
-describe("Git workspace deck surface integration", () => {
-  it("renders the repository context strip as a mirrored previous or next card peek", () => {
-    expect(branchToolbarSource).toContain('orientation?: "previous" | "next"');
-    expect(branchToolbarSource).toContain("data-workspace-card-peek-position={orientation}");
-    expect(branchToolbarSource).toContain("chat-composer-context-strip--previous");
-    expect(branchToolbarSource).toContain("chat-composer-context-strip--next");
+vi.mock("./GitCompactCard", async () => {
+  const { createElement } = await import("react");
+  return {
+    GitCompactCard: (props: Record<string, unknown>) => {
+      rendered.compactCard = props;
+      return createElement(
+        "article",
+        { "data-compact-git-card": "true" },
+        props.workbench as ReactNode,
+      );
+    },
+  };
+});
+
+vi.mock("./GitWorkbenchDrawerShell", async () => {
+  const { createElement } = await import("react");
+  return {
+    GitWorkbenchDrawerShell: (props: Record<string, unknown>) => {
+      rendered.drawer = props;
+      return createElement(
+        "section",
+        {
+          className: props.className,
+          "data-workspace-card-expanded-surface": "true",
+        },
+        props.children as ReactNode,
+      );
+    },
+  };
+});
+
+vi.mock("./ChatWorkspaceDeck", async () => {
+  const { createElement } = await import("react");
+  return {
+    ChatWorkspaceDeck: (props: Record<string, unknown>) => {
+      rendered.deck = props;
+      return createElement("div", { "data-chat-workspace-deck": "true" });
+    },
+  };
+});
+
+vi.mock("../mcp-workspace/McpWorkspaceController", async () => {
+  const { createElement, Fragment } = await import("react");
+  return {
+    McpWorkspaceRuntimeProvider: (props: Record<string, unknown>) => {
+      rendered.mcpProvider = props;
+      return createElement(Fragment, null, props.children as ReactNode);
+    },
+  };
+});
+
+import type { GitWorkspaceDeckControllerProps } from "./GitWorkspaceDeckController.model";
+import {
+  GitWorkspaceDeckGitCard,
+  GitWorkspaceDeckPresentation,
+  type GitWorkspaceDeckPresentationProps,
+} from "./GitWorkspaceDeckController.presentation";
+
+const status = {
+  kind: "changed" as const,
+  label: "Changed",
+  branch: "main",
+  changeCount: 1,
+  staged: 1,
+  unstaged: 0,
+  untracked: 0,
+  conflicts: 0,
+  additions: 2,
+  deletions: 1,
+  ahead: 0,
+  behind: 0,
+  updatedAtLabel: "Updated now",
+};
+
+function controllerFixture(input?: {
+  readonly dismissTransientUi?: () => void;
+  readonly focusAtEnd?: () => void;
+  readonly renderChat?: GitWorkspaceDeckControllerProps["renderChat"];
+}): GitWorkspaceDeckControllerProps {
+  return {
+    environmentId: EnvironmentId.make("environment-1"),
+    cwd: "/repo",
+    threadId: ThreadId.make("thread-1"),
+    turnId: null,
+    workbenchSupported: true,
+    legacyStatus: null,
+    legacyStatusPending: false,
+    actionRequired: false,
+    activeTurn: false,
+    isRecording: false,
+    composerRef: {
+      current: {
+        dismissTransientUi: input?.dismissTransientUi ?? vi.fn(),
+        focusAtEnd: input?.focusAtEnd ?? vi.fn(),
+      },
+    } as unknown as GitWorkspaceDeckControllerProps["composerRef"],
+    mcpAuthorizationAvailable: true,
+    mcpConfiguredServers: [],
+    mcpProviderDisplayName: "Codex",
+    mcpProviderDriver: null,
+    mcpProviderInstanceId: null,
+    mcpProviders: [],
+    mcpRuntimeSessionId: null,
+    mcpWorkspaceSupported: true,
+    renderChat:
+      input?.renderChat ??
+      ((controls) =>
+        createElement("span", null, `${controls.deckEnabled}:${controls.gitAvailable}`)),
+    renderGitPeek: () => null,
+    onOpenFile: vi.fn(),
+    onNonChatActiveChange: vi.fn(),
+    onExpandedChange: vi.fn(),
+  };
+}
+
+function presentationFixture(
+  controller: GitWorkspaceDeckControllerProps,
+  overrides?: Partial<GitWorkspaceDeckPresentationProps>,
+): GitWorkspaceDeckPresentationProps {
+  return {
+    actionRequired: controller.actionRequired,
+    activeCard: "chat",
+    cards: [],
+    deckEnabled: true,
+    expandedCard: null,
+    fallback: controller.renderChat({ deckEnabled: false, gitAvailable: false }),
+    isDesktop: true,
+    isRecording: controller.isRecording,
+    mcpExpanded: false,
+    mcpRuntime: controller,
+    onActiveCardChange: vi.fn(),
+    onBeforeHideChat: () => controller.composerRef.current?.dismissTransientUi(),
+    onCardSelectionBlocked: vi.fn(),
+    onExpandedCardChange: vi.fn(),
+    onRestoreChatFocus: () => controller.composerRef.current?.focusAtEnd(),
+    resetKey: "scope",
+    ...overrides,
+  };
+}
+
+describe("Git workspace deck presentation integration", () => {
+  beforeEach(() => {
+    rendered.compactCard = null;
+    rendered.deck = null;
+    rendered.drawer = null;
+    rendered.mcpProvider = null;
   });
 
-  it("splits the composer body from the Git peek without changing selector hit targets", () => {
-    const renderChatIndex = chatViewSource.indexOf("renderChat=");
-    const renderGitPeekIndex = chatViewSource.indexOf("renderGitPeek=", renderChatIndex);
-    const branchToolbarIndex = chatViewSource.indexOf(
-      "renderComposerContextStrip(",
-      renderGitPeekIndex,
+  it.each([
+    { deckEnabled: false, isDesktop: true },
+    { deckEnabled: true, isDesktop: false },
+  ])("falls back to plain Chat when the desktop deck is unavailable", (availability) => {
+    const renderChat = vi.fn<GitWorkspaceDeckControllerProps["renderChat"]>((controls) =>
+      createElement("span", null, `${controls.deckEnabled}:${controls.gitAvailable}`),
     );
 
-    expect(renderChatIndex).toBeGreaterThan(-1);
-    expect(renderGitPeekIndex).toBeGreaterThan(renderChatIndex);
-    expect(branchToolbarIndex).toBeGreaterThan(renderGitPeekIndex);
-    expect(chatViewSource).toContain('cardPeek ? "pointer-events-none" : "pointer-events-auto"');
-    expect(chatViewSource).toMatch(/renderComposerContextStrip\([\s\S]*?position,[\s\S]*?true,/);
-    expect(environmentSelectorSource).toContain('data-git-workspace-context-control="true"');
-    expect(envModeSelectorSource).toContain('data-git-workspace-context-control="true"');
-    expect(branchSelectorSource.match(/data-git-workspace-context-control="true"/g)).toHaveLength(
-      2,
-    );
-  });
-
-  it("waits for confirmed Git status before rendering repository context", () => {
-    expect(chatViewSource).toContain("const isGitRepo = gitStatusQuery.data?.isRepo === true;");
-    expect(chatViewSource).not.toContain("gitStatusQuery.data?.isRepo ?? true");
-  });
-
-  it("tracks every non-Chat card so type-anywhere never steals focus from the deck", () => {
-    expect(chatViewSource).toContain("nonChatWorkspaceCardActive");
-    expect(chatViewSource).not.toContain("gitWorkbenchFrontmost");
-    expect(chatViewSource).toContain("onNonChatActiveChange={setNonChatWorkspaceCardActive}");
-  });
-
-  it("batches composer overlay measurements into animation frames", () => {
-    expect(chatViewSource).toContain("composerOverlayResizeFrameRef");
-    expect(chatViewSource).toMatch(/new ResizeObserver\(scheduleComposerOverlayMeasurement\)/);
-    expect(chatViewSource).toContain(
-      "window.cancelAnimationFrame(composerOverlayResizeFrameRef.current)",
-    );
-  });
-
-  it("keeps the composer glass outside the fading foreground layer", () => {
-    const glassHostIndex = chatViewSource.indexOf('"chat-composer-glass-host relative z-10');
-    const contentIndex = chatViewSource.indexOf(
-      'className="workspace-card-deck__card-content relative z-10"',
-      glassHostIndex,
+    const controller = controllerFixture({ renderChat });
+    const markup = renderToStaticMarkup(
+      createElement(GitWorkspaceDeckPresentation, presentationFixture(controller, availability)),
     );
 
-    expect(glassHostIndex).toBeGreaterThan(-1);
-    expect(contentIndex).toBeGreaterThan(glassHostIndex);
-    expect(chatViewSource).toContain('deckEnabled && "h-full"');
+    expect(markup).toContain("false:false");
+    expect(renderChat).toHaveBeenCalledWith({ deckEnabled: false, gitAvailable: false });
+    expect(rendered.deck).toBeNull();
   });
 
-  it("keeps the context-strip chrome outside its fading controls", () => {
-    expect(branchToolbarSource).toContain("chat-composer-context-strip");
-    expect(branchToolbarSource).toContain("mx-auto");
-    expect(branchToolbarSource).not.toContain("workspace-card-deck__card-content");
-    expect(branchToolbarSource).not.toContain("git-workspace-deck__card-content");
+  it("forwards deck and MCP runtime state and restores composer focus through the controller", () => {
+    const dismissTransientUi = vi.fn();
+    const focusAtEnd = vi.fn();
+    const controller = controllerFixture({ dismissTransientUi, focusAtEnd });
+    const onActiveCardChange = vi.fn();
+    const onExpandedCardChange = vi.fn();
+
+    renderToStaticMarkup(
+      createElement(
+        GitWorkspaceDeckPresentation,
+        presentationFixture(controller, {
+          activeCard: "mcp",
+          expandedCard: "mcp",
+          mcpExpanded: true,
+          onActiveCardChange,
+          onExpandedCardChange,
+        }),
+      ),
+    );
+
+    expect(rendered.mcpProvider).toMatchObject({
+      active: true,
+      environmentId: controller.environmentId,
+      expanded: true,
+      projectCwd: controller.cwd,
+      threadId: controller.threadId,
+    });
+    expect(rendered.deck).toMatchObject({
+      activeCard: "mcp",
+      expandedCard: "mcp",
+      onActiveCardChange,
+      onExpandedCardChange,
+      resetKey: "scope",
+    });
+    (rendered.deck?.onBeforeHideChat as (() => void) | undefined)?.();
+    (rendered.deck?.onRestoreChatFocus as (() => void) | undefined)?.();
+    expect(dismissTransientUi).toHaveBeenCalledOnce();
+    expect(focusAtEnd).toHaveBeenCalledOnce();
   });
 
-  it("lets the card trigger own static lookout content without stealing real selectors", () => {
-    expect(branchToolbarSource).toContain('className="flex min-w-0 flex-1 items-center gap-1"');
-    expect(branchToolbarSource).not.toContain('className="relative z-10 flex min-w-0 flex-1');
-    expect(branchToolbarSource).toContain(
-      'className="min-w-0 flex-1 justify-end md:ml-auto md:flex-none"',
-    );
-    expect(branchToolbarSource).not.toContain(
-      'className="relative z-10 min-w-0 flex-1 justify-end md:ml-auto md:flex-none"',
-    );
-    expect(environmentSelectorSource).toContain('data-git-workspace-context-control="true"');
-    expect(envModeSelectorSource).toContain('data-git-workspace-context-control="true"');
-    expect(branchSelectorSource.match(/data-git-workspace-context-control="true"/g)).toHaveLength(
-      2,
-    );
-    expect(branchSelectorSource).toContain("max-w-[180px]");
-    expect(branchSelectorSource).not.toContain("max-w-[240px]");
-    expect(changesIndicatorSource).not.toContain("<button");
-    expect(changesIndicatorSource).not.toContain("onOpen");
-  });
+  it("keeps expanded Git content embedded and returns focus to the compact trigger", () => {
+    const expandButtonRef = { current: null } as RefObject<HTMLButtonElement | null>;
+    const onExpand = vi.fn();
+    const onExpandedChange = vi.fn();
+    const onActiveTabChange = vi.fn();
 
-  it("embeds the expanded workbench inside the centered Git card instead of a portal", () => {
-    const centeredCardIndex = chatViewSource.indexOf('"relative mx-auto w-full max-w-3xl"');
-    const controllerIndex = chatViewSource.indexOf(
-      "<ChatWorkspaceDeckController",
-      centeredCardIndex,
+    const markup = renderToStaticMarkup(
+      createElement(GitWorkspaceDeckGitCard, {
+        activeTab: "overview",
+        blocked: false,
+        expanded: true,
+        expandButtonRef,
+        lastCommit: null,
+        onActiveTabChange,
+        onExpand,
+        onExpandedChange,
+        panel: createElement("div", null, "Panel content"),
+        quickAction: null,
+        repositoryLabel: "/repo",
+        showOperationsTab: true,
+        status,
+      } satisfies ComponentProps<typeof GitWorkspaceDeckGitCard>),
     );
 
-    expect(deckControllerSource).not.toContain('from "react-dom"');
-    expect(deckControllerSource).not.toContain("createPortal(");
-    expect(deckControllerSource).not.toContain("drawerHost");
-    expect(deckControllerSource).toContain("workbench={");
-    expect(deckControllerSource).toContain(
-      'className="workspace-card-deck__card-content git-workbench-drawer--embedded"',
-    );
-    expect(chatViewSource).not.toContain("data-git-workbench-drawer-host");
-    expect(centeredCardIndex).toBeGreaterThan(-1);
-    expect(controllerIndex).toBeGreaterThan(centeredCardIndex);
-  });
-
-  it("content-sizes Git without retaining manual drawer height state", () => {
-    expect(drawerShellSource).toContain('sizingMode="content"');
-    expect(drawerShellSource).not.toContain("DRAWER_HEIGHT_STORAGE_KEY");
-    expect(drawerShellSource).not.toContain("DRAWER_DEFAULT_MAX_HEIGHT");
-    expect(drawerShellSource).not.toContain('resizeLabel="Resize Git workbench vertically"');
-    expect(drawerShellSource).toContain('"data-workspace-card-expanded-surface": "true"');
-    expect(deckControllerSource).not.toContain("onDrawerHeightChange");
-  });
-
-  it("reserves the measured expanded card height without blocking the full chat width", () => {
-    expect(chatViewSource).not.toContain('workspaceCardExpanded && "invisible"');
-    expect(chatViewSource).toContain("isDraftHeroState && !workspaceCardExpanded");
-    expect(chatViewSource).toContain('workspaceCardExpanded ? "pointer-events-none"');
-    expect(chatViewSource).toContain('workspaceCardExpanded && "pointer-events-auto"');
-    expect(chatViewSource).toContain("contentInsetEndAdjustment={composerOverlayHeight}");
-    expect(chatViewSource).toContain("bottom: composerOverlayHeight + 4");
-    expect(chatViewSource).toMatch(
-      /bottomInset=\{\s*isDraftHeroState && !workspaceCardExpanded \? 0 : composerOverlayHeight\s*\}/,
-    );
-  });
-
-  it("keeps terminal restoration and the desktop-only boundary intact", () => {
-    expect(chatViewSource).toContain("terminalUiState.terminalOpen &&");
-    expect(chatViewSource).toContain("!workspaceCardExpanded");
-    expect(deckControllerSource).toContain(
-      'const DESKTOP_WORKBENCH_MEDIA_QUERY = "(min-width: 48rem)"',
-    );
-    expect(deckControllerSource).toContain("if (!isDesktop)");
-    expect(deckControllerSource).not.toContain("if (!isDesktop || !props.cwd)");
-    expect(deckControllerSource).toMatch(/setExpandedCard\(null\)[\s\S]*?\}, \[scopeKey\]\);/);
-  });
-
-  it("restores focus to the compact expand arrow after collapse", () => {
-    const returnLabelIndex = compactCardSource.indexOf('aria-label="Return to chat"');
-    const expandButtonRefIndex = compactCardSource.indexOf("ref={props.expandButtonRef}");
-    const expandLabelIndex = compactCardSource.indexOf('aria-label="Expand Git workbench"');
-
-    expect(returnLabelIndex).toBe(-1);
-    expect(expandButtonRefIndex).toBeGreaterThan(-1);
-    expect(expandLabelIndex).toBeGreaterThan(expandButtonRefIndex);
-    expect(deckControllerSource).toContain("returnFocusRef={expandButtonRef}");
+    expect(markup).toContain('data-workspace-card-expanded-surface="true"');
+    expect(markup).toContain("Panel content");
+    expect(rendered.compactCard).toMatchObject({
+      expanded: true,
+      expandButtonRef,
+      onExpand,
+      status,
+    });
+    expect(rendered.drawer).toMatchObject({
+      activeTab: "overview",
+      className: "workspace-card-deck__card-content git-workbench-drawer--embedded",
+      onActiveTabChange,
+      onOpenChange: onExpandedChange,
+      open: true,
+      repositoryLabel: "/repo",
+      returnFocusRef: expandButtonRef,
+      showOperationsTab: true,
+    });
   });
 });

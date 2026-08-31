@@ -6,9 +6,12 @@ import {
   buildBulkTitleRegenerationContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
+  filterSidebarProjectScopeItems,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
+  resolveLegacySidebarProjectThreadIds,
   resolveAdjacentThreadId,
+  reduceSidebarProjectScopeMenuState,
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
@@ -18,9 +21,11 @@ import {
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
+  resolveProjectHeaderClickAction,
   resolveProjectStatusIndicator,
   resolveSidebarProjectSettingsTarget,
   resolveSidebarStageBadgeLabel,
+  resolveSidebarThreadPresentationState,
   resolveThreadRowClassName,
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
@@ -494,6 +499,54 @@ describe("shouldCreateNewThreadInCurrentProject", () => {
   });
 });
 
+describe("resolveProjectHeaderClickAction", () => {
+  it("shows less on Shift-left-click when the project is expanded", () => {
+    expect(
+      resolveProjectHeaderClickAction({
+        button: 0,
+        detail: 1,
+        projectExpanded: true,
+        shiftKey: true,
+      }),
+    ).toBe("show-less");
+  });
+
+  it("retains the existing toggle for regular, collapsed, keyboard, and non-primary clicks", () => {
+    expect(
+      resolveProjectHeaderClickAction({
+        button: 0,
+        detail: 1,
+        projectExpanded: true,
+        shiftKey: false,
+      }),
+    ).toBe("toggle-expanded");
+    expect(
+      resolveProjectHeaderClickAction({
+        button: 0,
+        detail: 1,
+        projectExpanded: false,
+        shiftKey: true,
+      }),
+    ).toBe("toggle-expanded");
+    expect(
+      resolveProjectHeaderClickAction({
+        button: 0,
+        detail: 0,
+        projectExpanded: true,
+        shiftKey: true,
+      }),
+    ).toBe("toggle-expanded");
+    expect(
+      resolveProjectHeaderClickAction({
+        button: 1,
+        detail: 1,
+        projectExpanded: true,
+        shiftKey: true,
+      }),
+    ).toBe("toggle-expanded");
+  });
+});
+
 describe("orderItemsByPreferredIds", () => {
   it("keeps preferred ids first, skips stale ids, and preserves the relative order of remaining items", () => {
     const ordered = orderItemsByPreferredIds({
@@ -679,6 +732,49 @@ describe("getVisibleSidebarThreadIds", () => {
   });
 });
 
+describe("resolveLegacySidebarProjectThreadIds", () => {
+  it("does not resolve or sort threads for a collapsed project without an active route", () => {
+    const resolveExpandedThreadIds = vi.fn(() => [ThreadId.make("thread-1")]);
+
+    expect(
+      resolveLegacySidebarProjectThreadIds({
+        projectExpanded: false,
+        pinnedCollapsedThreadId: null,
+        resolveExpandedThreadIds,
+      }),
+    ).toEqual([]);
+    expect(resolveExpandedThreadIds).not.toHaveBeenCalled();
+  });
+
+  it("returns only the pinned active thread without resolving the collapsed project list", () => {
+    const pinnedThreadId = ThreadId.make("thread-active");
+    const resolveExpandedThreadIds = vi.fn(() => [ThreadId.make("thread-1")]);
+
+    expect(
+      resolveLegacySidebarProjectThreadIds({
+        projectExpanded: false,
+        pinnedCollapsedThreadId: pinnedThreadId,
+        resolveExpandedThreadIds,
+      }),
+    ).toEqual([pinnedThreadId]);
+    expect(resolveExpandedThreadIds).not.toHaveBeenCalled();
+  });
+
+  it("resolves the complete ordered list only after the project expands", () => {
+    const expandedThreadIds = [ThreadId.make("thread-3"), ThreadId.make("thread-2")];
+    const resolveExpandedThreadIds = vi.fn(() => expandedThreadIds);
+
+    expect(
+      resolveLegacySidebarProjectThreadIds({
+        projectExpanded: true,
+        pinnedCollapsedThreadId: null,
+        resolveExpandedThreadIds,
+      }),
+    ).toBe(expandedThreadIds);
+    expect(resolveExpandedThreadIds).toHaveBeenCalledOnce();
+  });
+});
+
 describe("isContextMenuPointerDown", () => {
   it("treats secondary-button presses as context menu gestures on all platforms", () => {
     expect(
@@ -755,6 +851,16 @@ describe("resolveSidebarThreadStatus", () => {
         session: { ...session, status: "starting" as const },
       }),
     ).toBe("working");
+    expect(
+      resolveSidebarThreadPresentationState({
+        ...idle,
+        backgroundLiveness: null,
+        hasActionableProposedPlan: false,
+        interactionMode: "default",
+        latestTurn: null,
+        session: { ...session, status: "starting" as const },
+      }),
+    ).toBe("connecting");
   });
 
   it("reports failed only while the session status is error", () => {
@@ -803,29 +909,109 @@ describe("searchSidebarThreadsByTitle", () => {
   });
 });
 
-describe("sortThreadsForSidebar", () => {
-  const sortable = (input: { id: string; createdAt: string }) => ({
-    id: input.id,
-    createdAt: input.createdAt,
+describe("filterSidebarProjectScopeItems", () => {
+  const items = [
+    { value: "all", label: "All projects" },
+    { value: "alpha", label: "Alpha workspace" },
+    { value: "beta", label: "Beta tools" },
+  ] as const;
+  const filter = (activeScopeKey: string | null, query: string) =>
+    filterSidebarProjectScopeItems({
+      items,
+      activeScopeKey,
+      query,
+      matches: (item, candidate) =>
+        item.label.toLocaleLowerCase().includes(candidate.toLocaleLowerCase()),
+    });
+
+  it("omits the reset row when the sidebar is already unscoped", () => {
+    expect(filter(null, "")).toEqual(items.slice(1));
   });
 
-  it("orders by creation time, newest first, ignoring activity", () => {
-    const sorted = sortThreadsForSidebar([
-      sortable({ id: "oldest", createdAt: "2026-03-09T08:00:00.000Z" }),
-      sortable({ id: "newest", createdAt: "2026-03-09T12:00:00.000Z" }),
-      sortable({ id: "middle", createdAt: "2026-03-09T10:00:00.000Z" }),
-    ]);
+  it("shows the reset row first while a project scope is active", () => {
+    expect(filter("alpha", "")).toEqual(items);
+  });
+
+  it("hides the reset row while filtering an active scope", () => {
+    expect(filter("alpha", "all")).toEqual([]);
+  });
+
+  it("returns matching projects in source order and supports no-match results", () => {
+    expect(filter(null, "WORK")).toEqual([items[1]]);
+    expect(filter(null, "missing")).toEqual([]);
+  });
+});
+
+describe("reduceSidebarProjectScopeMenuState", () => {
+  const queriedOpenState = { open: true, query: "alpha" };
+
+  it("clears the query when the combobox closes through onOpenChange", () => {
+    expect(
+      reduceSidebarProjectScopeMenuState(queriedOpenState, {
+        type: "open-changed",
+        open: false,
+      }),
+    ).toEqual({ open: false, query: "" });
+  });
+
+  it("clears the query when project settings closes the combobox", () => {
+    expect(
+      reduceSidebarProjectScopeMenuState(queriedOpenState, {
+        type: "project-settings-opened",
+      }),
+    ).toEqual({ open: false, query: "" });
+  });
+
+  it("keeps the popup open while the query changes", () => {
+    expect(
+      reduceSidebarProjectScopeMenuState(
+        { open: true, query: "" },
+        { type: "query-changed", query: "beta" },
+      ),
+    ).toEqual({ open: true, query: "beta" });
+  });
+});
+
+describe("sortThreadsForSidebar", () => {
+  const sortable = (input: { id: string; createdAt: string; latestUserMessageAt?: string }) => ({
+    id: input.id,
+    createdAt: input.createdAt,
+    updatedAt: input.latestUserMessageAt ?? input.createdAt,
+    latestUserMessageAt: input.latestUserMessageAt ?? null,
+  });
+
+  it("applies the shared created-at preference", () => {
+    const sorted = sortThreadsForSidebar(
+      [
+        sortable({
+          id: "oldest",
+          createdAt: "2026-03-09T08:00:00.000Z",
+          latestUserMessageAt: "2026-03-09T14:00:00.000Z",
+        }),
+        sortable({ id: "newest", createdAt: "2026-03-09T12:00:00.000Z" }),
+        sortable({ id: "middle", createdAt: "2026-03-09T10:00:00.000Z" }),
+      ],
+      "created_at",
+    );
 
     expect(sorted.map((thread) => thread.id)).toEqual(["newest", "middle", "oldest"]);
   });
 
-  it("breaks creation-time ties by id so the order is stable", () => {
-    const sorted = sortThreadsForSidebar([
-      sortable({ id: "b", createdAt: "2026-03-09T10:00:00.000Z" }),
-      sortable({ id: "a", createdAt: "2026-03-09T10:00:00.000Z" }),
-    ]);
+  it("applies the shared updated-at preference", () => {
+    const sorted = sortThreadsForSidebar(
+      [
+        sortable({
+          id: "oldest-now-active",
+          createdAt: "2026-03-09T08:00:00.000Z",
+          latestUserMessageAt: "2026-03-09T14:00:00.000Z",
+        }),
+        sortable({ id: "newest", createdAt: "2026-03-09T12:00:00.000Z" }),
+        sortable({ id: "middle", createdAt: "2026-03-09T10:00:00.000Z" }),
+      ],
+      "updated_at",
+    );
 
-    expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
+    expect(sorted.map((thread) => thread.id)).toEqual(["oldest-now-active", "newest", "middle"]);
   });
 });
 
@@ -1198,6 +1384,23 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Plan Ready", pulse: false });
   });
 
+  it("shows a failed provider session before passive background status", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          backgroundLiveness: "monitoring",
+          session: {
+            ...baseThread.session,
+            status: "error",
+            activeTurnId: null,
+            lastError: "boom",
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Failed", pulse: false });
+  });
+
   it("does not manufacture completed state without a client visit marker", () => {
     expect(
       resolveThreadStatusPill({
@@ -1214,22 +1417,35 @@ describe("resolveThreadStatusPill", () => {
     ).toBeNull();
   });
 
-  it("shows completed when there is an unseen completion and no active blocker", () => {
-    expect(
-      resolveThreadStatusPill({
-        thread: {
-          ...baseThread,
-          interactionMode: "default",
-          latestTurn: makeLatestTurn(),
-          lastVisitedAt: "2026-03-09T10:04:00.000Z",
-          session: {
-            ...baseThread.session,
-            status: "ready",
-            activeTurnId: null,
-          },
-        },
-      }),
-    ).toMatchObject({ label: "Completed", pulse: false });
+  it("keeps an unseen completion visible until the completed thread is visited", () => {
+    const completedThread = {
+      ...baseThread,
+      interactionMode: "default" as const,
+      latestTurn: makeLatestTurn(),
+      session: {
+        ...baseThread.session,
+        status: "ready" as const,
+        activeTurnId: null,
+      },
+    };
+
+    const beforeVisit = resolveThreadStatusPill({
+      thread: {
+        ...completedThread,
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+      },
+    });
+    const afterVisit = resolveThreadStatusPill({
+      thread: {
+        ...completedThread,
+        lastVisitedAt: "2026-03-09T10:05:00.000Z",
+      },
+    });
+
+    expect(beforeVisit).toMatchObject({ label: "Completed", pulse: false });
+    expect(isThreadStatusAlwaysVisibleInProjectPreview(beforeVisit)).toBe(true);
+    expect(afterVisit).toBeNull();
+    expect(isThreadStatusAlwaysVisibleInProjectPreview(afterVisit)).toBe(false);
   });
 });
 
@@ -1239,14 +1455,15 @@ describe("isThreadStatusAlwaysVisibleInProjectPreview", () => {
       label === null ? null : { label, colorClass: "", dotClass: "", pulse: false },
     );
 
-  it("keeps only displayed working and connecting statuses outside the configured limit", () => {
+  it("keeps every displayed status outside the configured limit", () => {
     expect(status("Working")).toBe(true);
     expect(status("Connecting")).toBe(true);
-    expect(status("Monitoring")).toBe(false);
-    expect(status("Pending Approval")).toBe(false);
-    expect(status("Awaiting Input")).toBe(false);
-    expect(status("Plan Ready")).toBe(false);
-    expect(status("Completed")).toBe(false);
+    expect(status("Monitoring")).toBe(true);
+    expect(status("Pending Approval")).toBe(true);
+    expect(status("Awaiting Input")).toBe(true);
+    expect(status("Failed")).toBe(true);
+    expect(status("Plan Ready")).toBe(true);
+    expect(status("Completed")).toBe(true);
     expect(status(null)).toBe(false);
   });
 });

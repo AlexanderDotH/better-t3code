@@ -16,6 +16,7 @@ This is a living glossary for T3 Code. It explains what common terms mean in thi
 - [Workspace card deck](#workspace-card-deck)
 - [Git workbench](#git-workbench)
 - [Checkpointing](#checkpointing)
+- [Appearance](#appearance)
 
 ## Concepts
 
@@ -46,6 +47,19 @@ A single user-to-assistant work cycle inside a thread. It starts with user input
 #### Activity
 
 A user-visible log item attached to a thread. In [the contracts][1], activities cover important non-message events like approvals, tool actions, and failures. They are projected into thread state in [projector.ts][4].
+
+#### Thread fork
+
+A new durable thread whose initial timeline is an independent copy of a source thread through one
+message or proposed-plan boundary. A fork stays in the same project, starts a fresh provider session,
+and selects its workspace through ordinary new-thread defaults. See [thread-forking.md][30].
+
+#### Inherited history
+
+The immutable messages, activities, plans, subagents, turns, and checkpoints copied into a thread
+fork. Each row has a `historyOrigin` that records its source identity and global ordinal. Clients may
+inspect or fork inherited history again, but must not expose controls that mutate it. See
+[thread-forking.md][30].
 
 ### Orchestration
 
@@ -133,6 +147,14 @@ The read-only `workspace_context` internal MCP tool. It batches deterministic re
 content searches with targeted line-range reads. Its workspace root comes from the authenticated
 thread and project rather than tool input. See [internal-mcp.md][25].
 
+#### Workspace edit
+
+The T3-owned `workspace_edit` text-mutation tool. One authenticated call applies ordered whole-file,
+exact-replacement, range-splice, and file-delete edits across one or more regular UTF-8 files. It
+uses revision guards, path fencing, bounded compact results, and rollback for ordinary commit
+failures. Thread checkpoints remain the reverse path because a host crash cannot make a multi-file
+filesystem commit atomic. See [internal-mcp.md][25].
+
 ### Project-agent coordination
 
 The internal MCP protocol that lets independent active root threads in one project announce work,
@@ -199,6 +221,10 @@ the foreground body is interactive and visible to assistive technology. Chat def
 compact height. Expandable panels return to that height before the requested vertical shuffle
 begins. See [workspace-card-deck.md][28].
 
+#### Model manifest
+
+The per-driver list of current model slugs that decides which models land in the model picker's legacy section. Bundled at `apps/server/src/provider/model-manifest.json` and refreshed at runtime from the same file on `main`, so classification updates ship as commits instead of releases. See the [provider architecture][16] model manifest section.
+
 ### Checkpointing
 
 Checkpointing captures workspace state over time so the app can diff turns and restore earlier points. The main pieces are [CheckpointStore.ts][19], [CheckpointDiffQuery.ts][20], and [CheckpointReactor.ts][6].
@@ -223,6 +249,21 @@ The patch difference between two checkpoints. Query logic lives in [CheckpointDi
 
 The file patch and changed-file summary for one turn. It is usually computed in [CheckpointDiffQuery.ts][20], represented in [the contracts][1], and recorded into thread state by [projector.ts][4].
 
+### Appearance
+
+#### Environment theme
+
+A theme an environment's machine publishes for clients to follow, one file per theme under `themes/` in that environment's state directory; the filename is the theme id. [environmentTheme.ts][31] watches the directory and streams the set over `subscribeServerConfig`; clients render each as a library card, generating a full palette when the file carries seed colors and using the palette directly when it is a standard exported theme file. A desktop that retints its apps when the system theme changes rewrites its file, so T3 Code follows along without a restart. See [environment-theme.md][32].
+
+#### Default theme
+
+The environment's theme, held in its `settings.json` as `defaultTheme` (with `defaultThemeSetAt`
+as the set-generation) and set with `t3 theme set <id>`. Web and desktop clients apply each set
+once — live when connected, on the next connect otherwise — so setting it switches them, while a
+theme a user picks in Settings afterwards sticks until the next set; mobile keeps its own
+appearance settings. Naming a published [environment theme](#environment-theme) is how a desktop
+ships T3 Code already matching it.
+
 ## Practical Shortcuts
 
 - If you see `requested`, think "intent recorded".
@@ -242,6 +283,7 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 - [MCP servers][29]
 - [Git workbench][27]
 - [Workspace card deck][28]
+- [Thread forking][30]
 
 [1]: ../../packages/contracts/src/orchestration.ts
 [2]: ./workspace-layout.md
@@ -272,3 +314,6 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [27]: ./git-workbench.md
 [28]: ./workspace-card-deck.md
 [29]: ../user/mcp-servers.md
+[30]: ./thread-forking.md
+[31]: ../../apps/server/src/environmentTheme.ts
+[32]: ../user/environment-theme.md

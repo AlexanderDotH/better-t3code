@@ -11,9 +11,14 @@ import {
   type FetchModelSelectionResolution,
 } from "@t3tools/shared/fetchMode";
 import { createModelSelection } from "@t3tools/shared/model";
+import {
+  translateInterfaceMessage,
+  type InterfaceTranslator,
+} from "@t3tools/shared/interfaceLanguage";
 import * as Equal from "effect/Equal";
 import { TriangleAlertIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 import {
   useClientSettings,
@@ -42,22 +47,25 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 
+const translateEnglish: InterfaceTranslator["message"] = (key, values) =>
+  translateInterfaceMessage("en", key, values);
+
 export function fetchModelWarning(
   resolution: FetchModelSelectionResolution,
   fetchEnabled: boolean,
+  translate: InterfaceTranslator["message"] = translateEnglish,
 ): string | null {
   if (resolution.status === "resolved") return null;
   if (resolution.source === "manual") {
     return resolution.reason === "model-unavailable"
-      ? "The selected Fetch model is unavailable. The main turn will continue without Fetch."
-      : "The selected Fetch provider is unavailable. The main turn will continue without Fetch.";
+      ? translate("settings.application.experimental.fetchWarning.model")
+      : translate("settings.application.experimental.fetchWarning.provider");
   }
-  return fetchEnabled
-    ? "No Fetch-capable provider model is currently available. The main turn will continue without Fetch."
-    : null;
+  return fetchEnabled ? translate("settings.application.experimental.fetchWarning.none") : null;
 }
 
 export interface ExperimentalSettingsPanelViewProps {
+  readonly translate?: InterfaceTranslator["message"];
   readonly fetchEnabled: boolean;
   readonly fetchModelAutomatic: boolean;
   readonly fetchModelControl: ReactNode;
@@ -75,6 +83,7 @@ export interface ExperimentalSettingsPanelViewProps {
 }
 
 export function ExperimentalSettingsPanelView({
+  translate = translateEnglish,
   fetchEnabled,
   fetchModelAutomatic,
   fetchModelControl,
@@ -97,33 +106,33 @@ export function ExperimentalSettingsPanelView({
         className="flex items-start gap-2 rounded-xl border border-warning/30 bg-warning/8 px-4 py-3 text-xs text-muted-foreground"
       >
         <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
-        <p>
-          Experimental features may change, break, or be removed without notice. Enable them only
-          when you are comfortable testing unfinished workflows.
-        </p>
+        <p>{translate("settings.application.experimental.notice")}</p>
       </div>
 
-      <SettingsSection title="Experimental">
+      <SettingsSection title={translate("settings.application.section.experimental")}>
         <SettingsRow
-          title="Fetch"
-          description="Let T3 use transient read-only workers only when parallel repository exploration would materially help; the main agent handles simple or focused requests itself."
+          title={translate("settings.application.experimental.fetch.title")}
+          description={translate("settings.application.experimental.fetch.description")}
           resetAction={
             fetchEnabled !== DEFAULT_CLIENT_SETTINGS.experimentalFetch ? (
-              <SettingResetButton label="Fetch" onClick={onResetFetch} />
+              <SettingResetButton
+                label={translate("settings.application.experimental.fetch.title")}
+                onClick={onResetFetch}
+              />
             ) : null
           }
           control={
             <Switch
               checked={fetchEnabled}
               onCheckedChange={(checked) => onFetchChange(Boolean(checked))}
-              aria-label="Enable Fetch repository exploration"
+              aria-label={translate("settings.application.experimental.fetch.enableAria")}
             />
           }
         />
 
         <SettingsRow
-          title="Fetch model"
-          description="Choose an independent provider and model for Fetch. T3 chooses the smallest useful worker count dynamically; multiple provider sessions may consume additional provider quota."
+          title={translate("settings.application.experimental.fetchModel.title")}
+          description={translate("settings.application.experimental.fetchModel.description")}
           status={
             fetchModelWarning ? (
               <span role="alert" className="text-warning">
@@ -133,7 +142,10 @@ export function ExperimentalSettingsPanelView({
           }
           resetAction={
             fetchModelDirty ? (
-              <SettingResetButton label="Fetch model" onClick={onResetFetchModel} />
+              <SettingResetButton
+                label={translate("settings.application.experimental.fetchModel.title")}
+                onClick={onResetFetchModel}
+              />
             ) : null
           }
           control={
@@ -144,7 +156,7 @@ export function ExperimentalSettingsPanelView({
             >
               {fetchModelAutomatic ? (
                 <span className="rounded-md border border-border/70 bg-muted/50 px-2 py-1 font-medium text-muted-foreground text-xs">
-                  Auto
+                  {translate("settings.application.experimental.fetchModel.auto")}
                 </span>
               ) : null}
               {fetchModelControl}
@@ -153,13 +165,13 @@ export function ExperimentalSettingsPanelView({
         />
 
         <SettingsRow
-          title="Parallel plan implementation"
-          description="Suggest a provider-native subagent strategy when implementing a completed plan."
+          title={translate("settings.application.experimental.parallel.title")}
+          description={translate("settings.application.experimental.parallel.description")}
           resetAction={
             parallelPlanImplementationEnabled !==
             DEFAULT_CLIENT_SETTINGS.experimentalParallelPlanImplementation ? (
               <SettingResetButton
-                label="parallel plan implementation"
+                label={translate("settings.application.experimental.parallel.title")}
                 onClick={onResetParallelPlanImplementation}
               />
             ) : null
@@ -168,18 +180,18 @@ export function ExperimentalSettingsPanelView({
             <Switch
               checked={parallelPlanImplementationEnabled}
               onCheckedChange={(checked) => onParallelPlanImplementationChange(Boolean(checked))}
-              aria-label="Use subagents when implementing plans"
+              aria-label={translate("settings.application.experimental.parallel.enableAria")}
             />
           }
         />
 
         <SettingsRow
-          title="Agent count review model"
-          description="Fast model used to estimate how many provider-native subagents can implement a completed plan in parallel."
+          title={translate("settings.application.experimental.reviewModel.title")}
+          description={translate("settings.application.experimental.reviewModel.description")}
           resetAction={
             planReviewModelDirty ? (
               <SettingResetButton
-                label="agent count review model"
+                label={translate("settings.application.experimental.reviewModel.title")}
                 onClick={onResetPlanReviewModel}
               />
             ) : null
@@ -200,6 +212,7 @@ export function ExperimentalSettingsPanelView({
 }
 
 export function ExperimentalSettingsPanel() {
+  const translate = useInterfaceTranslator().message;
   const fetchEnabled = useClientSettings((settings) => settings.experimentalFetch);
   const parallelPlanImplementationEnabled = useClientSettings(
     (settings) => settings.experimentalParallelPlanImplementation,
@@ -277,10 +290,11 @@ export function ExperimentalSettingsPanel() {
 
   return (
     <ExperimentalSettingsPanelView
+      translate={translate}
       fetchEnabled={fetchEnabled}
       fetchModelAutomatic={settings.fetchModelSelection === null}
       fetchModelDirty={settings.fetchModelSelection !== null}
-      fetchModelWarning={fetchModelWarning(fetchResolution, fetchEnabled)}
+      fetchModelWarning={fetchModelWarning(fetchResolution, fetchEnabled, translate)}
       fetchModelControl={
         fetchSelection ? (
           <>
@@ -293,7 +307,7 @@ export function ExperimentalSettingsPanel() {
               disabled={!fetchEnabled}
               triggerVariant="outline"
               triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
-              triggerAriaLabel="Fetch model"
+              triggerAriaLabel={translate("settings.application.experimental.fetchModel.title")}
               onInstanceModelChange={(instanceId, model) => {
                 updateSettings({
                   fetchModelSelection: createModelSelection(instanceId, model),
@@ -324,7 +338,9 @@ export function ExperimentalSettingsPanel() {
             />
           </>
         ) : (
-          <span className="text-muted-foreground text-xs">Unavailable</span>
+          <span className="text-muted-foreground text-xs">
+            {translate("settings.common.unavailable")}
+          </span>
         )
       }
       parallelPlanImplementationEnabled={parallelPlanImplementationEnabled}
@@ -340,7 +356,9 @@ export function ExperimentalSettingsPanel() {
             disabled={!parallelPlanImplementationEnabled}
             triggerVariant="outline"
             triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
-            triggerAriaLabel="Agent count review model"
+            triggerAriaLabel={translate(
+              "settings.application.experimental.reviewModel.triggerAria",
+            )}
             onInstanceModelChange={(instanceId, model) => {
               updateSettings({
                 parallelPlanReviewModelSelection: resolveReviewSelection(

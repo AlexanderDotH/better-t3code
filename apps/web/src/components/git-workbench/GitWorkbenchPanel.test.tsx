@@ -123,7 +123,7 @@ describe("GitWorkbenchPanel", () => {
     const markup = renderToStaticMarkup(<GitWorkbenchPanel {...props} />);
 
     expect(markup).toContain("Historical files are read-only");
-    expect(markup).toContain("Open current worktree version");
+    expect(markup).toContain("Open current working tree version");
     expect(markup).toContain('aria-label="Filter history by branch"');
     expect(markup).toContain("main");
     expect(markup).not.toContain("Save historical file");

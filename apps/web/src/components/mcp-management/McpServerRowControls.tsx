@@ -13,6 +13,7 @@ import {
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Switch } from "../ui/switch";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 export type McpServerConfigurationAction = "edit" | "duplicate" | "delete";
 export type McpServerRowAction = McpRuntimeAction | McpServerConfigurationAction;
@@ -24,7 +25,6 @@ export interface McpRuntimeActionPending {
 
 export interface McpServerRowActionDescriptor {
   readonly key: McpServerRowAction;
-  readonly label: string;
   readonly destructive: boolean;
 }
 
@@ -34,12 +34,12 @@ export interface McpServerRowActionModel {
 }
 
 const ACTION_DESCRIPTOR: Readonly<Record<McpServerRowAction, McpServerRowActionDescriptor>> = {
-  authorize: { key: "authorize", label: "Authorize", destructive: false },
-  reconnect: { key: "reconnect", label: "Reconnect", destructive: false },
-  refresh: { key: "refresh", label: "Refresh", destructive: false },
-  edit: { key: "edit", label: "Edit", destructive: false },
-  duplicate: { key: "duplicate", label: "Duplicate", destructive: false },
-  delete: { key: "delete", label: "Delete", destructive: true },
+  authorize: { key: "authorize", destructive: false },
+  reconnect: { key: "reconnect", destructive: false },
+  refresh: { key: "refresh", destructive: false },
+  edit: { key: "edit", destructive: false },
+  duplicate: { key: "duplicate", destructive: false },
+  delete: { key: "delete", destructive: true },
 };
 
 const RECONNECT_PRIMARY_STATES: ReadonlySet<McpRuntimeState> = new Set([
@@ -95,11 +95,11 @@ const ACTION_ICON = {
   delete: Trash2Icon,
 } satisfies Record<McpServerRowAction, typeof RefreshCwIcon>;
 
-const PENDING_LABEL: Readonly<Record<McpRuntimeAction, string>> = {
-  authorize: "Authorizing",
-  reconnect: "Reconnecting",
-  refresh: "Refreshing",
-};
+const PENDING_MESSAGE_KEY = {
+  authorize: "settings.mcp.action.authorizing",
+  reconnect: "settings.mcp.action.reconnecting",
+  refresh: "settings.mcp.action.refreshing",
+} as const satisfies Readonly<Record<McpRuntimeAction, string>>;
 
 export interface McpServerRowControlsProps {
   readonly serverKey: string;
@@ -122,6 +122,7 @@ export interface McpServerRowControlsProps {
 }
 
 export function McpServerRowControls(props: McpServerRowControlsProps) {
+  const translate = useInterfaceTranslator().message;
   const configurationActions = [
     props.onEdit ? ("edit" as const) : null,
     props.onDuplicate ? ("duplicate" as const) : null,
@@ -167,7 +168,7 @@ export function McpServerRowControls(props: McpServerRowControlsProps) {
     <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
       {pendingAction ? (
         <span role="status" className="sr-only">
-          {PENDING_LABEL[pendingAction]} {props.serverName}
+          {translate(PENDING_MESSAGE_KEY[pendingAction])} {props.serverName}
         </span>
       ) : null}
 
@@ -177,7 +178,7 @@ export function McpServerRowControls(props: McpServerRowControlsProps) {
           size="xs"
           variant="outline"
           disabled={actionDisabled(primaryAction.key)}
-          title={props.readOnly ? "Runtime actions require operate access" : undefined}
+          title={props.readOnly ? translate("settings.mcp.runtime.operateRequired") : undefined}
           onClick={() => runAction(primaryAction.key)}
         >
           {pendingAction === primaryAction.key ? (
@@ -186,14 +187,14 @@ export function McpServerRowControls(props: McpServerRowControlsProps) {
             <PrimaryIcon aria-hidden="true" className="size-3.5" />
           ) : null}
           {pendingAction === primaryAction.key
-            ? `${PENDING_LABEL[pendingAction]}…`
-            : primaryAction.label}
+            ? `${translate(PENDING_MESSAGE_KEY[pendingAction])}…`
+            : translate(`settings.mcp.action.${primaryAction.key}`)}
         </Button>
       ) : null}
 
       {props.providerAssignment ? (
         <label className="inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-[11px] text-muted-foreground">
-          <span>Enabled</span>
+          <span>{translate("settings.mcp.action.enabled")}</span>
           <Switch
             checked={props.providerAssignment.enabled}
             disabled={
@@ -202,7 +203,14 @@ export function McpServerRowControls(props: McpServerRowControlsProps) {
               props.providerAssignment.disabled ||
               props.providerAssignment.pending
             }
-            aria-label={`${props.providerAssignment.enabled ? "Disable" : "Enable"} ${props.serverName} for selected provider`}
+            aria-label={translate("settings.mcp.action.assignmentAria", {
+              action: translate(
+                props.providerAssignment.enabled
+                  ? "settings.mcp.action.disable"
+                  : "settings.mcp.action.enable",
+              ),
+              server: props.serverName,
+            })}
             onCheckedChange={(enabled) => props.providerAssignment?.onChange(Boolean(enabled))}
           />
         </label>
@@ -216,7 +224,9 @@ export function McpServerRowControls(props: McpServerRowControlsProps) {
                 type="button"
                 size="icon-sm"
                 variant="ghost"
-                aria-label={`Actions for ${props.serverName}`}
+                aria-label={translate("settings.mcp.action.menuAria", {
+                  server: props.serverName,
+                })}
               />
             }
           >
@@ -237,7 +247,9 @@ export function McpServerRowControls(props: McpServerRowControlsProps) {
                   onClick={() => runAction(action.key)}
                 >
                   <Icon aria-hidden="true" />
-                  {pendingAction === action.key ? `${PENDING_LABEL[pendingAction]}…` : action.label}
+                  {pendingAction === action.key
+                    ? `${translate(PENDING_MESSAGE_KEY[pendingAction])}…`
+                    : translate(`settings.mcp.action.${action.key}`)}
                 </MenuItem>
               );
             })}

@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
 import {
@@ -23,12 +24,24 @@ import {
   OrchestrationSession,
   OrchestrationThreadShell,
   ProjectCreateCommand,
+  OrchestrationMessage,
+  ThreadMessageSentPayload,
   ThreadMetaUpdatedPayload,
+  ThreadForkCommand,
+  ThreadForkedPayload,
+  ThreadForkHandoffCompleteCommand,
+  ThreadForkHandoffCompletedPayload,
+  ThreadForkWorkspaceUpdateCommand,
+  ThreadForkWorkspaceUpdatedPayload,
+  ThreadHarnessSyncLinkCommand,
+  ThreadHarnessSyncMessageImportCommand,
+  ThreadTurnRetryCommand,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
   ThreadTurnStartRequestedPayload,
   isProviderSendTurnSupportedImageMimeType,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import { RuntimeSessionId, TurnId } from "./baseSchemas.ts";
@@ -40,6 +53,9 @@ const decodeProjectCreateCommand = Schema.decodeUnknownEffect(ProjectCreateComma
 const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPayload);
 const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
 const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
+const decodeThreadTurnRetryCommand = Schema.decodeUnknownEffect(ThreadTurnRetryCommand);
+const decodeOrchestrationMessage = Schema.decodeUnknownEffect(OrchestrationMessage);
+const decodeThreadMessageSentPayload = Schema.decodeUnknownEffect(ThreadMessageSentPayload);
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
 );
@@ -64,7 +80,231 @@ const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationComma
 const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+const decodeThreadForkCommand = Schema.decodeUnknownEffect(ThreadForkCommand);
+const decodeThreadForkedPayload = Schema.decodeUnknownEffect(ThreadForkedPayload);
+const decodeThreadForkWorkspaceUpdateCommand = Schema.decodeUnknownEffect(
+  ThreadForkWorkspaceUpdateCommand,
+);
+const decodeThreadForkWorkspaceUpdatedPayload = Schema.decodeUnknownEffect(
+  ThreadForkWorkspaceUpdatedPayload,
+);
+const decodeThreadForkHandoffCompleteCommand = Schema.decodeUnknownEffect(
+  ThreadForkHandoffCompleteCommand,
+);
+const decodeThreadForkHandoffCompletedPayload = Schema.decodeUnknownEffect(
+  ThreadForkHandoffCompletedPayload,
+);
+const decodeThreadHarnessSyncLinkCommand = Schema.decodeUnknownEffect(ThreadHarnessSyncLinkCommand);
+const decodeThreadHarnessSyncMessageImportCommand = Schema.decodeUnknownEffect(
+  ThreadHarnessSyncMessageImportCommand,
+);
 const decodeDispatchCommandError = Schema.decodeUnknownEffect(OrchestrationDispatchCommandError);
+
+const forkWorkspace = {
+  mode: "worktree",
+  baseBranch: "main",
+  startFromOrigin: true,
+  runSetupScript: true,
+} as const;
+
+it.effect("decodes message and proposed-plan thread fork commands", () =>
+  Effect.gen(function* () {
+    const base = {
+      type: "thread.fork",
+      commandId: "fork-command",
+      threadId: "thread-fork",
+      sourceThreadId: "thread-source",
+      modelSelection: { instanceId: "codex", model: "gpt-5.6" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspace: forkWorkspace,
+      createdAt: "2026-08-24T10:00:00.000Z",
+    } as const;
+    const fromMessage = yield* decodeThreadForkCommand({
+      ...base,
+      boundary: { kind: "message", messageId: "message-source" },
+    });
+    const fromPlan = yield* decodeClientOrchestrationCommand({
+      ...base,
+      boundary: { kind: "proposed-plan", planId: "plan-source" },
+      workspace: {
+        mode: "local",
+        baseBranch: null,
+        startFromOrigin: false,
+        runSetupScript: false,
+      },
+    });
+
+    assert.strictEqual(fromMessage.boundary.kind, "message");
+    assert.strictEqual(fromPlan.type, "thread.fork");
+    if (fromPlan.type === "thread.fork") {
+      assert.strictEqual(fromPlan.boundary.kind, "proposed-plan");
+      assert.strictEqual(fromPlan.workspace.baseBranch, null);
+    }
+  }),
+);
+
+it.effect("decodes frozen fork history with provenance and remaining first-turn budget", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadForkedPayload({
+      threadId: "thread-fork",
+      fork: {
+        provenance: {
+          sourceThreadId: "thread-source",
+          sourceTitle: "Source thread",
+          boundary: { kind: "message", messageId: "message-source" },
+          forkedAt: "2026-08-24T10:00:00.000Z",
+        },
+        workspace: {
+          spec: forkWorkspace,
+          status: "pending",
+          preparedAt: null,
+          lastError: null,
+        },
+        handoff: {
+          status: "pending",
+          historyInputChars: 4_000,
+          historyAttachmentCount: 1,
+          remainingInputChars: 116_000,
+          remainingAttachmentCount: 7,
+          completedAt: null,
+        },
+      },
+      history: {
+        messages: [
+          {
+            id: "message-fork",
+            role: "user",
+            text: "Question",
+            turnId: "turn-fork",
+            streaming: false,
+            createdAt: "2026-08-24T09:59:00.000Z",
+            updatedAt: "2026-08-24T09:59:00.000Z",
+            historyOrigin: {
+              sourceThreadId: "thread-source",
+              sourceId: "message-source",
+              ordinal: 0,
+            },
+          },
+        ],
+        proposedPlans: [],
+        activities: [],
+        subagents: [],
+        turns: [
+          {
+            turnId: "turn-fork",
+            pendingMessageId: "message-fork",
+            assistantMessageId: null,
+            state: "running",
+            requestedAt: "2026-08-24T09:59:00.000Z",
+            startedAt: "2026-08-24T09:59:01.000Z",
+            completedAt: null,
+            checkpointTurnCount: null,
+            checkpointRef: null,
+            checkpointStatus: null,
+            checkpointFiles: [],
+            historyOrigin: {
+              sourceThreadId: "thread-source",
+              sourceId: "turn-source",
+              ordinal: 1,
+            },
+          },
+        ],
+        checkpoints: [],
+      },
+    });
+
+    assert.strictEqual(parsed.history.messages[0]?.historyOrigin.sourceId, "message-source");
+    assert.strictEqual(parsed.fork.handoff.remainingInputChars, 116_000);
+    assert.strictEqual(parsed.fork.workspace.status, "pending");
+
+    const event = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-forked",
+      aggregateKind: "thread",
+      aggregateId: "thread-fork",
+      type: "thread.forked",
+      occurredAt: "2026-08-24T10:00:00.000Z",
+      commandId: "fork-command",
+      causationEventId: null,
+      correlationId: "fork-command",
+      metadata: {},
+      payload: parsed,
+    });
+    assert.strictEqual(event.type, "thread.forked");
+  }),
+);
+
+it.effect("decodes internal fork workspace and handoff state transitions", () =>
+  Effect.gen(function* () {
+    const workspaceCommand = yield* decodeThreadForkWorkspaceUpdateCommand({
+      type: "thread.fork.workspace.update",
+      commandId: "workspace-command",
+      threadId: "thread-fork",
+      status: "error",
+      preparedAt: null,
+      lastError: "Could not create worktree",
+      createdAt: "2026-08-24T10:01:00.000Z",
+    });
+    const workspacePayload = yield* decodeThreadForkWorkspaceUpdatedPayload({
+      threadId: "thread-fork",
+      status: "ready",
+      preparedAt: "2026-08-24T10:02:00.000Z",
+      lastError: null,
+      createdAt: "2026-08-24T10:02:00.000Z",
+    });
+    const handoffCommand = yield* decodeThreadForkHandoffCompleteCommand({
+      type: "thread.fork.handoff.complete",
+      commandId: "handoff-command",
+      threadId: "thread-fork",
+      completedAt: "2026-08-24T10:03:00.000Z",
+    });
+    const handoffPayload = yield* decodeThreadForkHandoffCompletedPayload({
+      threadId: "thread-fork",
+      completedAt: "2026-08-24T10:03:00.000Z",
+    });
+    const internalCommand = yield* decodeOrchestrationCommand(workspaceCommand);
+    const internalHandoffCommand = yield* decodeOrchestrationCommand(handoffCommand);
+    const clientWorkspaceCommand = yield* Effect.exit(
+      decodeClientOrchestrationCommand(workspaceCommand),
+    );
+    const workspaceEvent = yield* decodeOrchestrationEvent({
+      sequence: 2,
+      eventId: "event-workspace-updated",
+      aggregateKind: "thread",
+      aggregateId: "thread-fork",
+      type: "thread.fork-workspace-updated",
+      occurredAt: workspacePayload.createdAt,
+      commandId: workspaceCommand.commandId,
+      causationEventId: null,
+      correlationId: workspaceCommand.commandId,
+      metadata: {},
+      payload: workspacePayload,
+    });
+    const handoffEvent = yield* decodeOrchestrationEvent({
+      sequence: 3,
+      eventId: "event-handoff-completed",
+      aggregateKind: "thread",
+      aggregateId: "thread-fork",
+      type: "thread.fork-handoff-completed",
+      occurredAt: handoffPayload.completedAt,
+      commandId: handoffCommand.commandId,
+      causationEventId: null,
+      correlationId: handoffCommand.commandId,
+      metadata: {},
+      payload: handoffPayload,
+    });
+
+    assert.strictEqual(workspaceCommand.status, "error");
+    assert.strictEqual(workspacePayload.status, "ready");
+    assert.strictEqual(handoffCommand.completedAt, handoffPayload.completedAt);
+    assert.strictEqual(internalCommand.type, "thread.fork.workspace.update");
+    assert.strictEqual(internalHandoffCommand.type, "thread.fork.handoff.complete");
+    assert.strictEqual(clientWorkspaceCommand._tag, "Failure");
+    assert.strictEqual(workspaceEvent.type, "thread.fork-workspace-updated");
+    assert.strictEqual(handoffEvent.type, "thread.fork-handoff-completed");
+  }),
+);
 
 it.effect("decodes a dispatch error after its bootstrap thread was deleted", () =>
   Effect.gen(function* () {
@@ -75,6 +315,45 @@ it.effect("decodes a dispatch error after its bootstrap thread was deleted", () 
     });
 
     assert.strictEqual(error.bootstrapThreadDisposition, "deleted");
+  }),
+);
+
+it.effect("decodes harness history link and native message import commands", () =>
+  Effect.gen(function* () {
+    const linked = yield* decodeThreadHarnessSyncLinkCommand({
+      type: "thread.harness-sync.link",
+      commandId: "sync-link-1",
+      threadId: "thread-1",
+      sourceId: "codex-home",
+      continuationKey: "codex:/tmp/codex-home",
+      nativeSessionId: "native-session-1",
+      providerInstanceId: "codex-work",
+      providerLabel: "Codex Work",
+      activity: "active",
+      sourceUpdatedAt: "2026-08-23T10:00:00.000Z",
+      lastSyncedAt: "2026-08-23T10:01:00.000Z",
+    });
+    const imported = yield* decodeThreadHarnessSyncMessageImportCommand({
+      type: "thread.harness-sync.message.import",
+      commandId: "sync-message-1",
+      threadId: "thread-1",
+      nativeMessageId: "native-message-1",
+      message: {
+        id: "message-1",
+        role: "assistant",
+        text: "Imported answer",
+        turnId: null,
+        streaming: false,
+        createdAt: "2026-08-23T09:59:00.000Z",
+        updatedAt: "2026-08-23T09:59:00.000Z",
+      },
+      linkedAt: "2026-08-23T10:01:00.000Z",
+    });
+
+    assert.strictEqual(linked.providerInstanceId, "codex-work");
+    assert.strictEqual(linked.activity, "active");
+    assert.strictEqual(imported.nativeMessageId, "native-message-1");
+    assert.strictEqual(imported.message.id, "message-1");
   }),
 );
 
@@ -277,6 +556,47 @@ it.effect("decodes thread.turn.start defaults for provider and runtime mode", ()
   }),
 );
 
+it.effect("decodes a result-only retry against an existing user message and turn", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnRetryCommand({
+      type: "thread.turn.retry",
+      commandId: "cmd-turn-retry-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      messageId: "msg-1",
+      fetchMode: "repository-exploration",
+      modelSelection: {
+        instanceId: "codex",
+        model: "gpt-5.6",
+      },
+      createdAt: "2026-01-01T00:01:00.000Z",
+    });
+
+    assert.strictEqual(parsed.type, "thread.turn.retry");
+    assert.strictEqual(parsed.turnId, "turn-1");
+    assert.strictEqual(parsed.messageId, "msg-1");
+    assert.strictEqual(parsed.fetchMode, "repository-exploration");
+    assert.strictEqual(parsed.modelSelection?.model, "gpt-5.6");
+  }),
+);
+
+it.effect("decodes a result-only retry before a provider turn id exists", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnRetryCommand({
+      type: "thread.turn.retry",
+      commandId: "cmd-turn-retry-pending",
+      threadId: "thread-1",
+      turnId: null,
+      messageId: "msg-1",
+      createdAt: "2026-01-01T00:01:00.000Z",
+    });
+
+    assert.strictEqual(parsed.type, "thread.turn.retry");
+    assert.strictEqual(parsed.turnId, null);
+    assert.strictEqual(parsed.messageId, "msg-1");
+  }),
+);
+
 it.effect("preserves Fetch mode in thread.turn.start", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartCommand({
@@ -339,6 +659,168 @@ it.effect("keeps Fetch mode narrow on client turn-start commands", () =>
       }),
     );
     assert.strictEqual(invalid._tag, "Failure");
+  }),
+);
+
+it.effect("accepts inline images, uploaded images, and uploaded files from clients", () =>
+  Effect.gen(function* () {
+    const command = yield* decodeClientOrchestrationCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-attachments",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-attachments",
+        role: "user",
+        text: "hello",
+        attachments: [
+          {
+            type: "image",
+            name: "legacy.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+            dataUrl: "data:image/png;base64,YWJj",
+          },
+          {
+            type: "image",
+            id: "pending-00000000-0000-4000-8000-000000000001",
+            name: "uploaded.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+          },
+          {
+            type: "file",
+            id: "pending-00000000-0000-4000-8000-000000000002-pdf",
+            name: "report.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 3,
+          },
+        ],
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    if (command.type !== "thread.turn.start") {
+      assert.fail(`Expected thread.turn.start, received ${command.type}.`);
+    }
+    assert.strictEqual(command.message.attachments.length, 3);
+    assert.strictEqual("dataUrl" in command.message.attachments[0]!, true);
+    assert.strictEqual("id" in command.message.attachments[1]!, true);
+    assert.strictEqual(command.message.attachments[2]!.type, "file");
+  }),
+);
+
+it.effect("rejects display-only and unknown attachment types on new turns", () =>
+  Effect.gen(function* () {
+    const makeCommand = (attachment: unknown) => ({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-unsupported-attachment",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-unsupported-attachment",
+        role: "user",
+        text: "inspect this",
+        attachments: [attachment],
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const base = {
+      id: "pending-00000000-0000-4000-8000-000000000003",
+      name: "recording.bin",
+      sizeBytes: 12,
+    };
+
+    const audio = yield* Effect.exit(
+      decodeClientOrchestrationCommand(
+        makeCommand({ ...base, type: "audio", mimeType: "audio/webm" }),
+      ),
+    );
+    const unknown = yield* Effect.exit(
+      decodeClientOrchestrationCommand(
+        makeCommand({ ...base, type: "future", mimeType: "application/octet-stream" }),
+      ),
+    );
+
+    assert.strictEqual(Exit.isFailure(audio), true);
+    assert.strictEqual(Exit.isFailure(unknown), true);
+  }),
+);
+
+// Attachments ride on persisted events and thread streams with no client
+// version negotiation. A type this build does not know must decode instead of
+// failing the whole message.
+it.effect("tolerates attachment types from newer builds when decoding messages", () =>
+  Effect.gen(function* () {
+    const futureAttachment = {
+      type: "somethingnew",
+      id: "thread-1-00000000-0000-4000-8000-000000000003-glb",
+      name: "scene.glb",
+      mimeType: "model/gltf-binary",
+      sizeBytes: 12,
+    };
+
+    const message = yield* decodeOrchestrationMessage({
+      id: "message-1",
+      role: "user",
+      text: "look at this",
+      attachments: [futureAttachment],
+      turnId: null,
+      streaming: false,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(message.attachments?.length, 1);
+    assert.strictEqual(message.attachments?.[0]!.type, "somethingnew");
+
+    const payload = yield* decodeThreadMessageSentPayload({
+      threadId: "thread-1",
+      messageId: "message-1",
+      role: "user",
+      text: "look at this",
+      attachments: [futureAttachment],
+      turnId: null,
+      streaming: false,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(payload.attachments?.[0]!.type, "somethingnew");
+  }),
+);
+
+// The tolerant member must not catch malformed known attachments: a file over
+// the size cap or an image with a bad mime has to fail its own schema, not
+// slide through the open one with those constraints unchecked.
+it.effect("rejects malformed known attachment types instead of tolerating them", () =>
+  Effect.gen(function* () {
+    const base = {
+      id: "thread-1-00000000-0000-4000-8000-000000000003-pdf",
+      name: "report.pdf",
+      mimeType: "application/pdf",
+    };
+    const decode = (attachment: unknown) =>
+      decodeOrchestrationMessage({
+        id: "message-1",
+        role: "user",
+        text: "look at this",
+        attachments: [attachment],
+        turnId: null,
+        streaming: false,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+    const oversizedFile = yield* Effect.exit(
+      decode({ ...base, type: "file", sizeBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1 }),
+    );
+    assert.strictEqual(Exit.isFailure(oversizedFile), true);
+
+    const badMimeImage = yield* Effect.exit(
+      decode({ ...base, type: "image", mimeType: "application/pdf", sizeBytes: 12 }),
+    );
+    assert.strictEqual(Exit.isFailure(badMimeImage), true);
   }),
 );
 
@@ -536,8 +1018,10 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
 
     assert.strictEqual(thread.settledOverride, null);
     assert.strictEqual(thread.settledAt, null);
+    assert.strictEqual(thread.fork, undefined);
     assert.strictEqual(shell.settledOverride, null);
     assert.strictEqual(shell.settledAt, null);
+    assert.strictEqual(shell.fork, undefined);
   }),
 );
 
@@ -767,6 +1251,28 @@ it.effect("accepts a title regeneration intent in thread.meta.update", () =>
   }),
 );
 
+it.effect("accepts a linked pull request in thread.meta.update", () =>
+  Effect.gen(function* () {
+    const linkedPullRequest = {
+      projectId: "project-1",
+      repository: "pingdotgg/t3code",
+      number: 42,
+      url: "https://github.com/pingdotgg/t3code/pull/42",
+    };
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "thread.meta.update",
+      commandId: "cmd-link-pull-request",
+      threadId: "thread-1",
+      linkedPullRequest,
+    });
+
+    assert.strictEqual(parsed.type, "thread.meta.update");
+    if (parsed.type === "thread.meta.update") {
+      assert.deepStrictEqual(parsed.linkedPullRequest, linkedPullRequest);
+    }
+  }),
+);
+
 it.effect("accepts an internal title regeneration completion", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeOrchestrationCommand({
@@ -851,6 +1357,21 @@ it.effect("decodes Fetch mode on a turn-start request", () =>
     });
 
     assert.strictEqual(parsed.fetchMode, "repository-exploration");
+  }),
+);
+
+it.effect("decodes result-only retry metadata on a turn-start request", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartRequestedPayload({
+      threadId: "thread-1",
+      messageId: "msg-1",
+      resultOnly: true,
+      retryOfTurnId: "turn-1",
+      createdAt: "2026-01-01T00:01:00.000Z",
+    });
+
+    assert.strictEqual(parsed.resultOnly, true);
+    assert.strictEqual(parsed.retryOfTurnId, "turn-1");
   }),
 );
 

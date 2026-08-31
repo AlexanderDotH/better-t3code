@@ -9,12 +9,14 @@ import {
   OPENCODE_DRIVER_KIND,
   ProviderDriverKind,
   ProviderInstanceId,
+  makeBetterT3SettingsV1,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/unstable/http";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -29,7 +31,11 @@ const fakeEnvironment = ServerEnvironment.ServerEnvironment.of({
   getDescriptor: Effect.die("unused"),
 });
 
-const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
+const makeRegistry = (
+  now: () => number,
+  httpServer = fakeHttpServer,
+  optionalFeature?: "knowledge.graph" | "agent.projectCoordination" | "agent.generalSubagents",
+) =>
   McpSessionRegistry.__testing
     .make({
       now,
@@ -38,6 +44,17 @@ const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
     .pipe(
       Effect.provideService(HttpServer.HttpServer, httpServer),
       Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
+      Effect.provide(
+        ServerSettings.ServerSettingsService.layerTest(
+          optionalFeature
+            ? {
+                betterT3Environment: makeBetterT3SettingsV1("clean-install", {
+                  [optionalFeature]: true,
+                }),
+              }
+            : {},
+        ),
+      ),
       Effect.provide(NodeServices.layer),
     );
 
@@ -84,9 +101,81 @@ it.effect("scopes transient workspace-only credentials to a durable parent threa
     expect(issued.config.endpoint).toBe("http://127.0.0.1:43123/mcp/workspace-only");
     expect(resolved?.threadId).toBe(workspaceContextThreadId);
     expect(Array.from(resolved?.capabilities ?? [])).toEqual(["workspace"]);
+    expect(resolved?.capabilities.has("workspace-write")).toBe(false);
 
     yield* registry.revokeThread(ownerThreadId);
     expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
+it.effect("selects writable workspace profiles only when explicitly authorized", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const cases = [
+      [{}, "/mcp/workspace-write"],
+      [{ projectMemoryEnabled: false }, "/mcp/workspace-write-no-memory"],
+      [{ previewEnabled: false, workspaceOnly: false }, "/mcp/workspace-write-no-preview"],
+      [
+        { previewEnabled: false, workspaceOnly: false, projectMemoryEnabled: false },
+        "/mcp/workspace-write-no-preview-no-memory",
+      ],
+      [{ previewEnabled: false, workspaceOnly: true }, "/mcp/workspace-write-only"],
+      [
+        { previewEnabled: false, workspaceOnly: true, projectMemoryEnabled: false },
+        "/mcp/workspace-write-only-no-memory",
+      ],
+    ] as const;
+
+    for (const [profile, endpoint] of cases) {
+      const credential = yield* registry.issue({
+        threadId: ThreadId.make(`thread-${endpoint}`),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        provider: CODEX_DRIVER_KIND,
+        workspaceWriteEnabled: true,
+        ...profile,
+      });
+      const token = credential.config.authorizationHeader.replace(/^Bearer\s+/, "");
+      const scope = yield* registry.resolve(token);
+
+      expect(credential.config.endpoint).toBe(`http://127.0.0.1:43123${endpoint}`);
+      expect(scope?.capabilities.has("workspace")).toBe(true);
+      expect(scope?.capabilities.has("workspace-write")).toBe(true);
+    }
+
+    const previewOnly = yield* registry.issue({
+      threadId: ThreadId.make("thread-grok-write-request"),
+      providerInstanceId: ProviderInstanceId.make("grok"),
+      provider: GROK_DRIVER_KIND,
+      workspaceWriteEnabled: true,
+    });
+    const previewOnlyToken = previewOnly.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    expect(previewOnly.config.endpoint).toBe("http://127.0.0.1:43123/mcp");
+    expect((yield* registry.resolve(previewOnlyToken))?.capabilities.has("workspace-write")).toBe(
+      false,
+    );
+  }),
+);
+
+it.effect("omits project memory from every workspace profile when it is not activated", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const cases = [
+      [{ previewEnabled: false }, "/mcp/workspace-only-no-memory"],
+      [{ previewEnabled: false, workspaceOnly: false }, "/mcp/workspace-no-preview-no-memory"],
+      [{ previewEnabled: true }, "/mcp/workspace-no-memory"],
+    ] as const;
+
+    for (const [profile, endpoint] of cases) {
+      const credential = yield* registry.issue({
+        threadId: ThreadId.make(`thread-${endpoint}`),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        provider: CODEX_DRIVER_KIND,
+        projectMemoryEnabled: false,
+        ...profile,
+      });
+
+      expect(credential.config.endpoint).toBe(`http://127.0.0.1:43123${endpoint}`);
+    }
   }),
 );
 
@@ -200,7 +289,7 @@ it.effect("issues workspace credentials only to MCP-capable coding providers", (
   }),
 );
 
-it.effect("withholds only preview tools while retaining workspace and coordination", () =>
+it.effect("uses core Codex tools unless optional groups are explicitly requested", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry(() => 1_000);
     const codingThreadId = ThreadId.make("thread-preview-disabled-codex");
@@ -213,10 +302,29 @@ it.effect("withholds only preview tools while retaining workspace and coordinati
     const codingToken = codingCredential.config.authorizationHeader.replace(/^Bearer\s+/, "");
     const codingScope = yield* registry.resolve(codingToken);
 
-    expect(codingCredential.config.endpoint).toBe(
+    expect(codingCredential.config.endpoint).toBe("http://127.0.0.1:43123/mcp/workspace-only");
+    expect(Array.from(codingScope?.capabilities ?? [])).toEqual(["workspace"]);
+
+    const explicitFullCredential = yield* registry.issue({
+      threadId: ThreadId.make("thread-explicit-full-codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      provider: CODEX_DRIVER_KIND,
+      previewEnabled: false,
+      workspaceOnly: false,
+    });
+    const explicitFullToken = explicitFullCredential.config.authorizationHeader.replace(
+      /^Bearer\s+/,
+      "",
+    );
+    const explicitFullScope = yield* registry.resolve(explicitFullToken);
+
+    expect(explicitFullCredential.config.endpoint).toBe(
       "http://127.0.0.1:43123/mcp/workspace-no-preview",
     );
-    expect(Array.from(codingScope?.capabilities ?? [])).toEqual(["workspace", "coordination"]);
+    expect(Array.from(explicitFullScope?.capabilities ?? [])).toEqual([
+      "workspace",
+      "coordination",
+    ]);
 
     const nonWorkspaceCredential = yield* registry.issue({
       threadId: ThreadId.make("thread-preview-disabled-grok"),
@@ -232,5 +340,24 @@ it.effect("withholds only preview tools while retaining workspace and coordinati
 
     expect(nonWorkspaceCredential.config.endpoint).toBe("http://127.0.0.1:43123/mcp/coordination");
     expect(Array.from(nonWorkspaceScope?.capabilities ?? [])).toEqual(["coordination"]);
+  }),
+);
+
+it.effect("selects the full relevant profile when an optional coding group is enabled", () =>
+  Effect.gen(function* () {
+    for (const feature of [
+      "knowledge.graph",
+      "agent.projectCoordination",
+      "agent.generalSubagents",
+    ] as const) {
+      const registry = yield* makeRegistry(() => 1_000, fakeHttpServer, feature);
+      const credential = yield* registry.issue({
+        threadId: ThreadId.make(`thread-${feature}`),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        provider: CODEX_DRIVER_KIND,
+        previewEnabled: false,
+      });
+      expect(credential.config.endpoint).toBe("http://127.0.0.1:43123/mcp/workspace-no-preview");
+    }
   }),
 );

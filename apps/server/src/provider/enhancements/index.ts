@@ -5,6 +5,16 @@ export type {
 } from "./PromptEnhancementTypes.ts";
 export { appendPromptAppendix } from "./PromptEnhancementTypes.ts";
 
+export type {
+  AgentPromptEnhancementApplication,
+  AgentPromptEnhancementOutcome,
+  AgentPromptEnhancementPolicy,
+} from "./AgentPromptPolicy.ts";
+export {
+  applyAgentEnhancementsToProviderInput,
+  buildAgentPromptEnhancementPolicy,
+} from "./AgentPromptPolicy.ts";
+
 export type { CavemanPromptMode, CavemanPromptStyleOptions } from "./CavemanPromptStyle.ts";
 export {
   CAVEMAN_PROMPT_MODES,
@@ -17,6 +27,7 @@ export type {
   DeepThinkingAccumulatedData,
   DeepThinkingMessage,
   DeepThinkingMessagePart,
+  DeepThinkingRequestPolicyOptions,
 } from "./DeepThinkingPrompts.ts";
 export {
   DEEP_THINKING_DECOMPOSE_SCHEMA_DESC,
@@ -28,6 +39,7 @@ export {
   buildDecomposeRepairUserPrompt,
   buildDecomposeSystemPrompt,
   buildDecomposeUserPrompt,
+  buildDeepThinkingRequestAppendix,
   buildRefinementSystemPrompt,
   buildRefinementUserPrompt,
   buildStepWorkRepairUserPrompt,

@@ -44,12 +44,16 @@ describe("ProviderStatusBanner", () => {
     expect(markup).toContain("absolute top-2 right-2");
   });
 
-  it("renders on a glass surface so the timeline never reads through the banner", () => {
+  it("renders warnings on an opaque semantic surface", () => {
     const markup = renderToStaticMarkup(
       <ProviderStatusBanner status={warningProvider()} onDismiss={() => {}} />,
     );
 
-    expect(markup).toContain("alert-glass");
+    expect(markup).toContain("border-warning/32");
+    expect(markup).toContain("bg-warning-surface");
+    expect(markup).toContain("text-warning-foreground");
+    expect(markup).toContain("text-warning-foreground/80");
+    expect(markup).not.toContain("alert-glass");
     expect(markup).toContain('data-variant="warning"');
   });
 
@@ -62,5 +66,21 @@ describe("ProviderStatusBanner", () => {
     );
 
     expect(markup).toContain('aria-label="Dismiss Codex provider error"');
+  });
+
+  it("uses one coherent semantic palette for provider errors", () => {
+    const markup = renderToStaticMarkup(
+      <ProviderStatusBanner
+        status={{ ...warningProvider(), status: "error" }}
+        onDismiss={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("border-error/32");
+    expect(markup).toContain("bg-error-surface");
+    expect(markup).toContain("text-error-foreground");
+    expect(markup).toContain("text-error-foreground/80");
+    expect(markup).toContain('data-provider-status-message="true"');
+    expect(markup).not.toContain("alert-glass");
   });
 });

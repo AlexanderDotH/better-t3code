@@ -15,14 +15,11 @@ import {
 import { Fragment, useMemo, useState } from "react";
 
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 import { Button } from "../ui/button";
 import { McpServerRowControls, type McpRuntimeActionPending } from "./McpServerRowControls";
-import {
-  aggregateMcpRuntimeStatus,
-  mcpRuntimeStateLabel,
-  type McpAggregateTone,
-} from "./mcpRuntimePresentation";
+import { aggregateMcpRuntimeStatus, type McpAggregateTone } from "./mcpRuntimePresentation";
 
 export type { McpRuntimeActionPending } from "./McpServerRowControls";
 
@@ -59,12 +56,6 @@ const SERVER_SOURCE_ORDER: Record<McpRuntimeServer["source"], number> = {
   "t3-built-in": 2,
 };
 
-const SERVER_SOURCE_LABEL: Record<McpRuntimeServer["source"], string> = {
-  "t3-managed": "T3-managed servers",
-  "provider-native": "Provider-managed servers",
-  "t3-built-in": "T3 Code system server",
-};
-
 export interface McpRuntimeServerListProps {
   readonly providerDisplayName: string;
   readonly authorizationAvailable: boolean;
@@ -96,8 +87,18 @@ export function McpRuntimeServerList({
   onOpenSettings,
   emptyMessage,
 }: McpRuntimeServerListProps) {
+  const translate = useInterfaceTranslator().message;
   const [expandedKeys, setExpandedKeys] = useState<ReadonlySet<string>>(() => new Set());
   const aggregate = aggregateMcpRuntimeStatus(servers);
+  const aggregateLabel =
+    aggregate.expectedCount === 0
+      ? translate("settings.mcp.runtime.aggregateUnavailable")
+      : aggregate.connectedCount === aggregate.expectedCount
+        ? translate("settings.mcp.runtime.aggregateAll", { count: aggregate.expectedCount })
+        : translate("settings.mcp.runtime.aggregateConnected", {
+            connected: aggregate.connectedCount,
+            expected: aggregate.expectedCount,
+          });
   const orderedServers = useMemo(
     () =>
       [...servers].sort((left, right) => {
@@ -127,7 +128,7 @@ export function McpRuntimeServerList({
       <div className="flex items-start justify-between gap-3 border-b border-border/55 px-3.5 py-3">
         <div className="min-w-0">
           <div className="truncate font-medium text-sm">{providerDisplayName}</div>
-          <div className="mt-0.5 text-[11px] text-muted-foreground">{aggregate.label}</div>
+          <div className="mt-0.5 text-[11px] text-muted-foreground">{aggregateLabel}</div>
         </div>
         <span
           aria-hidden="true"
@@ -135,13 +136,17 @@ export function McpRuntimeServerList({
         />
       </div>
 
-      <section aria-label="MCP servers" className="min-h-0">
+      <section aria-label={translate("settings.mcp.runtime.servers")} className="min-h-0">
         {orderedServers.length === 0 ? (
           <div className="px-3.5 py-5 text-center text-muted-foreground text-xs">
-            {emptyMessage ?? "No runtime MCP status is available for this session."}
+            {emptyMessage ?? translate("settings.mcp.runtime.empty")}
           </div>
         ) : (
-          <ul role="list" aria-label="MCP server status" className="divide-y divide-border/45">
+          <ul
+            role="list"
+            aria-label={translate("settings.mcp.runtime.status")}
+            className="divide-y divide-border/45"
+          >
             {orderedServers.map((server, index) => {
               const expanded = expandedKeys.has(server.providerKey);
               const isBuiltIn = server.source === "t3-built-in";
@@ -151,7 +156,13 @@ export function McpRuntimeServerList({
                   {orderedServers[index - 1]?.source !== server.source ? (
                     <li className="bg-muted/20 px-3.5 py-1.5">
                       <h3 className="font-medium text-[10px] text-muted-foreground uppercase tracking-wide">
-                        {SERVER_SOURCE_LABEL[server.source]}
+                        {translate(
+                          server.source === "t3-managed"
+                            ? "settings.mcp.runtime.source.t3Managed"
+                            : server.source === "provider-native"
+                              ? "settings.mcp.runtime.source.providerManaged"
+                              : "settings.mcp.runtime.source.system",
+                        )}
                       </h3>
                     </li>
                   ) : null}
@@ -178,16 +189,20 @@ export function McpRuntimeServerList({
                             />
                           ) : null}
                           <span className="truncate font-medium text-xs">
-                            {isBuiltIn ? "T3 Code System Server" : server.name}
+                            {isBuiltIn
+                              ? translate("settings.mcp.runtime.source.system")
+                              : server.name}
                           </span>
                         </span>
                         <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted-foreground">
-                          <span>{mcpRuntimeStateLabel(server.state)}</span>
+                          <span>{translate(`settings.mcp.runtime.state.${server.state}`)}</span>
                           {server.toolCount !== undefined ? (
                             <>
                               <span aria-hidden="true">·</span>
                               <span>
-                                {server.toolCount} {server.toolCount === 1 ? "tool" : "tools"}
+                                {translate("settings.mcp.runtime.toolCount", {
+                                  count: server.toolCount,
+                                })}
                               </span>
                             </>
                           ) : null}
@@ -200,7 +215,7 @@ export function McpRuntimeServerList({
                           {server.configDrift !== "none" ? (
                             <>
                               <span aria-hidden="true">·</span>
-                              <span>Applies next session</span>
+                              <span>{translate("settings.mcp.runtime.appliesNextSession")}</span>
                             </>
                           ) : null}
                         </span>
@@ -231,7 +246,7 @@ export function McpRuntimeServerList({
                     ) : null}
                     {readOnly && !isBuiltIn && server.availableActions.length > 0 ? (
                       <p className="mt-2 pl-3.5 text-muted-foreground text-[11px]">
-                        Runtime actions require operate access.
+                        {translate("settings.mcp.runtime.operateRequired")}
                       </p>
                     ) : null}
                     {!authorizationAvailable &&
@@ -239,7 +254,7 @@ export function McpRuntimeServerList({
                     server.state === "auth-required" &&
                     server.availableActions.includes("authorize") ? (
                       <p className="mt-2 pl-3.5 text-warning-foreground text-[11px]">
-                        Complete authorization on the environment host.
+                        {translate("settings.mcp.runtime.authorizeOnHost")}
                       </p>
                     ) : null}
 
@@ -250,24 +265,32 @@ export function McpRuntimeServerList({
                         server.templateCount !== undefined ? (
                           <div className="mb-2 flex flex-wrap gap-x-2 gap-y-1 text-muted-foreground">
                             {server.serverInfo?.version ? (
-                              <span>Version {server.serverInfo.version}</span>
+                              <span>
+                                {translate("settings.mcp.runtime.version", {
+                                  version: server.serverInfo.version,
+                                })}
+                              </span>
                             ) : null}
                             {server.resourceCount !== undefined ? (
                               <span>
-                                {server.resourceCount}{" "}
-                                {server.resourceCount === 1 ? "resource" : "resources"}
+                                {translate("settings.mcp.runtime.resourceCount", {
+                                  count: server.resourceCount,
+                                })}
                               </span>
                             ) : null}
                             {server.templateCount !== undefined ? (
                               <span>
-                                {server.templateCount}{" "}
-                                {server.templateCount === 1 ? "template" : "templates"}
+                                {translate("settings.mcp.runtime.templateCount", {
+                                  count: server.templateCount,
+                                })}
                               </span>
                             ) : null}
                           </div>
                         ) : null}
                         {detailsLoadingKeys.has(server.providerKey) ? (
-                          <div className="text-muted-foreground">Loading MCP inventory…</div>
+                          <div className="text-muted-foreground">
+                            {translate("settings.mcp.runtime.loadingInventory")}
+                          </div>
                         ) : detailsErrorByProviderKey[server.providerKey] ? (
                           <div className="text-destructive">
                             {detailsErrorByProviderKey[server.providerKey]}
@@ -281,8 +304,8 @@ export function McpRuntimeServerList({
                         ) : (
                           <div className="text-muted-foreground">
                             {server.reportsTools
-                              ? "No tools were reported by this server."
-                              : "This provider does not report tool details."}
+                              ? translate("settings.mcp.runtime.noTools")
+                              : translate("settings.mcp.runtime.noToolDetails")}
                           </div>
                         )}
                         {server.issue?.message ? (
@@ -311,7 +334,7 @@ export function McpRuntimeServerList({
           className="w-full justify-between text-xs"
           onClick={() => onOpenSettings()}
         >
-          <span>Manage MCP servers</span>
+          <span>{translate("settings.mcp.runtime.manage")}</span>
           <ExternalLinkIcon aria-hidden="true" className="size-3.5" />
         </Button>
       </div>
@@ -328,14 +351,15 @@ export function McpRuntimeInventoryDetails({
   readonly reportsTools: boolean;
   readonly serverName: string;
 }) {
+  const translate = useInterfaceTranslator().message;
   const hasInventory =
     details.tools.length > 0 || details.resources.length > 0 || details.templates.length > 0;
   if (!hasInventory) {
     return (
       <div className="text-muted-foreground">
         {reportsTools
-          ? "No tools, resources, or templates were reported by this server."
-          : "This provider does not report MCP inventory details."}
+          ? translate("settings.mcp.runtime.noInventory")
+          : translate("settings.mcp.runtime.noInventoryDetails")}
       </div>
     );
   }
@@ -344,10 +368,13 @@ export function McpRuntimeInventoryDetails({
     <div className="space-y-3">
       {details.tools.length > 0 ? (
         <InventorySection
-          ariaLabel={`${serverName} tools`}
+          ariaLabel={translate("settings.mcp.runtime.inventoryAria", {
+            server: serverName,
+            section: translate("settings.mcp.runtime.tools"),
+          })}
           overflowCount={Math.max(0, details.tools.length - 100)}
-          overflowLabel="tools"
-          title="Tools"
+          overflowLabel={translate("settings.mcp.runtime.tools").toLocaleLowerCase()}
+          title={translate("settings.mcp.runtime.tools")}
         >
           {details.tools.slice(0, 100).map((tool) => (
             <li key={tool.name} className="min-w-0">
@@ -366,10 +393,13 @@ export function McpRuntimeInventoryDetails({
 
       {details.resources.length > 0 ? (
         <InventorySection
-          ariaLabel={`${serverName} resources`}
+          ariaLabel={translate("settings.mcp.runtime.inventoryAria", {
+            server: serverName,
+            section: translate("settings.mcp.runtime.resources"),
+          })}
           overflowCount={Math.max(0, details.resources.length - 100)}
-          overflowLabel="resources"
-          title="Resources"
+          overflowLabel={translate("settings.mcp.runtime.resources").toLocaleLowerCase()}
+          title={translate("settings.mcp.runtime.resources")}
         >
           {details.resources.slice(0, 100).map((resource) => (
             <li key={resource.uri} className="min-w-0">
@@ -396,10 +426,13 @@ export function McpRuntimeInventoryDetails({
 
       {details.templates.length > 0 ? (
         <InventorySection
-          ariaLabel={`${serverName} resource templates`}
+          ariaLabel={translate("settings.mcp.runtime.inventoryAria", {
+            server: serverName,
+            section: translate("settings.mcp.runtime.resourceTemplates"),
+          })}
           overflowCount={Math.max(0, details.templates.length - 100)}
-          overflowLabel="templates"
-          title="Resource templates"
+          overflowLabel={translate("settings.mcp.runtime.resourceTemplates").toLocaleLowerCase()}
+          title={translate("settings.mcp.runtime.resourceTemplates")}
         >
           {details.templates.slice(0, 100).map((template) => (
             <li key={template.uriTemplate} className="min-w-0">
@@ -437,6 +470,7 @@ function InventorySection({
   readonly overflowLabel: string;
   readonly title: string;
 }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <section>
       <h4 className="mb-1.5 font-medium text-muted-foreground text-[10px] uppercase tracking-wide">
@@ -446,7 +480,10 @@ function InventorySection({
         {children}
         {overflowCount > 0 ? (
           <li className="text-muted-foreground">
-            {overflowCount} additional {overflowLabel} are available in Settings.
+            {translate("settings.mcp.runtime.additional", {
+              count: overflowCount,
+              section: overflowLabel,
+            })}
           </li>
         ) : null}
       </ul>
@@ -455,10 +492,11 @@ function InventorySection({
 }
 
 function ToolAnnotations({ tool }: { readonly tool: McpRuntimeTool }) {
+  const translate = useInterfaceTranslator().message;
   const labels = [
-    tool.readOnly ? "Read only" : null,
-    tool.destructive ? "Destructive" : null,
-    tool.openWorld ? "Open world" : null,
+    tool.readOnly ? translate("settings.mcp.runtime.annotation.readOnly") : null,
+    tool.destructive ? translate("settings.mcp.runtime.annotation.destructive") : null,
+    tool.openWorld ? translate("settings.mcp.runtime.annotation.openWorld") : null,
   ].filter((label): label is string => label !== null);
   if (labels.length === 0) return null;
   return (

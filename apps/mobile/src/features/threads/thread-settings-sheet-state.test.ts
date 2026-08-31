@@ -3,7 +3,15 @@ import { describe, expect, it } from "vite-plus/test";
 import { ProviderInstanceId, type ProviderOptionSelection } from "@t3tools/contracts";
 
 import type { ModelOption } from "../../lib/modelOptions";
-import { modelMatchesCatalogQuery, pendingModelAfterPress } from "./thread-settings-sheet-state";
+import {
+  MOBILE_MODEL_FILTER_MIN_TOUCH_TARGET,
+  filterOpenRouterProviderCatalog,
+  modelFavoriteActionMessageKey,
+  modelMatchesCatalogQuery,
+  pendingModelAfterPress,
+  performModelFavoriteToggle,
+  providerCatalogUsesDrillIn,
+} from "./thread-settings-sheet-state";
 
 function modelOption(
   model: string,
@@ -12,12 +20,14 @@ function modelOption(
   return {
     key: `codex:${model}`,
     label: model,
-    subtitle: "Codex",
+    subtitle: "",
     providerKey: "codex",
     providerLabel: "Codex",
     providerDriver: "codex",
     isDefault: false,
     isLegacy: false,
+    isSelectable: true,
+    unavailableReason: null,
     continuationGroupKey: null,
     requiresNewThreadForModelChange: false,
     capabilities: null,
@@ -30,6 +40,58 @@ function modelOption(
 }
 
 describe("thread settings sheet state", () => {
+  it("opens OpenRouter in a provider-specific catalog while keeping other providers inline", () => {
+    expect(providerCatalogUsesDrillIn("openrouter")).toBe(true);
+    expect(providerCatalogUsesDrillIn("codex")).toBe(false);
+    expect(providerCatalogUsesDrillIn(undefined)).toBe(false);
+  });
+
+  it("filters the OpenRouter drill-in catalog by capabilities, search, and favorites", () => {
+    const freeVisionModel: ModelOption = {
+      ...modelOption("openai/free-vision"),
+      providerDriver: "openrouter",
+      capabilities: {
+        contextWindow: { defaultTokens: 128_000, maxTokens: 128_000 },
+        inputModalities: ["text", "image"],
+        outputModalities: ["text"],
+        pricing: { promptUsdPerMillion: 0, completionUsdPerMillion: 0 },
+        toolSupport: { tools: true, parallelToolCalls: true, toolChoice: true },
+      },
+    };
+    const paidTextModel: ModelOption = {
+      ...modelOption("anthropic/paid-text"),
+      providerDriver: "openrouter",
+      capabilities: {
+        contextWindow: { defaultTokens: 64_000, maxTokens: 64_000 },
+        inputModalities: ["text"],
+        outputModalities: ["text"],
+        pricing: { promptUsdPerMillion: 1, completionUsdPerMillion: 2 },
+        toolSupport: { tools: true, parallelToolCalls: true, toolChoice: true },
+      },
+    };
+
+    expect(
+      filterOpenRouterProviderCatalog({
+        models: [paidTextModel, freeVisionModel],
+        providerLabel: "OpenRouter",
+        query: "free",
+        filters: new Set(["free", "vision"]),
+        favoritesOnly: true,
+        isFavorite: (model) => model.selection.model === freeVisionModel.selection.model,
+      }),
+    ).toEqual([freeVisionModel]);
+    expect(
+      filterOpenRouterProviderCatalog({
+        models: [paidTextModel, freeVisionModel],
+        providerLabel: "OpenRouter",
+        query: "",
+        filters: new Set(["free"]),
+        favoritesOnly: true,
+        isFavorite: () => false,
+      }),
+    ).toEqual([]);
+  });
+
   it("matches visible model and provider terms", () => {
     const model = modelOption("gpt-next");
 
@@ -48,6 +110,21 @@ describe("thread settings sheet state", () => {
         query: "   ",
       }),
     ).toBe(true);
+  });
+
+  it("matches the upstream provider's display name", () => {
+    const model = {
+      ...modelOption("opencode/claude-fable-5"),
+      label: "Claude Fable 5",
+      subtitle: "OpenCode Zen",
+    };
+
+    expect(modelMatchesCatalogQuery({ model, providerLabel: "OpenCode", query: " ZEN " })).toBe(
+      true,
+    );
+    expect(modelMatchesCatalogQuery({ model, providerLabel: "OpenCode", query: "copilot" })).toBe(
+      false,
+    );
   });
 
   it("clears staging when the applied model is pressed", () => {
@@ -82,5 +159,17 @@ describe("thread settings sheet state", () => {
         pressedIsApplied: false,
       }),
     ).toBe(pressed);
+  });
+
+  it("keeps filter controls touchable and toggles favorites without selecting the model row", () => {
+    expect(MOBILE_MODEL_FILTER_MIN_TOUCH_TARGET).toBe(44);
+    expect(modelFavoriteActionMessageKey(false)).toBe("mobile.thread.settings.addFavorite");
+    expect(modelFavoriteActionMessageKey(true)).toBe("mobile.thread.settings.removeFavorite");
+
+    const calls: string[] = [];
+    performModelFavoriteToggle({ stopPropagation: () => calls.push("stopped") }, () =>
+      calls.push("favorite"),
+    );
+    expect(calls).toEqual(["stopped", "favorite"]);
   });
 });

@@ -1,9 +1,7 @@
-import { useNavigation } from "@react-navigation/native";
-import { Platform, ScrollView, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
+import {
+  AndroidScreenScaffold,
+  ScreenScaffoldScrollView,
+} from "../../components/AndroidScreenScaffold";
 import { CodeAppearanceSection } from "./appearance/sections/CodeAppearanceSection";
 import { ChatVisualsAppearanceSection } from "./appearance/sections/ChatVisualsAppearanceSection";
 import { ProjectThreadPreviewCountSection } from "./appearance/sections/ProjectThreadPreviewCountSection";
@@ -11,36 +9,23 @@ import { TerminalAppearanceSection } from "./appearance/sections/TerminalAppeara
 import { TextAppearanceSection } from "./appearance/sections/TextAppearanceSection";
 import { ThreadListAppearanceSection } from "./appearance/sections/ThreadListAppearanceSection";
 import { ThemeAppearanceSection } from "./appearance/sections/ThemeAppearanceSection";
+import { InterfaceLanguageSection } from "./appearance/sections/InterfaceLanguageSection";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function SettingsAppearanceRouteScreen() {
-  const navigation = useNavigation();
-  const insets = useSafeAreaInsets();
-
+  const translator = useMobileInterfaceTranslator();
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      {Platform.OS === "android" ? (
-        <>
-          <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="Appearance" onBack={() => navigation.goBack()} />
-        </>
-      ) : null}
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        showsVerticalScrollIndicator={false}
-        className="flex-1"
-        contentContainerClassName="gap-6 px-5 pt-4"
-        contentContainerStyle={{
-          paddingBottom: Math.max(insets.bottom, 18) + 18,
-        }}
-      >
+    <AndroidScreenScaffold title={translator.message("mobile.appearance.title")}>
+      <ScreenScaffoldScrollView>
         <ThemeAppearanceSection />
+        <InterfaceLanguageSection />
         <ThreadListAppearanceSection />
         <ProjectThreadPreviewCountSection />
         <ChatVisualsAppearanceSection />
         <TextAppearanceSection />
         <TerminalAppearanceSection />
         <CodeAppearanceSection />
-      </ScrollView>
-    </View>
+      </ScreenScaffoldScrollView>
+    </AndroidScreenScaffold>
   );
 }

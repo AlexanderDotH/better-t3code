@@ -13,11 +13,40 @@ export interface DeepThinkingAccumulatedData {
   readonly refinements: ReadonlyArray<Record<string, unknown>>;
 }
 
+export interface DeepThinkingRequestPolicyOptions {
+  readonly stepCount: number;
+  readonly refinementPasses: number;
+  readonly parallelEnabled: boolean;
+  readonly parallelBatchSize: number;
+  readonly forceParallelForDurableProviders: boolean;
+}
+
 export const DEEP_THINKING_DECOMPOSE_SCHEMA_DESC = '{ "steps": ["topic 1", "topic 2", ...] }';
 export const DEEP_THINKING_STEP_SCHEMA_DESC =
   '{ "thinking": "...", "considerations": ["..."], "openQuestions": ["..."] }';
 export const DEEP_THINKING_REFINE_SCHEMA_DESC =
   '{ "sufficient": true|false, "gaps": ["..."], "adjustments": ["..."] }';
+
+export function buildDeepThinkingRequestAppendix(
+  options: DeepThinkingRequestPolicyOptions,
+): string {
+  const refinementLabel = options.refinementPasses === 1 ? "pass" : "passes";
+  const parallelBatchSize = Math.min(options.stepCount, options.parallelBatchSize);
+  const parallelGuidance = options.parallelEnabled
+    ? `- Organize independent considerations in private batches of at most ${parallelBatchSize}.${
+        options.forceParallelForDurableProviders
+          ? " Use that bounded organization when the already-selected runtime supports it durably."
+          : ""
+      }`
+    : "- Work through the considerations sequentially.";
+
+  return `### Deep thinking
+- Before acting or answering, privately examine at most ${options.stepCount} distinct considerations that materially affect the request.
+- Perform at most ${options.refinementPasses} bounded self-review ${refinementLabel} before the final response.
+${parallelGuidance}
+- Do not reveal hidden chain-of-thought. Present only conclusions and concise rationale useful to the user.
+- Do not start extra provider calls, tools, or agents solely to satisfy this mode.`;
+}
 
 function readPartText(part: DeepThinkingMessagePart | string): string {
   if (typeof part === "string") return part.trim();

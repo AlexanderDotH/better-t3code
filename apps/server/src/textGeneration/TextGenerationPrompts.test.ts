@@ -9,6 +9,7 @@ import {
   buildPromptImprovementPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildThreadMetadataPrompt,
   buildTranscriptTranslationPrompt,
   PLAN_PARALLELISM_REVIEW_PLAN_MAX_CHARS,
   PLAN_PARALLELISM_REVIEW_REQUEST_MAX_CHARS,
@@ -259,6 +260,33 @@ describe("buildThreadTitlePrompt", () => {
       `Thread contents:\n[Earlier content truncated]\n\n${retainedContext}`,
     );
     expect(result.prompt.match(/\[Earlier content truncated\]/g)).toHaveLength(1);
+  });
+});
+
+describe("buildThreadMetadataPrompt", () => {
+  it("requests one structured title and branch result from metadata-only context", () => {
+    const result = buildThreadMetadataPrompt({
+      message: "Fix reconnect handling from the attached trace",
+      attachments: [
+        {
+          type: "file",
+          id: "trace",
+          name: "trace.txt",
+          mimeType: "text/plain",
+          sizeBytes: 512,
+        },
+      ],
+    });
+    const decode = Schema.decodeUnknownSync(result.outputSchema);
+
+    expect(result.prompt).toContain("<t3code_metadata_call>");
+    expect(result.prompt).toContain('exactly two keys: "title" and "branch"');
+    expect(result.prompt).toContain("Attachment metadata:");
+    expect(result.prompt).not.toContain("Attachment contents:");
+    expect(decode({ title: "Fix reconnect handling", branch: "fix-reconnect-handling" })).toEqual({
+      title: "Fix reconnect handling",
+      branch: "fix-reconnect-handling",
+    });
   });
 });
 

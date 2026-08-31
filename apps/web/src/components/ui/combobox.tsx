@@ -4,6 +4,7 @@ import { Combobox as ComboboxPrimitive } from "@base-ui/react/combobox";
 import { ChevronsUpDownIcon, XIcon } from "lucide-react";
 import * as React from "react";
 
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { cn } from "~/lib/utils";
 import { Input } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -175,7 +176,7 @@ function ComboboxPopup({
           )}
         >
           <ComboboxPrimitive.Popup
-            className="flex max-h-[min(var(--available-height),23rem)] flex-1 flex-col text-foreground"
+            className="flex min-w-0 max-h-[min(var(--available-height),23rem)] flex-1 flex-col overflow-hidden text-foreground"
             data-slot="combobox-popup"
             {...props}
           >
@@ -365,9 +366,10 @@ function ComboboxChip({ children, ...props }: ComboboxPrimitive.Chip.Props) {
 }
 
 function ComboboxChipRemove(props: ComboboxPrimitive.ChipRemove.Props) {
+  const translator = useInterfaceTranslator();
   return (
     <ComboboxPrimitive.ChipRemove
-      aria-label="Remove"
+      aria-label={translator.message("ui.remove")}
       className="h-full shrink-0 cursor-pointer px-1.5 opacity-80 hover:opacity-100 [&_svg:not([class*='size-'])]:size-4 sm:[&_svg:not([class*='size-'])]:size-3.5"
       data-slot="combobox-chip-remove"
       {...props}

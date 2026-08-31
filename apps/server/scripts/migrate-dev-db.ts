@@ -235,6 +235,7 @@ const ensureNotInUse = Effect.fn("ensureDevDbNotInUse")(function* (databasePath:
 
 const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigrateDevDbInput) {
   const sql = yield* SqlClient.SqlClient;
+  yield* sql.unsafe("PRAGMA foreign_keys = ON").unprepared;
 
   // The shared db can carry monitor_json from a branch build even though no
   // migration in this checkout creates it, so filter it only when present.
@@ -311,6 +312,15 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
             AND stream_id NOT IN (SELECT thread_id FROM kept_threads))
            OR (aggregate_kind = 'project'
             AND stream_id NOT IN (SELECT project_id FROM kept_projects))`;
+      // Knowledge Graph data is rebuildable but can contain bounded source
+      // excerpts. Keep it only for the projects selected into this disposable
+      // snapshot; the schema's cascade removes every derived child row.
+      yield* sql`DELETE FROM knowledge_graph_scopes
+        WHERE project_id NOT IN (SELECT project_id FROM kept_projects)`;
+      yield* sql`DELETE FROM knowledge_graph_semantic_environments
+        WHERE environment_id NOT IN (
+          SELECT DISTINCT environment_id FROM knowledge_graph_scopes
+        )`;
       yield* sql`DELETE FROM orchestration_command_receipts`;
       yield* sql`DELETE FROM provider_session_runtime`;
       yield* sql`DELETE FROM auth_sessions`;
@@ -341,6 +351,8 @@ const compatibleMigrationSlotAliases = new Map<number, ReadonlySet<string>>([
   [38, new Set(["ProjectionThreadsPinOrderKey"])],
   [39, new Set(["ProjectionProjectsDefaultThreadEnvMode"])],
   [40, new Set(["ProjectionProjectFaviconPath"])],
+  [42, new Set(["ProjectionThreadLinkedPullRequest"])],
+  [43, new Set(["ProjectionThreadsUnsettledAt"])],
 ]);
 
 const convergenceTail = new Map<number, string>([
@@ -350,6 +362,7 @@ const convergenceTail = new Map<number, string>([
   [48, "ProjectionThreadsPinOrderKeyCompatibility"],
   [49, "ProjectionProjectsDefaultThreadEnvModeCompatibility"],
   [50, "ProjectionProjectFaviconPathCompatibility"],
+  [58, "Upstream42And43SchemaConvergence"],
 ]);
 
 /** Compare this checkout's migration registry against what the cloned

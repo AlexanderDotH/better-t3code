@@ -39,6 +39,12 @@ export interface SubagentUsage {
   readonly durationMs?: number;
 }
 
+export interface SubagentUsageSummary {
+  readonly totalTokens: number;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+}
+
 export interface SubagentActivityEntry {
   readonly at: string;
   readonly summary: string;
@@ -927,6 +933,32 @@ export function formatSubagentModelLabel(
     .replace(/-\d{8}$/, "")
     .replace(/-latest$/, "");
   return effort ? `${compact} · ${effort}` : compact;
+}
+
+/** Sums only counters a provider actually reported, so the UI never presents an inferred split. */
+export function summarizeSubagentUsage(
+  usages: ReadonlyArray<SubagentUsage | null | undefined>,
+): SubagentUsageSummary {
+  let totalTokens = 0;
+  let inputTokens: number | undefined;
+  let outputTokens: number | undefined;
+
+  for (const usage of usages) {
+    if (!usage) continue;
+    totalTokens += usage.totalTokens;
+    if (usage.inputTokens !== undefined) {
+      inputTokens = (inputTokens ?? 0) + usage.inputTokens;
+    }
+    if (usage.outputTokens !== undefined) {
+      outputTokens = (outputTokens ?? 0) + usage.outputTokens;
+    }
+  }
+
+  return {
+    totalTokens,
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+  };
 }
 
 export function formatSubagentTokenCount(totalTokens: number): string {

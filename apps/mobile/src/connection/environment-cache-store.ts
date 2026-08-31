@@ -75,6 +75,25 @@ function mapDatabaseError(operation: CacheOperation) {
   return (error: MobileDatabase.MobileDatabaseError) => persistenceError(operation, error);
 }
 
+/**
+ * Reads only the newest persisted cache timestamp for each environment. UI consumers use this
+ * narrow projection to describe stale-but-available data without loading any cached payloads.
+ */
+export const loadEnvironmentCacheFreshnesses = Effect.fn("MobileEnvironmentCache.loadFreshnesses")(
+  function* (environmentIds: ReadonlyArray<EnvironmentId>) {
+    const database = yield* MobileDatabase.MobileDatabase;
+    const entries = yield* Effect.forEach(
+      [...new Set(environmentIds)],
+      (environmentId) =>
+        database
+          .loadEnvironmentCacheUpdatedAt(environmentId)
+          .pipe(Effect.map((updatedAt) => [environmentId, Option.getOrNull(updatedAt)] as const)),
+      { concurrency: "unbounded" },
+    );
+    return new Map(entries);
+  },
+);
+
 function loadDecodedCache<A, B>(input: {
   readonly database: MobileDatabase.MobileDatabase["Service"];
   readonly environmentId: EnvironmentId;

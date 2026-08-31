@@ -35,13 +35,14 @@ import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { useThreadActions } from "./useThreadActions";
+import { useInterfaceTranslator } from "./useInterfaceTranslator";
 
-function failureToast(title: string, error: unknown) {
+function failureToast(title: string, error: unknown, fallbackDescription = "An error occurred.") {
   toastManager.add(
     stackedThreadToast({
       type: "error",
       title,
-      description: error instanceof Error ? error.message : "An error occurred.",
+      description: error instanceof Error ? error.message : fallbackDescription,
     }),
   );
 }
@@ -64,6 +65,7 @@ export function useThreadActionMenu(input: {
   readonly changeRequest: ChangeRequestSettleSource | null;
   readonly onStartRename: () => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const { threadRef, projectCwd, changeRequest, onStartRename } = input;
   const {
     settleThread,
@@ -71,7 +73,7 @@ export function useThreadActionMenu(input: {
     snoozeThread,
     unsnoozeThread,
     pinThread,
-    unpinThread,
+    confirmAndUnpinThread,
     archiveThread,
     deleteThread,
   } = useThreadActions();
@@ -87,22 +89,49 @@ export function useThreadActionMenu(input: {
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
-      toastManager.add({ type: "success", title: "Path copied", description: path });
+      toastManager.add({
+        type: "success",
+        title: translate("chat.action.pathCopied"),
+        description: path,
+      });
     },
-    onError: (error) => failureToast("Failed to copy path", error),
+    onError: (error) =>
+      failureToast(
+        translate("chat.action.pathCopyFailed"),
+        error,
+        translate("chat.header.genericError"),
+      ),
   });
   const { copyToClipboard: copyBranchToClipboard } = useCopyToClipboard<{ branch: string }>({
     target: "branch name",
     onCopy: ({ branch }) => {
-      toastManager.add({ type: "success", title: "Branch copied", description: branch });
+      toastManager.add({
+        type: "success",
+        title: translate("chat.action.branchCopied"),
+        description: branch,
+      });
     },
-    onError: (error) => failureToast("Failed to copy branch", error),
+    onError: (error) =>
+      failureToast(
+        translate("chat.action.branchCopyFailed"),
+        error,
+        translate("chat.header.genericError"),
+      ),
   });
   const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{ threadId: ThreadId }>({
     onCopy: ({ threadId }) => {
-      toastManager.add({ type: "success", title: "Thread ID copied", description: threadId });
+      toastManager.add({
+        type: "success",
+        title: translate("chat.action.threadIdCopied"),
+        description: threadId,
+      });
     },
-    onError: (error) => failureToast("Failed to copy thread ID", error),
+    onError: (error) =>
+      failureToast(
+        translate("chat.action.threadIdCopyFailed"),
+        error,
+        translate("chat.header.genericError"),
+      ),
   });
 
   const openMenu = useCallback(
@@ -215,9 +244,10 @@ export function useThreadActionMenu(input: {
           case "pin":
             await reportFailure("Failed to pin thread", () => pinThread(threadRef));
             return;
-          case "unpin":
-            await reportFailure("Failed to unpin thread", () => unpinThread(threadRef));
+          case "unpin": {
+            await reportFailure("Failed to unpin thread", () => confirmAndUnpinThread(threadRef));
             return;
+          }
           case "rename":
             onStartRename();
             return;
@@ -315,6 +345,7 @@ export function useThreadActionMenu(input: {
       changeRequest,
       confirmThreadArchive,
       confirmThreadDelete,
+      confirmAndUnpinThread,
       copyBranchToClipboard,
       copyPathToClipboard,
       copyThreadIdToClipboard,
@@ -328,7 +359,6 @@ export function useThreadActionMenu(input: {
       snoozeThread,
       threadRef,
       timestampFormat,
-      unpinThread,
       unsettleThread,
       unsnoozeThread,
       updateThreadMetadata,

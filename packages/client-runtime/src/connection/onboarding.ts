@@ -38,6 +38,12 @@ export interface PairingConnectionInput {
   readonly pairingCode?: string;
 }
 
+export type PairingOnboardingStage = "validating" | "checking-host" | "validating-code" | "saving";
+
+export interface PairingOnboardingOptions {
+  readonly reportProgress?: (stage: PairingOnboardingStage) => Effect.Effect<void>;
+}
+
 export interface SshConnectionInput {
   readonly target: DesktopSshEnvironmentTarget;
   readonly label?: string;
@@ -54,6 +60,7 @@ export class ConnectionOnboarding extends Context.Service<
   {
     readonly registerPairing: (
       input: PairingConnectionInput,
+      options?: PairingOnboardingOptions,
     ) => Effect.Effect<
       EnvironmentId,
       ConnectionAttemptError | Persistence.ConnectionPersistenceError
@@ -83,14 +90,24 @@ const resolvePairingTarget = Effect.fn("clientRuntime.connection.onboarding.reso
   },
 );
 
+function reportPairingProgress(
+  options: PairingOnboardingOptions | undefined,
+  stage: PairingOnboardingStage,
+): Effect.Effect<void> {
+  return options?.reportProgress?.(stage) ?? Effect.void;
+}
+
 export const preparePairingRegistration = Effect.fn(
   "clientRuntime.connection.onboarding.preparePairingRegistration",
-)(function* (input: PairingConnectionInput) {
+)(function* (input: PairingConnectionInput, options?: PairingOnboardingOptions) {
+  yield* reportPairingProgress(options, "validating");
   const target = yield* resolvePairingTarget(input);
   const presentation = yield* ClientCapabilities.ClientPresentation;
+  yield* reportPairingProgress(options, "checking-host");
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({
     httpBaseUrl: target.httpBaseUrl,
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
+  yield* reportPairingProgress(options, "validating-code");
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl: target.httpBaseUrl,
     credential: target.credential,
@@ -120,9 +137,10 @@ export const preparePairingRegistration = Effect.fn(
 
 export const registerPairingConnection = Effect.fn(
   "clientRuntime.connection.onboarding.registerPairingConnection",
-)(function* (input: PairingConnectionInput) {
-  const registration = yield* preparePairingRegistration(input);
+)(function* (input: PairingConnectionInput, options?: PairingOnboardingOptions) {
+  const registration = yield* preparePairingRegistration(input, options);
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+  yield* reportPairingProgress(options, "saving");
   yield* registry.register(registration);
   return registration.target.environmentId;
 });
@@ -250,8 +268,8 @@ export const make = Effect.gen(function* () {
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
 
   return ConnectionOnboarding.of({
-    registerPairing: (input) =>
-      registerPairingConnection(input).pipe(
+    registerPairing: (input, options) =>
+      registerPairingConnection(input, options).pipe(
         Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
         Effect.provideService(ClientCapabilities.ClientPresentation, presentation),
         Effect.provideService(HttpClient.HttpClient, httpClient),

@@ -5,10 +5,24 @@ export const SERVICE_LAUNCHER_PROTOCOL = 2 as const;
 export const SERVICE_LAUNCHER_CONTEXT_ENV = "T3_SERVICE_LAUNCHER_CONTEXT";
 export const SERVICE_LAUNCHER_FILE = "service-launcher.mjs";
 export const SERVICE_STATE_FILE = "service-state.json";
+export const SERVICE_WINDOWS_TASK_NAME = "\\T3 Code Server";
+export const SERVICE_STOP_PROTOCOL = 1 as const;
+export const SERVICE_STOP_REQUEST_FILE = ".service-stop-request.json";
+export const SERVICE_STOP_ACK_FILE = ".service-stop-ack.json";
 /** Written by the launcher just before an explicit stop kills its child, so
     the child can tell "the service is going away" from "the launcher is about
     to start my replacement" while a pending update is recorded. */
 export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
+
+export interface ServiceStopRequest {
+  readonly protocol: typeof SERVICE_STOP_PROTOCOL;
+  readonly id: string;
+}
+
+export interface ServiceStopAcknowledgement extends ServiceStopRequest {
+  readonly pid: number;
+  readonly status: "received" | "stopped";
+}
 
 export interface PendingServiceUpdate {
   readonly id: string;
@@ -56,6 +70,10 @@ export type ServiceLauncherParentMessage =
   | {
       readonly type: "committed";
       readonly updateId: string;
+    }
+  | {
+      readonly type: "shutdown";
+      readonly requestId: string;
     };
 
 const SEMVER_NUMBER = "(?:0|[1-9]\\d*)";
@@ -70,6 +88,45 @@ export const isExactServiceVersion = (version: string): boolean =>
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+export function decodeServiceStopRequest(value: unknown): ServiceStopRequest | undefined {
+  if (
+    !isRecord(value) ||
+    value.protocol !== SERVICE_STOP_PROTOCOL ||
+    typeof value.id !== "string" ||
+    value.id.trim() === ""
+  ) {
+    return undefined;
+  }
+  return { protocol: SERVICE_STOP_PROTOCOL, id: value.id };
+}
+
+export function decodeServiceStopAcknowledgement(
+  value: unknown,
+): ServiceStopAcknowledgement | undefined {
+  const request = decodeServiceStopRequest(value);
+  if (
+    request === undefined ||
+    !isRecord(value) ||
+    typeof value.pid !== "number" ||
+    !Number.isSafeInteger(value.pid) ||
+    value.pid <= 0 ||
+    (value.status !== "received" && value.status !== "stopped")
+  ) {
+    return undefined;
+  }
+  return { ...request, pid: value.pid, status: value.status };
+}
+
+export function parseServiceStopAcknowledgement(
+  value: string,
+): ServiceStopAcknowledgement | undefined {
+  try {
+    return decodeServiceStopAcknowledgement(JSON.parse(value) as unknown);
+  } catch {
+    return undefined;
+  }
+}
 
 export function decodeServiceUpdate(value: unknown): ServiceUpdateRecord | undefined {
   if (!isRecord(value)) return undefined;
@@ -242,6 +299,11 @@ export function decodeServiceLauncherParentMessage(
   }
   if (value.type === "update-accepted" && typeof value.updateId === "string") {
     return { type: value.type, updateId: value.updateId };
+  }
+  if (value.type === "shutdown" && typeof value.requestId === "string") {
+    return value.requestId.trim() === ""
+      ? undefined
+      : { type: value.type, requestId: value.requestId };
   }
   return value.type === "committed" && typeof value.updateId === "string"
     ? { type: value.type, updateId: value.updateId }

@@ -134,6 +134,25 @@ describe("submitComposerDraft", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
+  it("uses a fork's smaller remaining first-turn budget", () => {
+    const onSend = vi.fn();
+
+    const result = submitComposerDraft({
+      prompt: "x".repeat(21),
+      maxInputChars: 20,
+      submissionTarget: "provider-turn",
+      event: undefined,
+      onSend,
+    });
+
+    expect(result).toEqual({
+      validationMessage:
+        "Prompt is 1 character over the 20-character limit. Shorten or split it before sending.",
+      didDispatch: false,
+    });
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
   it("allows surrounding whitespace that the provider turn contract trims", () => {
     const draft = ` ${"x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)} `;
     const onSend = vi.fn();

@@ -82,6 +82,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           interaction_mode,
           branch,
           worktree_path,
+          linked_pull_request_json,
           latest_turn_id,
           latest_user_message_at,
           pending_approval_count,
@@ -102,6 +103,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'default',
           NULL,
           NULL,
+          '{"projectId":"project-1","repository":"pingdotgg/t3code","number":42,"url":"https://github.com/pingdotgg/t3code/pull/42"}',
           'turn-1',
           '2026-02-24T00:00:04.000Z',
           1,
@@ -306,6 +308,12 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
+          linkedPullRequest: {
+            projectId: asProjectId("project-1"),
+            repository: "pingdotgg/t3code",
+            number: 42,
+            url: "https://github.com/pingdotgg/t3code/pull/42",
+          },
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",
@@ -323,6 +331,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           archivedAt: null,
           settledOverride: null,
           settledAt: null,
+          unsettledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
           pinnedAt: "2026-02-24T00:00:01.000Z",
@@ -429,6 +438,12 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
+          linkedPullRequest: {
+            projectId: asProjectId("project-1"),
+            repository: "pingdotgg/t3code",
+            number: 42,
+            url: "https://github.com/pingdotgg/t3code/pull/42",
+          },
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",
@@ -446,6 +461,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           archivedAt: null,
           settledOverride: null,
           settledAt: null,
+          unsettledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
           pinnedAt: "2026-02-24T00:00:01.000Z",
@@ -1950,6 +1966,94 @@ it.effect(
     }).pipe(Effect.provide(layer));
   },
 );
+
+projectionSnapshotLayer("ProjectionSnapshotQuery harness sync state", (it) => {
+  it.effect("hydrates compact harness sync state across command, detail, and shell reads", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_harness_chat_sync_message_links`;
+      yield* sql`DELETE FROM projection_harness_chat_sync_links`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, default_model_selection_json,
+          scripts_json, created_at, updated_at, deleted_at
+        ) VALUES (
+          'project-sync', 'Synced project', '/tmp/project-sync', NULL,
+          '[]', '2026-08-23T10:00:00.000Z', '2026-08-23T10:01:00.000Z', NULL
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode,
+          interaction_mode, latest_user_message_at, pending_approval_count,
+          pending_user_input_count, has_actionable_proposed_plan,
+          created_at, updated_at, deleted_at
+        ) VALUES (
+          'thread-sync', 'project-sync', 'Synced thread',
+          '{"instanceId":"codex-work","model":"gpt-5.6"}', 'full-access',
+          'default', NULL, 0, 0, 0,
+          '2026-08-23T10:00:00.000Z', '2026-08-23T10:01:00.000Z', NULL
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_harness_chat_sync_links (
+          thread_id, project_id, source_id, continuation_key, native_session_id,
+          provider_instance_id, provider_label, activity, source_updated_at, last_synced_at
+        ) VALUES (
+          'thread-sync', 'project-sync', 'codex-home', 'codex:/tmp/home', 'native-session-1',
+          'codex-work', 'Codex Work', 'active',
+          '2026-08-23T10:00:30.000Z', '2026-08-23T10:01:00.000Z'
+        )
+      `;
+      for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
+        yield* sql`
+          INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+          VALUES (${projector}, 3, '2026-08-23T10:01:00.000Z')
+        `;
+      }
+
+      const expected = {
+        providerInstanceId: ProviderInstanceId.make("codex-work"),
+        providerLabel: "Codex Work",
+        activity: "active" as const,
+        sourceUpdatedAt: "2026-08-23T10:00:30.000Z",
+        lastSyncedAt: "2026-08-23T10:01:00.000Z",
+      };
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      const fullSnapshot = yield* snapshotQuery.getSnapshot();
+      const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
+      const threadShell = yield* snapshotQuery.getThreadShellById(ThreadId.make("thread-sync"));
+      const threadDetail = yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-sync"));
+
+      assert.deepStrictEqual(commandReadModel.threads[0]?.harnessSync, expected);
+      assert.deepStrictEqual(fullSnapshot.threads[0]?.harnessSync, expected);
+      assert.deepStrictEqual(shellSnapshot.threads[0]?.harnessSync, expected);
+      assert.deepStrictEqual(
+        threadShell._tag === "Some" ? threadShell.value.harnessSync : null,
+        expected,
+      );
+      assert.deepStrictEqual(
+        threadDetail._tag === "Some" ? threadDetail.value.harnessSync : null,
+        expected,
+      );
+
+      yield* sql`
+        UPDATE projection_threads
+        SET archived_at = '2026-08-23T10:02:00.000Z'
+        WHERE thread_id = 'thread-sync'
+      `;
+      const archivedShell = yield* snapshotQuery.getArchivedShellSnapshot();
+      assert.deepStrictEqual(archivedShell.threads[0]?.harnessSync, expected);
+    }),
+  );
+});
 
 projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) => {
   // A thread shaped like real fan-out usage: user turns interleaved with

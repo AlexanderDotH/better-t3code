@@ -2,6 +2,7 @@ import {
   type AssemblyAiSpeechContext,
   AssemblyAiStreamingTokenError,
   type AssemblyAiStreamingTokenResult,
+  resolveBetterT3FeatureFlag,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -58,6 +59,11 @@ const make = Effect.gen(function* () {
           }),
       ),
     );
+    if (!resolveBetterT3FeatureFlag(currentSettings.betterT3Environment, "voice.assemblyAi")) {
+      return yield* new AssemblyAiStreamingTokenError({
+        reason: "AssemblyAI dictation is disabled in Better T3 settings.",
+      });
+    }
     const apiKey = currentSettings.speechTranscription.assemblyAi.apiKey.value.trim();
     if (apiKey.length === 0) {
       return yield* new AssemblyAiStreamingTokenError({

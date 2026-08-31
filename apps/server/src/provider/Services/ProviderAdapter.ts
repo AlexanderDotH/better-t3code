@@ -24,6 +24,8 @@ import type {
   ProviderSession,
   ProviderSessionStartInput,
   RuntimeSessionId,
+  ProviderUploadFeedbackInput,
+  ProviderUploadFeedbackResult,
   ThreadId,
   ProviderTurnStartResult,
   TurnId,
@@ -62,6 +64,18 @@ export interface ProviderAdapterCapabilities {
    * Declares how this adapter consumes T3-owned MCP server settings.
    */
   readonly mcp: ProviderMcpSupportMode;
+  /** Whether the adapter can fork a provider thread without replaying its transcript. */
+  readonly nativeThreadFork?: boolean;
+  /** Whether the adapter exposes provider-native manual compaction. */
+  readonly manualCompaction?: boolean;
+}
+
+export interface ProviderNativeThreadForkInput {
+  readonly sourceThreadId: ThreadId;
+  readonly destinationThreadId: ThreadId;
+  readonly sourceProviderThreadId: string;
+  readonly lastProviderTurnId?: string;
+  readonly session: ProviderSessionStartInput;
 }
 
 /** Exact provider runtime selected for an MCP inspection or mutation. */
@@ -129,12 +143,23 @@ export interface ProviderAdapterShape<TError> {
     input: ProviderSessionStartInput,
   ) => Effect.Effect<ProviderSession, TError>;
 
+  /** Fork a provider-native thread into a new T3 session when supported. */
+  readonly forkSession?: (
+    input: ProviderNativeThreadForkInput,
+  ) => Effect.Effect<ProviderSession, TError>;
+
   /**
    * Send a turn to an active provider session.
    */
   readonly sendTurn: (
     input: ProviderSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, TError>;
+
+  /** Compact the active provider thread when supported. */
+  readonly compactThread?: (
+    threadId: ThreadId,
+    expectedRuntimeSessionId?: RuntimeSessionId,
+  ) => Effect.Effect<void, TError>;
 
   /**
    * Interrupt an active turn.
@@ -200,6 +225,13 @@ export interface ProviderAdapterShape<TError> {
     threadId: ThreadId,
     numTurns: number,
   ) => Effect.Effect<ProviderThreadSnapshot, TError>;
+
+  /**
+   * Upload a thread to the provider when the adapter supports feedback.
+   */
+  readonly uploadFeedback?: (
+    input: ProviderUploadFeedbackInput,
+  ) => Effect.Effect<ProviderUploadFeedbackResult, TError>;
 
   /**
    * Stop all sessions owned by this adapter.

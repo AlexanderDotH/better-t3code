@@ -61,15 +61,21 @@ export function resolveProjectThreadPreview<T>(
 export function resolveProjectThreadSections<T>(
   input: ProjectThreadSectionsInput<T>,
 ): ProjectThreadSections<T> {
-  const nonSettledItems: T[] = [];
+  const priorityItems: T[] = [];
+  const ordinaryNonSettledItems: T[] = [];
   const settledItems: T[] = [];
   for (const item of input.items) {
+    if (input.alwaysVisible(item)) {
+      priorityItems.push(item);
+      continue;
+    }
     if (input.isSettled(item)) {
       settledItems.push(item);
       continue;
     }
-    nonSettledItems.push(item);
+    ordinaryNonSettledItems.push(item);
   }
+  const nonSettledItems = [...priorityItems, ...ordinaryNonSettledItems];
 
   const nonSettledPreview = resolveProjectThreadPreview({
     items: nonSettledItems,

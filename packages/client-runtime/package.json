@@ -15,6 +15,10 @@
       "types": "./src/environment/index.ts",
       "default": "./src/environment/index.ts"
     },
+    "./markdown-images": {
+      "types": "./src/markdownImages.ts",
+      "default": "./src/markdownImages.ts"
+    },
     "./errors": {
       "types": "./src/errors/index.ts",
       "default": "./src/errors/index.ts"
@@ -39,6 +43,10 @@
       "types": "./src/modelOptions.ts",
       "default": "./src/modelOptions.ts"
     },
+    "./openrouter-model-selection": {
+      "types": "./src/openRouterModelSelection.ts",
+      "default": "./src/openRouterModelSelection.ts"
+    },
     "./reasoning-recommendation": {
       "types": "./src/reasoningRecommendation.ts",
       "default": "./src/reasoningRecommendation.ts"
@@ -51,6 +59,10 @@
       "types": "./src/chatVisualModeSync.ts",
       "default": "./src/chatVisualModeSync.ts"
     },
+    "./interface-language-sync": {
+      "types": "./src/interfaceLanguageSync.ts",
+      "default": "./src/interfaceLanguageSync.ts"
+    },
     "./project-thread-preview": {
       "types": "./src/projectThreadPreview.ts",
       "default": "./src/projectThreadPreview.ts"
@@ -58,6 +70,14 @@
     "./resource-protection": {
       "types": "./src/resourceProtection.ts",
       "default": "./src/resourceProtection.ts"
+    },
+    "./better-t3-status": {
+      "types": "./src/betterT3Status.ts",
+      "default": "./src/betterT3Status.ts"
+    },
+    "./knowledge-graph": {
+      "types": "./src/knowledgeGraphViewModel.ts",
+      "default": "./src/knowledgeGraphViewModel.ts"
     },
     "./plan-implementation": {
       "types": "./src/planImplementation.ts",
@@ -87,6 +107,10 @@
       "types": "./src/providerSkills.ts",
       "default": "./src/providerSkills.ts"
     },
+    "./providerSettingsForm": {
+      "types": "./src/providerSettingsForm.ts",
+      "default": "./src/providerSettingsForm.ts"
+    },
     "./relay": {
       "types": "./src/relay/index.ts",
       "default": "./src/relay/index.ts"
@@ -103,6 +127,10 @@
       "types": "./src/state/agentSettings.ts",
       "default": "./src/state/agentSettings.ts"
     },
+    "./state/attachments": {
+      "types": "./src/state/attachments.ts",
+      "default": "./src/state/attachments.ts"
+    },
     "./state/connections": {
       "types": "./src/state/connections.ts",
       "default": "./src/state/connections.ts"
@@ -118,6 +146,10 @@
     "./state/git": {
       "types": "./src/state/git.ts",
       "default": "./src/state/git.ts"
+    },
+    "./state/knowledge-graph": {
+      "types": "./src/state/knowledgeGraph.ts",
+      "default": "./src/state/knowledgeGraph.ts"
     },
     "./state/models": {
       "types": "./src/state/models.ts",
@@ -202,6 +234,10 @@
     "./state/thread-abort": {
       "types": "./src/state/threadAbort.ts",
       "default": "./src/state/threadAbort.ts"
+    },
+    "./state/thread-retry": {
+      "types": "./src/state/threadRetry.ts",
+      "default": "./src/state/threadRetry.ts"
     },
     "./state/vcs": {
       "types": "./src/state/vcs.ts",

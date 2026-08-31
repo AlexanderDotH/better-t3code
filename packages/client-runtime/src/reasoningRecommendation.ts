@@ -5,6 +5,7 @@ import type {
   ProviderOptionSelection,
   SelectProviderOptionDescriptor,
 } from "@t3tools/contracts";
+import { isAutoReasoningEnabled } from "@t3tools/shared/model";
 
 const REASONING_OPTION_IDS = new Set(["reasoningEffort", "effort"]);
 const TOOL_LIFECYCLE_ITEM_TYPES = new Set([
@@ -381,6 +382,7 @@ export function deriveReasoningRecommendation(input: {
   readonly handledEvidenceTurnId: string | null | undefined;
 }): ReasoningRecommendation | null {
   if (
+    isAutoReasoningEnabled(input.durableSelection) ||
     !input.threadIdle ||
     input.latestCompletedTurnId === null ||
     input.latestCompletedTurnId === input.handledEvidenceTurnId

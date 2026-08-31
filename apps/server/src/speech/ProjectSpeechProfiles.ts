@@ -27,6 +27,7 @@ import { isIgnoredProjectSpeechPath } from "./ProjectSpeechPathPolicy.ts";
 import { ProjectSpeechWorkspaceScanner } from "./ProjectSpeechWorkspaceScanner.ts";
 
 export const PROJECT_SPEECH_PROFILE_INDEX_FILE_LIMIT = 24;
+export const PROJECT_SPEECH_PROFILE_INDEX_TIMEOUT = "5 seconds";
 export const INDEX_FALLBACK_WARNING =
   "Full project indexing was unavailable; using a basic speech profile.";
 
@@ -294,15 +295,10 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  const buildBasicContent = Effect.fn("ProjectSpeechProfiles.buildBasicContent")(function* (
-    project: OrchestrationProjectShell,
-  ) {
-    const entries = yield* workspaceScanner.scan(project.workspaceRoot).pipe(
-      Effect.map((result) => result.entries),
-      Effect.orElseSucceed(() => []),
-    );
-    return buildBasicProjectSpeechProfileContent(indexerInput(project, entries, []));
-  });
+  const buildBasicContent = Effect.fn("ProjectSpeechProfiles.buildBasicContent")(
+    (project: OrchestrationProjectShell) =>
+      Effect.sync(() => buildBasicProjectSpeechProfileContent(indexerInput(project, [], []))),
+  );
 
   const get: ProjectSpeechProfiles["Service"]["get"] = Effect.fn("ProjectSpeechProfiles.get")(
     function* (projectId) {
@@ -327,20 +323,26 @@ export const make = Effect.gen(function* () {
   const index: ProjectSpeechProfiles["Service"]["index"] = Effect.fn("ProjectSpeechProfiles.index")(
     function* (projectId) {
       const project = yield* resolveProject(projectId);
-      const indexed = yield* buildIndexedContent(project).pipe(
-        Effect.map((content) => ({ source: "indexed" as const, content, warning: null })),
-        Effect.catch(() =>
-          buildBasicContent(project).pipe(
-            Effect.map((content) => ({
-              source: "basic" as const,
-              content,
-              warning: INDEX_FALLBACK_WARNING,
-            })),
-          ),
-        ),
+      const indexedContent = yield* buildIndexedContent(project).pipe(
+        Effect.timeoutOption(PROJECT_SPEECH_PROFILE_INDEX_TIMEOUT),
+        Effect.orElseSucceed(() => Option.none<ProjectSpeechProfileContent>()),
+        Effect.catchDefect(() => Effect.succeed(Option.none<ProjectSpeechProfileContent>())),
       );
-      return yield* persist(project, indexed.source, indexed.content, indexed.warning);
+      if (Option.isSome(indexedContent)) {
+        return yield* persist(project, "indexed", indexedContent.value, null);
+      }
+      const basicContent = yield* buildBasicContent(project);
+      return yield* persist(project, "basic", basicContent, INDEX_FALLBACK_WARNING);
     },
+    Effect.catchDefect((cause) =>
+      Effect.fail(
+        new ProjectSpeechProfileError({
+          operation: "index",
+          reason: "The project speech profile could not be indexed.",
+          cause,
+        }),
+      ),
+    ),
   );
 
   const contextForProject: ProjectSpeechProfiles["Service"]["contextForProject"] = Effect.fn(

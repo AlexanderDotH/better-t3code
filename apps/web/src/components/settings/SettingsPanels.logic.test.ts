@@ -8,6 +8,7 @@ import {
 import { getBackgroundActivityPresetSettings } from "@t3tools/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
 import { describe, expect, it } from "vite-plus/test";
+import { translateInterfaceMessage } from "@t3tools/shared/interfaceLanguage";
 import {
   backgroundActivitySharedPolicySettings,
   buildProviderInstanceUpdatePatch,
@@ -153,6 +154,27 @@ describe("project grouping toggle", () => {
 });
 
 describe("formatDiagnosticsDescription", () => {
+  it("localizes app-owned diagnostics prose while preserving endpoint values", () => {
+    const french = (
+      key: Parameters<typeof translateInterfaceMessage>[1],
+      values?: Readonly<Record<string, string | number>>,
+    ) => translateInterfaceMessage("fr", key, values);
+
+    expect(
+      formatDiagnosticsDescription(
+        {
+          localTracingEnabled: false,
+          otlpTracesEnabled: true,
+          otlpTracesUrl: "http://localhost:4318/v1/traces",
+          otlpMetricsEnabled: false,
+        },
+        french,
+      ),
+    ).toBe(
+      "Journaux du terminal uniquement. Export des traces OTEL vers http://localhost:4318/v1/traces.",
+    );
+  });
+
   it("collapses trace and metric URLs that share the same OTEL base path", () => {
     expect(
       formatDiagnosticsDescription({

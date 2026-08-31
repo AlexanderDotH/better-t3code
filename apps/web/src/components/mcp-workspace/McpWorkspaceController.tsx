@@ -29,6 +29,7 @@ import { ensureLocalApi } from "~/localApi";
 import { agentSettingsEnvironment } from "~/state/agentSettings";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 import type { ChatComposerHandle } from "../chat/ChatComposer";
 import { McpServersSettingsPanel } from "../settings/McpServersSettings";
@@ -211,6 +212,7 @@ interface RuntimePanelProps {
 }
 
 function McpExactRuntimePanel(props: RuntimePanelProps) {
+  const translate = useInterfaceTranslator().message;
   const runRuntimeDetailsQuery = useAtomQueryRunner(
     agentSettingsEnvironment.mcp.runtimeServerDetailsQuery,
     { reportFailure: false },
@@ -365,8 +367,8 @@ function McpExactRuntimePanel(props: RuntimePanelProps) {
         emptyMessage={
           props.runtime.error ??
           (props.runtime.pending
-            ? "Loading this exact MCP runtime session…"
-            : "This runtime session has ended or has no active MCP servers.")
+            ? translate("settings.mcp.workspace.loadingExactRuntime")
+            : translate("settings.mcp.workspace.runtimeEnded"))
         }
         providerDisplayName={props.providerDisplayName}
         servers={props.runtime.snapshot?.servers ?? []}
@@ -379,13 +381,11 @@ function McpExactRuntimePanel(props: RuntimePanelProps) {
 }
 
 function UpgradeRequired() {
+  const translate = useInterfaceTranslator().message;
   return (
     <div className="mcp-workspace-panel__empty" data-mcp-workspace-upgrade-required="true">
-      <strong>Server upgrade required</strong>
-      <p>
-        Configuration remains available, but this server version cannot provide the MCP workspace
-        runtime and context streams.
-      </p>
+      <strong>{translate("settings.mcp.workspace.upgradeRequired")}</strong>
+      <p>{translate("settings.mcp.workspace.upgradeDescription")}</p>
     </div>
   );
 }
@@ -395,19 +395,21 @@ function RuntimeUnavailable({
 }: {
   readonly selectedContextMissing: boolean;
 }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <div className="mcp-workspace-panel__empty">
-      <strong>No exact runtime session</strong>
+      <strong>{translate("settings.mcp.workspace.noRuntime")}</strong>
       <p>
         {selectedContextMissing
-          ? "The selected runtime has ended or is no longer retained. Choose another exact session."
-          : "Start a provider session to inspect connected servers, tools, resources, and templates."}
+          ? translate("settings.mcp.workspace.selectedRuntimeEnded")
+          : translate("settings.mcp.workspace.startSession")}
       </p>
     </div>
   );
 }
 
 function McpWorkspaceControllerView(props: McpWorkspaceCardControllerProps) {
+  const translate = useInterfaceTranslator().message;
   const runtime = useContext(McpWorkspaceRuntimeContext);
   const [activeSection, setActiveSection] = useState<McpWorkspaceSection>("servers");
   const expandButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -475,12 +477,12 @@ function McpWorkspaceControllerView(props: McpWorkspaceCardControllerProps) {
       workbench={
         <WorkspaceCardDrawerShell
           activeTab={activeSection}
-          ariaLabel="MCP workspace"
-          collapseLabel="Collapse MCP workspace"
-          resizeLabel="Resize MCP workspace vertically"
+          ariaLabel={translate("settings.mcp.workspace.title")}
+          collapseLabel={translate("settings.mcp.workspace.collapse")}
+          resizeLabel={translate("settings.mcp.workspace.resize")}
           storageKey={MCP_DRAWER_STORAGE_KEY}
           tabs={[]}
-          title="MCP workspace"
+          title={translate("settings.mcp.workspace.title")}
           open={props.expanded}
           {...(props.drawerAvailableHeight === undefined
             ? {}
@@ -499,7 +501,11 @@ function McpWorkspaceControllerView(props: McpWorkspaceCardControllerProps) {
             activeSection={activeSection}
             contexts={runtime.contexts.map((context) => ({
               id: mcpRuntimeContextId(context),
-              label: `${context.state === "active" ? "Active" : "Ended"} · ${String(context.threadId).slice(0, 8)} · ${String(context.runtimeSessionId).slice(0, 8)}`,
+              label: `${translate(
+                context.state === "active"
+                  ? "settings.mcp.workspace.active"
+                  : "settings.mcp.workspace.ended",
+              )} · ${String(context.threadId).slice(0, 8)} · ${String(context.runtimeSessionId).slice(0, 8)}`,
             }))}
             providers={deriveMcpWorkspaceProviderOptions(props.providers)}
             selectedContextId={

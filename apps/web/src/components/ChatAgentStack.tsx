@@ -10,6 +10,7 @@ import {
 } from "react";
 
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 
 import {
   resolveSubagentDisplayName,
@@ -69,6 +70,7 @@ export const ChatAgentStack = memo(function ChatAgentStack({
   onSelectSubagent,
   className,
 }: ChatAgentStackProps) {
+  const translate = useInterfaceTranslator().message;
   const lifecycle = useSubagentLifecycleStack(subagents);
   const compactContentId = useId();
   const [compactOpen, setCompactOpen] = useState(false);
@@ -88,14 +90,14 @@ export const ChatAgentStack = memo(function ChatAgentStack({
       <button
         type="button"
         data-subagent-compact-trigger
-        aria-label={`${subagents.length} ${subagents.length === 1 ? "agent" : "agents"}`}
+        aria-label={translate("chat.agent.count", { count: subagents.length })}
         aria-expanded={compactOpen}
         aria-controls={compactContentId}
         className="subagent-stack-compact-trigger pointer-events-auto h-7 w-fit items-center gap-1.5 rounded-full border border-border/65 bg-background/92 px-2.5 text-xs font-medium text-foreground shadow-md/8 outline-none backdrop-blur-xl transition-[background-color,border-color,box-shadow] hover:border-border hover:bg-background hover:shadow-md/12 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         onClick={() => setCompactOpen((current) => !current)}
       >
         <BotIcon aria-hidden="true" className="size-3.5 text-sky-600 dark:text-sky-300/80" />
-        <span>Agents</span>
+        <span>{translate("chat.agent.heading")}</span>
         <span className="tabular-nums">{subagents.length}</span>
         <ChevronRightIcon
           aria-hidden="true"
@@ -109,7 +111,11 @@ export const ChatAgentStack = memo(function ChatAgentStack({
           scrollFade
         >
           <div className="flex w-full flex-col items-start py-0.5">
-            <ul className="w-full" role="list" aria-label="Active and recent agents">
+            <ul
+              className="w-full"
+              role="list"
+              aria-label={translate("chat.agent.activeRecentAria")}
+            >
               {lifecycle.visible.map((entry) => (
                 <PresenceAgentItem
                   key={entry.agent.id}
@@ -244,6 +250,7 @@ function ArchivedAgentSection({
   readonly selectedSubagentId: SubagentId | null;
   readonly onSelectSubagent: (subagentId: SubagentId) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const selectedAgentIsArchived = agents.some((agent) => agent.id === selectedSubagentId);
   const [open, setOpen] = useState(selectedAgentIsArchived);
   const [renderLimit, setRenderLimit] = useState(ARCHIVED_AGENT_RENDER_PAGE_SIZE);
@@ -267,7 +274,7 @@ function ArchivedAgentSection({
     return null;
   }
 
-  const archivedLabel = `${agents.length} archived ${agents.length === 1 ? "agent" : "agents"}`;
+  const archivedLabel = translate("chat.agent.archivedCount", { count: agents.length });
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="w-full">
       <CollapsibleTrigger
@@ -276,7 +283,7 @@ function ArchivedAgentSection({
         className="pointer-events-auto group flex h-7 w-fit max-w-52 items-center gap-1.5 rounded-full border border-border/55 bg-background/78 px-2.5 text-xs font-medium text-muted-foreground/70 shadow-sm/5 outline-none backdrop-blur-xl transition-[background-color,border-color,color] hover:border-border/80 hover:bg-background/92 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
       >
         <ArchiveIcon aria-hidden="true" className="size-3.5" />
-        <span>History</span>
+        <span>{translate("chat.agent.history")}</span>
         <span className="tabular-nums">{agents.length}</span>
         <ChevronRightIcon
           aria-hidden="true"
@@ -284,7 +291,7 @@ function ArchivedAgentSection({
         />
       </CollapsibleTrigger>
       <CollapsiblePanel className="mt-1 w-full transition-[height,opacity] data-starting-style:opacity-0 data-ending-style:opacity-0">
-        <ul className="w-full" role="list" aria-label="Archived agents">
+        <ul className="w-full" role="list" aria-label={translate("chat.agent.archivedAria")}>
           {renderedAgents.map((agent) => (
             <li key={agent.id} className="mb-1 h-7">
               <ChatAgentPill
@@ -302,7 +309,9 @@ function ArchivedAgentSection({
             className="pointer-events-auto mt-1 h-7 rounded-full px-2.5 text-left text-xs font-medium text-muted-foreground outline-none hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
             onClick={() => setRenderLimit((current) => current + ARCHIVED_AGENT_RENDER_PAGE_SIZE)}
           >
-            Show {Math.min(ARCHIVED_AGENT_RENDER_PAGE_SIZE, remainingAgentCount)} more
+            {translate("chat.agent.showMore", {
+              count: Math.min(ARCHIVED_AGENT_RENDER_PAGE_SIZE, remainingAgentCount),
+            })}
           </button>
         ) : null}
       </CollapsiblePanel>

@@ -10,7 +10,6 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useEffect, useRef } from "react";
 import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useThemeColor } from "../../lib/useThemeColor";
 import { cn } from "../../lib/cn";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
@@ -23,28 +22,33 @@ import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import { getProjectScopeSelectionTarget } from "./new-task-project-selection";
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 type NewTaskRouteParams = {
   readonly incomingShareId?: string | string[];
 };
 
-function deriveProjectEmptyState(catalogState: WorkspaceState): {
+function deriveProjectEmptyState(
+  catalogState: WorkspaceState,
+  translator: InterfaceTranslator,
+): {
   readonly title: string;
   readonly detail: string;
   readonly loading: boolean;
 } {
   if (catalogState.isLoadingConnections) {
     return {
-      title: "Loading environments",
-      detail: "Checking saved environments on this device.",
+      title: translator.message("mobile.home.loadingEnvironments"),
+      detail: translator.message("mobile.home.checkingEnvironments"),
       loading: true,
     };
   }
 
   if (!catalogState.hasConnections) {
     return {
-      title: "No environments connected",
-      detail: "Add an environment before creating a task.",
+      title: translator.message("mobile.home.noEnvironments"),
+      detail: translator.message("mobile.thread.addBeforeTask"),
       loading: false,
     };
   }
@@ -56,10 +60,8 @@ function deriveProjectEmptyState(catalogState: WorkspaceState): {
     !catalogState.hasLoadedShellSnapshot
   ) {
     return {
-      title: "Environment unavailable",
-      detail:
-        catalogState.connectionError ??
-        "The saved environment is offline. Check the URL or start the environment, then retry.",
+      title: translator.message("mobile.home.environmentUnavailable"),
+      detail: catalogState.connectionError ?? translator.message("mobile.home.environmentOffline"),
       loading: false,
     };
   }
@@ -70,20 +72,21 @@ function deriveProjectEmptyState(catalogState: WorkspaceState): {
     catalogState.connectionError === null
   ) {
     return {
-      title: "Connecting to environment",
-      detail: "Loading projects from the saved environment.",
+      title: translator.message("mobile.home.connectingEnvironment"),
+      detail: translator.message("mobile.thread.loadingProjects"),
       loading: true,
     };
   }
 
   return {
-    title: "No projects found",
-    detail: "The connected environment did not report any projects.",
+    title: translator.message("mobile.home.noProjects"),
+    detail: translator.message("mobile.home.noProjectsDescription"),
     loading: false,
   };
 }
 
 export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRouteParams | undefined>) {
+  const translator = useMobileInterfaceTranslator();
   const projects = useProjects();
   const { projectScopes, selectedEnvironmentId, setProject } = useNewTaskFlow();
   const { state: catalogState } = useWorkspaceState();
@@ -91,8 +94,6 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const isFocused = useIsFocused();
   const { layout } = useAdaptiveWorkspaceLayout();
   const insets = useSafeAreaInsets();
-  const chevronColor = useThemeColor("--color-chevron");
-  const accentColor = useThemeColor("--color-icon-muted");
   const { getShare, releaseShareReservation } = useIncomingShare();
   const routeShareId = Array.isArray(route.params?.incomingShareId)
     ? route.params.incomingShareId[0]
@@ -100,13 +101,17 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const incomingShare = routeShareId ? getShare(routeShareId) : null;
   const incomingShareSubtitle = incomingShare
     ? incomingShare.attachments.length === 0
-      ? "Choose a project for what you shared"
+      ? translator.message("mobile.thread.chooseShared")
       : incomingShare.attachments.length === 1
-        ? "Choose a project for the image you shared"
-        : `Choose a project for the ${incomingShare.attachments.length} images you shared`
+        ? translator.message("mobile.thread.chooseSharedImage")
+        : translator.message("mobile.thread.chooseSharedImages", {
+            count: incomingShare.attachments.length,
+          })
     : null;
-  const screenTitle = incomingShare ? "Start a task" : "Choose project";
-  const projectEmptyState = deriveProjectEmptyState(catalogState);
+  const screenTitle = translator.message(
+    incomingShare ? "mobile.thread.startTaskTitle" : "mobile.thread.chooseProject",
+  );
+  const projectEmptyState = deriveProjectEmptyState(catalogState, translator);
   const resumedDestinationKeyRef = useRef<string | null>(null);
   const reservedDestinationProject = incomingShare?.destination
     ? (projects.find(
@@ -122,10 +127,10 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         await releaseShareReservation(incomingShare.id, incomingShare.destination);
       } catch (error) {
         Alert.alert(
-          "Could not change project",
+          translator.message("mobile.thread.changeProjectFailed"),
           error instanceof Error
             ? error.message
-            : "The shared content reservation could not be updated.",
+            : translator.message("mobile.thread.shareReservationFailed"),
         );
         return;
       }
@@ -192,7 +197,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               catalogState.hasReadyEnvironment
                 ? [
                     {
-                      accessibilityLabel: "Add project",
+                      accessibilityLabel: translator.message("mobile.thread.addProject"),
                       icon: "plus",
                       onPress: () => navigation.dispatch(StackActions.push("AddProject")),
                     },
@@ -212,7 +217,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
           <NativeHeaderToolbar placement="right">
             {layout.usesSplitView ? (
               <NativeHeaderToolbar.Button
-                accessibilityLabel="Close new task"
+                accessibilityLabel={translator.message("mobile.thread.closeNewTask")}
                 icon="xmark"
                 onPress={() => navigation.goBack()}
                 separateBackground
@@ -242,7 +247,9 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       >
         {projectScopes.length === 0 ? (
           <View collapsable={false} className="items-center gap-3 rounded-[24px] bg-card px-6 py-8">
-            {projectEmptyState.loading ? <ActivityIndicator color={accentColor} /> : null}
+            {projectEmptyState.loading ? (
+              <ActivityIndicator colorClassName={"accent-icon-muted"} />
+            ) : null}
             <Text className="text-center text-lg font-t3-bold text-foreground">
               {projectEmptyState.title}
             </Text>
@@ -255,7 +262,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                 onPress={() => navigation.navigate("ConnectionsNew")}
               >
                 <Text className="text-sm font-t3-bold text-primary-foreground">
-                  Add environment
+                  {translator.message("mobile.connection.addEnvironment")}
                 </Text>
               </Pressable>
             ) : (
@@ -264,7 +271,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                 onPress={() => navigation.dispatch(StackActions.push("AddProject"))}
               >
                 <Text className="text-sm font-t3-bold text-primary-foreground">
-                  Add new project
+                  {translator.message("mobile.thread.addNewProject")}
                 </Text>
               </Pressable>
             )}
@@ -308,7 +315,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                     <SymbolView
                       name="chevron.right"
                       size={14}
-                      tintColor={chevronColor}
+                      tintColorClassName={"accent-chevron"}
                       type="monochrome"
                     />
                   </Pressable>

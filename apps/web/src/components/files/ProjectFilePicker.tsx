@@ -1,8 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { useActiveProjectTarget, type ActiveProjectTarget } from "~/hooks/useActiveProjectTarget";
 import { useTheme } from "~/hooks/useTheme";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 
@@ -43,26 +45,36 @@ function HighlightedFuzzyText(props: {
   return <span className="text-muted-foreground">{parts}</span>;
 }
 
-function getEmptyStateMessage(query: string, error: string | null, isPending: boolean): string {
+function getEmptyStateMessage(
+  query: string,
+  error: string | null,
+  isPending: boolean,
+  translate: InterfaceTranslator["message"],
+): string {
   if (error) return error;
   const isSearching = query.trim().length > 0;
-  if (isPending) return isSearching ? "Searching workspace files…" : "Indexing workspace files…";
-  return isSearching ? "No matching files." : "No files found.";
+  if (isPending) {
+    return isSearching
+      ? translate("browser.files.searchingWorkspace")
+      : translate("browser.files.indexingWorkspace");
+  }
+  return isSearching ? translate("browser.files.noMatching") : translate("browser.files.noneFound");
 }
 
 function EmptyProjectFilePicker() {
+  const translate = useInterfaceTranslator().message;
   return (
     <CommandPaletteContent
-      aria-label="File picker"
-      escapeLabel="Back"
-      footerActionLabel="Open file"
-      inputProps={{ disabled: true, placeholder: "Search files…" }}
+      aria-label={translate("browser.files.picker")}
+      escapeLabel={translate("browser.files.back")}
+      footerActionLabel={translate("browser.files.openFile")}
+      inputProps={{ disabled: true, placeholder: translate("browser.files.searchEllipsis") }}
       mode="none"
       testId="project-file-picker"
       value=""
     >
       <div className="py-10 text-center text-sm text-muted-foreground">
-        Open a project to search its files.
+        {translate("browser.files.openProjectToSearch")}
       </div>
     </CommandPaletteContent>
   );
@@ -70,6 +82,7 @@ function EmptyProjectFilePicker() {
 
 function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveProjectTarget }) {
   const { target } = props;
+  const translate = useInterfaceTranslator().message;
   const [query, setQuery] = useState("");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const result = useProjectFilePickerQuery(
@@ -113,15 +126,15 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
     [hasMatchedQuery, matches, resolvedTheme, target.threadRef],
   );
 
-  const emptyStateMessage = getEmptyStateMessage(query, result.error, result.isPending);
+  const emptyStateMessage = getEmptyStateMessage(query, result.error, result.isPending, translate);
 
   return (
     <CommandPaletteContent
-      aria-label="File picker"
+      aria-label={translate("browser.files.picker")}
       autoHighlight="always"
-      escapeLabel="Back"
-      footerActionLabel="Open file"
-      inputProps={{ placeholder: "Search files…" }}
+      escapeLabel={translate("browser.files.back")}
+      footerActionLabel={translate("browser.files.openFile")}
+      inputProps={{ placeholder: translate("browser.files.searchEllipsis") }}
       mode="none"
       onItemHighlighted={(value) => {
         setHighlightedItemValue(typeof value === "string" ? value : null);

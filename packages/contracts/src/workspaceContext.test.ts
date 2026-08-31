@@ -85,6 +85,7 @@ describe("WorkspaceContextResult", () => {
           lineEnd: 4,
           text: "export const context = true;",
           truncated: false,
+          revision: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         },
         {
           status: "error",

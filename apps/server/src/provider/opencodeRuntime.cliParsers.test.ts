@@ -3,11 +3,30 @@ import * as NodeAssert from "node:assert/strict";
 import { describe, it } from "vite-plus/test";
 
 import {
+  buildLocalOpenCodeInventoryArgs,
+  buildLocalOpenCodeServerArgs,
   parseAgentListCliOutput,
   parseModelsCliOutput,
   parseOpenCodeModelSlug,
   parseSkillsCliOutput,
+  toOpenCodeFileParts,
 } from "./opencodeRuntime.ts";
+
+describe("local OpenCode process arguments", () => {
+  it("disables external plugins for the owned server and matching inventory commands", () => {
+    NodeAssert.deepStrictEqual(buildLocalOpenCodeServerArgs("127.0.0.1", 4301), [
+      "serve",
+      "--pure",
+      "--hostname=127.0.0.1",
+      "--port=4301",
+    ]);
+    NodeAssert.deepStrictEqual(buildLocalOpenCodeInventoryArgs(), {
+      models: ["models", "--verbose", "--pure"],
+      agents: ["agent", "list", "--pure"],
+      skills: ["debug", "skill", "--pure"],
+    });
+  });
+});
 
 describe("parseModelsCliOutput", () => {
   it("parses a single model from a single provider", () => {
@@ -320,7 +339,7 @@ describe("parseOpenCodeModelSlug", () => {
 });
 
 describe("parseSkillsCliOutput", () => {
-  it("parses skill metadata from the CLI JSON output", () => {
+  it("parses only skill metadata from the CLI JSON output", () => {
     const result = parseSkillsCliOutput(
       JSON.stringify([
         {
@@ -337,12 +356,46 @@ describe("parseSkillsCliOutput", () => {
         name: "review-pr",
         description: "Review a pull request.",
         location: "/tmp/review-pr/SKILL.md",
-        content: "---\nname: review-pr\n---\n",
       },
     ]);
   });
 
   it("degrades malformed output to an empty skill list", () => {
     NodeAssert.deepEqual(parseSkillsCliOutput("not json"), []);
+  });
+});
+
+describe("toOpenCodeFileParts", () => {
+  const attachment = (mimeType: string, sizeBytes = 12) => ({
+    type: "file" as const,
+    id: "thread-1-00000000-0000-4000-8000-000000000001-bin",
+    name: "attachment",
+    mimeType,
+    sizeBytes,
+  });
+
+  it("sends supported images, text, and PDFs natively and skips what models reject", () => {
+    const parts = toOpenCodeFileParts({
+      attachments: [
+        attachment("application/pdf"),
+        attachment("text/markdown"),
+        attachment("image/png"),
+        // A ZIP file part makes OpenCode's Anthropic path throw before the
+        // turn starts; it must ride only as the prompt's file path line.
+        attachment("application/zip"),
+        attachment("application/octet-stream"),
+        // Image formats the model APIs reject stay on the fallback path too.
+        attachment("image/bmp"),
+        attachment("image/svg+xml"),
+        // Over the direct-attachment limit: path fallback even for a PDF.
+        attachment("application/pdf", 21 * 1024 * 1024),
+      ],
+      resolveAttachmentPath: () => "/tmp/attachment",
+    });
+
+    NodeAssert.deepEqual(
+      parts.map((part) => part.mime),
+      ["application/pdf", "text/markdown", "image/png"],
+    );
   });
 });

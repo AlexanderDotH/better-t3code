@@ -49,6 +49,7 @@ import { projectActivityPayload } from "../ActivityPayloadProjection.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { canReplaceThreadTitle } from "../threadTitles.ts";
+import { findOpenPendingInteractions } from "../pendingInteractionLifecycle.ts";
 import {
   isActiveSubagentStatus,
   settleSubagentAfterRuntimeLoss,
@@ -474,7 +475,7 @@ function sessionStatusAllowsActiveTurn(
 
 function requestKindFromCanonicalRequestType(
   requestType: string | undefined,
-): "command" | "file-read" | "file-change" | undefined {
+): "command" | "file-read" | "file-change" | "mcp-elicitation" | undefined {
   switch (requestType) {
     case "command_execution_approval":
     case "exec_command_approval":
@@ -484,6 +485,8 @@ function requestKindFromCanonicalRequestType(
     case "file_change_approval":
     case "apply_patch_approval":
       return "file-change";
+    case "mcp_elicitation_approval":
+      return "mcp-elicitation";
     default:
       return undefined;
   }
@@ -564,12 +567,16 @@ export function runtimeEventToActivities(
                 ? "File-read approval requested"
                 : requestKind === "file-change"
                   ? "File-change approval requested"
-                  : "Approval requested",
+                  : requestKind === "mcp-elicitation"
+                    ? "App access approval requested"
+                    : "Approval requested",
           payload: {
             requestId: toApprovalRequestId(event.requestId),
             ...(requestKind ? { requestKind } : {}),
             requestType: event.payload.requestType,
             ...(event.payload.detail ? { detail: event.payload.detail } : {}),
+            ...(event.payload.appName ? { appName: event.payload.appName } : {}),
+            ...(event.payload.options ? { options: event.payload.options } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -1218,6 +1225,56 @@ const make = Effect.gen(function* () {
     crypto.randomUUIDv4.pipe(
       Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
     );
+  const latestRootUsage = new Map<ThreadId, ThreadTokenUsageSnapshot>();
+  const lastCompactionAttempt = new Map<ThreadId, number>();
+
+  const maybeCompactAtMilestone = Effect.fn("maybeCompactAtMilestone")(function* (input: {
+    readonly thread: OrchestrationThread;
+    readonly settledSubagentId?: SubagentId;
+    readonly settledSubagentStatus?: OrchestrationSubagentSummary["status"];
+  }) {
+    const usage = latestRootUsage.get(input.thread.id);
+    if (
+      usage?.maxTokens === undefined ||
+      usage.usedTokens < Math.floor(usage.maxTokens * 0.5) ||
+      lastCompactionAttempt.get(input.thread.id) === usage.usedTokens
+    ) {
+      return;
+    }
+    const session = input.thread.session;
+    if (
+      session?.runtimeSessionId === null ||
+      session?.runtimeSessionId === undefined ||
+      session.providerInstanceId === undefined ||
+      session.status === "running" ||
+      session.status === "starting" ||
+      session.activeTurnId !== null
+    ) {
+      return;
+    }
+    const hasActiveChild = input.thread.subagents.some((subagent) =>
+      subagent.id === input.settledSubagentId && input.settledSubagentStatus !== undefined
+        ? isActiveSubagentStatus(input.settledSubagentStatus)
+        : isActiveSubagentStatus(subagent.status),
+    );
+    if (hasActiveChild) return;
+    const pending = findOpenPendingInteractions({ activities: input.thread.activities });
+    if (pending.approvals.length > 0 || pending.userInputs.length > 0) return;
+    const capabilities = yield* providerService.getCapabilities(session.providerInstanceId);
+    if (capabilities.manualCompaction !== true) return;
+
+    lastCompactionAttempt.set(input.thread.id, usage.usedTokens);
+    yield* providerService.compactThread(input.thread.id, session.runtimeSessionId).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider milestone compaction failed", {
+          threadId: input.thread.id,
+          usedTokens: usage.usedTokens,
+          maxTokens: usage.maxTokens,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+  });
 
   const synchronizeSubagentBackgroundLiveness = (
     threadId: ThreadId,
@@ -2171,6 +2228,9 @@ const make = Effect.gen(function* () {
         return;
       }
       const runtimeSessionId = projectedRuntimeSessionId ?? event.runtimeSessionId ?? null;
+      if (event.type === "thread.token-usage.updated" && event.subagentId === undefined) {
+        latestRootUsage.set(thread.id, event.payload.usage);
+      }
 
       let loadedThreadDetail: OrchestrationThread | null | undefined;
       const getLoadedThreadDetail = () =>
@@ -2255,6 +2315,16 @@ const make = Effect.gen(function* () {
           updatedAt: now,
         });
         synchronizeSubagentBackgroundLiveness(thread.id, subagent, event.payload.state);
+        if (!isActiveSubagentStatus(event.payload.state)) {
+          const detailedThread = yield* getLoadedThreadDetail();
+          if (detailedThread !== null) {
+            yield* maybeCompactAtMilestone({
+              thread: detailedThread,
+              settledSubagentId: event.payload.subagentId,
+              settledSubagentStatus: event.payload.state,
+            });
+          }
+        }
         return;
       }
 
@@ -2468,6 +2538,14 @@ const make = Effect.gen(function* () {
             );
           }
 
+          const providerForkCursor =
+            event.providerRefs?.providerThreadId !== undefined &&
+            event.providerRefs.providerTurnId !== undefined
+              ? {
+                  providerThreadId: event.providerRefs.providerThreadId,
+                  providerTurnId: event.providerRefs.providerTurnId,
+                }
+              : thread.session?.providerForkCursor;
           yield* orchestrationEngine.dispatch({
             type: "thread.session.set",
             commandId: yield* providerCommandId(event, "thread-session-set"),
@@ -2483,11 +2561,30 @@ const make = Effect.gen(function* () {
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,
               abortState: thread.session?.abortState ?? null,
+              ...(providerForkCursor !== undefined ? { providerForkCursor } : {}),
               lastError,
               updatedAt: now,
             },
             createdAt: now,
           });
+          if (event.type === "turn.completed") {
+            const detailedThread = yield* getLoadedThreadDetail();
+            if (detailedThread !== null) {
+              yield* maybeCompactAtMilestone({
+                thread:
+                  detailedThread.session === null
+                    ? detailedThread
+                    : {
+                        ...detailedThread,
+                        session: {
+                          ...detailedThread.session,
+                          status,
+                          activeTurnId: nextActiveTurnId,
+                        },
+                      },
+              });
+            }
+          }
         }
       }
 
@@ -2722,6 +2819,10 @@ const make = Effect.gen(function* () {
 
       if (event.type === "session.exited") {
         yield* clearTurnStateForSession(thread.id, eventSubagentId);
+        if (eventSubagentId === undefined) {
+          latestRootUsage.delete(thread.id);
+          lastCompactionAttempt.delete(thread.id);
+        }
       }
 
       if (event.type === "runtime.error" && eventSubagentId === undefined) {

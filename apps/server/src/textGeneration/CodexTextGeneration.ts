@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -27,6 +31,7 @@ import {
   buildPromptImprovementPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildThreadMetadataPrompt,
   buildTranscriptTranslationPrompt,
 } from "./TextGenerationPrompts.ts";
 import {
@@ -39,13 +44,18 @@ import {
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 import { codexExecArgs } from "../provider/CodexProcessArgs.ts";
+import { buildAutoReasoningPrompt, validateAutoReasoningDecision } from "./AutoReasoning.ts";
 
 const CODEX_TIMEOUT_MS = 180_000;
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const isTextGenerationError = Schema.is(TextGenerationError);
 
 export function classifyCodexTextGenerationModelFailure(
   detail: string,
 ): TextGenerationModelFailureReason | undefined {
+  if (/\byou(?:'|\u2019)ve hit your usage limit\b/iu.test(detail)) {
+    return "rate-limited";
+  }
   if (
     /(?:do not have access|not entitled|not enabled|not supported).*\b(?:account|subscription)\b|\b(?:account|subscription)\b.*(?:does not include|lacks access)/iu.test(
       detail,
@@ -115,9 +125,11 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
 
   const encodeJsonForOperation = (
     operation:
+      | "decideAutoReasoning"
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
+      | "generateThreadMetadata"
       | "generateThreadTitle"
       | "translateTranscriptToEnglish"
       | "improvePrompt"
@@ -143,11 +155,14 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     outputSchemaJson,
     cleanupPaths = [],
     modelSelection,
+    isolatedHome,
   }: {
     operation:
+      | "decideAutoReasoning"
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
+      | "generateThreadMetadata"
       | "generateThreadTitle"
       | "translateTranscriptToEnglish"
       | "improvePrompt"
@@ -158,6 +173,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     outputSchemaJson: S;
     cleanupPaths?: ReadonlyArray<string>;
     modelSelection: ModelSelection;
+    isolatedHome?: string;
   }): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
     const schemaJson = yield* encodeJsonForOperation(
       operation,
@@ -167,7 +183,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     const outputPath = yield* writeTempFile(operation, "codex-output", "");
 
     const runCodexCommand = Effect.fn("runCodexJson.runCodexCommand")(function* () {
-      const launchArgs = resolveCodexLaunchArgs(codexConfig.launchArgs, resolvedEnvironment);
+      const launchArgs = isolatedHome
+        ? ""
+        : resolveCodexLaunchArgs(codexConfig.launchArgs, resolvedEnvironment);
       const reasoningEffort =
         getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
         DEFAULT_TEXT_GENERATION_REASONING_EFFORT;
@@ -176,8 +194,17 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         codexConfig.binaryPath || "codex",
         codexExecArgs([
           ...codexExecLaunchArgs(launchArgs),
-          ...(operation === "planFetchExploration"
-            ? ["--disable", "multi_agent", "-c", "mcp_servers={}"]
+          ...(operation === "planFetchExploration" || operation === "decideAutoReasoning"
+            ? [
+                "--disable",
+                "multi_agent",
+                "-c",
+                "mcp_servers={}",
+                "-c",
+                "memories.use_memories=false",
+                "-c",
+                "memories.generate_memories=false",
+              ]
             : []),
           "--ephemeral",
           "--skip-git-repo-check",
@@ -199,7 +226,11 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         env: {
           ...resolvedEnvironment,
-          ...(codexConfig.homePath ? { CODEX_HOME: expandHomePath(codexConfig.homePath) } : {}),
+          ...(isolatedHome
+            ? { CODEX_HOME: isolatedHome }
+            : codexConfig.homePath
+              ? { CODEX_HOME: expandHomePath(codexConfig.homePath) }
+              : {}),
         },
         cwd,
         shell: spawnCommand.shell,
@@ -292,6 +323,84 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       );
     }).pipe(Effect.ensuring(cleanup));
   });
+
+  const makeIsolatedCodexHome = Effect.fn("CodexTextGeneration.makeIsolatedCodexHome")(
+    function* () {
+      const home = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-auto-reasoning-codex-home-",
+      });
+      const configuredHome = codexConfig.homePath.trim()
+        ? expandHomePath(codexConfig.homePath)
+        : resolvedEnvironment.CODEX_HOME?.trim() ||
+          NodePath.join(resolvedEnvironment.HOME?.trim() || NodeOS.homedir(), ".codex");
+      const authSource = NodePath.join(configuredHome, "auth.json");
+      if (yield* fileSystem.exists(authSource).pipe(Effect.orElseSucceed(() => false))) {
+        yield* fileSystem.copyFile(authSource, NodePath.join(home, "auth.json")).pipe(
+          Effect.mapError(
+            (cause) =>
+              new TextGenerationError({
+                operation: "decideAutoReasoning",
+                detail: "Failed to prepare isolated Codex credentials.",
+                cause,
+              }),
+          ),
+        );
+      }
+      yield* fileSystem
+        .writeFileString(
+          NodePath.join(home, "config.toml"),
+          "mcp_servers = {}\n\n[features]\nmulti_agent = false\n",
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new TextGenerationError({
+                operation: "decideAutoReasoning",
+                detail: "Failed to prepare isolated Codex configuration.",
+                cause,
+              }),
+          ),
+        );
+      return home;
+    },
+  );
+
+  const decideAutoReasoning: TextGeneration.TextGeneration["Service"]["decideAutoReasoning"] =
+    Effect.fn("CodexTextGeneration.decideAutoReasoning")(function* (input) {
+      if (resolveCodexLaunchArgs(codexConfig.launchArgs, resolvedEnvironment).length > 0) {
+        return yield* new TextGenerationError({
+          operation: "decideAutoReasoning",
+          detail: "Custom Codex launch arguments prevent isolated Auto Reasoning.",
+        });
+      }
+      return yield* Effect.gen(function* () {
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-auto-reasoning-codex-cwd-",
+        });
+        const isolatedHome = yield* makeIsolatedCodexHome();
+        const { prompt, outputSchema } = buildAutoReasoningPrompt(input);
+        const generated = yield* runCodexJson({
+          operation: "decideAutoReasoning",
+          cwd,
+          prompt,
+          outputSchemaJson: outputSchema,
+          modelSelection: input.modelSelection,
+          isolatedHome,
+        });
+        return yield* validateAutoReasoningDecision(input.allowedEfforts, generated);
+      }).pipe(
+        Effect.mapError((cause) =>
+          isTextGenerationError(cause)
+            ? cause
+            : new TextGenerationError({
+                operation: "decideAutoReasoning",
+                detail: "Failed to prepare isolated Codex Auto Reasoning.",
+                cause,
+              }),
+        ),
+        Effect.scoped,
+      );
+    });
 
   const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
     Effect.fn("CodexTextGeneration.generateCommitMessage")(function* (input) {
@@ -387,6 +496,22 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateThreadMetadata: TextGeneration.TextGeneration["Service"]["generateThreadMetadata"] =
+    Effect.fn("CodexTextGeneration.generateThreadMetadata")(function* (input) {
+      const { prompt, outputSchema } = buildThreadMetadataPrompt(input);
+      const generated = yield* runCodexJson({
+        operation: "generateThreadMetadata",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+      return {
+        title: sanitizeThreadTitle(generated.title),
+        branch: sanitizeBranchFragment(generated.branch),
+      };
+    });
+
   const translateTranscriptToEnglish: TextGeneration.TextGeneration["Service"]["translateTranscriptToEnglish"] =
     Effect.fn("CodexTextGeneration.translateTranscriptToEnglish")(function* (input) {
       const { prompt, outputSchema } = buildTranscriptTranslationPrompt({ text: input.text });
@@ -443,13 +568,16 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     });
 
   return {
+    decideAutoReasoning,
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
+    generateThreadMetadata,
     generateThreadTitle,
     translateTranscriptToEnglish,
     improvePrompt,
     reviewPlanParallelism,
     planFetchExploration,
+    enrichKnowledgeGraph: TextGeneration.unsupportedKnowledgeGraphEnrichment("Codex"),
   } satisfies TextGeneration.TextGeneration["Service"];
 });

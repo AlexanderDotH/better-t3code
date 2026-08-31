@@ -16,6 +16,14 @@ default when no choice has been saved.
 On mobile, the equivalent **Settings → Appearance → Thread list layout** choice is stored on that
 device, so its layout can differ from web and desktop.
 
+## Return to unsent drafts
+
+Leaving a new-thread composer with a prompt or attachment keeps that draft available in the
+sidebar. **Current** shows draft cards above the activity lists, while **Classic** shows each draft
+with the chats under its matching project. Select the amber draft row to return to the composer, or
+use its discard button to remove it. Drafts keep their selected model, access mode, branch, and
+worktree until they are sent or discarded.
+
 ## Limit chats shown per project
 
 The **Classic** layout initially shows up to three chats in each project. Choose **Chats per
@@ -25,12 +33,18 @@ project's non-settled chats. After those chats are visible, use **Show settled c
 settled chats or **Hide settled chats** to conceal them again. If all non-settled chats already fit,
 **Show settled chats** appears immediately. **Show less** returns to the configured limit and hides
 the settled section. Searching continues to show every matching chat, regardless of the limit.
-Chats labeled **Working** or **Connecting** stay visible in addition to the configured number, so
-active work is never hidden behind **Show more**.
+Any chat with a displayed status moves to the top while keeping the selected order within the
+status and ordinary groups. The configured count remains the target total, but never hides a status
+chat, so four status chats remain visible when the limit is three. An old or settled chat stays
+promoted until its status clears. In Classic, opening a **Completed** chat acknowledges that
+read-once status; the chat then returns to normal ordering and may move behind **Show more** or the
+settled disclosure. Other statuses remain until their underlying condition resolves. This changes
+only the compact preview: no chat is deleted or archived.
 
-The project-grouped Home list and tablet sidebar on mobile use the same ordering and controls.
-Settled chats do not count toward the per-project preview limit. The **Current** activity-based
-layout keeps its separate settled section and is not affected by these project controls.
+The project-grouped Home list and tablet sidebar on mobile use the same priority ordering and
+controls for the statuses mobile presents. Settled chats without a displayed status do not count
+toward the per-project preview limit. The **Current** activity-based layout keeps its separate
+settled section and is not affected by these project controls.
 
 This preference is shared through every connected environment that supports synchronized
 appearance settings, while each device keeps an offline copy for immediate use. Changes made
@@ -54,8 +68,21 @@ Older projects disclosure state on that device.
 ## Pin and arrange threads
 
 Pin a thread from its context menu to keep it in the pinned section above your active work.
-Pinned threads are shown independently of their project, including when you connect to more than
-one environment.
+`mod+shift+p` pins or unpins the thread you have open. Pinned threads are shown independently of
+their project, including when you connect to more than one environment.
+
+To require confirmation before unpinning, enable **Settings → General → Unpin confirmation**. The
+confirmation applies to the sidebar controls, thread menus, and the `mod+shift+p` shortcut.
+
+Pinned threads still move to **Settled** when they become inactive. They also move when their pull
+request merges if **Auto-settle merged threads** is enabled.
+
+When you un-settle a thread, it returns to the top of the active list so you can find it right
+away. Its timestamps do not change. Other threads keep their positions.
+
+Right-click a pull request link in a thread and choose **Link to thread** to show that pull request
+in the sidebar. The thread settles when the linked pull request merges if **Auto-settle merged
+threads** is enabled. Right-click the same link and choose **Unlink from thread** to remove it.
 
 On web and desktop, drag a pinned thread to change its position. On mobile, open the thread's menu
 and choose **Move up** or **Move down**. The order is stored by the server and appears on your

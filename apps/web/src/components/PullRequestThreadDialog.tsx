@@ -25,6 +25,7 @@ import {
 } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Spinner } from "./ui/spinner";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 interface PullRequestThreadDialogProps {
   open: boolean;
@@ -45,6 +46,7 @@ export function PullRequestThreadDialog({
   onOpenChange,
   onPrepared,
 }: PullRequestThreadDialogProps) {
+  const translate = useInterfaceTranslator().message;
   const referenceInputRef = useRef<HTMLInputElement>(null);
   const [reference, setReference] = useState(initialReference ?? "");
   const [referenceDirty, setReferenceDirty] = useState(false);
@@ -171,9 +173,13 @@ export function PullRequestThreadDialog({
   const validationMessage = !referenceDirty
     ? null
     : reference.trim().length === 0
-      ? `Paste a ${terminology.singular} URL, checkout command, or enter 123 / #123.`
+      ? translate("pullRequest.thread.referenceRequired", {
+          changeRequest: terminology.singular,
+        })
       : parsedReference === null
-        ? `Use a ${terminology.singular} URL, checkout command, 123, or #123.`
+        ? translate("pullRequest.thread.referenceInvalid", {
+            changeRequest: terminology.singular,
+          })
         : null;
   const errorMessage =
     validationMessage ??
@@ -182,7 +188,9 @@ export function PullRequestThreadDialog({
       : preparePullRequestThreadAction.error instanceof Error
         ? preparePullRequestThreadAction.error.message
         : preparePullRequestThreadAction.error
-          ? `Failed to prepare ${terminology.singular} thread.`
+          ? translate("pullRequest.thread.prepareFailed", {
+              changeRequest: terminology.singular,
+            })
           : null);
 
   return (
@@ -198,11 +206,15 @@ export function PullRequestThreadDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <SourceControlIcon className="size-4" />
-            Checkout {terminology.singular}
+            {translate("pullRequest.thread.checkoutTitle", {
+              changeRequest: terminology.singular,
+            })}
           </DialogTitle>
           <DialogDescription>
-            Resolve a {sourceControlPresentation.providerName} {terminology.singular}, then create
-            the draft thread in the main repo or in a dedicated worktree.
+            {translate("pullRequest.thread.checkoutDescription", {
+              provider: sourceControlPresentation.providerName,
+              changeRequest: terminology.singular,
+            })}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-4">
@@ -212,7 +224,9 @@ export function PullRequestThreadDialog({
             </span>
             <Input
               ref={referenceInputRef}
-              placeholder={`${terminology.shortLabel} URL, checkout command, or #42`}
+              placeholder={translate("pullRequest.thread.referencePlaceholder", {
+                shortLabel: terminology.shortLabel,
+              })}
               value={reference}
               onChange={(event) => {
                 setReferenceDirty(true);
@@ -236,12 +250,15 @@ export function PullRequestThreadDialog({
                 <div className="min-w-0">
                   <p className="truncate font-medium text-sm">{resolvedPullRequest.title}</p>
                   <p className="truncate text-muted-foreground text-xs">
-                    #{resolvedPullRequest.number} · {resolvedPullRequest.headBranch} to{" "}
-                    {resolvedPullRequest.baseBranch}
+                    {translate("pullRequest.thread.branchPair", {
+                      number: resolvedPullRequest.number,
+                      head: resolvedPullRequest.headBranch,
+                      base: resolvedPullRequest.baseBranch,
+                    })}
                   </p>
                 </div>
                 <span className={cn("shrink-0 text-xs capitalize", statusTone)}>
-                  {resolvedPullRequest.state}
+                  {translate(`pullRequest.state.${resolvedPullRequest.state}`)}
                 </span>
               </div>
             </div>
@@ -250,7 +267,9 @@ export function PullRequestThreadDialog({
           {isResolving ? (
             <div className="flex items-center gap-2 text-muted-foreground text-xs">
               <Spinner className="size-3.5" />
-              Resolving {terminology.singular}...
+              {translate("pullRequest.thread.resolving", {
+                changeRequest: terminology.singular,
+              })}
             </div>
           ) : null}
 
@@ -264,7 +283,7 @@ export function PullRequestThreadDialog({
             onClick={() => onOpenChange(false)}
             disabled={preparePullRequestThreadAction.isPending}
           >
-            Cancel
+            {translate("common.cancel")}
           </Button>
           <Button
             type="button"
@@ -280,7 +299,11 @@ export function PullRequestThreadDialog({
               preparePullRequestThreadAction.isPending
             }
           >
-            {preparingMode === "local" ? "Preparing local..." : "Local"}
+            {translate(
+              preparingMode === "local"
+                ? "pullRequest.thread.preparingLocal"
+                : "pullRequest.thread.local",
+            )}
           </Button>
           <Button
             type="button"
@@ -295,7 +318,11 @@ export function PullRequestThreadDialog({
               preparePullRequestThreadAction.isPending
             }
           >
-            {preparingMode === "worktree" ? "Preparing worktree..." : "Worktree"}
+            {translate(
+              preparingMode === "worktree"
+                ? "pullRequest.thread.preparingWorktree"
+                : "pullRequest.thread.worktree",
+            )}
           </Button>
         </DialogFooter>
       </DialogPopup>

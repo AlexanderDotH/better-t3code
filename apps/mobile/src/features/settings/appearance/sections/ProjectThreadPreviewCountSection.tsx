@@ -7,16 +7,16 @@ import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../../../components/AppText";
 import { SymbolView } from "../../../../components/AppSymbol";
-import { useThemeColor } from "../../../../lib/useThemeColor";
 import { SettingsSection } from "../../components/SettingsSection";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 import {
   projectThreadPreviewSyncMessages,
   stepProjectThreadPreviewCount,
 } from "../projectThreadPreviewAppearance";
+import { useMobileInterfaceTranslator } from "../../../../localization/useMobileInterfaceTranslator";
 
 export function ProjectThreadPreviewCountSection() {
-  const iconColor = useThemeColor("--color-icon");
+  const translator = useMobileInterfaceTranslator();
   const { appearance, isReady, projectThreadPreviewSyncStatus, setProjectThreadPreviewCount } =
     useAppearancePreferences();
   const count = appearance.projectThreadPreviewCount;
@@ -26,27 +26,29 @@ export function ProjectThreadPreviewCountSection() {
   const resetDisabled = !isReady || count === DEFAULT_PROJECT_THREAD_PREVIEW_COUNT;
 
   return (
-    <SettingsSection card title="Sidebar">
+    <SettingsSection card title={translator.message("mobile.appearance.sidebar")}>
       <View className="gap-3 p-4">
         <View className="flex-row items-center gap-4">
           <SymbolView
             name="text.bubble"
             size={22}
-            tintColor={iconColor}
+            tintColorClassName={"accent-icon"}
             type="monochrome"
             weight="regular"
           />
           <View className="min-w-0 flex-1 gap-1">
-            <Text className="text-lg text-foreground">Chats per project</Text>
+            <Text className="text-lg text-foreground">
+              {translator.message("mobile.appearance.chatsPerProject")}
+            </Text>
             <Text className="text-sm leading-normal text-foreground-muted">
-              Limits collapsed Classic project groups. Search still shows every match.
+              {translator.message("mobile.appearance.chatLimitDescription")}
             </Text>
           </View>
         </View>
 
         <View className="flex-row items-center justify-end gap-3">
           <Pressable
-            accessibilityLabel="Show fewer chats per project"
+            accessibilityLabel={translator.message("mobile.appearance.showFewerChats")}
             accessibilityRole="button"
             disabled={decrementDisabled}
             onPress={() => setProjectThreadPreviewCount(stepProjectThreadPreviewCount(count, -1))}
@@ -59,19 +61,19 @@ export function ProjectThreadPreviewCountSection() {
             <SymbolView
               name={{ ios: "minus", android: "remove" }}
               size={18}
-              tintColor={iconColor}
+              tintColorClassName={"accent-icon"}
               type="monochrome"
               weight="semibold"
             />
           </Pressable>
           <Text
-            accessibilityLabel={`${count} chats per project`}
+            accessibilityLabel={translator.message("mobile.appearance.chatCount", { count })}
             className="min-w-10 text-center text-xl font-t3-semibold text-foreground"
           >
             {count}
           </Text>
           <Pressable
-            accessibilityLabel="Show more chats per project"
+            accessibilityLabel={translator.message("mobile.appearance.showMoreChats")}
             accessibilityRole="button"
             disabled={incrementDisabled}
             onPress={() => setProjectThreadPreviewCount(stepProjectThreadPreviewCount(count, 1))}
@@ -84,7 +86,7 @@ export function ProjectThreadPreviewCountSection() {
             <SymbolView
               name="plus"
               size={18}
-              tintColor={iconColor}
+              tintColorClassName={"accent-icon"}
               type="monochrome"
               weight="semibold"
             />
@@ -102,7 +104,9 @@ export function ProjectThreadPreviewCountSection() {
             : "border-t border-border-subtle p-4 active:opacity-70"
         }
       >
-        <Text className="text-center text-base font-t3-medium text-primary">Reset to 3</Text>
+        <Text className="text-center text-base font-t3-medium text-primary">
+          {translator.message("mobile.appearance.resetThree")}
+        </Text>
       </Pressable>
 
       {messages.length > 0 ? (

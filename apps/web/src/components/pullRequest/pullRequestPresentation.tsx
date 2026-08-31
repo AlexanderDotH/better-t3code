@@ -21,13 +21,22 @@ import {
 import { Children, isValidElement, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { PullRequestReviewOutcome } from "./pullRequestDetail.logic";
 
 interface StatePresentation {
-  readonly label: string;
+  readonly labelKey:
+    | "pullRequest.state.merged"
+    | "pullRequest.state.closed"
+    | "pullRequest.state.draft"
+    | "pullRequest.state.open"
+    | "pullRequest.state.conflictsWith"
+    | "pullRequest.state.hasConflicts";
+  readonly labelValues?: Readonly<Record<string, string | number>>;
   readonly toneClassName: string;
   readonly Icon: typeof GitPullRequestIcon;
 }
@@ -48,21 +57,21 @@ export function resolvePullRequestState(input: {
 }): StatePresentation {
   if (input.state === "merged") {
     return {
-      label: "Merged",
+      labelKey: "pullRequest.state.merged",
       toneClassName: "text-violet-600 dark:text-violet-300/90",
       Icon: GitMergeIcon,
     };
   }
   if (input.state === "closed") {
     return {
-      label: "Closed",
+      labelKey: "pullRequest.state.closed",
       toneClassName: "text-red-600 dark:text-red-300/90",
       Icon: GitPullRequestClosedIcon,
     };
   }
   if (input.isDraft) {
     return {
-      label: "Draft",
+      labelKey: "pullRequest.state.draft",
       toneClassName: "text-zinc-500 dark:text-zinc-400/80",
       Icon: GitPullRequestDraftIcon,
     };
@@ -71,13 +80,16 @@ export function resolvePullRequestState(input: {
     return {
       // "Has conflicts" leaves out the one thing a reader wants when the warning triangle catches
       // their eye, so name the branch it collides with wherever the caller knows it.
-      label: input.baseBranch ? `Conflicts with ${input.baseBranch}` : "Has conflicts",
+      labelKey: input.baseBranch
+        ? "pullRequest.state.conflictsWith"
+        : "pullRequest.state.hasConflicts",
+      ...(input.baseBranch ? { labelValues: { branch: input.baseBranch } } : {}),
       toneClassName: "text-destructive",
       Icon: TriangleAlertIcon,
     };
   }
   return {
-    label: "Open",
+    labelKey: "pullRequest.state.open",
     toneClassName: "text-emerald-600 dark:text-emerald-300/90",
     Icon: GitPullRequestIcon,
   };
@@ -96,12 +108,14 @@ export function PullRequestStateGlyph({
   baseBranch?: string;
   className?: string;
 }) {
+  const translate = useInterfaceTranslator().message;
   const presentation = resolvePullRequestState({
     state,
     isDraft,
     ...(mergeability ? { mergeability } : {}),
     ...(baseBranch ? { baseBranch } : {}),
   });
+  const label = translate(presentation.labelKey, presentation.labelValues);
   return (
     <Tooltip>
       {/* The list row is itself a button, so the trigger stays a span: an interactive one would
@@ -109,33 +123,60 @@ export function PullRequestStateGlyph({
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
         <presentation.Icon
           role="img"
-          aria-label={presentation.label}
+          aria-label={label}
           className={cn("size-4 shrink-0", presentation.toneClassName, className)}
         />
       </TooltipTrigger>
-      <TooltipPopup>{presentation.label}</TooltipPopup>
+      <TooltipPopup>{label}</TooltipPopup>
     </Tooltip>
   );
 }
 
 const CHECK_STATUS_PRESENTATION = {
-  pending: { label: "Running", Icon: LoaderIcon, toneClassName: "animate-spin text-amber-500" },
+  pending: {
+    labelKey: "pullRequest.checkStatus.running",
+    Icon: LoaderIcon,
+    toneClassName: "animate-spin text-amber-500",
+  },
   success: {
-    label: "Passed",
+    labelKey: "pullRequest.checkStatus.passed",
     Icon: CircleCheckIcon,
     toneClassName: "text-emerald-600 dark:text-emerald-300/90",
   },
-  failure: { label: "Failed", Icon: CircleXIcon, toneClassName: "text-destructive" },
-  cancelled: { label: "Cancelled", Icon: CircleXIcon, toneClassName: "text-destructive" },
-  skipped: { label: "Skipped", Icon: CircleDashedIcon, toneClassName: "text-muted-foreground/70" },
-  neutral: { label: "Neutral", Icon: CircleDashedIcon, toneClassName: "text-muted-foreground/70" },
+  failure: {
+    labelKey: "pullRequest.checkStatus.failed",
+    Icon: CircleXIcon,
+    toneClassName: "text-destructive",
+  },
+  cancelled: {
+    labelKey: "pullRequest.checkStatus.cancelled",
+    Icon: CircleXIcon,
+    toneClassName: "text-destructive",
+  },
+  skipped: {
+    labelKey: "pullRequest.checkStatus.skipped",
+    Icon: CircleDashedIcon,
+    toneClassName: "text-muted-foreground/70",
+  },
+  neutral: {
+    labelKey: "pullRequest.checkStatus.neutral",
+    Icon: CircleDashedIcon,
+    toneClassName: "text-muted-foreground/70",
+  },
 } as const satisfies Record<
   PullRequestCheckStatus,
-  { label: string; Icon: typeof CircleCheckIcon; toneClassName: string }
+  {
+    labelKey: Parameters<InterfaceTranslator["message"]>[0];
+    Icon: typeof CircleCheckIcon;
+    toneClassName: string;
+  }
 >;
 
-export function pullRequestCheckStatusLabel(status: PullRequestCheckStatus): string {
-  return CHECK_STATUS_PRESENTATION[status].label;
+export function pullRequestCheckStatusLabel(
+  status: PullRequestCheckStatus,
+  translate: InterfaceTranslator["message"],
+): string {
+  return translate(CHECK_STATUS_PRESENTATION[status].labelKey);
 }
 
 export function PullRequestCheckStatusIcon({ status }: { status: PullRequestCheckStatus }) {
@@ -154,23 +195,27 @@ export function PullRequestCheckStatusIcon({ status }: { status: PullRequestChec
  */
 const CHECKS_STATE_PRESENTATION = {
   passing: {
-    label: "All checks have passed",
+    labelKey: "pullRequest.checksState.passing",
     Icon: CircleCheckIcon,
     toneClassName: "text-emerald-600 dark:text-emerald-300/90",
   },
   failing: {
-    label: "Some checks were not successful",
+    labelKey: "pullRequest.checksState.failing",
     Icon: CircleXIcon,
     toneClassName: "text-destructive",
   },
   pending: {
-    label: "Some checks haven't completed yet",
+    labelKey: "pullRequest.checksState.pending",
     Icon: CircleDotIcon,
     toneClassName: "text-amber-600 dark:text-amber-400/90",
   },
 } as const satisfies Record<
   PullRequestChecksState,
-  { label: string; Icon: typeof CircleCheckIcon; toneClassName: string }
+  {
+    labelKey: Parameters<InterfaceTranslator["message"]>[0];
+    Icon: typeof CircleCheckIcon;
+    toneClassName: string;
+  }
 >;
 
 export function pullRequestChecksStatePresentation(state: PullRequestChecksState) {
@@ -187,10 +232,21 @@ export function pullRequestChecksState(
   checks: ReadonlyArray<PullRequestCheck>,
 ): PullRequestChecksState | null {
   if (checks.length === 0) return null;
-  const statuses = checks.map((check) => check.status);
-  if (statuses.includes("failure") || statuses.includes("cancelled")) return "failing";
-  if (statuses.includes("pending")) return "pending";
-  return statuses.includes("success") ? "passing" : null;
+  const statuses = new Set(checks.map((check) => check.status));
+  if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
+  if (statuses.has("pending")) return "pending";
+  return statuses.has("success") ? "passing" : null;
+}
+
+/** Stable React keys for host check runs, including repeated names without relying on array index. */
+export function keyedPullRequestChecks(checks: ReadonlyArray<PullRequestCheck>) {
+  const occurrences = new Map<string, number>();
+  return checks.map((check) => {
+    const identity = JSON.stringify([check.name, check.status, check.description, check.url]);
+    const occurrence = occurrences.get(identity) ?? 0;
+    occurrences.set(identity, occurrence + 1);
+    return { check, key: `${identity}:${occurrence}` } as const;
+  });
 }
 
 /**
@@ -203,7 +259,7 @@ export function pullRequestChecksState(
  */
 const REVIEW_OUTCOME_PRESENTATION = {
   approved: {
-    label: "Approved",
+    labelKey: "pullRequest.reviewOutcome.approved",
     Icon: CircleCheckIcon,
     toneClassName: "text-emerald-600 dark:text-emerald-300/90",
     ringClassName: "ring-2 ring-emerald-500 dark:ring-emerald-400",
@@ -212,7 +268,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
     badgeVariant: "success",
   },
   "changes-requested": {
-    label: "Changes requested",
+    labelKey: "pullRequest.reviewOutcome.changesRequested",
     Icon: CircleXIcon,
     toneClassName: "text-destructive",
     ringClassName: "ring-2 ring-destructive",
@@ -220,18 +276,18 @@ const REVIEW_OUTCOME_PRESENTATION = {
     badgeVariant: "error",
   },
   dismissed: {
-    label: "Review dismissed",
+    labelKey: "pullRequest.reviewOutcome.dismissed",
     Icon: CircleDashedIcon,
     toneClassName: "text-muted-foreground/70",
     ringClassName: "ring-2 ring-muted-foreground/60",
     staleRingClassName:
-      "ring-2 ring-[color-mix(in_srgb,var(--muted-foreground)_30%,var(--background))]",
+      "ring-2 ring-[color-mix(in_srgb,var(--contrast-muted-foreground)_30%,var(--background))]",
     badgeVariant: "outline",
   },
 } as const satisfies Record<
   PullRequestReviewOutcome,
   {
-    label: string;
+    labelKey: Parameters<InterfaceTranslator["message"]>[0];
     Icon: typeof CircleCheckIcon;
     toneClassName: string;
     ringClassName: string;
@@ -263,8 +319,13 @@ export function pullRequestReviewOutcomeRingClassName(
  * What a superseded verdict says, which is the same word with when it applied added. Commits
  * landed after it, so it stands for code the branch no longer has.
  */
-export function pullRequestReviewOutcomeStaleLabel(outcome: PullRequestReviewOutcome): string {
-  return `${REVIEW_OUTCOME_PRESENTATION[outcome].label} earlier changes`;
+export function pullRequestReviewOutcomeStaleLabel(
+  outcome: PullRequestReviewOutcome,
+  translate: InterfaceTranslator["message"],
+): string {
+  return translate("pullRequest.reviewOutcome.earlier", {
+    outcome: translate(REVIEW_OUTCOME_PRESENTATION[outcome].labelKey),
+  });
 }
 
 /** Decorative: every caller says which verdict this is in words beside it. */
@@ -284,8 +345,11 @@ export function PullRequestReviewOutcomeIcon({
   );
 }
 
-export function pullRequestReviewOutcomeLabel(outcome: PullRequestReviewOutcome): string {
-  return REVIEW_OUTCOME_PRESENTATION[outcome].label;
+export function pullRequestReviewOutcomeLabel(
+  outcome: PullRequestReviewOutcome,
+  translate: InterfaceTranslator["message"],
+): string {
+  return translate(REVIEW_OUTCOME_PRESENTATION[outcome].labelKey);
 }
 
 export function PullRequestReviewOutcomeBadge({
@@ -295,11 +359,12 @@ export function PullRequestReviewOutcomeBadge({
   outcome: PullRequestReviewOutcome;
   className?: string;
 }) {
+  const translate = useInterfaceTranslator().message;
   const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
   return (
     <Badge size="sm" variant={presentation.badgeVariant} className={cn("gap-1", className)}>
       <presentation.Icon aria-hidden className="size-3" />
-      {presentation.label}
+      {translate(presentation.labelKey)}
     </Badge>
   );
 }
@@ -431,14 +496,23 @@ export function PullRequestMetaLine({
   );
 }
 
-export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestCheck>): string {
-  if (checks.length === 0) return "No checks reported";
+export function summarizePullRequestChecks(
+  checks: ReadonlyArray<PullRequestCheck>,
+  translate: InterfaceTranslator["message"],
+): string {
+  if (checks.length === 0) return translate("pullRequest.checksSummary.none");
   const failed = checks.filter(
     (check) => check.status === "failure" || check.status === "cancelled",
   ).length;
   const pending = checks.filter((check) => check.status === "pending").length;
   const passed = checks.filter((check) => check.status === "success").length;
-  if (failed > 0) return `${failed} of ${checks.length} failing`;
-  if (pending > 0) return `${pending} of ${checks.length} running`;
-  return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;
+  if (failed > 0) {
+    return translate("pullRequest.checksSummary.failing", { count: failed, total: checks.length });
+  }
+  if (pending > 0) {
+    return translate("pullRequest.checksSummary.running", { count: pending, total: checks.length });
+  }
+  return passed === checks.length
+    ? translate("pullRequest.checksSummary.allPassed")
+    : translate("pullRequest.checksSummary.passing", { count: passed, total: checks.length });
 }

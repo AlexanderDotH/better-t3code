@@ -11,6 +11,9 @@ import * as IpcChannels from "./ipc/channels.ts";
 
 exposeClerkBridge({ passkeys: true });
 
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Electron exposes the client platform in its sandboxed preload process.
+const clientPlatform = process.platform;
+
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
     typeof result === "object" &&
@@ -21,7 +24,7 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
     const message =
       "message" in result && typeof result.message === "string"
         ? result.message
-        : "SSH authentication cancelled.";
+        : IpcChannels.SSH_PASSWORD_PROMPT_CANCELLED_RESULT;
     throw new Error(message);
   }
   return result as Awaited<ReturnType<DesktopBridge["ensureSshEnvironment"]>>;
@@ -35,6 +38,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     }
     return result as ReturnType<DesktopBridge["getAppBranding"]>;
   },
+  getClientPlatform: () => clientPlatform,
   getSystemLocale: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_SYSTEM_LOCALE_CHANNEL);
     return typeof result === "string" ? result : null;

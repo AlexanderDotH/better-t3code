@@ -1,5 +1,6 @@
 import {
   type ChatAttachment,
+  CODEX_REASONING_EFFORT_OPTION_ID,
   CommandId,
   EventId,
   type ModelSelection,
@@ -8,7 +9,10 @@ import {
   type OrchestrationReadModel,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderDriverKind,
+  resolveBetterT3FeatureFlag,
   type ProjectId,
+  type ProjectMemoryMode,
+  DEFAULT_PROJECT_MEMORY_CONTEXT_WINDOW_TOKENS,
   type OrchestrationSession,
   ThreadId,
   type ProviderSession,
@@ -17,16 +21,27 @@ import {
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import { resolveFetchLunaFallback, resolveFetchModelSelection } from "@t3tools/shared/fetchMode";
-import { resolveCodexContextWindowTokens } from "@t3tools/shared/model";
+import {
+  getModelSelectionStringOptionValue,
+  isAutoReasoningEnabled,
+  readAutoReasoningResolution,
+  resolveCodexContextWindowTokens,
+  selectManualReasoningEffort,
+  stripAutoReasoning,
+} from "@t3tools/shared/model";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
@@ -35,7 +50,10 @@ import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
-import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
+import {
+  type AutoReasoningGenerationResult,
+  TextGeneration,
+} from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -54,10 +72,7 @@ import {
 import { SkillEngine } from "../../skills/Services/SkillEngine.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
-import {
-  buildProviderTranscriptHandoff,
-  prependProviderTranscriptHandoff,
-} from "../providerTranscriptHandoff.ts";
+import { buildProviderTranscriptHandoff } from "../providerTranscriptHandoff.ts";
 import { normalizeCodexModelSelectionServiceTier } from "../../codexModelOptions.ts";
 import { isActiveSubagentStatus, settleSubagentAfterRuntimeLoss } from "../subagentLifecycle.ts";
 import {
@@ -65,6 +80,8 @@ import {
   FetchWorkerCoordinator,
 } from "../../fetch/FetchWorkerCoordinator.ts";
 import { applyProjectAgentInstructionsToProviderInput } from "../../projectAgent/ProjectAgentInstructions.ts";
+import { applyAgentEnhancementsToProviderInput } from "../../provider/enhancements/index.ts";
+import { ProjectMemoryStore } from "../../projectMemory/ProjectMemoryStore.ts";
 import {
   findOpenPendingInteractions,
   type OpenPendingInteraction,
@@ -119,10 +136,77 @@ const MAX_REGENERATION_ATTACHMENTS = 4;
 const MAX_THREAD_TITLE_CONTEXT_CHARS = 8_000;
 const MAX_FIRST_USER_TITLE_CONTEXT_CHARS = 2_000;
 const THREAD_TITLE_CONTEXT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
+
+function lowEffortMetadataSelection(selection: ModelSelection): ModelSelection {
+  return {
+    ...selection,
+    options: [
+      ...(selection.options ?? []).filter((option) => option.id !== "reasoningEffort"),
+      { id: "reasoningEffort", value: "low" },
+    ],
+  };
+}
 const FETCH_CONTEXT_TRUNCATION_MARKER = "\n[T3 Fetch context truncated]";
 const FIRST_USER_CONTEXT_TRUNCATION_MARKER = "\n[First user message truncated]";
 const STARTUP_PENDING_INTERACTION_ID_PREFIX = "startup-pending-interaction";
 const STARTUP_PENDING_INTERACTION_REASON = "provider-runtime-unavailable-after-startup";
+const AUTO_REASONING_TIMEOUT = Duration.seconds(15);
+
+interface AutoReasoningDiagnostic {
+  readonly routerModel: {
+    readonly instanceId: string;
+    readonly model: string;
+  } | null;
+  readonly effort: string;
+  readonly durationMs: number;
+  readonly fallback: boolean;
+  readonly usage?: AutoReasoningGenerationResult["usage"];
+}
+
+function collectAutoReasoningConversation(
+  messages: ReadonlyArray<OrchestrationMessage>,
+  boundaryMessageId: OrchestrationMessage["id"],
+) {
+  const boundaryIndex = messages.findIndex((message) => message.id === boundaryMessageId);
+  return (boundaryIndex >= 0 ? messages.slice(0, boundaryIndex) : messages)
+    .filter(
+      (message): message is OrchestrationMessage & { readonly role: "user" | "assistant" } =>
+        message.role === "user" || message.role === "assistant",
+    )
+    .map((message) => ({ role: message.role, text: message.text }));
+}
+
+function reuseAutoReasoningForRetry(input: {
+  readonly selection: ModelSelection;
+  readonly activities: OrchestrationReadModel["threads"][number]["activities"];
+  readonly retryOfTurnId?: TurnId;
+}):
+  | {
+      readonly effectiveSelection: ModelSelection;
+      readonly diagnostic?: AutoReasoningDiagnostic;
+    }
+  | undefined {
+  if (!isAutoReasoningEnabled(input.selection)) return undefined;
+
+  const previous =
+    input.retryOfTurnId === undefined
+      ? null
+      : readAutoReasoningResolution(input.activities, input.retryOfTurnId);
+  const effort =
+    previous?.effectiveEffort ??
+    getModelSelectionStringOptionValue(input.selection, CODEX_REASONING_EFFORT_OPTION_ID);
+  if (!effort) return { effectiveSelection: stripAutoReasoning(input.selection) };
+
+  return {
+    effectiveSelection: selectManualReasoningEffort(input.selection, effort),
+    diagnostic: {
+      routerModel: null,
+      effort,
+      durationMs: 0,
+      fallback: previous?.fallback ?? true,
+    } satisfies AutoReasoningDiagnostic,
+  };
+}
 
 export function requiresProviderSessionRestartForModelSelectionChange(input: {
   readonly provider: ProviderDriverKind;
@@ -330,13 +414,15 @@ function isUnknownPendingApprovalRequestError(cause: Cause.Cause<ProviderService
     const detail = error.detail.toLowerCase();
     return (
       detail.includes("unknown pending approval request") ||
-      detail.includes("unknown pending permission request")
+      detail.includes("unknown pending permission request") ||
+      detail.includes("unknown pending codex approval request")
     );
   }
-  const message = Cause.pretty(cause);
+  const message = Cause.pretty(cause).toLowerCase();
   return (
     message.includes("unknown pending approval request") ||
-    message.includes("unknown pending permission request")
+    message.includes("unknown pending permission request") ||
+    message.includes("unknown pending codex approval request")
   );
 }
 
@@ -397,10 +483,12 @@ const make = Effect.gen(function* () {
   const turnAbortCoordinator = yield* TurnAbortCoordinator;
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
+  const fileSystem = yield* FileSystem.FileSystem;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
   const skillEngine = yield* SkillEngine;
+  const projectMemory = yield* ProjectMemoryStore;
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -418,6 +506,9 @@ const make = Effect.gen(function* () {
     );
 
   const threadModelSelections = new Map<string, ModelSelection>();
+  const threadProjectMemoryModes = new Map<string, ProjectMemoryMode>();
+  const completedForkHandoffs = new Set<ThreadId>();
+  const forkHandoffsInFlight = new Set<ThreadId>();
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -518,6 +609,155 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const appendAutoReasoningActivity = (input: {
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+    readonly diagnostic: AutoReasoningDiagnostic;
+    readonly createdAt: string;
+  }) =>
+    Effect.all({
+      commandId: serverCommandId("auto-reasoning-activity"),
+      eventId: serverEventId(),
+    }).pipe(
+      Effect.flatMap(({ commandId, eventId }) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId: input.threadId,
+          activity: {
+            id: eventId,
+            tone: "info",
+            kind: "auto-reasoning.resolved",
+            summary: "Auto reasoning resolved",
+            payload: {
+              autoReasoningEffort: input.diagnostic.effort,
+              autoReasoningFallback: input.diagnostic.fallback,
+              autoReasoningRouterModel: input.diagnostic.routerModel,
+              autoReasoningDurationMs: input.diagnostic.durationMs,
+              autoReasoningUsage: input.diagnostic.usage ?? null,
+            },
+            turnId: input.turnId,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        }),
+      ),
+    );
+
+  const resolveAutoReasoning = Effect.fn("ProviderCommandReactor.resolveAutoReasoning")(
+    function* (input: {
+      readonly selection: ModelSelection;
+      readonly cwd: string;
+      readonly userPrompt: string;
+      readonly interactionMode: "default" | "plan";
+      readonly attachments: ReadonlyArray<ChatAttachment>;
+      readonly conversation: ReadonlyArray<{
+        readonly role: "user" | "assistant";
+        readonly text: string;
+      }>;
+    }) {
+      if (!isAutoReasoningEnabled(input.selection)) return undefined;
+
+      const providers = yield* providerRegistry.getProviders;
+      const provider = providers.find(
+        (candidate) => candidate.instanceId === input.selection.instanceId,
+      );
+      if (provider?.driver !== ProviderDriverKind.make("codex")) return undefined;
+
+      const model = provider.models.find(
+        (candidate) => candidate.slug === input.selection.model && candidate.isSelectable !== false,
+      );
+      const descriptor = model?.capabilities?.optionDescriptors?.find(
+        (candidate) =>
+          candidate.id === CODEX_REASONING_EFFORT_OPTION_ID && candidate.type === "select",
+      );
+      const live =
+        provider.enabled &&
+        provider.installed &&
+        provider.availability !== "unavailable" &&
+        provider.status !== "error" &&
+        provider.status !== "disabled" &&
+        provider.auth.status !== "unauthenticated";
+      const allowedEfforts =
+        live && descriptor?.type === "select" ? descriptor.options.map((option) => option.id) : [];
+      const concreteFallback = getModelSelectionStringOptionValue(
+        input.selection,
+        CODEX_REASONING_EFFORT_OPTION_ID,
+      );
+      const effectiveFallback = stripAutoReasoning(input.selection);
+      if (!concreteFallback) {
+        yield* Effect.logInfo("auto reasoning resolved", {
+          routerModel: null,
+          chosenEffort: null,
+          durationMs: 0,
+          fallback: true,
+          usage: null,
+        });
+        return { effectiveSelection: effectiveFallback };
+      }
+
+      const settings = yield* serverSettingsService.getSettings;
+      const routerSelection = stripAutoReasoning(
+        settings.autoReasoningModelSelection ?? settings.textGenerationModelSelection,
+      );
+      const routerModel = {
+        instanceId: String(routerSelection.instanceId),
+        model: routerSelection.model,
+      };
+      const startedAt = yield* Clock.currentTimeMillis;
+      const decisionExit =
+        allowedEfforts.length === 0
+          ? undefined
+          : yield* Effect.exit(
+              textGeneration
+                .decideAutoReasoning({
+                  cwd: input.cwd,
+                  userPrompt: input.userPrompt,
+                  interactionMode: input.interactionMode,
+                  attachments: input.attachments,
+                  allowedEfforts,
+                  conversation: input.conversation,
+                  modelSelection: routerSelection,
+                })
+                .pipe(Effect.timeoutOption(AUTO_REASONING_TIMEOUT)),
+            );
+      if (
+        decisionExit !== undefined &&
+        Exit.isFailure(decisionExit) &&
+        Cause.hasInterruptsOnly(decisionExit.cause)
+      ) {
+        return yield* Effect.failCause(decisionExit.cause);
+      }
+      const decision =
+        decisionExit !== undefined &&
+        Exit.isSuccess(decisionExit) &&
+        Option.isSome(decisionExit.value) &&
+        allowedEfforts.includes(decisionExit.value.value.effort)
+          ? decisionExit.value.value
+          : undefined;
+      const effort = decision?.effort ?? concreteFallback;
+      const durationMs = Math.max(0, (yield* Clock.currentTimeMillis) - startedAt);
+      const diagnostic: AutoReasoningDiagnostic = {
+        routerModel,
+        effort,
+        durationMs,
+        fallback: decision === undefined,
+        ...(decision?.usage !== undefined ? { usage: decision.usage } : {}),
+      };
+      yield* Effect.logInfo("auto reasoning resolved", {
+        routerModel,
+        chosenEffort: diagnostic.effort,
+        durationMs: diagnostic.durationMs,
+        fallback: diagnostic.fallback,
+        usage: diagnostic.usage ?? null,
+      });
+      return {
+        effectiveSelection: selectManualReasoningEffort(effectiveFallback, effort),
+        diagnostic,
+      };
+    },
+  );
+
   const formatFailureDetail = (cause: Cause.Cause<unknown>): string => {
     const failReason = cause.reasons.find(Cause.isFailReason);
     const providerError = isProviderAdapterRequestError(failReason?.error)
@@ -610,6 +850,52 @@ const make = Effect.gen(function* () {
       .pipe(Effect.map(Option.getOrUndefined));
   });
 
+  /**
+   * Recreates a thread's worktree from its branch when the directory has
+   * disappeared. Provider sessions resume into the persisted cwd, so a missing
+   * worktree makes every later turn fail as a bogus "session not found".
+   * Best-effort: on failure the turn proceeds and reports the real error.
+   */
+  const ensureThreadWorktree = Effect.fnUntraced(function* (thread: {
+    readonly id: ThreadId;
+    readonly projectId: ProjectId;
+    readonly branch: string | null;
+    readonly worktreePath: string | null;
+  }) {
+    const { worktreePath, branch } = thread;
+    if (!worktreePath || !branch) {
+      return;
+    }
+    const exists = yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => true));
+    if (exists) {
+      return;
+    }
+    const project = yield* resolveProject(thread.projectId);
+    if (!project) {
+      return;
+    }
+    const cwd = project.workspaceRoot;
+    yield* Effect.logWarning("provider command reactor recreating missing worktree", {
+      threadId: thread.id,
+      worktreePath,
+      branch,
+    });
+    // A directory deleted without `git worktree remove` leaves an admin entry
+    // that makes `git worktree add` refuse the path; prune clears it.
+    yield* gitWorkflow.pruneWorktrees({ cwd }).pipe(
+      Effect.andThen(gitWorkflow.createWorktree({ cwd, refName: branch, path: worktreePath })),
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.failCause(cause)
+          : Effect.logWarning("provider command reactor failed to recreate worktree", {
+              threadId: thread.id,
+              worktreePath,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    );
+  });
+
   const resolveThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     return yield* projectionSnapshotQuery
       .getThreadDetailById(threadId)
@@ -622,6 +908,13 @@ const make = Effect.gen(function* () {
     options?: {
       readonly modelSelection?: ModelSelection;
       readonly pendingTurnStart?: boolean;
+      readonly forceFreshSession?: boolean;
+      readonly projectMemoryMode?: ProjectMemoryMode;
+      readonly nativeFork?: {
+        readonly sourceThreadId: ThreadId;
+        readonly providerThreadId: string;
+        readonly providerTurnId: string;
+      };
     },
   ) {
     const thread = yield* resolveThread(threadId);
@@ -631,6 +924,18 @@ const make = Effect.gen(function* () {
 
     const desiredRuntimeMode = thread.runtimeMode;
     const requestedModelSelection = options?.modelSelection;
+    const forceFreshSession = options?.forceFreshSession === true;
+    const projectMemoryMode = options?.projectMemoryMode;
+    const previousProjectMemoryMode = threadProjectMemoryModes.get(threadId);
+    const projectMemoryModeChanged =
+      projectMemoryMode !== undefined &&
+      previousProjectMemoryMode !== undefined &&
+      projectMemoryMode !== previousProjectMemoryMode;
+    const prepared = <A>(value: A): A => {
+      if (projectMemoryMode !== undefined)
+        threadProjectMemoryModes.set(threadId, projectMemoryMode);
+      return value;
+    };
     const resolveActiveSession = (threadId: ThreadId) =>
       providerService
         .listSessions()
@@ -764,21 +1069,25 @@ const make = Effect.gen(function* () {
       projects: project ? [project] : [],
     });
 
+    const providerSessionInput = (input?: {
+      readonly resumeCursor?: unknown;
+      readonly freshSession?: boolean;
+    }) => ({
+      threadId,
+      ...(preferredProvider ? { provider: preferredProvider } : {}),
+      providerInstanceId: desiredInstanceId,
+      ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+      ...(thread.title ? { title: thread.title } : {}),
+      modelSelection: desiredModelSelection,
+      ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
+      ...(input?.freshSession === true ? { freshSession: true } : {}),
+      ...(projectMemoryMode !== undefined ? { projectMemoryMode } : {}),
+      runtimeMode: desiredRuntimeMode,
+    });
     const startProviderSession = (input?: {
       readonly resumeCursor?: unknown;
       readonly freshSession?: boolean;
-    }) =>
-      providerService.startSession(threadId, {
-        threadId,
-        ...(preferredProvider ? { provider: preferredProvider } : {}),
-        providerInstanceId: desiredInstanceId,
-        ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
-        ...(thread.title ? { title: thread.title } : {}),
-        modelSelection: desiredModelSelection,
-        ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
-        ...(input?.freshSession === true ? { freshSession: true } : {}),
-        runtimeMode: desiredRuntimeMode,
-      });
+    }) => providerService.startSession(threadId, providerSessionInput(input));
 
     const bindSessionToThread = (session: ProviderSession) =>
       Effect.gen(function* () {
@@ -820,6 +1129,8 @@ const make = Effect.gen(function* () {
         .sessionModelSwitch;
       const shouldRestartForModelChange = modelChanged && sessionModelSwitch === "unsupported";
       const shouldStartFresh =
+        forceFreshSession ||
+        projectMemoryModeChanged ||
         continuationIncompatible ||
         shouldRestartForModelChange ||
         requiresFreshSessionForModelChange;
@@ -836,15 +1147,19 @@ const make = Effect.gen(function* () {
         !runtimeModeChanged &&
         !cwdChanged &&
         !instanceChanged &&
+        !forceFreshSession &&
+        !projectMemoryModeChanged &&
         !shouldRestartForModelChange &&
         !requiresFreshSessionForModelChange &&
         !shouldRestartForModelSelectionChange
       ) {
-        return {
+        return prepared({
           sessionThreadId: existingSessionThreadId,
           transcriptHandoffRequired: false,
+          forkStrategy: undefined,
           modelSelection: desiredModelSelection,
-        };
+          newSession: false,
+        });
       }
 
       const resumeCursor = shouldStartFresh
@@ -868,7 +1183,9 @@ const make = Effect.gen(function* () {
         shouldRestartForModelChange,
         requiresFreshSessionForModelChange,
         continuationIncompatible,
+        projectMemoryModeChanged,
         shouldRestartForModelSelectionChange,
+        forceFreshSession,
         hasResumeCursor: resumeCursor !== undefined,
       });
       const restartedSession = yield* startProviderSession(
@@ -887,23 +1204,62 @@ const make = Effect.gen(function* () {
         cwd: restartedSession.cwd,
       });
       yield* bindSessionToThread(restartedSession);
-      return {
+      return prepared({
         sessionThreadId: restartedSession.threadId,
         transcriptHandoffRequired: shouldStartFresh,
+        forkStrategy: undefined,
         modelSelection: desiredModelSelection,
-      };
+        newSession: true,
+      });
     }
 
-    const shouldStartFresh = continuationIncompatible || requiresFreshSessionForModelChange;
+    const shouldStartFresh =
+      forceFreshSession ||
+      projectMemoryModeChanged ||
+      continuationIncompatible ||
+      requiresFreshSessionForModelChange;
+    if (options?.nativeFork !== undefined) {
+      const nativeForkSession = yield* providerService
+        .forkSession({
+          sourceThreadId: options.nativeFork.sourceThreadId,
+          destinationThreadId: threadId,
+          sourceProviderThreadId: options.nativeFork.providerThreadId,
+          lastProviderTurnId: options.nativeFork.providerTurnId,
+          session: providerSessionInput(),
+        })
+        .pipe(
+          Effect.map(Option.some),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("provider native fork failed; using compact handoff", {
+              threadId,
+              sourceThreadId: options.nativeFork?.sourceThreadId,
+              provider: preferredProvider,
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.as(Option.none<ProviderSession>())),
+          ),
+        );
+      if (Option.isSome(nativeForkSession)) {
+        yield* bindSessionToThread(nativeForkSession.value);
+        return prepared({
+          sessionThreadId: nativeForkSession.value.threadId,
+          transcriptHandoffRequired: false,
+          forkStrategy: "provider-native" as const,
+          modelSelection: desiredModelSelection,
+          newSession: true,
+        });
+      }
+    }
     const startedSession = yield* startProviderSession(
       shouldStartFresh ? { freshSession: true } : undefined,
     );
     yield* bindSessionToThread(startedSession);
-    return {
+    return prepared({
       sessionThreadId: startedSession.threadId,
       transcriptHandoffRequired: shouldStartFresh,
+      forkStrategy: options?.nativeFork === undefined ? undefined : ("compact-handoff" as const),
       modelSelection: desiredModelSelection,
-    };
+      newSession: true,
+    });
   });
 
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
@@ -913,6 +1269,8 @@ const make = Effect.gen(function* () {
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
     readonly interactionMode?: "default" | "plan";
+    readonly resultOnly?: boolean;
+    readonly retryOfTurnId?: TurnId;
     readonly createdAt: string;
   }) {
     const thread = yield* resolveThread(input.threadId);
@@ -921,18 +1279,111 @@ const make = Effect.gen(function* () {
         new Error(`Thread '${input.threadId}' was not found in read model.`),
       );
     }
+    const forkHandoffRequired =
+      thread.fork?.handoff.status === "pending" && !completedForkHandoffs.has(input.threadId);
+    const failedTurnHandoffRequired =
+      thread.session?.status === "error" || thread.session?.status === "interrupted";
+    if (forkHandoffRequired) {
+      yield* projectionSnapshotQuery.getThreadForkHistory(input.threadId).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () =>
+              new ProviderAdapterRequestError({
+                provider: providerErrorLabelFromInstanceHint({
+                  instanceId: String(
+                    input.modelSelection?.instanceId ?? thread.modelSelection.instanceId,
+                  ),
+                }),
+                method: "thread.turn.start",
+                detail: `Frozen fork history for thread '${input.threadId}' was not found.`,
+              }),
+            onSome: Effect.succeed,
+          }),
+        ),
+      );
+    }
+    const project = yield* resolveProject(thread.projectId);
+    const durableModelSelection = input.modelSelection ?? thread.modelSelection;
+    const effectiveCwd =
+      resolveThreadWorkspaceCwd({
+        thread,
+        projects: project ? [project] : [],
+      }) ??
+      project?.workspaceRoot ??
+      process.cwd();
+    const autoReasoning =
+      input.resultOnly === true
+        ? reuseAutoReasoningForRetry({
+            selection: durableModelSelection,
+            activities: thread.activities,
+            ...(input.retryOfTurnId !== undefined ? { retryOfTurnId: input.retryOfTurnId } : {}),
+          })
+        : yield* resolveAutoReasoning({
+            selection: durableModelSelection,
+            cwd: effectiveCwd,
+            userPrompt: input.messageText,
+            interactionMode: input.interactionMode ?? "default",
+            attachments: input.attachments ?? [],
+            conversation: collectAutoReasoningConversation(
+              thread.messages,
+              input.boundaryMessageId,
+            ),
+          });
+    const effectiveInputModelSelection = autoReasoning?.effectiveSelection ?? input.modelSelection;
+    const memoryModelSelection = autoReasoning?.effectiveSelection ?? durableModelSelection;
+    const projectMemoryRead = project
+      ? yield* projectMemory
+          .read(
+            {
+              projectId: thread.projectId,
+              workspaceRoot: project.workspaceRoot,
+              threadId: input.threadId,
+              actor: "root",
+            },
+            {
+              projectId: thread.projectId,
+              query: input.messageText,
+              contextWindowTokens:
+                resolveCodexContextWindowTokens(memoryModelSelection) ??
+                DEFAULT_PROJECT_MEMORY_CONTEXT_WINDOW_TOKENS,
+            },
+          )
+          .pipe(
+            Effect.map(Option.some),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("provider command reactor could not load project memory", {
+                threadId: input.threadId,
+                projectId: thread.projectId,
+                cause: Cause.pretty(cause),
+              }).pipe(Effect.as(Option.none())),
+            ),
+          )
+      : Option.none();
     const sessionPreparation = yield* ensureSessionForThread(input.threadId, input.createdAt, {
-      ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+      ...(effectiveInputModelSelection !== undefined
+        ? { modelSelection: effectiveInputModelSelection }
+        : {}),
       pendingTurnStart: true,
+      forceFreshSession: forkHandoffRequired || failedTurnHandoffRequired,
+      ...(Option.isSome(projectMemoryRead)
+        ? { projectMemoryMode: projectMemoryRead.value.mode }
+        : {}),
+      ...(forkHandoffRequired && thread.fork?.providerForkCursor !== undefined
+        ? {
+            nativeFork: {
+              sourceThreadId: thread.fork.provenance.sourceThreadId,
+              providerThreadId: thread.fork.providerForkCursor.providerThreadId,
+              providerTurnId: thread.fork.providerForkCursor.providerTurnId,
+            },
+          }
+        : {}),
     });
     threadModelSelections.set(input.threadId, sessionPreparation.modelSelection);
-    const normalizedAttachments = input.attachments ?? [];
     const activeSession = yield* providerService
       .listSessions()
       .pipe(
         Effect.map((sessions) => sessions.find((session) => session.threadId === input.threadId)),
       );
-    const project = yield* resolveProject(thread.projectId);
     const providerMessageText =
       activeSession?.providerInstanceId === undefined
         ? input.messageText
@@ -941,23 +1392,36 @@ const make = Effect.gen(function* () {
             ...(project ? { projectCwd: project.workspaceRoot } : {}),
             prompt: input.messageText,
           });
-    const providerInputWithHandoff = sessionPreparation.transcriptHandoffRequired
-      ? prependProviderTranscriptHandoff({
-          handoff: buildProviderTranscriptHandoff({
+    const compactHandoff =
+      (forkHandoffRequired && sessionPreparation.forkStrategy !== "provider-native") ||
+      sessionPreparation.transcriptHandoffRequired
+        ? buildProviderTranscriptHandoff({
             messages: thread.messages,
             boundaryMessageId: input.boundaryMessageId,
-          }),
-          providerInput: providerMessageText,
-        })
-      : providerMessageText;
-    if (providerInputWithHandoff.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
-      return yield* new ProviderAdapterRequestError({
-        provider: providerErrorLabel(activeSession?.provider),
-        method: "thread.turn.start",
-        detail: `Full transcript handoff for thread '${input.threadId}' is ${providerInputWithHandoff.length} characters, exceeding the provider input limit of ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS}. The transcript was not truncated.`,
-      });
-    }
-    let providerInput = providerInputWithHandoff;
+            ...(thread.latestTurn?.state !== undefined
+              ? { latestTurnState: thread.latestTurn.state }
+              : {}),
+            checkpoints: thread.checkpoints,
+          })
+        : undefined;
+    const projectMemoryContext =
+      sessionPreparation.newSession &&
+      Option.isSome(projectMemoryRead) &&
+      projectMemoryRead.value.entries.length > 0
+        ? `<t3code_project_memory>\n${projectMemoryRead.value.markdown.trim()}\n</t3code_project_memory>`
+        : undefined;
+    const transcriptContext = [projectMemoryContext, compactHandoff?.handoff]
+      .filter((value): value is string => value !== undefined)
+      .join("\n\n");
+    const transcriptHandoff = transcriptContext
+      ? {
+          text: transcriptContext,
+          ...(compactHandoff !== undefined && compactHandoff.attachments.length > 0
+            ? { attachments: compactHandoff.attachments }
+            : {}),
+        }
+      : undefined;
+    let providerInput = providerMessageText;
     if (yield* projectionSnapshotQuery.hasActiveProjectAgentPeer(input.threadId)) {
       const coordinationApplication = applyProjectAgentInstructionsToProviderInput({
         providerInput,
@@ -989,19 +1453,19 @@ const make = Effect.gen(function* () {
             })
           : (yield* providerService.getCapabilities(activeSession.providerInstanceId))
               .sessionModelSwitch;
-    const requestedModelSelection =
-      input.modelSelection !== undefined
-        ? sessionPreparation.modelSelection
-        : (threadModelSelections.get(input.threadId) ?? thread.modelSelection);
+    const modelSelectionWasRequested = effectiveInputModelSelection !== undefined;
+    const requestedModelSelection = modelSelectionWasRequested
+      ? sessionPreparation.modelSelection
+      : (threadModelSelections.get(input.threadId) ?? thread.modelSelection);
     const modelForTurn =
-      sessionModelSwitch === "unsupported" && input.modelSelection === undefined
+      sessionModelSwitch === "unsupported" && !modelSelectionWasRequested
         ? activeSession?.model !== undefined
           ? {
               ...requestedModelSelection,
               model: activeSession.model,
             }
           : requestedModelSelection
-        : input.modelSelection !== undefined
+        : modelSelectionWasRequested
           ? requestedModelSelection
           : undefined;
 
@@ -1010,7 +1474,7 @@ const make = Effect.gen(function* () {
         type: "thread.meta.update",
         commandId: yield* serverCommandId("model-selection-commit"),
         threadId: input.threadId,
-        modelSelection: sessionPreparation.modelSelection,
+        modelSelection: autoReasoning ? input.modelSelection : sessionPreparation.modelSelection,
       });
       threadModelSelections.set(input.threadId, sessionPreparation.modelSelection);
     }
@@ -1018,10 +1482,61 @@ const make = Effect.gen(function* () {
     return {
       threadId: input.threadId,
       ...(normalizedInput ? { input: normalizedInput } : {}),
-      ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
+      ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
+      ...(transcriptHandoff !== undefined ? { transcriptHandoff } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      ...(autoReasoning?.diagnostic !== undefined
+        ? { autoReasoning: autoReasoning.diagnostic }
+        : {}),
     };
+  });
+
+  const applyGeneratedWorktreeBranch = Effect.fn("applyGeneratedWorktreeBranch")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly oldBranch: string;
+    readonly cwd: string;
+    readonly generatedBranch: string;
+  }) {
+    const targetBranch = buildGeneratedWorktreeBranchName(input.generatedBranch);
+    if (targetBranch === input.oldBranch) return;
+
+    const renamed = yield* gitWorkflow.renameBranch({
+      cwd: input.cwd,
+      oldBranch: input.oldBranch,
+      newBranch: targetBranch,
+    });
+    yield* orchestrationEngine.dispatch({
+      type: "thread.meta.update",
+      commandId: yield* serverCommandId("worktree-branch-rename"),
+      threadId: input.threadId,
+      branch: renamed.branch,
+      worktreePath: input.cwd,
+    });
+    yield* vcsStatusBroadcaster.refreshStatus(input.cwd).pipe(Effect.ignoreCause({ log: true }));
+  });
+
+  const applyGeneratedThreadTitle = Effect.fn("applyGeneratedThreadTitle")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly generatedTitle: string;
+    readonly titleSeed?: string;
+    readonly replaceableTitle?: string;
+  }) {
+    const thread = yield* resolveThread(input.threadId);
+    if (!thread) return;
+    if (
+      !canReplaceThreadTitle(thread.title, input.titleSeed) &&
+      thread.title !== input.replaceableTitle
+    ) {
+      return;
+    }
+
+    yield* orchestrationEngine.dispatch({
+      type: "thread.meta.update",
+      commandId: yield* serverCommandId("thread-title-rename"),
+      threadId: input.threadId,
+      title: input.generatedTitle,
+    });
   });
 
   const maybeGenerateAndRenameWorktreeBranchForFirstTurn = Effect.fn(
@@ -1033,12 +1548,7 @@ const make = Effect.gen(function* () {
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
   }) {
-    if (!input.branch || !input.worktreePath) {
-      return;
-    }
-    if (!isTemporaryWorktreeBranch(input.branch)) {
-      return;
-    }
+    if (!input.branch || !input.worktreePath || !isTemporaryWorktreeBranch(input.branch)) return;
 
     const oldBranch = input.branch;
     const cwd = input.worktreePath;
@@ -1052,27 +1562,18 @@ const make = Effect.gen(function* () {
               settings,
               yield* providerRegistry.getProviders,
             );
-
       const generated = yield* textGeneration.generateBranchName({
         cwd,
         message: input.messageText,
         ...(attachments.length > 0 ? { attachments } : {}),
         modelSelection,
       });
-      if (!generated) return;
-
-      const targetBranch = buildGeneratedWorktreeBranchName(generated.branch);
-      if (targetBranch === oldBranch) return;
-
-      const renamed = yield* gitWorkflow.renameBranch({ cwd, oldBranch, newBranch: targetBranch });
-      yield* orchestrationEngine.dispatch({
-        type: "thread.meta.update",
-        commandId: yield* serverCommandId("worktree-branch-rename"),
+      yield* applyGeneratedWorktreeBranch({
         threadId: input.threadId,
-        branch: renamed.branch,
-        worktreePath: cwd,
+        oldBranch,
+        cwd,
+        generatedBranch: generated.branch,
       });
-      yield* vcsStatusBroadcaster.refreshStatus(cwd).pipe(Effect.ignoreCause({ log: true }));
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("provider command reactor failed to generate or rename worktree branch", {
@@ -1092,37 +1593,100 @@ const make = Effect.gen(function* () {
       readonly messageText: string;
       readonly attachments?: ReadonlyArray<ChatAttachment>;
       readonly titleSeed?: string;
+      readonly replaceableTitle?: string;
     }) {
       const attachments = input.attachments ?? [];
       yield* Effect.gen(function* () {
         const { textGenerationModelSelection: modelSelection } =
           yield* serverSettingsService.getSettings;
 
-        const generated = yield* textGeneration.generateThreadTitle({
-          cwd: input.cwd,
-          message: input.messageText,
-          ...(attachments.length > 0 ? { attachments } : {}),
-          modelSelection,
-        });
+        const generated = yield* textGeneration
+          .generateThreadTitle({
+            cwd: input.cwd,
+            message: input.messageText,
+            ...(attachments.length > 0 ? { attachments } : {}),
+            modelSelection,
+          })
+          .pipe(
+            Effect.retry({
+              times: 2,
+              schedule: Schedule.exponential("2 seconds"),
+            }),
+          );
         if (!generated) return;
 
-        const thread = yield* resolveThread(input.threadId);
-        if (!thread) return;
-        if (!canReplaceThreadTitle(thread.title, input.titleSeed)) {
-          return;
-        }
-
-        yield* orchestrationEngine.dispatch({
-          type: "thread.meta.update",
-          commandId: yield* serverCommandId("thread-title-rename"),
+        yield* applyGeneratedThreadTitle({
           threadId: input.threadId,
-          title: generated.title,
+          generatedTitle: generated.title,
+          ...(input.titleSeed !== undefined ? { titleSeed: input.titleSeed } : {}),
+          ...(input.replaceableTitle !== undefined
+            ? { replaceableTitle: input.replaceableTitle }
+            : {}),
         });
       }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("provider command reactor failed to generate or rename thread title", {
             threadId: input.threadId,
             cwd: input.cwd,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
+    },
+  );
+
+  const maybeGenerateFirstTurnMetadata = Effect.fn("maybeGenerateFirstTurnMetadata")(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly branch: string;
+      readonly worktreePath: string;
+      readonly messageText: string;
+      readonly attachments?: ReadonlyArray<ChatAttachment>;
+      readonly titleSeed?: string;
+      readonly replaceableTitle?: string;
+    }) {
+      const attachments = input.attachments ?? [];
+      yield* Effect.gen(function* () {
+        const { textGenerationModelSelection: modelSelection } =
+          yield* serverSettingsService.getSettings;
+        const generated = yield* textGeneration
+          .generateThreadMetadata({
+            cwd: input.worktreePath,
+            message: input.messageText,
+            ...(attachments.length > 0 ? { attachments } : {}),
+            modelSelection: lowEffortMetadataSelection(modelSelection),
+          })
+          .pipe(
+            Effect.retry({
+              times: 2,
+              schedule: Schedule.exponential("2 seconds"),
+            }),
+          );
+
+        yield* Effect.all(
+          [
+            applyGeneratedWorktreeBranch({
+              threadId: input.threadId,
+              oldBranch: input.branch,
+              cwd: input.worktreePath,
+              generatedBranch: generated.branch,
+            }),
+            applyGeneratedThreadTitle({
+              threadId: input.threadId,
+              generatedTitle: generated.title,
+              ...(input.titleSeed !== undefined ? { titleSeed: input.titleSeed } : {}),
+              ...(input.replaceableTitle !== undefined
+                ? { replaceableTitle: input.replaceableTitle }
+                : {}),
+            }),
+          ],
+          { concurrency: 2, discard: true },
+        );
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("provider command reactor failed to generate thread metadata", {
+            threadId: input.threadId,
+            cwd: input.worktreePath,
             cause: Cause.pretty(cause),
           }),
         ),
@@ -1518,9 +2082,29 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    const shouldReserveForkHandoff =
+      thread.fork?.handoff.status === "pending" &&
+      !completedForkHandoffs.has(event.payload.threadId);
+    if (shouldReserveForkHandoff && forkHandoffsInFlight.has(event.payload.threadId)) {
+      yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.turn.start.failed",
+        summary: "Provider turn start failed",
+        detail: "The fork history handoff is already being sent by another turn.",
+        turnId: null,
+        createdAt: event.payload.createdAt,
+      });
+      return;
+    }
+    if (shouldReserveForkHandoff) {
+      forkHandoffsInFlight.add(event.payload.threadId);
+    }
+    yield* ensureThreadWorktree(thread);
+
     const isFirstUserMessageTurn =
-      thread.messages.filter((entry) => entry.role === "user").length === 1;
-    if (isFirstUserMessageTurn) {
+      thread.messages.filter((entry) => entry.role === "user" && entry.historyOrigin === undefined)
+        .length === 1;
+    if (isFirstUserMessageTurn && event.payload.resultOnly !== true) {
       const project = yield* resolveProject(thread.projectId);
       const generationCwd =
         resolveThreadWorkspaceCwd({
@@ -1533,18 +2117,41 @@ const make = Effect.gen(function* () {
         ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
       };
 
-      yield* maybeGenerateAndRenameWorktreeBranchForFirstTurn({
-        threadId: event.payload.threadId,
-        branch: thread.branch,
-        worktreePath: thread.worktreePath,
-        ...generationInput,
-      }).pipe(Effect.forkScoped);
-
-      if (canReplaceThreadTitle(thread.title, event.payload.titleSeed)) {
+      const isUnrenamedForkTitle =
+        thread.fork !== undefined &&
+        thread.title === `${thread.fork.provenance.sourceTitle} (fork)`;
+      const shouldGenerateBranch =
+        thread.branch !== null &&
+        thread.worktreePath !== null &&
+        isTemporaryWorktreeBranch(thread.branch);
+      const shouldGenerateTitle =
+        canReplaceThreadTitle(thread.title, event.payload.titleSeed) || isUnrenamedForkTitle;
+      if (
+        shouldGenerateBranch &&
+        shouldGenerateTitle &&
+        thread.branch !== null &&
+        thread.worktreePath !== null
+      ) {
+        yield* maybeGenerateFirstTurnMetadata({
+          threadId: event.payload.threadId,
+          branch: thread.branch,
+          worktreePath: thread.worktreePath,
+          ...generationInput,
+          ...(isUnrenamedForkTitle ? { replaceableTitle: thread.title } : {}),
+        }).pipe(Effect.forkScoped);
+      } else if (shouldGenerateBranch) {
+        yield* maybeGenerateAndRenameWorktreeBranchForFirstTurn({
+          threadId: event.payload.threadId,
+          branch: thread.branch,
+          worktreePath: thread.worktreePath,
+          ...generationInput,
+        }).pipe(Effect.forkScoped);
+      } else if (shouldGenerateTitle) {
         yield* maybeGenerateThreadTitleForFirstTurn({
           threadId: event.payload.threadId,
           cwd: generationCwd,
           ...generationInput,
+          ...(isUnrenamedForkTitle ? { replaceableTitle: thread.title } : {}),
         }).pipe(Effect.forkScoped);
       }
     }
@@ -1595,6 +2202,10 @@ const make = Effect.gen(function* () {
           ? { modelSelection: event.payload.modelSelection }
           : {}),
         interactionMode: event.payload.interactionMode,
+        ...(event.payload.resultOnly !== undefined ? { resultOnly: event.payload.resultOnly } : {}),
+        ...(event.payload.retryOfTurnId !== undefined
+          ? { retryOfTurnId: event.payload.retryOfTurnId }
+          : {}),
         createdAt: event.payload.createdAt,
       }).pipe(
         Effect.map(Option.some),
@@ -1605,8 +2216,83 @@ const make = Effect.gen(function* () {
         return;
       }
 
+      const completePendingForkHandoff = Effect.fn("completePendingForkHandoff")(function* () {
+        if (thread.fork?.handoff.status !== "pending") {
+          return;
+        }
+        completedForkHandoffs.add(event.payload.threadId);
+        const completedAt = DateTime.formatIso(yield* DateTime.now);
+        yield* orchestrationEngine
+          .dispatch({
+            type: "thread.fork.handoff.complete",
+            commandId: CommandId.make(
+              `server:fork-handoff-complete:${event.commandId ?? event.eventId}`,
+            ),
+            threadId: event.payload.threadId,
+            completedAt,
+          })
+          .pipe(
+            Effect.retry({ times: 1 }),
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                "provider command reactor failed to persist fork handoff completion",
+                {
+                  threadId: event.payload.threadId,
+                  cause: Cause.pretty(cause),
+                },
+              ),
+            ),
+          );
+      });
+
       const sendMainTurn = (request: typeof sendTurnRequest.value) =>
-        providerService.sendTurn(request).pipe(Effect.catchCause(recoverTurnStartFailure));
+        Effect.gen(function* () {
+          const settings = yield* serverSettingsService.getSettings;
+          const enhancementApplication = applyAgentEnhancementsToProviderInput({
+            ...(request.input !== undefined ? { providerInput: request.input } : {}),
+            cavemanMode: settings.agentEnhancement.cavemanMode,
+            deepThinking: {
+              ...settings.agentEnhancement.deepThinking,
+              enabled: resolveBetterT3FeatureFlag(
+                settings.betterT3Environment,
+                "agent.deepThinking",
+              ),
+            },
+          });
+          const enhancedRequest =
+            enhancementApplication.providerInput === request.input
+              ? request
+              : {
+                  ...request,
+                  ...(enhancementApplication.providerInput !== undefined
+                    ? { input: enhancementApplication.providerInput }
+                    : {}),
+                };
+          const { autoReasoning, ...providerRequest } = enhancedRequest;
+          const started = yield* providerService.sendTurn(providerRequest);
+          if (autoReasoning !== undefined) {
+            yield* appendAutoReasoningActivity({
+              threadId: event.payload.threadId,
+              turnId: started.turnId,
+              diagnostic: autoReasoning,
+              createdAt: event.payload.createdAt,
+            }).pipe(
+              Effect.catchCause(() =>
+                Effect.logWarning("failed to persist auto reasoning activity", {
+                  routerModel: autoReasoning.routerModel,
+                  chosenEffort: autoReasoning.effort,
+                  durationMs: autoReasoning.durationMs,
+                  fallback: autoReasoning.fallback,
+                  usage: autoReasoning.usage ?? null,
+                }),
+              ),
+            );
+          }
+          return started;
+        }).pipe(
+          Effect.tap(() => completePendingForkHandoff()),
+          Effect.catchCause(recoverTurnStartFailure),
+        );
 
       if (event.payload.fetchMode === undefined) {
         yield* sendMainTurn(sendTurnRequest.value);
@@ -1744,7 +2430,15 @@ const make = Effect.gen(function* () {
       );
     });
 
-    yield* startProviderTurn.pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
+    yield* startProviderTurn.pipe(
+      Effect.catchCause(recoverTurnStartFailure),
+      Effect.ensuring(
+        Effect.sync(() => {
+          forkHandoffsInFlight.delete(event.payload.threadId);
+        }),
+      ),
+      Effect.forkScoped,
+    );
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (

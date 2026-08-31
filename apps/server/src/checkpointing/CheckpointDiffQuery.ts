@@ -137,9 +137,15 @@ export const make = Effect.gen(function* () {
         });
       }
 
+      const toCheckpoint = threadContext.value.checkpoints.find(
+        (checkpoint) => checkpoint.checkpointTurnCount === input.toTurnCount,
+      );
       const fromCheckpointRef =
         input.fromTurnCount === 0
-          ? checkpointRefForThreadTurn(input.threadId, 0)
+          ? checkpointRefForThreadTurn(
+              toCheckpoint?.historyOrigin?.sourceThreadId ?? input.threadId,
+              0,
+            )
           : threadContext.value.checkpoints.find(
               (checkpoint) => checkpoint.checkpointTurnCount === input.fromTurnCount,
             )?.checkpointRef;
@@ -152,9 +158,7 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const toCheckpointRef = threadContext.value.checkpoints.find(
-        (checkpoint) => checkpoint.checkpointTurnCount === input.toTurnCount,
-      )?.checkpointRef;
+      const toCheckpointRef = toCheckpoint?.checkpointRef;
       if (!toCheckpointRef) {
         return yield* new CheckpointRefUnavailableError({
           operation,
@@ -257,7 +261,10 @@ export const make = Effect.gen(function* () {
     const diff = yield* checkpointStore
       .diffCheckpoints({
         cwd: workspaceCwd,
-        fromCheckpointRef: checkpointRefForThreadTurn(input.threadId, 0),
+        fromCheckpointRef: checkpointRefForThreadTurn(
+          threadContext.value.baselineCheckpointThreadId ?? input.threadId,
+          0,
+        ),
         toCheckpointRef: threadContext.value.toCheckpointRef as CheckpointRef,
         fallbackFromToHead: false,
         ignoreWhitespace,

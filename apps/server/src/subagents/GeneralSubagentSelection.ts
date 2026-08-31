@@ -5,6 +5,13 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import {
+  getModelSelectionStringOptionValue,
+  isAutoReasoningEnabled,
+  readAutoReasoningResolution,
+  selectManualReasoningEffort,
+  stripAutoReasoning,
+} from "@t3tools/shared/model";
 
 const REASONING_OPTION_IDS = ["reasoningEffort", "effort"] as const;
 
@@ -53,7 +60,9 @@ export function isGeneralSubagentProviderAvailable(provider: ServerProvider): bo
     provider.status !== "error" &&
     provider.status !== "disabled" &&
     provider.auth.status !== "unauthenticated" &&
-    provider.models.length > 0
+    provider.models.some((model) => model.isSelectable !== false) &&
+    (provider.status !== "warning" ||
+      provider.models.some((model) => model.isDefault === true && model.isSelectable !== false))
   );
 }
 
@@ -76,7 +85,10 @@ function unavailable(
 }
 
 function defaultModel(provider: ServerProvider): ServerProviderModel | undefined {
-  return provider.models.find((candidate) => candidate.isDefault) ?? provider.models[0];
+  return (
+    provider.models.find((candidate) => candidate.isDefault && candidate.isSelectable !== false) ??
+    provider.models.find((candidate) => candidate.isSelectable !== false)
+  );
 }
 
 function resolveModel(input: {
@@ -89,7 +101,9 @@ function resolveModel(input: {
     (input.parentModelSelection.instanceId === input.provider.instanceId
       ? input.parentModelSelection.model
       : defaultModel(input.provider)?.slug);
-  return input.provider.models.find((candidate) => candidate.slug === modelSlug);
+  return input.provider.models.find(
+    (candidate) => candidate.slug === modelSlug && candidate.isSelectable !== false,
+  );
 }
 
 function inheritedOptions(input: {
@@ -176,6 +190,25 @@ export function resolveGeneralSubagentSelection(input: {
   };
 }
 
+export function resolveGeneralSubagentParentSelection(input: {
+  readonly selection: ModelSelection;
+  readonly activities: ReadonlyArray<{
+    readonly kind: string;
+    readonly payload: unknown;
+    readonly turnId?: string | null;
+  }>;
+  readonly parentTurnId: string | null;
+}): ModelSelection {
+  if (!isAutoReasoningEnabled(input.selection)) return input.selection;
+  const resolved = readAutoReasoningResolution(input.activities, input.parentTurnId);
+  const effort =
+    resolved?.effectiveEffort ??
+    getModelSelectionStringOptionValue(input.selection, "reasoningEffort");
+  return effort
+    ? selectManualReasoningEffort(input.selection, effort)
+    : stripAutoReasoning(input.selection);
+}
+
 export function listGeneralSubagentModels(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly callerProviderInstanceId: ProviderInstanceId;
@@ -188,15 +221,17 @@ export function listGeneralSubagentModels(input: {
       driver: provider.driver,
       displayName: provider.displayName ?? provider.driver,
       current: provider.instanceId === input.callerProviderInstanceId,
-      models: provider.models.map((model) => ({
-        slug: model.slug,
-        name: model.name,
-        current:
-          provider.instanceId === input.parentModelSelection.instanceId &&
-          model.slug === input.parentModelSelection.model,
-        isDefault: model.isDefault === true,
-        reasoningEfforts: reasoningEfforts(model),
-      })),
+      models: provider.models
+        .filter((model) => model.isSelectable !== false)
+        .map((model) => ({
+          slug: model.slug,
+          name: model.name,
+          current:
+            provider.instanceId === input.parentModelSelection.instanceId &&
+            model.slug === input.parentModelSelection.model,
+          isDefault: model.isDefault === true,
+          reasoningEfforts: reasoningEfforts(model),
+        })),
     }))
     .sort((left, right) => Number(right.current) - Number(left.current));
 }

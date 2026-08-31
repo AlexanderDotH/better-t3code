@@ -66,6 +66,12 @@ import Migration0050 from "./Migrations/050_ProjectionProjectFaviconPathCompatib
 import Migration0051 from "./Migrations/051_ProjectionProjectCheckpointsEnabled.ts";
 import Migration0052 from "./Migrations/052_AuthSessionClientConnectionCompatibility.ts";
 import Migration0053 from "./Migrations/053_ProjectionThreadSubagentManagedOrigin.ts";
+import Migration0054 from "./Migrations/054_ProjectionHarnessChatSync.ts";
+import Migration0055 from "./Migrations/055_ProjectionThreadForks.ts";
+import Migration0056 from "./Migrations/056_ProjectionThreadLinkedPullRequest.ts";
+import Migration0057 from "./Migrations/057_ProjectionThreadsUnsettledAt.ts";
+import Migration0058 from "./Migrations/058_Upstream42And43SchemaConvergence.ts";
+import Migration0059 from "./Migrations/059_KnowledgeGraphDerivedData.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -131,6 +137,12 @@ export const migrationEntries = [
   [51, "ProjectionProjectCheckpointsEnabled", Migration0051],
   [52, "AuthSessionClientConnectionCompatibility", Migration0052],
   [53, "ProjectionThreadSubagentManagedOrigin", Migration0053],
+  [54, "ProjectionHarnessChatSync", Migration0054],
+  [55, "ProjectionThreadForks", Migration0055],
+  [56, "ProjectionThreadLinkedPullRequest", Migration0056],
+  [57, "ProjectionThreadsUnsettledAt", Migration0057],
+  [58, "Upstream42And43SchemaConvergence", Migration0058],
+  [59, "KnowledgeGraphDerivedData", Migration0059],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

@@ -10,6 +10,7 @@ import {
   EventId,
   IsoDateTime,
   NonNegativeInt,
+  OrchestrationHistoryOrigin,
   OrchestrationThreadActivityTone,
   ThreadId,
   TurnId,
@@ -30,6 +31,7 @@ export const ProjectionThreadActivity = Schema.Struct({
   payload: Schema.Unknown,
   sequence: Schema.optional(NonNegativeInt),
   createdAt: IsoDateTime,
+  historyOrigin: Schema.optional(OrchestrationHistoryOrigin),
 });
 export type ProjectionThreadActivity = typeof ProjectionThreadActivity.Type;
 

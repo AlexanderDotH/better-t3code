@@ -1,4 +1,5 @@
 import {
+  CODEX_REASONING_EFFORT_OPTION_ID,
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
@@ -6,6 +7,7 @@ import {
   type ModelSelection,
   ProviderDriverKind,
   ProviderInstanceId,
+  T3_AUTO_REASONING_OPTION_ID,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
 } from "@t3tools/contracts";
@@ -20,10 +22,18 @@ export interface SelectableModelOption {
 export function createModelCapabilities(input: {
   optionDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
   contextWindow?: ModelCapabilities["contextWindow"];
+  inputModalities?: ModelCapabilities["inputModalities"];
+  outputModalities?: ModelCapabilities["outputModalities"];
+  pricing?: ModelCapabilities["pricing"];
+  toolSupport?: ModelCapabilities["toolSupport"];
 }): ModelCapabilities {
   return {
     optionDescriptors: input.optionDescriptors.map(cloneDescriptor),
     ...(input.contextWindow ? { contextWindow: { ...input.contextWindow } } : {}),
+    ...(input.inputModalities ? { inputModalities: [...input.inputModalities] } : {}),
+    ...(input.outputModalities ? { outputModalities: [...input.outputModalities] } : {}),
+    ...(input.pricing ? { pricing: { ...input.pricing } } : {}),
+    ...(input.toolSupport ? { toolSupport: { ...input.toolSupport } } : {}),
   };
 }
 
@@ -79,6 +89,87 @@ export function getModelSelectionBooleanOptionValue(
   return getProviderOptionBooleanSelectionValue(modelSelection?.options, id);
 }
 
+function withoutModelSelectionOption(
+  selection: ModelSelection,
+  optionId: string,
+): Array<ProviderOptionSelection> {
+  return (selection.options ?? []).filter((option) => option.id !== optionId).map(cloneSelection);
+}
+
+function withModelSelectionOption(
+  selection: ModelSelection,
+  option: ProviderOptionSelection,
+): ModelSelection {
+  const options = (selection.options ?? []).map(cloneSelection);
+  const index = options.findIndex((candidate) => candidate.id === option.id);
+  if (index >= 0) {
+    options[index] = option;
+  } else {
+    options.push(option);
+  }
+  return { ...selection, options };
+}
+
+export function isAutoReasoningEnabled(selection: ModelSelection | null | undefined): boolean {
+  return getModelSelectionBooleanOptionValue(selection, T3_AUTO_REASONING_OPTION_ID) === true;
+}
+
+export function enableAutoReasoning(selection: ModelSelection): ModelSelection {
+  return withModelSelectionOption(selection, { id: T3_AUTO_REASONING_OPTION_ID, value: true });
+}
+
+export function stripAutoReasoning(selection: ModelSelection): ModelSelection {
+  const options = withoutModelSelectionOption(selection, T3_AUTO_REASONING_OPTION_ID);
+  return options.length > 0
+    ? { ...selection, options }
+    : { instanceId: selection.instanceId, model: selection.model };
+}
+
+export function selectManualReasoningEffort(
+  selection: ModelSelection,
+  effort: string,
+): ModelSelection {
+  const manual = stripAutoReasoning(selection);
+  return withModelSelectionOption(manual, {
+    id: CODEX_REASONING_EFFORT_OPTION_ID,
+    value: effort,
+  });
+}
+
+export type AutoReasoningResolution = {
+  readonly effectiveEffort: string;
+  readonly fallback: boolean;
+};
+
+export function readAutoReasoningResolution(
+  activities: ReadonlyArray<{
+    readonly kind: string;
+    readonly payload: unknown;
+    readonly turnId?: string | null;
+  }>,
+  expectedTurnId?: string | null,
+): AutoReasoningResolution | null {
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const activity = activities[index];
+    if (
+      activity?.kind !== "auto-reasoning.resolved" ||
+      (expectedTurnId !== undefined && activity.turnId !== expectedTurnId) ||
+      typeof activity.payload !== "object" ||
+      activity.payload === null
+    ) {
+      continue;
+    }
+    const payload = activity.payload as Record<string, unknown>;
+    const effort = payload["autoReasoningEffort"];
+    const fallback = payload["autoReasoningFallback"];
+    if (typeof effort !== "string" || effort.trim().length === 0 || typeof fallback !== "boolean") {
+      continue;
+    }
+    return { effectiveEffort: effort.trim(), fallback };
+  }
+  return null;
+}
+
 export const CODEX_CONTEXT_WINDOW_OPTION_ID = "contextWindow";
 export const CODEX_CONTEXT_WINDOW_DEFAULT_VALUE = "default";
 
@@ -104,19 +195,23 @@ export function createCodexContextWindowDescriptor(
   metadata: NonNullable<ModelCapabilities["contextWindow"]>,
 ): Extract<ProviderOptionDescriptor, { type: "select" }> {
   const defaultLabel = formatModelContextWindowTokens(metadata.defaultTokens);
+  const maximumSelectableTokens = Math.min(
+    metadata.maxTokens,
+    CODEX_CONTEXT_WINDOW_CUSTOM_MAX_TOKENS,
+  );
   const numericTokens = new Set<number>(
     CODEX_CONTEXT_WINDOW_STABLE_TOKENS.filter(
       (tokens) =>
+        tokens <= maximumSelectableTokens &&
         tokens !== metadata.defaultTokens &&
         formatModelContextWindowTokens(tokens) !== defaultLabel,
     ),
   );
   if (
-    metadata.maxTokens >= CODEX_CONTEXT_WINDOW_MIN_TOKENS &&
-    metadata.maxTokens <= CODEX_CONTEXT_WINDOW_CUSTOM_MAX_TOKENS &&
-    metadata.maxTokens !== metadata.defaultTokens
+    maximumSelectableTokens >= CODEX_CONTEXT_WINDOW_MIN_TOKENS &&
+    maximumSelectableTokens !== metadata.defaultTokens
   ) {
-    numericTokens.add(metadata.maxTokens);
+    numericTokens.add(maximumSelectableTokens);
   }
   const choices = [
     ...Array.from(numericTokens, (tokens) => ({
@@ -186,6 +281,21 @@ function resolveDescriptorChoiceValue(
   }
   if (descriptor.options.some((option) => option.id === trimmed)) {
     return trimmed;
+  }
+  if (descriptor.id === CODEX_CONTEXT_WINDOW_OPTION_ID) {
+    const requestedTokens = Number(trimmed);
+    const maximumChoiceTokens = Math.max(
+      ...descriptor.options
+        .map((option) => Number(option.id))
+        .filter((tokens) => Number.isSafeInteger(tokens) && tokens > 0),
+    );
+    if (
+      Number.isSafeInteger(requestedTokens) &&
+      requestedTokens > maximumChoiceTokens &&
+      Number.isFinite(maximumChoiceTokens)
+    ) {
+      return String(maximumChoiceTokens);
+    }
   }
   return descriptor.currentValue ?? descriptor.options.find((option) => option.isDefault)?.id;
 }
@@ -452,7 +562,11 @@ export function applyClaudePromptEffortPrefix(
   if (!trimmed) {
     return trimmed;
   }
-  if (effort !== "ultrathink") {
+  // Prefixing a slash command turns it into plain prose, so Claude never
+  // runs it. Command names come from arbitrary file names ("/deploy.prod",
+  // "/plugin:skill"), so accept any first token without a second slash;
+  // absolute paths like "/home/theo/app.ts" keep the prefix.
+  if (effort !== "ultrathink" || /^\/[^\s/]+(?:\s|$)/u.test(trimmed)) {
     return trimmed;
   }
   if (trimmed.startsWith("Ultrathink:")) {

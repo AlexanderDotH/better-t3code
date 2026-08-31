@@ -5,6 +5,7 @@ import { Edit3Icon, PlusIcon, RefreshCwIcon, Trash2Icon, UploadIcon } from "luci
 import { useEffect, useMemo, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useProjects } from "../../state/entities";
 import { Button } from "../ui/button";
@@ -50,12 +51,13 @@ function SkillImportSourceRows(props: {
   readonly isLoading: boolean;
   readonly onSelectedSourceIdsChange: (sourceIds: ReadonlyArray<string>) => void;
 }) {
+  const translator = useInterfaceTranslator();
   const selected = useMemo(() => new Set(props.selectedSourceIds), [props.selectedSourceIds]);
 
   if (props.isLoading) {
     return (
       <div className="rounded-md border p-4 text-muted-foreground text-sm">
-        Scanning agent folders...
+        {translator.message("settings.skills.scanning")}
       </div>
     );
   }
@@ -63,7 +65,7 @@ function SkillImportSourceRows(props: {
   if (props.sources.length === 0) {
     return (
       <div className="rounded-md border p-4 text-muted-foreground text-sm">
-        No agent dotfolders with importable skills were found.
+        {translator.message("settings.skills.noSources")}
       </div>
     );
   }
@@ -100,8 +102,15 @@ function SkillImportSourceRows(props: {
               </span>
               <span className="block truncate text-muted-foreground text-xs">{source.path}</span>
               <span className="block text-muted-foreground text-xs">
-                {source.skillCount} skill{source.skillCount === 1 ? "" : "s"},{" "}
-                {source.mcpServerCount} MCP server{source.mcpServerCount === 1 ? "" : "s"}
+                {translator.message("settings.skills.skillCount", {
+                  count: source.skillCount,
+                  formattedCount: translator.number(source.skillCount),
+                })}
+                {", "}
+                {translator.message("settings.skills.mcpCount", {
+                  count: source.mcpServerCount,
+                  formattedCount: translator.number(source.mcpServerCount),
+                })}
               </span>
             </span>
           </label>
@@ -125,14 +134,20 @@ function SkillImportDialog(props: {
   readonly onOpenChange: (open: boolean) => void;
   readonly onImport: () => void;
 }) {
+  const translator = useInterfaceTranslator();
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogPopup className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Import Agent Skills</DialogTitle>
+          <DialogTitle>{translator.message("settings.skills.importTitle")}</DialogTitle>
           <DialogDescription>
-            Import skills from detected Codex, Cursor, Claude, and OpenCode folders into{" "}
-            {props.scope === "global" ? "global" : "project"} skills.
+            {translator.message("settings.skills.importDescription", {
+              scope: translator.message(
+                props.scope === "global"
+                  ? "settings.skills.globalAdjective"
+                  : "settings.skills.projectAdjective",
+              ),
+            })}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-4">
@@ -147,20 +162,20 @@ function SkillImportDialog(props: {
               checked={props.deduplicate}
               onCheckedChange={(checked) => props.onDeduplicateChange(Boolean(checked))}
             />
-            Deduplicate matching skills
+            {translator.message("settings.skills.deduplicate")}
           </label>
           {props.error ? <p className="text-destructive text-xs">{props.error}</p> : null}
         </DialogPanel>
         <DialogFooter>
           <Button variant="outline" onClick={() => props.onOpenChange(false)}>
-            Cancel
+            {translator.message("common.cancel")}
           </Button>
           <Button
             disabled={props.isImporting || props.selectedSourceIds.length === 0}
             onClick={props.onImport}
           >
             <UploadIcon className="size-4" />
-            Import
+            {translator.message("settings.skills.import")}
           </Button>
         </DialogFooter>
       </DialogPopup>
@@ -217,6 +232,8 @@ function SkillEditorDialog(props: {
   readonly onOpenChange: (open: boolean) => void;
   readonly onSave: () => void;
 }) {
+  const translator = useInterfaceTranslator();
+
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogPopup className="max-w-2xl">
@@ -225,7 +242,7 @@ function SkillEditorDialog(props: {
         </DialogHeader>
         <DialogPanel className="space-y-4">
           <div className="grid gap-2">
-            <Label>Name</Label>
+            <Label>{translator.message("settings.skills.name")}</Label>
             <Input
               value={props.draft.name}
               placeholder="review-follow-up"
@@ -235,10 +252,10 @@ function SkillEditorDialog(props: {
             />
           </div>
           <div className="grid gap-2">
-            <Label>Description</Label>
+            <Label>{translator.message("settings.skills.description")}</Label>
             <Input
               value={props.draft.description}
-              placeholder="Use when reviewing follow-up changes."
+              placeholder={translator.message("settings.skills.descriptionPlaceholder")}
               onChange={(event) =>
                 props.onDraftChange({ ...props.draft, description: event.currentTarget.value })
               }
@@ -246,20 +263,20 @@ function SkillEditorDialog(props: {
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-2">
-              <Label>Display name</Label>
+              <Label>{translator.message("settings.skills.displayName")}</Label>
               <Input
                 value={props.draft.displayName}
-                placeholder="Review follow-up"
+                placeholder={translator.message("settings.skills.displayNamePlaceholder")}
                 onChange={(event) =>
                   props.onDraftChange({ ...props.draft, displayName: event.currentTarget.value })
                 }
               />
             </div>
             <div className="grid gap-2">
-              <Label>Short description</Label>
+              <Label>{translator.message("settings.skills.shortDescription")}</Label>
               <Input
                 value={props.draft.shortDescription}
-                placeholder="Focused review workflow"
+                placeholder={translator.message("settings.skills.shortDescriptionPlaceholder")}
                 onChange={(event) =>
                   props.onDraftChange({
                     ...props.draft,
@@ -270,7 +287,7 @@ function SkillEditorDialog(props: {
             </div>
           </div>
           <div className="grid gap-2">
-            <Label>Instructions</Label>
+            <Label>{translator.message("settings.skills.instructions")}</Label>
             <Textarea
               className="font-mono text-xs"
               value={props.draft.body}
@@ -282,10 +299,10 @@ function SkillEditorDialog(props: {
         </DialogPanel>
         <DialogFooter>
           <Button variant="outline" onClick={() => props.onOpenChange(false)}>
-            Cancel
+            {translator.message("common.cancel")}
           </Button>
           <Button disabled={props.isSaving} onClick={props.onSave}>
-            Save
+            {translator.message("settings.skills.save")}
           </Button>
         </DialogFooter>
       </DialogPopup>
@@ -294,6 +311,7 @@ function SkillEditorDialog(props: {
 }
 
 export function SkillsSettingsPanel() {
+  const translator = useInterfaceTranslator();
   const queryClient = useQueryClient();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -366,10 +384,10 @@ export function SkillsSettingsPanel() {
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (scope === "project" && (!selectedProjectId || !selectedProjectCwd)) {
-        throw new Error("Select a project before saving a project skill.");
+        throw new Error(translator.message("settings.skills.selectProjectSave"));
       }
       if (!draft.name.trim() || !draft.description.trim()) {
-        throw new Error("Name and description are required.");
+        throw new Error(translator.message("settings.skills.required"));
       }
       const skillsApi = requireSettingsEnvironment(environmentSelection).api.skills;
 
@@ -410,7 +428,9 @@ export function SkillsSettingsPanel() {
       void invalidateSkills();
     },
     onError: (error) => {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to save skill.");
+      setErrorMessage(
+        error instanceof Error ? error.message : translator.message("settings.skills.saveFailed"),
+      );
     },
   });
 
@@ -428,7 +448,7 @@ export function SkillsSettingsPanel() {
   const importMutation = useMutation({
     mutationFn: () => {
       if (scope === "project" && (!selectedProjectId || !selectedProjectCwd)) {
-        throw new Error("Select a project before importing project skills.");
+        throw new Error(translator.message("settings.skills.selectProjectImport"));
       }
       return requireSettingsEnvironment(environmentSelection).api.skills.importSources({
         sourceIds: selectedImportSourceIds,
@@ -445,13 +465,17 @@ export function SkillsSettingsPanel() {
       void invalidateSkills();
     },
     onError: (error) => {
-      setImportErrorMessage(error instanceof Error ? error.message : "Failed to import skills.");
+      setImportErrorMessage(
+        error instanceof Error ? error.message : translator.message("settings.skills.importFailed"),
+      );
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: async (skill: SkillDescriptor) => {
-      const confirmed = await ensureLocalApi().dialogs.confirm(`Delete skill '${skill.name}'?`);
+      const confirmed = await ensureLocalApi().dialogs.confirm(
+        translator.message("settings.skills.deleteConfirm", { skill: skill.name }),
+      );
       if (!confirmed) return null;
       return requireSettingsEnvironment(environmentSelection).api.skills.delete({
         target: skillTarget(skill),
@@ -487,14 +511,14 @@ export function SkillsSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection
-        title="Skills"
+        title={translator.message("settings.skills.title")}
         headerAction={
           <div className="flex items-center gap-1.5">
             <Button
               size="icon-xs"
               variant="ghost"
               onClick={() => void skillsQuery.refetch()}
-              aria-label="Refresh skills"
+              aria-label={translator.message("settings.skills.refresh")}
             >
               <RefreshCwIcon className="size-3.5" />
             </Button>
@@ -505,7 +529,7 @@ export function SkillsSettingsPanel() {
               disabled={scope === "project" && !selectedProjectCwd}
             >
               <UploadIcon className="size-3.5" />
-              Import
+              {translator.message("settings.skills.import")}
             </Button>
             <Button
               size="xs"
@@ -513,7 +537,7 @@ export function SkillsSettingsPanel() {
               disabled={scope === "project" && !selectedProjectCwd}
             >
               <PlusIcon className="size-3.5" />
-              New
+              {translator.message("settings.skills.new")}
             </Button>
           </div>
         }
@@ -525,11 +549,19 @@ export function SkillsSettingsPanel() {
               onValueChange={(value) => setScope((value ?? "global") as SkillScopeSelection)}
             >
               <SelectTrigger>
-                <SelectValue>{scope === "global" ? "Global" : "Project"}</SelectValue>
+                <SelectValue>
+                  {translator.message(
+                    scope === "global" ? "settings.skills.global" : "settings.skills.project",
+                  )}
+                </SelectValue>
               </SelectTrigger>
               <SelectPopup>
-                <SelectItem value="global">Global</SelectItem>
-                <SelectItem value="project">Project</SelectItem>
+                <SelectItem value="global">
+                  {translator.message("settings.skills.global")}
+                </SelectItem>
+                <SelectItem value="project">
+                  {translator.message("settings.skills.project")}
+                </SelectItem>
               </SelectPopup>
             </Select>
             <Select
@@ -538,7 +570,9 @@ export function SkillsSettingsPanel() {
               onValueChange={(value) => setSelectedProjectKey(value ?? null)}
             >
               <SelectTrigger>
-                <SelectValue>{selectedProject?.title ?? "No project"}</SelectValue>
+                <SelectValue>
+                  {selectedProject?.title ?? translator.message("settings.skills.noProject")}
+                </SelectValue>
               </SelectTrigger>
               <SelectPopup>
                 {projects.map((project) => (
@@ -554,7 +588,9 @@ export function SkillsSettingsPanel() {
         <div className="divide-y divide-border/60">
           {visibleSkills.length === 0 ? (
             <div className="p-5 text-muted-foreground text-sm">
-              {skillsQuery.isLoading ? "Loading skills..." : "No skills in this scope."}
+              {translator.message(
+                skillsQuery.isLoading ? "settings.skills.loading" : "settings.skills.empty",
+              )}
             </div>
           ) : (
             visibleSkills.map((skill) => (
@@ -567,7 +603,7 @@ export function SkillsSettingsPanel() {
                     <span className="truncate text-sm font-medium">{skill.name}</span>
                     {skill.readOnly ? (
                       <span className="rounded-sm border px-1.5 py-0.5 text-muted-foreground text-[10px] uppercase">
-                        Read-only
+                        {translator.message("settings.skills.readOnly")}
                       </span>
                     ) : null}
                   </div>
@@ -587,7 +623,9 @@ export function SkillsSettingsPanel() {
                     size="icon-sm"
                     variant="ghost"
                     disabled={skill.readOnly}
-                    aria-label={`Edit ${skill.name}`}
+                    aria-label={translator.message("settings.skills.editAria", {
+                      skill: skill.name,
+                    })}
                     onClick={() => openEditDialog(skill)}
                   >
                     <Edit3Icon className="size-4" />
@@ -596,7 +634,9 @@ export function SkillsSettingsPanel() {
                     size="icon-sm"
                     variant="ghost"
                     disabled={skill.readOnly || deleteMutation.isPending}
-                    aria-label={`Delete ${skill.name}`}
+                    aria-label={translator.message("settings.skills.deleteAria", {
+                      skill: skill.name,
+                    })}
                     onClick={() => deleteMutation.mutate(skill)}
                   >
                     <Trash2Icon className="size-4" />
@@ -610,7 +650,9 @@ export function SkillsSettingsPanel() {
 
       <SkillEditorDialog
         open={isEditorOpen}
-        title={editingSkill ? "Edit skill" : "New skill"}
+        title={translator.message(
+          editingSkill ? "settings.skills.editTitle" : "settings.skills.newTitle",
+        )}
         draft={draft}
         isSaving={saveMutation.isPending}
         onDraftChange={setDraft}

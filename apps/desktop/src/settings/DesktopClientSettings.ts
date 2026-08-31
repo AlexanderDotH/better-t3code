@@ -1,4 +1,9 @@
-import { ClientSettingsSchema, type ClientSettings } from "@t3tools/contracts";
+import {
+  ClientSettingsSchema,
+  bootstrapBetterT3SettingsV1,
+  type BetterT3CompatibilityFlagV1,
+  type ClientSettings,
+} from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -18,15 +23,80 @@ const ClientSettingsDocumentSchema = Schema.Struct({
 
 const ClientSettingsJson = fromLenientJson(ClientSettingsSchema);
 const LegacyClientSettingsDocumentJson = fromLenientJson(ClientSettingsDocumentSchema);
+const UnknownClientSettingsDocumentJson = fromLenientJson(
+  Schema.Record(Schema.String, Schema.Unknown),
+);
 const decodeLegacyClientSettingsDocumentJson = Schema.decodeEffect(
   LegacyClientSettingsDocumentJson,
 );
 const decodeClientSettingsJsonValue = Schema.decodeEffect(ClientSettingsJson);
-const decodeClientSettingsJson = (raw: string): Effect.Effect<ClientSettings, Schema.SchemaError> =>
+const decodeUnknownClientSettingsDocumentJson = Schema.decodeEffect(
+  UnknownClientSettingsDocumentJson,
+);
+const clientSettingsDocument = (
+  document: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> => {
+  const wrapped = document.settings;
+  return wrapped !== null && typeof wrapped === "object" && !Array.isArray(wrapped)
+    ? (wrapped as Readonly<Record<string, unknown>>)
+    : document;
+};
+const compatibilityFlags = (
+  document: Readonly<Record<string, unknown>>,
+  settings: ClientSettings,
+): ReadonlyArray<BetterT3CompatibilityFlagV1> => {
+  const flags: BetterT3CompatibilityFlagV1[] = [];
+  const add = (
+    key: keyof ClientSettings,
+    featureId: BetterT3CompatibilityFlagV1["featureId"],
+    enabled: boolean,
+  ) => {
+    if (Object.hasOwn(document, key)) flags.push({ featureId, enabled });
+  };
+  add("legacySidebarEnabled", "chat.classicSidebar", settings.legacySidebarEnabled);
+  add("experimentalFetch", "agent.fetch", settings.experimentalFetch);
+  add(
+    "experimentalParallelPlanImplementation",
+    "agent.parallelPlanImplementation",
+    settings.experimentalParallelPlanImplementation,
+  );
+  add("planModeEnabled", "agent.planMode", settings.planModeEnabled);
+  add("improvePromptBeforeSend", "agent.promptImprovement", settings.improvePromptBeforeSend);
+  add(
+    "showExpandedComposerControls",
+    "agent.expandedComposerControls",
+    settings.showExpandedComposerControls,
+  );
+  add("showReasoning", "agent.reasoningVisibility", settings.showReasoning);
+  return flags;
+};
+const decodeClientSettingsValue = (
+  raw: string,
+): Effect.Effect<ClientSettings, Schema.SchemaError> =>
   decodeLegacyClientSettingsDocumentJson(raw).pipe(
     Effect.map((document) => document.settings),
     Effect.catchTags({
       SchemaError: () => decodeClientSettingsJsonValue(raw),
+    }),
+  );
+const decodeClientSettingsJson = (raw: string): Effect.Effect<ClientSettings, Schema.SchemaError> =>
+  Effect.all({
+    settings: decodeClientSettingsValue(raw),
+    document: decodeUnknownClientSettingsDocumentJson(raw),
+  }).pipe(
+    Effect.map(({ settings, document }) => {
+      const persistedDocument = clientSettingsDocument(document);
+      return {
+        ...settings,
+        betterT3Device: bootstrapBetterT3SettingsV1({
+          version: 1,
+          initialization: "existing-install-migration",
+          persistedSettings: Object.hasOwn(persistedDocument, "betterT3Device")
+            ? settings.betterT3Device
+            : null,
+          compatibilityFlags: compatibilityFlags(persistedDocument, settings),
+        }),
+      };
     }),
   );
 const encodeClientSettingsJson = Schema.encodeEffect(ClientSettingsJson);

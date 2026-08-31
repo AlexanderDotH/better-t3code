@@ -1,5 +1,6 @@
 import type { WorkspaceDeckPosition } from "../workspace-deck/workspaceCardDeck.logic";
 import { WorkspaceCardPeek } from "../workspace-deck/WorkspaceCardPeek";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import type { McpWorkspaceSummary } from "./mcpWorkspace.logic";
 
 export interface McpWorkspacePeekProps {
@@ -10,20 +11,24 @@ export interface McpWorkspacePeekProps {
   readonly requestActivation: () => void;
 }
 
-function peekStatus(summary: McpWorkspaceSummary): string {
+function peekStatus(
+  summary: McpWorkspaceSummary,
+  translate: ReturnType<typeof useInterfaceTranslator>["message"],
+): string {
   if (summary.attentionCount > 0) {
-    return `${summary.attentionCount} needs attention`;
+    return translate("settings.mcp.workspace.needsAttention", { count: summary.attentionCount });
   }
   return summary.statusLabel;
 }
 
 export function McpWorkspacePeek(props: McpWorkspacePeekProps) {
+  const translate = useInterfaceTranslator().message;
   return (
     <WorkspaceCardPeek
       blocked={props.blocked}
       cardId="mcp"
       className="mcp-workspace-peek"
-      label="MCP workspace"
+      label={translate("settings.mcp.workspace.title")}
       position={props.position}
       onActivate={props.requestActivation}
     >
@@ -31,7 +36,7 @@ export function McpWorkspacePeek(props: McpWorkspacePeekProps) {
         <strong>MCP</strong>
         <span className="mcp-workspace-peek__provider">{props.providerDisplayName}</span>
         <span className="mcp-workspace-peek__status" data-mcp-workspace-state={props.summary.state}>
-          {peekStatus(props.summary)}
+          {peekStatus(props.summary, translate)}
         </span>
       </span>
     </WorkspaceCardPeek>

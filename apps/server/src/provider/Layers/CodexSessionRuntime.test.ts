@@ -19,7 +19,11 @@ import {
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildTurnStartParams,
+  compactCodexThread,
   codexNotificationProviderRoute,
+  configuredT3ToolAvailability,
+  describeMcpElicitation,
+  forkCodexThread,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
   listCodexMcpServerStatuses,
@@ -27,6 +31,7 @@ import {
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
   requestCodexMcpOauth,
+  toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
 const decodeMcpServerDefinition = Schema.decodeSync(McpServerDefinition);
@@ -255,6 +260,208 @@ describe("buildTurnStartParams", () => {
   });
 });
 
+describe("Codex MCP elicitation approvals", () => {
+  const request = {
+    mode: "form",
+    message: "Allow ChatGPT to use Safari?",
+    serverName: "computer-use",
+    threadId: "provider-thread-1",
+    turnId: "turn-1",
+    _meta: {
+      app_name: "Safari",
+      persist: ["session", "always"],
+    },
+    requestedSchema: {
+      type: "object",
+      properties: {
+        approval: {
+          type: "string",
+          oneOf: [
+            { const: "once", title: "Allow once" },
+            { const: "session", title: "Allow for this session" },
+            { const: "always", title: "Always allow Safari" },
+          ],
+        },
+      },
+      required: ["approval"],
+    },
+  } satisfies EffectCodexSchema.McpServerElicitationRequestParams;
+
+  it("preserves the app name and advertised persistence choices", () => {
+    NodeAssert.deepStrictEqual(describeMcpElicitation(request), {
+      appName: "Safari",
+      options: [
+        { decision: "cancel", label: "Cancel" },
+        { decision: "decline", label: "Decline" },
+        { decision: "acceptForSession", label: "Allow for this session" },
+        { decision: "acceptAlways", label: "Always allow Safari" },
+        { decision: "accept", label: "Approve" },
+      ],
+    });
+  });
+
+  it("extracts the app name from a Computer Use request without metadata", () => {
+    const { _meta, ...requestWithoutMetadata } = request;
+
+    NodeAssert.equal(describeMcpElicitation(requestWithoutMetadata).appName, "Safari");
+  });
+
+  it("returns the accepted form option to Codex", () => {
+    NodeAssert.deepStrictEqual(toMcpElicitationResponse(request, "accept"), {
+      action: "accept",
+      content: { approval: "once" },
+    });
+  });
+
+  it("returns session-scoped approval in the MCP response", () => {
+    NodeAssert.deepStrictEqual(toMcpElicitationResponse(request, "acceptForSession"), {
+      action: "accept",
+      _meta: { persist: "session" },
+      content: { approval: "session" },
+    });
+  });
+
+  it("returns persistent approval in the MCP response", () => {
+    NodeAssert.deepStrictEqual(toMcpElicitationResponse(request, "acceptAlways"), {
+      action: "accept",
+      _meta: { persist: "always" },
+      content: { approval: "always" },
+    });
+  });
+
+  it("returns rejection without form content", () => {
+    NodeAssert.deepStrictEqual(toMcpElicitationResponse(request, "decline"), {
+      action: "decline",
+    });
+  });
+
+  it("returns cancellation without form content", () => {
+    NodeAssert.deepStrictEqual(toMcpElicitationResponse(request, "cancel"), {
+      action: "cancel",
+    });
+  });
+
+  it("supports boolean permanent-approval fields", () => {
+    const booleanRequest = {
+      ...request,
+      _meta: { app_name: "Safari" },
+      requestedSchema: {
+        type: "object",
+        properties: {
+          always: { type: "boolean", title: "Always allow Safari" },
+        },
+      },
+    } satisfies EffectCodexSchema.McpServerElicitationRequestParams;
+
+    NodeAssert.ok(
+      describeMcpElicitation(booleanRequest).options.some(
+        (option) => option.decision === "acceptAlways",
+      ),
+    );
+    NodeAssert.deepStrictEqual(toMcpElicitationResponse(booleanRequest, "acceptAlways"), {
+      action: "accept",
+      _meta: { persist: "always" },
+      content: { always: true },
+    });
+  });
+
+  it("preserves valid nullable MCP form fields and persistence choices", () => {
+    const nullableRequest = {
+      ...request,
+      _meta: {
+        app_name: null,
+        appName: "Safari",
+        connector_name: null,
+        persist: null,
+        target: null,
+        tool_params: null,
+      },
+      requestedSchema: {
+        type: "object",
+        properties: {
+          approval: {
+            type: "string",
+            title: null,
+            description: null,
+            default: null,
+            enum: ["once", "always"],
+            enumNames: null,
+          },
+        },
+        required: ["approval"],
+      },
+    } satisfies EffectCodexSchema.McpServerElicitationRequestParams;
+
+    NodeAssert.equal(describeMcpElicitation(nullableRequest).appName, "Safari");
+    NodeAssert.ok(
+      describeMcpElicitation(nullableRequest).options.some(
+        (option) => option.decision === "acceptAlways",
+      ),
+    );
+    NodeAssert.deepStrictEqual(toMcpElicitationResponse(nullableRequest, "acceptAlways"), {
+      action: "accept",
+      _meta: { persist: "always" },
+      content: { approval: "always" },
+    });
+  });
+
+  it("declines required form fields that an approval prompt cannot collect", () => {
+    const inputRequest = {
+      ...request,
+      requestedSchema: {
+        type: "object",
+        properties: {
+          email: { type: "string", format: "email" },
+        },
+        required: ["email"],
+      },
+    } satisfies EffectCodexSchema.McpServerElicitationRequestParams;
+
+    NodeAssert.deepStrictEqual(toMcpElicitationResponse(inputRequest, "accept"), {
+      action: "decline",
+    });
+  });
+
+  it("does not approve URL elicitations without opening their requested URL", () => {
+    const urlRequest = {
+      mode: "url",
+      message: "Finish signing in to continue.",
+      serverName: "computer-use",
+      threadId: "provider-thread-1",
+      turnId: "turn-1",
+      elicitationId: "sign-in-1",
+      url: "https://example.com/authorize",
+    } satisfies EffectCodexSchema.McpServerElicitationRequestParams;
+
+    NodeAssert.deepStrictEqual(toMcpElicitationResponse(urlRequest, "accept"), {
+      action: "decline",
+    });
+  });
+
+  it("omits persistence choices that cannot satisfy required form fields", () => {
+    const onceOnlyRequest = {
+      ...request,
+      _meta: { app_name: "Safari", persist: ["session", "always"] },
+      requestedSchema: {
+        type: "object",
+        properties: {
+          approval: {
+            type: "string",
+            enum: ["once"],
+          },
+        },
+        required: ["approval"],
+      },
+    } satisfies EffectCodexSchema.McpServerElicitationRequestParams;
+
+    NodeAssert.deepStrictEqual(describeMcpElicitation(onceOnlyRequest).options, [
+      { decision: "cancel", label: "Cancel" },
+      { decision: "decline", label: "Decline" },
+      { decision: "accept", label: "Approve" },
+    ]);
+  });
+});
+
 describe("buildCodexDeveloperInstructions", () => {
   it("appends runtime info after the mode instructions", () => {
     const instructions = buildCodexDeveloperInstructions("default", {
@@ -308,14 +515,14 @@ describe("T3 browser developer instructions", () => {
       codexDefaultModeDeveloperInstructions(true),
       codexPlanModeDeveloperInstructions(true),
     ]) {
-      NodeAssert.match(instructions, /t3-code/);
+      NodeAssert.match(instructions, /T3 browser/);
       NodeAssert.match(instructions, /preview_status/);
-      NodeAssert.match(instructions, /preview_open/);
-      NodeAssert.match(instructions, /Do not switch to global browser skills/);
+      NodeAssert.match(instructions, /open a preview/i);
+      NodeAssert.match(instructions, /before switching browser systems/i);
     }
   });
 
-  it("keeps current collaboration guidance alongside workspace discovery", () => {
+  it("keeps collaboration guidance and concise workspace-tool preferences", () => {
     NodeAssert.match(CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS, /concise by default/);
     NodeAssert.match(CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS, /complete replacement/);
     NodeAssert.match(
@@ -328,10 +535,11 @@ describe("T3 browser developer instructions", () => {
       CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
     ]) {
       NodeAssert.match(instructions, /workspace_context/);
-      NodeAssert.match(instructions, /batch independent searches and reads/i);
-      NodeAssert.match(instructions, /fall back to.*rg/i);
-      NodeAssert.match(instructions, /reuse.*results/i);
+      NodeAssert.doesNotMatch(instructions, /then use bounded.*rg/i);
+      NodeAssert.doesNotMatch(instructions, /reuse.*results/i);
     }
+    NodeAssert.match(CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS, /workspace_edit/);
+    NodeAssert.doesNotMatch(CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS, /workspace_edit/);
   });
 
   it("omits the browser block entirely when the preview tools are not attached", () => {
@@ -345,19 +553,108 @@ describe("T3 browser developer instructions", () => {
       // Steering away from other browser automation must go with the tools;
       // keeping it would leave the model talked out of its only option.
       NodeAssert.doesNotMatch(instructions, /Do not switch to global browser skills/);
-      // The rest of the collaboration mode is untouched.
+      // The collaboration mode remains valid while unavailable toolkits stay absent.
       NodeAssert.match(instructions, /<collaboration_mode>/);
       NodeAssert.match(instructions, /<\/collaboration_mode>/);
-      NodeAssert.match(instructions, /workspace_context/);
+      NodeAssert.doesNotMatch(instructions, /workspace_context/);
     }
   });
 
   it("tracks the turn's MCP configuration rather than defaulting to on", () => {
     const runtime = { model: "gpt-5.3-codex", reasoningEffort: "high" };
-    NodeAssert.match(buildCodexDeveloperInstructions("default", runtime, true), /preview_open/);
+    NodeAssert.match(buildCodexDeveloperInstructions("default", runtime, true), /preview_status/);
     NodeAssert.doesNotMatch(
       buildCodexDeveloperInstructions("default", runtime, false),
-      /preview_open/,
+      /preview_status/,
+    );
+  });
+});
+
+describe("configuredT3ToolAvailability", () => {
+  it("announces only toolkits attached by the selected endpoint profile", () => {
+    NodeAssert.deepEqual(configuredT3ToolAvailability(undefined), {
+      preview: false,
+      workspace: false,
+      workspaceWrite: false,
+      coordination: false,
+      threadContext: false,
+      projectMemory: false,
+      knowledgeGraph: false,
+    });
+    NodeAssert.deepEqual(
+      configuredT3ToolAvailability([
+        "-c",
+        'mcp_servers.t3-code.url="http://127.0.0.1/mcp/workspace-no-preview"',
+      ]),
+      {
+        preview: false,
+        workspace: true,
+        workspaceWrite: false,
+        coordination: true,
+        threadContext: true,
+        projectMemory: true,
+        knowledgeGraph: true,
+      },
+    );
+    NodeAssert.deepEqual(
+      configuredT3ToolAvailability([
+        "-c",
+        'mcp_servers.t3-code.url="http://127.0.0.1/mcp/workspace-only"',
+      ]),
+      {
+        preview: false,
+        workspace: true,
+        workspaceWrite: false,
+        coordination: false,
+        threadContext: true,
+        projectMemory: true,
+        knowledgeGraph: false,
+      },
+    );
+    NodeAssert.deepEqual(
+      configuredT3ToolAvailability([
+        "-c",
+        'mcp_servers.t3-code.url="http://127.0.0.1/mcp/workspace-only-no-memory"',
+      ]),
+      {
+        preview: false,
+        workspace: true,
+        workspaceWrite: false,
+        coordination: false,
+        threadContext: true,
+        projectMemory: false,
+        knowledgeGraph: false,
+      },
+    );
+    NodeAssert.deepEqual(
+      configuredT3ToolAvailability([
+        "-c",
+        'mcp_servers.t3-code.url="http://127.0.0.1/mcp/workspace-write-no-preview"',
+      ]),
+      {
+        preview: false,
+        workspace: true,
+        workspaceWrite: true,
+        coordination: true,
+        threadContext: true,
+        projectMemory: true,
+        knowledgeGraph: true,
+      },
+    );
+    NodeAssert.deepEqual(
+      configuredT3ToolAvailability([
+        "-c",
+        'mcp_servers.t3-code.url="http://127.0.0.1/mcp/workspace-write-only-no-memory"',
+      ]),
+      {
+        preview: false,
+        workspace: true,
+        workspaceWrite: true,
+        coordination: false,
+        threadContext: true,
+        projectMemory: false,
+        knowledgeGraph: false,
+      },
     );
   });
 });
@@ -374,7 +671,24 @@ describe("hasConfiguredMcpServer", () => {
       hasConfiguredMcpServer(["-c", 'mcp_servers.t3-code.url="http://127.0.0.1/mcp/workspace"']),
       true,
     );
-    for (const profile of ["workspace-no-preview", "coordination", "workspace-only"]) {
+    NodeAssert.equal(
+      hasConfiguredMcpServer([
+        "-c",
+        'mcp_servers.t3-code.url="http://127.0.0.1/mcp/workspace-write"',
+      ]),
+      true,
+    );
+    for (const profile of [
+      "workspace-no-preview",
+      "coordination",
+      "workspace-only",
+      "workspace-no-preview-no-memory",
+      "workspace-only-no-memory",
+      "workspace-write-no-preview",
+      "workspace-write-no-preview-no-memory",
+      "workspace-write-only",
+      "workspace-write-only-no-memory",
+    ]) {
       NodeAssert.equal(
         hasConfiguredMcpServer(["-c", `mcp_servers.t3-code.url="http://127.0.0.1/mcp/${profile}"`]),
         false,
@@ -638,6 +952,26 @@ describe("codexSessionAppServerArgs", () => {
       ],
     );
   });
+
+  it("passes narrow and explicit optional T3 profiles to the Codex runtime unchanged", () => {
+    const profileArg = (
+      profile: "workspace-only" | "workspace-no-preview" | "workspace-only-no-memory",
+    ) => `mcp_servers.t3-code.url=http://127.0.0.1/mcp/${profile}`;
+
+    NodeAssert.deepStrictEqual(codexSessionAppServerArgs(["-c", profileArg("workspace-only")]), [
+      "app-server",
+      "-c",
+      profileArg("workspace-only"),
+    ]);
+    NodeAssert.deepStrictEqual(
+      codexSessionAppServerArgs(["-c", profileArg("workspace-no-preview")]),
+      ["app-server", "-c", profileArg("workspace-no-preview")],
+    );
+    NodeAssert.deepStrictEqual(
+      codexSessionAppServerArgs(["-c", profileArg("workspace-only-no-memory")]),
+      ["app-server", "-c", profileArg("workspace-only-no-memory")],
+    );
+  });
 });
 
 describe("Codex notification provider routing", () => {
@@ -754,6 +1088,47 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
+  it.effect("preserves reasoning and compacts body context before the window is exhausted", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
+      const client = {
+        request: <M extends "thread/start" | "thread/resume">(
+          method: M,
+          payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          calls.push({ method, payload });
+          return Effect.succeed(
+            makeThreadOpenResponse("fresh-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
+          );
+        },
+      };
+
+      yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.6-sol",
+        contextWindow: 262_144,
+        reasoningEffort: "high",
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+      });
+
+      const request = calls[0];
+      NodeAssert.ok(request);
+      NodeAssert.deepStrictEqual(
+        (request.payload as { readonly config?: Readonly<Record<string, unknown>> }).config,
+        {
+          model_context_window: 262_144,
+          model_auto_compact_token_limit: 209_715,
+          model_auto_compact_token_limit_scope: "body_after_prefix",
+          model_reasoning_effort: "high",
+        },
+      );
+    }),
+  );
+
   it.effect("keeps the built-in T3 server when configured MCP servers override thread config", () =>
     Effect.gen(function* () {
       const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
@@ -894,6 +1269,87 @@ describe("openCodexThread", () => {
 
       NodeAssert.ok(isCodexAppServerRequestError(error));
       NodeAssert.equal(error.errorMessage, "timed out waiting for server");
+    }),
+  );
+});
+
+describe("Codex native thread lifecycle", () => {
+  it.effect("forks through the requested provider turn without serializing a transcript", () =>
+    Effect.gen(function* () {
+      const requests: Array<{ readonly method: string; readonly payload: unknown }> = [];
+      const result = yield* forkCodexThread({
+        client: {
+          request: (method, payload) => {
+            requests.push({ method, payload });
+            return Effect.succeed({
+              model: "gpt-5.6-sol",
+              reasoningEffort: "high",
+              thread: { id: "provider-child" },
+            } as CodexRpc.ClientRequestResponsesByMethod["thread/fork"]);
+          },
+        },
+        sourceProviderThreadId: "provider-parent",
+        lastProviderTurnId: "provider-turn-7",
+      });
+      yield* forkCodexThread({
+        client: {
+          request: (method, payload) => {
+            requests.push({ method, payload });
+            return Effect.succeed({
+              model: "gpt-5.6-sol",
+              thread: { id: "provider-child-latest" },
+            } as CodexRpc.ClientRequestResponsesByMethod["thread/fork"]);
+          },
+        },
+        sourceProviderThreadId: "provider-parent",
+      });
+
+      NodeAssert.deepStrictEqual(requests, [
+        {
+          method: "thread/fork",
+          payload: {
+            threadId: "provider-parent",
+            lastTurnId: "provider-turn-7",
+          },
+        },
+        {
+          method: "thread/fork",
+          payload: { threadId: "provider-parent" },
+        },
+      ]);
+      NodeAssert.deepStrictEqual(result, {
+        threadId: "provider-child",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "high",
+      });
+    }),
+  );
+
+  it.effect("treats a native compaction request failure as nonfatal", () =>
+    Effect.gen(function* () {
+      const requests: Array<{ readonly method: string; readonly payload: unknown }> = [];
+
+      yield* compactCodexThread({
+        client: {
+          request: (method, payload) => {
+            requests.push({ method, payload });
+            return Effect.fail(
+              new CodexErrors.CodexAppServerRequestError({
+                code: -32603,
+                errorMessage: "compaction unavailable",
+              }),
+            );
+          },
+        },
+        providerThreadId: "provider-thread-1",
+      });
+
+      NodeAssert.deepStrictEqual(requests, [
+        {
+          method: "thread/compact/start",
+          payload: { threadId: "provider-thread-1" },
+        },
+      ]);
     }),
   );
 });

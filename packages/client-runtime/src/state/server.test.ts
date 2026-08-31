@@ -8,15 +8,18 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
+import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { RpcClientError } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
 
@@ -31,6 +34,7 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
   applyServerConfigProjection,
+  createServerEnvironmentAtoms,
   makeEnvironmentServerConfigState,
   isLegacyUpdateHandoffLoss,
   matchesServerUpdateReadyEvent,
@@ -42,6 +46,7 @@ import {
   serverUpdateStateForServerVersion,
   validateServerUpdateReadyEvent,
 } from "./server.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
 
 const CONFIG = {
   availableEditors: [],
@@ -51,6 +56,9 @@ const CONFIG = {
   observability: null,
   providers: [],
   settings: {},
+  // Capabilities drive version-skew behaviour in the projection, so the
+  // fixture carries them rather than leaving the field absent.
+  environment: { capabilities: { environmentThemes: true } },
 } as unknown as ServerConfig;
 
 const snapshotEvent = (config: ServerConfig): ServerConfigStreamEvent => ({
@@ -65,6 +73,61 @@ const TARGET = new PrimaryConnectionTarget({
   httpBaseUrl: "https://environment.example.test",
   wsBaseUrl: "wss://environment.example.test",
 });
+
+it("releases resource-protection subscriptions immediately after their last consumer", () => {
+  const runtime = Atom.runtime(Layer.empty) as unknown as Atom.AtomRuntime<
+    EnvironmentRegistry.EnvironmentRegistry | Persistence.EnvironmentCacheStore,
+    never
+  >;
+  const server = createServerEnvironmentAtoms(runtime, {
+    initialConfigValueAtom: () => Atom.make<ServerConfig | null>(null),
+  });
+  const target = { environmentId: TARGET.environmentId, input: {} };
+  const subscription = server.resourceProtection(target);
+
+  expect(subscription.idleTTL).toBe(0);
+  expect(server.resourceProtection(target)).toBe(subscription);
+});
+
+it.effect("cancels the resource-protection stream when its last consumer unmounts", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const cancelled = yield* Deferred.make<void>();
+      const upstream = Stream.never.pipe(
+        Stream.onStart(Deferred.succeed(started, undefined)),
+        Stream.ensuring(Deferred.succeed(cancelled, undefined)),
+      );
+      const followStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["followStream"] = () =>
+        upstream as never;
+      const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+        followStream,
+      } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+      const runtime = Atom.runtime(
+        Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+      ) as unknown as Atom.AtomRuntime<
+        EnvironmentRegistry.EnvironmentRegistry | Persistence.EnvironmentCacheStore,
+        never
+      >;
+      const server = createServerEnvironmentAtoms(runtime, {
+        initialConfigValueAtom: () => Atom.make<ServerConfig | null>(null),
+      });
+      const subscription = server.resourceProtection({
+        environmentId: TARGET.environmentId,
+        input: {},
+      });
+      const registry = AtomRegistry.make();
+      yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+      const unmount = registry.mount(subscription);
+
+      yield* Deferred.await(started);
+      unmount();
+      yield* Deferred.await(cancelled);
+
+      expect(subscription.idleTTL).toBe(0);
+    }),
+  ),
+);
 
 function session(client: WsRpcProtocolClient): RpcSession {
   return {
@@ -123,6 +186,30 @@ describe("update restart reconnect nudges", () => {
 
       yield* Fiber.join(fiber);
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("retries rejected credentials only while the update restart is in progress", () =>
+    Effect.gen(function* () {
+      const retries = yield* Ref.make(0);
+
+      yield* nudgeReconnectDuringUpdateRestart({
+        stateChanges: Stream.fromIterable([
+          { phase: "blocked", lastFailure: { reason: "permission" } },
+          {
+            phase: "blocked",
+            lastFailure: {
+              reason: "authentication",
+              detail: "The environment credential is invalid.",
+            },
+          },
+          { phase: "blocked", lastFailure: { reason: "configuration" } },
+        ]),
+        retryNow: Ref.update(retries, (count) => count + 1),
+        interval: Duration.zero,
+      });
+
+      expect(yield* Ref.get(retries)).toBe(1);
+    }),
   );
 });
 
@@ -280,6 +367,78 @@ describe("server state projection", () => {
     const result = Option.getOrThrow(projected);
     expect(result.config.settings).toBe(settings);
     expect(result.latestEvent.type).toBe("settingsUpdated");
+  });
+
+  it("carries published environment themes in and out of the projected snapshot", () => {
+    const snapshot = applyServerConfigProjection(Option.none(), {
+      version: 1,
+      type: "snapshot",
+      config: CONFIG,
+    });
+    const themes = [
+      {
+        id: "nightfall",
+        name: "Nightfall",
+        appearance: "dark",
+        canvas: "#1a1b26",
+        accent: "#7aa2f7",
+      },
+    ] as const;
+
+    const published = applyServerConfigProjection(snapshot, {
+      version: 1,
+      type: "environmentThemesUpdated",
+      payload: { themes },
+    });
+    expect(Option.getOrThrow(published).config.environmentThemes).toEqual(themes);
+
+    // A machine that stops publishing has to clear the palettes, not freeze
+    // clients on the last set it sent.
+    const unpublished = applyServerConfigProjection(published, {
+      version: 1,
+      type: "environmentThemesUpdated",
+      payload: { themes: [] },
+    });
+    expect(Option.getOrThrow(unpublished).config.environmentThemes).toBeUndefined();
+  });
+
+  // A snapshot never carries published themes, so taking it wholesale would
+  // clear them on every reconnect and repaint anyone wearing one.
+  it("keeps published themes across a reconnect snapshot", () => {
+    const themes = [
+      {
+        id: "nightfall",
+        name: "Nightfall",
+        appearance: "dark",
+        canvas: "#1a1b26",
+        accent: "#7aa2f7",
+      },
+    ] as const;
+
+    const withThemes = applyServerConfigProjection(
+      applyServerConfigProjection(Option.none(), { version: 1, type: "snapshot", config: CONFIG }),
+      { version: 1, type: "environmentThemesUpdated", payload: { themes } },
+    );
+    expect(Option.getOrThrow(withThemes).config.environmentThemes).toEqual(themes);
+
+    const afterReconnect = applyServerConfigProjection(withThemes, {
+      version: 1,
+      type: "snapshot",
+      config: CONFIG,
+    });
+    expect(Option.getOrThrow(afterReconnect).config.environmentThemes).toEqual(themes);
+
+    // A server that predates the feature never sends another theme event, so
+    // carrying the set forward would leave a palette nothing can update.
+    const downgraded = applyServerConfigProjection(withThemes, {
+      version: 1,
+      type: "snapshot",
+      config: {
+        ...CONFIG,
+        environment: { capabilities: {} },
+      } as unknown as ServerConfig,
+    });
+    expect(Option.getOrThrow(downgraded).config.environmentThemes).toBeUndefined();
   });
 
   it("retains welcome when a ready event follows in the same stream chunk", () => {

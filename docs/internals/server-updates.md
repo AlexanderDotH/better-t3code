@@ -3,8 +3,8 @@
 > For maintainers. Using T3 Code? See [docs/user](../user/).
 
 Remote server updates use one stable launcher selected by the platform service manager (systemd on
-Linux, launchd on macOS). Foreground CLI processes do not self-update, and a running server never
-edits its service definition or durable service state.
+Linux, launchd on macOS, and a per-user Scheduled Task on Windows). Foreground CLI processes do not
+self-update, and a running server never edits its service definition or durable service state.
 
 ## Ownership
 
@@ -25,7 +25,15 @@ The state contains one active version and, at most, one update record:
 - `rolled-back A → B` or `failed A → B` selects A;
 - invalid state fails closed so the service manager cannot guess at a runtime.
 
-Every write uses same-directory replacement plus file and directory fsync.
+Every write uses same-directory replacement plus file fsync. Directory fsync is also used on
+Linux/macOS and is intentionally skipped on Windows, whose directory handles do not provide the
+same portable contract.
+
+Windows repair and uninstall write a correlated stop request under `<baseDir>/runtime`. The
+launcher acknowledges receipt, asks its child over IPC to close the existing Effect root scope,
+and writes the stopped acknowledgement only after the child exits. Task Scheduler `/End` and an
+exact acknowledged PID-tree kill are bounded, logged fallbacks. A launcher IPC disconnect also
+closes the child so Task Scheduler can restart the pair without leaving a duplicate server.
 
 ## Remote Update
 

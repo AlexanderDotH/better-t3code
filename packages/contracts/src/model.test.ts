@@ -92,4 +92,20 @@ describe("multi-provider model contracts", () => {
     });
     expect(decodeModelCapabilities({})).toEqual({});
   });
+
+  it("decodes optional model modality, pricing, and tool-support metadata", () => {
+    expect(
+      decodeModelCapabilities({
+        inputModalities: ["text", "image"],
+        outputModalities: ["text"],
+        pricing: { promptUsdPerMillion: 2, completionUsdPerMillion: 10 },
+        toolSupport: { tools: true, parallelToolCalls: true, toolChoice: true },
+      }),
+    ).toEqual({
+      inputModalities: ["text", "image"],
+      outputModalities: ["text"],
+      pricing: { promptUsdPerMillion: 2, completionUsdPerMillion: 10 },
+      toolSupport: { tools: true, parallelToolCalls: true, toolChoice: true },
+    });
+  });
 });

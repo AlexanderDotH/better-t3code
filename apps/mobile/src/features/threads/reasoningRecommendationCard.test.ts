@@ -1,8 +1,24 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { buildReasoningRecommendationCardCopy } from "./reasoningRecommendationCard";
+import {
+  REASONING_RECOMMENDATION_CARD_CLASSES,
+  buildReasoningRecommendationCardCopy,
+} from "./reasoningRecommendationCard";
 
 describe("reasoning recommendation card copy", () => {
+  it("uses semantic theme tokens for every card surface", () => {
+    expect(REASONING_RECOMMENDATION_CARD_CLASSES).toMatchObject({
+      root: expect.stringContaining("border-border"),
+      title: expect.stringContaining("text-foreground"),
+      description: expect.stringContaining("text-foreground-muted"),
+      primaryAction: expect.stringContaining("bg-primary"),
+      primaryActionLabel: expect.stringContaining("text-primary-foreground"),
+      secondaryAction: expect.stringContaining("bg-subtle"),
+      secondaryActionLabel: expect.stringContaining("text-foreground"),
+    });
+    expect(Object.values(REASONING_RECOMMENDATION_CARD_CLASSES).join(" ")).not.toContain("dark:");
+  });
+
   it("explains the evidence and preserves the chat default", () => {
     expect(
       buildReasoningRecommendationCardCopy({
@@ -53,5 +69,24 @@ describe("reasoning recommendation card copy", () => {
       dismissAccessibilityLabel: null,
       armed: true,
     });
+  });
+
+  it("suppresses recommendation UI while Auto reasoning is active", () => {
+    expect(
+      buildReasoningRecommendationCardCopy({
+        recommendation: null,
+        pendingOverride: {
+          evidenceTurnId: "turn-1",
+          instanceId: "codex",
+          model: "gpt-5.6-sol",
+          optionId: "reasoningEffort",
+          fromValue: "max",
+          fromLabel: "Max",
+          targetValue: "high",
+          targetLabel: "High",
+        },
+        autoReasoningActive: true,
+      }),
+    ).toBeNull();
   });
 });

@@ -9,6 +9,8 @@ import {
 } from "react";
 
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { shouldExpandGitCompactPull } from "./gitWorkspaceDeck.logic";
@@ -64,13 +66,14 @@ export interface GitCompactCardProps {
 }
 
 function Divergence({ ahead, behind }: { ahead: number; behind: number }) {
-  if (ahead === 0 && behind === 0) return <span>Up to date</span>;
+  const translate = useInterfaceTranslator().message;
+  if (ahead === 0 && behind === 0) return <span>{translate("git.workbench.upToDate")}</span>;
 
   return (
     <span className="git-compact-card__divergence">
-      {ahead > 0 ? `${ahead} ahead` : null}
+      {ahead > 0 ? translate("git.workbench.aheadCount", { count: ahead }) : null}
       {ahead > 0 && behind > 0 ? <span aria-hidden> · </span> : null}
-      {behind > 0 ? `${behind} behind` : null}
+      {behind > 0 ? translate("git.workbench.behindCount", { count: behind }) : null}
     </span>
   );
 }
@@ -83,20 +86,27 @@ interface PullState {
   readonly startY: number;
 }
 
-function changeSummary(status: GitCompactStatus): string {
-  const changes = `${status.changeCount} ${status.changeCount === 1 ? "change" : "changes"}`;
+function changeSummary(
+  status: GitCompactStatus,
+  translate: InterfaceTranslator["message"],
+): string {
+  const changes = translate("git.workbench.changeCount", { count: status.changeCount });
   if (status.conflicts > 0) {
-    return `${status.conflicts} ${status.conflicts === 1 ? "conflict" : "conflicts"} · ${changes}`;
+    return translate("git.workbench.conflictSummary", {
+      conflicts: translate("git.workbench.conflictCount", { count: status.conflicts }),
+      changes,
+    });
   }
   if (status.changeCount > 0) return changes;
-  if (status.kind === "disconnected") return "Repository disconnected";
-  if (status.kind === "unavailable") return "Repository unavailable";
-  if (status.kind === "stale") return "Repository status refreshing";
-  if (status.kind === "clean") return "Working tree clean";
-  return "No working tree changes";
+  if (status.kind === "disconnected") return translate("git.workbench.repositoryDisconnected");
+  if (status.kind === "unavailable") return translate("git.workbench.repositoryUnavailable");
+  if (status.kind === "stale") return translate("git.workbench.statusRefreshing");
+  if (status.kind === "clean") return translate("git.workbench.clean");
+  return translate("git.workbench.noChanges");
 }
 
 export function GitCompactCard(props: GitCompactCardProps) {
+  const translate = useInterfaceTranslator().message;
   const pullHandleRef = useRef<HTMLDivElement | null>(null);
   const pullStateRef = useRef<PullState | null>(null);
   const resetPull = useCallback((releaseCapture = true) => {
@@ -182,7 +192,11 @@ export function GitCompactCard(props: GitCompactCardProps) {
       data-expanded={props.expanded ? "true" : undefined}
       data-repository-state={props.status.kind}
       data-workspace-card-compact-surface="true"
-      aria-label={props.expanded ? "Git workbench" : "Repository overview"}
+      aria-label={
+        props.expanded
+          ? translate("git.workbench.title")
+          : translate("git.workbench.repositoryOverview")
+      }
     >
       <div
         className="workspace-card-deck__card-content git-compact-card__content"
@@ -208,10 +222,10 @@ export function GitCompactCard(props: GitCompactCardProps) {
             <div className="git-compact-card__branch-row">
               <GitBranchIcon aria-hidden className="size-3.5 shrink-0" />
               <strong className="truncate font-medium text-sm">
-                {props.status.branch ?? "No branch"}
+                {props.status.branch ?? translate("git.workbench.noBranch")}
               </strong>
               <span className="git-compact-card__state" data-repository-state={props.status.kind}>
-                {props.status.label}
+                {translate(`git.workbench.state.${props.status.kind}`)}
               </span>
             </div>
             <div className="git-compact-card__freshness">
@@ -228,7 +242,7 @@ export function GitCompactCard(props: GitCompactCardProps) {
                     ref={props.expandButtonRef}
                     type="button"
                     className="git-compact-card__header-action"
-                    aria-label="Expand Git workbench"
+                    aria-label={translate("git.workbench.expand")}
                     disabled={props.expansionBlocked}
                     onClick={props.onExpand}
                   />
@@ -236,35 +250,52 @@ export function GitCompactCard(props: GitCompactCardProps) {
               >
                 <ArrowUpIcon aria-hidden />
               </TooltipTrigger>
-              <TooltipPopup side="top">Expand Git workbench</TooltipPopup>
+              <TooltipPopup side="top">{translate("git.workbench.expand")}</TooltipPopup>
             </Tooltip>
           </div>
         </header>
 
-        <section className="git-compact-card__summary" aria-label="Working tree summary">
-          <strong className="git-compact-card__change-total">{changeSummary(props.status)}</strong>
+        <section
+          className="git-compact-card__summary"
+          aria-label={translate("git.workbench.workingTreeSummary")}
+        >
+          <strong className="git-compact-card__change-total">
+            {changeSummary(props.status, translate)}
+          </strong>
           <span className="git-compact-card__diff-stat">
             <span
               className="font-mono text-success"
-              aria-label={`${props.status.additions} additions`}
+              aria-label={translate("git.workbench.additionCount", {
+                count: props.status.additions,
+              })}
             >
               +{props.status.additions}
             </span>
             <span
               className="font-mono text-destructive"
-              aria-label={`${props.status.deletions} deletions`}
+              aria-label={translate("git.workbench.deletionCount", {
+                count: props.status.deletions,
+              })}
             >
               −{props.status.deletions}
             </span>
           </span>
           {props.status.detailsPending ? (
-            <span className="git-compact-card__summary-pending">Detailed counts loading</span>
+            <span className="git-compact-card__summary-pending">
+              {translate("git.workbench.detailsLoading")}
+            </span>
           ) : (
             <div className="git-compact-card__summary-groups">
-              <span>{props.status.staged} staged</span>
-              <span>{props.status.unstaged} unstaged</span>
-              <span>{props.status.untracked} untracked</span>
-              <span>{props.status.conflicts} conflicts</span>
+              <span>{translate("git.workbench.stagedCount", { count: props.status.staged })}</span>
+              <span>
+                {translate("git.workbench.unstagedCount", { count: props.status.unstaged })}
+              </span>
+              <span>
+                {translate("git.workbench.untrackedCount", { count: props.status.untracked })}
+              </span>
+              <span>
+                {translate("git.workbench.conflictsCount", { count: props.status.conflicts })}
+              </span>
             </div>
           )}
         </section>
@@ -278,7 +309,7 @@ export function GitCompactCard(props: GitCompactCardProps) {
                 <span className="text-muted-foreground"> · {props.lastCommit.ageLabel}</span>
               </span>
             ) : (
-              <span className="text-muted-foreground">No commits yet</span>
+              <span className="text-muted-foreground">{translate("git.workbench.noCommits")}</span>
             )}
           </div>
           {props.quickAction ? (

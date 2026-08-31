@@ -13,6 +13,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import type { NetworkInterfaces } from "./DesktopNetworkInterfaces.ts";
+import { translateDesktopInterfaceMessage } from "../settings/DesktopInterfaceLanguage.ts";
 
 export { isTailscaleIpv4Address, parseTailscaleMagicDnsName } from "@t3tools/tailscale";
 
@@ -49,7 +50,7 @@ function resolveTailscaleIpAdvertisedEndpoints(input: {
           httpBaseUrl: `http://${address.address}:${input.port}`,
           reachability: "private-network",
           status: "available",
-          description: "Reachable from devices on the same Tailnet.",
+          description: translateDesktopInterfaceMessage("desktop.endpoint.sameTailnetDescription"),
         }),
       );
     }
@@ -91,9 +92,11 @@ const resolveTailscaleMagicDnsAdvertisedEndpoint = Effect.fn(
       reachability: "private-network",
       hostedHttpsCompatibility: isReachable ? "compatible" : "requires-configuration",
       status: isReachable ? "available" : "unavailable",
-      description: isReachable
-        ? "HTTPS endpoint served by Tailscale Serve."
-        : "MagicDNS hostname. Configure Tailscale Serve for HTTPS access.",
+      description: translateDesktopInterfaceMessage(
+        isReachable
+          ? "desktop.endpoint.tailscaleServeDescription"
+          : "desktop.endpoint.tailscaleConfigureDescription",
+      ),
     }),
   );
 });

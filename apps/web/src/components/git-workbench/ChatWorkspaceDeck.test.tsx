@@ -162,7 +162,7 @@ describe("ChatWorkspaceDeck", () => {
     });
   });
 
-  it("keeps Chat mounted but inert and hidden when Git is in front", () => {
+  it("unmounts the heavy Chat body while retaining its lightweight peek", () => {
     const html = renderToStaticMarkup(
       <ChatWorkspaceDeck
         activeCard="git"
@@ -176,14 +176,13 @@ describe("ChatWorkspaceDeck", () => {
       />,
     );
 
-    expect(html).toContain("chat body remains mounted");
-    expect(html).toContain('data-workspace-card-body="chat"');
-    expect(html).toContain('aria-hidden="true"');
-    expect(html).toContain('inert=""');
+    expect(html).not.toContain("chat body remains mounted");
+    expect(html).not.toContain('data-workspace-card-body="chat"');
+    expect(html).toContain('data-workspace-card-peek="chat"');
     expect(html).toContain('data-workspace-card-body="git"');
   });
 
-  it("renders the ordered Chat, Git, and MCP bodies through the generic deck", () => {
+  it("mounts one active body while rendering adjacent Git and MCP peeks", () => {
     const html = renderToStaticMarkup(
       <ChatWorkspaceDeck
         activeCard="chat"
@@ -197,11 +196,12 @@ describe("ChatWorkspaceDeck", () => {
       />,
     );
 
-    expect(html.match(/data-workspace-card-body=/g)).toHaveLength(3);
+    expect(html.match(/data-workspace-card-body=/g)).toHaveLength(1);
     expect(html).toContain('data-workspace-card-body="chat"');
-    expect(html).toContain('data-workspace-card-body="git"');
-    expect(html).toContain('data-workspace-card-body="mcp"');
-    expect(html).toContain('data-mcp-workspace-card="true"');
+    expect(html).not.toContain('data-workspace-card-body="git"');
+    expect(html).not.toContain('data-workspace-card-body="mcp"');
+    expect(html).toContain('data-workspace-card-peek="git"');
+    expect(html).toContain('data-workspace-card-peek="mcp"');
     expect(html.match(/data-workspace-card-peek-trigger="true"/g)).toHaveLength(2);
   });
 
@@ -279,7 +279,7 @@ describe("GitCompactCard", () => {
       />,
     );
 
-    expect(html).toContain("Changes present");
+    expect(html).toContain("Changed");
     expect(html).toContain("6 changes");
     expect(html).toContain("2 staged");
     expect(html).toContain("3 unstaged");

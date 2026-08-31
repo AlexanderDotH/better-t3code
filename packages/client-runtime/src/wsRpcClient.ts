@@ -167,12 +167,28 @@ export interface WsRpcClient {
       typeof WS_METHODS.serverDiscoverSourceControl
     >;
     readonly updateProvider: RpcUnaryMethod<typeof WS_METHODS.serverUpdateProvider>;
+    readonly connectProviderAuth: (
+      input: RpcInput<typeof WS_METHODS.serverProviderAuthConnect>,
+      listener: Parameters<RpcInputStreamMethod<typeof WS_METHODS.serverProviderAuthConnect>>[1],
+    ) => Promise<void>;
+    readonly setProviderAuthCredential: RpcUnaryMethod<
+      typeof WS_METHODS.serverProviderAuthSetCredential
+    >;
+    readonly disconnectProviderAuth: RpcUnaryMethod<typeof WS_METHODS.serverProviderAuthDisconnect>;
     readonly upsertKeybinding: RpcUnaryMethod<typeof WS_METHODS.serverUpsertKeybinding>;
     readonly removeKeybinding: RpcUnaryMethod<typeof WS_METHODS.serverRemoveKeybinding>;
     readonly getSettings: RpcUnaryNoArgMethod<typeof WS_METHODS.serverGetSettings>;
     readonly updateSettings: (
       patch: ServerSettingsPatch,
     ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.serverUpdateSettings>>;
+    readonly compactThread: RpcUnaryMethod<typeof WS_METHODS.providerCompactThread>;
+    readonly viewProjectMemory: RpcUnaryMethod<typeof WS_METHODS.projectMemoryView>;
+    readonly updateProjectMemorySettings: RpcUnaryMethod<
+      typeof WS_METHODS.projectMemoryUpdateSettings
+    >;
+    readonly replaceProjectMemory: RpcUnaryMethod<typeof WS_METHODS.projectMemoryReplace>;
+    readonly importProjectMemory: RpcUnaryMethod<typeof WS_METHODS.projectMemoryImport>;
+    readonly clearProjectMemory: RpcUnaryMethod<typeof WS_METHODS.projectMemoryClear>;
     readonly createAssemblyAiStreamingToken: RpcUnaryMethod<
       typeof WS_METHODS.serverCreateAssemblyAiStreamingToken
     >;
@@ -189,6 +205,10 @@ export interface WsRpcClient {
     readonly signalProcess: RpcUnaryMethod<typeof WS_METHODS.serverSignalProcess>;
   };
   readonly speech: {
+    readonly startStreamingSession: RpcUnaryMethod<typeof WS_METHODS.speechStartStreamingSession>;
+    readonly pushStreamingAudio: RpcUnaryMethod<typeof WS_METHODS.speechPushStreamingAudio>;
+    readonly finishStreamingSession: RpcUnaryMethod<typeof WS_METHODS.speechFinishStreamingSession>;
+    readonly cancelStreamingSession: RpcUnaryMethod<typeof WS_METHODS.speechCancelStreamingSession>;
     readonly getProjectProfile: RpcUnaryMethod<typeof WS_METHODS.speechGetProjectProfile>;
     readonly listProjectProfiles: RpcUnaryNoArgMethod<typeof WS_METHODS.speechListProjectProfiles>;
     readonly indexProject: RpcUnaryMethod<typeof WS_METHODS.speechIndexProject>;
@@ -226,6 +246,14 @@ export interface WsRpcClient {
       input?: RpcInput<typeof WS_METHODS.chatImportDiscover>,
     ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.chatImportDiscover>>;
     readonly run: RpcUnaryMethod<typeof WS_METHODS.chatImportRun>;
+  };
+  readonly harnessChatSync: {
+    readonly sources: (
+      input?: RpcInput<typeof WS_METHODS.harnessChatSyncSources>,
+    ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.harnessChatSyncSources>>;
+    readonly list: RpcUnaryMethod<typeof WS_METHODS.harnessChatSyncList>;
+    readonly run: RpcUnaryMethod<typeof WS_METHODS.harnessChatSyncRun>;
+    readonly status: RpcUnaryMethod<typeof WS_METHODS.harnessChatSyncStatus>;
   };
   readonly mcp: {
     readonly list: (
@@ -435,6 +463,15 @@ export function createWsRpcClient(
         transport.request((client) => client[WS_METHODS.serverDiscoverSourceControl]({})),
       updateProvider: (input) =>
         transport.request((client) => client[WS_METHODS.serverUpdateProvider](input)),
+      connectProviderAuth: (input, listener) =>
+        transport.requestStream(
+          (client) => client[WS_METHODS.serverProviderAuthConnect](input),
+          listener,
+        ),
+      setProviderAuthCredential: (input) =>
+        transport.request((client) => client[WS_METHODS.serverProviderAuthSetCredential](input)),
+      disconnectProviderAuth: (input) =>
+        transport.request((client) => client[WS_METHODS.serverProviderAuthDisconnect](input)),
       upsertKeybinding: (input) =>
         transport.request((client) => client[WS_METHODS.serverUpsertKeybinding](input)),
       removeKeybinding: (input) =>
@@ -442,6 +479,18 @@ export function createWsRpcClient(
       getSettings: () => transport.request((client) => client[WS_METHODS.serverGetSettings]({})),
       updateSettings: (patch) =>
         transport.request((client) => client[WS_METHODS.serverUpdateSettings]({ patch })),
+      compactThread: (input) =>
+        transport.request((client) => client[WS_METHODS.providerCompactThread](input)),
+      viewProjectMemory: (input) =>
+        transport.request((client) => client[WS_METHODS.projectMemoryView](input)),
+      updateProjectMemorySettings: (input) =>
+        transport.request((client) => client[WS_METHODS.projectMemoryUpdateSettings](input)),
+      replaceProjectMemory: (input) =>
+        transport.request((client) => client[WS_METHODS.projectMemoryReplace](input)),
+      importProjectMemory: (input) =>
+        transport.request((client) => client[WS_METHODS.projectMemoryImport](input)),
+      clearProjectMemory: (input) =>
+        transport.request((client) => client[WS_METHODS.projectMemoryClear](input)),
       createAssemblyAiStreamingToken: (input) =>
         transport.request((client) =>
           client[WS_METHODS.serverCreateAssemblyAiStreamingToken](input),
@@ -474,6 +523,14 @@ export function createWsRpcClient(
         transport.request((client) => client[WS_METHODS.serverSignalProcess](input)),
     },
     speech: {
+      startStreamingSession: (input) =>
+        transport.request((client) => client[WS_METHODS.speechStartStreamingSession](input)),
+      pushStreamingAudio: (input) =>
+        transport.request((client) => client[WS_METHODS.speechPushStreamingAudio](input)),
+      finishStreamingSession: (input) =>
+        transport.request((client) => client[WS_METHODS.speechFinishStreamingSession](input)),
+      cancelStreamingSession: (input) =>
+        transport.request((client) => client[WS_METHODS.speechCancelStreamingSession](input)),
       getProjectProfile: (input) =>
         transport.request((client) => client[WS_METHODS.speechGetProjectProfile](input)),
       listProjectProfiles: () =>
@@ -529,6 +586,14 @@ export function createWsRpcClient(
       discover: (input) =>
         transport.request((client) => client[WS_METHODS.chatImportDiscover](input ?? {})),
       run: (input) => transport.request((client) => client[WS_METHODS.chatImportRun](input)),
+    },
+    harnessChatSync: {
+      sources: (input) =>
+        transport.request((client) => client[WS_METHODS.harnessChatSyncSources](input ?? {})),
+      list: (input) => transport.request((client) => client[WS_METHODS.harnessChatSyncList](input)),
+      run: (input) => transport.request((client) => client[WS_METHODS.harnessChatSyncRun](input)),
+      status: (input) =>
+        transport.request((client) => client[WS_METHODS.harnessChatSyncStatus](input)),
     },
     mcp: {
       list: (input) => transport.request((client) => client[WS_METHODS.mcpList](input ?? {})),

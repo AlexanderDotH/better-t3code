@@ -37,7 +37,7 @@ import { ControlPillMenu } from "../../components/ControlPill";
 import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { useThreadDraftForThread } from "../../state/use-thread-composer-state";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
@@ -55,6 +55,8 @@ import { useThreadSelection } from "../../state/use-thread-selection";
 import { vcsEnvironment } from "../../state/vcs";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { ThreadGitMenu } from "../threads/ThreadGitControls";
+import { mobileGitWorkbenchCanActivate } from "../threads/git/mobile-git-workbench";
+import { useMobileGitWorkbenchAvailability } from "../threads/git/use-mobile-git-workbench";
 import { useReviewCacheForThread } from "./reviewState";
 import {
   isNativeReviewDiffDrawEvent,
@@ -74,19 +76,19 @@ import { resolveSelectedReviewFileId } from "./reviewPaneSelection";
 import { buildReviewSectionMenu } from "./review-section-menu";
 import type { ReviewSectionItem } from "./reviewModel";
 import { reportShowcaseSceneRendered } from "../showcase/showcaseRenderSignal";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const REVIEW_HEADER_SPACING = 0;
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 
 const ReviewNotice = memo(function ReviewNotice(props: { readonly notice: string }) {
+  const translator = useMobileInterfaceTranslator();
   return (
-    <View className="border-b border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/60 dark:bg-amber-950/40">
-      <Text className="text-xs font-t3-bold uppercase text-amber-700 dark:text-amber-300">
-        Partial diff
+    <View className="border-b border-adaptive-amber-200-900-a60 bg-adaptive-amber-50-950-a40 px-4 py-3">
+      <Text className="text-xs font-t3-bold uppercase text-adaptive-amber-700-300">
+        {translator.message("mobile.review.partialDiff")}
       </Text>
-      <Text className="text-xs leading-normal text-amber-800 dark:text-amber-200">
-        {props.notice}
-      </Text>
+      <Text className="text-xs leading-normal text-adaptive-amber-800-200">{props.notice}</Text>
     </View>
   );
 });
@@ -97,7 +99,6 @@ function ReviewSelectionActionBar(props: {
   readonly onOpenComment: (() => void) | null;
   readonly onClear: () => void;
 }) {
-  const foreground = useThemeColor("--color-primary-foreground");
   if (!props.title) {
     return null;
   }
@@ -107,7 +108,7 @@ function ReviewSelectionActionBar(props: {
       <SymbolView
         name={props.onOpenComment ? "text.bubble" : "line.3.horizontal.decrease.circle"}
         size={16}
-        tintColor={foreground}
+        tintColorClassName={"accent-primary-foreground"}
         type="monochrome"
       />
       <Text className="text-base font-t3-bold text-primary-foreground">{props.title}</Text>
@@ -144,7 +145,12 @@ function ReviewSelectionActionBar(props: {
         className="h-12 w-12 items-center justify-center rounded-full bg-primary"
         onPress={props.onClear}
       >
-        <SymbolView name="xmark" size={16} tintColor={foreground} type="monochrome" />
+        <SymbolView
+          name="xmark"
+          size={16}
+          tintColorClassName={"accent-primary-foreground"}
+          type="monochrome"
+        />
       </Pressable>
     </View>
   );
@@ -216,9 +222,11 @@ function ReviewFileNavigator({
   onSelectFile,
   ref,
 }: ReviewFileNavigatorProps) {
+  const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
-  const sheetColor = String(useThemeColor("--color-sheet"));
-  const foregroundColor = String(useThemeColor("--color-foreground"));
+  const theme = useUniwindTheme();
+  const sheetColor = theme["--color-sheet"];
+  const foregroundColor = theme["--color-foreground"];
   const headerScrollEdgeEffects = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
   const [fileSelection, setFileSelection] = useState<{
     readonly sectionId: string | null;
@@ -307,8 +315,8 @@ function ReviewFileNavigator({
               hideBackButton
               hideShadow={false}
               navigationItemStyle="editor"
-              subtitle={`${files.length} ${files.length === 1 ? "file" : "files"}`}
-              title="Changed files"
+              subtitle={translator.message("mobile.review.fileCount", { count: files.length })}
+              title={translator.message("mobile.review.changedFiles")}
               titleColor={foregroundColor}
               titleFontSize={17}
               titleFontWeight="700"
@@ -324,9 +332,11 @@ function ReviewFileNavigator({
     <View className="flex-1 border-l border-border bg-sheet">
       <View className="border-b border-border" style={{ paddingTop: headerInset }}>
         <View className="px-4 py-3">
-          <Text className="text-sm font-t3-bold text-foreground">Changed files</Text>
+          <Text className="text-sm font-t3-bold text-foreground">
+            {translator.message("mobile.review.changedFiles")}
+          </Text>
           <Text className="text-xs text-foreground-muted">
-            {files.length} {files.length === 1 ? "file" : "files"}
+            {translator.message("mobile.review.fileCount", { count: files.length })}
           </Text>
         </View>
       </View>
@@ -341,6 +351,7 @@ type ReviewSheetProps = StaticScreenProps<{
 }>;
 
 export function ReviewSheet(props: ReviewSheetProps) {
+  const translator = useMobileInterfaceTranslator();
   const isAndroid = Platform.OS === "android";
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
   useAdaptiveWorkspacePaneRole("inspector");
@@ -348,8 +359,10 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { themeAppearance: selectedTheme } = useAppearancePreferences();
-  const headerIcon = String(useThemeColor("--color-icon"));
+  const headerIcon = String(useUniwindTheme()["--color-icon"]);
   const { environmentId, threadId } = props.route.params;
+  const gitWorkbenchAvailability = useMobileGitWorkbenchAvailability({ environmentId, threadId });
+  const gitWorkbenchEnabled = mobileGitWorkbenchCanActivate(gitWorkbenchAvailability);
   const environment = useEnvironmentPresentation(environmentId);
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
   const isEnvironmentReady = environment.presentation?.connection.phase === "connected";
@@ -361,7 +374,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const gitStatusQuery = useEnvironmentQuery(
-    selectedThread !== null && selectedThreadCwd !== null
+    gitWorkbenchEnabled && selectedThread !== null && selectedThreadCwd !== null
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
           input: { cwd: selectedThreadCwd },
@@ -371,7 +384,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
   // The selection-based git hooks only apply when this review belongs to the
   // selected thread (it always does when reached from the thread's toolbar).
   const gitMenuAvailable =
-    selectedThread !== null && String(selectedThread.id) === String(threadId);
+    gitWorkbenchEnabled &&
+    selectedThread !== null &&
+    String(selectedThread.id) === String(threadId);
   // With a solid (non-overlay) header the content lays out below the header
   // natively, so no manual top inset is needed. (Android renders its own
   // in-flow AndroidScreenHeader, so it needs no inset either.)
@@ -532,22 +547,28 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const androidSectionMenuActions = useMemo<MenuAction[]>(() => {
     const sectionAction = (section: ReviewSectionItem | null, title: string): MenuAction => ({
       id: section ? `section:${section.id}` : `unavailable:${title}`,
-      title: section?.id === selectedSection?.id ? `${title} (selected)` : title,
+      title:
+        section?.id === selectedSection?.id
+          ? translator.message("mobile.review.selected", { title })
+          : title,
       attributes: section ? undefined : { disabled: true },
     });
     const actions: MenuAction[] = [
-      sectionAction(sectionMenu.workingTree, "Working tree"),
-      sectionAction(sectionMenu.branchChanges, "Branch changes"),
-      sectionAction(sectionMenu.latestTurn, "Latest turn"),
+      sectionAction(sectionMenu.workingTree, translator.message("mobile.review.workingTree")),
+      sectionAction(sectionMenu.branchChanges, translator.message("mobile.review.branchChanges")),
+      sectionAction(sectionMenu.latestTurn, translator.message("mobile.review.latestTurn")),
     ];
 
     if (sectionMenu.turns.length > 0) {
       actions.push({
         id: "turns",
-        title: "Turn",
+        title: translator.message("mobile.review.turn"),
         subactions: sectionMenu.turns.map((section) => ({
           id: `section:${section.id}`,
-          title: section.id === selectedSection?.id ? `${section.title} (selected)` : section.title,
+          title:
+            section.id === selectedSection?.id
+              ? translator.message("mobile.review.selected", { title: section.title })
+              : section.title,
           subtitle: section.subtitle ?? undefined,
         })),
       });
@@ -557,13 +578,13 @@ export function ReviewSheet(props: ReviewSheetProps) {
     // stays a menu action there (iOS refreshes via pull-to-refresh instead).
     actions.push({
       id: "refresh",
-      title: "Refresh current diff",
+      title: translator.message("mobile.review.refreshDiff"),
       attributes: {
         disabled: !selectedSection || selectedSection.isLoading,
       },
     });
     return actions;
-  }, [sectionMenu, selectedSection]);
+  }, [sectionMenu, selectedSection, translator]);
   const handleAndroidSectionMenuAction = useCallback(
     (event: { nativeEvent: { event: string } }) => {
       const id = event.nativeEvent.event;
@@ -608,7 +629,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
     if (error) {
       children.push(
         <View key="review-error" className="border-b border-border bg-card px-4 py-3">
-          <Text className="text-sm font-t3-bold text-foreground">Review unavailable</Text>
+          <Text className="text-sm font-t3-bold text-foreground">
+            {translator.message("mobile.review.unavailable")}
+          </Text>
           <Text className="text-xs leading-normal text-foreground-muted">{error}</Text>
         </View>,
       );
@@ -623,17 +646,17 @@ export function ReviewSheet(props: ReviewSheetProps) {
     }
 
     return <>{children}</>;
-  }, [error, parsedDiffNotice]);
+  }, [error, parsedDiffNotice, translator]);
   const headerSubtitle = [
     headerDiffSummary.additions,
     headerDiffSummary.deletions,
     pendingReviewCommentCount > 0
-      ? `${pendingReviewCommentCount} comment${pendingReviewCommentCount === 1 ? "" : "s"}`
+      ? translator.message("mobile.review.commentCount", { count: pendingReviewCommentCount })
       : null,
   ]
     .filter(Boolean)
     .join(" · ");
-  const headerTitleText = selectedSection?.title ?? "Review changes";
+  const headerTitleText = selectedSection?.title ?? translator.message("mobile.review.changes");
 
   return (
     <>
@@ -657,8 +680,8 @@ export function ReviewSheet(props: ReviewSheetProps) {
 
       {isAndroid ? (
         <AndroidScreenHeader
-          title="Review changes"
-          subtitle={androidHeaderSubtitle || "Select a diff"}
+          title={translator.message("mobile.review.changes")}
+          subtitle={androidHeaderSubtitle || translator.message("mobile.review.selectDiff")}
           onBack={handleReturnToThread}
           trailing={
             showSectionToolbar ? (
@@ -668,7 +691,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
                 onPressAction={handleAndroidSectionMenuAction}
               >
                 <AndroidHeaderIconButton
-                  accessibilityLabel="Select review diff"
+                  accessibilityLabel={translator.message("mobile.review.selectDiff")}
                   icon="ellipsis.circle"
                 />
               </ControlPillMenu>
@@ -679,7 +702,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
 
       <WorkspaceSidebarToolbar>
         <NativeHeaderToolbar.Button
-          accessibilityLabel="Back to chat"
+          accessibilityLabel={translator.message("mobile.review.backToChat")}
           icon="chevron.left"
           onPress={handleReturnToThread}
         />
@@ -690,7 +713,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
           {panes.supportsAuxiliaryPane ? (
             <NativeHeaderToolbar.Button
               accessibilityLabel={
-                panes.auxiliaryPaneVisible ? "Hide changed files" : "Show changed files"
+                panes.auxiliaryPaneVisible
+                  ? translator.message("mobile.review.hideChangedFiles")
+                  : translator.message("mobile.review.showChangedFiles")
               }
               icon="sidebar.right"
               onPress={toggleAuxiliaryPane}
@@ -704,12 +729,17 @@ export function ReviewSheet(props: ReviewSheetProps) {
               currentBranch={selectedThread.branch ?? null}
               gitStatus={gitStatusQuery.data}
               gitOperationLabel={gitState.gitOperationLabel}
+              gitEnabled={gitWorkbenchEnabled}
               onPull={gitActions.onPullSelectedThreadBranch}
               onRunAction={gitActions.onRunSelectedThreadGitAction}
             />
           ) : null}
           {showSectionToolbar ? (
-            <NativeHeaderToolbar.Menu icon="ellipsis" title="Select diff" separateBackground>
+            <NativeHeaderToolbar.Menu
+              icon="ellipsis"
+              title={translator.message("mobile.review.selectDiff")}
+              separateBackground
+            >
               <NativeHeaderToolbar.Menu inline>
                 <NativeHeaderToolbar.MenuAction
                   disabled={sectionMenu.workingTree === null}
@@ -720,7 +750,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     }
                   }}
                 >
-                  <NativeHeaderToolbar.Label>Working tree</NativeHeaderToolbar.Label>
+                  <NativeHeaderToolbar.Label>
+                    {translator.message("mobile.review.workingTree")}
+                  </NativeHeaderToolbar.Label>
                 </NativeHeaderToolbar.MenuAction>
                 <NativeHeaderToolbar.MenuAction
                   disabled={sectionMenu.branchChanges === null}
@@ -731,7 +763,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     }
                   }}
                 >
-                  <NativeHeaderToolbar.Label>Branch changes</NativeHeaderToolbar.Label>
+                  <NativeHeaderToolbar.Label>
+                    {translator.message("mobile.review.branchChanges")}
+                  </NativeHeaderToolbar.Label>
                 </NativeHeaderToolbar.MenuAction>
                 <NativeHeaderToolbar.MenuAction
                   disabled={sectionMenu.latestTurn === null}
@@ -742,10 +776,12 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     }
                   }}
                 >
-                  <NativeHeaderToolbar.Label>Latest turn</NativeHeaderToolbar.Label>
+                  <NativeHeaderToolbar.Label>
+                    {translator.message("mobile.review.latestTurn")}
+                  </NativeHeaderToolbar.Label>
                 </NativeHeaderToolbar.MenuAction>
                 {sectionMenu.turns.length > 0 ? (
-                  <NativeHeaderToolbar.Menu title="Turn">
+                  <NativeHeaderToolbar.Menu title={translator.message("mobile.review.turn")}>
                     {sectionMenu.turns.map((section) => (
                       <NativeHeaderToolbar.MenuAction
                         key={section.id}
@@ -768,7 +804,10 @@ export function ReviewSheet(props: ReviewSheetProps) {
         {showConnectionNotice ? (
           <View className="flex-1" style={{ paddingTop: topContentInset }}>
             <EnvironmentConnectionNotice
-              environmentLabel={environment.presentation?.entry.target.label ?? "Environment"}
+              environmentLabel={
+                environment.presentation?.entry.target.label ??
+                translator.message("mobile.navigation.environment")
+              }
               connection={
                 environment.presentation?.connection ?? {
                   phase: "available",
@@ -776,7 +815,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
                   traceId: null,
                 }
               }
-              resourceName="review"
+              resourceName={translator.message("mobile.review.resourceName")}
               onRetry={handleRetryEnvironment}
             />
           </View>
@@ -838,21 +877,27 @@ export function ReviewSheet(props: ReviewSheetProps) {
             {listHeader}
             {!selectedSection ? (
               <View className="border-b border-border bg-card px-4 py-5">
-                <Text className="text-sm font-t3-bold text-foreground">No review diffs</Text>
+                <Text className="text-sm font-t3-bold text-foreground">
+                  {translator.message("mobile.review.noDiffs")}
+                </Text>
                 <Text className="text-xs leading-normal text-foreground-muted">
-                  This thread has no ready turn diffs and the worktree diff is empty.
+                  {translator.message("mobile.review.noDiffsDescription")}
                 </Text>
               </View>
             ) : selectedSection.isLoading && selectedSection.diff === null ? (
               <View className="items-center gap-3 border-b border-border bg-card px-4 py-6">
                 <ActivityIndicator size="small" />
-                <Text className="text-xs text-foreground-muted">Loading diff…</Text>
+                <Text className="text-xs text-foreground-muted">
+                  {translator.message("mobile.review.loadingDiff")}
+                </Text>
               </View>
             ) : parsedDiff.kind === "empty" ? (
               <View className="border-b border-border bg-card px-4 py-5">
-                <Text className="text-sm font-t3-bold text-foreground">No changes</Text>
+                <Text className="text-sm font-t3-bold text-foreground">
+                  {translator.message("mobile.review.noChanges")}
+                </Text>
                 <Text className="text-xs leading-normal text-foreground-muted">
-                  {selectedSection.subtitle ?? "This diff is empty."}
+                  {selectedSection.subtitle ?? translator.message("mobile.review.emptyDiff")}
                 </Text>
               </View>
             ) : parsedDiff.kind === "raw" ? (

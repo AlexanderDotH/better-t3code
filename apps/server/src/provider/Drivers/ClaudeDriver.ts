@@ -31,17 +31,26 @@ import { McpConfigEngine, toClaudeMcpServers } from "../../mcp/McpConfigEngine.t
 import { ProviderDriverError } from "../Errors.ts";
 import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
 import {
+  makeClaudeHistorySyncAdapter,
+  makeClaudeHomeSessionStore,
+} from "../history/ClaudeHistorySync.ts";
+import {
   checkClaudeProviderStatus,
   makePendingClaudeProvider,
   probeClaudeCapabilities,
 } from "../Layers/ClaudeProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import * as ModelManifest from "../ModelManifest.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
   type ProviderInstance,
 } from "../ProviderDriver.ts";
+import {
+  makeInstanceHistorySyncSource,
+  makeSupportedProviderHistorySync,
+} from "../Services/ProviderHistorySync.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
@@ -65,11 +74,18 @@ import {
 import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
+  resolveClaudeConfigDir,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
+const HISTORY_SYNC_CAPABILITIES = {
+  search: true,
+  archived: false,
+  resume: true,
+  activity: false,
+} as const;
 const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
 const OPAQUE_GATEWAY_MODEL_IDS = new Set(["default"]);
 
@@ -125,6 +141,7 @@ export type ClaudeDriverEnv =
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | McpConfigEngine
+  | ModelManifest.ModelManifest
   | Path.Path
   | ProviderEventLoggers
   | ServerConfig
@@ -164,6 +181,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
       const mcpConfigEngine = yield* McpConfigEngine;
+      const modelManifest = yield* ModelManifest.ModelManifest;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -175,6 +193,22 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         env: processEnv,
       });
       const continuationGroupKey = yield* makeClaudeContinuationGroupKey(effectiveConfig);
+      const historySource = makeInstanceHistorySyncSource({
+        driverKind: DRIVER_KIND,
+        instanceId,
+        continuationKey: continuationGroupKey,
+        displayName: displayName ?? "Claude",
+        capabilities: HISTORY_SYNC_CAPABILITIES,
+      });
+      const historyConfigDir = yield* resolveClaudeConfigDir(effectiveConfig);
+      const historyStore = yield* makeClaudeHomeSessionStore(historyConfigDir);
+      const historySync = makeSupportedProviderHistorySync({
+        source: historySource,
+        adapter: makeClaudeHistorySyncAdapter({
+          sourceId: historySource.sourceId,
+          sessionStore: historyStore,
+        }),
+      });
       const stampIdentity = withInstanceIdentity({
         instanceId,
         displayName,
@@ -245,14 +279,25 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         resolveGatewayModelProfile: resolveGatewayProfile,
       });
 
-      const checkProvider = checkClaudeProviderStatus(
-        effectiveConfig,
-        () => resolveCombinedProbe().pipe(Effect.map(({ capabilities }) => capabilities)),
-        processEnv,
-        cwd,
-        resolveGatewayCatalog,
-      ).pipe(
-        Effect.map(stampIdentity),
+      // Kick the TTL-gated manifest refresh in the background and classify
+      // with the in-memory manifest, so a slow or hung fetch never delays the
+      // provider check. A refresh that lands mid-probe applies on the next one.
+      const checkProvider = modelManifest.refreshInBackground.pipe(
+        Effect.andThen(
+          Effect.zipWith(
+            checkClaudeProviderStatus(
+              effectiveConfig,
+              () => resolveCombinedProbe().pipe(Effect.map(({ capabilities }) => capabilities)),
+              processEnv,
+              cwd,
+              resolveGatewayCatalog,
+            ),
+            modelManifest.current,
+            (draft, manifest) =>
+              stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),
+            { concurrent: true },
+          ),
+        ),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
@@ -265,7 +310,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
-          makePendingClaudeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
+          Effect.zipWith(
+            makePendingClaudeProvider(settings.provider),
+            modelManifest.current,
+            (draft, manifest) =>
+              stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),
+          ),
         checkProvider,
         enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
           enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
@@ -298,6 +348,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         enabled,
         snapshot,
         adapter,
+        historySync,
         textGeneration,
       } satisfies ProviderInstance;
     }),

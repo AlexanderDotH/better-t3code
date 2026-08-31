@@ -3,31 +3,28 @@ import {
   WorkspaceBreadcrumbItem,
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
-import { SETTINGS_SECTION_LABELS } from "./settingsSearch";
-
-const SETTINGS_BREADCRUMB_LABELS: Readonly<Record<string, string>> = {
-  ...SETTINGS_SECTION_LABELS,
-  "/settings/diagnostics": "Diagnostics",
-};
-
-function settingsBreadcrumbLabel(pathname: string): string | null {
-  const normalizedPathname = pathname.replace(/\/+$/, "") || "/";
-  return SETTINGS_BREADCRUMB_LABELS[normalizedPathname] ?? null;
-}
+import { resolveSettingsSectionLabels } from "./settingsSearch";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
-  const sectionLabel = settingsBreadcrumbLabel(pathname);
+  const translate = useInterfaceTranslator().message;
+  const sectionLabels = resolveSettingsSectionLabels(translate);
+  const normalizedPathname = pathname.replace(/\/+$/, "") || "/";
+  const sectionLabel =
+    normalizedPathname === "/settings/diagnostics"
+      ? translate("settings.application.section.diagnostics")
+      : (sectionLabels[normalizedPathname as keyof typeof sectionLabels] ?? null);
 
   return (
-    <WorkspaceBreadcrumb ariaLabel="Settings breadcrumb">
+    <WorkspaceBreadcrumb ariaLabel={translate("settings.breadcrumb.aria")}>
       {sectionLabel ? (
         <>
-          <WorkspaceBreadcrumbItem>Settings</WorkspaceBreadcrumbItem>
+          <WorkspaceBreadcrumbItem>{translate("settings.breadcrumb.root")}</WorkspaceBreadcrumbItem>
           <WorkspaceBreadcrumbSeparator />
         </>
       ) : null}
       <WorkspaceBreadcrumbItem current className="truncate">
-        {sectionLabel ?? "Settings"}
+        {sectionLabel ?? translate("settings.breadcrumb.root")}
       </WorkspaceBreadcrumbItem>
     </WorkspaceBreadcrumb>
   );

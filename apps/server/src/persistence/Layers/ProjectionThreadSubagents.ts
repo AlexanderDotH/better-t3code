@@ -1,4 +1,8 @@
-import { OrchestrationLatestTurn, OrchestrationSubagentProgress } from "@t3tools/contracts";
+import {
+  OrchestrationHistoryOrigin,
+  OrchestrationLatestTurn,
+  OrchestrationSubagentProgress,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -22,8 +26,19 @@ const ProjectionThreadSubagentDbRow = ProjectionThreadSubagent.mapFields(
   Struct.assign({
     latestProgress: Schema.NullOr(Schema.fromJsonString(OrchestrationSubagentProgress)),
     latestTurn: Schema.NullOr(Schema.fromJsonString(OrchestrationLatestTurn)),
+    historyOrigin: Schema.NullOr(Schema.fromJsonString(OrchestrationHistoryOrigin)),
   }),
 );
+
+function toProjectionThreadSubagent(
+  row: typeof ProjectionThreadSubagentDbRow.Type,
+): ProjectionThreadSubagent {
+  const { historyOrigin, ...subagent } = row;
+  return {
+    ...subagent,
+    ...(historyOrigin !== null ? { historyOrigin } : {}),
+  };
+}
 
 const toRepositoryError = (sqlOperation: string, decodeOperation: string) => (cause: unknown) =>
   Schema.isSchemaError(cause)
@@ -59,6 +74,7 @@ const makeProjectionThreadSubagentRepository = Effect.gen(function* () {
         started_at,
         updated_at,
         completed_at
+        , history_origin_json
       )
       VALUES (
         ${row.threadId},
@@ -83,6 +99,7 @@ const makeProjectionThreadSubagentRepository = Effect.gen(function* () {
         ${row.startedAt},
         ${row.updatedAt},
         ${row.completedAt}
+        , ${row.historyOrigin === undefined ? null : JSON.stringify(row.historyOrigin)}
       )
       ON CONFLICT (thread_id, subagent_id)
       DO UPDATE SET
@@ -106,6 +123,10 @@ const makeProjectionThreadSubagentRepository = Effect.gen(function* () {
         started_at = excluded.started_at,
         updated_at = excluded.updated_at,
         completed_at = excluded.completed_at
+        , history_origin_json = COALESCE(
+          excluded.history_origin_json,
+          projection_thread_subagents.history_origin_json
+        )
     `,
   });
 
@@ -136,6 +157,7 @@ const makeProjectionThreadSubagentRepository = Effect.gen(function* () {
         started_at AS "startedAt",
         updated_at AS "updatedAt",
         completed_at AS "completedAt"
+        , history_origin_json AS "historyOrigin"
       FROM projection_thread_subagents
       WHERE thread_id = ${threadId}
         AND subagent_id = ${subagentId}
@@ -170,6 +192,7 @@ const makeProjectionThreadSubagentRepository = Effect.gen(function* () {
         started_at AS "startedAt",
         updated_at AS "updatedAt",
         completed_at AS "completedAt"
+        , history_origin_json AS "historyOrigin"
       FROM projection_thread_subagents
       WHERE thread_id = ${threadId}
       ORDER BY updated_at DESC, subagent_id ASC
@@ -211,7 +234,7 @@ const makeProjectionThreadSubagentRepository = Effect.gen(function* () {
           "ProjectionThreadSubagentRepository.getById:decodeRow",
         ),
       ),
-      Effect.map(Option.map((row) => row)),
+      Effect.map(Option.map(toProjectionThreadSubagent)),
     );
 
   const listByThreadId: ProjectionThreadSubagentRepositoryShape["listByThreadId"] = (input) =>
@@ -222,6 +245,7 @@ const makeProjectionThreadSubagentRepository = Effect.gen(function* () {
           "ProjectionThreadSubagentRepository.listByThreadId:decodeRows",
         ),
       ),
+      Effect.map((rows) => rows.map(toProjectionThreadSubagent)),
     );
 
   const deleteBySubagentId: ProjectionThreadSubagentRepositoryShape["deleteBySubagentId"] = (

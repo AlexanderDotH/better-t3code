@@ -29,6 +29,7 @@ import { cn } from "~/lib/utils";
 import { Button, buttonVariants } from "~/components/ui/button";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { resolveThreadRouteTarget } from "~/threadRoutes";
 import {
   buildVisibleToastLayout,
@@ -538,6 +539,7 @@ function ToastProvider({ children, position = "top-right", ...props }: ToastProv
 }
 
 function Toasts({ position }: { position: ToastPosition }) {
+  const translator = useInterfaceTranslator();
   const { toasts } = Toast.useToastManager<ThreadToastData>();
   const activeThreadRef = useActiveThreadRefFromRoute();
   const isTop = position.startsWith("top");
@@ -662,7 +664,7 @@ function Toasts({ position }: { position: ToastPosition }) {
               />
               <div className={toastCornerDismissClass}>
                 <button
-                  aria-label="Dismiss notification"
+                  aria-label={translator.message("ui.notification.dismiss")}
                   className={toastCornerOrbClass}
                   data-slot="toast-close"
                   onClick={() =>
@@ -711,6 +713,7 @@ function AnchoredToastProvider({ children, ...props }: Toast.Provider.Props) {
 }
 
 function AnchoredToasts() {
+  const translator = useInterfaceTranslator();
   const { toasts } = Toast.useToastManager<ThreadToastData>();
   const activeThreadRef = useActiveThreadRefFromRoute();
 
@@ -753,7 +756,7 @@ function AnchoredToasts() {
                     <>
                       <div className={toastCornerDismissClass}>
                         <button
-                          aria-label="Dismiss notification"
+                          aria-label={translator.message("ui.notification.dismiss")}
                           className={toastCornerOrbClass}
                           data-slot="toast-close"
                           onClick={() =>

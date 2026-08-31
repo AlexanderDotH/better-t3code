@@ -58,6 +58,24 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
       }
       yield* sql`INSERT INTO auth_sessions (session_id, subject, scopes, method, issued_at, expires_at)
         VALUES ('session-1', 'user', '[]', 'pairing', '2026-08-01', '2027-08-01')`;
+      yield* sql`INSERT INTO knowledge_graph_scopes
+        (scope_id, environment_id, project_id, effective_workspace_root, is_worktree,
+         created_at, updated_at)
+        VALUES
+        ('scope-kept', 'environment-local', 'project-kept', '/tmp/kept', 0,
+         '2026-08-01', '2026-08-01'),
+        ('scope-deleted', 'environment-local', 'project-deleted', '/tmp/deleted', 0,
+         '2026-08-01', '2026-08-01')`;
+      for (const scopeId of ["scope-kept", "scope-deleted"] as const) {
+        yield* sql`INSERT INTO knowledge_graph_nodes
+          (scope_id, node_id, kind, label, provenance, confidence, node_revision, node_json)
+          VALUES (${scopeId}, ${`node-${scopeId}`}, 'file', 'index.ts', 'deterministic', 1, 1, '{}')`;
+        yield* sql`INSERT INTO knowledge_graph_semantic_queue
+          (job_id, environment_id, scope_id, node_id, desired_node_revision, model_generation,
+           status, available_at, candidates_json, created_at, updated_at)
+          VALUES (${`job-${scopeId}`}, 'environment-local', ${scopeId}, ${`node-${scopeId}`},
+           1, 0, 'queued', 0, '[]', 0, 0)`;
+      }
     }),
   );
   return databasePath;
@@ -88,7 +106,13 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
             SELECT stream_id FROM orchestration_events`;
           const [auth] = yield* sql<{ count: number }>`
             SELECT COUNT(*) AS count FROM auth_sessions`;
-          return { threads, events, authCount: auth?.count ?? 0 };
+          const scopes = yield* sql<{ scope_id: string }>`
+            SELECT scope_id FROM knowledge_graph_scopes ORDER BY scope_id`;
+          const graphNodes = yield* sql<{ scope_id: string }>`
+            SELECT scope_id FROM knowledge_graph_nodes ORDER BY scope_id`;
+          const semanticJobs = yield* sql<{ scope_id: string }>`
+            SELECT scope_id FROM knowledge_graph_semantic_queue ORDER BY scope_id`;
+          return { threads, events, authCount: auth?.count ?? 0, scopes, graphNodes, semanticJobs };
         }),
       );
       assert.deepStrictEqual(
@@ -100,6 +124,9 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         ["stopped-thread"],
       );
       assert.equal(kept.authCount, 0);
+      assert.deepStrictEqual(kept.scopes, [{ scope_id: "scope-kept" }]);
+      assert.deepStrictEqual(kept.graphNodes, [{ scope_id: "scope-kept" }]);
+      assert.deepStrictEqual(kept.semanticJobs, [{ scope_id: "scope-kept" }]);
     }),
   );
 
@@ -150,6 +177,8 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         [38, "ProjectionThreadsPinOrderKey"],
         [39, "ProjectionProjectsDefaultThreadEnvMode"],
         [40, "ProjectionProjectFaviconPath"],
+        [42, "ProjectionThreadLinkedPullRequest"],
+        [43, "ProjectionThreadsUnsettledAt"],
       ] as const;
       yield* withDatabase(
         source,
@@ -174,6 +203,41 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         }),
       );
       assert.deepStrictEqual(integrity, [{ integrity_check: "ok" }]);
+    }),
+  );
+
+  it.effect("rejects upstream 42 and 43 aliases without migration 58 convergence", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const sourceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "migrate-dev-db-unrepaired-upstream-43-",
+      });
+      const destDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "migrate-dev-db-unrepaired-upstream-43-dest-",
+      });
+      const source = yield* createFixtureSource(sourceDir);
+      yield* withDatabase(
+        source,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`UPDATE effect_sql_migrations
+            SET name = 'ProjectionThreadLinkedPullRequest' WHERE migration_id = 42`;
+          yield* sql`UPDATE effect_sql_migrations
+            SET name = 'ProjectionThreadsUnsettledAt' WHERE migration_id = 43`;
+          yield* sql`UPDATE effect_sql_migrations
+            SET name = 'UnprovenConvergence' WHERE migration_id = 58`;
+        }),
+      );
+
+      const error = yield* runMigrateDevDb(
+        { baseDir: destDir, source, projects: 5, threadsPerProject: 10 },
+        { sharedHome: sourceDir },
+      ).pipe(Effect.flip);
+      assert.equal(error._tag, "MigrateDevDbSlotCollisionError");
+      if (error._tag === "MigrateDevDbSlotCollisionError") {
+        assert.equal(error.slot, 42);
+        assert.equal(error.appliedName, "ProjectionThreadLinkedPullRequest");
+      }
     }),
   );
 

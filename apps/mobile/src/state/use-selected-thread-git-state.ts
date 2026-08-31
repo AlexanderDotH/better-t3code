@@ -8,21 +8,28 @@ import { sourceControlEnvironment } from "./sourceControl";
 import { useVcsActionState } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
 import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
+import { mobileGitWorkbenchCanActivate } from "../features/threads/git/mobile-git-workbench";
+import { useMobileGitWorkbenchAvailability } from "../features/threads/git/use-mobile-git-workbench";
 
 export function useSelectedThreadGitState() {
   const { selectedThread, selectedThreadProject } = useThreadSelection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const gitWorkbenchAvailability = useMobileGitWorkbenchAvailability({
+    environmentId: selectedThread?.environmentId ?? null,
+    threadId: selectedThread?.id ?? null,
+  });
+  const gitWorkbenchEnabled = mobileGitWorkbenchCanActivate(gitWorkbenchAvailability);
 
   const selectedThreadGitTarget = useMemo(
     () => ({
-      environmentId: selectedThread?.environmentId ?? null,
-      cwd: selectedThreadCwd,
+      environmentId: gitWorkbenchEnabled ? (selectedThread?.environmentId ?? null) : null,
+      cwd: gitWorkbenchEnabled ? selectedThreadCwd : null,
     }),
-    [selectedThread?.environmentId, selectedThreadCwd],
+    [gitWorkbenchEnabled, selectedThread?.environmentId, selectedThreadCwd],
   );
   const gitActionState = useVcsActionState(selectedThreadGitTarget);
   const sourceControlDiscovery = useEnvironmentQuery(
-    selectedThread === null
+    !gitWorkbenchEnabled || selectedThread === null
       ? null
       : sourceControlEnvironment.discovery({
           environmentId: selectedThread.environmentId,
@@ -32,11 +39,11 @@ export function useSelectedThreadGitState() {
 
   const selectedThreadBranchTarget = useMemo(
     () => ({
-      environmentId: selectedThread?.environmentId ?? null,
-      cwd: selectedThreadProject?.workspaceRoot ?? null,
+      environmentId: gitWorkbenchEnabled ? (selectedThread?.environmentId ?? null) : null,
+      cwd: gitWorkbenchEnabled ? (selectedThreadProject?.workspaceRoot ?? null) : null,
       query: null,
     }),
-    [selectedThread?.environmentId, selectedThreadProject?.workspaceRoot],
+    [gitWorkbenchEnabled, selectedThread?.environmentId, selectedThreadProject?.workspaceRoot],
   );
   const selectedThreadBranchState = useBranches(selectedThreadBranchTarget);
   const selectedThreadBranches = useMemo(

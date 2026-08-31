@@ -9,6 +9,7 @@ import {
 } from "expo-sharing";
 import React, { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { Alert, AppState, Platform } from "react-native";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 import {
   buildIncomingShareDraft,
@@ -165,6 +166,7 @@ const incomingShareInbox = new IncomingShareInbox({
 });
 
 export function IncomingShareProvider(props: React.PropsWithChildren) {
+  const translator = useMobileInterfaceTranslator();
   const enabled = receiveSharingEnabled();
   const [drafts, setDrafts] = useState<ReadonlyArray<IncomingShareDraft>>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -238,17 +240,21 @@ export function IncomingShareProvider(props: React.PropsWithChildren) {
     if (!error) {
       return;
     }
-    Alert.alert("Could not import shared content", error.message, [
-      { text: "Dismiss", style: "cancel", onPress: () => setError(null) },
+    Alert.alert(translator.message("mobile.share.importFailed"), error.message, [
       {
-        text: "Retry",
+        text: translator.message("mobile.thread.dismiss"),
+        style: "cancel",
+        onPress: () => setError(null),
+      },
+      {
+        text: translator.message("common.retry"),
         onPress: () => {
           setError(null);
           void refresh();
         },
       },
     ]);
-  }, [error, refresh]);
+  }, [error, refresh, translator]);
 
   const consumeShare = useCallback(async (shareId: string) => {
     const snapshot = await incomingShareInbox.consume(shareId);

@@ -20,7 +20,7 @@ import { cn } from "../../lib/cn";
 import { HOME_HORIZONTAL_INSET } from "../../lib/layoutMetrics";
 import { relativeTime } from "../../lib/time";
 import { themeColorWithAlpha } from "../../lib/mobileTheme";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr, type ThreadPr } from "../../state/use-thread-pr";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
@@ -28,6 +28,7 @@ import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import { resolveThreadStatus } from "./threadPresentation";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 /**
  * Shared presentation for the thread lists: the compact (phone) Home list and
@@ -88,7 +89,7 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
   readonly newThreadTarget?: EnvironmentProject | null;
   readonly onNewThread?: (project: EnvironmentProject) => void;
 }) {
-  const iconMutedColor = useThemeColor("--color-icon-muted");
+  const translator = useMobileInterfaceTranslator();
   const { groupKey, onGroupAction, onNewThread } = props;
   const newThreadTarget = props.newThreadTarget ?? null;
   const compact = props.variant === "compact";
@@ -125,8 +126,13 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded: !props.collapsed }}
-        accessibilityLabel={`${props.title}, ${props.threadCount} threads`}
-        accessibilityHint={props.collapsed ? "Expands the project" : "Collapses the project"}
+        accessibilityLabel={translator.message("mobile.thread.groupLabel", {
+          project: props.title,
+          count: props.threadCount,
+        })}
+        accessibilityHint={translator.message(
+          props.collapsed ? "mobile.thread.expandProject" : "mobile.thread.collapseProject",
+        )}
         className={
           compact ? "flex-1 flex-row items-center gap-2.5" : "flex-1 flex-row items-center gap-2"
         }
@@ -163,7 +169,9 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
       </Pressable>
       {showNewThreadButton ? (
         <Pressable
-          accessibilityLabel={`Create new thread in ${props.title}`}
+          accessibilityLabel={translator.message("mobile.thread.createInProject", {
+            project: props.title,
+          })}
           accessibilityRole="button"
           hitSlop={{ ...verticalHitSlop, left: 10, right: 14 }}
           onPress={handleNewThread}
@@ -172,7 +180,7 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
           <SymbolView
             name="plus"
             size={compact ? 20 : 16}
-            tintColor={iconMutedColor}
+            tintColorClassName={"accent-icon-muted"}
             type="monochrome"
             weight="medium"
           />
@@ -188,7 +196,6 @@ export const ThreadListOlderProjectsHeader = memo(function ThreadListOlderProjec
   readonly expanded: boolean;
   readonly onToggle: () => void;
 }) {
-  const mutedColor = useThemeColor("--color-foreground-muted");
   return (
     <Pressable
       accessibilityHint={
@@ -211,7 +218,7 @@ export const ThreadListOlderProjectsHeader = memo(function ThreadListOlderProjec
       <SymbolView
         name={props.expanded ? "chevron.up" : "chevron.down"}
         size={10}
-        tintColor={mutedColor}
+        tintColorClassName={"accent-foreground-muted"}
         type="monochrome"
       />
     </Pressable>
@@ -229,7 +236,7 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
   readonly groupKey: string;
   readonly onGroupAction: (key: string, action: HomeGroupDisplayAction) => void;
 }) {
-  const iconSubtleColor = useThemeColor("--color-icon-subtle");
+  const translator = useMobileInterfaceTranslator();
   const showsMore = props.hiddenCount > 0;
   const compact = props.variant === "compact";
   const { groupKey, onGroupAction } = props;
@@ -273,7 +280,7 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
         <SymbolView
           name={icon}
           size={10}
-          tintColor={iconSubtleColor}
+          tintColorClassName={"accent-icon-subtle"}
           type="monochrome"
           weight="semibold"
         />
@@ -303,34 +310,42 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
         paddingVertical: compact ? 12 : 8,
       }}
     >
-      {showsMore ? button("Show more", "Show more threads", "chevron.down", handleShowMore) : null}
+      {showsMore
+        ? button(
+            translator.message("mobile.thread.showMore"),
+            translator.message("mobile.thread.showMoreThreads"),
+            "chevron.down",
+            handleShowMore,
+          )
+        : null}
       {props.canToggleSettled
         ? props.settledVisible
           ? button(
-              "Hide settled chats",
-              "Hide settled chats",
+              translator.message("mobile.thread.hideSettled"),
+              translator.message("mobile.thread.hideSettled"),
               "checkmark.circle",
               handleHideSettled,
             )
           : button(
-              "Show settled chats",
-              "Show settled chats",
+              translator.message("mobile.thread.showSettled"),
+              translator.message("mobile.thread.showSettled"),
               "checkmark.circle",
               handleShowSettled,
             )
         : null}
       {props.canShowLess
-        ? button("Show less", "Show fewer threads", "chevron.up", handleShowLess)
+        ? button(
+            translator.message("mobile.thread.showLess"),
+            translator.message("mobile.thread.showFewer"),
+            "chevron.up",
+            handleShowLess,
+          )
         : null}
     </View>
   );
 });
 
 /* ─── Pending task row ───────────────────────────────────────────────── */
-
-const PENDING_TASK_MENU_ACTIONS: MenuAction[] = [
-  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
-];
 
 /**
  * A queued new task waiting in the outbox for its environment to reconnect.
@@ -345,11 +360,22 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const compact = props.variant === "compact";
-  const separatorColor = useThemeColor("--color-separator");
-  const iconSubtleColor = useThemeColor("--color-icon-subtle");
-  const mutedColor = useThemeColor("--color-foreground-muted");
-  const pressedBackgroundColor = useThemeColor("--color-subtle");
+  const theme = useUniwindTheme();
+  const separatorColor = theme["--color-separator"];
+  const pressedBackgroundColor = theme["--color-subtle"];
+  const pendingTaskMenuActions = useMemo<MenuAction[]>(
+    () => [
+      {
+        id: "delete",
+        title: translator.message("mobile.thread.delete"),
+        image: "trash",
+        attributes: { destructive: true },
+      },
+    ],
+    [translator],
+  );
 
   const { pendingTask, onSelectPendingTask, onDeletePendingTask } = props;
   const timestamp = relativeTime(pendingTask.message.createdAt);
@@ -365,8 +391,10 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
   );
 
   const statusPill = (
-    <View className="rounded-full bg-zinc-500/12 px-1.5 py-0.5 dark:bg-zinc-500/16">
-      <Text className="text-3xs font-t3-bold text-zinc-600 dark:text-zinc-300">Pending</Text>
+    <View className="rounded-full bg-adaptive-zinc-500-a12-a16 px-1.5 py-0.5">
+      <Text className="text-3xs font-t3-bold text-adaptive-zinc-600-300">
+        {translator.message("mobile.thread.pending")}
+      </Text>
     </View>
   );
 
@@ -376,7 +404,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
         <SymbolView
           name="tray.and.arrow.up"
           size={10}
-          tintColor={compact ? iconSubtleColor : mutedColor}
+          tintColorClassName={compact ? "accent-icon-subtle" : "accent-foreground-muted"}
           type="monochrome"
         />
         <Text
@@ -394,7 +422,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
 
   const rowContent = compact ? (
     <Pressable
-      accessibilityHint="Opens the queued task for editing"
+      accessibilityHint={translator.message("mobile.thread.openQueuedHint")}
       accessibilityLabel={pendingTask.title}
       accessibilityRole="button"
       className="bg-screen"
@@ -426,7 +454,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
               <SymbolView
                 name="chevron.right"
                 size={13}
-                tintColor={iconSubtleColor}
+                tintColorClassName={"accent-icon-subtle"}
                 type="monochrome"
               />
             </View>
@@ -437,7 +465,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
     </Pressable>
   ) : (
     <Pressable
-      accessibilityHint="Opens the queued task for editing"
+      accessibilityHint={translator.message("mobile.thread.openQueuedHint")}
       accessibilityLabel={pendingTask.title}
       accessibilityRole="button"
       onPress={() => onSelectPendingTask(pendingTask)}
@@ -470,7 +498,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
 
   return (
     <ControlPillMenu
-      actions={PENDING_TASK_MENU_ACTIONS}
+      actions={pendingTaskMenuActions}
       onPressAction={handleMenuAction}
       shouldOpenOnLongPress
     >
@@ -480,11 +508,6 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
 });
 
 /* ─── Thread row ─────────────────────────────────────────────────────── */
-
-const THREAD_ROW_MENU_ACTIONS: MenuAction[] = [
-  { id: "archive", title: "Archive", image: "archivebox" },
-  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
-];
 
 export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly variant: ThreadListVariant;
@@ -513,6 +536,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     typeof ThreadSwipeable
   >["simultaneousWithExternalGesture"];
 }) {
+  const translator = useMobileInterfaceTranslator();
   const { width: windowWidth } = useWindowDimensions();
   const { themeAppearance: colorScheme } = useAppearancePreferences();
   const compact = props.variant === "compact";
@@ -521,13 +545,13 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   // thread, so a hover highlight can't leak across rows.
   const [hovered, setHovered] = useRecyclingState(false);
 
-  const separatorColor = useThemeColor("--color-separator");
-  const iconSubtleColor = useThemeColor("--color-icon-subtle");
-  const screenColor = useThemeColor("--color-screen");
-  const drawerColor = useThemeColor("--color-drawer");
-  const pressedBackgroundColor = useThemeColor("--color-subtle");
-  const selectedBackgroundColor = useThemeColor("--color-user-bubble");
-  const selectedForegroundColor = useThemeColor("--color-user-bubble-foreground");
+  const theme = useUniwindTheme();
+  const separatorColor = theme["--color-separator"];
+  const screenColor = theme["--color-screen"];
+  const drawerColor = theme["--color-drawer"];
+  const pressedBackgroundColor = theme["--color-subtle"];
+  const selectedBackgroundColor = theme["--color-user-bubble"];
+  const selectedForegroundColor = theme["--color-user-bubble-foreground"];
 
   const { thread, onSelectThread, onArchiveThread, onDeleteThread, onRegenerateThreadTitle } =
     props;
@@ -571,23 +595,34 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   );
   const menuActions = useMemo<MenuAction[]>(
     () => [
-      THREAD_ROW_MENU_ACTIONS[0]!,
+      {
+        id: "archive",
+        title: translator.message("mobile.thread.archive"),
+        image: "archivebox",
+      },
       ...buildThreadTitleRegenerationMenuItems({
         supported: props.titleRegenerationSupported,
         isRegenerating: thread.titleRegeneration != null,
       }),
-      THREAD_ROW_MENU_ACTIONS[1]!,
+      {
+        id: "delete",
+        title: translator.message("mobile.thread.delete"),
+        image: "trash",
+        attributes: { destructive: true },
+      },
     ],
-    [props.titleRegenerationSupported, thread.titleRegeneration],
+    [props.titleRegenerationSupported, thread.titleRegeneration, translator],
   );
   const primaryAction = useMemo(
     () => ({
-      accessibilityLabel: `Archive ${thread.title}`,
+      accessibilityLabel: translator.message("mobile.thread.archiveNamed", {
+        thread: thread.title,
+      }),
       icon: "archivebox" as const,
-      label: "Archive",
+      label: translator.message("mobile.thread.archive"),
       onPress: handleArchive,
     }),
-    [handleArchive, thread.title],
+    [handleArchive, thread.title, translator],
   );
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
@@ -649,7 +684,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const rowContent = (close: () => void) =>
     compact ? (
       <Pressable
-        accessibilityHint="Swipe left for archive and delete actions"
+        accessibilityHint={translator.message("mobile.thread.swipeActionsHint")}
         accessibilityLabel={threadAccessibilityLabel}
         accessibilityRole="button"
         className="bg-screen"
@@ -684,7 +719,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                 <SymbolView
                   name="chevron.right"
                   size={13}
-                  tintColor={iconSubtleColor}
+                  tintColorClassName={"accent-icon-subtle"}
                   type="monochrome"
                 />
               </View>
@@ -702,7 +737,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       </Pressable>
     ) : (
       <Pressable
-        accessibilityHint="Opens the thread"
+        accessibilityHint={translator.message("mobile.thread.openHint")}
         accessibilityLabel={threadAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}

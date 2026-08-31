@@ -7,6 +7,8 @@ import {
   DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
   DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
 } from "@t3tools/contracts";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/unstable/reactivity";
 import {
   createContext,
   createElement,
@@ -19,7 +21,11 @@ import {
   type SetStateAction,
 } from "react";
 
+import type { Preferences } from "../../persistence/mobile-preferences";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import type { HomeProjectSortOrder } from "./homeThreadList";
+
+export { PROJECT_SORT_OPTIONS, THREAD_SORT_OPTIONS } from "./home-list-sort-options";
 
 export interface HomeListOptions {
   readonly selectedEnvironmentId: EnvironmentId | null;
@@ -30,22 +36,6 @@ export interface HomeListOptions {
 export interface ResolvedHomeListOptions extends HomeListOptions {
   readonly projectGroupingMode: SidebarProjectGroupingMode;
 }
-
-export const PROJECT_SORT_OPTIONS: ReadonlyArray<{
-  readonly value: HomeProjectSortOrder;
-  readonly label: string;
-}> = [
-  { value: "updated_at", label: "Last user message" },
-  { value: "created_at", label: "Created at" },
-];
-
-export const THREAD_SORT_OPTIONS: ReadonlyArray<{
-  readonly value: SidebarThreadSortOrder;
-  readonly label: string;
-}> = [
-  { value: "updated_at", label: "Last user message" },
-  { value: "created_at", label: "Created at" },
-];
 
 function defaultHomeListOptions(): HomeListOptions {
   return {
@@ -98,9 +88,22 @@ export function hasCustomHomeListOptions(
   );
 }
 
+export function resolvePersistedHomeListOptions(
+  options: HomeListOptions,
+  preferences: Pick<Preferences, "sidebarProjectSortOrder" | "sidebarThreadSortOrder">,
+): HomeListOptions {
+  return {
+    ...options,
+    projectSortOrder: preferences.sidebarProjectSortOrder ?? options.projectSortOrder,
+    threadSortOrder: preferences.sidebarThreadSortOrder ?? options.threadSortOrder,
+  };
+}
+
 export function useHomeListOptions(availableEnvironmentIds: ReadonlySet<EnvironmentId>) {
   const shared = useContext(HomeListOptionsContext);
   const [localOptions, setLocalOptions] = useState<HomeListOptions>(defaultHomeListOptions);
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const options = shared?.options ?? localOptions;
   const setOptions = shared?.setOptions ?? setLocalOptions;
   const selectedEnvironmentId =
@@ -112,20 +115,32 @@ export function useHomeListOptions(availableEnvironmentIds: ReadonlySet<Environm
     selectedEnvironmentId === options.selectedEnvironmentId
       ? options
       : { ...options, selectedEnvironmentId };
+  const persistedOptions = resolvePersistedHomeListOptions(
+    availableOptions,
+    AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : {},
+  );
   const resolvedOptions: ResolvedHomeListOptions = {
-    ...availableOptions,
+    ...persistedOptions,
     projectGroupingMode: shared?.projectGroupingMode ?? "repository",
   };
 
   const setSelectedEnvironmentId = useCallback((value: EnvironmentId | null) => {
     setOptions((current) => ({ ...current, selectedEnvironmentId: value }));
   }, []);
-  const setProjectSortOrder = useCallback((value: HomeProjectSortOrder) => {
-    setOptions((current) => ({ ...current, projectSortOrder: value }));
-  }, []);
-  const setThreadSortOrder = useCallback((value: SidebarThreadSortOrder) => {
-    setOptions((current) => ({ ...current, threadSortOrder: value }));
-  }, []);
+  const setProjectSortOrder = useCallback(
+    (value: HomeProjectSortOrder) => {
+      setOptions((current) => ({ ...current, projectSortOrder: value }));
+      savePreferences({ sidebarProjectSortOrder: value });
+    },
+    [savePreferences, setOptions],
+  );
+  const setThreadSortOrder = useCallback(
+    (value: SidebarThreadSortOrder) => {
+      setOptions((current) => ({ ...current, threadSortOrder: value }));
+      savePreferences({ sidebarThreadSortOrder: value });
+    },
+    [savePreferences, setOptions],
+  );
   return {
     options: resolvedOptions,
     setSelectedEnvironmentId,

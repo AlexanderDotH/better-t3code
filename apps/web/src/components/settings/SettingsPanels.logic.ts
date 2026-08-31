@@ -19,6 +19,13 @@ import {
 } from "@t3tools/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
+import {
+  translateInterfaceMessage,
+  type InterfaceTranslator,
+} from "@t3tools/shared/interfaceLanguage";
+
+const translateEnglish: InterfaceTranslator["message"] = (key, values) =>
+  translateInterfaceMessage("en", key, values);
 
 export function isProjectGroupingEnabled(mode: SidebarProjectGroupingMode): boolean {
   return mode !== "separate";
@@ -89,23 +96,26 @@ type TypographySettings = Pick<
 >;
 
 /** Labels the font rows whose family or size differs from the defaults. */
-export function getChangedTypographySettingLabels(settings: TypographySettings): string[] {
+export function getChangedTypographySettingLabels(
+  settings: TypographySettings,
+  translate: InterfaceTranslator["message"] = translateEnglish,
+): string[] {
   return [
     ...(settings.fontFamilySans !== DEFAULT_UNIFIED_SETTINGS.fontFamilySans ||
     settings.fontSizeInterface !== DEFAULT_UNIFIED_SETTINGS.fontSizeInterface
-      ? ["Interface font"]
+      ? [translate("settings.application.title.interfaceFont")]
       : []),
     ...(settings.fontFamilyComposer !== DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer ||
     settings.fontSizePrompt !== DEFAULT_UNIFIED_SETTINGS.fontSizePrompt
-      ? ["Prompt font"]
+      ? [translate("settings.application.title.promptFont")]
       : []),
     ...(settings.fontFamilyCode !== DEFAULT_UNIFIED_SETTINGS.fontFamilyCode ||
     settings.fontSizeCode !== DEFAULT_UNIFIED_SETTINGS.fontSizeCode
-      ? ["Code font"]
+      ? [translate("settings.application.title.codeFont")]
       : []),
     ...(settings.fontFamilyTerminal !== DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal ||
     settings.fontSizeTerminal !== DEFAULT_UNIFIED_SETTINGS.fontSizeTerminal
-      ? ["Terminal font"]
+      ? [translate("settings.application.title.terminalFont")]
       : []),
   ];
 }
@@ -138,23 +148,26 @@ export function isSamePreviewViewport(
 }
 
 /** Labels the browser-default rows that differ from the defaults. */
-export function getChangedBrowserSettingLabels(settings: BrowserDefaultSettings): string[] {
+export function getChangedBrowserSettingLabels(
+  settings: BrowserDefaultSettings,
+  translate: InterfaceTranslator["message"] = translateEnglish,
+): string[] {
   return [
     ...(isSamePreviewViewport(
       settings.browserDefaultViewport,
       DEFAULT_UNIFIED_SETTINGS.browserDefaultViewport,
     )
       ? []
-      : ["Browser viewport"]),
+      : [translate("settings.application.restore.browserViewport")]),
     ...(settings.browserDefaultZoomFactor !== DEFAULT_UNIFIED_SETTINGS.browserDefaultZoomFactor
-      ? ["Browser zoom"]
+      ? [translate("settings.application.restore.browserZoom")]
       : []),
     ...(settings.browserDefaultAppearance !== DEFAULT_UNIFIED_SETTINGS.browserDefaultAppearance
-      ? ["Browser appearance"]
+      ? [translate("settings.application.restore.browserAppearance")]
       : []),
     ...(settings.browserAutoShowFloatingPreview !==
     DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview
-      ? ["Floating preview"]
+      ? [translate("settings.application.restore.floatingPreview")]
       : []),
   ];
 }
@@ -214,33 +227,47 @@ function collapseOtelSignalsUrl(input: {
   return `${tracesBase}/{traces,metrics}`;
 }
 
-export function formatDiagnosticsDescription(input: {
-  readonly localTracingEnabled: boolean;
-  readonly otlpTracesEnabled: boolean;
-  readonly otlpTracesUrl?: string | undefined;
-  readonly otlpMetricsEnabled: boolean;
-  readonly otlpMetricsUrl?: string | undefined;
-}): string {
-  const mode = input.localTracingEnabled ? "Local trace file" : "Terminal logs only";
+export function formatDiagnosticsDescription(
+  input: {
+    readonly localTracingEnabled: boolean;
+    readonly otlpTracesEnabled: boolean;
+    readonly otlpTracesUrl?: string | undefined;
+    readonly otlpMetricsEnabled: boolean;
+    readonly otlpMetricsUrl?: string | undefined;
+  },
+  translate: InterfaceTranslator["message"] = translateEnglish,
+): string {
+  const mode = translate(
+    input.localTracingEnabled
+      ? "settings.application.diagnostics.localTrace"
+      : "settings.application.diagnostics.terminalLogs",
+  );
   const tracesUrl = input.otlpTracesEnabled ? input.otlpTracesUrl : undefined;
   const metricsUrl = input.otlpMetricsEnabled ? input.otlpMetricsUrl : undefined;
 
   if (tracesUrl && metricsUrl) {
     const collapsedUrl = collapseOtelSignalsUrl({ tracesUrl, metricsUrl });
     return collapsedUrl
-      ? `${mode}. Exporting OTEL to ${collapsedUrl}.`
-      : `${mode}. Exporting OTEL traces to ${tracesUrl} and metrics to ${metricsUrl}.`;
+      ? translate("settings.application.diagnostics.exportCombined", {
+          mode,
+          url: collapsedUrl,
+        })
+      : translate("settings.application.diagnostics.exportSeparate", {
+          mode,
+          tracesUrl,
+          metricsUrl,
+        });
   }
 
   if (tracesUrl) {
-    return `${mode}. Exporting OTEL traces to ${tracesUrl}.`;
+    return translate("settings.application.diagnostics.exportTraces", { mode, url: tracesUrl });
   }
 
   if (metricsUrl) {
-    return `${mode}. Exporting OTEL metrics to ${metricsUrl}.`;
+    return translate("settings.application.diagnostics.exportMetrics", { mode, url: metricsUrl });
   }
 
-  return `${mode}.`;
+  return translate("settings.application.diagnostics.modeOnly", { mode });
 }
 
 export function buildProviderInstanceUpdatePatch(input: {
