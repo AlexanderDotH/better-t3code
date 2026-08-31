@@ -53,6 +53,7 @@ function supportsProjectSettings(config: ServerConfig | null): boolean {
 }
 
 function ProjectMemorySettingsController({ project }: { project: EnvironmentProject }) {
+  const translator = useMobileInterfaceTranslator();
   const query = useEnvironmentQuery(
     serverEnvironment.projectMemoryView({
       environmentId: project.environmentId,
@@ -109,7 +110,10 @@ function ProjectMemorySettingsController({ project }: { project: EnvironmentProj
       }
       onImport={() => run(() => importMemory({ ...target, input: { projectId: project.id } }))}
       onExport={() =>
-        Share.share({ title: "MEMORY.md", message: viewModel.content }).then(() => {})
+        Share.share({
+          title: translator.message("settings.projects.memory.filename"),
+          message: viewModel.content,
+        }).then(() => {})
       }
       onClear={() => run(() => clear({ ...target, input: { projectId: project.id } }))}
     />

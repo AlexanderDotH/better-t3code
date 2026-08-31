@@ -133,7 +133,7 @@ it("passes explicit launcher paths on every service manager", () => {
     logPath: "/home/theo/.t3/userdata/logs/boot-service.log",
     unitPath: "/home/theo/.config/systemd/user/t3code.service",
   });
-  const plist = BootService.renderBootServicePlist(macPlan, { homeDir: "/Users/theo" });
+  const plist = BootService.renderBootServicePlist(macPlan, macRenderOptions);
 
   expect(unit).toContain(
     "--base-dir /home/theo/.t3 --log-path /home/theo/.t3/userdata/logs/boot-service.log",

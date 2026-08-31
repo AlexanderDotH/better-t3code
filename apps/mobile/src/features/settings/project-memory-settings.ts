@@ -35,11 +35,14 @@ export function canEditProjectMemory(viewModel: ProjectMemoryViewModel): boolean
   return viewModel.status !== "unavailable" && viewModel.mode === "project";
 }
 
-export function projectMemoryClearActions(onClear: () => void | Promise<void>) {
+export function projectMemoryClearActions(
+  onClear: () => void | Promise<void>,
+  labels: { readonly cancel: string; readonly clear: string },
+) {
   return [
-    { text: "Cancel", style: "cancel" as const },
+    { text: labels.cancel, style: "cancel" as const },
     {
-      text: "Clear memory",
+      text: labels.clear,
       style: "destructive" as const,
       onPress: () => void onClear(),
     },

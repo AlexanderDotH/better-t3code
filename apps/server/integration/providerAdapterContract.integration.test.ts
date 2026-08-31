@@ -47,6 +47,12 @@ const PROVIDER_CASES: ReadonlyArray<ProviderContractCase> = [
     forceStopResult: { outcome: "terminated", mechanism: "runtime-close" },
   },
   {
+    label: "OpenAI Responses",
+    provider: ProviderDriverKind.make("openai"),
+    capabilities: { sessionModelSwitch: "in-session", mcp: "sessionConfig" },
+    forceStopResult: { outcome: "terminated", mechanism: "runtime-close" },
+  },
+  {
     label: "Claude",
     provider: ProviderDriverKind.make("claudeAgent"),
     capabilities: { sessionModelSwitch: "in-session", mcp: "sessionConfig" },

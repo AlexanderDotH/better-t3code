@@ -49,7 +49,7 @@ it.effect("053 preserves existing rows and admits only the managed origin", () =
         )
     `;
 
-    const migrations = yield* runMigrations();
+    const migrations = yield* runMigrations({ toMigrationInclusive: 53 });
     assert.deepStrictEqual(
       migrations.map(([id, name]) => [id, name]),
       [[53, "ProjectionThreadSubagentManagedOrigin"]],

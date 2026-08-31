@@ -86,6 +86,7 @@ import { FetchWorkerCoordinator } from "../src/fetch/FetchWorkerCoordinator.ts";
 import * as VcsProcess from "../src/vcs/VcsProcess.ts";
 import * as AgentAwarenessRelay from "../src/relay/AgentAwarenessRelay.ts";
 import { NoOpSkillEngineLayer } from "../src/skills/testUtils/NoOpSkillEngine.ts";
+import { ProjectMemoryStore } from "../src/projectMemory/ProjectMemoryStore.ts";
 
 const decodeCodexSettings = Schema.decodeEffect(CodexSettings);
 
@@ -414,6 +415,20 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(orchestrationReactorLayer),
       Layer.provideMerge(providerRegistryLayer),
       Layer.provideMerge(NoOpSkillEngineLayer),
+      Layer.provideMerge(
+        Layer.mock(ProjectMemoryStore)({
+          read: () =>
+            Effect.succeed({
+              mode: "provider",
+              storage: null,
+              entries: [],
+              markdown: "",
+              tokenBudget: 2_560,
+              estimatedTokens: 0,
+              truncated: false,
+            }),
+        }),
+      ),
       Layer.provide(persistenceLayer),
       Layer.provideMerge(RepositoryIdentityResolver.layer),
       Layer.provideMerge(ServerSettingsService.layerTest()),

@@ -22,7 +22,7 @@ describe("mobile project memory settings", () => {
 
   it("clears memory only through the destructive confirmation action", () => {
     const clear = vi.fn();
-    const actions = projectMemoryClearActions(clear);
+    const actions = projectMemoryClearActions(clear, { cancel: "Cancel", clear: "Clear memory" });
 
     actions[0]?.onPress?.();
     expect(clear).not.toHaveBeenCalled();

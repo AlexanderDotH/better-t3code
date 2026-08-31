@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Alert, Pressable, TextInput, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import {
@@ -26,17 +27,17 @@ type ProjectMemorySettingsCardProps = {
   readonly onClear: () => void | Promise<void>;
 };
 
-const MODES: ReadonlyArray<{ value: ProjectMemoryMode; label: string }> = [
-  { value: "project", label: "Project file" },
-  { value: "provider", label: "Provider memory" },
-  { value: "off", label: "Off" },
-];
+const MODES = [
+  { value: "project", messageKey: "settings.projects.memory.source.project" },
+  { value: "provider", messageKey: "settings.projects.memory.source.provider" },
+  { value: "off", messageKey: "settings.projects.memory.source.off" },
+] as const satisfies ReadonlyArray<{ value: ProjectMemoryMode; messageKey: string }>;
 
-const STATUS_LABELS: Record<ProjectMemoryViewModel["status"], string> = {
-  ready: "Ready",
-  fallback: "Using T3 home fallback",
-  unavailable: "Unavailable",
-};
+const STATUS_MESSAGE_KEYS = {
+  ready: "settings.projects.memory.status.ready",
+  fallback: "settings.projects.memory.status.fallback",
+  unavailable: "settings.projects.memory.status.unavailable",
+} as const satisfies Record<ProjectMemoryViewModel["status"], string>;
 
 function ActionButton(props: {
   readonly label: string;
@@ -59,6 +60,7 @@ function ActionButton(props: {
 }
 
 export function ProjectMemorySettingsCard(props: ProjectMemorySettingsCardProps) {
+  const translator = useMobileInterfaceTranslator();
   const viewModel = props.viewModel ?? DEFAULT_PROJECT_MEMORY_VIEW_MODEL;
   const [content, setContent] = useState(viewModel.content);
   const unavailable = viewModel.status === "unavailable";
@@ -67,10 +69,12 @@ export function ProjectMemorySettingsCard(props: ProjectMemorySettingsCardProps)
   useEffect(() => setContent(viewModel.content), [viewModel.content]);
 
   return (
-    <SettingsSection title="Project memory" card>
+    <SettingsSection title={translator.message("settings.projects.memory.title")} card>
       <View className="gap-4 p-4">
         <View className="gap-2">
-          <Text className="text-sm text-foreground-muted">Memory source</Text>
+          <Text className="text-sm text-foreground-muted">
+            {translator.message("settings.projects.memory.source")}
+          </Text>
           <View accessibilityRole="radiogroup" className="flex-row flex-wrap gap-2">
             {MODES.map((mode) => (
               <Pressable
@@ -90,7 +94,7 @@ export function ProjectMemorySettingsCard(props: ProjectMemorySettingsCardProps)
                   )
                 }
               >
-                <Text className="text-foreground">{mode.label}</Text>
+                <Text className="text-foreground">{translator.message(mode.messageKey)}</Text>
               </Pressable>
             ))}
           </View>
@@ -100,8 +104,8 @@ export function ProjectMemorySettingsCard(props: ProjectMemorySettingsCardProps)
           <SettingsSwitchRow
             disabled={props.busy || unavailable}
             icon="doc.text"
-            label="Allow agent writes"
-            subtitle="Let agents update this project's memory file."
+            label={translator.message("settings.projects.memory.allowAgentWrites")}
+            subtitle={translator.message("settings.projects.memory.allowAgentWritesDescription")}
             value={viewModel.allowAgentWrites}
             onValueChange={(allowAgentWrites) =>
               void props.onSavePreferences(
@@ -112,15 +116,19 @@ export function ProjectMemorySettingsCard(props: ProjectMemorySettingsCardProps)
         </View>
 
         <View className="gap-1">
-          <Text className="text-sm text-foreground-muted">Effective memory file</Text>
-          <Text className="text-sm text-foreground" selectable>
-            {viewModel.effectivePath || "No memory file is available."}
+          <Text className="text-sm text-foreground-muted">
+            {translator.message("settings.projects.memory.effectiveFile")}
           </Text>
-          <Text className="text-xs text-foreground-muted">{STATUS_LABELS[viewModel.status]}</Text>
+          <Text className="text-sm text-foreground" selectable>
+            {viewModel.effectivePath || translator.message("settings.projects.memory.noFile")}
+          </Text>
+          <Text className="text-xs text-foreground-muted">
+            {translator.message(STATUS_MESSAGE_KEYS[viewModel.status])}
+          </Text>
         </View>
 
         <TextInput
-          accessibilityLabel="Project memory content"
+          accessibilityLabel={translator.message("settings.projects.memory.content")}
           autoCapitalize="none"
           autoCorrect={false}
           editable={editable}
@@ -133,29 +141,32 @@ export function ProjectMemorySettingsCard(props: ProjectMemorySettingsCardProps)
 
         <View className="flex-row flex-wrap justify-end gap-2">
           <ActionButton
-            label="Import"
+            label={translator.message("settings.projects.memory.import")}
             disabled={props.busy || unavailable || viewModel.mode !== "project"}
             onPress={() => void props.onImport()}
           />
           <ActionButton
-            label="Export"
+            label={translator.message("settings.projects.memory.export")}
             disabled={props.busy || unavailable}
             onPress={() => void props.onExport()}
           />
           <ActionButton
-            label="Clear"
+            label={translator.message("settings.projects.memory.clear")}
             destructive
             disabled={props.busy || unavailable || viewModel.mode !== "project"}
             onPress={() =>
               Alert.alert(
-                "Clear project memory?",
-                "This deletes the current project memory content and cannot be undone.",
-                projectMemoryClearActions(props.onClear),
+                translator.message("settings.projects.memory.clearTitle"),
+                translator.message("settings.projects.memory.clearDescription"),
+                projectMemoryClearActions(props.onClear, {
+                  cancel: translator.message("mobile.settings.projects.settings.cancel"),
+                  clear: translator.message("settings.projects.memory.clearAction"),
+                }),
               )
             }
           />
           <ActionButton
-            label="Save"
+            label={translator.message("settings.projects.memory.save")}
             disabled={!editable || content === viewModel.content}
             onPress={() => void props.onSaveContent(content)}
           />
