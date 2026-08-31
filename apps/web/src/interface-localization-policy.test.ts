@@ -24,6 +24,7 @@ const USER_FACING_PROPERTIES = new Set([
   "title",
 ]);
 const INTENTIONAL_LITERAL_VALUES = new Set([
+  "Better",
   "Code",
   "MCP",
   "T3",

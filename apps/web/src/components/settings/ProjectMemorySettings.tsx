@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -35,17 +36,18 @@ type ProjectMemorySettingsProps = {
   readonly onClear: () => void | Promise<void>;
 };
 
-const STATUS_LABELS: Record<ProjectMemoryViewModel["status"], string> = {
-  ready: "Ready",
-  fallback: "Using T3 home fallback",
-  unavailable: "Unavailable",
-};
+const STATUS_MESSAGE_KEYS = {
+  ready: "settings.projects.memory.status.ready",
+  fallback: "settings.projects.memory.status.fallback",
+  unavailable: "settings.projects.memory.status.unavailable",
+} as const satisfies Record<ProjectMemoryViewModel["status"], string>;
 
 function isProjectMemoryMode(value: string | null): value is ProjectMemoryMode {
   return value === "project" || value === "provider" || value === "off";
 }
 
 export function ProjectMemorySettings(props: ProjectMemorySettingsProps) {
+  const translator = useInterfaceTranslator();
   const viewModel = props.viewModel ?? DEFAULT_PROJECT_MEMORY_VIEW_MODEL;
   const [content, setContent] = useState(viewModel.content);
   const [clearOpen, setClearOpen] = useState(false);
@@ -56,10 +58,10 @@ export function ProjectMemorySettings(props: ProjectMemorySettingsProps) {
 
   return (
     <>
-      <SettingsSection title="Project memory">
+      <SettingsSection title={translator.message("settings.projects.memory.title")}>
         <SettingsRow
-          title="Memory source"
-          description="Choose the project file, provider-native memory, or disable memory."
+          title={translator.message("settings.projects.memory.source")}
+          description={translator.message("settings.projects.memory.sourceDescription")}
           control={
             <Select
               value={viewModel.mode}
@@ -71,23 +73,32 @@ export function ProjectMemorySettings(props: ProjectMemorySettingsProps) {
                 );
               }}
             >
-              <SelectTrigger aria-label="Memory source" className="w-full sm:w-48">
+              <SelectTrigger
+                aria-label={translator.message("settings.projects.memory.source")}
+                className="w-full sm:w-48"
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectPopup>
-                <SelectItem value="project">Project file</SelectItem>
-                <SelectItem value="provider">Provider memory</SelectItem>
-                <SelectItem value="off">Off</SelectItem>
+                <SelectItem value="project">
+                  {translator.message("settings.projects.memory.source.project")}
+                </SelectItem>
+                <SelectItem value="provider">
+                  {translator.message("settings.projects.memory.source.provider")}
+                </SelectItem>
+                <SelectItem value="off">
+                  {translator.message("settings.projects.memory.source.off")}
+                </SelectItem>
               </SelectPopup>
             </Select>
           }
         />
         <SettingsRow
-          title="Allow agent writes"
-          description="Let agents update this project's memory file."
+          title={translator.message("settings.projects.memory.allowAgentWrites")}
+          description={translator.message("settings.projects.memory.allowAgentWritesDescription")}
           control={
             <Switch
-              aria-label="Allow agent writes"
+              aria-label={translator.message("settings.projects.memory.allowAgentWrites")}
               checked={viewModel.allowAgentWrites}
               disabled={props.busy || unavailable}
               onCheckedChange={(allowAgentWrites) =>
@@ -99,23 +110,23 @@ export function ProjectMemorySettings(props: ProjectMemorySettingsProps) {
           }
         />
         <SettingsRow
-          title="Effective memory file"
+          title={translator.message("settings.projects.memory.effectiveFile")}
           description={
             viewModel.effectivePath ? (
               <code className="break-all font-mono text-xs">{viewModel.effectivePath}</code>
             ) : (
-              "No memory file is available."
+              translator.message("settings.projects.memory.noFile")
             )
           }
-          status={STATUS_LABELS[viewModel.status]}
+          status={translator.message(STATUS_MESSAGE_KEYS[viewModel.status])}
         />
         <SettingsRow
-          title="Memory content"
-          description="Edit the context shared by future threads in this project."
+          title={translator.message("settings.projects.memory.contentTitle")}
+          description={translator.message("settings.projects.memory.contentDescription")}
         >
           <div className="space-y-3 pt-3">
             <Textarea
-              aria-label="Project memory content"
+              aria-label={translator.message("settings.projects.memory.content")}
               className="min-h-52 font-mono text-sm"
               disabled={!editable}
               value={content}
@@ -128,7 +139,7 @@ export function ProjectMemorySettings(props: ProjectMemorySettingsProps) {
                 disabled={props.busy || unavailable || viewModel.mode !== "project"}
                 onClick={() => void props.onImport()}
               >
-                Import
+                {translator.message("settings.projects.memory.import")}
               </Button>
               <Button
                 type="button"
@@ -136,7 +147,7 @@ export function ProjectMemorySettings(props: ProjectMemorySettingsProps) {
                 disabled={props.busy || unavailable}
                 onClick={() => void props.onExport()}
               >
-                Export
+                {translator.message("settings.projects.memory.export")}
               </Button>
               <Button
                 type="button"
@@ -144,14 +155,14 @@ export function ProjectMemorySettings(props: ProjectMemorySettingsProps) {
                 disabled={props.busy || unavailable || viewModel.mode !== "project"}
                 onClick={() => setClearOpen(true)}
               >
-                Clear
+                {translator.message("settings.projects.memory.clear")}
               </Button>
               <Button
                 type="button"
                 disabled={!editable || content === viewModel.content}
                 onClick={() => void props.onSaveContent(content)}
               >
-                Save
+                {translator.message("settings.projects.memory.save")}
               </Button>
             </div>
           </div>
@@ -161,13 +172,17 @@ export function ProjectMemorySettings(props: ProjectMemorySettingsProps) {
       <AlertDialog open={clearOpen} onOpenChange={setClearOpen}>
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Clear project memory?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {translator.message("settings.projects.memory.clearTitle")}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              This deletes the current project memory content and cannot be undone.
+              {translator.message("settings.projects.memory.clearDescription")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {translator.message("common.cancel")}
+            </AlertDialogClose>
             <Button
               variant="destructive"
               onClick={() => {
@@ -175,7 +190,7 @@ export function ProjectMemorySettings(props: ProjectMemorySettingsProps) {
                 void props.onClear();
               }}
             >
-              Clear memory
+              {translator.message("settings.projects.memory.clearAction")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

@@ -205,6 +205,11 @@ export const settingsProjectsInterfaceCatalog = defineLocalizedInterfaceCatalog(
   ],
   "settings.projects.memory.title": ["Project memory", "Projektspeicher", "Mémoire du projet"],
   "settings.projects.memory.source": ["Memory source", "Speicherquelle", "Source de mémoire"],
+  "settings.projects.memory.sourceDescription": [
+    "Choose the project file, provider-native memory, or disable memory.",
+    "Wähle die Projektdatei, den nativen Provider-Speicher oder deaktiviere den Speicher.",
+    "Choisissez le fichier du projet, la mémoire native du fournisseur ou désactivez la mémoire.",
+  ],
   "settings.projects.memory.source.project": ["Project file", "Projektdatei", "Fichier du projet"],
   "settings.projects.memory.source.provider": [
     "Provider memory",
@@ -243,6 +248,16 @@ export const settingsProjectsInterfaceCatalog = defineLocalizedInterfaceCatalog(
     "Project memory content",
     "Inhalt des Projektspeichers",
     "Contenu de la mémoire du projet",
+  ],
+  "settings.projects.memory.contentTitle": [
+    "Memory content",
+    "Speicherinhalt",
+    "Contenu de la mémoire",
+  ],
+  "settings.projects.memory.contentDescription": [
+    "Edit the context shared by future threads in this project.",
+    "Bearbeite den Kontext, den zukünftige Chats in diesem Projekt gemeinsam nutzen.",
+    "Modifiez le contexte partagé par les futures discussions de ce projet.",
   ],
   "settings.projects.memory.import": ["Import", "Importieren", "Importer"],
   "settings.projects.memory.export": ["Export", "Exportieren", "Exporter"],

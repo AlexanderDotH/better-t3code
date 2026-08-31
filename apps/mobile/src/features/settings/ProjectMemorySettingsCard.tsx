@@ -159,7 +159,7 @@ export function ProjectMemorySettingsCard(props: ProjectMemorySettingsCardProps)
                 translator.message("settings.projects.memory.clearTitle"),
                 translator.message("settings.projects.memory.clearDescription"),
                 projectMemoryClearActions(props.onClear, {
-                  cancel: translator.message("mobile.settings.projects.settings.cancel"),
+                  cancel: translator.message("common.cancel"),
                   clear: translator.message("settings.projects.memory.clearAction"),
                 }),
               )
