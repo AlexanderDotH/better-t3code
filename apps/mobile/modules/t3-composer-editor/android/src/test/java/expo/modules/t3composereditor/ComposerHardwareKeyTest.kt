@@ -8,17 +8,41 @@ import org.junit.Test
 class ComposerHardwareKeyTest {
   @Test
   fun ctrlEnterSubmits() {
-    assertTrue(isComposerSubmitShortcut(KeyEvent.KEYCODE_ENTER, ctrlPressed = true, metaPressed = false))
+    assertTrue(
+      isComposerSubmitShortcut(
+        KeyEvent.KEYCODE_ENTER,
+        ctrlPressed = true,
+        metaPressed = false
+      )
+    )
   }
 
   @Test
   fun commandEnterSubmits() {
-    assertTrue(isComposerSubmitShortcut(KeyEvent.KEYCODE_ENTER, ctrlPressed = false, metaPressed = true))
+    assertTrue(
+      isComposerSubmitShortcut(
+        KeyEvent.KEYCODE_ENTER,
+        ctrlPressed = false,
+        metaPressed = true
+      )
+    )
   }
 
   @Test
   fun plainAndShiftEnterRemainEditorInput() {
-    assertFalse(isComposerSubmitShortcut(KeyEvent.KEYCODE_ENTER, ctrlPressed = false, metaPressed = false))
-    assertFalse(isComposerSubmitShortcut(KeyEvent.KEYCODE_A, ctrlPressed = true, metaPressed = false))
+    assertFalse(
+      isComposerSubmitShortcut(
+        KeyEvent.KEYCODE_ENTER,
+        ctrlPressed = false,
+        metaPressed = false
+      )
+    )
+    assertFalse(
+      isComposerSubmitShortcut(
+        KeyEvent.KEYCODE_A,
+        ctrlPressed = true,
+        metaPressed = false
+      )
+    )
   }
 }

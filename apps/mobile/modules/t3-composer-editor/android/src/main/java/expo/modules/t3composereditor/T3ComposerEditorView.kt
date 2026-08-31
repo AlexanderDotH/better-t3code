@@ -27,7 +27,7 @@ import kotlin.math.max
 internal fun isComposerSubmitShortcut(
   keyCode: Int,
   ctrlPressed: Boolean,
-  metaPressed: Boolean,
+  metaPressed: Boolean
 ): Boolean = keyCode == KeyEvent.KEYCODE_ENTER && (ctrlPressed || metaPressed)
 
 class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
