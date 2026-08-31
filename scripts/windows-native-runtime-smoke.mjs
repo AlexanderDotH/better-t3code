@@ -28,7 +28,7 @@ function runFile(command, args, options = {}) {
       env: options.env ?? process.env,
       shell: options.shell ?? false,
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: 30_000,
+      signal: AbortSignal.timeout(30_000),
       windowsHide: true,
     });
     let stdout = "";
