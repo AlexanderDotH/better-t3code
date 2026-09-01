@@ -45,6 +45,17 @@ function Invoke-ServiceCommand {
   }
 }
 
+function Write-TaskRegistrationDiagnostic {
+  if (-not (Test-Path -LiteralPath $taskXmlPath -PathType Leaf)) {
+    return
+  }
+  Write-Host "Direct schtasks diagnostic after service registration failure:"
+  $output = & schtasks.exe /Create /TN $taskName /XML $taskXmlPath /F 2>&1
+  $exitCode = $LASTEXITCODE
+  $output | ForEach-Object { Write-Host $_ }
+  Write-Host "Direct schtasks exit code: $exitCode"
+}
+
 function Wait-Until {
   param(
     [Parameter(Mandatory = $true)][string]$Description,
@@ -145,7 +156,13 @@ New-Item -ItemType Junction -Path $runtimePackage -Target $serverRoot | Out-Null
 Set-Content -LiteralPath $runtimeSentinel -Value $version -Encoding utf8NoBOM
 
 try {
-  Invoke-ServiceCommand -Command "install"
+  try {
+    Invoke-ServiceCommand -Command "install"
+  }
+  catch {
+    Write-TaskRegistrationDiagnostic
+    throw
+  }
   $installed = $true
 
   & schtasks.exe /Query /TN $taskName /XML | Out-Null
