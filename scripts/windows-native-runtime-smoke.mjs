@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeTimersPromises from "node:timers/promises";
 import * as NodeURL from "node:url";
 
 import {
@@ -273,10 +274,15 @@ async function main() {
     NodePath.join(NodeOS.tmpdir(), "T3 Windows x64 Probe Grüße "),
   );
   try {
+    console.log("[windows-smoke] provider command probes");
     await runProviderCommandProbes(tempRoot);
+    console.log("[windows-smoke] PowerShell argument probe");
     await runPowerShellArgumentProbe(tempRoot);
+    console.log("[windows-smoke] ConPTY probe");
     await runConPtyProbe(tempRoot);
+    console.log("[windows-smoke] Git checkpoint probe");
     await runGitCheckpointProbe(tempRoot);
+    console.log("[windows-smoke] process-tree cleanup probe");
     await runProcessTreeCleanupProbe(tempRoot);
     console.log("Windows native runtime smoke passed.");
   } finally {
@@ -284,4 +290,9 @@ async function main() {
   }
 }
 
-await main();
+await Promise.race([
+  main(),
+  NodeTimersPromises.setTimeout(180_000, undefined, { ref: false }).then(() =>
+    fail("Windows native runtime smoke timed out after 180 seconds"),
+  ),
+]);
