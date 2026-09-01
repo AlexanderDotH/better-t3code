@@ -141,7 +141,7 @@ async function runConPtyProbe(tempRoot) {
     [
       "const nodePty = require(process.argv[2]);",
       "const [, , , cwd, token] = process.argv;",
-      "const terminal = nodePty.spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', `Write-Output '${token}'`], { cols: 100, rows: 20, cwd, env: process.env, name: 'xterm-color' });",
+      "const terminal = nodePty.spawn('cmd.exe', ['/d', '/s', '/c', `echo ${token}`], { cols: 100, rows: 20, cwd, env: process.env, name: 'xterm-color' });",
       "terminal.onData((chunk) => process.stdout.write(chunk));",
       "terminal.onExit(({ exitCode }) => { process.exitCode = exitCode; });",
       "",
