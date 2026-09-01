@@ -258,18 +258,7 @@ jobs:
         run: vp run build:desktop
 
       - name: Verify Windows preload bundle output
-        shell: pwsh
-        run: |
-          $preload = "apps/desktop/dist-electron/preload.cjs"
-          if (-not (Test-Path -LiteralPath $preload -PathType Leaf)) {
-            throw "Missing desktop preload bundle: $preload"
-          }
-          $required = @("desktopBridge", "getLocalEnvironmentBootstrap", "PICK_FOLDER_CHANNEL", "wsUrl")
-          foreach ($marker in $required) {
-            if (-not (Select-String -LiteralPath $preload -SimpleMatch $marker -Quiet)) {
-              throw "Desktop preload bundle is missing '$marker'."
-            }
-          }
+        run: node apps/desktop/scripts/verify-preload-bundle.mjs
 
       - name: Exercise installed per-user Task Scheduler service
         shell: pwsh
