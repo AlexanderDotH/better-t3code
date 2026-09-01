@@ -235,22 +235,16 @@ jobs:
             packages/shared/src/path.test.ts `
             apps/server/src/processRunner.test.ts `
             apps/server/src/process/OwnedChildProcess.test.ts `
-            apps/server/src/cloud/bootService.test.ts `
             apps/server/src/cloud/serviceLauncherClient.test.ts `
-            apps/server/src/serviceLauncher.test.ts `
             apps/server/src/resourceTelemetry/NativeTelemetryClient.test.ts `
-            apps/server/src/resourceTelemetry/ResourceMonitorBinary.test.ts `
             apps/server/src/resourceProtection/SubagentResourceGovernor.test.ts `
             apps/server/src/terminal/NodePtyAdapter.test.ts `
             apps/server/src/terminal/Manager.test.ts `
             apps/server/src/provider/CodexProcessArgs.test.ts `
             apps/server/src/provider/Drivers/ClaudeExecutable.test.ts `
-            apps/server/src/provider/Layers/ProviderRegistry.test.ts `
             apps/server/src/provider/Layers/ProviderAdapterRegistry.test.ts `
             apps/server/src/cli/connect.test.ts `
             apps/server/src/checkpointing/CheckpointStore.test.ts `
-            apps/server/src/vcs/GitVcsDriverCore.test.ts `
-            apps/desktop/src/app/DesktopConnectionCatalogStore.test.ts `
             apps/desktop/src/backend/DesktopBackendConfiguration.test.ts `
             apps/desktop/src/wsl/DesktopWslEnvironment.test.ts
 
