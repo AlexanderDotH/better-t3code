@@ -89,7 +89,7 @@ async function pathExists(target: string): Promise<boolean> {
 }
 
 async function syncFile(filePath: string): Promise<void> {
-  const handle = await NodeFSP.open(filePath, "r");
+  const handle = await NodeFSP.open(filePath, "r+");
   try {
     await handle.sync();
   } finally {

@@ -389,7 +389,7 @@ export const makeWithFileRename = (renameFile: typeof NodeFSP.rename) =>
       );
       try {
         await NodeFSP.writeFile(stagePath, contents, { flag: "wx", mode });
-        const handle = await NodeFSP.open(stagePath, "r");
+        const handle = await NodeFSP.open(stagePath, "r+");
         try {
           await handle.sync();
         } finally {
@@ -881,7 +881,7 @@ export const makeWithFileRename = (renameFile: typeof NodeFSP.rename) =>
             flag: "wx",
             mode: existingStat ? existingStat.mode & 0o777 : 0o666,
           });
-          const temporaryHandle = await NodeFSP.open(temporaryPath, "r");
+          const temporaryHandle = await NodeFSP.open(temporaryPath, "r+");
           try {
             await temporaryHandle.sync();
           } finally {
