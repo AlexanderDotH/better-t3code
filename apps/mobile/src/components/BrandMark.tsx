@@ -3,6 +3,7 @@ import { Image } from "expo-image";
 import { View } from "react-native";
 
 import { AppText as Text } from "./AppText";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 
 const appVariant = Constants.expoConfig?.extra?.appVariant;
 const BRAND_MARK_SOURCE =
@@ -15,6 +16,7 @@ const DEFAULT_STAGE_LABEL =
   appVariant === "development" ? "Dev" : appVariant === "preview" ? "Preview" : "Alpha";
 
 export function BrandMark(props: { readonly compact?: boolean; readonly stageLabel?: string }) {
+  const translator = useMobileInterfaceTranslator();
   const compact = props.compact ?? false;
   const iconSize = compact ? 32 : 44;
   const stageLabel = props.stageLabel ?? DEFAULT_STAGE_LABEL;
@@ -41,7 +43,7 @@ export function BrandMark(props: { readonly compact?: boolean; readonly stageLab
         </View>
         {!compact ? (
           <Text className="text-xs font-medium text-foreground-muted">
-            Mobile control surface for your live coding environments
+            {translator.message("mobile.brand.tagline")}
           </Text>
         ) : null}
       </View>

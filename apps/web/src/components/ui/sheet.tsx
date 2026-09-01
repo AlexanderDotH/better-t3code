@@ -2,6 +2,7 @@
 
 import { Dialog as SheetPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -71,6 +72,7 @@ function SheetPopup({
   side?: "right" | "left" | "top" | "bottom";
   variant?: "default" | "inset";
 }) {
+  const translator = useInterfaceTranslator();
   return (
     <SheetPortal keepMounted={keepMounted}>
       <SheetBackdrop />
@@ -96,7 +98,7 @@ function SheetPopup({
           {children}
           {showCloseButton && (
             <SheetPrimitive.Close
-              aria-label="Close"
+              aria-label={translator.message("ui.close")}
               className="absolute end-2 top-2"
               render={<Button size="icon" variant="ghost" />}
             >

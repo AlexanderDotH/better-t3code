@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 
@@ -24,12 +25,10 @@ export interface McpWorkspacePanelProps {
   readonly onProviderChange?: (providerId: string) => void;
 }
 
-const SECTIONS: readonly { readonly id: McpWorkspaceSection; readonly label: string }[] = [
-  { id: "servers", label: "Servers" },
-  { id: "runtime", label: "Runtime" },
-];
+const SECTIONS: readonly McpWorkspaceSection[] = ["servers", "runtime"];
 
 export function McpWorkspacePanel(props: McpWorkspacePanelProps) {
+  const translate = useInterfaceTranslator().message;
   const selectedContext = props.contexts?.find((context) => context.id === props.selectedContextId);
   const missingSelectedContext =
     props.selectedContextId !== null &&
@@ -37,13 +36,15 @@ export function McpWorkspacePanel(props: McpWorkspacePanelProps) {
     selectedContext === undefined;
   const contextOptions = missingSelectedContext
     ? [
-        { id: props.selectedContextId, label: "Ended or unavailable session" },
+        { id: props.selectedContextId, label: translate("settings.mcp.workspace.endedSession") },
         ...(props.contexts ?? []),
       ]
     : (props.contexts ?? []);
   const selectedContextLabel =
     selectedContext?.label ??
-    (missingSelectedContext ? "Ended or unavailable session" : "No active session");
+    (missingSelectedContext
+      ? translate("settings.mcp.workspace.endedSession")
+      : translate("settings.mcp.workspace.noActiveSession"));
   const showSelectors =
     (props.providers !== undefined && props.providers.length > 0) || props.contexts !== undefined;
 
@@ -55,7 +56,7 @@ export function McpWorkspacePanel(props: McpWorkspacePanelProps) {
             <div
               className="mcp-workspace-panel__providers"
               role="tablist"
-              aria-label="MCP providers"
+              aria-label={translate("settings.mcp.workspace.providers")}
             >
               {props.providers.map((provider) => (
                 <button
@@ -81,7 +82,7 @@ export function McpWorkspacePanel(props: McpWorkspacePanelProps) {
               className="mcp-workspace-panel__context-selector"
               data-mcp-runtime-session-selector="true"
             >
-              <span>Runtime session</span>
+              <span>{translate("settings.mcp.workspace.runtimeSession")}</span>
               <Select
                 value={props.selectedContextId ?? undefined}
                 disabled={contextOptions.length === 0}
@@ -90,7 +91,7 @@ export function McpWorkspacePanel(props: McpWorkspacePanelProps) {
                 <SelectTrigger
                   className="mcp-workspace-panel__context-trigger"
                   size="sm"
-                  aria-label="Runtime session"
+                  aria-label={translate("settings.mcp.workspace.runtimeSession")}
                 >
                   <SelectValue>{selectedContextLabel}</SelectValue>
                 </SelectTrigger>
@@ -106,17 +107,25 @@ export function McpWorkspacePanel(props: McpWorkspacePanelProps) {
           ) : null}
         </div>
       ) : null}
-      <nav className="mcp-workspace-panel__tabs" role="tablist" aria-label="MCP workspace views">
+      <nav
+        className="mcp-workspace-panel__tabs"
+        role="tablist"
+        aria-label={translate("settings.mcp.workspace.views")}
+      >
         {SECTIONS.map((section) => (
           <button
-            key={section.id}
+            key={section}
             type="button"
             role="tab"
-            aria-selected={props.activeSection === section.id}
-            data-active={props.activeSection === section.id ? "true" : undefined}
-            onClick={() => props.onActiveSectionChange(section.id)}
+            aria-selected={props.activeSection === section}
+            data-active={props.activeSection === section ? "true" : undefined}
+            onClick={() => props.onActiveSectionChange(section)}
           >
-            {section.label}
+            {translate(
+              section === "servers"
+                ? "settings.mcp.workspace.servers"
+                : "settings.mcp.workspace.runtime",
+            )}
           </button>
         ))}
       </nav>

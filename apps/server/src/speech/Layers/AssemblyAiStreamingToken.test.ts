@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "@effect/vitest";
+import { makeBetterT3SettingsV1 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpClient, type HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
@@ -11,6 +12,7 @@ import {
 
 function makeTestLayer(input: {
   readonly apiKey?: string;
+  readonly enabled?: boolean;
   readonly respond: (request: HttpClientRequest.HttpClientRequest) => Response;
 }) {
   const execute = vi.fn((request: HttpClientRequest.HttpClientRequest) =>
@@ -19,6 +21,9 @@ function makeTestLayer(input: {
   const layer = AssemblyAiStreamingTokenLive.pipe(
     Layer.provide(
       ServerSettingsService.layerTest({
+        betterT3Environment: makeBetterT3SettingsV1("clean-install", {
+          "voice.assemblyAi": input.enabled ?? true,
+        }),
         speechTranscription: {
           assemblyAi: { apiKey: { value: input.apiKey ?? "" } },
         },
@@ -86,12 +91,31 @@ describe("AssemblyAiStreamingToken", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("fails before transport when AssemblyAI is disabled in Better T3 settings", () => {
+    const { execute, layer } = makeTestLayer({
+      apiKey: "must-never-be-used",
+      enabled: false,
+      respond: () => Response.json({ token: "unused" }),
+    });
+
+    return Effect.gen(function* () {
+      const service = yield* AssemblyAiStreamingToken;
+      const error = yield* Effect.flip(service.create(speechContext));
+
+      expect(error.reason).toBe("AssemblyAI dictation is disabled in Better T3 settings.");
+      expect(execute).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect(
     "maps transport failures without retaining request headers or the permanent key",
     () => {
       const layer = AssemblyAiStreamingTokenLive.pipe(
         Layer.provide(
           ServerSettingsService.layerTest({
+            betterT3Environment: makeBetterT3SettingsV1("clean-install", {
+              "voice.assemblyAi": true,
+            }),
             speechTranscription: {
               assemblyAi: { apiKey: { value: "transport-secret-key" } },
             },

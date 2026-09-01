@@ -1,7 +1,12 @@
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
-import { PanelLeftCloseIcon, PanelLeftIcon } from "lucide-react";
+import {
+  PanelLeftCloseIcon,
+  PanelLeftIcon,
+  PanelRightCloseIcon,
+  PanelRightIcon,
+} from "lucide-react";
 import * as React from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
@@ -18,6 +23,7 @@ import {
 import { Skeleton } from "~/components/ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useIsMobile } from "~/hooks/useMediaQuery";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { resolveSidebarState, type ResponsiveSidebarState } from "./sidebarState";
 import * as Schema from "effect/Schema";
@@ -89,6 +95,10 @@ function useSidebar() {
 function useSidebarVisibility() {
   const { isMobile, open, openMobile } = useSidebar();
   return isMobile ? openMobile : open;
+}
+
+function useSidebarSide(): "left" | "right" {
+  return React.use(SidebarInstanceContext)?.side ?? "left";
 }
 
 function SidebarProvider({
@@ -168,6 +178,8 @@ function SidebarProvider({
             "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
             "--workspace-titlebar-content-left":
               "calc(var(--workspace-controls-left) + var(--workspace-titlebar-control-size) + var(--workspace-titlebar-control-gap))",
+            "--workspace-titlebar-content-right":
+              "calc(var(--workspace-controls-right) + var(--workspace-titlebar-control-size) + var(--workspace-titlebar-control-gap))",
             ...style,
           } as React.CSSProperties
         }
@@ -194,6 +206,7 @@ function Sidebar({
   resizable?: boolean | SidebarResizableOptions;
 }) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
+  const translator = useInterfaceTranslator();
   const resolvedResizable = React.useMemo<SidebarResolvedResizableOptions | null>(() => {
     if (isMobile || collapsible === "none" || !resizable) {
       return null;
@@ -251,8 +264,8 @@ function Sidebar({
             }
           >
             <SheetHeader className="sr-only">
-              <SheetTitle>Sidebar</SheetTitle>
-              <SheetDescription>Displays the mobile sidebar.</SheetDescription>
+              <SheetTitle>{translator.message("ui.sidebar.title")}</SheetTitle>
+              <SheetDescription>{translator.message("ui.sidebar.description")}</SheetDescription>
             </SheetHeader>
             <div
               className={cn(
@@ -318,9 +331,17 @@ function Sidebar({
   );
 }
 
-function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
+function SidebarTrigger({
+  className,
+  onClick,
+  side,
+  ...props
+}: React.ComponentProps<typeof Button> & { readonly side?: "left" | "right" }) {
   const { toggleSidebar } = useSidebar();
+  const translator = useInterfaceTranslator();
   const isOpen = useSidebarVisibility();
+  const sidebarInstance = React.use(SidebarInstanceContext);
+  const resolvedSide = side ?? sidebarInstance?.side ?? "left";
 
   return (
     <Button
@@ -339,8 +360,18 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       variant="ghost"
       {...props}
     >
-      {isOpen ? <PanelLeftCloseIcon /> : <PanelLeftIcon />}
-      <span className="sr-only">Toggle Sidebar</span>
+      {isOpen ? (
+        resolvedSide === "left" ? (
+          <PanelLeftCloseIcon />
+        ) : (
+          <PanelRightCloseIcon />
+        )
+      ) : resolvedSide === "left" ? (
+        <PanelLeftIcon />
+      ) : (
+        <PanelRightIcon />
+      )}
+      <span className="sr-only">{translator.message("ui.sidebar.toggle")}</span>
     </Button>
   );
 }
@@ -1039,5 +1070,6 @@ export {
   SidebarSeparator,
   SidebarTrigger,
   useSidebar,
+  useSidebarSide,
   useSidebarVisibility,
 };

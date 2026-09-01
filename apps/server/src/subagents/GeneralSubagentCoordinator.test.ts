@@ -4,6 +4,7 @@ import {
   assistantTextFromCompletedItem,
   buildGeneralSubagentPrompt,
   generalSubagentApprovalAction,
+  parseGeneralSubagentFinalResult,
 } from "./GeneralSubagentCoordinator.ts";
 
 describe("general subagent policy", () => {
@@ -11,6 +12,7 @@ describe("general subagent policy", () => {
     const prompt = buildGeneralSubagentPrompt({
       task: "Implement the parser fix, add focused tests, and run those tests.",
       parentThreadId: "parent-thread",
+      agentId: "general:parent-thread:worker-1",
     });
 
     expect(prompt).toContain("GENERAL-PURPOSE SUBAGENT");
@@ -19,6 +21,10 @@ describe("general subagent policy", () => {
     expect(prompt).toContain("same workspace");
     expect(prompt).toContain("Do not ask the user");
     expect(prompt).toContain("Do not spawn nested agents");
+    expect(prompt).toContain('"changesOrFindings"');
+    expect(prompt).toContain('"verification"');
+    expect(prompt).toContain('"risksOrBlockers"');
+    expect(prompt).toContain('"transcriptRef": "subagent:general:parent-thread:worker-1"');
     expect(prompt).not.toContain("READ-ONLY REPOSITORY EXPLORATION");
     expect(prompt).not.toContain("Do not edit files");
   });
@@ -55,5 +61,38 @@ describe("general subagent policy", () => {
         payload: { ...eventBase.payload, data: { text: "Gemini fallback" } },
       }),
     ).toBe("Gemini fallback");
+  });
+
+  it("parses a valid final result and falls back to the entire malformed message", () => {
+    const agentId = "general:parent-thread:worker-1";
+    const valid = {
+      outcome: "Implemented the parser fix.",
+      changesOrFindings: [
+        { path: "apps/server/src/parser.ts", details: "Handled the missing delimiter." },
+      ],
+      verification: [{ command: "vp test run parser.test.ts", result: "1 test passed" }],
+      risksOrBlockers: [],
+      transcriptRef: `subagent:${agentId}`,
+    };
+
+    expect(parseGeneralSubagentFinalResult(JSON.stringify(valid), agentId)).toEqual(valid);
+
+    const malformed = "Final result without the required sections.\nSecond line is retained.";
+    expect(parseGeneralSubagentFinalResult(malformed, agentId)).toEqual({
+      outcome: malformed,
+      changesOrFindings: [],
+      verification: [],
+      risksOrBlockers: [],
+      transcriptRef: `subagent:${agentId}`,
+    });
+
+    const extraSection = JSON.stringify({ ...valid, commentary: "not part of the contract" });
+    expect(parseGeneralSubagentFinalResult(extraSection, agentId)).toEqual({
+      outcome: extraSection,
+      changesOrFindings: [],
+      verification: [],
+      risksOrBlockers: [],
+      transcriptRef: `subagent:${agentId}`,
+    });
   });
 });

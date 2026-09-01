@@ -73,12 +73,98 @@ describe("ExecutionEnvironmentCapabilities", () => {
       environmentSettingsVersion: 3,
       projectSettingsVersion: 1,
     });
+    const interfaceLanguageSyncServer = decodeCapabilities({
+      repositoryIdentity: true,
+      environmentSettingsVersion: 4,
+      projectSettingsVersion: 1,
+    });
 
     expect(legacy.environmentSettingsVersion).toBeUndefined();
     expect(legacy.projectSettingsVersion).toBeUndefined();
     expect(previewSyncServer.environmentSettingsVersion).toBe(2);
     expect(current.environmentSettingsVersion).toBe(3);
+    expect(interfaceLanguageSyncServer.environmentSettingsVersion).toBe(4);
     expect(current.projectSettingsVersion).toBe(1);
+  });
+
+  it("keeps harness chat sync optional for older environments", () => {
+    const legacy = decodeCapabilities({ repositoryIdentity: true });
+    const current = decodeCapabilities({
+      repositoryIdentity: true,
+      harnessChatSyncVersion: 1,
+    });
+
+    expect(legacy.harnessChatSyncVersion).toBeUndefined();
+    expect(current.harnessChatSyncVersion).toBe(1);
+    expect(() =>
+      decodeCapabilities({ repositoryIdentity: true, harnessChatSyncVersion: 0 }),
+    ).toThrow();
+  });
+
+  it("keeps Knowledge Graph optional and versioned under mixed clients", () => {
+    const legacy = decodeCapabilities({ repositoryIdentity: true });
+    const current = decodeCapabilities({
+      repositoryIdentity: true,
+      knowledgeGraphVersion: 1,
+    });
+
+    expect(legacy.knowledgeGraphVersion).toBeUndefined();
+    expect(current.knowledgeGraphVersion).toBe(1);
+    expect(() =>
+      decodeCapabilities({ repositoryIdentity: true, knowledgeGraphVersion: 0 }),
+    ).toThrow();
+  });
+
+  it("keeps resource diagnostics optional and versioned under mixed clients", () => {
+    const legacy = decodeCapabilities({ repositoryIdentity: true });
+    const current = decodeCapabilities({
+      repositoryIdentity: true,
+      resourceDiagnosticsVersion: 1,
+    });
+
+    expect(legacy.resourceDiagnosticsVersion).toBeUndefined();
+    expect(current.resourceDiagnosticsVersion).toBe(1);
+    expect(() =>
+      decodeCapabilities({ repositoryIdentity: true, resourceDiagnosticsVersion: 0 }),
+    ).toThrow();
+  });
+
+  it("keeps resource protection optional and distinct from diagnostics", () => {
+    const legacy = decodeCapabilities({ repositoryIdentity: true });
+    const current = decodeCapabilities({
+      repositoryIdentity: true,
+      resourceDiagnosticsVersion: 1,
+      resourceProtectionVersion: 1,
+    });
+
+    expect(legacy.resourceProtectionVersion).toBeUndefined();
+    expect(current.resourceProtectionVersion).toBe(1);
+    expect(current.resourceDiagnosticsVersion).toBe(1);
+    expect(() =>
+      decodeCapabilities({ repositoryIdentity: true, resourceProtectionVersion: 0 }),
+    ).toThrow();
+  });
+
+  it("keeps thread forking optional for older environments", () => {
+    const legacy = decodeCapabilities({ repositoryIdentity: true });
+    const current = decodeCapabilities({
+      repositoryIdentity: true,
+      threadForking: true,
+    });
+
+    expect(legacy.threadForking).toBeUndefined();
+    expect(current.threadForking).toBe(true);
+  });
+
+  it("keeps interrupted-turn retry optional for older environments", () => {
+    const legacy = decodeCapabilities({ repositoryIdentity: true });
+    const current = decodeCapabilities({
+      repositoryIdentity: true,
+      interruptedTurnRetry: true,
+    });
+
+    expect(legacy.interruptedTurnRetry).toBeUndefined();
+    expect(current.interruptedTurnRetry).toBe(true);
   });
 });
 
@@ -102,5 +188,30 @@ describe("ExecutionEnvironmentDescriptor", () => {
         capabilities: { ...descriptor.capabilities, pullRequests: true },
       }).capabilities.pullRequests,
     ).toBe(true);
+  });
+
+  it("treats a missing attachment upload capability as unsupported", () => {
+    expect(decodeDescriptor(descriptor).capabilities.attachmentUploads).toBeUndefined();
+  });
+
+  it("preserves an advertised attachment upload capability", () => {
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, attachmentUploads: true },
+      }).capabilities.attachmentUploads,
+    ).toBe(true);
+  });
+
+  it("preserves the server's generic attachment upload limit", () => {
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: {
+          ...descriptor.capabilities,
+          fileAttachments: { maxUploadBytes: 50 * 1024 * 1024 },
+        },
+      }).capabilities.fileAttachments,
+    ).toEqual({ maxUploadBytes: 50 * 1024 * 1024 });
   });
 });

@@ -4,6 +4,7 @@ import {
   CURSOR_DRIVER_KIND,
   OPENCODE_DRIVER_KIND,
   ProviderInstanceId,
+  resolveBetterT3FeatureFlag,
   ThreadId,
   type ProviderDriverKind,
 } from "@t3tools/contracts";
@@ -12,18 +13,25 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { HttpServer } from "effect/unstable/http";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpProviderSession from "./McpProviderSession.ts";
 
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
   readonly workspaceContextThreadId?: ThreadId;
+  /** True selects core-only; explicit false requests the full optional profile. */
   readonly workspaceOnly?: boolean;
+  /** False omits project memory when memory is disabled or provider-managed. */
+  readonly projectMemoryEnabled?: boolean;
   readonly previewEnabled?: boolean;
+  /** True selects a writable profile in addition to ordinary workspace reads. */
+  readonly workspaceWriteEnabled?: boolean;
   readonly providerInstanceId: ProviderInstanceId;
   readonly provider: ProviderDriverKind;
 }
@@ -96,6 +104,12 @@ const WORKSPACE_CONTEXT_PROVIDERS = new Set<ProviderDriverKind>([
 const supportsWorkspaceContext = (provider: ProviderDriverKind): boolean =>
   WORKSPACE_CONTEXT_PROVIDERS.has(provider);
 
+const OPTIONAL_T3_TOOL_FEATURES = [
+  "knowledge.graph",
+  "agent.projectCoordination",
+  "agent.generalSubagents",
+] as const;
+
 const bytesToHex = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 
@@ -117,6 +131,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
 ) {
   const crypto = yield* Crypto.Crypto;
   const environment = yield* ServerEnvironment.ServerEnvironment;
+  const serverSettings = Option.getOrUndefined(
+    yield* Effect.serviceOption(ServerSettings.ServerSettingsService),
+  );
   const environmentId = yield* environment.getEnvironmentId;
   const httpServer = yield* HttpServer.HttpServer;
   const state = yield* SynchronizedRef.make<RegistryState>({ records: new Map() });
@@ -145,34 +162,75 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     function* (request) {
       const issuedAt = yield* currentTimeMillis;
       const workspaceContextEnabled = supportsWorkspaceContext(request.provider);
+      const workspaceWriteEnabled =
+        workspaceContextEnabled && request.workspaceWriteEnabled === true;
       const previewEnabled = request.previewEnabled !== false;
+      const configuredOptionalGroups = serverSettings
+        ? yield* serverSettings.getSettings.pipe(
+            Effect.map((settings) =>
+              OPTIONAL_T3_TOOL_FEATURES.some((feature) =>
+                resolveBetterT3FeatureFlag(settings.betterT3Environment, feature),
+              ),
+            ),
+            Effect.catch((cause) =>
+              Effect.logWarning(
+                "Could not read optional T3 tool settings; using the core MCP profile.",
+                { cause },
+              ).pipe(Effect.as(false)),
+            ),
+          )
+        : false;
+      const coreWorkspaceOnly =
+        request.workspaceOnly === true ||
+        (workspaceContextEnabled &&
+          !previewEnabled &&
+          !configuredOptionalGroups &&
+          request.workspaceOnly === undefined);
+      const projectMemoryEnabled = request.projectMemoryEnabled !== false;
       const providerSessionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
-      const capabilities: ReadonlySet<McpInvocationContext.McpCapability> =
-        request.workspaceOnly === true
-          ? workspaceContextEnabled
-            ? new Set(["workspace"])
-            : new Set()
-          : workspaceContextEnabled
-            ? previewEnabled
-              ? new Set(["preview", "workspace", "coordination"])
-              : new Set(["workspace", "coordination"])
-            : previewEnabled
-              ? new Set(["preview", "coordination"])
-              : new Set(["coordination"]);
-      const endpointPath =
-        request.workspaceOnly === true
+      const capabilities: ReadonlySet<McpInvocationContext.McpCapability> = coreWorkspaceOnly
+        ? workspaceContextEnabled
+          ? new Set(["workspace", ...(workspaceWriteEnabled ? (["workspace-write"] as const) : [])])
+          : new Set()
+        : workspaceContextEnabled
+          ? previewEnabled
+            ? new Set([
+                "preview",
+                "workspace",
+                ...(workspaceWriteEnabled ? (["workspace-write"] as const) : []),
+                "coordination",
+              ])
+            : new Set([
+                "workspace",
+                ...(workspaceWriteEnabled ? (["workspace-write"] as const) : []),
+                "coordination",
+              ])
+          : previewEnabled
+            ? new Set(["preview", "coordination"])
+            : new Set(["coordination"]);
+      const readEndpointPath = coreWorkspaceOnly
+        ? projectMemoryEnabled
           ? "/mcp/workspace-only"
-          : workspaceContextEnabled
-            ? previewEnabled
+          : "/mcp/workspace-only-no-memory"
+        : workspaceContextEnabled
+          ? previewEnabled
+            ? projectMemoryEnabled
               ? "/mcp/workspace"
-              : "/mcp/workspace-no-preview"
-            : previewEnabled
-              ? "/mcp"
-              : "/mcp/coordination";
+              : "/mcp/workspace-no-memory"
+            : projectMemoryEnabled
+              ? "/mcp/workspace-no-preview"
+              : "/mcp/workspace-no-preview-no-memory"
+          : previewEnabled
+            ? "/mcp"
+            : "/mcp/coordination";
+      const endpointPath = workspaceWriteEnabled
+        ? readEndpointPath.replace("/mcp/workspace", "/mcp/workspace-write")
+        : readEndpointPath;
       const scope: McpInvocationContext.McpInvocationScope = {
         environmentId,
+        ownerThreadId: request.threadId,
         threadId: ThreadId.make(request.workspaceContextThreadId ?? request.threadId),
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),

@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
   useUsage: vi.fn(),
+  metric: "cost" as "cost" | "tokens",
+  breakdown: "time" as "model" | "time",
 }));
 
 vi.mock("react", async (importOriginal) => {
@@ -24,9 +26,11 @@ vi.mock("react", async (importOriginal) => {
               untilTime: "2026-08-11T12:37:00.000Z",
             },
           }
-        : initial === "model"
-          ? "time"
-          : initial,
+        : initial === "cost"
+          ? testState.metric
+          : initial === "model"
+            ? testState.breakdown
+            : initial,
       vi.fn(),
     ]),
   };
@@ -53,13 +57,16 @@ vi.mock("../WorkspaceBreadcrumb", () => ({
 vi.mock("../WorkspacePageContainer", () => ({ WorkspacePageContainer: "main" }));
 vi.mock("../WorkspacePageHeader", () => ({ WorkspacePageHeader: "header" }));
 vi.mock("./UsageProviderChart", () => ({ UsageProviderChart: "div" }));
-vi.mock("./usageProviders", () => ({
-  PROVIDER_ORDER: ["codex", "claude"],
-  PROVIDER_PRESENTATION: {
-    codex: { color: "white", label: "Codex", mark: "span" },
-    claude: { color: "orange", label: "Claude Code", mark: "span" },
-  },
-}));
+vi.mock("./usageProviders", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./usageProviders")>();
+  return {
+    ...actual,
+    PROVIDER_PRESENTATION: {
+      codex: { color: "white", label: "Codex", mark: "span" },
+      claude: { color: "orange", label: "Claude Code", mark: "span" },
+    },
+  };
+});
 
 import { UsagePage } from "./UsagePage";
 
@@ -69,10 +76,66 @@ const providerTotals = (codex: number, claude: number) =>
     ["claude", { costUsd: claude, totalTokens: claude * 1_000 }],
   ] as const);
 
+const modelTotals = Object.freeze([
+  {
+    model: "expensive-model",
+    provider: "claude" as const,
+    costUsd: 10,
+    totalTokens: 100,
+    records: 1,
+    costShare: 10 / 16,
+  },
+  {
+    model: "token-heavy-model",
+    provider: "codex" as const,
+    costUsd: 5,
+    totalTokens: 1_000,
+    records: 1,
+    costShare: 5 / 16,
+  },
+  {
+    model: "token-heavy-cheaper-model",
+    provider: "codex" as const,
+    costUsd: 1,
+    totalTokens: 1_000,
+    records: 1,
+    costShare: 1 / 16,
+  },
+]);
+
 beforeEach(() => {
+  testState.metric = "cost";
+  testState.breakdown = "time";
   testState.useUsage.mockReturnValue({
     merged: {
       ...mergeUsage([], USAGE_CONTRACT_VERSION),
+      uncachedInputTokens: 101,
+      cachedInputTokens: 202,
+      cacheCreationTokens: 3,
+      outputTokens: 404,
+      reasoningTokens: 55,
+      totalTokens: 710,
+      calls: [
+        { kind: "root", costUsd: 1, totalTokens: 400, records: 4 },
+        { kind: "subagent", costUsd: 0.5, totalTokens: 200, records: 2 },
+        { kind: "metadata", costUsd: 0.1, totalTokens: 100, records: 1 },
+        { kind: "auto-reasoning", costUsd: 0.05, totalTokens: 50, records: 1 },
+        { kind: "unknown", costUsd: 0, totalTokens: 10, records: 1 },
+      ],
+      contextDiagnostics: {
+        nativeForks: 2,
+        compactHandoffs: 3,
+        totalHandoffChars: 456,
+        compactionEvents: 4,
+        maxContextTokens: 200_000,
+        instructionChars: 1_000,
+        memoryInjectionChars: 2_000,
+        toolSchemaChars: 3_000,
+        subagentResultChars: 4_000,
+        toolDigestChars: 5_000,
+        autoRoutingChars: 6_000,
+      },
+      models: modelTotals,
       hourly: [
         {
           day: "2026-08-10",
@@ -106,5 +169,75 @@ describe("UsagePage hourly breakdown", () => {
     expect(body).toContain("$11.00");
     expect(body).toContain("$13.00");
     expect(body.indexOf("$11.00")).toBeLessThan(body.indexOf("$13.00"));
+  });
+
+  it("keeps chronological ordering when the token metric is selected", () => {
+    testState.metric = "tokens";
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+
+    expect(body).toMatch(/\$11\.00.*\$13\.00/);
+  });
+});
+
+describe("UsagePage model breakdown", () => {
+  it("sorts models by cost when the cost metric is selected", () => {
+    testState.breakdown = "model";
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+
+    expect(body).toMatch(/expensive-model.*token-heavy-model.*token-heavy-cheaper-model/);
+  });
+
+  it("sorts models by token usage when the token metric is selected", () => {
+    testState.metric = "tokens";
+    testState.breakdown = "model";
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+
+    expect(body).toMatch(/token-heavy-model.*token-heavy-cheaper-model.*expensive-model/);
+    expect(modelTotals.map((model) => model.model)).toEqual([
+      "expensive-model",
+      "token-heavy-model",
+      "token-heavy-cheaper-model",
+    ]);
+  });
+});
+
+describe("UsagePage accounting diagnostics", () => {
+  it("shows the disjoint token mix with processed total as secondary context", () => {
+    const markup = renderToStaticMarkup(<UsagePage />);
+
+    expect(markup).toContain("New input");
+    expect(markup).toContain("Cached input");
+    expect(markup).toContain("Output");
+    expect(markup).toContain("Reasoning");
+    expect(markup).toContain("Processed total");
+    expect(markup).toContain("Cache writes");
+  });
+
+  it("shows root, subagent, hidden metadata, and content-free context diagnostics", () => {
+    const markup = renderToStaticMarkup(<UsagePage />);
+
+    expect(markup).toContain("Calls by role");
+    expect(markup).toContain("Root calls");
+    expect(markup).toContain("Subagent calls");
+    expect(markup).toContain("Hidden metadata calls");
+    expect(markup).toContain("Auto reasoning calls");
+    expect(markup).toContain("Context diagnostics");
+    expect(markup).toContain("Native forks");
+    expect(markup).toContain("Compact handoffs");
+    expect(markup).toContain("Handoff characters");
+    expect(markup).toContain("Compaction events");
+    expect(markup).toContain("Instruction characters");
+    expect(markup).toContain("Memory injection characters");
+    expect(markup).toContain("Tool schema characters");
+    expect(markup).toContain("Subagent result characters");
+    expect(markup).toContain("Tool digest characters");
+    expect(markup).toContain("Auto routing characters");
+    expect(markup).not.toContain("private prompt");
   });
 });

@@ -17,7 +17,7 @@ import {
   KeybindingWhen,
   ResolvedKeybindingsConfig,
 } from "./keybindings.ts";
-import { EditorId, RemoteOpenTarget } from "./editor.ts";
+import { EditorId, FileManagerRevealKind, RemoteOpenTarget } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerSettings } from "./settings.ts";
@@ -50,17 +50,165 @@ export type ServerProviderState = typeof ServerProviderState.Type;
 export const ServerProviderAuthStatus = Schema.Literals([
   "authenticated",
   "unauthenticated",
+  "pending",
+  "expired",
+  "error",
   "unknown",
 ]);
 export type ServerProviderAuthStatus = typeof ServerProviderAuthStatus.Type;
+
+export const ProviderAuthFlow = Schema.Literals(["browser", "device-code"]);
+export type ProviderAuthFlow = typeof ProviderAuthFlow.Type;
+
+export const ServerProviderAuthCredential = Schema.Struct({
+  kind: Schema.Literal("api-key"),
+  label: TrimmedNonEmptyString,
+  placeholder: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerProviderAuthCredential = typeof ServerProviderAuthCredential.Type;
+
+export const ServerProviderAuthCapabilities = Schema.Struct({
+  flows: Schema.Array(ProviderAuthFlow),
+  canDisconnect: Schema.Boolean,
+  credential: Schema.optional(ServerProviderAuthCredential),
+});
+export type ServerProviderAuthCapabilities = typeof ServerProviderAuthCapabilities.Type;
+
+export const ServerProviderPlan = Schema.Struct({
+  id: Schema.optional(TrimmedNonEmptyString),
+  label: TrimmedNonEmptyString,
+});
+export type ServerProviderPlan = typeof ServerProviderPlan.Type;
 
 export const ServerProviderAuth = Schema.Struct({
   status: ServerProviderAuthStatus,
   type: Schema.optional(TrimmedNonEmptyString),
   label: Schema.optional(TrimmedNonEmptyString),
+  accountId: Schema.optional(TrimmedNonEmptyString),
   email: Schema.optional(TrimmedNonEmptyString),
+  expiresAt: Schema.optional(IsoDateTime),
+  capabilities: Schema.optional(ServerProviderAuthCapabilities),
+  plan: Schema.optional(ServerProviderPlan),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
+
+export const ServerProviderRateLimitStatus = Schema.Literals([
+  "available",
+  "limited",
+  "exhausted",
+  "unknown",
+]);
+export type ServerProviderRateLimitStatus = typeof ServerProviderRateLimitStatus.Type;
+
+export const ServerProviderRateLimit = Schema.Struct({
+  status: ServerProviderRateLimitStatus,
+  limit: Schema.optional(NonNegativeInt),
+  remaining: Schema.optional(NonNegativeInt),
+  resetsAt: Schema.optional(IsoDateTime),
+  retryAfterSeconds: Schema.optional(NonNegativeInt),
+  message: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerProviderRateLimit = typeof ServerProviderRateLimit.Type;
+
+export const ProviderAuthFailureCode = Schema.Literals([
+  "provider-not-found",
+  "auth-unsupported",
+  "flow-unsupported",
+  "auth-in-progress",
+  "authorization-declined",
+  "challenge-expired",
+  "broker-unavailable",
+  "broker-failed",
+  "credential-invalid",
+  "credential-storage-failed",
+  "credential-removal-failed",
+  "disconnect-conflict",
+  "unknown",
+]);
+export type ProviderAuthFailureCode = typeof ProviderAuthFailureCode.Type;
+
+export const ProviderAuthFailure = Schema.Struct({
+  code: ProviderAuthFailureCode,
+  reason: TrimmedNonEmptyString,
+  retryable: Schema.Boolean,
+});
+export type ProviderAuthFailure = typeof ProviderAuthFailure.Type;
+
+export const ProviderAuthConnectInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  flow: ProviderAuthFlow,
+});
+export type ProviderAuthConnectInput = typeof ProviderAuthConnectInput.Type;
+
+export const ProviderAuthConnectEvent = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("starting"),
+    flow: ProviderAuthFlow,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("browserChallenge"),
+    authorizationUrl: TrimmedNonEmptyString,
+    expiresAt: Schema.optional(IsoDateTime),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("deviceCodeChallenge"),
+    verificationUrl: TrimmedNonEmptyString,
+    userCode: TrimmedNonEmptyString,
+    expiresAt: IsoDateTime,
+    pollIntervalSeconds: PositiveInt,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("connected"),
+    auth: ServerProviderAuth,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("failed"),
+    failure: ProviderAuthFailure,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("cancelled"),
+    reason: Schema.optional(TrimmedNonEmptyString),
+  }),
+]);
+export type ProviderAuthConnectEvent = typeof ProviderAuthConnectEvent.Type;
+
+export const ProviderAuthDisconnectInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+});
+export type ProviderAuthDisconnectInput = typeof ProviderAuthDisconnectInput.Type;
+
+export const ProviderAuthSetCredentialInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  credential: TrimmedNonEmptyString,
+});
+export type ProviderAuthSetCredentialInput = typeof ProviderAuthSetCredentialInput.Type;
+
+export const ProviderAuthSetCredentialResult = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  auth: ServerProviderAuth,
+});
+export type ProviderAuthSetCredentialResult = typeof ProviderAuthSetCredentialResult.Type;
+
+export const ProviderAuthDisconnectResult = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  auth: ServerProviderAuth,
+});
+export type ProviderAuthDisconnectResult = typeof ProviderAuthDisconnectResult.Type;
+
+export class ProviderAuthOperationError extends Schema.TaggedErrorClass<ProviderAuthOperationError>()(
+  "ProviderAuthOperationError",
+  {
+    instanceId: ProviderInstanceId,
+    operation: Schema.Literals(["connect", "set-credential", "disconnect"]),
+    code: ProviderAuthFailureCode,
+    reason: TrimmedNonEmptyString,
+    retryable: Schema.Boolean,
+  },
+) {
+  override get message(): string {
+    return `Provider auth ${this.operation} failed for ${this.instanceId}: ${this.reason}`;
+  }
+}
 
 export const ServerProviderModel = Schema.Struct({
   slug: TrimmedNonEmptyString,
@@ -68,8 +216,11 @@ export const ServerProviderModel = Schema.Struct({
   shortName: Schema.optional(TrimmedNonEmptyString),
   subProvider: Schema.optional(TrimmedNonEmptyString),
   isCustom: Schema.Boolean,
+  isVerified: Schema.optional(Schema.Boolean),
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
+  isSelectable: Schema.optional(Schema.Boolean),
+  unavailableReason: Schema.optional(TrimmedNonEmptyString),
   capabilities: Schema.NullOr(ModelCapabilities),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
@@ -178,6 +329,12 @@ export const ServerProviderFetchWorkers = Schema.Struct({
 });
 export type ServerProviderFetchWorkers = typeof ServerProviderFetchWorkers.Type;
 
+export const ServerProviderRuntimeCapabilities = Schema.Struct({
+  nativeThreadFork: Schema.optional(Schema.Boolean),
+  manualCompaction: Schema.optional(Schema.Boolean),
+});
+export type ServerProviderRuntimeCapabilities = typeof ServerProviderRuntimeCapabilities.Type;
+
 export const ServerProvider = Schema.Struct({
   // Routing key for the configured instance this snapshot represents. This
   // is the only stable identity consumers may use for provider routing.
@@ -193,11 +350,13 @@ export const ServerProvider = Schema.Struct({
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
   nativeSubagents: Schema.optional(ServerProviderNativeSubagents),
   fetchWorkers: Schema.optional(ServerProviderFetchWorkers),
+  runtimeCapabilities: Schema.optional(ServerProviderRuntimeCapabilities),
   enabled: Schema.Boolean,
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),
   status: ServerProviderState,
   auth: ServerProviderAuth,
+  rateLimit: Schema.optional(ServerProviderRateLimit),
   checkedAt: IsoDateTime,
   message: Schema.optional(TrimmedNonEmptyString),
   // Optional for back-compat: every legacy producer omits this field and
@@ -439,6 +598,93 @@ export const ServerSignalProcessResult = Schema.Struct({
 });
 export type ServerSignalProcessResult = typeof ServerSignalProcessResult.Type;
 
+/**
+ * A palette the environment's machine publishes for T3 Code to follow, read
+ * from a theme file next to the rest of the environment's state. Two seed
+ * colors rather than a full palette: clients derive the remaining roles with
+ * the same generator the guided theme editor uses, so a desktop theme carries
+ * over as a coherent T3 Code palette instead of a foreign one.
+ */
+export const EnvironmentThemeColor = Schema.String.check(
+  Schema.isPattern(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/),
+);
+export type EnvironmentThemeColor = typeof EnvironmentThemeColor.Type;
+
+/**
+ * Matches the client-side theme id rule, so a published id is selectable.
+ * The appearance keywords are excluded outright: a published `dark.json`
+ * would otherwise capture every client whose stored preference is the stock
+ * `"dark"`, retinting people who never chose it.
+ */
+export const EnvironmentThemeId = Schema.String.check(
+  Schema.isPattern(/^(?!(?:system|light|dark)$)[a-z0-9](?:[a-z0-9-]{0,47})$/),
+);
+export type EnvironmentThemeId = typeof EnvironmentThemeId.Type;
+
+/**
+ * Role colors as published. Values are any CSS color the client's theme
+ * parser accepts (exported theme files use oklch), canonicalized client-side;
+ * roles a build does not know are dropped there, so a machine may publish
+ * roles a newer client added without breaking an older one. Keys must still
+ * be role-shaped and values color-sized, so the record stays open to future
+ * vocabulary without being an arbitrary-payload channel.
+ */
+const EnvironmentThemeColors = Schema.Record(
+  Schema.String.check(Schema.isPattern(/^[a-zA-Z][a-zA-Z0-9]{0,63}$/)),
+  TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+);
+
+const environmentThemeFields = {
+  /**
+   * Standard exported theme files (the Download button's output) carry
+   * `version: 1`; the seeded short form a desktop generates has no version.
+   */
+  version: Schema.optional(Schema.Literal(1)),
+  /** Shown on the theme card, e.g. the desktop theme's own name. */
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(48)),
+  appearance: Schema.Literals(["light", "dark"]),
+  /**
+   * Seed colors. When present, clients derive the full palette from them with
+   * the guided theme editor's generator and layer `colors` on top; when
+   * absent, `colors` is the palette, as in an exported theme file.
+   */
+  canvas: Schema.optional(EnvironmentThemeColor),
+  accent: Schema.optional(EnvironmentThemeColor),
+  colors: Schema.optional(EnvironmentThemeColors),
+  /** The other appearance's palette, as exported theme files carry it. */
+  variants: Schema.optional(
+    Schema.Struct({
+      light: Schema.optional(EnvironmentThemeColors),
+      dark: Schema.optional(EnvironmentThemeColors),
+    }),
+  ),
+};
+
+/** One published theme file. The id is the filename, not part of the content,
+ * so a file cannot claim another file's identity; an embedded `id` is ignored. */
+export const EnvironmentThemeFile = Schema.Struct(environmentThemeFields);
+export type EnvironmentThemeFile = typeof EnvironmentThemeFile.Type;
+
+export const EnvironmentTheme = Schema.Struct({
+  /** The publishing filename without its extension, stable across recolors. */
+  id: EnvironmentThemeId,
+  ...environmentThemeFields,
+});
+export type EnvironmentTheme = typeof EnvironmentTheme.Type;
+
+/**
+ * Whether a theme file carries anything to render. A file with neither seeds
+ * nor colors would show as the stock palette wearing a name, which reads as a
+ * bug rather than a theme — the CLI and the server watcher both reject it,
+ * through this one predicate so they cannot drift.
+ */
+export function environmentThemeFileHasColors(file: EnvironmentThemeFile): boolean {
+  return (
+    (file.canvas !== undefined && file.accent !== undefined) ||
+    (file.colors !== undefined && Object.keys(file.colors).length > 0)
+  );
+}
+
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
@@ -460,6 +706,11 @@ export const ServerConfig = Schema.Struct({
   settings: ServerSettings,
   /** Whether shell subscriptions can emit an opt-in catch-up completion marker. */
   shellResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
+  /** Whether shell.openInEditor honors `LaunchEditorInput.reveal` for the
+      file-manager editor. */
+  shellRevealInFileManager: Schema.optionalKey(Schema.Boolean),
+  /** File-manager wording clients should use for reveal actions. */
+  shellRevealInFileManagerKind: Schema.optionalKey(FileManagerRevealKind),
   /** Whether thread subscriptions can emit an opt-in catch-up completion marker. */
   threadResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /**
@@ -470,6 +721,14 @@ export const ServerConfig = Schema.Struct({
   threadSnapshotPagination: Schema.optionalKey(Schema.Boolean),
   /** Whether subagent detail reads support bounded activity windows. */
   subagentSnapshotPagination: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Palettes published by this environment's machine. Never sent in a config
+   * snapshot: the theme stream emits the current set before any change, so a
+   * snapshot carrying it too would hand every subscriber the same array twice
+   * per connect. Clients populate this by projecting `environmentThemesUpdated`,
+   * and it stays absent for subscribers that did not opt in.
+   */
+  environmentThemes: Schema.optional(Schema.Array(EnvironmentTheme)),
 });
 export type ServerConfig = typeof ServerConfig.Type;
 
@@ -554,11 +813,27 @@ export const ServerConfigStreamSettingsUpdatedEvent = Schema.Struct({
 export type ServerConfigStreamSettingsUpdatedEvent =
   typeof ServerConfigStreamSettingsUpdatedEvent.Type;
 
+export const ServerConfigEnvironmentThemesUpdatedPayload = Schema.Struct({
+  /** The full published set; empty once the machine publishes none. */
+  themes: Schema.Array(EnvironmentTheme),
+});
+export type ServerConfigEnvironmentThemesUpdatedPayload =
+  typeof ServerConfigEnvironmentThemesUpdatedPayload.Type;
+
+export const ServerConfigStreamEnvironmentThemesUpdatedEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("environmentThemesUpdated"),
+  payload: ServerConfigEnvironmentThemesUpdatedPayload,
+});
+export type ServerConfigStreamEnvironmentThemesUpdatedEvent =
+  typeof ServerConfigStreamEnvironmentThemesUpdatedEvent.Type;
+
 export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSnapshotEvent,
   ServerConfigStreamKeybindingsUpdatedEvent,
   ServerConfigStreamProviderStatusesEvent,
   ServerConfigStreamSettingsUpdatedEvent,
+  ServerConfigStreamEnvironmentThemesUpdatedEvent,
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 
@@ -626,6 +901,41 @@ export const AssemblyAiStreamingTokenResult = Schema.Struct({
   context: AssemblyAiSpeechContext,
 });
 export type AssemblyAiStreamingTokenResult = typeof AssemblyAiStreamingTokenResult.Type;
+
+export const SpeechStreamingSessionId = TrimmedNonEmptyString.pipe(
+  Schema.brand("SpeechStreamingSessionId"),
+);
+export type SpeechStreamingSessionId = typeof SpeechStreamingSessionId.Type;
+
+export const SpeechStreamingSessionStartResult = Schema.Struct({
+  sessionId: SpeechStreamingSessionId,
+});
+export type SpeechStreamingSessionStartResult = typeof SpeechStreamingSessionStartResult.Type;
+
+export const SpeechStreamingAudioInput = Schema.Struct({
+  sessionId: SpeechStreamingSessionId,
+  audio: Schema.Uint8Array,
+});
+export type SpeechStreamingAudioInput = typeof SpeechStreamingAudioInput.Type;
+
+export const SpeechStreamingSessionInput = Schema.Struct({
+  sessionId: SpeechStreamingSessionId,
+});
+export type SpeechStreamingSessionInput = typeof SpeechStreamingSessionInput.Type;
+
+export const SpeechStreamingTranscriptResult = Schema.Struct({
+  transcript: Schema.String,
+});
+export type SpeechStreamingTranscriptResult = typeof SpeechStreamingTranscriptResult.Type;
+
+export class SpeechStreamingProxyError extends Schema.TaggedErrorClass<SpeechStreamingProxyError>()(
+  "SpeechStreamingProxyError",
+  { reason: TrimmedNonEmptyString },
+) {
+  override get message(): string {
+    return `Voice streaming error: ${this.reason}`;
+  }
+}
 
 export class AssemblyAiStreamingTokenError extends Schema.TaggedErrorClass<AssemblyAiStreamingTokenError>()(
   "AssemblyAiStreamingTokenError",

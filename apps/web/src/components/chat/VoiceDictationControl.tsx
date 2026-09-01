@@ -2,6 +2,7 @@ import { MicIcon, SquareIcon } from "lucide-react";
 import { memo } from "react";
 
 import type { AssemblyAiDictationState } from "../../hooks/useAssemblyAiDictation";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { cn } from "../../lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -40,6 +41,7 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
   readonly onStart: () => void | Promise<void>;
   readonly onStop: () => void | Promise<void>;
 }) {
+  const translate = useInterfaceTranslator().message;
   if (state === "idle") {
     return (
       <Tooltip>
@@ -50,13 +52,13 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
               className="flex h-9 w-9 enabled:cursor-pointer items-center justify-center rounded-full border border-border/70 bg-background text-muted-foreground transition-all duration-150 hover:scale-105 hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30 sm:h-8 sm:w-8"
               disabled={disabled}
               onClick={() => void onStart()}
-              aria-label="Start voice input"
+              aria-label={translate("chat.composer.voiceStart")}
             />
           }
         >
           <MicIcon className="size-4" />
         </TooltipTrigger>
-        <TooltipPopup side="top">Start voice input</TooltipPopup>
+        <TooltipPopup side="top">{translate("chat.composer.voiceStart")}</TooltipPopup>
       </Tooltip>
     );
   }
@@ -64,14 +66,14 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
   const canSpeak = state === "recording";
   const buttonLabel =
     state === "starting"
-      ? "Cancel voice input connection"
+      ? translate("chat.composer.voiceCancelConnection")
       : state === "stopping"
-        ? "Stopping voice input"
-        : "Stop voice input";
+        ? translate("chat.composer.voiceStopping")
+        : translate("chat.composer.voiceStop");
   const buttonTooltip =
     state === "starting"
-      ? "Connecting to AssemblyAI · Select to cancel"
-      : "Stop voice input · Press Escape to cancel and restore the draft";
+      ? translate("chat.composer.voiceConnectingTooltip")
+      : translate("chat.composer.voiceStopTooltip");
   const peakLevel = audioWaveform.reduce((peak, level) => Math.max(peak, level), 0);
   return (
     <div
@@ -81,7 +83,7 @@ export const VoiceDictationControl = memo(function VoiceDictationControl({
     >
       <div
         role="meter"
-        aria-label="Live microphone waveform"
+        aria-label={translate("chat.composer.voiceWaveform")}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(Math.max(0, Math.min(1, peakLevel)) * 100)}

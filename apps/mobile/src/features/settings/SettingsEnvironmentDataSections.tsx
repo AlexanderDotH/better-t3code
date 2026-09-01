@@ -15,11 +15,11 @@ import { ActivityIndicator, Alert, Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
-import { useThemeColor } from "../../lib/useThemeColor";
 import { agentSettingsEnvironment } from "../../state/agent-settings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./components/SettingsSection";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import {
   formatChatImportLatest,
   formatChatImportSummary,
@@ -35,6 +35,7 @@ function failureMessage(result: { readonly _tag: string }, fallback: string): st
 }
 
 export function EnvironmentChatImportSettings(props: { readonly environmentId: EnvironmentId }) {
+  const translator = useMobileInterfaceTranslator();
   const discoverSources = useAtomCommand(agentSettingsEnvironment.chatImport.discover, {
     reportFailure: false,
   });
@@ -99,7 +100,7 @@ export function EnvironmentChatImportSettings(props: { readonly environmentId: E
 
   return (
     <View className="gap-2">
-      <SettingsSection title="Import chats">
+      <SettingsSection title={translator.message("mobile.settings.data.importChats")}>
         {sources === null ? (
           <Pressable
             accessibilityRole="button"
@@ -109,16 +110,19 @@ export function EnvironmentChatImportSettings(props: { readonly environmentId: E
           >
             {loading ? <ActivityIndicator size="small" /> : null}
             <Text className="text-center text-sm text-foreground-muted">
-              {error ?? (loading ? "Looking for other T3 Code instances…" : "Scan for chats")}
+              {error ??
+                (loading
+                  ? translator.message("mobile.settings.data.lookingInstances")
+                  : translator.message("mobile.settings.data.scanChats"))}
             </Text>
           </Pressable>
         ) : sources.length === 0 ? (
           <View className="gap-1 p-5">
             <Text className="text-center text-base font-t3-medium text-foreground">
-              No other T3 Code chats found
+              {translator.message("mobile.settings.data.noChats")}
             </Text>
             <Text className="text-center text-sm leading-normal text-foreground-muted">
-              The server scans its local .t3 and .t3-* data directories.
+              {translator.message("mobile.settings.data.scanDirectories")}
             </Text>
           </View>
         ) : (
@@ -147,7 +151,9 @@ export function EnvironmentChatImportSettings(props: { readonly environmentId: E
                   className="self-start rounded-xl bg-foreground px-4 py-2 disabled:opacity-40"
                 >
                   <Text className="font-t3-medium text-background">
-                    {importing ? "Importing…" : "Import chats"}
+                    {importing
+                      ? translator.message("mobile.settings.data.importing")
+                      : translator.message("mobile.settings.data.importChats")}
                   </Text>
                 </Pressable>
               </View>
@@ -162,7 +168,9 @@ export function EnvironmentChatImportSettings(props: { readonly environmentId: E
             className="border-t border-border-subtle p-4 disabled:opacity-40"
           >
             <Text className="text-center font-t3-medium text-foreground">
-              {loading ? "Scanning…" : "Scan again"}
+              {loading
+                ? translator.message("mobile.settings.data.scanning")
+                : translator.message("mobile.settings.data.scanAgain")}
             </Text>
           </Pressable>
         ) : null}
@@ -177,8 +185,7 @@ export function EnvironmentChatImportSettings(props: { readonly environmentId: E
         <Text className="px-2 text-sm leading-normal text-danger-foreground">{error}</Text>
       ) : null}
       <Text className="px-2 text-xs leading-normal text-foreground-muted">
-        Imported chats receive new local IDs and cannot resume source sessions. Re-importing safely
-        syncs the same chats without duplicates.
+        {translator.message("mobile.settings.data.importSafety")}
       </Text>
     </View>
   );
@@ -195,6 +202,7 @@ export function EnvironmentSpeechProfileSettings(props: {
   readonly environmentId: EnvironmentId;
   readonly projects: ReadonlyArray<EnvironmentProject>;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const listProfiles = useAtomCommand(serverEnvironment.listProjectSpeechProfiles, {
     reportFailure: false,
   });
@@ -214,7 +222,6 @@ export function EnvironmentSpeechProfileSettings(props: {
     () => new Map(),
   );
   const requestSequence = useRef(0);
-  const chevronColor = useThemeColor("--color-chevron");
   const sortedProjects = useMemo(
     () => [...props.projects].sort((left, right) => left.title.localeCompare(right.title)),
     [props.projects],
@@ -292,10 +299,10 @@ export function EnvironmentSpeechProfileSettings(props: {
 
   return (
     <View className="gap-2">
-      <SettingsSection title="Project speech context">
+      <SettingsSection title={translator.message("mobile.settings.speech.projectContext")}>
         {sortedProjects.length === 0 ? (
           <Text className="p-5 text-center text-sm text-foreground-muted">
-            No projects are available in this environment.
+            {translator.message("mobile.settings.speech.noProjects")}
           </Text>
         ) : (
           sortedProjects.map((project, index) => {
@@ -303,7 +310,11 @@ export function EnvironmentSpeechProfileSettings(props: {
             const status = projectSpeechProfileStatus(profile, loadState);
             const expanded = expandedProjects.has(project.id);
             const busyAction = busyActions.get(project.id);
-            const indexLabel = profile?.source === "indexed" ? "Reindex" : "Index";
+            const indexLabel = translator.message(
+              profile?.source === "indexed"
+                ? "mobile.settings.speech.reindex"
+                : "mobile.settings.speech.index",
+            );
             return (
               <View
                 key={project.id}
@@ -312,7 +323,9 @@ export function EnvironmentSpeechProfileSettings(props: {
                 <Pressable
                   accessibilityRole="button"
                   accessibilityState={{ expanded }}
-                  accessibilityLabel={`Toggle ${project.title} speech profile`}
+                  accessibilityLabel={translator.message("mobile.settings.speech.toggleProfile", {
+                    project: project.title,
+                  })}
                   onPress={() => toggleProject(project.id)}
                   className="flex-row items-center gap-3 p-4"
                 >
@@ -334,7 +347,7 @@ export function EnvironmentSpeechProfileSettings(props: {
                   <SymbolView
                     name={expanded ? "chevron.up" : "chevron.down"}
                     size={13}
-                    tintColor={chevronColor}
+                    tintColorClassName={"accent-chevron"}
                     type="monochrome"
                   />
                 </Pressable>
@@ -345,7 +358,7 @@ export function EnvironmentSpeechProfileSettings(props: {
                       <>
                         <View className="gap-1">
                           <Text className="text-xs font-t3-medium text-foreground">
-                            AssemblyAI prompt
+                            {translator.message("mobile.settings.speech.prompt")}
                           </Text>
                           <Text
                             selectable
@@ -369,20 +382,23 @@ export function EnvironmentSpeechProfileSettings(props: {
                           </Text>
                         ) : null}
                         <Text className="text-xs text-foreground-muted">
-                          Updated {formatUpdatedAt(profile.updatedAt)}
+                          {translator.message("mobile.settings.speech.updated", {
+                            date: formatUpdatedAt(profile.updatedAt),
+                          })}
                         </Text>
                       </>
                     ) : loadState === "error" ? (
                       <Text className="text-sm leading-normal text-danger-foreground">
-                        {loadError ?? "This speech profile is unavailable."}
+                        {loadError ?? translator.message("mobile.settings.speech.unavailable")}
                       </Text>
                     ) : loadState === "ready" ? (
                       <Text className="text-sm leading-normal text-foreground-muted">
-                        Index this project for repository-aware recognition, or use basic context
-                        from project metadata.
+                        {translator.message("mobile.settings.speech.indexDescription")}
                       </Text>
                     ) : (
-                      <Text className="text-sm text-foreground-muted">Loading this profile…</Text>
+                      <Text className="text-sm text-foreground-muted">
+                        {translator.message("mobile.settings.speech.loadingProfile")}
+                      </Text>
                     )}
 
                     <View className="flex-row flex-wrap gap-2">
@@ -397,7 +413,13 @@ export function EnvironmentSpeechProfileSettings(props: {
                         className="rounded-xl bg-foreground px-4 py-2 disabled:opacity-40"
                       >
                         <Text className="font-t3-medium text-background">
-                          {busyAction === "index" ? `${indexLabel}ing…` : indexLabel}
+                          {busyAction === "index"
+                            ? translator.message(
+                                profile?.source === "indexed"
+                                  ? "mobile.settings.speech.reindexing"
+                                  : "mobile.settings.speech.indexing",
+                              )
+                            : indexLabel}
                         </Text>
                       </Pressable>
                       <Pressable
@@ -411,7 +433,9 @@ export function EnvironmentSpeechProfileSettings(props: {
                         className="rounded-xl bg-subtle px-4 py-2 disabled:opacity-40"
                       >
                         <Text className="font-t3-medium text-foreground">
-                          {busyAction === "basic" ? "Creating…" : "Use basic context"}
+                          {busyAction === "basic"
+                            ? translator.message("mobile.settings.speech.creating")
+                            : translator.message("mobile.settings.speech.useBasic")}
                         </Text>
                       </Pressable>
                     </View>
@@ -428,13 +452,14 @@ export function EnvironmentSpeechProfileSettings(props: {
           className="border-t border-border-subtle p-4 disabled:opacity-40"
         >
           <Text className="text-center font-t3-medium text-foreground">
-            {loading ? "Refreshing profiles…" : "Refresh profiles"}
+            {loading
+              ? translator.message("mobile.settings.speech.refreshing")
+              : translator.message("mobile.settings.speech.refresh")}
           </Text>
         </Pressable>
       </SettingsSection>
       <Text className="px-2 text-xs leading-normal text-foreground-muted">
-        Indexing extracts project terminology and technology names for AssemblyAI. No source
-        snippets are sent.
+        {translator.message("mobile.settings.speech.privacy")}
       </Text>
     </View>
   );

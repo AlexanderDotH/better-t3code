@@ -3,6 +3,7 @@ import { LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { useActiveProjectTarget, type ActiveProjectTarget } from "~/hooks/useActiveProjectTarget";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -81,18 +82,19 @@ function SearchOptionButton(props: {
 }
 
 function EmptyContentSearchDialog() {
+  const translate = useInterfaceTranslator().message;
   return (
     <CommandPaletteContent
-      aria-label="Search project contents"
-      escapeLabel="Back"
-      footerActionLabel="Open file"
-      inputProps={{ disabled: true, placeholder: "Search project contents…" }}
+      aria-label={translate("browser.search.label")}
+      escapeLabel={translate("browser.files.back")}
+      footerActionLabel={translate("browser.files.openFile")}
+      inputProps={{ disabled: true, placeholder: translate("browser.search.placeholder") }}
       mode="none"
       panelClassName="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground"
       testId="project-content-search"
       value=""
     >
-      Open a project to search its files.
+      {translate("browser.files.openProjectToSearch")}
     </CommandPaletteContent>
   );
 }
@@ -102,6 +104,8 @@ function OpenContentSearchDialog(props: {
   readonly target: ActiveProjectTarget;
 }) {
   const { target } = props;
+  const translator = useInterfaceTranslator();
+  const translate = translator.message;
   const { resolvedTheme } = useTheme();
   const [query, setQuery] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
@@ -158,31 +162,41 @@ function OpenContentSearchDialog(props: {
   const fileCount = useMemo(() => new Set(matches.map((match) => match.path)).size, [matches]);
   const showSearchStatus =
     search.hasQuery || search.isPending || search.error !== null || search.invalidRegex;
+  const resultCount = translate("browser.search.resultCount", {
+    count: matches.length,
+    displayCount: `${translator.number(matches.length)}${search.truncated ? "+" : ""}`,
+  });
+  const resultFileCount = translate("browser.search.fileCount", {
+    count: fileCount,
+    displayCount: translator.number(fileCount),
+  });
 
   return (
     <CommandPaletteContent
-      aria-label={`Search file contents in ${target.projectName}`}
-      escapeLabel="Back"
-      footerActionLabel="Open file"
+      aria-label={translate("browser.search.projectLabel", { project: target.projectName })}
+      escapeLabel={translate("browser.files.back")}
+      footerActionLabel={translate("browser.files.openFile")}
       inputAccessory={
         <div className="absolute inset-e-2.5 top-1/2 flex shrink-0 -translate-y-1/2 items-center gap-0.5 rounded-md border bg-muted/30 p-0.5">
           <SearchOptionButton
             active={caseSensitive}
-            label="Match case"
+            label={translate("browser.search.matchCase")}
             onClick={() => setCaseSensitive((current) => !current)}
           >
-            Aa
+            {translate("browser.search.matchCaseToken")}
           </SearchOptionButton>
           <SearchOptionButton
             active={wholeWord}
-            label="Match whole word"
+            label={translate("browser.search.wholeWord")}
             onClick={() => setWholeWord((current) => !current)}
           >
-            <span className="underline decoration-2 underline-offset-2">ab</span>
+            <span className="underline decoration-2 underline-offset-2">
+              {translate("browser.search.wholeWordToken")}
+            </span>
           </SearchOptionButton>
           <SearchOptionButton
             active={useRegex}
-            label="Use regular expression"
+            label={translate("browser.search.regex")}
             onClick={() => setUseRegex((current) => !current)}
           >
             .*
@@ -191,7 +205,9 @@ function OpenContentSearchDialog(props: {
       }
       inputProps={{
         className: "pe-30",
-        placeholder: `Search in ${target.projectName}`,
+        placeholder: translate("browser.search.projectPlaceholder", {
+          project: target.projectName,
+        }),
         onKeyDown: (event) => {
           if (event.key === "ArrowDown" && matches.length > 0) {
             event.preventDefault();
@@ -225,14 +241,18 @@ function OpenContentSearchDialog(props: {
         <div className="flex h-9 shrink-0 items-center border-b px-3 text-xs text-muted-foreground">
           {search.isPending ? (
             <span className="flex items-center gap-2">
-              <LoaderCircle className="size-3.5 animate-spin" /> Searching…
+              <LoaderCircle className="size-3.5 animate-spin" />
+              {translate("browser.search.searching")}
             </span>
           ) : search.error ? (
             <span className="text-destructive">{search.error}</span>
           ) : search.invalidRegex ? (
-            <span className="text-destructive">Invalid regular expression</span>
+            <span className="text-destructive">{translate("browser.search.invalidRegex")}</span>
           ) : (
-            `${matches.length.toLocaleString()}${search.truncated ? "+" : ""} results in ${fileCount.toLocaleString()} files`
+            translate("browser.search.resultsInFiles", {
+              results: resultCount,
+              files: resultFileCount,
+            })
           )}
         </div>
       ) : null}
@@ -240,8 +260,8 @@ function OpenContentSearchDialog(props: {
       {matches.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">
           {search.hasQuery && !search.isPending && !search.error
-            ? "No results found."
-            : "Type to search across your project."}
+            ? translate("browser.search.noResults")
+            : translate("browser.search.typeToSearch")}
         </div>
       ) : (
         <ScrollArea className="min-h-0 flex-1" scrollFade>

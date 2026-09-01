@@ -216,4 +216,65 @@ describe("renderThreadTranscriptMarkdown", () => {
     expect(result.content).toContain("activity summary 0");
     expect(result.content).toContain("activity summary 128");
   });
+
+  it("exports fork provenance and frozen entry origins", () => {
+    const sourceThreadId = ThreadId.make("thread-source-export");
+    const historyOrigin = {
+      sourceThreadId,
+      sourceId: "message-source-export",
+      ordinal: 0,
+    };
+    const thread = makeThread({
+      fork: {
+        provenance: {
+          sourceThreadId,
+          sourceTitle: "Source export",
+          boundary: { kind: "message", messageId: MessageId.make("message-source-export") },
+          forkedAt: updatedAt,
+        },
+        workspace: {
+          spec: {
+            mode: "local",
+            baseBranch: null,
+            startFromOrigin: false,
+            runSetupScript: false,
+          },
+          status: "pending",
+          preparedAt: null,
+          lastError: null,
+        },
+        handoff: {
+          status: "pending",
+          historyInputChars: 12,
+          historyAttachmentCount: 0,
+          remainingInputChars: 100,
+          remainingAttachmentCount: 4,
+          completedAt: null,
+        },
+      },
+      messages: [
+        {
+          id: MessageId.make("message-fork-export"),
+          role: "assistant",
+          text: "Frozen answer",
+          turnId,
+          streaming: false,
+          createdAt,
+          updatedAt,
+          historyOrigin,
+        },
+      ],
+    });
+
+    const result = renderThreadTranscriptMarkdown({
+      thread,
+      project: makeProject(),
+      generatedAt: updatedAt,
+    });
+
+    expect(result.content).toContain('"sourceThreadId": "thread-source-export"');
+    expect(result.content).toContain('"sourceId": "message-source-export"');
+    expect(result.content).toContain('"ordinal": 0');
+    expect(result.content).toContain('"status": "pending"');
+  });
 });

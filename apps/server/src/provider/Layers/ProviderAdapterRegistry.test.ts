@@ -18,6 +18,11 @@ import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts
 import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+import {
+  makeInstanceHistorySyncSource,
+  makeUnsupportedProviderHistorySync,
+  NO_PROVIDER_HISTORY_SYNC_CAPABILITIES,
+} from "../Services/ProviderHistorySync.ts";
 import type * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 import * as ProviderAdapterRegistryLayer from "./ProviderAdapterRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -40,6 +45,7 @@ const fakeCodexAdapter: CodexAdapter.CodexAdapterShape = {
   hasSession: vi.fn(),
   readThread: vi.fn(),
   rollbackThread: vi.fn(),
+  uploadFeedback: vi.fn(),
   stopAll: vi.fn(),
   streamEvents: Stream.empty,
 };
@@ -124,6 +130,16 @@ const makeFakeInstance = (
       streamChanges: Stream.empty,
     },
     adapter,
+    historySync: makeUnsupportedProviderHistorySync({
+      source: makeInstanceHistorySyncSource({
+        driverKind,
+        instanceId: defaultInstanceIdForDriver(driverKind),
+        continuationKey: `${driverKind}:instance:${defaultInstanceIdForDriver(driverKind)}`,
+        displayName: driverKind,
+        capabilities: NO_PROVIDER_HISTORY_SYNC_CAPABILITIES,
+      }),
+      reason: "History sync is outside this adapter registry test.",
+    }),
     textGeneration: {} as unknown as TextGeneration.TextGeneration["Service"],
   };
 };

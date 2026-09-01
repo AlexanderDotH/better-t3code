@@ -54,6 +54,7 @@ type CachedRead =
       readonly path: string;
       readonly contents: string;
       readonly sourceTruncated: boolean;
+      readonly revision?: string | undefined;
     }
   | {
       readonly status: "error";
@@ -87,6 +88,7 @@ type MutableReadResult =
       lineEnd: number;
       text: string;
       truncated: boolean;
+      revision?: string | undefined;
     }
   | {
       status: "error";
@@ -202,6 +204,7 @@ function explicitReadResult(
     lineEnd,
     text: selected.join("\n"),
     truncated: read.sourceTruncated || rangeTruncated,
+    ...(read.sourceTruncated || read.revision === undefined ? {} : { revision: read.revision }),
   };
 }
 
@@ -359,6 +362,9 @@ export const make = Effect.gen(function* () {
                 path: read.relativePath,
                 contents: read.contents,
                 sourceTruncated: read.truncated,
+                ...(read.truncated || read.revision === undefined
+                  ? {}
+                  : { revision: read.revision }),
               }),
             ),
             Effect.catch((error) => mapReadFailure(relativePath, error)),

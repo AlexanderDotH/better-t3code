@@ -7,11 +7,13 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import { workspaceFileImageAtom } from "./workspace-file-image-cache";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 function ResolvedWorkspaceFileImagePreview(props: {
   readonly accessibilityLabel: string;
   readonly uri: string;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const [loadError, setLoadError] = useState<string | null>(null);
   const [fullScreenVisible, setFullScreenVisible] = useState(false);
   const imageSource = useMemo(
@@ -24,7 +26,9 @@ function ResolvedWorkspaceFileImagePreview(props: {
     <View className="relative flex-1 bg-subtle">
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Open full-screen preview of ${props.accessibilityLabel}`}
+        accessibilityLabel={translator.message("mobile.files.openImageFullscreen", {
+          label: props.accessibilityLabel,
+        })}
         disabled={loadError !== null}
         className="flex-1 p-4 active:bg-subtle-strong"
         onPress={() => setFullScreenVisible(true)}
@@ -36,14 +40,19 @@ function ResolvedWorkspaceFileImagePreview(props: {
           resizeMode="contain"
           onLoadStart={() => setLoadError(null)}
           onError={(event) => {
-            setLoadError(event.nativeEvent.error || "The image could not be rendered.");
+            setLoadError(
+              event.nativeEvent.error || translator.message("mobile.files.imageRenderFailed"),
+            );
           }}
         />
       </Pressable>
 
       {loadError !== null ? (
         <View className="absolute inset-0 items-center justify-center bg-card px-6">
-          <EmptyState title="Image unavailable" detail={loadError} />
+          <EmptyState
+            title={translator.message("mobile.files.imageUnavailable")}
+            detail={loadError}
+          />
         </View>
       ) : null}
 
@@ -63,6 +72,7 @@ function CachedWorkspaceFileImagePreview(props: {
   readonly accessibilityLabel: string;
   readonly uri: string;
 }) {
+  const translator = useMobileInterfaceTranslator();
   const imageAtom = useMemo(() => workspaceFileImageAtom(props.uri), [props.uri]);
   const imageResult = useAtomValue(imageAtom);
 
@@ -70,8 +80,8 @@ function CachedWorkspaceFileImagePreview(props: {
     return (
       <View className="flex-1 items-center justify-center bg-card px-6">
         <EmptyState
-          title="Image unavailable"
-          detail="The image could not be loaded into the local cache."
+          title={translator.message("mobile.files.imageUnavailable")}
+          detail={translator.message("mobile.files.imageCacheFailed")}
         />
       </View>
     );
@@ -81,7 +91,9 @@ function CachedWorkspaceFileImagePreview(props: {
     return (
       <View className="flex-1 items-center justify-center gap-3 bg-card px-6">
         <ActivityIndicator />
-        <Text className="text-center text-sm text-foreground-muted">Loading image...</Text>
+        <Text className="text-center text-sm text-foreground-muted">
+          {translator.message("mobile.files.loadingImage")}
+        </Text>
       </View>
     );
   }
@@ -98,12 +110,13 @@ export function WorkspaceFileImagePreview(props: {
   readonly accessibilityLabel: string;
   readonly uri: string | null;
 }) {
+  const translator = useMobileInterfaceTranslator();
   if (props.uri === null) {
     return (
       <View className="flex-1 items-center justify-center gap-3 bg-card px-6">
         <ActivityIndicator />
         <Text className="text-center text-sm text-foreground-muted">
-          Preparing image preview...
+          {translator.message("mobile.files.preparingImage")}
         </Text>
       </View>
     );

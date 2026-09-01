@@ -5,14 +5,17 @@ import {
   type ProviderInstanceId,
   type ThreadId,
   WorkspaceContextUnavailableError,
+  WorkspaceEditError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-export type McpCapability = "preview" | "workspace" | "coordination";
+export type McpCapability = "preview" | "workspace" | "workspace-write" | "coordination";
 
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
+  /** Authenticated runtime thread that owns this MCP credential. */
+  readonly ownerThreadId?: ThreadId;
   readonly threadId: ThreadId;
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;
@@ -48,6 +51,16 @@ export const requireWorkspaceMcpCapability = Effect.fn("mcp.requireWorkspaceCapa
       return yield* new WorkspaceContextUnavailableError({
         reason: "credential_not_authorized",
       });
+    }
+    return invocation;
+  },
+);
+
+export const requireWorkspaceWriteMcpCapability = Effect.fn("mcp.requireWorkspaceWriteCapability")(
+  function* () {
+    const invocation = yield* McpInvocationContext;
+    if (!invocation.capabilities.has("workspace-write")) {
+      return yield* new WorkspaceEditError({ reason: "credential_not_authorized" });
     }
     return invocation;
   },

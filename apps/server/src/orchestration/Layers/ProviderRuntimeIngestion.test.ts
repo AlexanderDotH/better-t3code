@@ -34,7 +34,7 @@ import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { it as effectIt } from "@effect/vitest";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
@@ -43,6 +43,7 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
+import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
@@ -107,14 +108,24 @@ function isLegacyTurnCompletedEvent(
   );
 }
 
-function createProviderServiceHarness() {
+function createProviderServiceHarness(options?: {
+  readonly manualCompaction?: boolean;
+  readonly compactThreadEffect?: ProviderServiceShape["compactThread"];
+}) {
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
   const runtimeSessions: ProviderSession[] = [];
 
   const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
+  const compactThread = vi.fn<ProviderServiceShape["compactThread"]>(
+    (threadId, runtimeSessionId) =>
+      options?.compactThreadEffect?.(threadId, runtimeSessionId) ?? Effect.void,
+  );
   const service: ProviderServiceShape = {
     startSession: () => unsupported(),
+    forkSession: () => unsupported(),
+    startTransientSession: () => unsupported(),
     sendTurn: () => unsupported(),
+    compactThread,
     interruptTurn: () => unsupported(),
     resolveAbortTarget: () => unsupported(),
     interruptAbortTarget: () => unsupported(),
@@ -123,8 +134,14 @@ function createProviderServiceHarness() {
     respondToRequest: () => unsupported(),
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
+    stopTransientSession: () => unsupported(),
     listSessions: () => Effect.succeed([...runtimeSessions]),
-    getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session", mcp: "unsupported" }),
+    getCapabilities: () =>
+      Effect.succeed({
+        sessionModelSwitch: "in-session",
+        mcp: "unsupported",
+        manualCompaction: options?.manualCompaction === true,
+      }),
     getInstanceInfo: (instanceId) => {
       const driverKind = ProviderDriverKind.make(String(instanceId));
       return Effect.succeed({
@@ -139,6 +156,7 @@ function createProviderServiceHarness() {
       });
     },
     rollbackConversation: () => unsupported(),
+    uploadFeedback: () => unsupported(),
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
     },
@@ -176,6 +194,7 @@ function createProviderServiceHarness() {
     service,
     emit,
     setSession,
+    compactThread,
   };
 }
 
@@ -250,10 +269,12 @@ describe("ProviderRuntimeIngestion", () => {
   async function createHarness(options?: {
     serverSettings?: Partial<ServerSettings>;
     threadTitle?: string;
+    manualCompaction?: boolean;
+    compactThreadEffect?: ProviderServiceShape["compactThread"];
   }) {
     const workspaceRoot = makeTempDir("t3-provider-project-");
     NodeFS.mkdirSync(NodePath.join(workspaceRoot, ".git"));
-    const provider = createProviderServiceHarness();
+    const provider = createProviderServiceHarness(options);
     const abortSettlements: SettleCooperativeTurnAbortInput[] = [];
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
@@ -366,6 +387,7 @@ describe("ProviderRuntimeIngestion", () => {
         ),
       emit: provider.emit,
       setProviderSession: provider.setSession,
+      compactThread: provider.compactThread,
       abortSettlements,
       drain,
       runEffect,
@@ -3925,6 +3947,259 @@ describe("ProviderRuntimeIngestion", () => {
       toolUses: 25,
       durationMs: 43_567,
     });
+  });
+
+  it("compacts at 50 percent only after the entire subagent group settles", async () => {
+    const harness = await createHarness({ manualCompaction: true });
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-milestone-compaction");
+    const runtimeSessionId = RuntimeSessionId.make("runtime-milestone-compaction");
+    const subagentId = asSubagentId("codex:milestone-child");
+    const startedAt = "2026-01-01T00:01:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-compaction-running"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeSessionId,
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          abortState: null,
+          lastError: null,
+          updatedAt: startedAt,
+        },
+        createdAt: startedAt,
+      }),
+    );
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      runtimeSessionId,
+      activeTurnId: turnId,
+      createdAt: startedAt,
+      updatedAt: startedAt,
+    });
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-compaction-usage"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeSessionId,
+      createdAt: startedAt,
+      threadId,
+      payload: {
+        usage: {
+          usedTokens: 60_000,
+          maxTokens: 100_000,
+          inputTokens: 55_000,
+          cachedInputTokens: 40_000,
+          outputTokens: 5_000,
+          reasoningOutputTokens: 1_000,
+          compactsAutomatically: true,
+        },
+      },
+    });
+    harness.emit({
+      type: "subagent.state.changed",
+      eventId: asEventId("evt-compaction-child-running"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeSessionId,
+      createdAt: startedAt,
+      threadId,
+      subagentId,
+      payload: { subagentId, state: "running" },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-compaction-root-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeSessionId,
+      createdAt: "2026-01-01T00:01:01.000Z",
+      threadId,
+      turnId,
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+    expect(harness.compactThread).not.toHaveBeenCalled();
+
+    harness.emit({
+      type: "subagent.state.changed",
+      eventId: asEventId("evt-compaction-child-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeSessionId,
+      createdAt: "2026-01-01T00:01:02.000Z",
+      threadId,
+      subagentId,
+      payload: { subagentId, state: "completed" },
+    });
+    await harness.drain();
+    expect(harness.compactThread).toHaveBeenCalledTimes(1);
+    expect(harness.compactThread).toHaveBeenCalledWith(threadId, runtimeSessionId);
+  });
+
+  it("does not compact a completed root turn while an approval is pending", async () => {
+    const harness = await createHarness({ manualCompaction: true });
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-pending-approval-compaction");
+    const runtimeSessionId = RuntimeSessionId.make("runtime-pending-approval-compaction");
+    const startedAt = "2026-01-01T00:01:30.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-pending-approval-compaction-running"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeSessionId,
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          abortState: null,
+          lastError: null,
+          updatedAt: startedAt,
+        },
+        createdAt: startedAt,
+      }),
+    );
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      runtimeSessionId,
+      activeTurnId: turnId,
+      createdAt: startedAt,
+      updatedAt: startedAt,
+    });
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-pending-approval-compaction-usage"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeSessionId,
+      createdAt: startedAt,
+      threadId,
+      payload: { usage: { usedTokens: 60_000, maxTokens: 100_000 } },
+    });
+    harness.emit({
+      type: "request.opened",
+      eventId: asEventId("evt-pending-approval-compaction-request"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeSessionId,
+      createdAt: startedAt,
+      threadId,
+      turnId,
+      requestId: ApprovalRequestId.make("req-pending-approval-compaction"),
+      payload: {
+        requestType: "command_execution_approval",
+        detail: "pwd",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-pending-approval-compaction-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeSessionId,
+      createdAt: "2026-01-01T00:01:31.000Z",
+      threadId,
+      turnId,
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    expect(harness.compactThread).not.toHaveBeenCalled();
+  });
+
+  it("keeps a completed turn usable when milestone compaction fails", async () => {
+    const compactFailure = new ProviderAdapterRequestError({
+      provider: "codex",
+      method: "thread/compact/start",
+      detail: "injected compact failure",
+    });
+    const harness = await createHarness({
+      manualCompaction: true,
+      compactThreadEffect: () => Effect.fail(compactFailure),
+    });
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-failed-compaction");
+    const runtimeSessionId = RuntimeSessionId.make("runtime-failed-compaction");
+    const startedAt = "2026-01-01T00:02:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-failed-compaction-running"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeSessionId,
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          abortState: null,
+          lastError: null,
+          updatedAt: startedAt,
+        },
+        createdAt: startedAt,
+      }),
+    );
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      runtimeSessionId,
+      activeTurnId: turnId,
+      createdAt: startedAt,
+      updatedAt: startedAt,
+    });
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-failed-compaction-usage"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeSessionId,
+      createdAt: startedAt,
+      threadId,
+      payload: { usage: { usedTokens: 50_000, maxTokens: 100_000 } },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-failed-compaction-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeSessionId,
+      createdAt: "2026-01-01T00:02:01.000Z",
+      threadId,
+      turnId,
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    expect(harness.compactThread).toHaveBeenCalledTimes(1);
+    const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(thread?.session).toMatchObject({ status: "ready", activeTurnId: null });
   });
 
   it("projects compacted thread state into context compaction activities", async () => {

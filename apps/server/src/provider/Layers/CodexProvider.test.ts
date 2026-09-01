@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { CODEX_CONTEXT_WINDOW_DESCRIPTOR } from "@t3tools/shared/model";
+import { createCodexContextWindowDescriptor } from "@t3tools/shared/model";
 
 import {
   applyPreferredCodexDefaultModel,
@@ -10,9 +10,11 @@ import {
 
 const TEST_CONTEXT_WINDOW = {
   defaultTokens: 272_000,
-  maxTokens: 1_048_576,
+  maxTokens: 872_000,
   effectivePercent: 95,
 } as const;
+
+const TEST_CONTEXT_WINDOW_DESCRIPTOR = createCodexContextWindowDescriptor(TEST_CONTEXT_WINDOW);
 
 it("extracts bounded context metadata from Codex's raw model catalog", () => {
   assert.deepStrictEqual(
@@ -121,7 +123,7 @@ it("maps current Codex model capability fields", () => {
       ],
       currentValue: "flex",
     },
-    CODEX_CONTEXT_WINDOW_DESCRIPTOR,
+    TEST_CONTEXT_WINDOW_DESCRIPTOR,
   ]);
 });
 
@@ -164,7 +166,7 @@ it("uses standard routing when the catalog has no default service tier", () => {
       ],
       currentValue: "default",
     },
-    CODEX_CONTEXT_WINDOW_DESCRIPTOR,
+    TEST_CONTEXT_WINDOW_DESCRIPTOR,
   ]);
 });
 
@@ -197,7 +199,7 @@ it("canonicalizes the legacy fast catalog tier to priority", () => {
       ],
       currentValue: "priority",
     },
-    CODEX_CONTEXT_WINDOW_DESCRIPTOR,
+    TEST_CONTEXT_WINDOW_DESCRIPTOR,
   ]);
 });
 

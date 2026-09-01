@@ -22,6 +22,7 @@ import {
 import type { ElementType } from "react";
 
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
@@ -81,6 +82,7 @@ export function PullRequestSearchInput({
   busy?: boolean;
   onChange: (value: string) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <InputGroup className="min-w-0 flex-1 **:[input]:h-9 sm:**:[input]:h-8">
       <InputGroupAddon>
@@ -90,8 +92,8 @@ export function PullRequestSearchInput({
         type="search"
         value={value}
         onChange={(event) => onChange(event.currentTarget.value)}
-        placeholder="Search pull requests, or label:bug"
-        aria-label="Search pull requests"
+        placeholder={translate("pullRequest.list.searchPlaceholder")}
+        aria-label={translate("pullRequest.search")}
       />
     </InputGroup>
   );
@@ -120,24 +122,32 @@ export const pullRequestProjectKey = (project: {
 }) => JSON.stringify([project.environmentId, project.id]);
 
 const DRAFT_OPTIONS = [
-  { value: UNFILTERED_VALUE, label: "All", Icon: LayersIcon },
-  { value: "only", label: "Drafts only", Icon: GitPullRequestDraftIcon },
-  { value: "hide", label: "Hide drafts", Icon: EyeOffIcon },
-] as const satisfies ReadonlyArray<PullRequestFilterOption<string>>;
+  { value: UNFILTERED_VALUE, labelKey: "pullRequest.filter.all", Icon: LayersIcon },
+  { value: "only", labelKey: "pullRequest.filter.draft.only", Icon: GitPullRequestDraftIcon },
+  { value: "hide", labelKey: "pullRequest.filter.draft.hide", Icon: EyeOffIcon },
+] as const;
 
 const REVIEW_OPTIONS = [
-  { value: UNFILTERED_VALUE, label: "All", Icon: LayersIcon },
-  { value: "approved", label: "Approved", Icon: CircleCheckIcon },
-  { value: "changes-requested", label: "Changes requested", Icon: CircleXIcon },
-  { value: "review-required", label: "Review required", Icon: CircleDashedIcon },
-  { value: "none", label: "No reviews", Icon: CircleSlashIcon },
-] as const satisfies ReadonlyArray<PullRequestFilterOption<string>>;
+  { value: UNFILTERED_VALUE, labelKey: "pullRequest.filter.all", Icon: LayersIcon },
+  { value: "approved", labelKey: "pullRequest.filter.review.approved", Icon: CircleCheckIcon },
+  {
+    value: "changes-requested",
+    labelKey: "pullRequest.filter.review.changesRequested",
+    Icon: CircleXIcon,
+  },
+  {
+    value: "review-required",
+    labelKey: "pullRequest.filter.review.required",
+    Icon: CircleDashedIcon,
+  },
+  { value: "none", labelKey: "pullRequest.filter.review.none", Icon: CircleSlashIcon },
+] as const;
 
 const CHECKS_OPTIONS = [
-  { value: UNFILTERED_VALUE, label: "All", Icon: LayersIcon },
-  { value: "passing", label: "Passing", Icon: CircleCheckIcon },
-  { value: "failing", label: "Failing", Icon: CircleXIcon },
-] as const satisfies ReadonlyArray<PullRequestFilterOption<string>>;
+  { value: UNFILTERED_VALUE, labelKey: "pullRequest.filter.all", Icon: LayersIcon },
+  { value: "passing", labelKey: "pullRequest.filter.checks.passing", Icon: CircleCheckIcon },
+  { value: "failing", labelKey: "pullRequest.filter.checks.failing", Icon: CircleXIcon },
+] as const;
 
 function PullRequestFilterRadioGroup<Value extends string>({
   label,
@@ -154,7 +164,7 @@ function PullRequestFilterRadioGroup<Value extends string>({
     <MenuRadioGroup
       value={value}
       onValueChange={(next) => {
-        if (next !== value) onChange(next as Value);
+        applyPullRequestFilterSelection(value, next as Value, onChange);
       }}
     >
       <MenuGroupLabel>{label}</MenuGroupLabel>
@@ -186,6 +196,52 @@ function PullRequestFilterRadioGroup<Value extends string>({
       })}
     </MenuRadioGroup>
   );
+}
+
+export function applyPullRequestFilterSelection<Value extends string>(
+  current: Value,
+  next: Value,
+  onChange: (value: Value) => void,
+): void {
+  if (next !== current) onChange(next);
+}
+
+export function updatePullRequestFilters(
+  filters: PullRequestListFilters,
+  key: keyof PullRequestListFilters,
+  value: string,
+): PullRequestListFilters {
+  return Object.fromEntries(
+    Object.entries({ ...filters, [key]: value === UNFILTERED_VALUE ? undefined : value }).filter(
+      ([, held]) => held !== undefined,
+    ),
+  ) as PullRequestListFilters;
+}
+
+export function applyPullRequestProjectSelection({
+  next,
+  projects,
+  projectId,
+  projectEnvironmentId,
+  onProject,
+}: {
+  next: string;
+  projects: ReadonlyArray<{ readonly id: ProjectId; readonly environmentId: EnvironmentId }>;
+  projectId: ProjectId | undefined;
+  projectEnvironmentId: EnvironmentId | undefined;
+  onProject: (projectId: ProjectId | undefined, environmentId: EnvironmentId | undefined) => void;
+}): void {
+  if (next === ALL_PROJECTS_VALUE) {
+    if (projectId !== undefined) onProject(undefined, undefined);
+    return;
+  }
+  const project = projects.find((candidate) => pullRequestProjectKey(candidate) === next);
+  if (
+    project !== undefined &&
+    (project.id !== projectId || project.environmentId !== projectEnvironmentId)
+  ) {
+    onProject(project.id, project.environmentId);
+  }
 }
 
 export function PullRequestFiltersMenu({
@@ -254,6 +310,19 @@ export function PullRequestFiltersMenu({
   /** The environment comes with the project id, since picking a row picks a specific server's copy of it. */
   onProject: (projectId: ProjectId | undefined, environmentId: EnvironmentId | undefined) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
+  const draftOptions = DRAFT_OPTIONS.map(({ labelKey, ...option }) => ({
+    ...option,
+    label: translate(labelKey),
+  }));
+  const reviewOptions = REVIEW_OPTIONS.map(({ labelKey, ...option }) => ({
+    ...option,
+    label: translate(labelKey),
+  }));
+  const checksOptions = CHECKS_OPTIONS.map(({ labelKey, ...option }) => ({
+    ...option,
+    label: translate(labelKey),
+  }));
   const filtered =
     state !== "open" ||
     involvement !== "all" ||
@@ -261,16 +330,6 @@ export function PullRequestFiltersMenu({
     server !== undefined ||
     projectId !== undefined ||
     Object.keys(filters).length > 0;
-  /**
-   * Rebuilt rather than spread so an unfiltered group leaves the record instead of lingering in
-   * it as an explicit `undefined`, which the listing input does not accept.
-   */
-  const withFilter = (key: keyof PullRequestListFilters, value: string): PullRequestListFilters =>
-    Object.fromEntries(
-      Object.entries({ ...filters, [key]: value === UNFILTERED_VALUE ? undefined : value }).filter(
-        ([, held]) => held !== undefined,
-      ),
-    ) as PullRequestListFilters;
   return (
     <Menu>
       <MenuTrigger
@@ -279,7 +338,7 @@ export function PullRequestFiltersMenu({
             className={cn("relative", filtered && "[--control-icon-color:currentColor]")}
             size="icon"
             variant="outline"
-            aria-label="Filter pull requests"
+            aria-label={translate("pullRequest.filter.button")}
           />
         }
       >
@@ -293,44 +352,44 @@ export function PullRequestFiltersMenu({
       </MenuTrigger>
       <MenuPopup align="end" side="bottom" className="min-w-56">
         <PullRequestFilterRadioGroup
-          label="State"
+          label={translate("pullRequest.filter.stateGroup")}
           value={state}
           options={stateOptions}
           onChange={onState}
         />
         <MenuSeparator />
         <PullRequestFilterRadioGroup
-          label="Involvement"
+          label={translate("pullRequest.filter.involvementGroup")}
           value={involvement}
           options={involvementOptions}
           onChange={onInvolvement}
         />
         <MenuSeparator />
         <PullRequestFilterRadioGroup
-          label="Draft"
+          label={translate("pullRequest.filter.draft")}
           value={filters.draft ?? UNFILTERED_VALUE}
-          options={DRAFT_OPTIONS}
-          onChange={(next) => onFilters(withFilter("draft", next))}
+          options={draftOptions}
+          onChange={(next) => onFilters(updatePullRequestFilters(filters, "draft", next))}
         />
         <MenuSeparator />
         <PullRequestFilterRadioGroup
-          label="Review"
+          label={translate("pullRequest.filter.review")}
           value={filters.review ?? UNFILTERED_VALUE}
-          options={REVIEW_OPTIONS}
-          onChange={(next) => onFilters(withFilter("review", next))}
+          options={reviewOptions}
+          onChange={(next) => onFilters(updatePullRequestFilters(filters, "review", next))}
         />
         <MenuSeparator />
         <PullRequestFilterRadioGroup
-          label="Checks"
+          label={translate("pullRequest.filter.checks")}
           value={filters.checks ?? UNFILTERED_VALUE}
-          options={CHECKS_OPTIONS}
-          onChange={(next) => onFilters(withFilter("checks", next))}
+          options={checksOptions}
+          onChange={(next) => onFilters(updatePullRequestFilters(filters, "checks", next))}
         />
         {hostOptions.length > 2 ? (
           <>
             <MenuSeparator />
             <PullRequestFilterRadioGroup
-              label="Host"
+              label={translate("pullRequest.filter.hostGroup")}
               value={host ?? ALL_HOSTS_VALUE}
               options={hostOptions}
               onChange={(next) => onHost(next === ALL_HOSTS_VALUE ? undefined : next)}
@@ -341,7 +400,7 @@ export function PullRequestFiltersMenu({
           <>
             <MenuSeparator />
             <PullRequestFilterRadioGroup
-              label="Server"
+              label={translate("pullRequest.filter.server")}
               value={server ?? ALL_SERVERS_VALUE}
               options={serverOptions}
               onChange={(next) =>
@@ -357,27 +416,21 @@ export function PullRequestFiltersMenu({
               ? ALL_PROJECTS_VALUE
               : pullRequestProjectKey({ id: projectId, environmentId: projectEnvironmentId })
           }
-          onValueChange={(next) => {
-            if (next === ALL_PROJECTS_VALUE) {
-              if (projectId !== undefined) onProject(undefined, undefined);
-              return;
-            }
-            // The value carries both halves, since the id alone cannot tell two servers' rows
-            // apart once they share one.
-            const project = projects.find((candidate) => pullRequestProjectKey(candidate) === next);
-            if (
-              project !== undefined &&
-              (project.id !== projectId || project.environmentId !== projectEnvironmentId)
-            ) {
-              onProject(project.id, project.environmentId);
-            }
-          }}
+          onValueChange={(next) =>
+            applyPullRequestProjectSelection({
+              next,
+              projects,
+              projectId,
+              projectEnvironmentId,
+              onProject,
+            })
+          }
         >
-          <MenuGroupLabel>Project</MenuGroupLabel>
+          <MenuGroupLabel>{translate("pullRequest.filter.project")}</MenuGroupLabel>
           <MenuRadioItem value={ALL_PROJECTS_VALUE}>
             <span className="flex min-w-0 items-center gap-2">
               <LayersIcon aria-hidden className="size-3.5" />
-              All projects
+              {translate("pullRequest.filter.allProjects")}
             </span>
           </MenuRadioItem>
           {/* The ones that can be chosen first: a list that opens with three disabled rows reads
@@ -407,7 +460,7 @@ export function PullRequestFiltersMenu({
                     <span className="min-w-0 flex-1 truncate">{project.title}</span>
                     {reason === undefined ? null : (
                       <span className="shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-[10px] font-medium text-amber-600 dark:text-amber-400/90">
-                        Unavailable
+                        {translate("pullRequest.filter.unavailable")}
                       </span>
                     )}
                   </span>

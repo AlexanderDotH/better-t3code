@@ -2,6 +2,7 @@ import { UserButton, useAuth } from "@clerk/react";
 import { LogInIcon, ServerIcon, SmartphoneIcon } from "lucide-react";
 
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { MobileClientsUserProfilePage } from "./MobileClientsUserProfilePage";
 import { T3ConnectUserProfilePage } from "./T3ConnectUserProfilePage";
@@ -21,6 +22,7 @@ export function T3ConnectSidebarAvatar() {
 
 function ConfiguredT3ConnectSidebarAvatar() {
   const { isLoaded, isSignedIn } = useAuth();
+  const translator = useInterfaceTranslator();
 
   if (!isLoaded || !isSignedIn) return null;
 
@@ -34,14 +36,14 @@ function ConfiguredT3ConnectSidebarAvatar() {
       }}
     >
       <UserButton.UserProfilePage
-        label="Mobile clients"
+        label={translator.message("mobileClients.title")}
         labelIcon={<SmartphoneIcon className="size-4" />}
         url="mobile-clients"
       >
         <MobileClientsUserProfilePage />
       </UserButton.UserProfilePage>
       <UserButton.UserProfilePage
-        label="T3 Connect"
+        label={translator.message("t3Connect.label")}
         labelIcon={<ServerIcon className="size-4" />}
         url="t3-connect"
       >
@@ -54,6 +56,7 @@ function ConfiguredT3ConnectSidebarAvatar() {
 function ConfiguredT3ConnectSidebarSignIn() {
   const { isLoaded, isSignedIn } = useAuth();
   const openAuthPrompt = useT3ConnectAuthPrompt();
+  const translator = useInterfaceTranslator();
 
   if (!isLoaded || isSignedIn) return null;
 
@@ -62,7 +65,7 @@ function ConfiguredT3ConnectSidebarSignIn() {
       <SidebarMenuItem>
         <SidebarMenuButton onClick={openAuthPrompt}>
           <LogInIcon />
-          <span>Sign in to T3 Connect</span>
+          <span>{translator.message("t3Connect.signIn")}</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>

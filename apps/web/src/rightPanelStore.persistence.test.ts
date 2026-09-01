@@ -60,7 +60,7 @@ describe("rightPanelStore persisted-state hydration", () => {
       },
     });
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}")).toMatchObject({
-      version: 12,
+      version: 13,
     });
   });
 });

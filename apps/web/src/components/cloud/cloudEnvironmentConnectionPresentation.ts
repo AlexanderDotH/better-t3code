@@ -1,7 +1,5 @@
-import {
-  connectionStatusText,
-  type EnvironmentConnectionPresentation,
-} from "@t3tools/client-runtime/connection";
+import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 
 export interface SavedCloudEnvironmentConnectionPresentation {
   readonly buttonLabel: string;
@@ -16,42 +14,51 @@ export interface SavedCloudEnvironmentConnectionPresentation {
  */
 export function presentSavedCloudEnvironmentConnection(
   connection: EnvironmentConnectionPresentation,
+  translator: InterfaceTranslator,
 ): SavedCloudEnvironmentConnectionPresentation {
   switch (connection.phase) {
     case "connected":
       return {
-        buttonLabel: "Connected",
-        statusText: connectionStatusText(connection),
+        buttonLabel: translator.message("cloud.connection.connected"),
+        statusText: translator.message("cloud.connection.connected"),
         tone: "connected",
       };
     case "connecting":
       return {
-        buttonLabel: "Connecting…",
-        statusText: connectionStatusText(connection),
+        buttonLabel: translator.message("cloud.connection.connecting"),
+        statusText: translator.message("cloud.connection.connecting"),
         tone: "connecting",
       };
     case "reconnecting":
       return {
-        buttonLabel: "Reconnecting…",
-        statusText: connectionStatusText(connection),
+        buttonLabel: translator.message("cloud.connection.reconnecting"),
+        statusText:
+          connection.error === null
+            ? translator.message("cloud.connection.reconnecting")
+            : translator.message("cloud.connection.reconnectingReason", {
+                error: connection.error,
+              }),
         tone: "connecting",
       };
     case "error":
       return {
-        buttonLabel: "Connection failed",
-        statusText: connectionStatusText(connection),
+        buttonLabel: translator.message("cloud.connection.failed"),
+        statusText:
+          connection.error === null
+            ? translator.message("cloud.connection.failed")
+            : translator.message("cloud.connection.failedReason", { error: connection.error }),
         tone: "error",
       };
     case "offline":
       return {
-        buttonLabel: "Offline",
-        statusText: connectionStatusText(connection),
+        buttonLabel: translator.message("cloud.connection.offline"),
+        statusText: translator.message("cloud.connection.offline"),
         tone: "idle",
       };
     case "available":
       return {
-        buttonLabel: "Not connected",
-        statusText: connectionStatusText(connection),
+        buttonLabel: translator.message("cloud.connection.notConnected"),
+        statusText: translator.message("cloud.connection.available"),
         tone: "idle",
       };
   }

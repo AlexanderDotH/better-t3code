@@ -75,6 +75,21 @@ export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boo
   return entry.enabled && entry.isAvailable && entry.status === "ready";
 }
 
+/**
+ * Whether the picker can safely expose an instance's model catalog.
+ *
+ * A provider can be unable to start turns while still having everything the
+ * picker needs to finish setup. OpenRouter uses that state after authentication
+ * when its catalog is loaded but no valid default model is configured yet.
+ * Keep that catalog browsable without weakening the stricter turn-ready state.
+ */
+export function isProviderInstancePickerBrowsable(entry: ProviderInstanceEntry): boolean {
+  if (!entry.enabled || !entry.isAvailable) return false;
+  if (entry.status === "ready") return true;
+  if (entry.status !== "warning" || entry.snapshot.auth.status !== "authenticated") return false;
+  return entry.models.some((model) => model.isSelectable !== false);
+}
+
 /** Picker rails contain configured, enabled instances only. */
 export function isProviderInstancePickerVisible(entry: ProviderInstanceEntry): boolean {
   return entry.enabled;
@@ -323,10 +338,11 @@ export function getDefaultProviderInstanceModel(
 ): string | undefined {
   const entry = getProviderInstanceEntry(providers, instanceId);
   if (!entry) return undefined;
+  const selectableModels = entry.models.filter((model) => model.isSelectable !== false);
   return (
-    entry.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
-    entry.models.find((model) => !model.isCustom)?.slug ??
-    entry.models[0]?.slug ??
+    selectableModels.find((model) => model.isDefault && !model.isCustom)?.slug ??
+    selectableModels.find((model) => !model.isCustom)?.slug ??
+    selectableModels[0]?.slug ??
     DEFAULT_MODEL_BY_PROVIDER[entry.driverKind]
   );
 }

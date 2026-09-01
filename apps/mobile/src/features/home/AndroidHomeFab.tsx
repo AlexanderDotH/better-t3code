@@ -3,11 +3,12 @@ import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/AppSymbol";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { getAndroidHomeFabLayout } from "./homeContentInsets";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 /**
- * Android-only wrapper that overlays a bottom-right new-task FAB on the home
- * screen. Other platforms render children unchanged.
+ * Android-only wrapper that overlays a bottom-right new-task FAB on a thread
+ * list. Other platforms render children unchanged.
  */
 export function AndroidHomeFabLayout(props: {
   readonly onStartNewTask: () => void;
@@ -25,24 +26,34 @@ function AndroidHomeFab(props: {
   readonly children: ReactNode;
 }) {
   const insets = useSafeAreaInsets();
-  const primaryForegroundColor = useThemeColor("--color-primary-foreground");
-
+  const translator = useMobileInterfaceTranslator();
+  const layout = getAndroidHomeFabLayout(insets.bottom);
   return (
     <View className="flex-1">
       {props.children}
       <Pressable
-        accessibilityLabel="New task"
+        accessibilityLabel={translator.message("mobile.navigation.newTask")}
+        accessibilityHint={translator.message("mobile.navigation.newTaskHint")}
         accessibilityRole="button"
-        onPress={props.onStartNewTask}
-        className="absolute right-5 size-14 items-center justify-center rounded-full bg-primary shadow-lg"
-        style={{
-          bottom: Math.max(insets.bottom, 16) + 16,
+        android_ripple={{
+          color: "rgba(255, 255, 255, 0.22)",
+          foreground: true,
+          radius: layout.buttonSize / 2,
         }}
+        onPress={props.onStartNewTask}
+        className="absolute right-5 items-center justify-center overflow-hidden rounded-full bg-primary"
+        style={({ pressed }) => ({
+          bottom: layout.buttonBottom,
+          elevation: pressed ? 4 : 8,
+          height: layout.buttonSize,
+          transform: [{ scale: pressed ? 0.97 : 1 }],
+          width: layout.buttonSize,
+        })}
       >
         <SymbolView
           name="square.and.pencil"
           size={22}
-          tintColor={primaryForegroundColor}
+          tintColorClassName={"accent-primary-foreground"}
           type="monochrome"
         />
       </Pressable>

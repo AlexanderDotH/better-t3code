@@ -13,6 +13,19 @@ describe("buildModelPickerSearchText", () => {
       }),
     ).toBe("claude opus 4.7 github copilot opencode opencode");
   });
+
+  it("indexes an exact model slug and its vendor prefix", () => {
+    const model = {
+      driverKind: "openrouter",
+      providerDisplayName: "OpenRouter",
+      name: "Kimi K3",
+      slug: "moonshotai/kimi-k3",
+    };
+
+    expect(buildModelPickerSearchText(model)).toContain("moonshotai/kimi-k3");
+    expect(scoreModelPickerSearch(model, "moonshotai")).not.toBeNull();
+    expect(scoreModelPickerSearch(model, "moonshotai/kimi-k3")).not.toBeNull();
+  });
 });
 
 describe("scoreModelPickerSearch", () => {

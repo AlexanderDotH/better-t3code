@@ -2,7 +2,14 @@ import type { ServerConfig } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import type { ConnectionCatalogEntry } from "./catalog.ts";
-import type { NetworkStatus, SupervisorConnectionState } from "./model.ts";
+import type {
+  ConnectionAttemptError,
+  ConnectionAttemptStage,
+  ConnectionBlockedReason,
+  ConnectionTransientReason,
+  NetworkStatus,
+  SupervisorConnectionState,
+} from "./model.ts";
 
 export type EnvironmentConnectionPhase =
   | "available"
@@ -12,8 +19,37 @@ export type EnvironmentConnectionPhase =
   | "connected"
   | "error";
 
+export type EnvironmentConnectionFailure =
+  | {
+      readonly kind: "transient";
+      readonly reason: ConnectionTransientReason;
+      readonly detail: string;
+      readonly traceId: string | null;
+    }
+  | {
+      readonly kind: "blocked";
+      readonly reason: ConnectionBlockedReason;
+      readonly detail: string;
+      readonly traceId: string | null;
+    };
+
+export type EnvironmentConnectionRetry =
+  | {
+      readonly mode: "none" | "manual";
+      readonly at: null;
+    }
+  | {
+      readonly mode: "automatic";
+      readonly at: number | null;
+    };
+
 export interface EnvironmentConnectionPresentation {
   readonly phase: EnvironmentConnectionPhase;
+  readonly network: NetworkStatus;
+  readonly stage: ConnectionAttemptStage | null;
+  readonly attempt: number;
+  readonly failure: EnvironmentConnectionFailure | null;
+  readonly retry: EnvironmentConnectionRetry;
   readonly error: string | null;
   readonly traceId: string | null;
 }
@@ -24,38 +60,82 @@ export interface EnvironmentPresentation {
   readonly serverConfig: ServerConfig | null;
 }
 
-export function presentConnectionState(
-  state: SupervisorConnectionState,
-): EnvironmentConnectionPresentation {
-  switch (state.phase) {
-    case "available":
-      return { phase: "available", error: null, traceId: null };
-    case "offline":
-      return { phase: "offline", error: null, traceId: null };
-    case "connecting":
+function presentConnectionFailure(
+  failure: ConnectionAttemptError | null,
+): EnvironmentConnectionFailure | null {
+  if (failure === null) return null;
+  switch (failure._tag) {
+    case "ConnectionTransientError":
       return {
-        phase: state.attempt <= 1 && state.lastFailure === null ? "connecting" : "reconnecting",
-        error: state.lastFailure?.message ?? null,
-        traceId: state.lastFailure?.traceId ?? null,
+        kind: "transient",
+        reason: failure.reason,
+        detail: failure.detail,
+        traceId: failure.traceId ?? null,
       };
-    case "connected":
-      return { phase: "connected", error: null, traceId: null };
-    case "backoff":
+    case "ConnectionBlockedError":
       return {
-        phase: "reconnecting",
-        error: state.lastFailure?.message ?? null,
-        traceId: state.lastFailure?.traceId ?? null,
-      };
-    case "blocked":
-      return {
-        phase: "error",
-        error: state.lastFailure?.message ?? null,
-        traceId: state.lastFailure?.traceId ?? null,
+        kind: "blocked",
+        reason: failure.reason,
+        detail: failure.detail,
+        traceId: failure.traceId ?? null,
       };
   }
 }
 
-export function connectionStatusText(connection: EnvironmentConnectionPresentation): string {
+function presentConnectionRetry(state: SupervisorConnectionState): EnvironmentConnectionRetry {
+  if (state.phase === "backoff") {
+    return { mode: "automatic", at: state.retryAt };
+  }
+  if (state.phase === "connecting" && state.lastFailure?._tag === "ConnectionTransientError") {
+    return { mode: "automatic", at: null };
+  }
+  if (state.phase === "blocked") {
+    return { mode: "manual", at: null };
+  }
+  return { mode: "none", at: null };
+}
+
+export function presentConnectionState(
+  state: SupervisorConnectionState,
+): EnvironmentConnectionPresentation {
+  const failure = presentConnectionFailure(state.lastFailure);
+  const shared = {
+    network: state.network,
+    stage: state.stage,
+    attempt: state.attempt,
+    failure,
+    retry: presentConnectionRetry(state),
+    error: failure?.detail ?? null,
+    traceId: failure?.traceId ?? null,
+  };
+  switch (state.phase) {
+    case "available":
+      return { phase: "available", ...shared, error: null, traceId: null };
+    case "offline":
+      return { phase: "offline", ...shared, error: null, traceId: null };
+    case "connecting":
+      return {
+        phase: state.attempt <= 1 && state.lastFailure === null ? "connecting" : "reconnecting",
+        ...shared,
+      };
+    case "connected":
+      return { phase: "connected", ...shared, error: null, traceId: null };
+    case "backoff":
+      return {
+        phase: "reconnecting",
+        ...shared,
+      };
+    case "blocked":
+      return {
+        phase: "error",
+        ...shared,
+      };
+  }
+}
+
+type EnvironmentConnectionStatus = Pick<EnvironmentConnectionPresentation, "phase" | "error">;
+
+export function connectionStatusText(connection: EnvironmentConnectionStatus): string {
   switch (connection.phase) {
     case "available":
       return "Available";
@@ -76,7 +156,7 @@ export function connectionStatusText(connection: EnvironmentConnectionPresentati
   }
 }
 
-export function connectionStatusTitle(connection: EnvironmentConnectionPresentation): string {
+export function connectionStatusTitle(connection: EnvironmentConnectionStatus): string {
   if (connection.phase === "reconnecting" && connection.error) {
     return "Failed to connect. Reconnecting...";
   }

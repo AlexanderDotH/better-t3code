@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 function describeSshTarget(request: DesktopSshPasswordPromptRequest): string {
   return request.username ? `${request.username}@${request.destination}` : request.destination;
@@ -21,11 +22,13 @@ function formatRemainingSeconds(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-function getPromptErrorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : "SSH password prompt failed.";
-  return message.includes("expired") || message.includes("no longer pending")
-    ? "This SSH password prompt expired. Try connecting again."
-    : message;
+export function sshPasswordPromptErrorMessage(
+  error: unknown,
+  fallback: string,
+  expired: string,
+): string {
+  const message = error instanceof Error ? error.message : fallback;
+  return message.includes("expired") || message.includes("no longer pending") ? expired : message;
 }
 
 export function SshPasswordPromptDialog() {
@@ -67,6 +70,7 @@ function ActiveSshPasswordPrompt({
   readonly request: DesktopSshPasswordPromptRequest;
   readonly onRemove: (requestId: string) => void;
 }) {
+  const translator = useInterfaceTranslator();
   const [password, setPassword] = useState("");
   const [isResponding, setIsResponding] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -101,7 +105,7 @@ function ActiveSshPasswordPrompt({
   const remainingLabel =
     remainingSeconds === null ? null : formatRemainingSeconds(remainingSeconds);
   const visibleResponseError = isExpired
-    ? "This SSH password prompt expired. Try connecting again."
+    ? translator.message("sshPassword.expired")
     : responseError;
 
   const respond = async (nextPassword: string | null) => {
@@ -111,7 +115,7 @@ function ActiveSshPasswordPrompt({
 
     const requestId = request.requestId;
     if (nextPassword !== null && isExpired) {
-      setResponseError("This SSH password prompt expired. Try connecting again.");
+      setResponseError(translator.message("sshPassword.expired"));
       return;
     }
 
@@ -125,7 +129,13 @@ function ActiveSshPasswordPrompt({
       if (nextPassword === null) {
         onRemove(requestId);
       } else {
-        setResponseError(getPromptErrorMessage(error));
+        setResponseError(
+          sshPasswordPromptErrorMessage(
+            error,
+            translator.message("sshPassword.failureFallback"),
+            translator.message("sshPassword.expired"),
+          ),
+        );
       }
     } finally {
       isRespondingRef.current = false;
@@ -158,10 +168,9 @@ function ActiveSshPasswordPrompt({
     >
       <DialogPopup className="max-w-md" showCloseButton={false}>
         <DialogHeader>
-          <DialogTitle>SSH Password Required</DialogTitle>
+          <DialogTitle>{translator.message("sshPassword.title")}</DialogTitle>
           <DialogDescription>
-            T3 needs your SSH password to connect to <code>{target}</code>. The password is passed
-            to the local SSH process for this connection attempt and is not saved by T3 Code.
+            {translator.message("sshPassword.description", { target })}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-3" scrollFade={false}>
@@ -184,7 +193,7 @@ function ActiveSshPasswordPrompt({
                         : "shrink-0 text-xs text-muted-foreground"
                     }
                   >
-                    {isExpired ? "Expired" : remainingLabel}
+                    {isExpired ? translator.message("sshPassword.expiredLabel") : remainingLabel}
                   </span>
                 ) : null}
               </div>
@@ -202,17 +211,17 @@ function ActiveSshPasswordPrompt({
               <p className="text-sm text-destructive">{visibleResponseError}</p>
             ) : (
               <p className="text-sm text-muted-foreground">
-                Use SSH keys to avoid repeated password prompts on new SSH sessions.
+                {translator.message("sshPassword.keysHint")}
               </p>
             )}
           </form>
         </DialogPanel>
         <DialogFooter>
           <Button disabled={isResponding} type="button" variant="outline" onClick={cancelPrompt}>
-            {isExpired ? "Dismiss" : "Cancel"}
+            {translator.message(isExpired ? "cloud.action.dismiss" : "common.cancel")}
           </Button>
           <Button disabled={isResponding || isExpired} form={formId} type="submit">
-            Continue
+            {translator.message("cloud.action.continue")}
           </Button>
         </DialogFooter>
       </DialogPopup>

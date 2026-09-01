@@ -3,6 +3,7 @@ import { memo } from "react";
 import { cn } from "~/lib/utils";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
@@ -38,6 +39,7 @@ function PullRequestRowImpl({
   matchedElsewhere?: boolean;
   onSelect: (entry: EnvironmentPullRequestEntry) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const { Icon, providerName } = getSourceControlPresentationForKind(entry.provider);
   return (
     <button
@@ -119,7 +121,7 @@ function PullRequestRowImpl({
           )}
           {matchedElsewhere ? (
             <span className="shrink-0 rounded-full border border-border/60 px-1.5 text-[10px]">
-              matched in the description
+              {translate("pullRequest.row.matchedDescription")}
             </span>
           ) : null}
         </PullRequestMetaLine>

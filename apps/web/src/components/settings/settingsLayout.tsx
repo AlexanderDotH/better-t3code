@@ -12,6 +12,7 @@ import {
 } from "react";
 
 import { cn } from "../../lib/utils";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { WorkspacePageContainer, type WorkspacePageWidth } from "../WorkspacePageContainer";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -86,12 +87,17 @@ function useSettingsSearchTarget<T extends HTMLElement>(id: string | undefined) 
 
 /** Info affordance explaining how a setting interacts with the shared background policy. */
 export function PolicyTooltip({ children }: { readonly children: string }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <Tooltip>
       <TooltipTrigger
         delay={200}
         render={
-          <Button size="icon-micro" variant="ghost-muted" aria-label="Background policy details">
+          <Button
+            size="icon-micro"
+            variant="ghost-muted"
+            aria-label={translate("settings.common.backgroundPolicyDetails")}
+          >
             <InfoIcon className="size-3.5" />
           </Button>
         }
@@ -153,6 +159,7 @@ export function SettingsRow({
   status,
   resetAction,
   control,
+  visual,
   children,
   className,
   ...rowProps
@@ -162,18 +169,32 @@ export function SettingsRow({
   status?: ReactNode;
   resetAction?: ReactNode;
   control?: ReactNode;
+  visual?: ReactNode;
   children?: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
+  const hasVisual = visual !== undefined && visual !== null;
 
   return (
     <div
       {...rowProps}
       ref={targetRef}
       tabIndex={rowProps.id ? -1 : rowProps.tabIndex}
-      className={cn("rounded-xl px-3 sm:px-4", children ? "pt-3 pb-1" : "py-3", className)}
+      className={cn(
+        "rounded-xl px-3 sm:px-4",
+        children ? "pt-3 pb-1" : "py-3",
+        hasVisual && "border border-border/60 bg-card/35 shadow-[0_16px_48px_-42px_rgb(0_0_0/85%)]",
+        className,
+      )}
     >
-      <div className="flex flex-col gap-3 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(10rem,auto)] sm:items-center sm:gap-8">
+      <div
+        className={cn(
+          "grid gap-3",
+          hasVisual
+            ? "sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center md:grid-cols-[minmax(12rem,1fr)_minmax(15rem,20rem)_auto] md:gap-5"
+            : "sm:grid-cols-[minmax(0,1fr)_minmax(10rem,auto)] sm:items-center sm:gap-8",
+        )}
+      >
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">
             <h3 className="text-sm font-medium tracking-[-0.005em] text-foreground">{title}</h3>
@@ -189,8 +210,22 @@ export function SettingsRow({
           {status ? <div className="pt-0.5 text-xs text-muted-foreground">{status}</div> : null}
         </div>
         {control ? (
-          <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+          <div
+            className={cn(
+              "flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end",
+              hasVisual && "sm:col-start-2 sm:row-start-1 md:col-start-3",
+            )}
+          >
             {control}
+          </div>
+        ) : null}
+        {hasVisual ? (
+          <div
+            aria-hidden="true"
+            className="overflow-hidden rounded-lg border border-border/60 bg-background/65 sm:col-span-2 md:col-span-1 md:col-start-2 md:row-start-1"
+            data-settings-row-visual
+          >
+            {visual}
           </div>
         ) : null}
       </div>
@@ -208,6 +243,7 @@ export function SettingResetButton({
   disabled?: boolean;
   onClick: () => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -215,7 +251,7 @@ export function SettingResetButton({
           <Button
             size="icon-micro"
             variant="ghost-muted"
-            aria-label={`Reset ${label} to default`}
+            aria-label={translate("settings.common.resetAria", { label })}
             disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();
@@ -226,7 +262,7 @@ export function SettingResetButton({
           </Button>
         }
       />
-      <TooltipPopup side="top">Reset to default</TooltipPopup>
+      <TooltipPopup side="top">{translate("settings.common.reset")}</TooltipPopup>
     </Tooltip>
   );
 }

@@ -3,17 +3,10 @@
  * called as a plain function and its tree read for text: the elements are walked rather than
  * invoked, so the button's own hooks never run outside a render.
  */
-import { isValidElement, type ReactElement, type ReactNode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import { PullRequestListEmptyState } from "./PullRequestListEmptyState";
-
-function textOf(node: ReactNode): string {
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(textOf).join(" ");
-  if (!isValidElement(node)) return "";
-  return textOf((node as ReactElement<{ children?: ReactNode }>).props.children);
-}
 
 const baseProps = {
   query: "",
@@ -29,7 +22,7 @@ const baseProps = {
 };
 
 function render(props: Partial<typeof baseProps>): string {
-  return textOf(PullRequestListEmptyState({ ...baseProps, ...props }));
+  return renderToStaticMarkup(<PullRequestListEmptyState {...baseProps} {...props} />);
 }
 
 describe("PullRequestListEmptyState", () => {

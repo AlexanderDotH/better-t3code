@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import { BearerConnectionProfile, type ConnectionCatalogEntry } from "./catalog.ts";
 import {
   BearerConnectionTarget,
+  ConnectionBlockedError,
   ConnectionTransientError,
   type SupervisorConnectionState,
 } from "./model.ts";
@@ -58,6 +59,11 @@ describe("connection presentation", () => {
   it("distinguishes initial connection, reconnect, and retry errors", () => {
     expect(presentConnectionState(supervisorState({ phase: "connecting", attempt: 1 }))).toEqual({
       phase: "connecting",
+      network: "online",
+      stage: "preparing",
+      attempt: 1,
+      failure: null,
+      retry: { mode: "none", at: null },
       error: null,
       traceId: null,
     });
@@ -75,6 +81,16 @@ describe("connection presentation", () => {
       ),
     ).toEqual({
       phase: "reconnecting",
+      network: "online",
+      stage: "preparing",
+      attempt: 2,
+      failure: {
+        kind: "transient",
+        reason: "transport",
+        detail: "Socket closed.",
+        traceId: "trace-previous",
+      },
+      retry: { mode: "automatic", at: null },
       error: "Socket closed.",
       traceId: "trace-previous",
     });
@@ -82,6 +98,7 @@ describe("connection presentation", () => {
       presentConnectionState(
         supervisorState({
           phase: "backoff",
+          stage: null,
           attempt: 2,
           retryAt: 1,
           lastFailure: new ConnectionTransientError({
@@ -93,6 +110,16 @@ describe("connection presentation", () => {
       ),
     ).toEqual({
       phase: "reconnecting",
+      network: "online",
+      stage: null,
+      attempt: 2,
+      failure: {
+        kind: "transient",
+        reason: "transport",
+        detail: "Disconnected.",
+        traceId: "trace-1",
+      },
+      retry: { mode: "automatic", at: 1 },
       error: "Disconnected.",
       traceId: "trace-1",
     });
@@ -114,8 +141,83 @@ describe("connection presentation", () => {
       ),
     ).toEqual({
       phase: "reconnecting",
+      network: "online",
+      stage: "opening",
+      attempt: 2,
+      failure: {
+        kind: "transient",
+        reason: "transport",
+        detail: "Relay connection timed out.",
+        traceId: "trace-retry",
+      },
+      retry: { mode: "automatic", at: null },
       error: "Relay connection timed out.",
       traceId: "trace-retry",
+    });
+  });
+
+  it("preserves transient retry state for clients without creating a client-side timer", () => {
+    expect(
+      presentConnectionState(
+        supervisorState({
+          network: "online",
+          phase: "backoff",
+          stage: null,
+          attempt: 3,
+          retryAt: 12_345,
+          lastFailure: new ConnectionTransientError({
+            reason: "endpoint-unavailable",
+            detail: "The environment endpoint is unavailable.",
+            traceId: "trace-transient",
+          }),
+        }),
+      ),
+    ).toMatchObject({
+      network: "online",
+      stage: null,
+      attempt: 3,
+      failure: {
+        kind: "transient",
+        reason: "endpoint-unavailable",
+        detail: "The environment endpoint is unavailable.",
+        traceId: "trace-transient",
+      },
+      retry: {
+        mode: "automatic",
+        at: 12_345,
+      },
+    });
+  });
+
+  it("presents blocked failures as manual recovery and ignores stale retry timestamps", () => {
+    expect(
+      presentConnectionState(
+        supervisorState({
+          phase: "blocked",
+          stage: null,
+          attempt: 1,
+          retryAt: 99_999,
+          lastFailure: new ConnectionBlockedError({
+            reason: "authentication",
+            detail: "Pair this environment again.",
+            traceId: "trace-blocked",
+          }),
+        }),
+      ),
+    ).toMatchObject({
+      network: "online",
+      stage: null,
+      attempt: 1,
+      failure: {
+        kind: "blocked",
+        reason: "authentication",
+        detail: "Pair this environment again.",
+        traceId: "trace-blocked",
+      },
+      retry: {
+        mode: "manual",
+        at: null,
+      },
     });
   });
 
@@ -146,6 +248,42 @@ describe("connection presentation", () => {
       ),
     ).toEqual({
       phase: "offline",
+      network: "offline",
+      stage: null,
+      attempt: 1,
+      failure: null,
+      retry: { mode: "none", at: null },
+      error: null,
+      traceId: null,
+    });
+  });
+
+  it("keeps offline failure details structured while preserving legacy status fields", () => {
+    expect(
+      presentEnvironmentConnection(
+        supervisorState({
+          network: "offline",
+          phase: "offline",
+          stage: null,
+          lastFailure: new ConnectionTransientError({
+            reason: "network",
+            detail: "The previous network request failed.",
+            traceId: "trace-offline",
+          }),
+        }),
+      ),
+    ).toEqual({
+      phase: "offline",
+      network: "offline",
+      stage: null,
+      attempt: 1,
+      failure: {
+        kind: "transient",
+        reason: "network",
+        detail: "The previous network request failed.",
+        traceId: "trace-offline",
+      },
+      retry: { mode: "none", at: null },
       error: null,
       traceId: null,
     });
@@ -162,6 +300,11 @@ describe("connection presentation", () => {
       ),
     ).toEqual({
       phase: "connected",
+      network: "online",
+      stage: null,
+      attempt: 1,
+      failure: null,
+      retry: { mode: "none", at: null },
       error: null,
       traceId: null,
     });
@@ -180,6 +323,11 @@ describe("connection presentation", () => {
       ),
     ).toEqual({
       phase: "available",
+      network: "offline",
+      stage: null,
+      attempt: 0,
+      failure: null,
+      retry: { mode: "none", at: null },
       error: null,
       traceId: null,
     });

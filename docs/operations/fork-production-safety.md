@@ -49,6 +49,37 @@ Run the source-policy regression with Node 24:
 vp test run scripts/production-workflow-policy.test.ts
 ```
 
+## CI and packaging boundaries
+
+The normal pull-request workflow and the production workflows prove different things. A skipped or
+credential-blocked production job is not packaging evidence.
+
+- **Check** compiles the desktop pipeline on Ubuntu and verifies the preload bundle. It does not
+  produce an AppImage, DMG, or NSIS installer.
+- **Mobile Android Debug Build** conditionally creates an arm64 debug APK when native Android inputs
+  change. Ordinary TypeScript changes stay on the unit and typecheck path, and the job does not
+  launch an emulator.
+- **Windows 2025 x64 Parity** exercises native command shims, PowerShell, ConPTY, Git and process
+  cleanup, focused WSL contracts, typechecks, and the desktop/server build pipeline. The installed
+  NSIS update and isolated Ubuntu WSL runtime smoke belong to the release workflow.
+- **Release Smoke** exercises release scripts and update-manifest handling. It does not package or
+  launch an application.
+
+Actual desktop packaging is owned by [the release workflow](../../.github/workflows/release.yml):
+macOS arm64/x64 DMGs, a Linux x64 AppImage, and a Windows x64 NSIS installer. macOS signing and
+notarization, Windows signing, installed-update smoke, and the real WSL runtime require their
+platform runners and configured credentials. The label-gated
+[macOS preview](../../.github/workflows/desktop-macos-preview.yml) builds an unsigned arm64 DMG and
+does not replace the release matrix.
+
+Mobile simulator and store evidence is also separate. The manually dispatched
+[showcase workflow](../../.github/workflows/mobile-showcase-screenshots.yml) drives iOS Simulator and
+Android Emulator captures. [EAS preview](../../.github/workflows/mobile-eas-preview.yml) requires
+the preview label and `EXPO_TOKEN`; [EAS production](../../.github/workflows/mobile-eas-production.yml)
+requires the repository guard plus `EXPO_TOKEN`. None of those external runs may be inferred from
+unit tests, a generated native project, or a build artifact alone. See
+[CI quality gates](../internals/ci.md) and [Release](./release.md) for the owning runbooks.
+
 ## Disable and drain a fork
 
 Disable the workflows before cancelling queued runs so a new scheduled run cannot enter the queue

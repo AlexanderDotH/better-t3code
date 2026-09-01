@@ -4,8 +4,8 @@ function stringSet(values: string): ReadonlySet<string> {
 
 const IGNORED_DIRECTORY_NAMES = stringSet(`
   .cache .git .next .nuxt .output .parcel-cache .svelte-kit .turbo .venv .vite .vite-plus
-  __generated__ __pycache__ bin build coverage deriveddata dist generated node_modules obj out
-  pods target temp third_party tmp vendor venv
+  __generated__ __pycache__ artifact artifacts backup backups bin build coverage deriveddata dist
+  generated node_modules obj out pods target temp third_party tmp vendor venv
 `);
 
 export function isIgnoredProjectSpeechDirectoryName(name: string): boolean {

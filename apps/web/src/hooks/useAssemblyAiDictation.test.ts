@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   renderAssemblyAiDictationDraft,
   resolveAssemblyAiDictationTranscript,
+  shouldCancelAssemblyAiDictation,
 } from "./useAssemblyAiDictation";
 
 describe("renderAssemblyAiDictationDraft", () => {
@@ -35,5 +36,14 @@ describe("resolveAssemblyAiDictationTranscript", () => {
     await expect(
       resolveAssemblyAiDictationTranscript("native words", async () => Promise.reject(error)),
     ).resolves.toEqual({ text: "native words", error });
+  });
+});
+
+describe("shouldCancelAssemblyAiDictation", () => {
+  it("cancels an active client session as soon as the feature becomes unavailable", () => {
+    expect(shouldCancelAssemblyAiDictation(false, "recording")).toBe(true);
+    expect(shouldCancelAssemblyAiDictation(false, "starting")).toBe(true);
+    expect(shouldCancelAssemblyAiDictation(false, "idle")).toBe(false);
+    expect(shouldCancelAssemblyAiDictation(true, "recording")).toBe(false);
   });
 });

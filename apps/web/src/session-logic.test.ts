@@ -2,6 +2,7 @@ import {
   classifyTaskAgentKind,
   EventId,
   MessageId,
+  OrchestrationProposedPlanId,
   ProviderDriverKind,
   ThreadId,
   TurnId,
@@ -50,6 +51,7 @@ function makeActivity(overrides: {
   payload?: Record<string, unknown>;
   turnId?: string;
   sequence?: number;
+  historyOrigin?: OrchestrationThreadActivity["historyOrigin"];
 }): OrchestrationThreadActivity {
   // Fixtures model post-ingestion rows: ingestion stamps agentKind on every
   // task.* payload. Pass an explicit agentKind to model legacy rows.
@@ -73,10 +75,28 @@ function makeActivity(overrides: {
     payload,
     turnId: overrides.turnId ? TurnId.make(overrides.turnId) : null,
     ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
+    ...(overrides.historyOrigin !== undefined ? { historyOrigin: overrides.historyOrigin } : {}),
   };
 }
 
 describe("derivePendingApprovals", () => {
+  it("does not revive inherited approval requests", () => {
+    expect(
+      derivePendingApprovals([
+        makeActivity({
+          kind: "approval.requested",
+          tone: "approval",
+          payload: { requestId: "frozen-request", requestKind: "command" },
+          historyOrigin: {
+            sourceThreadId: ThreadId.make("source-thread"),
+            sourceId: "source-approval",
+            ordinal: 0,
+          },
+        }),
+      ]),
+    ).toEqual([]);
+  });
+
   it("tracks open approvals and removes resolved ones", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -141,6 +161,39 @@ describe("derivePendingApprovals", () => {
         requestKind: "command",
         createdAt: "2026-02-23T00:00:01.000Z",
         detail: "pwd",
+      },
+    ]);
+  });
+
+  it("keeps app access approvals and persistence choices from remote activities", () => {
+    const options = [
+      { decision: "decline", label: "Decline" },
+      { decision: "acceptAlways", label: "Always allow Safari" },
+      { decision: "accept", label: "Approve" },
+    ];
+    const activities = [
+      makeActivity({
+        kind: "approval.requested",
+        summary: "App access approval requested",
+        tone: "approval",
+        payload: {
+          requestId: "req-safari",
+          requestType: "mcp_elicitation_approval",
+          detail: "Allow ChatGPT to use Safari?",
+          appName: "Safari",
+          options,
+        },
+      }),
+    ];
+
+    expect(derivePendingApprovals(activities)).toEqual([
+      {
+        requestId: "req-safari",
+        requestKind: "mcp-elicitation",
+        createdAt: "2026-02-23T00:00:00.000Z",
+        detail: "Allow ChatGPT to use Safari?",
+        appName: "Safari",
+        options,
       },
     ]);
   });
@@ -232,6 +285,32 @@ describe("derivePendingApprovals", () => {
 });
 
 describe("derivePendingUserInputs", () => {
+  it("does not revive inherited user-input questions", () => {
+    expect(
+      derivePendingUserInputs([
+        makeActivity({
+          kind: "user-input.requested",
+          payload: {
+            requestId: "frozen-input",
+            questions: [
+              {
+                id: "scope",
+                header: "Scope",
+                question: "Which scope?",
+                options: [{ label: "All", description: "Everything" }],
+              },
+            ],
+          },
+          historyOrigin: {
+            sourceThreadId: ThreadId.make("source-thread"),
+            sourceId: "source-input",
+            ordinal: 0,
+          },
+        }),
+      ]),
+    ).toEqual([]);
+  });
+
   it("tracks open structured prompts and removes resolved ones", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -364,6 +443,26 @@ describe("derivePendingUserInputs", () => {
 });
 
 describe("deriveActivePlanState", () => {
+  it("does not make inherited turn plans live", () => {
+    expect(
+      deriveActivePlanState(
+        [
+          makeActivity({
+            kind: "turn.plan.updated",
+            turnId: "source-turn",
+            payload: { plan: [{ step: "Old work", status: "inProgress" }] },
+            historyOrigin: {
+              sourceThreadId: ThreadId.make("source-thread"),
+              sourceId: "source-plan-activity",
+              ordinal: 0,
+            },
+          }),
+        ],
+        undefined,
+      ),
+    ).toBeNull();
+  });
+
   it("returns the latest plan update for the active turn", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -675,6 +774,29 @@ describe("deriveTurnPlans", () => {
 });
 
 describe("findLatestProposedPlan", () => {
+  it("never treats an inherited plan as actionable in the fork", () => {
+    const sourceThreadId = ThreadId.make("source-thread");
+    const inheritedPlanId = OrchestrationProposedPlanId.make("source-plan");
+
+    expect(
+      findLatestProposedPlan(
+        [
+          {
+            id: OrchestrationProposedPlanId.make("destination-plan"),
+            turnId: null,
+            planMarkdown: "# Frozen plan",
+            implementedAt: null,
+            implementationThreadId: null,
+            createdAt: "2026-02-23T00:00:01.000Z",
+            updatedAt: "2026-02-23T00:00:01.000Z",
+            historyOrigin: { sourceThreadId, sourceId: inheritedPlanId, ordinal: 0 },
+          },
+        ],
+        null,
+      ),
+    ).toBeNull();
+  });
+
   it("prefers the latest proposed plan for the active turn", () => {
     expect(
       findLatestProposedPlan(
@@ -897,6 +1019,34 @@ describe("workEntryIndicatesToolFailure", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
+  it("keeps the latest task progress without emitting plan-update log entries", () => {
+    const activities = [
+      makeActivity({ id: "before", kind: "tool.completed", summary: "Read files", sequence: 0 }),
+      makeActivity({
+        id: "plan-1",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        turnId: "turn-1",
+        sequence: 1,
+        payload: { plan: [{ step: "Verify the composer", status: "inProgress" }] },
+      }),
+      makeActivity({
+        id: "plan-2",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        turnId: "turn-1",
+        sequence: 2,
+        payload: { plan: [{ step: "Verify the composer", status: "completed" }] },
+      }),
+      makeActivity({ id: "after", kind: "tool.completed", summary: "Ran tests", sequence: 3 }),
+    ];
+    expect(deriveWorkLogEntries(activities).map((entry) => entry.id)).toEqual(["before", "after"]);
+    expect(deriveTurnPlans(activities)).toHaveLength(1);
+    expect(deriveTurnPlans(activities)[0]?.plan.steps).toMatchObject([
+      { step: "Verify the composer", status: "completed" },
+    ]);
+  });
+
   it("omits tool started entries and keeps completed entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -915,6 +1065,28 @@ describe("deriveWorkLogEntries", () => {
 
     const entries = deriveWorkLogEntries(activities);
     expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
+  });
+
+  it("drops runtime warnings with no displayable content, keeps ones with a preview", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "warning-noise",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "runtime.warning",
+        summary: "Claude system message 'background_tasks_changed' (no displayable text content)",
+        tone: "info",
+      }),
+      makeActivity({
+        id: "warning-signal",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "runtime.warning",
+        summary: "Reconnecting... 2/5",
+        tone: "info",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.map((entry) => entry.id)).toEqual(["warning-signal"]);
   });
 
   it("omits task.started but shows task.progress and task.completed", () => {
@@ -1823,6 +1995,53 @@ describe("deriveWorkLogEntries", () => {
 });
 
 describe("deriveTimelineEntries", () => {
+  it("uses inherited ordinals at equal timestamps and keeps native rows after the prefix", () => {
+    const sourceThreadId = ThreadId.make("source-thread");
+    const timestamp = "2026-02-23T00:00:01.000Z";
+    const entries = deriveTimelineEntries(
+      [
+        {
+          id: MessageId.make("native-message"),
+          role: "user",
+          text: "Native",
+          createdAt: timestamp,
+          turnId: null,
+          updatedAt: timestamp,
+          streaming: false,
+        },
+        {
+          id: MessageId.make("inherited-message"),
+          role: "user",
+          text: "Inherited",
+          createdAt: timestamp,
+          turnId: null,
+          updatedAt: timestamp,
+          streaming: false,
+          historyOrigin: { sourceThreadId, sourceId: "source-message", ordinal: 1 },
+        },
+      ],
+      [
+        {
+          id: OrchestrationProposedPlanId.make("inherited-plan"),
+          turnId: null,
+          planMarkdown: "# First inherited row",
+          implementedAt: null,
+          implementationThreadId: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          historyOrigin: { sourceThreadId, sourceId: "source-plan", ordinal: 0 },
+        },
+      ],
+      [],
+    );
+
+    expect(entries.map((entry) => entry.id)).toEqual([
+      "inherited-plan",
+      "inherited-message",
+      "native-message",
+    ]);
+  });
+
   it("includes proposed plans alongside messages and work entries in chronological order", () => {
     const entries = deriveTimelineEntries(
       [
@@ -2240,5 +2459,72 @@ describe("rerun workflows", () => {
     const spawnRows = entries.filter((entry) => entry.agentSpawn !== undefined);
     expect(spawnRows.map((row) => row.agentSpawn!.workflowId)).toEqual(["wf-run1", "wf-run2"]);
     expect(spawnRows.map((row) => row.turnId)).toEqual(["turn-1", "turn-2"]);
+  });
+});
+
+describe("session activity performance", () => {
+  it("reuses entries for unchanged activities", () => {
+    const activities = ["status", "diff", "log"].map((command, index) =>
+      makeActivity({
+        id: `stable-tool-${index}`,
+        kind: "tool.completed",
+        sequence: index,
+        payload: {
+          itemType: "command_execution",
+          data: { toolCallId: `stable-tool-${index}`, item: { command: ["git", command] } },
+        },
+      }),
+    );
+
+    const initialEntries = deriveWorkLogEntries(activities.slice(0, 2));
+    const appendedEntries = deriveWorkLogEntries(activities);
+    expect(appendedEntries[0]).toBe(initialEntries[0]);
+    expect(appendedEntries[1]).toBe(initialEntries[1]);
+  });
+
+  it("reuses entries when appending to 20,000 ordered tool activities", () => {
+    const activities = Array.from({ length: 20_000 }, (_, index) =>
+      makeActivity({
+        id: `benchmark-tool-${index}`,
+        createdAt: new Date(1_700_000_000_000 + index).toISOString(),
+        kind: "tool.completed",
+        summary: "Ran command",
+        sequence: index,
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: `benchmark-tool-${index}`,
+            item: { command: ["git", "status"] },
+          },
+        },
+      }),
+    );
+    const initialEntries = deriveWorkLogEntries(activities);
+    expect(initialEntries).toHaveLength(20_000);
+    const updatedActivities = [
+      ...activities,
+      makeActivity({
+        id: "benchmark-tool-appended",
+        createdAt: new Date(1_700_000_000_000 + activities.length).toISOString(),
+        kind: "tool.completed",
+        summary: "Ran command",
+        sequence: activities.length,
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: { toolCallId: "benchmark-tool-appended", item: { command: ["git", "diff"] } },
+        },
+      }),
+    ];
+
+    const updatedEntries = deriveWorkLogEntries(updatedActivities);
+    expect(updatedEntries).toHaveLength(20_001);
+    expect(initialEntries.every((entry, index) => updatedEntries[index] === entry)).toBe(true);
+    expect(updatedEntries.at(-1)).toMatchObject({
+      id: "benchmark-tool-appended",
+      command: "git diff",
+      toolLifecycleStatus: "completed",
+    });
   });
 });

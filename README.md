@@ -52,7 +52,7 @@ power-user plumbing around the chat.
 | **Chat portability**       | Normal in-app thread history                                | Copy the complete unredacted transcript and import chats from sibling local T3 Code installations                                                |
 | **Agent tooling**          | Provider-managed configuration                              | Visual MCP server management plus global/project skill discovery, import, enablement, and prompt integration                                     |
 | **Prompt ergonomics**      | Standard prompt and reasoning controls                      | Optional prompt improvement and evidence-based, one-turn reasoning-effort recommendations                                                        |
-| **Repository context**     | Providers use their regular filesystem tools                | A bounded `workspace_context` MCP tool batches common project discovery and file-reading work                                                    |
+| **Repository context**     | Providers use their regular filesystem tools                | Bounded `workspace_context` reads and one `workspace_edit` text tool batch common discovery and single- or multi-file changes                    |
 | **Version control**        | Core source-control actions                                 | A queued Git workbench adds typed operations, recovery refs, undo flows, and workspace-aware change views                                        |
 | **Project organization**   | Standard project grouping                                   | Quiet projects move into **Older projects** at the exact seven-day inactivity boundary while attention states stay visible                       |
 | **Product analytics**      | Anonymous PostHog product analytics                         | Outbound anonymous product analytics removed; local resource diagnostics stay local and useful                                                   |
@@ -170,6 +170,7 @@ credentials and projects stay outside the image in explicit volumes. See the
 - [Multiple Codex accounts](./docs/user/providers-codex.md)
 - [Multiple Claude accounts](./docs/user/providers-claude.md)
 - [Gemini API provider](./docs/user/providers-gemini.md)
+- [OpenAI Responses API provider](./docs/user/providers-openai.md)
 - [Internal architecture](./docs/internals/overview.md)
 - [Internal glossary](./docs/internals/glossary.md)
 - [Upstream synchronization and fork contract](./docs/operations/upstream-sync.md)

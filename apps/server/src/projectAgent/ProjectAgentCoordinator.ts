@@ -5,6 +5,7 @@ import {
   ProjectAgentCoordinationOperationError,
   ProjectAgentCoordinationUnavailableError,
   ProjectAgentMessageId,
+  resolveBetterT3FeatureFlag,
   type ProjectAgentClaimSetInput,
   type ProjectAgentClaimSetResult,
   type ProjectAgentCoordinationError,
@@ -17,17 +18,22 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 
 import { OrchestrationCommandInvariantError } from "../orchestration/Errors.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProjectionProjectAgentCoordinationRepository } from "../persistence/Services/ProjectionProjectAgentCoordination.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import { normalizeProjectAgentClaims } from "./claimRules.ts";
 
 export interface ProjectAgentCoordinatorShape {
@@ -99,6 +105,10 @@ const makeCoordinator = Effect.gen(function* () {
   const orchestration = yield* OrchestrationEngineService;
   const crypto = yield* Crypto.Crypto;
   const hostPlatform = yield* HostProcessPlatform;
+  const settings = yield* ServerSettingsService;
+  const coordinatorScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+    Scope.close(scope, Exit.void),
+  );
 
   const nextId = (prefix: string) =>
     crypto.randomUUIDv4.pipe(
@@ -108,6 +118,20 @@ const makeCoordinator = Effect.gen(function* () {
 
   const operationError = (operation: "list" | "claim" | "send" | "inbox", cause: unknown) =>
     new ProjectAgentCoordinationOperationError({ operation, cause });
+
+  const ensureFeatureEnabled = Effect.fn("ProjectAgentCoordinator.ensureFeatureEnabled")(function* (
+    operation: "list" | "claim" | "send" | "inbox",
+  ) {
+    const current = yield* settings.getSettings.pipe(
+      Effect.mapError((cause) => operationError(operation, cause)),
+    );
+    if (!resolveBetterT3FeatureFlag(current.betterT3Environment, "agent.projectCoordination")) {
+      return yield* operationError(
+        operation,
+        new Error("Project-agent coordination is disabled in Better T3 settings."),
+      );
+    }
+  });
 
   const readCommandModel = Effect.fn("ProjectAgentCoordinator.readCommandModel")(function* () {
     return yield* snapshots.getCommandReadModel().pipe(
@@ -144,6 +168,7 @@ const makeCoordinator = Effect.gen(function* () {
 
   const list: ProjectAgentCoordinatorShape["list"] = Effect.fn("ProjectAgentCoordinator.list")(
     function* (threadId) {
+      yield* ensureFeatureEnabled("list");
       const scope = yield* resolveScope(threadId);
       const [shell, unreadCounts] = yield* Effect.all([
         snapshots
@@ -202,6 +227,7 @@ const makeCoordinator = Effect.gen(function* () {
 
   const claim: ProjectAgentCoordinatorShape["claim"] = Effect.fn("ProjectAgentCoordinator.claim")(
     function* (threadId, input) {
+      if (input.action !== "release") yield* ensureFeatureEnabled("claim");
       const { project, turnId } = yield* resolveScope(threadId);
       const timestamp = yield* nowIso;
       if (input.action === "release") {
@@ -276,6 +302,7 @@ const makeCoordinator = Effect.gen(function* () {
 
   const send: ProjectAgentCoordinatorShape["send"] = Effect.fn("ProjectAgentCoordinator.send")(
     function* (threadId, input) {
+      yield* ensureFeatureEnabled("send");
       const { readModel, project } = yield* resolveScope(threadId);
       const projectPeers = readModel.threads.filter(
         (candidate) =>
@@ -329,6 +356,7 @@ const makeCoordinator = Effect.gen(function* () {
 
   const inbox: ProjectAgentCoordinatorShape["inbox"] = Effect.fn("ProjectAgentCoordinator.inbox")(
     function* (threadId, input) {
+      yield* ensureFeatureEnabled("inbox");
       const { project } = yield* resolveScope(threadId);
       if (input.acknowledgeThrough !== undefined) {
         const timestamp = yield* nowIso;
@@ -356,6 +384,48 @@ const makeCoordinator = Effect.gen(function* () {
           page.minRetainedSequence !== null && page.cursor < page.minRetainedSequence - 1,
       };
     },
+  );
+
+  const releaseActiveClaims = Effect.fn("ProjectAgentCoordinator.releaseActiveClaims")(
+    function* () {
+      const readModel = yield* readCommandModel();
+      const releasedAt = yield* nowIso;
+      yield* Effect.forEach(
+        readModel.projects,
+        (project) =>
+          Effect.forEach(
+            project.coordinationClaims,
+            (lease) =>
+              Effect.gen(function* () {
+                yield* orchestration.dispatch({
+                  type: "project.agent.claim.release",
+                  commandId: CommandId.make(yield* nextId("project-agent-feature-disabled")),
+                  projectId: project.id,
+                  threadId: lease.threadId,
+                  expectedTurnId: lease.turnId,
+                  releasedAt,
+                });
+              }),
+            { concurrency: 1, discard: true },
+          ),
+        { concurrency: 1, discard: true },
+      );
+    },
+  );
+
+  yield* settings.streamChanges.pipe(
+    Stream.map((next) =>
+      resolveBetterT3FeatureFlag(next.betterT3Environment, "agent.projectCoordination"),
+    ),
+    Stream.changes,
+    Stream.filter((enabled) => !enabled),
+    Stream.runForEach(() => releaseActiveClaims()),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Project-agent feature reconciliation failed", {
+        cause: Cause.pretty(cause),
+      }),
+    ),
+    Effect.forkIn(coordinatorScope),
   );
 
   return ProjectAgentCoordinator.of({ list, claim, send, inbox });

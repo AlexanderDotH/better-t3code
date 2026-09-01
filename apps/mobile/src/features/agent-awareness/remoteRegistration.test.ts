@@ -273,6 +273,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       label: "Julius's iPhone",
       platform: "ios",
       iosMajorVersion: 18,
+      language: "en",
       appVersion: "1.0.0",
       pushToken: "apns-token",
       pushToStartToken: "push-to-start-token",
@@ -303,6 +304,50 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       bundleId: "com.t3tools.t3code.preview",
       apsEnvironment: "production",
     });
+  });
+
+  it("registers the resolved explicit interface language", () => {
+    expect(
+      makeRelayDeviceRegistrationRequest({
+        deviceId: "device-1",
+        label: "Julius's iPhone",
+        iosMajorVersion: 18,
+        notificationsEnabled: true,
+        preferences: {
+          interfaceLanguageSyncRecord: {
+            preference: "de",
+            updatedAt: 10,
+            updateId: "mobile:de",
+          },
+        },
+        systemLocales: ["en-US"],
+      }).language,
+    ).toBe("de");
+  });
+
+  it("registers the versioned French interface locale instead of its legacy mirror", () => {
+    expect(
+      makeRelayDeviceRegistrationRequest({
+        deviceId: "device-1",
+        label: "Julius's iPhone",
+        iosMajorVersion: 18,
+        notificationsEnabled: true,
+        preferences: {
+          interfaceLocaleSyncRecordV1: {
+            version: 1,
+            preference: "fr",
+            updatedAt: 20,
+            updateId: "mobile:fr",
+          },
+          interfaceLanguageSyncRecord: {
+            preference: "de",
+            updatedAt: 10,
+            updateId: "mobile:legacy-de",
+          },
+        },
+        systemLocales: ["en-US"],
+      }).language,
+    ).toBe("fr");
   });
 
   it("routes development builds to the APNs sandbox", () => {
@@ -350,6 +395,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       label: "Julius's iPhone",
       platform: "ios",
       iosMajorVersion: 18,
+      language: "en",
       appVersion: "1.0.0",
       pushToStartToken: "push-to-start-token",
       preferences: {

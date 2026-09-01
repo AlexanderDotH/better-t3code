@@ -7,19 +7,19 @@ import {
 } from "lucide-react";
 
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 import type { GitWorkbenchTabId } from "./GitWorkbench.types";
 
 const tabs: readonly {
   readonly icon: typeof GitBranch;
   readonly id: GitWorkbenchTabId;
-  readonly label: string;
 }[] = [
-  { icon: LayoutDashboard, id: "overview", label: "Overview" },
-  { icon: GitCompareArrows, id: "changes", label: "Changes" },
-  { icon: History, id: "history", label: "History" },
-  { icon: GitBranch, id: "branches", label: "Branches" },
-  { icon: GitCommitHorizontal, id: "operations", label: "Operations" },
+  { icon: LayoutDashboard, id: "overview" },
+  { icon: GitCompareArrows, id: "changes" },
+  { icon: History, id: "history" },
+  { icon: GitBranch, id: "branches" },
+  { icon: GitCommitHorizontal, id: "operations" },
 ];
 
 interface GitWorkbenchTabsProps {
@@ -33,9 +33,17 @@ export function GitWorkbenchTabs({
   attentionCount = 0,
   onChange,
 }: GitWorkbenchTabsProps) {
+  const translate = useInterfaceTranslator().message;
+  const labels = {
+    overview: translate("git.workbench.tab.overview"),
+    changes: translate("git.workbench.tab.changes"),
+    history: translate("git.workbench.tab.history"),
+    branches: translate("git.workbench.tab.branches"),
+    operations: translate("git.workbench.tab.operations"),
+  } satisfies Record<GitWorkbenchTabId, string>;
   return (
     <div
-      aria-label="Git workbench sections"
+      aria-label={translate("git.workbench.sections")}
       className="flex min-w-0 gap-1 overflow-x-auto border-b px-2 py-1.5"
       role="tablist"
     >
@@ -60,7 +68,7 @@ export function GitWorkbenchTabs({
             type="button"
           >
             <Icon aria-hidden="true" className="size-4" />
-            {tab.label}
+            {labels[tab.id]}
             {count > 0 ? (
               <span className="min-w-4 rounded-full bg-warning/16 px-1 text-center text-warning-foreground text-xs">
                 {count}

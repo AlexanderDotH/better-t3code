@@ -1,6 +1,7 @@
 import {
   defaultInstanceIdForDriver,
   type ModelSelection,
+  type OrchestrationThreadActivity,
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderOptionSelection,
@@ -12,7 +13,10 @@ import {
   CODEX_CONTEXT_WINDOW_OPTION_ID,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
+  isAutoReasoningEnabled,
   isClaudeUltrathinkPrompt,
+  normalizeModelSlug,
+  readAutoReasoningResolution,
 } from "@t3tools/shared/model";
 import { normalizeClientModelSelection } from "@t3tools/client-runtime/model-options";
 import type { ReactNode } from "react";
@@ -24,7 +28,12 @@ import {
   ContextWindowPicker,
   shouldRenderContextWindowControl,
 } from "./ContextWindowPicker";
-import { shouldRenderTraitsControls, TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
+import {
+  type AutoReasoningStatus,
+  shouldRenderTraitsControls,
+  TraitsMenuContent,
+  TraitsPicker,
+} from "./TraitsPicker";
 
 export type ComposerProviderStateInput = {
   provider: ProviderDriverKind;
@@ -34,6 +43,26 @@ export type ComposerProviderStateInput = {
   modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined;
   planModeEnabled: boolean;
 };
+
+export function readAutoReasoningStatus(
+  activities: ReadonlyArray<Pick<OrchestrationThreadActivity, "kind" | "payload">>,
+): AutoReasoningStatus | null {
+  const resolution = readAutoReasoningResolution(activities);
+  return resolution === null
+    ? null
+    : {
+        enabled: true,
+        effectiveEffort: resolution.effectiveEffort,
+        ...(resolution.fallback ? { fallback: true } : {}),
+      };
+}
+
+export function resolveAutoReasoningStatus(
+  selection: ModelSelection,
+  activities: ReadonlyArray<Pick<OrchestrationThreadActivity, "kind" | "payload">>,
+): AutoReasoningStatus | null {
+  return isAutoReasoningEnabled(selection) ? readAutoReasoningStatus(activities) : null;
+}
 
 export type ComposerPromptInjectionState = "none" | "ultrathink";
 
@@ -61,6 +90,7 @@ type TraitsRenderInput = {
     modelSelection: ModelSelection,
   ) => void;
   planModeEnabled: boolean;
+  autoReasoningStatus?: AutoReasoningStatus;
 };
 
 export function getComposerPromptInjectionState(prompt: string): ComposerPromptInjectionState {
@@ -76,6 +106,21 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
     promptInjectionState = "none",
     planModeEnabled,
   } = input;
+  if (provider === "opencode") {
+    const normalizedModel = normalizeModelSlug(model, provider);
+    const modelIsInCatalog = models.some((candidate) => candidate.slug === normalizedModel);
+    if (!modelIsInCatalog) {
+      const preservedOptions = modelOptions?.filter(
+        (option) => planModeEnabled || option.id !== "agent" || option.value !== "plan",
+      );
+      return {
+        provider,
+        promptEffort: null,
+        modelOptionsForDispatch:
+          preservedOptions && preservedOptions.length > 0 ? preservedOptions : undefined,
+      };
+    }
+  }
   const caps = getProviderModelCapabilities(models, model, provider, planModeEnabled);
   const normalizedSelection = normalizeClientModelSelection({
     provider,
@@ -130,6 +175,7 @@ function renderTraitsControl(
     prompt,
     onPromptChange,
     planModeEnabled,
+    autoReasoningStatus,
   } = input;
   const hasTarget = threadRef !== undefined || draftId !== undefined;
   if (
@@ -157,6 +203,7 @@ function renderTraitsControl(
       prompt={prompt}
       onPromptChange={onPromptChange}
       planModeEnabled={planModeEnabled}
+      {...(autoReasoningStatus ? { autoReasoningStatus } : {})}
     />
   );
 }

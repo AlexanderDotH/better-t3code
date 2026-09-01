@@ -23,6 +23,11 @@ import {
   type ProviderDriver,
   type ProviderInstance,
 } from "../ProviderDriver.ts";
+import {
+  makeAlreadyLocalProviderHistorySync,
+  makeInstanceHistorySyncSource,
+  NO_PROVIDER_HISTORY_SYNC_CAPABILITIES,
+} from "../Services/ProviderHistorySync.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
@@ -89,6 +94,16 @@ export const GeminiDriver: ProviderDriver<GeminiSettings, GeminiDriverEnv> = {
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies GeminiSettings;
+      const historySync = makeAlreadyLocalProviderHistorySync({
+        source: makeInstanceHistorySyncSource({
+          driverKind: DRIVER_KIND,
+          instanceId,
+          continuationKey: continuationIdentity.continuationKey,
+          displayName: displayName ?? "Gemini",
+          capabilities: NO_PROVIDER_HISTORY_SYNC_CAPABILITIES,
+        }),
+        reason: "Gemini history is already stored by T3 Code.",
+      });
       const processRunner = yield* makeProcessRunner();
       const toolExecutor = yield* makeGeminiHarnessToolExecutor(processRunner);
       const adapter = yield* makeGeminiAdapter(effectiveConfig, {
@@ -130,6 +145,7 @@ export const GeminiDriver: ProviderDriver<GeminiSettings, GeminiDriverEnv> = {
         enabled,
         snapshot,
         adapter,
+        historySync,
         textGeneration,
       } satisfies ProviderInstance;
     }),

@@ -20,6 +20,7 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
+import type { InterfaceMessageKey, InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
@@ -34,6 +35,7 @@ import {
 import { shellEnvironment } from "../../state/shell";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -42,19 +44,17 @@ import { ResourceTelemetryDiagnostics } from "./ResourceTelemetryDiagnostics";
 import { SettingsPageContainer, SettingsSection, useRelativeTimeTick } from "./settingsLayout";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-const NUMBER_FORMAT = new Intl.NumberFormat();
-
-function formatCount(value: number): string {
-  return NUMBER_FORMAT.format(value);
+function formatCount(value: number, translator: InterfaceTranslator): string {
+  return translator.number(value);
 }
 
-function formatDuration(value: number): string {
-  if (value < 1_000) return `${Math.round(value)} ms`;
-  return `${(value / 1_000).toFixed(value >= 10_000 ? 1 : 2)} s`;
+function formatDuration(value: number, translator: InterfaceTranslator): string {
+  if (value < 1_000) return `${translator.number(Math.round(value))} ms`;
+  return `${translator.number(value / 1_000, { maximumFractionDigits: value >= 10_000 ? 1 : 2 })} s`;
 }
 
-function formatBytes(value: number): string {
-  if (value < 1024) return `${value} B`;
+function formatBytes(value: number, translator: InterfaceTranslator): string {
+  if (value < 1024) return `${translator.number(value)} B`;
   const units = ["KB", "MB", "GB"] as const;
   let unitIndex = -1;
   let next = value;
@@ -62,16 +62,22 @@ function formatBytes(value: number): string {
     next /= 1024;
     unitIndex += 1;
   } while (next >= 1024 && unitIndex < units.length - 1);
-  return `${next.toFixed(next >= 10 ? 1 : 2)} ${units[unitIndex]}`;
+  return `${translator.number(next, { maximumFractionDigits: next >= 10 ? 1 : 2 })} ${units[unitIndex]}`;
 }
 
-function formatRelative(value: DateTime.Utc | null): string {
-  if (!value) return "No trace records";
+function formatRelative(
+  value: DateTime.Utc | null,
+  translate: InterfaceTranslator["message"],
+): string {
+  if (!value) return translate("settings.diagnostics.trace.noSpans");
   return formatRelativeTimeLabel(DateTime.formatIso(value));
 }
 
-function formatRelativeNoWrap(value: DateTime.Utc | null): string {
-  return formatRelative(value).replaceAll(" ", "\u00a0");
+function formatRelativeNoWrap(
+  value: DateTime.Utc | null,
+  translate: InterfaceTranslator["message"],
+): string {
+  return formatRelative(value, translate).replaceAll(" ", "\u00a0");
 }
 
 function shortenTraceId(traceId: string): string {
@@ -94,6 +100,7 @@ function StatBlock({
   tooltip?: ReactNode;
   tone?: "default" | "warning" | "danger";
 }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <div className="min-w-0 border-border/60 px-4 py-3 sm:px-5">
       <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/70">
@@ -105,7 +112,7 @@ function StatBlock({
                 <button
                   type="button"
                   className="cursor-pointer inline-flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/60 hover:text-foreground"
-                  aria-label={`${label} details`}
+                  aria-label={translate("settings.diagnostics.common.details", { label })}
                 >
                   <InfoIcon className="size-3" />
                 </button>
@@ -165,13 +172,14 @@ function ExpandableText({
   text,
   className,
   collapsedClassName = "line-clamp-3",
-  expandLabel = "Show full error",
+  expandLabel,
 }: {
   text: string;
   className?: string;
   collapsedClassName?: string;
   expandLabel?: string;
 }) {
+  const translate = useInterfaceTranslator().message;
   const [expanded, setExpanded] = useState(false);
   const canExpand = text.length > 180 || text.includes("\n");
 
@@ -191,7 +199,9 @@ function ExpandableText({
           className="cursor-pointer mt-1 text-[11px] font-medium text-foreground/70 underline-offset-2 hover:text-foreground hover:underline"
           onClick={() => setExpanded((value) => !value)}
         >
-          {expanded ? "Show less" : expandLabel}
+          {expanded
+            ? translate("settings.diagnostics.common.showLess")
+            : (expandLabel ?? translate("settings.diagnostics.common.showFullError"))}
         </button>
       ) : null}
     </div>
@@ -248,6 +258,7 @@ function DiagnosticsTable({
 }
 
 function TraceIdCell({ traceId }: { traceId: string }) {
+  const translate = useInterfaceTranslator().message;
   const { copyToClipboard, isCopied: copied } = useCopyToClipboard({
     target: "trace ID",
     timeout: 1_200,
@@ -276,14 +287,22 @@ function TraceIdCell({ traceId }: { traceId: string }) {
             <Button
               size="icon-micro"
               variant="ghost-muted"
-              aria-label={copied ? "Copied trace ID" : "Copy trace ID"}
+              aria-label={
+                copied
+                  ? translate("settings.diagnostics.common.copiedTraceId")
+                  : translate("settings.diagnostics.common.copyTraceId")
+              }
               onClick={() => copyToClipboard(traceId)}
             >
               <CopyIcon className="size-3" />
             </Button>
           }
         />
-        <TooltipPopup side="top">{copied ? "Copied" : "Copy full trace ID"}</TooltipPopup>
+        <TooltipPopup side="top">
+          {copied
+            ? translate("settings.diagnostics.common.copied")
+            : translate("settings.diagnostics.common.copyFullTraceId")}
+        </TooltipPopup>
       </Tooltip>
     </div>
   );
@@ -297,10 +316,12 @@ function formatProcessName(command: string): string {
   return segments.at(-1) ?? normalized;
 }
 
-function formatProcessType(process: ServerProcessDiagnosticsEntry): string {
-  if (process.depth > 0) return "Subprocess";
-  if (/\b(codex|claude|opencode|cursor)\b/i.test(process.command)) return "Agent";
-  return "Process";
+function processTypeMessageKey(process: ServerProcessDiagnosticsEntry): InterfaceMessageKey {
+  if (process.depth > 0) return "settings.diagnostics.process.type.subprocess";
+  if (/\b(codex|claude|opencode|cursor)\b/i.test(process.command)) {
+    return "settings.diagnostics.process.type.agent";
+  }
+  return "settings.diagnostics.process.type.process";
 }
 
 function ProcessNameCell({
@@ -312,6 +333,7 @@ function ProcessNameCell({
   isExpanded: boolean;
   onToggle: (pid: number) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const name = formatProcessName(process.command);
   const hasChildren = process.childPids.length > 0;
   const ChevronIcon = isExpanded ? ChevronDownIcon : ChevronRightIcon;
@@ -325,7 +347,12 @@ function ProcessNameCell({
         <Button
           size="icon-micro"
           variant="ghost-muted"
-          aria-label={isExpanded ? `Collapse ${name}` : `Expand ${name}`}
+          aria-label={translate(
+            isExpanded
+              ? "settings.diagnostics.process.collapse"
+              : "settings.diagnostics.process.expand",
+            { name },
+          )}
           onClick={() => onToggle(process.pid)}
         >
           <ChevronIcon className="size-3.5" />
@@ -358,6 +385,7 @@ function ProcessSignalActions({
   isSignaling: boolean;
   onSignal: (pid: number, signal: ServerProcessSignal) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <div className="flex items-center justify-end gap-1.5">
       <Tooltip>
@@ -369,11 +397,11 @@ function ProcessSignalActions({
               className="cursor-pointer text-[11px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:pointer-events-none disabled:opacity-50"
               onClick={() => onSignal(process.pid, "SIGINT")}
             >
-              INT
+              {translate("settings.diagnostics.signal.intShort")}
             </button>
           }
         />
-        <TooltipPopup side="top">Send SIGINT</TooltipPopup>
+        <TooltipPopup side="top">{translate("settings.diagnostics.signal.sendInt")}</TooltipPopup>
       </Tooltip>
       <Tooltip>
         <TooltipTrigger
@@ -384,11 +412,11 @@ function ProcessSignalActions({
               className="cursor-pointer text-[11px] font-medium text-destructive underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
               onClick={() => onSignal(process.pid, "SIGKILL")}
             >
-              KILL
+              {translate("settings.diagnostics.signal.killShort")}
             </button>
           }
         />
-        <TooltipPopup side="top">Send SIGKILL</TooltipPopup>
+        <TooltipPopup side="top">{translate("settings.diagnostics.signal.sendKill")}</TooltipPopup>
       </Tooltip>
     </div>
   );
@@ -405,6 +433,8 @@ function ProcessDiagnosticsTable({
   onSignal: (pid: number, signal: ServerProcessSignal) => void;
   emptyLabel?: string;
 }) {
+  const translator = useInterfaceTranslator();
+  const translate = translator.message;
   const [collapsedPids, setCollapsedPids] = useState<ReadonlySet<number>>(() => new Set());
   const visibleProcesses = useMemo(() => {
     const visible: ServerProcessDiagnosticsEntry[] = [];
@@ -456,20 +486,34 @@ function ProcessDiagnosticsTable({
         </colgroup>
         <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-[11px] uppercase tracking-[0.08em] text-muted-foreground/70">
           <tr>
-            <th className="px-4 py-2 font-semibold sm:pl-5">Name</th>
-            <th className="px-3 py-2 text-right font-semibold">CPU</th>
-            <th className="px-3 py-2 text-right font-semibold">Memory</th>
-            <th className="px-3 py-2 font-semibold">Command</th>
-            <th className="px-3 py-2 text-right font-semibold">PID</th>
-            <th className="px-3 py-2 font-semibold">Type</th>
-            <th className="p-2 text-right font-semibold sm:pr-4">Kill</th>
+            <th className="px-4 py-2 font-semibold sm:pl-5">
+              {translate("settings.diagnostics.table.name")}
+            </th>
+            <th className="px-3 py-2 text-right font-semibold">
+              {translate("settings.diagnostics.table.cpu")}
+            </th>
+            <th className="px-3 py-2 text-right font-semibold">
+              {translate("settings.diagnostics.table.memory")}
+            </th>
+            <th className="px-3 py-2 font-semibold">
+              {translate("settings.diagnostics.table.command")}
+            </th>
+            <th className="px-3 py-2 text-right font-semibold">
+              {translate("settings.diagnostics.table.pid")}
+            </th>
+            <th className="px-3 py-2 font-semibold">
+              {translate("settings.diagnostics.table.type")}
+            </th>
+            <th className="p-2 text-right font-semibold sm:pr-4">
+              {translate("settings.diagnostics.table.kill")}
+            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border/50">
           {visibleProcesses.length === 0 ? (
             <tr>
               <td colSpan={7} className="px-4 py-4 text-xs text-muted-foreground sm:px-5">
-                {emptyLabel ?? "No live descendant processes found."}
+                {emptyLabel ?? translate("settings.diagnostics.live.empty")}
               </td>
             </tr>
           ) : null}
@@ -486,7 +530,7 @@ function ProcessDiagnosticsTable({
                 {process.cpuPercent.toFixed(1)}%
               </td>
               <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
-                {formatBytes(process.rssBytes)}
+                {formatBytes(process.rssBytes, translator)}
               </td>
               <td className="px-3 py-2 align-middle text-muted-foreground">
                 <Tooltip>
@@ -505,7 +549,7 @@ function ProcessDiagnosticsTable({
                 {process.pid}
               </td>
               <td className="truncate px-3 py-2 align-middle text-muted-foreground">
-                {formatProcessType(process)}
+                {translate(processTypeMessageKey(process))}
               </td>
               <td className="p-2 align-middle sm:pr-4">
                 <ProcessSignalActions
@@ -523,17 +567,37 @@ function ProcessDiagnosticsTable({
 }
 
 const RESOURCE_HISTORY_WINDOWS = [
-  { label: "5m", windowMs: 5 * 60_000, bucketMs: 30_000 },
-  { label: "15m", windowMs: 15 * 60_000, bucketMs: 60_000 },
-  { label: "30m", windowMs: 30 * 60_000, bucketMs: 2 * 60_000 },
-  { label: "1h", windowMs: 60 * 60_000, bucketMs: 5 * 60_000 },
+  {
+    messageKey: "settings.diagnostics.window.fiveMinutes",
+    windowMs: 5 * 60_000,
+    bucketMs: 30_000,
+  },
+  {
+    messageKey: "settings.diagnostics.window.fifteenMinutes",
+    windowMs: 15 * 60_000,
+    bucketMs: 60_000,
+  },
+  {
+    messageKey: "settings.diagnostics.window.thirtyMinutes",
+    windowMs: 30 * 60_000,
+    bucketMs: 2 * 60_000,
+  },
+  {
+    messageKey: "settings.diagnostics.window.oneHour",
+    windowMs: 60 * 60_000,
+    bucketMs: 5 * 60_000,
+  },
 ] as const;
 
-function formatCpuTime(seconds: number): string {
-  if (seconds < 60) return `${seconds.toFixed(seconds >= 10 ? 1 : 2)}s`;
+function formatCpuTime(seconds: number, translator: InterfaceTranslator): string {
+  if (seconds < 60) {
+    return `${translator.number(seconds, { maximumFractionDigits: seconds >= 10 ? 1 : 2 })}s`;
+  }
   const minutes = seconds / 60;
-  if (minutes < 60) return `${minutes.toFixed(minutes >= 10 ? 1 : 2)}m`;
-  return `${(minutes / 60).toFixed(2)}h`;
+  if (minutes < 60) {
+    return `${translator.number(minutes, { maximumFractionDigits: minutes >= 10 ? 1 : 2 })}m`;
+  }
+  return `${translator.number(minutes / 60, { maximumFractionDigits: 2 })}h`;
 }
 
 function formatShortProcessName(command: string): string {
@@ -548,13 +612,19 @@ function ResourceHistoryProcessNameCell({
   process: ServerProcessResourceHistorySummary;
   visualDepth: number;
 }) {
+  const translate = useInterfaceTranslator().message;
   const name = formatShortProcessName(process.command);
 
   return (
     <div
       className="grid min-w-0 grid-cols-[1.25rem_0.375rem_minmax(0,1fr)] items-center gap-2"
       style={{ paddingLeft: `${Math.min(visualDepth, 6) * 10}px` }}
-      aria-label={`${process.isServerRoot ? "Root" : "Child"} process ${name}`}
+      aria-label={translate(
+        process.isServerRoot
+          ? "settings.diagnostics.process.rootAria"
+          : "settings.diagnostics.process.childAria",
+        { name },
+      )}
     >
       <span className="size-5 shrink-0" aria-hidden="true" />
       <span
@@ -587,6 +657,8 @@ function ProcessResourceHistoryChart({
     readonly maxCpuPercent: number;
   }>;
 }) {
+  const translator = useInterfaceTranslator();
+  const translate = translator.message;
   const maxCpuPercent = Math.max(1, ...buckets.map((bucket) => bucket.maxCpuPercent));
 
   return (
@@ -602,7 +674,12 @@ function ProcessResourceHistoryChart({
                   <div className="flex h-full min-w-1 flex-1 items-end">
                     <div
                       className="relative h-full w-full"
-                      aria-label={`Average CPU ${bucket.avgCpuPercent.toFixed(1)}%, peak CPU ${bucket.maxCpuPercent.toFixed(1)}%`}
+                      aria-label={translate("settings.diagnostics.history.averagePeakAria", {
+                        average: translator.number(bucket.avgCpuPercent, {
+                          maximumFractionDigits: 1,
+                        }),
+                        peak: translator.number(bucket.maxCpuPercent, { maximumFractionDigits: 1 }),
+                      })}
                     >
                       <div
                         className="absolute inset-x-0 bottom-0 rounded-t-sm bg-foreground/15 transition-colors"
@@ -617,7 +694,10 @@ function ProcessResourceHistoryChart({
                 }
               />
               <TooltipPopup side="top">
-                Avg {bucket.avgCpuPercent.toFixed(1)}%, peak {bucket.maxCpuPercent.toFixed(1)}%
+                {translate("settings.diagnostics.history.averagePeak", {
+                  average: translator.number(bucket.avgCpuPercent, { maximumFractionDigits: 1 }),
+                  peak: translator.number(bucket.maxCpuPercent, { maximumFractionDigits: 1 }),
+                })}
               </TooltipPopup>
             </Tooltip>
           );
@@ -634,6 +714,7 @@ function ResourceHistoryWindowSelector({
   selectedWindowMs: number;
   onSelect: (windowMs: number) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <div className="flex items-center rounded-md border border-border/60 p-0.5">
       {RESOURCE_HISTORY_WINDOWS.map((option) => (
@@ -646,7 +727,7 @@ function ResourceHistoryWindowSelector({
           )}
           onClick={() => onSelect(option.windowMs)}
         >
-          {option.label}
+          {translate(option.messageKey)}
         </button>
       ))}
     </div>
@@ -660,6 +741,8 @@ function ProcessResourceHistoryTable({
   processes: ReadonlyArray<ServerProcessResourceHistorySummary>;
   emptyLabel: string;
 }) {
+  const translator = useInterfaceTranslator();
+  const translate = translator.message;
   const shallowestChildDepth = processes.reduce<number | null>((minDepth, process) => {
     if (process.isServerRoot) return minDepth;
     return minDepth === null ? process.depth : Math.min(minDepth, process.depth);
@@ -685,14 +768,30 @@ function ProcessResourceHistoryTable({
         </colgroup>
         <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-[11px] uppercase tracking-[0.08em] text-muted-foreground/70">
           <tr>
-            <th className="px-4 py-2 font-semibold sm:pl-5">Process</th>
-            <th className="px-3 py-2 text-right font-semibold">CPU Time</th>
-            <th className="px-3 py-2 text-right font-semibold">Current</th>
-            <th className="px-3 py-2 text-right font-semibold">Average</th>
-            <th className="px-3 py-2 text-right font-semibold">Peak</th>
-            <th className="px-3 py-2 text-right font-semibold">Max Mem</th>
-            <th className="px-3 py-2 font-semibold">Command</th>
-            <th className="px-3 py-2 text-right font-semibold sm:pr-5">PID</th>
+            <th className="px-4 py-2 font-semibold sm:pl-5">
+              {translate("settings.diagnostics.table.process")}
+            </th>
+            <th className="px-3 py-2 text-right font-semibold">
+              {translate("settings.diagnostics.table.cpuTime")}
+            </th>
+            <th className="px-3 py-2 text-right font-semibold">
+              {translate("settings.diagnostics.table.current")}
+            </th>
+            <th className="px-3 py-2 text-right font-semibold">
+              {translate("settings.diagnostics.table.average")}
+            </th>
+            <th className="px-3 py-2 text-right font-semibold">
+              {translate("settings.diagnostics.table.peak")}
+            </th>
+            <th className="px-3 py-2 text-right font-semibold">
+              {translate("settings.diagnostics.table.maxMemory")}
+            </th>
+            <th className="px-3 py-2 font-semibold">
+              {translate("settings.diagnostics.table.command")}
+            </th>
+            <th className="px-3 py-2 text-right font-semibold sm:pr-5">
+              {translate("settings.diagnostics.table.pid")}
+            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border/50">
@@ -716,7 +815,7 @@ function ProcessResourceHistoryTable({
                 />
               </td>
               <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
-                {formatCpuTime(process.cpuSecondsApprox)}
+                {formatCpuTime(process.cpuSecondsApprox, translator)}
               </td>
               <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
                 {process.currentCpuPercent.toFixed(1)}%
@@ -728,7 +827,7 @@ function ProcessResourceHistoryTable({
                 {process.maxCpuPercent.toFixed(1)}%
               </td>
               <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
-                {formatBytes(process.maxRssBytes)}
+                {formatBytes(process.maxRssBytes, translator)}
               </td>
               <td className="px-3 py-2 align-middle text-muted-foreground">
                 <Tooltip>
@@ -755,26 +854,31 @@ function ProcessResourceHistoryTable({
 }
 
 function DiagnosticsLastChecked({ checkedAt }: { checkedAt: DateTime.Utc | null }) {
+  const translate = useInterfaceTranslator().message;
   useRelativeTimeTick();
   const relative = getRelativeTimeState(checkedAt ? DateTime.formatIso(checkedAt) : null);
 
   if (relative.status === "missing") {
-    return <span className="text-[11px] text-muted-foreground/50">Checking</span>;
+    return (
+      <span className="text-[11px] text-muted-foreground/50">
+        {translate("settings.diagnostics.common.checking")}
+      </span>
+    );
   }
 
   if (relative.status === "invalid") {
-    return <span className="text-[11px] text-muted-foreground/50">Checked unavailable</span>;
+    return (
+      <span className="text-[11px] text-muted-foreground/50">
+        {translate("settings.diagnostics.common.checkedUnavailable")}
+      </span>
+    );
   }
 
   return (
     <span className="text-[11px] text-muted-foreground/60">
-      {relative.suffix ? (
-        <>
-          Checked <span className="font-mono tabular-nums">{relative.value}</span> {relative.suffix}
-        </>
-      ) : (
-        <>Checked {relative.value}</>
-      )}
+      {translate("settings.diagnostics.common.checked", {
+        value: relative.suffix ? `${relative.value} ${relative.suffix}` : relative.value,
+      })}
     </span>
   );
 }
@@ -809,6 +913,8 @@ function DiagnosticsRefreshButton({
 }
 
 export function DiagnosticsSettingsPanel() {
+  const translator = useInterfaceTranslator();
+  const translate = translator.message;
   const observability = useAtomValue(primaryServerObservabilityAtom);
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   const primaryEnvironment = usePrimaryEnvironment();
@@ -869,11 +975,11 @@ export function DiagnosticsSettingsPanel() {
 
     const editor = resolveAndPersistPreferredEditor(availableEditors ?? []);
     if (!editor) {
-      setOpenLogsDirectoryError("No available editors found.");
+      setOpenLogsDirectoryError(translate("settings.diagnostics.trace.noEditors"));
       return;
     }
     if (environmentId === null) {
-      setOpenLogsDirectoryError("No environment is selected.");
+      setOpenLogsDirectoryError(translate("settings.diagnostics.trace.noEnvironment"));
       return;
     }
 
@@ -891,11 +997,13 @@ export function DiagnosticsSettingsPanel() {
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         setOpenLogsDirectoryError(
-          error instanceof Error ? error.message : "Unable to open logs folder.",
+          error instanceof Error
+            ? error.message
+            : translate("settings.diagnostics.trace.openLogsFailed"),
         );
       }
     })();
-  }, [availableEditors, environmentId, observability?.logsDirectoryPath, openInEditor]);
+  }, [availableEditors, environmentId, observability?.logsDirectoryPath, openInEditor, translate]);
 
   const isInitialLoading = isPending && data === null;
   const isProcessInitialLoading = isProcessPending && processData === null;
@@ -912,15 +1020,18 @@ export function DiagnosticsSettingsPanel() {
         let confirmed = false;
         try {
           confirmed = await ensureLocalApi().dialogs.confirm(
-            `Send SIGKILL to process ${pid}? This cannot be handled by the process.`,
+            translate("settings.diagnostics.signal.confirmKill", { pid }),
             { variant: "destructive" },
           );
         } catch (error) {
           clearSignaling();
           toastManager.add({
             type: "error",
-            title: "Could not confirm signal",
-            description: error instanceof Error ? error.message : `Failed to send ${signal}.`,
+            title: translate("settings.diagnostics.signal.confirmFailed"),
+            description:
+              error instanceof Error
+                ? error.message
+                : translate("settings.diagnostics.signal.sendFailed", { signal }),
           });
           return;
         }
@@ -950,8 +1061,11 @@ export function DiagnosticsSettingsPanel() {
             const error = squashAtomCommandFailure(result);
             toastManager.add({
               type: "error",
-              title: `Could not send ${signal}`,
-              description: error instanceof Error ? error.message : `Failed to send ${signal}.`,
+              title: translate("settings.diagnostics.signal.sendFailedTitle", { signal }),
+              description:
+                error instanceof Error
+                  ? error.message
+                  : translate("settings.diagnostics.signal.sendFailed", { signal }),
             });
           }
           return;
@@ -962,17 +1076,16 @@ export function DiagnosticsSettingsPanel() {
           if (isStaleProcessSignalMessage(message)) {
             toastManager.add({
               type: "info",
-              title: "Process already exited",
-              description:
-                "The process is not a child of the T3 Server. It might already have exited.",
+              title: translate("settings.diagnostics.signal.alreadyExited"),
+              description: translate("settings.diagnostics.signal.alreadyExitedDescription"),
             });
             return;
           }
 
           toastManager.add({
             type: "error",
-            title: `Could not send ${signal}`,
-            description: message ?? `Failed to send ${signal}.`,
+            title: translate("settings.diagnostics.signal.sendFailedTitle", { signal }),
+            description: message ?? translate("settings.diagnostics.signal.sendFailed", { signal }),
           });
           return;
         }
@@ -981,7 +1094,7 @@ export function DiagnosticsSettingsPanel() {
         clearSignaling();
       }
     },
-    [refreshProcesses, signalServerProcess],
+    [refreshProcesses, signalServerProcess, translate],
   );
 
   const processDiagnosticsError = processData ? Option.getOrNull(processData.error) : null;
@@ -996,13 +1109,13 @@ export function DiagnosticsSettingsPanel() {
       <ResourceTelemetryDiagnostics />
 
       <SettingsSection
-        title="Live Processes"
+        title={translate("settings.diagnostics.live.title")}
         headerAction={
           <div className="flex items-center gap-1.5">
             <DiagnosticsLastChecked checkedAt={processData?.readAt ?? null} />
             <DiagnosticsRefreshButton
               isPending={isProcessPending}
-              label="Refresh process diagnostics"
+              label={translate("settings.diagnostics.live.refresh")}
               onClick={refreshProcesses}
             />
           </div>
@@ -1010,21 +1123,25 @@ export function DiagnosticsSettingsPanel() {
       >
         <StatsGrid>
           <StatBlock
-            label="Child Processes"
-            value={processData ? formatCount(processData.processCount) : "..."}
+            label={translate("settings.diagnostics.live.childProcesses")}
+            value={processData ? formatCount(processData.processCount, translator) : "..."}
           />
           <StatBlock
-            label="CPU"
-            value={processData ? `${processData.totalCpuPercent.toFixed(1)}%` : "..."}
-            tooltip="Total CPU across live child processes of the current server process. The desktop shell and other parent processes are not included."
+            label={translate("settings.diagnostics.table.cpu")}
+            value={
+              processData
+                ? `${translator.number(processData.totalCpuPercent, { maximumFractionDigits: 1 })}%`
+                : "..."
+            }
+            tooltip={translate("settings.diagnostics.live.cpuTooltip")}
           />
           <StatBlock
-            label="Memory"
-            value={processData ? formatBytes(processData.totalRssBytes) : "..."}
-            tooltip="Total resident memory across live child processes of the current server process. The desktop shell and other parent processes are not included."
+            label={translate("settings.diagnostics.table.memory")}
+            value={processData ? formatBytes(processData.totalRssBytes, translator) : "..."}
+            tooltip={translate("settings.diagnostics.live.memoryTooltip")}
           />
           <StatBlock
-            label="Server PID"
+            label={translate("settings.diagnostics.live.serverPid")}
             value={processData ? String(processData.serverPid) : "..."}
           />
         </StatsGrid>
@@ -1050,14 +1167,14 @@ export function DiagnosticsSettingsPanel() {
           onSignal={signalProcess}
           emptyLabel={
             isProcessInitialLoading
-              ? "Loading live processes..."
-              : "No live descendant processes found."
+              ? translate("settings.diagnostics.live.loading")
+              : translate("settings.diagnostics.live.empty")
           }
         />
       </SettingsSection>
 
       <SettingsSection
-        title="Resource History"
+        title={translate("settings.diagnostics.history.title")}
         headerAction={
           <div className="flex items-center gap-1.5">
             <ResourceHistoryWindowSelector
@@ -1067,7 +1184,7 @@ export function DiagnosticsSettingsPanel() {
             <DiagnosticsLastChecked checkedAt={resourceData?.readAt ?? null} />
             <DiagnosticsRefreshButton
               isPending={isResourcePending}
-              label="Refresh resource history"
+              label={translate("settings.diagnostics.history.refresh")}
               onClick={refreshResources}
             />
           </div>
@@ -1075,22 +1192,24 @@ export function DiagnosticsSettingsPanel() {
       >
         <StatsGrid>
           <StatBlock
-            label="CPU Time"
-            value={resourceData ? formatCpuTime(resourceData.totalCpuSecondsApprox) : "..."}
-            tooltip="Approximate active CPU time for the T3 server root process and its descendants during the selected window. It grows only while sampled processes use CPU and older samples leave as the window moves."
+            label={translate("settings.diagnostics.table.cpuTime")}
+            value={
+              resourceData ? formatCpuTime(resourceData.totalCpuSecondsApprox, translator) : "..."
+            }
+            tooltip={translate("settings.diagnostics.history.cpuTimeTooltip")}
           />
           <StatBlock
-            label="Samples"
-            value={resourceData ? formatCount(resourceData.retainedSampleCount) : "..."}
-            tooltip="In-memory process samples retained by the server. This resets when the server restarts."
+            label={translate("settings.diagnostics.table.samples")}
+            value={resourceData ? formatCount(resourceData.retainedSampleCount, translator) : "..."}
+            tooltip={translate("settings.diagnostics.history.samplesTooltip")}
           />
           <StatBlock
-            label="Interval"
-            value={resourceData ? formatDuration(resourceData.sampleIntervalMs) : "..."}
+            label={translate("settings.diagnostics.history.interval")}
+            value={resourceData ? formatDuration(resourceData.sampleIntervalMs, translator) : "..."}
           />
           <StatBlock
-            label="Processes"
-            value={resourceData ? formatCount(resourceData.topProcesses.length) : "..."}
+            label={translate("settings.diagnostics.history.processes")}
+            value={resourceData ? formatCount(resourceData.topProcesses.length, translator) : "..."}
           />
         </StatsGrid>
         {processResourceError || resourceError ? (
@@ -1114,14 +1233,14 @@ export function DiagnosticsSettingsPanel() {
           processes={resourceData?.topProcesses ?? []}
           emptyLabel={
             isResourcePending && resourceData === null
-              ? "Collecting process resource samples..."
-              : "No process resource samples found for this window."
+              ? translate("settings.diagnostics.history.collecting")
+              : translate("settings.diagnostics.history.empty")
           }
         />
       </SettingsSection>
 
       <SettingsSection
-        title="Trace Diagnostics"
+        title={translate("settings.diagnostics.trace.title")}
         headerAction={
           <div className="flex items-center gap-1.5">
             <DiagnosticsLastChecked checkedAt={data?.readAt ?? null} />
@@ -1133,42 +1252,49 @@ export function DiagnosticsSettingsPanel() {
                     variant="ghost-muted"
                     disabled={!observability?.logsDirectoryPath || isOpeningLogsDirectory}
                     onClick={openLogsDirectory}
-                    aria-label="Open logs folder"
+                    aria-label={translate("settings.diagnostics.trace.openLogs")}
                   >
                     <FolderOpenIcon className="size-3" />
                   </Button>
                 }
               />
-              <TooltipPopup side="top">Open logs folder</TooltipPopup>
+              <TooltipPopup side="top">
+                {translate("settings.diagnostics.trace.openLogs")}
+              </TooltipPopup>
             </Tooltip>
             <DiagnosticsRefreshButton
               isPending={isPending}
-              label="Refresh trace diagnostics"
+              label={translate("settings.diagnostics.trace.refresh")}
               onClick={refresh}
             />
           </div>
         }
       >
         <StatsGrid>
-          <StatBlock label="Spans" value={data ? formatCount(data.recordCount) : "..."} />
           <StatBlock
-            label="Failures"
-            value={data ? formatCount(data.failureCount) : "..."}
+            label={translate("settings.diagnostics.trace.spans")}
+            value={data ? formatCount(data.recordCount, translator) : "..."}
+          />
+          <StatBlock
+            label={translate("settings.diagnostics.trace.failures")}
+            value={data ? formatCount(data.failureCount, translator) : "..."}
             tone={data && data.failureCount > 0 ? "danger" : "default"}
           />
           <StatBlock
-            label="Slow Spans"
-            value={data ? formatCount(data.slowSpanCount) : "..."}
+            label={translate("settings.diagnostics.trace.slowSpans")}
+            value={data ? formatCount(data.slowSpanCount, translator) : "..."}
             tooltip={
               data
-                ? `Spans with a duration of ${formatDuration(data.slowSpanThresholdMs)} or longer.`
-                : "Spans at or above the configured slow-span threshold."
+                ? translate("settings.diagnostics.trace.slowThreshold", {
+                    duration: formatDuration(data.slowSpanThresholdMs, translator),
+                  })
+                : translate("settings.diagnostics.trace.slowThresholdDefault")
             }
             tone={data && data.slowSpanCount > 0 ? "warning" : "default"}
           />
           <StatBlock
-            label="Parse Errors"
-            value={data ? formatCount(data.parseErrorCount) : "..."}
+            label={translate("settings.diagnostics.trace.parseErrors")}
+            value={data ? formatCount(data.parseErrorCount, translator) : "..."}
             tone={data && data.parseErrorCount > 0 ? "warning" : "default"}
           />
         </StatsGrid>
@@ -1192,7 +1318,9 @@ export function DiagnosticsSettingsPanel() {
                 <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
                 <span>
                   {traceDiagnosticsPartialFailure
-                    ? `Some trace files could not be read, so diagnostics may be incomplete. ${traceDiagnosticsError.message}`
+                    ? translate("settings.diagnostics.trace.partialFailure", {
+                        detail: traceDiagnosticsError.message,
+                      })
                     : traceDiagnosticsError.message}
                 </span>
               </div>
@@ -1207,9 +1335,16 @@ export function DiagnosticsSettingsPanel() {
         ) : null}
       </SettingsSection>
 
-      <SettingsSection title="Latest Failures">
+      <SettingsSection title={translate("settings.diagnostics.trace.latestFailures")}>
         {data && data.latestFailures.length > 0 ? (
-          <DiagnosticsTable headers={["Span", "Cause", "Duration", "Ended"]}>
+          <DiagnosticsTable
+            headers={[
+              translate("settings.diagnostics.table.span"),
+              translate("settings.diagnostics.table.cause"),
+              translate("settings.diagnostics.table.duration"),
+              translate("settings.diagnostics.table.ended"),
+            ]}
+          >
             {data.latestFailures.map((failure) => (
               <tr key={`${failure.traceId}:${failure.spanId}`}>
                 <td className="px-4 py-3 align-top text-xs font-medium text-foreground first:sm:pl-5">
@@ -1219,23 +1354,34 @@ export function DiagnosticsSettingsPanel() {
                   <ExpandableText text={failure.cause} />
                 </td>
                 <td className="px-4 py-3 align-top font-mono tabular-nums">
-                  {formatDuration(failure.durationMs)}
+                  {formatDuration(failure.durationMs, translator)}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums text-muted-foreground last:sm:pr-5">
-                  {formatRelativeNoWrap(failure.endedAt)}
+                  {formatRelativeNoWrap(failure.endedAt, translate)}
                 </td>
               </tr>
             ))}
           </DiagnosticsTable>
         ) : (
-          <EmptyRows label={isInitialLoading ? "Loading failures..." : "No failed spans found."} />
+          <EmptyRows
+            label={
+              isInitialLoading
+                ? translate("settings.diagnostics.trace.loadingFailures")
+                : translate("settings.diagnostics.trace.noFailures")
+            }
+          />
         )}
       </SettingsSection>
 
-      <SettingsSection title="Most Common Failures">
+      <SettingsSection title={translate("settings.diagnostics.trace.commonFailures")}>
         {data && data.commonFailures.length > 0 ? (
           <DiagnosticsTable
-            headers={["Span", "Count", "Cause", "Last Seen"]}
+            headers={[
+              translate("settings.diagnostics.table.span"),
+              translate("settings.diagnostics.table.count"),
+              translate("settings.diagnostics.table.cause"),
+              translate("settings.diagnostics.table.lastSeen"),
+            ]}
             minTableWidth="min-w-[760px]"
           >
             {data.commonFailures.map((failure) => (
@@ -1244,28 +1390,37 @@ export function DiagnosticsSettingsPanel() {
                   {failure.name}
                 </td>
                 <td className="px-4 py-3 align-top font-mono tabular-nums">
-                  {formatCount(failure.count)}
+                  {formatCount(failure.count, translator)}
                 </td>
                 <td className="max-w-[360px] px-4 py-3 align-top text-muted-foreground">
                   <ExpandableText text={failure.cause} />
                 </td>
                 <td className="w-px whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums text-muted-foreground last:sm:pr-5">
-                  {formatRelativeNoWrap(failure.lastSeenAt)}
+                  {formatRelativeNoWrap(failure.lastSeenAt, translate)}
                 </td>
               </tr>
             ))}
           </DiagnosticsTable>
         ) : (
           <EmptyRows
-            label={isInitialLoading ? "Loading failure groups..." : "No repeated failures found."}
+            label={
+              isInitialLoading
+                ? translate("settings.diagnostics.trace.loadingGroups")
+                : translate("settings.diagnostics.trace.noGroups")
+            }
           />
         )}
       </SettingsSection>
 
-      <SettingsSection title="Slowest Spans">
+      <SettingsSection title={translate("settings.diagnostics.trace.slowestSpans")}>
         {data && data.slowestSpans.length > 0 ? (
           <DiagnosticsTable
-            headers={["Span", "Duration", "Ended", "Trace"]}
+            headers={[
+              translate("settings.diagnostics.table.span"),
+              translate("settings.diagnostics.table.duration"),
+              translate("settings.diagnostics.table.ended"),
+              translate("settings.diagnostics.table.trace"),
+            ]}
             minTableWidth="min-w-[900px]"
             columnWidths={["w-[44%]", "w-[14%]", "w-[12%]", "w-[30%]"]}
           >
@@ -1275,10 +1430,10 @@ export function DiagnosticsSettingsPanel() {
                   {span.name}
                 </td>
                 <td className="px-4 py-3 align-top font-mono tabular-nums">
-                  {formatDuration(span.durationMs)}
+                  {formatDuration(span.durationMs, translator)}
                 </td>
                 <td className="w-px whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums text-muted-foreground">
-                  {formatRelativeNoWrap(span.endedAt)}
+                  {formatRelativeNoWrap(span.endedAt, translate)}
                 </td>
                 <td className="min-w-0 whitespace-nowrap px-4 py-3 align-top text-muted-foreground last:sm:pr-5">
                   <TraceIdCell traceId={span.traceId} />
@@ -1287,11 +1442,17 @@ export function DiagnosticsSettingsPanel() {
             ))}
           </DiagnosticsTable>
         ) : (
-          <EmptyRows label={isInitialLoading ? "Loading slow spans..." : "No spans found."} />
+          <EmptyRows
+            label={
+              isInitialLoading
+                ? translate("settings.diagnostics.trace.loadingSlow")
+                : translate("settings.diagnostics.trace.noSpans")
+            }
+          />
         )}
       </SettingsSection>
 
-      <SettingsSection title="Span Logs">
+      <SettingsSection title={translate("settings.diagnostics.trace.spanLogs")}>
         {data && data.latestWarningAndErrorLogs.length > 0 ? (
           <ScrollArea
             chainVerticalScroll
@@ -1309,11 +1470,21 @@ export function DiagnosticsSettingsPanel() {
               </colgroup>
               <thead className="border-b border-border/60 text-[11px] uppercase tracking-[0.08em] text-muted-foreground/70">
                 <tr>
-                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold sm:pl-5">Time</th>
-                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold">Level</th>
-                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold">Span</th>
-                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold">Message</th>
-                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold sm:pr-5">Trace</th>
+                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold sm:pl-5">
+                    {translate("settings.diagnostics.table.time")}
+                  </th>
+                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold">
+                    {translate("settings.diagnostics.table.level")}
+                  </th>
+                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold">
+                    {translate("settings.diagnostics.table.span")}
+                  </th>
+                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold">
+                    {translate("settings.diagnostics.table.message")}
+                  </th>
+                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold sm:pr-5">
+                    {translate("settings.diagnostics.table.trace")}
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
@@ -1323,7 +1494,7 @@ export function DiagnosticsSettingsPanel() {
                     className="hover:bg-muted/15"
                   >
                     <td className="whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums text-muted-foreground sm:pl-5">
-                      {formatRelativeNoWrap(event.seenAt)}
+                      {formatRelativeNoWrap(event.seenAt, translate)}
                     </td>
                     <td className="px-4 py-3 align-top">
                       <span className="inline-flex rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] font-medium uppercase text-foreground/80">
@@ -1336,7 +1507,7 @@ export function DiagnosticsSettingsPanel() {
                     <td className="px-4 py-3 align-top text-muted-foreground">
                       <ExpandableText
                         collapsedClassName="line-clamp-2"
-                        expandLabel="Show full message"
+                        expandLabel={translate("settings.diagnostics.common.showFullMessage")}
                         text={event.message}
                       />
                     </td>
@@ -1350,15 +1521,25 @@ export function DiagnosticsSettingsPanel() {
           </ScrollArea>
         ) : (
           <EmptyRows
-            label={isInitialLoading ? "Loading recent logs..." : "No warnings or errors found."}
+            label={
+              isInitialLoading
+                ? translate("settings.diagnostics.trace.loadingLogs")
+                : translate("settings.diagnostics.trace.noLogs")
+            }
           />
         )}
       </SettingsSection>
 
-      <SettingsSection title="Top Span Names">
+      <SettingsSection title={translate("settings.diagnostics.trace.topNames")}>
         {data && data.topSpansByCount.length > 0 ? (
           <DiagnosticsTable
-            headers={["Span", "Count", "Failures", "Average", "Max"]}
+            headers={[
+              translate("settings.diagnostics.table.span"),
+              translate("settings.diagnostics.table.count"),
+              translate("settings.diagnostics.table.failures"),
+              translate("settings.diagnostics.table.average"),
+              translate("settings.diagnostics.table.max"),
+            ]}
             minTableWidth="min-w-[760px]"
             columnWidths={["w-[48%]", "w-[13%]", "w-[13%]", "w-[13%]", "w-[13%]"]}
           >
@@ -1368,22 +1549,28 @@ export function DiagnosticsSettingsPanel() {
                   {span.name}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums">
-                  {formatCount(span.count)}
+                  {formatCount(span.count, translator)}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums">
-                  {formatCount(span.failureCount)}
+                  {formatCount(span.failureCount, translator)}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums">
-                  {formatDuration(span.averageDurationMs)}
+                  {formatDuration(span.averageDurationMs, translator)}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums last:sm:pr-5">
-                  {formatDuration(span.maxDurationMs)}
+                  {formatDuration(span.maxDurationMs, translator)}
                 </td>
               </tr>
             ))}
           </DiagnosticsTable>
         ) : (
-          <EmptyRows label={isInitialLoading ? "Loading span names..." : "No spans found."} />
+          <EmptyRows
+            label={
+              isInitialLoading
+                ? translate("settings.diagnostics.trace.loadingNames")
+                : translate("settings.diagnostics.trace.noSpans")
+            }
+          />
         )}
       </SettingsSection>
     </SettingsPageContainer>

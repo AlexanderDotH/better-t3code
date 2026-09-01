@@ -214,23 +214,25 @@ it.effect("lets the main agent continue without workers when planning reaches 20
   }).pipe(Effect.provide(TestClock.layer())),
 );
 
-it.effect("surfaces typed model failures so Auto Spark can retry Luna", () =>
-  Effect.gen(function* () {
-    const unavailable = new TextGenerationError({
-      operation: "planFetchExploration",
-      detail: "not available",
-      reason: "model-unavailable",
-    });
-    const textGeneration = makeTextGeneration(() => Effect.fail(unavailable));
+it.effect.each(["model-unavailable", "rate-limited"] as const)(
+  "surfaces typed $0 failures so Auto Spark can retry Luna",
+  (reason) =>
+    Effect.gen(function* () {
+      const unavailable = new TextGenerationError({
+        operation: "planFetchExploration",
+        detail: "not available",
+        reason,
+      });
+      const textGeneration = makeTextGeneration(() => Effect.fail(unavailable));
 
-    const outcome = yield* requestFetchExplorationPlan({
-      cwd: "/repo",
-      userRequest: "Inspect the repository.",
-      repositoryOrientation: "Repository orientation",
-      maxRecommendedWorkers: 8,
-      modelSelection,
-    }).pipe(Effect.provideService(TextGeneration.TextGeneration, textGeneration));
+      const outcome = yield* requestFetchExplorationPlan({
+        cwd: "/repo",
+        userRequest: "Inspect the repository.",
+        repositoryOrientation: "Repository orientation",
+        maxRecommendedWorkers: 8,
+        modelSelection,
+      }).pipe(Effect.provideService(TextGeneration.TextGeneration, textGeneration));
 
-    expect(outcome.fallbackReason).toBe("model-unavailable");
-  }),
+      expect(outcome.fallbackReason).toBe(reason);
+    }),
 );

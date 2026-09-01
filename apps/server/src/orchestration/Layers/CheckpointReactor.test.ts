@@ -40,7 +40,11 @@ import {
   TurnQuiescenceNotifierLive,
 } from "../../git-workbench/TurnQuiescenceNotifier.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
-import { CheckpointReactorLive, isProjectCheckpointCaptureEnabled } from "./CheckpointReactor.ts";
+import {
+  CheckpointReactorLive,
+  isProjectCheckpointCaptureEnabled,
+  nextCheckpointTurnCount,
+} from "./CheckpointReactor.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
@@ -73,6 +77,51 @@ describe("isProjectCheckpointCaptureEnabled", () => {
     expect(isProjectCheckpointCaptureEnabled({ checkpointsEnabled: true })).toBe(true);
     expect(isProjectCheckpointCaptureEnabled({ checkpointsEnabled: false })).toBe(false);
     expect(isProjectCheckpointCaptureEnabled(undefined)).toBe(false);
+  });
+});
+
+describe("nextCheckpointTurnCount", () => {
+  it("continues after inherited history while preserving a native placeholder count", () => {
+    const sourceThreadId = ThreadId.make("thread-source");
+    expect(
+      nextCheckpointTurnCount(
+        [
+          {
+            turnId: TurnId.make("turn-inherited"),
+            checkpointTurnCount: 1,
+            status: "ready",
+            historyOrigin: {
+              sourceThreadId,
+              sourceId: "checkpoint-source",
+              ordinal: 4,
+            },
+          },
+        ],
+        TurnId.make("turn-native"),
+      ),
+    ).toBe(2);
+    expect(
+      nextCheckpointTurnCount(
+        [
+          {
+            turnId: TurnId.make("turn-inherited"),
+            checkpointTurnCount: 1,
+            status: "ready",
+            historyOrigin: {
+              sourceThreadId,
+              sourceId: "checkpoint-source",
+              ordinal: 4,
+            },
+          },
+          {
+            turnId: TurnId.make("turn-native"),
+            checkpointTurnCount: 2,
+            status: "missing",
+          },
+        ],
+        TurnId.make("turn-native"),
+      ),
+    ).toBe(2);
   });
 });
 
@@ -138,6 +187,7 @@ function createProviderServiceHarness(
         },
       }),
     rollbackConversation,
+    uploadFeedback: () => unsupported(),
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
     },

@@ -28,6 +28,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
 import { pullRequestFindingKey, type PullRequestFinding } from "./pullRequestDetail.logic";
 import { canEditPullRequestComment } from "./pullRequestEditing.logic";
@@ -186,7 +187,7 @@ export function PullRequestCodeTab({
   selectedCommitOid,
   onSelectedCommitChange,
   pendingFinding,
-  fixFindingLabel = "Fix in a thread",
+  fixFindingLabel,
   onFixFinding,
   onAddToAgentSelection,
   onRefresh,
@@ -209,6 +210,8 @@ export function PullRequestCodeTab({
   refreshToken?: number;
 }) {
   const { resolvedTheme } = useTheme();
+  const translate = useInterfaceTranslator().message;
+  const resolvedFixFindingLabel = fixFindingLabel ?? translate("pullRequest.thread.fix");
   const settings = useClientSettings();
   const [toggledFiles, setToggledFiles] = useState<ReadonlySet<string>>(() => new Set());
   // A change of any size can carry hundreds of commits, and a menu that long is a scroll rather
@@ -642,7 +645,9 @@ export function PullRequestCodeTab({
           : buildDiffReviewComment({
               id: `pull-request-selection:${anchor.fileKey}:${anchor.range.start}:${anchor.range.end}`,
               sectionId: `pull-request:${detail.number}`,
-              sectionTitle: `PR #${detail.number} review`,
+              sectionTitle: translate("pullRequest.code.reviewSection", {
+                number: detail.number,
+              }),
               filePath: anchor.path,
               fileDiff: file,
               range: anchor.range,
@@ -652,7 +657,7 @@ export function PullRequestCodeTab({
       setSelectedLines(null);
       if (comment !== null) onFinish(comment);
     },
-    [detail.number, files],
+    [detail.number, files, translate],
   );
 
   // The viewer's SlotPortals memoizes each visible file's header/annotation portal on these
@@ -672,17 +677,17 @@ export function PullRequestCodeTab({
         >
           {diffQuery.error !== null ? (
             <>
-              <span>The rest of this diff could not be loaded.</span>
+              <span>{translate("pullRequest.code.restUnavailable")}</span>
               <Button size="xs" variant="outline" onClick={() => diffQuery.refresh()}>
-                Retry
+                {translate("common.retry")}
               </Button>
             </>
           ) : diffQuery.isPending ? (
-            "Loading more files..."
+            translate("pullRequest.code.loadingMoreFiles")
           ) : null}
         </div>
       ),
-    [nextCursor, diffQuery.error, diffQuery.isPending, diffQuery.refresh],
+    [nextCursor, diffQuery.error, diffQuery.isPending, diffQuery.refresh, translate],
   );
 
   const renderHeaderPrefix = useCallback(
@@ -695,7 +700,7 @@ export function PullRequestCodeTab({
           size="icon-micro"
           variant="ghost-muted"
           aria-expanded={!collapsed}
-          aria-label={collapsed ? "Expand diff" : "Collapse diff"}
+          aria-label={translate(collapsed ? "git.diff.expand" : "git.diff.collapse")}
           className="mr-1 rounded hover:bg-transparent"
           onClick={(event) => {
             event.stopPropagation();
@@ -710,7 +715,7 @@ export function PullRequestCodeTab({
         </Button>
       );
     },
-    [toggleFile],
+    [toggleFile, translate],
   );
 
   const renderHeaderMetadata = useCallback(
@@ -800,7 +805,7 @@ export function PullRequestCodeTab({
         reference={reference}
         pending={threadPending}
         fixPending={pendingFinding === pullRequestFindingKey({ kind: "thread", thread })}
-        fixLabel={fixFindingLabel}
+        fixLabel={resolvedFixFindingLabel}
         {...(onFixFinding ? { onFix: () => onFixFinding({ kind: "thread", thread }) } : {})}
         onLoadMore={async (cursor): Promise<PullRequestThreadCommentsResult | null> => {
           const result = await loadThreadComments({
@@ -810,14 +815,14 @@ export function PullRequestCodeTab({
           if (result._tag === "Failure") {
             toastManager.add({
               type: "error",
-              title: "More comments could not be loaded",
+              title: translate("pullRequest.code.moreCommentsFailed"),
             });
             return null;
           }
           return result.value;
         }}
         onReply={(body) =>
-          runThreadCommand("Reply could not be posted", () =>
+          runThreadCommand(translate("pullRequest.code.replyFailed"), () =>
             replyToThread({
               environmentId,
               input: { ...reference, threadId: thread.id, body },
@@ -829,7 +834,7 @@ export function PullRequestCodeTab({
           canEditPullRequestComment(detail, { author: comment.author, kind: "review-comment" })
         }
         onEditComment={(commentId, body) =>
-          runThreadCommand("The comment could not be saved", () =>
+          runThreadCommand(translate("pullRequest.comment.saveFailed"), () =>
             updateComment({
               environmentId,
               input: { ...reference, commentId, kind: "review-comment", body },
@@ -837,7 +842,7 @@ export function PullRequestCodeTab({
           )
         }
         onToggleResolved={() =>
-          void runThreadCommand("The conversation could not be updated", () =>
+          void runThreadCommand(translate("pullRequest.code.conversationUpdateFailed"), () =>
             setThreadResolution({
               environmentId,
               input: { ...reference, threadId: thread.id, resolved: !thread.isResolved },
@@ -850,7 +855,7 @@ export function PullRequestCodeTab({
     [
       detail,
       environmentId,
-      fixFindingLabel,
+      resolvedFixFindingLabel,
       loadThreadComments,
       onRefresh,
       onFixFinding,
@@ -862,6 +867,7 @@ export function PullRequestCodeTab({
       runThreadCommand,
       setThreadResolution,
       threadPending,
+      translate,
       updateComment,
     ],
   );
@@ -882,11 +888,11 @@ export function PullRequestCodeTab({
             kind="draft"
             rangeLabel={`${draft.path}:${getReviewPositionAnchor(draft.position).line}`}
             text=""
-            submitLabel="Add to review"
+            submitLabel={translate("pullRequest.code.addToReview")}
             {...(onAddToAgentSelection
               ? {
                   secondaryAction: {
-                    label: "Add to agent",
+                    label: translate("pullRequest.code.addToAgent"),
                     onAction: (text: string) =>
                       finishSelection(draft, text, (comment) =>
                         onAddToAgentSelection({ comment, request: text }),
@@ -921,6 +927,7 @@ export function PullRequestCodeTab({
       removeComment,
       renderThreadCard,
       reviewKey,
+      translate,
     ],
   );
 
@@ -941,7 +948,7 @@ export function PullRequestCodeTab({
               type="button"
               size="icon-sm"
               variant="ghost"
-              aria-label="Close review"
+              aria-label={translate("pullRequest.code.closeReview")}
               className="absolute right-2 top-2"
               onClick={() => setReviewOpen(false)}
             >
@@ -967,7 +974,7 @@ export function PullRequestCodeTab({
             variant="glass"
           >
             <MessageSquareIcon className="size-3.5" />
-            Review
+            {translate("pullRequest.code.review")}
             {pendingComments.length > 0 ? (
               <span className="flex size-4 items-center justify-center rounded-full bg-accent text-[10px] tabular-nums text-accent-foreground">
                 {pendingComments.length}
@@ -990,7 +997,9 @@ export function PullRequestCodeTab({
       onSelectedCommitChange(null);
     }
   }, [commit, onSelectedCommitChange, selectedCommit]);
-  const scopeLabel = selectedCommit ? selectedCommit.messageHeadline : "All commits";
+  const scopeLabel = selectedCommit
+    ? selectedCommit.messageHeadline
+    : translate("pullRequest.code.allCommits");
   /**
    * The same controls the thread diff panel carries, in the same order, minus the
    * ignore-whitespace toggle: that is `git diff -w` on the server, and no host's pull request
@@ -1005,7 +1014,7 @@ export function PullRequestCodeTab({
           <DropdownMenu>
             <DropdownMenuTrigger
               className="inline-flex h-6 max-w-64 items-center gap-1 rounded-md bg-accent px-2 text-xs font-medium text-accent-foreground outline-none transition-colors hover:bg-accent/80 focus-visible:ring-2 focus-visible:ring-ring"
-              aria-label={`Diff scope: ${scopeLabel}`}
+              aria-label={translate("git.diff.scopeAria", { scope: scopeLabel })}
             >
               <span className="truncate">{scopeLabel}</span>
               <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
@@ -1015,7 +1024,7 @@ export function PullRequestCodeTab({
                 className={commit === null ? "bg-foreground/[0.08]" : undefined}
                 onClick={() => onSelectedCommitChange(null)}
               >
-                <span>All commits</span>
+                <span>{translate("pullRequest.code.allCommits")}</span>
               </DropdownMenuItem>
               {orderedCommits.slice(0, visibleCommitCount).map((entry) => (
                 <DropdownMenuItem
@@ -1044,7 +1053,9 @@ export function PullRequestCodeTab({
                   onClick={() => setVisibleCommitCount((count) => count + COMMIT_PAGE_SIZE)}
                 >
                   <span className="text-muted-foreground">
-                    Show more ({orderedCommits.length - visibleCommitCount} left)
+                    {translate("pullRequest.code.showMore", {
+                      count: orderedCommits.length - visibleCommitCount,
+                    })}
                   </span>
                 </DropdownMenuItem>
               ) : null}
@@ -1055,20 +1066,19 @@ export function PullRequestCodeTab({
             competed for a strip this narrow and every one of them truncated to nothing. */}
         <PullRequestMetaLine>
           <span className="shrink-0 tabular-nums">
-            {files.length} {files.length === 1 ? "file" : "files"}
+            {translate("pullRequest.code.fileCount", { count: files.length })}
             {nextCursor === null ? "" : "+"}
           </span>
           {withheldContent ? (
             <Tooltip>
               <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
                 <TriangleAlertIcon
-                  aria-label="Some of this diff was not shown"
+                  aria-label={translate("pullRequest.code.diffTruncated")}
                   className="size-3.5 text-amber-600 dark:text-amber-500"
                 />
               </TooltipTrigger>
               <TooltipPopup side="bottom">
-                The host withheld part of this diff — a binary file, or a change too large to
-                inline.
+                {translate("pullRequest.code.withheldDetail")}
               </TooltipPopup>
             </Tooltip>
           ) : null}
@@ -1076,12 +1086,12 @@ export function PullRequestCodeTab({
             <Tooltip>
               <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
                 <MessageSquareOffIcon
-                  aria-label="Line comments are written from the whole change"
+                  aria-label={translate("pullRequest.code.wholeChangeComments")}
                   className="size-3.5"
                 />
               </TooltipTrigger>
               <TooltipPopup side="bottom">
-                A comment is anchored to the whole change, so switch to All commits to write one.
+                {translate("pullRequest.code.wholeChangeDetail")}
               </TooltipPopup>
             </Tooltip>
           ) : null}
@@ -1101,7 +1111,9 @@ export function PullRequestCodeTab({
                   type="button"
                   size="icon-sm"
                   variant="ghost"
-                  aria-label={allFilesCollapsed ? "Expand all files" : "Collapse all files"}
+                  aria-label={translate(
+                    allFilesCollapsed ? "git.diff.expandAll" : "git.diff.collapseAll",
+                  )}
                   onClick={toggleAllFiles}
                 />
               }
@@ -1113,7 +1125,7 @@ export function PullRequestCodeTab({
               )}
             </TooltipTrigger>
             <TooltipPopup side="top">
-              {allFilesCollapsed ? "Expand all files" : "Collapse all files"}
+              {translate(allFilesCollapsed ? "git.diff.expandAll" : "git.diff.collapseAll")}
             </TooltipPopup>
           </Tooltip>
         ) : null}
@@ -1128,10 +1140,10 @@ export function PullRequestCodeTab({
             }
           }}
         >
-          <Toggle aria-label="Stacked diff view" value="stacked" variant="ghost">
+          <Toggle aria-label={translate("git.diff.view.stacked")} value="stacked" variant="ghost">
             <Rows3Icon className="size-3.5" />
           </Toggle>
-          <Toggle aria-label="Split diff view" value="split" variant="ghost">
+          <Toggle aria-label={translate("git.diff.view.split")} value="split" variant="ghost">
             <Columns2Icon className="size-3.5" />
           </Toggle>
         </ToggleGroup>
@@ -1139,7 +1151,9 @@ export function PullRequestCodeTab({
           <TooltipTrigger
             render={
               <Toggle
-                aria-label={wordWrap ? "Disable diff line wrapping" : "Enable diff line wrapping"}
+                aria-label={translate(
+                  wordWrap ? "git.diff.disableWrapAria" : "git.diff.enableWrapAria",
+                )}
                 variant="ghost"
                 size="sm"
                 pressed={wordWrap}
@@ -1152,7 +1166,7 @@ export function PullRequestCodeTab({
             <TextWrapIcon className="size-3.5" />
           </TooltipTrigger>
           <TooltipPopup side="top">
-            {wordWrap ? "Disable line wrapping" : "Enable line wrapping"}
+            {translate(wordWrap ? "git.diff.disableWrap" : "git.diff.enableWrap")}
           </TooltipPopup>
         </Tooltip>
       </div>
@@ -1176,7 +1190,7 @@ export function PullRequestCodeTab({
   // Under the toolbar rather than in place of it, so choosing a commit does not take the
   // dropdown that was just used off the screen while its diff loads.
   if (diffQuery.isPending && loadedSlices.length === 0) {
-    return withReviewBar(<DiffPanelLoadingState label="Loading pull request diff..." />);
+    return withReviewBar(<DiffPanelLoadingState label={translate("pullRequest.loading.diff")} />);
   }
 
   // A slice that fails once there are files on screen is reported at the end of them instead:
@@ -1212,8 +1226,8 @@ export function PullRequestCodeTab({
     return withReviewBar(
       <p className="px-4 py-5 text-sm text-muted-foreground">
         {commit === null
-          ? "This pull request has no file changes."
-          : "This commit has no file changes."}
+          ? translate("pullRequest.code.noPullRequestChanges")
+          : translate("pullRequest.code.noCommitChanges")}
       </p>,
     );
   }
@@ -1263,8 +1277,8 @@ export function PullRequestCodeTab({
                     that has not landed yet, which is not the same as being off the diff. */}
                 <span>
                   {nextCursor === null
-                    ? "Conversations not on the current diff"
-                    : "Conversations not on the diff loaded so far"}
+                    ? translate("pullRequest.code.offDiffConversations")
+                    : translate("pullRequest.code.offLoadedDiffConversations")}
                 </span>
                 <ChevronRightIcon
                   aria-hidden
@@ -1275,8 +1289,10 @@ export function PullRequestCodeTab({
                 </span>
                 <span className="sr-only">
                   {orphanThreads.length === 1
-                    ? "1 conversation"
-                    : `${orphanThreads.length} conversations`}
+                    ? translate("pullRequest.thread.commentCount", { count: 1 })
+                    : translate("pullRequest.thread.commentCount", {
+                        count: orphanThreads.length,
+                      })}
                 </span>
               </CollapsibleTrigger>
             </h2>
@@ -1298,7 +1314,9 @@ export function PullRequestCodeTab({
                       {threads.map((thread) => (
                         <div key={thread.id}>
                           {thread.line === null ? null : (
-                            <p className="px-3 text-xs text-muted-foreground">Line {thread.line}</p>
+                            <p className="px-3 text-xs text-muted-foreground">
+                              {translate("pullRequest.code.line", { line: thread.line })}
+                            </p>
                           )}
                           {renderThreadCard(thread)}
                         </div>

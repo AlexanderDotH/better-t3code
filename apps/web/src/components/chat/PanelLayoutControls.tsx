@@ -3,6 +3,7 @@ import { memo } from "react";
 
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 interface PanelLayoutControlsProps {
   showTerminalControl?: boolean;
@@ -25,10 +26,13 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   rightPanelAvailable,
   rightPanelOpen,
   rightPanelShortcutLabel,
-  rightPanelUnavailableLabel = "Right panel is unavailable",
+  rightPanelUnavailableLabel,
   onToggleTerminal,
   onToggleRightPanel,
 }: PanelLayoutControlsProps) {
+  const translate = useInterfaceTranslator().message;
+  const resolvedRightPanelUnavailableLabel =
+    rightPanelUnavailableLabel ?? translate("chat.composer.rightPanelUnavailable");
   return (
     <div
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
@@ -41,7 +45,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={terminalOpen}
               onPressedChange={onToggleTerminal}
-              aria-label="Toggle terminal drawer"
+              aria-label={translate("chat.composer.toggleTerminal")}
               variant="ghost"
               size="sm"
               disabled={!terminalAvailable}
@@ -51,8 +55,8 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
           </TooltipTrigger>
           <TooltipPopup side="bottom">
             {terminalAvailable
-              ? `Toggle terminal drawer${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
-              : "Terminal drawer is unavailable"}
+              ? `${translate("chat.composer.toggleTerminal")}${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
+              : translate("chat.composer.terminalUnavailable")}
           </TooltipPopup>
         </Tooltip>
       ) : null}
@@ -62,7 +66,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
             className="shrink-0 [-webkit-app-region:no-drag]"
             pressed={rightPanelOpen}
             onPressedChange={onToggleRightPanel}
-            aria-label="Toggle right panel"
+            aria-label={translate("chat.composer.toggleRightPanel")}
             variant="ghost"
             size="sm"
             disabled={!rightPanelAvailable}
@@ -72,8 +76,8 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
         </TooltipTrigger>
         <TooltipPopup side="bottom">
           {rightPanelAvailable
-            ? `Toggle right panel${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}`
-            : rightPanelUnavailableLabel}
+            ? `${translate("chat.composer.toggleRightPanel")}${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}`
+            : resolvedRightPanelUnavailableLabel}
         </TooltipPopup>
       </Tooltip>
     </div>
@@ -87,7 +91,10 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
   maximized: boolean;
   onToggle: () => void;
 }) {
-  const label = maximized ? "Restore panel size" : "Maximize panel";
+  const translate = useInterfaceTranslator().message;
+  const label = maximized
+    ? translate("chat.composer.restorePanel")
+    : translate("chat.composer.maximizePanel");
   return (
     <Tooltip>
       <TooltipTrigger

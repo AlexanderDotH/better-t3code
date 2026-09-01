@@ -1,11 +1,16 @@
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
-import { Frame, MousePointerClick, Paintbrush, PenLine, X } from "lucide-react";
+import { Frame, MousePointerClick, Paintbrush, PenLine, RotateCcw, X } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { ComposerImageAttachment } from "~/composerDraftStore";
 import { formatElementContextLabel, normalizeElementContextSelection } from "~/lib/elementContext";
+import {
+  formatAttachmentUploadProgress,
+  type AttachmentUploadState,
+} from "~/lib/attachmentUploadState";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 interface ComposerPreviewAnnotationCardsProps {
@@ -13,6 +18,8 @@ interface ComposerPreviewAnnotationCardsProps {
   images: ReadonlyArray<ComposerImageAttachment>;
   onRemove: (annotationId: string) => void;
   onExpandImage: (imageId: string) => void;
+  uploadsByImageId?: Readonly<Record<string, AttachmentUploadState>>;
+  onRetryUpload?: (image: ComposerImageAttachment) => void;
   className?: string;
 }
 
@@ -38,8 +45,11 @@ export function ComposerPreviewAnnotationCards({
   images,
   onRemove,
   onExpandImage,
+  uploadsByImageId,
+  onRetryUpload,
   className,
 }: ComposerPreviewAnnotationCardsProps) {
+  const translate = useInterfaceTranslator().message;
   if (annotations.length === 0) return null;
   const imagesById = new Map(images.map((image) => [image.id, image]));
 
@@ -47,6 +57,7 @@ export function ComposerPreviewAnnotationCards({
     <div className={cn("flex flex-wrap gap-1.5", className)}>
       {annotations.map((annotation) => {
         const image = imagesById.get(annotation.id);
+        const upload = image ? uploadsByImageId?.[image.id] : undefined;
         const elementLabels = annotation.elements.flatMap((target) => {
           const context = normalizeElementContextSelection(target.element);
           return context ? [{ id: target.id, label: formatElementContextLabel(context) }] : [];
@@ -59,13 +70,13 @@ export function ComposerPreviewAnnotationCards({
             {image?.previewUrl ? (
               <button
                 type="button"
-                aria-label={`Preview ${image.name}`}
+                aria-label={translate("chat.preview.openImage", { name: image.name })}
                 className="size-14 shrink-0 cursor-zoom-in overflow-hidden border-r border-border/70 bg-muted"
                 onClick={() => onExpandImage(image.id)}
               >
                 <img
                   src={image.previewUrl}
-                  alt="Annotated preview crop"
+                  alt={translate("chat.preview.cropAlt")}
                   className="size-full object-cover transition duration-200 group-hover/preview-annotation:scale-[1.03]"
                 />
               </button>
@@ -108,29 +119,51 @@ export function ComposerPreviewAnnotationCards({
                     <TargetStat
                       icon={<MousePointerClick className="size-3" />}
                       count={annotation.elements.length}
-                      label="element"
+                      label={translate("chat.preview.annotation.element")}
                     />
                   ) : null}
                   {annotation.regions.length > 0 ? (
                     <TargetStat
                       icon={<Frame className="size-3" />}
                       count={annotation.regions.length}
-                      label="region"
+                      label={translate("chat.preview.annotation.region")}
                     />
                   ) : null}
                   {annotation.strokes.length > 0 ? (
                     <TargetStat
                       icon={<PenLine className="size-3" />}
                       count={annotation.strokes.length}
-                      label="drawing"
+                      label={translate("chat.preview.annotation.drawing")}
                     />
                   ) : null}
                   {annotation.styleChanges.length > 0 ? (
                     <TargetStat
                       icon={<Paintbrush className="size-3" />}
                       count={annotation.styleChanges.length}
-                      label="style change"
+                      label={translate("chat.preview.annotation.style")}
                     />
+                  ) : null}
+                  {upload?.status === "uploading" ? (
+                    <span className="text-[10px] text-secondary-label">
+                      {formatAttachmentUploadProgress(upload.progress)}
+                    </span>
+                  ) : null}
+                  {upload?.status === "failed" && image && onRetryUpload ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            size="icon-micro"
+                            variant="ghost-muted"
+                            aria-label={translate("chat.preview.retryUpload", { name: image.name })}
+                            onClick={() => onRetryUpload(image)}
+                          />
+                        }
+                      >
+                        <RotateCcw className="size-3" />
+                      </TooltipTrigger>
+                      <TooltipPopup side="top">{upload.reason}</TooltipPopup>
+                    </Tooltip>
                   ) : null}
                 </div>
               </div>
@@ -138,7 +171,7 @@ export function ComposerPreviewAnnotationCards({
             <Button
               size="icon-micro"
               variant="ghost-muted"
-              aria-label="Remove preview annotation"
+              aria-label={translate("chat.preview.annotation.remove")}
               className="absolute right-1.5 top-1.5 [--control-icon-color:currentColor] rounded text-icon-muted hover:bg-muted"
               onClick={() => onRemove(annotation.id)}
             >

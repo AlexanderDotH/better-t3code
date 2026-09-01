@@ -25,6 +25,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { agentSettingsEnvironment } from "../../state/agentSettings";
@@ -450,6 +451,7 @@ function SecretEntriesEditor(props: {
   readonly namePlaceholder: string;
   readonly onChange: (entries: ReadonlyArray<SecretEntryDraft>) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <div className="grid gap-2">
       <div className="flex items-center justify-between gap-2">
@@ -460,12 +462,12 @@ function SecretEntriesEditor(props: {
           onClick={() => props.onChange([...props.entries, newSecretEntryDraft()])}
         >
           <PlusIcon className="size-3.5" />
-          Add
+          {translate("settings.mcp.editor.add")}
         </Button>
       </div>
       {props.entries.length === 0 ? (
         <div className="rounded-lg border border-dashed px-3 py-2 text-muted-foreground text-xs">
-          No values configured.
+          {translate("settings.mcp.editor.emptyValues")}
         </div>
       ) : (
         <div className="space-y-2">
@@ -486,7 +488,11 @@ function SecretEntriesEditor(props: {
               <Input
                 value={entry.value}
                 type={entry.sensitive ? "password" : "text"}
-                placeholder={entry.valueRedacted ? "Stored secret" : "Value"}
+                placeholder={translate(
+                  entry.valueRedacted
+                    ? "settings.mcp.editor.storedSecret"
+                    : "settings.mcp.editor.value",
+                )}
                 onChange={(event) =>
                   props.onChange(
                     updateSecretEntry(props.entries, index, {
@@ -508,12 +514,14 @@ function SecretEntriesEditor(props: {
                     )
                   }
                 />
-                Sensitive
+                {translate("settings.mcp.editor.sensitive")}
               </label>
               <Button
                 size="icon-sm"
                 variant="ghost"
-                aria-label={`Remove ${entry.key || props.label} value`}
+                aria-label={translate("settings.mcp.editor.removeValue", {
+                  name: entry.key || props.label,
+                })}
                 onClick={() => props.onChange(removeSecretEntry(props.entries, index))}
               >
                 <Trash2Icon className="size-4" />
@@ -538,30 +546,35 @@ export function McpServerEditorDialog(props: {
   readonly onOpenChange: (open: boolean) => void;
   readonly onSave: () => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const project = selectedProject(props.draft, props.projects);
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogPopup className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{props.mode === "edit" ? "Edit MCP server" : "New MCP server"}</DialogTitle>
-          <DialogDescription>
-            T3 stores MCP configuration locally and resolves it when a provider session starts.
-          </DialogDescription>
+          <DialogTitle>
+            {translate(
+              props.mode === "edit"
+                ? "settings.mcp.editor.editTitle"
+                : "settings.mcp.editor.newTitle",
+            )}
+          </DialogTitle>
+          <DialogDescription>{translate("settings.mcp.editor.description")}</DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-2">
-              <Label>Name</Label>
+              <Label>{translate("settings.mcp.editor.name")}</Label>
               <Input
                 value={props.draft.name}
-                placeholder="GitHub"
+                placeholder={translate("settings.mcp.editor.namePlaceholder")}
                 onChange={(event) =>
                   props.onDraftChange({ ...props.draft, name: event.currentTarget.value })
                 }
               />
             </div>
             <div className="grid gap-2">
-              <Label>Identifier</Label>
+              <Label>{translate("settings.mcp.editor.identifier")}</Label>
               <Input
                 value={props.draft.id}
                 placeholder={normalizeServerId(props.draft.name || "github")}
@@ -574,7 +587,7 @@ export function McpServerEditorDialog(props: {
 
           <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
             <div className="grid gap-2">
-              <Label>Scope</Label>
+              <Label>{translate("settings.mcp.editor.scope")}</Label>
               <Select
                 value={props.draft.scope}
                 onValueChange={(value) =>
@@ -585,16 +598,24 @@ export function McpServerEditorDialog(props: {
                 }
               >
                 <SelectTrigger>
-                  <SelectValue>{props.draft.scope === "global" ? "Global" : "Project"}</SelectValue>
+                  <SelectValue>
+                    {translate(
+                      props.draft.scope === "global"
+                        ? "settings.mcp.editor.global"
+                        : "settings.mcp.editor.project",
+                    )}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
-                  <SelectItem value="global">Global</SelectItem>
-                  <SelectItem value="project">Project</SelectItem>
+                  <SelectItem value="global">{translate("settings.mcp.editor.global")}</SelectItem>
+                  <SelectItem value="project">
+                    {translate("settings.mcp.editor.project")}
+                  </SelectItem>
                 </SelectPopup>
               </Select>
             </div>
             <div className="grid gap-2">
-              <Label>Project</Label>
+              <Label>{translate("settings.mcp.editor.project")}</Label>
               <Select
                 value={project?.key}
                 disabled={props.draft.scope !== "project" || props.projects.length === 0}
@@ -603,7 +624,9 @@ export function McpServerEditorDialog(props: {
                 }
               >
                 <SelectTrigger>
-                  <SelectValue>{project?.name ?? "No project"}</SelectValue>
+                  <SelectValue>
+                    {project?.name ?? translate("settings.mcp.editor.noProject")}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
                   {props.projects.map((option) => (
@@ -621,13 +644,13 @@ export function McpServerEditorDialog(props: {
                   props.onDraftChange({ ...props.draft, enabled: Boolean(checked) })
                 }
               />
-              Enabled
+              {translate("settings.mcp.editor.enabled")}
             </label>
           </div>
 
           <div className="grid gap-2">
             <div className="flex items-center justify-between gap-3">
-              <Label>Enable for</Label>
+              <Label>{translate("settings.mcp.editor.enableFor")}</Label>
               <label className="flex items-center gap-2 text-muted-foreground text-xs">
                 <Checkbox
                   checked={props.draft.providerRouting.mode === "all"}
@@ -645,7 +668,7 @@ export function McpServerEditorDialog(props: {
                     });
                   }}
                 />
-                All provider accounts
+                {translate("settings.mcp.editor.allAccounts")}
               </label>
             </div>
             {props.draft.providerRouting.mode === "selected" ? (
@@ -679,13 +702,13 @@ export function McpServerEditorDialog(props: {
               </div>
             ) : (
               <p className="text-muted-foreground text-xs">
-                This server will be available to every configured provider that supports MCP.
+                {translate("settings.mcp.editor.allProvidersDescription")}
               </p>
             )}
           </div>
 
           <div className="grid gap-2">
-            <Label>Transport</Label>
+            <Label>{translate("settings.mcp.editor.transport")}</Label>
             <Select
               value={props.draft.transport}
               onValueChange={(value) =>
@@ -699,9 +722,15 @@ export function McpServerEditorDialog(props: {
                 <SelectValue>{transportLabel(props.draft.transport)}</SelectValue>
               </SelectTrigger>
               <SelectPopup>
-                <SelectItem value="stdio">stdio</SelectItem>
-                <SelectItem value="sse">SSE</SelectItem>
-                <SelectItem value="http">HTTP</SelectItem>
+                <SelectItem value="stdio">
+                  {translate("settings.mcp.editor.transport.stdio")}
+                </SelectItem>
+                <SelectItem value="sse">
+                  {translate("settings.mcp.editor.transport.sse")}
+                </SelectItem>
+                <SelectItem value="http">
+                  {translate("settings.mcp.editor.transport.http")}
+                </SelectItem>
               </SelectPopup>
             </Select>
           </div>
@@ -710,20 +739,20 @@ export function McpServerEditorDialog(props: {
             <>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="grid gap-2">
-                  <Label>Command</Label>
+                  <Label>{translate("settings.mcp.editor.command")}</Label>
                   <Input
                     value={props.draft.command}
-                    placeholder="npx"
+                    placeholder={translate("settings.mcp.editor.commandPlaceholder")}
                     onChange={(event) =>
                       props.onDraftChange({ ...props.draft, command: event.currentTarget.value })
                     }
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label>Working directory</Label>
+                  <Label>{translate("settings.mcp.editor.cwd")}</Label>
                   <Input
                     value={props.draft.cwd}
-                    placeholder="/repo"
+                    placeholder={translate("settings.mcp.editor.cwdPlaceholder")}
                     onChange={(event) =>
                       props.onDraftChange({ ...props.draft, cwd: event.currentTarget.value })
                     }
@@ -731,18 +760,18 @@ export function McpServerEditorDialog(props: {
                 </div>
               </div>
               <div className="grid gap-2">
-                <Label>Arguments</Label>
+                <Label>{translate("settings.mcp.editor.arguments")}</Label>
                 <Textarea
                   className="[&_textarea]:min-h-24 font-mono text-xs"
                   value={props.draft.argsText}
-                  placeholder="-y&#10;@modelcontextprotocol/server-github"
+                  placeholder={translate("settings.mcp.editor.argumentsPlaceholder")}
                   onChange={(event) =>
                     props.onDraftChange({ ...props.draft, argsText: event.currentTarget.value })
                   }
                 />
               </div>
               <SecretEntriesEditor
-                label="Environment"
+                label={translate("settings.mcp.editor.environment")}
                 entries={props.draft.env}
                 namePlaceholder="GITHUB_TOKEN"
                 onChange={(env) => props.onDraftChange({ ...props.draft, env })}
@@ -751,7 +780,7 @@ export function McpServerEditorDialog(props: {
           ) : (
             <>
               <div className="grid gap-2">
-                <Label>URL</Label>
+                <Label>{translate("settings.mcp.editor.url")}</Label>
                 <Input
                   value={props.draft.url}
                   placeholder="https://example.com/mcp"
@@ -761,7 +790,7 @@ export function McpServerEditorDialog(props: {
                 />
               </div>
               <SecretEntriesEditor
-                label="Headers"
+                label={translate("settings.mcp.editor.headers")}
                 entries={props.draft.headers}
                 namePlaceholder="Authorization"
                 onChange={(headers) => props.onDraftChange({ ...props.draft, headers })}
@@ -773,10 +802,10 @@ export function McpServerEditorDialog(props: {
         </DialogPanel>
         <DialogFooter>
           <Button variant="outline" onClick={() => props.onOpenChange(false)}>
-            Cancel
+            {translate("settings.common.cancel")}
           </Button>
           <Button disabled={props.isSaving} onClick={props.onSave}>
-            Save
+            {translate("settings.mcp.editor.save")}
           </Button>
         </DialogFooter>
       </DialogPopup>
@@ -790,12 +819,13 @@ function ImportSourceRows(props: {
   readonly isLoading: boolean;
   readonly onSelectedSourceIdsChange: (sourceIds: ReadonlyArray<string>) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const selected = useMemo(() => new Set(props.selectedSourceIds), [props.selectedSourceIds]);
 
   if (props.isLoading) {
     return (
       <div className="rounded-md border p-4 text-muted-foreground text-sm">
-        Scanning agent folders...
+        {translate("settings.mcp.import.scanning")}
       </div>
     );
   }
@@ -803,7 +833,7 @@ function ImportSourceRows(props: {
   if (props.sources.length === 0) {
     return (
       <div className="rounded-md border p-4 text-muted-foreground text-sm">
-        No agent dotfolders with importable MCP config were found.
+        {translate("settings.mcp.import.noneFound")}
       </div>
     );
   }
@@ -839,8 +869,8 @@ function ImportSourceRows(props: {
               </span>
               <span className="block truncate text-muted-foreground text-xs">{source.path}</span>
               <span className="block text-muted-foreground text-xs">
-                {source.mcpServerCount} MCP server{source.mcpServerCount === 1 ? "" : "s"},{" "}
-                {source.skillCount} skill{source.skillCount === 1 ? "" : "s"}
+                {translate("settings.mcp.serverCount", { count: source.mcpServerCount })},{" "}
+                {translate("settings.mcp.import.skillCount", { count: source.skillCount })}
               </span>
             </span>
           </label>
@@ -873,16 +903,15 @@ export function McpImportDialog(props: {
   readonly onOpenChange: (open: boolean) => void;
   readonly onImport: () => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const project =
     props.projects.find((option) => option.key === props.projectKey) ?? props.projects[0] ?? null;
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogPopup className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Import Agent Configs</DialogTitle>
-          <DialogDescription>
-            Import MCP servers from detected Codex, Cursor, Claude, and OpenCode folders.
-          </DialogDescription>
+          <DialogTitle>{translate("settings.mcp.import.title")}</DialogTitle>
+          <DialogDescription>{translate("settings.mcp.import.description")}</DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-4">
           <ImportSourceRows
@@ -893,7 +922,7 @@ export function McpImportDialog(props: {
           />
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-2">
-              <Label>Scope</Label>
+              <Label>{translate("settings.mcp.editor.scope")}</Label>
               <Select
                 value={props.scope}
                 onValueChange={(value) =>
@@ -901,23 +930,33 @@ export function McpImportDialog(props: {
                 }
               >
                 <SelectTrigger>
-                  <SelectValue>{props.scope === "global" ? "Global" : "Project"}</SelectValue>
+                  <SelectValue>
+                    {translate(
+                      props.scope === "global"
+                        ? "settings.mcp.editor.global"
+                        : "settings.mcp.editor.project",
+                    )}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
-                  <SelectItem value="global">Global</SelectItem>
-                  <SelectItem value="project">Project</SelectItem>
+                  <SelectItem value="global">{translate("settings.mcp.editor.global")}</SelectItem>
+                  <SelectItem value="project">
+                    {translate("settings.mcp.editor.project")}
+                  </SelectItem>
                 </SelectPopup>
               </Select>
             </div>
             <div className="grid gap-2">
-              <Label>Project</Label>
+              <Label>{translate("settings.mcp.editor.project")}</Label>
               <Select
                 value={project?.key}
                 disabled={props.scope !== "project" || props.projects.length === 0}
                 onValueChange={(value) => props.onProjectKeyChange(value ?? "")}
               >
                 <SelectTrigger>
-                  <SelectValue>{project?.name ?? "No project"}</SelectValue>
+                  <SelectValue>
+                    {project?.name ?? translate("settings.mcp.editor.noProject")}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
                   {props.projects.map((option) => (
@@ -931,7 +970,7 @@ export function McpImportDialog(props: {
           </div>
           <div className="grid gap-2">
             <div className="flex items-center justify-between gap-3">
-              <Label>Enable imported servers for</Label>
+              <Label>{translate("settings.mcp.import.enableFor")}</Label>
               <label className="flex items-center gap-2 text-muted-foreground text-xs">
                 <Checkbox
                   checked={props.providerRouting.mode === "all"}
@@ -941,7 +980,7 @@ export function McpImportDialog(props: {
                     )
                   }
                 />
-                All accounts
+                {translate("settings.mcp.import.allAccounts")}
               </label>
             </div>
             {props.providerRouting.mode === "selected" ? (
@@ -972,27 +1011,27 @@ export function McpImportDialog(props: {
               checked={props.replace}
               onCheckedChange={(checked) => props.onReplaceChange(Boolean(checked))}
             />
-            Replace existing MCP servers
+            {translate("settings.mcp.import.replace")}
           </label>
           <label className="flex items-center gap-2 text-muted-foreground text-xs">
             <Switch
               checked={props.deduplicate}
               onCheckedChange={(checked) => props.onDeduplicateChange(Boolean(checked))}
             />
-            Deduplicate matching MCP servers
+            {translate("settings.mcp.import.deduplicate")}
           </label>
           {props.error ? <p className="text-destructive text-xs">{props.error}</p> : null}
         </DialogPanel>
         <DialogFooter>
           <Button variant="outline" onClick={() => props.onOpenChange(false)}>
-            Cancel
+            {translate("settings.common.cancel")}
           </Button>
           <Button
             disabled={props.isImporting || props.selectedSourceIds.length === 0}
             onClick={props.onImport}
           >
             <UploadIcon className="size-4" />
-            Import
+            {translate("settings.mcp.import.action")}
           </Button>
         </DialogFooter>
       </DialogPopup>
@@ -1016,25 +1055,23 @@ export function CursorExportDialog(props: {
   readonly onRefresh: () => void;
   readonly onCopy: () => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const project =
     props.projects.find((option) => option.key === props.projectKey) ?? props.projects[0] ?? null;
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogPopup className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Export Cursor JSON</DialogTitle>
-          <DialogDescription>
-            Export the selected MCP servers as Cursor-compatible JSON.
-          </DialogDescription>
+          <DialogTitle>{translate("settings.mcp.export.title")}</DialogTitle>
+          <DialogDescription>{translate("settings.mcp.export.description")}</DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-4">
           <p className="rounded-md bg-muted/40 px-3 py-2 text-muted-foreground text-xs">
-            This export contains the servers enabled for the selected provider account. Cursor JSON
-            does not preserve T3 provider assignments.
+            {translate("settings.mcp.export.assignmentWarning")}
           </p>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-2">
-              <Label>Scope</Label>
+              <Label>{translate("settings.mcp.editor.scope")}</Label>
               <Select
                 value={props.scope}
                 onValueChange={(value) => props.onScopeChange((value ?? "all") as ExportScope)}
@@ -1042,28 +1079,32 @@ export function CursorExportDialog(props: {
                 <SelectTrigger>
                   <SelectValue>
                     {props.scope === "all"
-                      ? "All"
+                      ? translate("settings.mcp.export.all")
                       : props.scope === "global"
-                        ? "Global"
-                        : "Project"}
+                        ? translate("settings.mcp.editor.global")
+                        : translate("settings.mcp.editor.project")}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
-                  <SelectItem value="all">All</SelectItem>
-                  <SelectItem value="global">Global</SelectItem>
-                  <SelectItem value="project">Project</SelectItem>
+                  <SelectItem value="all">{translate("settings.mcp.export.all")}</SelectItem>
+                  <SelectItem value="global">{translate("settings.mcp.editor.global")}</SelectItem>
+                  <SelectItem value="project">
+                    {translate("settings.mcp.editor.project")}
+                  </SelectItem>
                 </SelectPopup>
               </Select>
             </div>
             <div className="grid gap-2">
-              <Label>Project</Label>
+              <Label>{translate("settings.mcp.editor.project")}</Label>
               <Select
                 value={project?.key}
                 disabled={props.scope !== "project" || props.projects.length === 0}
                 onValueChange={(value) => props.onProjectKeyChange(value ?? "")}
               >
                 <SelectTrigger>
-                  <SelectValue>{project?.name ?? "No project"}</SelectValue>
+                  <SelectValue>
+                    {project?.name ?? translate("settings.mcp.editor.noProject")}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
                   {props.projects.map((option) => (
@@ -1080,7 +1121,7 @@ export function CursorExportDialog(props: {
               checked={props.includeDisabled}
               onCheckedChange={(checked) => props.onIncludeDisabledChange(Boolean(checked))}
             />
-            Include disabled servers
+            {translate("settings.mcp.export.includeDisabled")}
           </label>
           <Textarea
             readOnly
@@ -1092,11 +1133,11 @@ export function CursorExportDialog(props: {
         <DialogFooter>
           <Button variant="outline" disabled={props.isExporting} onClick={props.onRefresh}>
             <RefreshCwIcon className="size-4" />
-            Refresh
+            {translate("settings.mcp.export.refresh")}
           </Button>
           <Button disabled={props.json.trim().length === 0} onClick={props.onCopy}>
             <CopyIcon className="size-4" />
-            Copy
+            {translate("settings.mcp.export.copy")}
           </Button>
         </DialogFooter>
       </DialogPopup>
@@ -1110,6 +1151,7 @@ export function McpServersSettingsPanel(props: {
   readonly showRuntimeSelector?: boolean;
   readonly onProviderChange?: (providerInstanceId: ProviderInstanceId) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const runRuntimeDetailsQuery = useAtomQueryRunner(
     agentSettingsEnvironment.mcp.runtimeServerDetailsQuery,
     { reportFailure: false },
@@ -1406,7 +1448,7 @@ export function McpServersSettingsPanel(props: {
     onError: (error) => {
       toastManager.add({
         type: "error",
-        title: "Could not update MCP server",
+        title: translate("settings.mcp.toast.updateFailed"),
         description: errorMessage(error, "Failed to update MCP server."),
       });
     },
@@ -1432,7 +1474,7 @@ export function McpServersSettingsPanel(props: {
     onError: (error) => {
       toastManager.add({
         type: "error",
-        title: "Could not delete MCP server",
+        title: translate("settings.mcp.toast.deleteFailed"),
         description: errorMessage(error, "Failed to delete MCP server."),
       });
     },
@@ -1651,7 +1693,7 @@ export function McpServersSettingsPanel(props: {
     void navigator.clipboard
       .writeText(exportJson)
       .then(() => {
-        toastManager.add({ type: "success", title: "MCP JSON copied" });
+        toastManager.add({ type: "success", title: translate("settings.mcp.toast.copied") });
       })
       .catch((error: unknown) => {
         setExportError(errorMessage(error, "Failed to copy MCP JSON."));
@@ -1682,7 +1724,7 @@ export function McpServersSettingsPanel(props: {
           .catch((error: unknown) => {
             toastManager.add({
               type: "error",
-              title: "Could not open authorization",
+              title: translate("settings.mcp.toast.authorizationFailed"),
               description: errorMessage(error, "Open the authorization URL on the host."),
             });
           });
@@ -1695,7 +1737,7 @@ export function McpServersSettingsPanel(props: {
       if (currentRuntimeSelectorKeyRef.current !== input.selectorKey) return;
       toastManager.add({
         type: "error",
-        title: "MCP action failed",
+        title: translate("settings.mcp.toast.actionFailed"),
         description: errorMessage(error, "The provider could not perform this action."),
       });
     },
@@ -1731,7 +1773,7 @@ export function McpServersSettingsPanel(props: {
       if (currentRuntimeSelectorKeyRef.current !== selectorKey) return;
       toastManager.add({
         type: "error",
-        title: "Could not load MCP inventory",
+        title: translate("settings.mcp.toast.inventoryFailed"),
         description: errorMessage(error, "The provider did not return server details."),
       });
     } finally {
@@ -1798,7 +1840,7 @@ export function McpServersSettingsPanel(props: {
             id: selectedRuntimeContextId,
             runtimeSessionId: selectedRuntimeContextId,
             threadId: selectedRuntimeContextId,
-            label: "Ended or unavailable session",
+            label: translate("settings.mcp.session.ended"),
             live: false,
           },
         ]
@@ -1810,20 +1852,20 @@ export function McpServersSettingsPanel(props: {
       {...(props.embedded ? { viewportClassName: "overflow-visible p-0 sm:p-0" } : {})}
     >
       <SettingsSection
-        title="MCP Servers"
+        title={translate("settings.mcp.page.title")}
         headerAction={
           <div className="flex items-center gap-1.5">
             <Button size="xs" variant="outline" disabled={readOnly} onClick={openImportDialog}>
               <UploadIcon className="size-3.5" />
-              Import
+              {translate("settings.mcp.page.import")}
             </Button>
             <Button size="xs" variant="outline" onClick={openExportDialog}>
               <FileJsonIcon className="size-3.5" />
-              Export
+              {translate("settings.mcp.page.export")}
             </Button>
             <Button size="xs" disabled={readOnly} onClick={openCreateDialog}>
               <PlusIcon className="size-3.5" />
-              New
+              {translate("settings.mcp.page.new")}
             </Button>
           </div>
         }

@@ -1,16 +1,58 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ProviderInstanceId, type ServerConfig } from "@t3tools/contracts";
+import { ProviderInstanceId, type ModelSelection, type ServerConfig } from "@t3tools/contracts";
 
 import {
   buildModelOptions,
   filterStartedThreadModelOptions,
   groupByProvider,
   resolveDefaultableModelSelection,
+  resolveNewTaskModelSelection,
   resolveSelectableModelSelection,
+  type ModelOption,
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it("keeps unsupported OpenRouter models visible with non-selectable metadata", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "openrouter",
+          driver: "openrouter",
+          displayName: "OpenRouter",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "openai/no-tools",
+              name: "No tools",
+              isCustom: false,
+              isSelectable: false,
+              unavailableReason: "No tool support",
+              capabilities: {
+                outputModalities: ["text"],
+                toolSupport: { tools: false, parallelToolCalls: false, toolChoice: false },
+              },
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    expect(buildModelOptions(config, null)[0]).toMatchObject({
+      providerDriver: "openrouter",
+      isSelectable: false,
+      unavailableReason: "No tool support",
+    });
+    expect(
+      resolveSelectableModelSelection(config, {
+        instanceId: ProviderInstanceId.make("openrouter"),
+        model: "openai/no-tools",
+      }),
+    ).toBeNull();
+  });
+
   it("normalizes live gateway GPT defaults and preserves persisted per-thread options", () => {
     const config = {
       providers: [
@@ -219,10 +261,59 @@ describe("mobile model options", () => {
         providerKey: "codex",
         providerLabel: "Codex",
         models: [
-          { key: "codex:gpt-5.6-sol", label: "GPT-5.6 Sol", isLegacy: false },
+          { key: "codex:gpt-5.6-sol", label: "GPT-5.6 Sol", subtitle: "", isLegacy: false },
           { key: "codex:gpt-5.4", label: "GPT-5.4", isLegacy: true },
         ],
       },
+    ]);
+  });
+
+  it("distinguishes same-name OpenCode models without changing their routing", () => {
+    const sources = [
+      { id: "anthropic", label: "Anthropic" },
+      { id: "github-copilot", label: "GitHub Copilot" },
+      { id: "opencode", label: "OpenCode Zen" },
+    ];
+    const config = {
+      providers: [
+        {
+          instanceId: "opencode_work",
+          driver: "opencode",
+          displayName: "OpenCode Work",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: sources.map((source) => ({
+            slug: `${source.id}/claude-fable-5`,
+            name: "Claude Fable 5",
+            subProvider: source.label,
+            isCustom: false,
+            capabilities: null,
+          })),
+        },
+      ],
+    } as unknown as ServerConfig;
+    const selection = {
+      instanceId: ProviderInstanceId.make("opencode_work"),
+      model: "github-copilot/claude-fable-5",
+    };
+
+    const options = buildModelOptions(config, selection);
+
+    expect(options).toMatchObject(
+      sources.map((source) => ({
+        key: `opencode_work:${source.id}/claude-fable-5`,
+        label: "Claude Fable 5",
+        subtitle: source.label,
+        providerLabel: "OpenCode Work",
+        selection: {
+          instanceId: "opencode_work",
+          model: `${source.id}/claude-fable-5`,
+        },
+      })),
+    );
+    expect(groupByProvider(options)).toEqual([
+      { providerKey: "opencode_work", providerLabel: "OpenCode Work", models: options },
     ]);
   });
 
@@ -426,5 +517,31 @@ describe("mobile model options", () => {
     expect(resolveDefaultableModelSelection(config, legacy)).toBeNull();
     // Offline: nothing to validate against, selection passes through.
     expect(resolveDefaultableModelSelection(null, legacy)).toBe(legacy);
+  });
+
+  it("resolves new tasks from draft, project, sticky, then provider defaults", () => {
+    const draft = { instanceId: ProviderInstanceId.make("codex"), model: "draft" };
+    const project = { instanceId: ProviderInstanceId.make("codex"), model: "project" };
+    const sticky = { instanceId: ProviderInstanceId.make("codex"), model: "sticky" };
+    const providerDefault = {
+      selection: { instanceId: ProviderInstanceId.make("codex"), model: "default" },
+      isDefault: true,
+    } as ModelOption;
+    const resolve = (
+      draftSelection: ModelSelection | null,
+      projectDefaultSelection: ModelSelection | null,
+      stickySelection: ModelSelection | null,
+    ) =>
+      resolveNewTaskModelSelection({
+        draftSelection,
+        projectDefaultSelection,
+        stickySelection,
+        modelOptions: [providerDefault],
+      });
+
+    expect(resolve(draft, project, sticky)).toBe(draft);
+    expect(resolve(null, project, sticky)).toBe(project);
+    expect(resolve(null, null, sticky)).toBe(sticky);
+    expect(resolve(null, null, null)).toBe(providerDefault.selection);
   });
 });

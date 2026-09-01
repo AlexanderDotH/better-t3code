@@ -1,6 +1,8 @@
 import { useState } from "react";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
@@ -17,6 +19,7 @@ import { PullRequestMarkdown } from "./PullRequestMarkdown";
 export function PullRequestMarkdownEditor({
   value,
   cwd,
+  environmentId,
   placeholder,
   label,
   saving,
@@ -27,6 +30,7 @@ export function PullRequestMarkdownEditor({
 }: {
   readonly value: string;
   readonly cwd: string;
+  readonly environmentId: EnvironmentId;
   readonly placeholder?: string | undefined;
   readonly label: string;
   readonly saving: boolean;
@@ -36,6 +40,7 @@ export function PullRequestMarkdownEditor({
   readonly onSave: (next: string) => void;
   readonly onCancel: () => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const [draft, setDraft] = useState(value);
   const [preview, setPreview] = useState(false);
   // The words this draft started from. React keeps a component instance wherever the same
@@ -65,7 +70,7 @@ export function PullRequestMarkdownEditor({
           disabled={saving}
           onClick={() => setPreview(false)}
         >
-          Write
+          {translate("pullRequest.editor.write")}
         </Button>
         <Button
           size="xs"
@@ -73,15 +78,17 @@ export function PullRequestMarkdownEditor({
           disabled={saving}
           onClick={() => setPreview(true)}
         >
-          Preview
+          {translate("pullRequest.editor.preview")}
         </Button>
       </div>
       {preview ? (
         <div className="rounded-lg border border-border/60 px-3 py-2">
           {empty ? (
-            <p className="text-xs text-muted-foreground">Nothing to preview.</p>
+            <p className="text-xs text-muted-foreground">
+              {translate("pullRequest.preview.empty")}
+            </p>
           ) : (
-            <PullRequestMarkdown text={draft} cwd={cwd} />
+            <PullRequestMarkdown text={draft} cwd={cwd} environmentId={environmentId} />
           )}
         </div>
       ) : (
@@ -97,7 +104,7 @@ export function PullRequestMarkdownEditor({
       )}
       <div className="flex justify-end gap-2">
         <Button size="xs" variant="ghost" disabled={saving} onClick={onCancel}>
-          Cancel
+          {translate("common.cancel")}
         </Button>
         <Button
           size="xs"
@@ -105,7 +112,7 @@ export function PullRequestMarkdownEditor({
           disabled={saving || (empty && !allowEmpty)}
           onClick={() => onSave(draft)}
         >
-          {saving ? "Saving..." : "Save"}
+          {saving ? translate("pullRequest.editor.saving") : translate("git.common.save")}
         </Button>
       </div>
     </div>

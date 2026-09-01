@@ -1,6 +1,12 @@
-import { ApprovalRequestId, isToolLifecycleItemType } from "@t3tools/contracts";
+import {
+  ApprovalRequestId,
+  isToolLifecycleItemType,
+  ProviderApprovalOption,
+  ProviderRequestKind,
+} from "@t3tools/contracts";
 import type {
   ChatVisualMode,
+  OrchestrationHistoryOrigin,
   OrchestrationLatestTurn,
   OrchestrationProposedPlan,
   OrchestrationThread,
@@ -13,13 +19,19 @@ import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
+import * as Schema from "effect/Schema";
 
 export interface PendingApproval {
   readonly requestId: ApprovalRequestId;
-  readonly requestKind: "command" | "file-read" | "file-change";
+  readonly requestKind: ProviderRequestKind;
   readonly createdAt: string;
   readonly detail?: string;
+  readonly appName?: string;
+  readonly options?: ReadonlyArray<ProviderApprovalOption>;
 }
+
+const isProviderRequestKind = Schema.is(ProviderRequestKind);
+const isProviderApprovalOption = Schema.is(ProviderApprovalOption);
 
 export interface PendingUserInput {
   readonly requestId: ApprovalRequestId;
@@ -57,6 +69,7 @@ export interface ThreadFeedActivity {
   readonly toolLike: boolean;
   readonly status: "success" | "failure" | "neutral" | null;
   readonly toolLifecycleStatus?: ThreadFeedToolLifecycleStatus;
+  readonly historyOrigin?: OrchestrationHistoryOrigin;
 }
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
@@ -83,6 +96,7 @@ interface WorkLogEntry {
   requestKind?: PendingApproval["requestKind"];
   toolLifecycleStatus?: ThreadFeedToolLifecycleStatus;
   toolData?: unknown;
+  historyOrigin?: OrchestrationHistoryOrigin;
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -127,6 +141,7 @@ export type ThreadFeedEntry =
       readonly createdAt: string;
       readonly turnId: TurnId | null;
       readonly activities: ReadonlyArray<ThreadFeedActivity>;
+      readonly historyOrigin?: OrchestrationHistoryOrigin;
     }
   | {
       readonly type: "work-toggle";
@@ -137,6 +152,7 @@ export type ThreadFeedEntry =
       readonly hiddenCount: number;
       readonly expanded: boolean;
       readonly onlyToolActivities: boolean;
+      readonly historyOrigin?: OrchestrationHistoryOrigin;
     }
   | {
       readonly type: "work-summary";
@@ -150,6 +166,7 @@ export type ThreadFeedEntry =
       readonly expanded: boolean;
       readonly live: boolean;
       readonly hasFailure: boolean;
+      readonly historyOrigin?: OrchestrationHistoryOrigin;
     }
   | {
       readonly type: "turn-fold";
@@ -158,6 +175,7 @@ export type ThreadFeedEntry =
       readonly turnId: TurnId;
       readonly label: string;
       readonly expanded: boolean;
+      readonly historyOrigin?: OrchestrationHistoryOrigin;
     };
 
 export type ThreadFeedLatestTurn = Pick<
@@ -260,6 +278,8 @@ function requestKindFromRequestType(requestType: unknown): PendingApproval["requ
     case "file_change_approval":
     case "apply_patch_approval":
       return "file-change";
+    case "mcp_elicitation_approval":
+      return "mcp-elicitation";
     default:
       return null;
   }
@@ -438,11 +458,23 @@ function deriveWorkLogEntries(
     if (activity.kind === "tool.progress") continue;
     if (activity.kind === "context-window.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
+    if (isNoContentRuntimeWarning(activity)) continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
     if (isAgentInternalActivity(activity)) continue;
     entries.push(toDerivedWorkLogEntry(activity));
   }
   return collapseDerivedWorkLogEntries(entries);
+}
+
+/** Adapters forward unknown wire-only SDK messages (background_tasks_changed,
+ *  commands_changed, ...) as runtime warnings. The suffix comes from
+ *  describeUnknownSdkMessage in the Claude adapter; a row with no displayable
+ *  text carries nothing a user can act on, so it does not render. */
+function isNoContentRuntimeWarning(activity: OrchestrationThreadActivity): boolean {
+  return (
+    activity.kind === "runtime.warning" &&
+    activity.summary.endsWith("(no displayable text content)")
+  );
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
@@ -493,6 +525,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     createdAt: activity.createdAt,
     turnId: activity.turnId,
     ...(taskId ? { taskId } : {}),
+    ...(activity.historyOrigin ? { historyOrigin: activity.historyOrigin } : {}),
     label: taskLabel || activity.summary,
     tone:
       activity.kind === "task.progress"
@@ -616,6 +649,7 @@ function mergeDerivedWorkLogEntries(
   const collapseKey = next.collapseKey ?? previous.collapseKey;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
+  const historyOrigin = next.historyOrigin ?? previous.historyOrigin;
   return {
     ...previous,
     ...next,
@@ -629,6 +663,7 @@ function mergeDerivedWorkLogEntries(
     ...(collapseKey ? { collapseKey } : {}),
     ...(toolLifecycleStatus ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
+    ...(historyOrigin ? { historyOrigin } : {}),
   };
 }
 
@@ -1253,15 +1288,41 @@ interface ThreadFeedTurnFold {
   readonly createdAt: string;
   readonly hiddenEntryIds: ReadonlySet<string>;
   readonly label: string;
+  readonly historyOrigin?: OrchestrationHistoryOrigin;
+}
+
+function latestHistoryOrigin(
+  origins: ReadonlyArray<OrchestrationHistoryOrigin | undefined>,
+): OrchestrationHistoryOrigin | undefined {
+  let latest: OrchestrationHistoryOrigin | undefined;
+  for (const origin of origins) {
+    if (origin && (!latest || origin.ordinal >= latest.ordinal)) {
+      latest = origin;
+    }
+  }
+  return latest;
+}
+
+function feedEntryHistoryOrigin(entry: ThreadFeedEntry): OrchestrationHistoryOrigin | undefined {
+  if (entry.type === "message") return entry.message.historyOrigin;
+  if (entry.type === "proposed-plan") return entry.proposedPlan.historyOrigin;
+  if (entry.type === "activity-group") {
+    return latestHistoryOrigin(entry.activities.map((activity) => activity.historyOrigin));
+  }
+  return "historyOrigin" in entry ? entry.historyOrigin : undefined;
 }
 
 function deriveThreadFeedTurnFolds(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestTurn: ThreadFeedLatestTurn | null,
 ): ReadonlyMap<string, ThreadFeedTurnFold> {
+  const firstAssistantMessageIdByTurn = new Map<TurnId, string>();
   const terminalAssistantMessageIdByTurn = new Map<TurnId, string>();
   for (const entry of feed) {
     if (entry.type === "message" && entry.message.role === "assistant" && entry.message.turnId) {
+      if (!firstAssistantMessageIdByTurn.has(entry.message.turnId)) {
+        firstAssistantMessageIdByTurn.set(entry.message.turnId, entry.id);
+      }
       terminalAssistantMessageIdByTurn.set(entry.message.turnId, entry.id);
     }
   }
@@ -1309,17 +1370,24 @@ function deriveThreadFeedTurnFolds(
       continue;
     }
 
+    const firstAssistantMessageId = firstAssistantMessageIdByTurn.get(turnId);
     const terminalAssistantMessageId = terminalAssistantMessageIdByTurn.get(turnId);
     const hiddenEntryIds = new Set(
-      entries.filter((entry) => entry.id !== terminalAssistantMessageId).map((entry) => entry.id),
+      entries
+        .filter(
+          (entry) =>
+            entry.id !== firstAssistantMessageId && entry.id !== terminalAssistantMessageId,
+        )
+        .map((entry) => entry.id),
     );
     if (hiddenEntryIds.size === 0) {
       continue;
     }
 
     const firstEntry = entries[0];
+    const firstHiddenEntry = entries.find((entry) => hiddenEntryIds.has(entry.id));
     const lastEntry = entries.at(-1);
-    if (!firstEntry || !lastEntry) {
+    if (!firstEntry || !firstHiddenEntry || !lastEntry) {
       continue;
     }
     const terminalEntry = terminalAssistantMessageId
@@ -1348,11 +1416,13 @@ function deriveThreadFeedTurnFolds(
         ? `Worked for ${duration}`
         : "Worked";
 
-    foldsByAnchorId.set(firstEntry.id, {
+    const historyOrigin = latestHistoryOrigin(entries.map(feedEntryHistoryOrigin));
+    foldsByAnchorId.set(firstHiddenEntry.id, {
       turnId,
-      createdAt: firstEntry.createdAt,
+      createdAt: firstHiddenEntry.createdAt,
       hiddenEntryIds,
       label,
+      ...(historyOrigin ? { historyOrigin } : {}),
     });
   }
   return foldsByAnchorId;
@@ -1394,6 +1464,7 @@ export function deriveThreadFeedPresentation(
         turnId: fold.turnId,
         label: fold.label,
         expanded: expandedTurnIds.has(fold.turnId),
+        ...(fold.historyOrigin ? { historyOrigin: fold.historyOrigin } : {}),
       });
     }
     if (!collapsedEntryIds.has(entry.id)) {
@@ -1506,13 +1577,14 @@ function appendCurrentToolSummary(
   let liveActivity: ThreadFeedActivity | undefined;
   for (let index = activities.length - 1; index >= 0; index -= 1) {
     const activity = activities[index];
-    if (activity?.toolLifecycleStatus === "inProgress") {
+    if (activity?.toolLifecycleStatus === "inProgress" && !activity.historyOrigin) {
       liveActivity = activity;
       break;
     }
   }
   const groupId = entry.id;
   const distinctIcons = new Set(activities.map((activity) => activity.icon));
+  const historyOrigin = latestHistoryOrigin(activities.map((activity) => activity.historyOrigin));
   result.push({
     type: "work-summary",
     id: `work-summary:${groupId}`,
@@ -1525,6 +1597,7 @@ function appendCurrentToolSummary(
     expanded: expandedWorkGroupIds.has(groupId),
     live: liveActivity !== undefined,
     hasFailure: activities.every((activity) => activity.status === "failure"),
+    ...(historyOrigin ? { historyOrigin } : {}),
   });
 }
 
@@ -1546,6 +1619,7 @@ function appendClassicActivityOverflow(
   const expanded = expandedWorkGroupIds.has(groupId);
   const hiddenCount = activities.length - MAX_VISIBLE_WORK_LOG_ENTRIES;
   const visibleActivities = expanded ? activities : activities.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES);
+  const historyOrigin = latestHistoryOrigin(activities.map((activity) => activity.historyOrigin));
 
   for (const activity of visibleActivities) {
     result.push({
@@ -1565,6 +1639,7 @@ function appendClassicActivityOverflow(
     hiddenCount,
     expanded,
     onlyToolActivities: activities.every((activity) => activity.toolLike),
+    ...(historyOrigin ? { historyOrigin } : {}),
   });
 }
 
@@ -1586,18 +1661,22 @@ export function derivePendingApprovals(
   const openByRequestId = new Map<ApprovalRequestId, PendingApproval>();
 
   for (const activity of sortedActivities) {
+    if (activity.historyOrigin) {
+      continue;
+    }
     const payload =
       activity.payload && typeof activity.payload === "object"
         ? (activity.payload as Record<string, unknown>)
         : null;
     const requestId = parseApprovalRequestId(payload?.requestId);
-    const requestKind =
-      payload?.requestKind === "command" ||
-      payload?.requestKind === "file-read" ||
-      payload?.requestKind === "file-change"
-        ? payload.requestKind
-        : requestKindFromRequestType(payload?.requestType);
+    const requestKind = isProviderRequestKind(payload?.requestKind)
+      ? payload.requestKind
+      : requestKindFromRequestType(payload?.requestType);
     const detail = typeof payload?.detail === "string" ? payload.detail : undefined;
+    const appName = typeof payload?.appName === "string" ? payload.appName : undefined;
+    const options = Array.isArray(payload?.options)
+      ? payload.options.filter(isProviderApprovalOption)
+      : undefined;
 
     if (activity.kind === "approval.requested" && requestId && requestKind) {
       openByRequestId.set(requestId, {
@@ -1605,6 +1684,8 @@ export function derivePendingApprovals(
         requestKind,
         createdAt: activity.createdAt,
         ...(detail ? { detail } : {}),
+        ...(appName ? { appName } : {}),
+        ...(options && options.length > 0 ? { options } : {}),
       });
       continue;
     }
@@ -1632,6 +1713,9 @@ export function derivePendingUserInputs(
   const openByRequestId = new Map<ApprovalRequestId, PendingUserInput>();
 
   for (const activity of sortedActivities) {
+    if (activity.historyOrigin) {
+      continue;
+    }
     const payload =
       activity.payload && typeof activity.payload === "object"
         ? (activity.payload as Record<string, unknown>)
@@ -1742,15 +1826,19 @@ export function buildThreadFeed(
   thread: OrchestrationThread,
   options?: {
     readonly loadedMessages?: ReadonlyArray<OrchestrationThread["messages"][number]>;
+    readonly localMessages?: ReadonlyArray<OrchestrationThread["messages"][number]>;
   },
 ): ThreadFeedEntry[] {
   const loadedMessages = options?.loadedMessages ?? thread.messages;
+  const messages = options?.localMessages
+    ? [...loadedMessages, ...options.localMessages]
+    : loadedMessages;
   const oldestLoadedMessageCreatedAt =
     options?.loadedMessages !== undefined ? (loadedMessages[0]?.createdAt ?? null) : null;
   const workLogEntries = deriveWorkLogEntries(thread.activities);
   const entries = Arr.sortWith(
     [
-      ...loadedMessages.map<RawThreadFeedEntry>((message) => ({
+      ...messages.map<RawThreadFeedEntry>((message) => ({
         type: "message",
         id: message.id,
         createdAt: message.createdAt,
@@ -1808,6 +1896,7 @@ export function buildThreadFeed(
               ...(entry.toolLifecycleStatus
                 ? { toolLifecycleStatus: entry.toolLifecycleStatus }
                 : {}),
+              ...(entry.historyOrigin ? { historyOrigin: entry.historyOrigin } : {}),
             },
           };
         }),

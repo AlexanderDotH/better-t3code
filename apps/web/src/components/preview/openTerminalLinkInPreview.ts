@@ -40,6 +40,10 @@ interface OpenTerminalLinkInPreviewInput<E> {
   readonly openPreview: OpenPreviewMutation<E>;
   readonly localApi: LocalApi;
   readonly fallbackToBrowser: () => void;
+  readonly contextMenuLabels: {
+    readonly openInPreview: string;
+    readonly openInBrowser: string;
+  };
 }
 
 export async function openTerminalLinkInPreview<E>(
@@ -65,8 +69,8 @@ export async function openTerminalLinkInPreview<E>(
   try {
     choice = await input.localApi.contextMenu.show(
       [
-        { id: "open-in-preview", label: "Open in preview" },
-        { id: "open-in-browser", label: "Open in browser" },
+        { id: "open-in-preview", label: input.contextMenuLabels.openInPreview },
+        { id: "open-in-browser", label: input.contextMenuLabels.openInBrowser },
       ],
       input.position,
     );

@@ -4,8 +4,10 @@ import type { SourceControlWritingStyleMode } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
+import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -22,25 +24,26 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 
-const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; description: string }> =
-  {
-    repo_conventions: {
-      label: "Repository conventions",
-      description: "In each project, matches recent change descriptions and change request titles.",
-    },
-    conventional_commits: {
-      label: "Conventional Commits",
-      description:
-        "Uses Conventional Commit prefixes for change descriptions; change request titles and descriptions stay concise.",
-    },
-    custom: {
-      label: "Custom instructions",
-      description:
-        "Applies your instructions to change descriptions and change request titles and descriptions in every project.",
-    },
-  };
+const MODE_OPTIONS: Record<
+  SourceControlWritingStyleMode,
+  { label: InterfaceMessageKey; description: InterfaceMessageKey }
+> = {
+  repo_conventions: {
+    label: "settings.sourceControlWriting.repoConventions",
+    description: "settings.sourceControlWriting.repoConventionsDescription",
+  },
+  conventional_commits: {
+    label: "settings.sourceControlWriting.conventionalCommits",
+    description: "settings.sourceControlWriting.conventionalCommitsDescription",
+  },
+  custom: {
+    label: "settings.sourceControlWriting.custom",
+    description: "settings.sourceControlWriting.customDescription",
+  },
+};
 
 export function SourceControlWritingSettingsSection() {
+  const translator = useInterfaceTranslator();
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
@@ -71,14 +74,14 @@ export function SourceControlWritingSettingsSection() {
   );
 
   return (
-    <SettingsSection title="Text generation">
+    <SettingsSection title={translator.message("settings.sourceControlWriting.section")}>
       <SettingsRow
-        title="Source control writing style"
-        description={MODE_OPTIONS[style.mode].description}
+        title={translator.message("settings.sourceControlWriting.style")}
+        description={translator.message(MODE_OPTIONS[style.mode].description)}
         resetAction={
           isSourceControlWritingStyleDirty ? (
             <SettingResetButton
-              label="source control writing style"
+              label={translator.message("settings.sourceControlWriting.style")}
               onClick={() =>
                 updateSettings({
                   sourceControlWritingStyle: {
@@ -103,13 +106,16 @@ export function SourceControlWritingSettingsSection() {
               });
             }}
           >
-            <SelectTrigger className="w-full sm:w-56" aria-label="Source control writing style">
-              <SelectValue>{MODE_OPTIONS[style.mode].label}</SelectValue>
+            <SelectTrigger
+              className="w-full sm:w-56"
+              aria-label={translator.message("settings.sourceControlWriting.style")}
+            >
+              <SelectValue>{translator.message(MODE_OPTIONS[style.mode].label)}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {(Object.keys(MODE_OPTIONS) as SourceControlWritingStyleMode[]).map((mode) => (
                 <SelectItem key={mode} hideIndicator value={mode}>
-                  {MODE_OPTIONS[mode].label}
+                  {translator.message(MODE_OPTIONS[mode].label)}
                 </SelectItem>
               ))}
             </SelectPopup>
@@ -129,20 +135,20 @@ export function SourceControlWritingSettingsSection() {
                 }
               }}
               rows={4}
-              placeholder="Keep titles concise. Use short bullet points in descriptions."
-              aria-label="Custom source control writing instructions"
+              placeholder={translator.message("settings.sourceControlWriting.customPlaceholder")}
+              aria-label={translator.message("settings.sourceControlWriting.customAria")}
             />
           </div>
         ) : null}
       </SettingsRow>
 
       <SettingsRow
-        title="Follow change request templates"
-        description="Structures change request descriptions using the current repository's template when one is available."
+        title={translator.message("settings.sourceControlWriting.followTemplates")}
+        description={translator.message("settings.sourceControlWriting.followTemplatesDescription")}
         resetAction={
           style.followChangeRequestTemplates !== defaults.followChangeRequestTemplates ? (
             <SettingResetButton
-              label="change request templates"
+              label={translator.message("settings.sourceControlWriting.followTemplates")}
               onClick={() =>
                 updateSettings({
                   sourceControlWritingStyle: {
@@ -163,14 +169,14 @@ export function SourceControlWritingSettingsSection() {
                 },
               })
             }
-            aria-label="Follow change request templates"
+            aria-label={translator.message("settings.sourceControlWriting.followTemplates")}
           />
         }
       />
 
       <SettingsRow
-        title="Source control writer model"
-        description="Optional model override for change descriptions, change request titles and descriptions, and branch or bookmark names. Off uses the global text generation model."
+        title={translator.message("settings.sourceControlWriting.writerModel")}
+        description={translator.message("settings.sourceControlWriting.writerModelDescription")}
         control={
           <div className="flex flex-wrap items-center justify-end gap-2">
             {usesDedicatedModel ? (
@@ -182,7 +188,7 @@ export function SourceControlWritingSettingsSection() {
                 modelOptionsByInstance={modelOptionsByInstance}
                 triggerVariant="outline"
                 triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
-                triggerAriaLabel="Source control writer model"
+                triggerAriaLabel={translator.message("settings.sourceControlWriting.writerModel")}
                 onInstanceModelChange={(instanceId, model) => {
                   updateSettings({
                     sourceControlWriterModelSelection: createModelSelection(instanceId, model),
@@ -203,7 +209,7 @@ export function SourceControlWritingSettingsSection() {
                     : null,
                 })
               }
-              aria-label="Use a separate source control writer model"
+              aria-label={translator.message("settings.sourceControlWriting.separateWriterModel")}
             />
           </div>
         }

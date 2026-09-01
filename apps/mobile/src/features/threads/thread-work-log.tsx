@@ -8,7 +8,7 @@ import { scaledTypographyLineHeight } from "../../lib/appearancePreferences";
 import { cn } from "../../lib/cn";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import Animated, { FadeIn } from "react-native-reanimated";
 
 const WORK_LOG_LAYOUT_ANIMATION = {
@@ -135,7 +135,7 @@ export function ThreadWorkLog(props: {
   readonly onCopyRow: (rowId: string, value: string) => void;
   readonly onToggleRow: (rowId: string) => void;
 }) {
-  const pressedBackground = useThemeColor("--color-subtle");
+  const translator = useMobileInterfaceTranslator();
   const rows = visibleWorkLogActivities(props.activities, props.chatVisualMode).map((activity) => ({
     ...activity,
     detail: compactActivityDetail(activity.detail),
@@ -151,7 +151,7 @@ export function ThreadWorkLog(props: {
     <View className="-mx-1 mb-1 px-1 py-0">
       {!onlyToolRows ? (
         <Text className="px-0.5 pb-0.5 font-t3-medium text-2xs text-foreground-muted opacity-60">
-          work log
+          {translator.message("mobile.thread.workLog")}
         </Text>
       ) : null}
 
@@ -173,8 +173,8 @@ export function ThreadWorkLog(props: {
                 accessibilityLabel={displayText}
                 accessibilityHint={
                   canExpand
-                    ? "Double tap to show full details. Long press to copy."
-                    : "Long press to copy."
+                    ? translator.message("mobile.thread.workLogExpandedHint")
+                    : translator.message("mobile.thread.workLogCopyHint")
                 }
                 accessibilityState={canExpand ? { expanded } : undefined}
                 hitSlop={4}
@@ -185,10 +185,7 @@ export function ThreadWorkLog(props: {
                   }
                 }}
                 onLongPress={() => props.onCopyRow(row.id, row.getCopyText())}
-                style={({ pressed }) => ({
-                  backgroundColor: pressed ? pressedBackground : "transparent",
-                })}
-                className="rounded-md px-0.5 py-0"
+                className="rounded-md px-0.5 py-0 active:bg-subtle"
               >
                 <View className="min-h-8 flex-row items-center gap-1.5">
                   <View className="h-[18px] w-5 shrink-0 items-center justify-center">
@@ -205,7 +202,7 @@ export function ThreadWorkLog(props: {
                     <Text
                       className={cn(
                         "font-t3-medium text-foreground",
-                        iconIsDestructive && "text-rose-600 dark:text-rose-400",
+                        iconIsDestructive && "text-adaptive-rose-600-400",
                       )}
                     >
                       {row.summary}
@@ -217,8 +214,8 @@ export function ThreadWorkLog(props: {
 
                   <View className="shrink-0 flex-row items-center gap-px">
                     {props.copiedRowId === row.id ? (
-                      <Text className="pr-1 font-t3-medium text-3xs text-emerald-600 dark:text-emerald-400">
-                        Copied
+                      <Text className="pr-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
+                        {translator.message("mobile.thread.copied")}
                       </Text>
                     ) : null}
                     <View className="h-4 w-4 items-center justify-center">
@@ -246,7 +243,7 @@ export function ThreadWorkLog(props: {
                                 : { ios: "minus", android: "remove" }
                           }
                           size={11}
-                          tintColor={row.status === "failure" ? "#e11d48" : props.iconSubtleColor}
+                          tintColor={props.iconSubtleColor}
                           type="monochrome"
                         />
                       ) : null}
@@ -256,7 +253,7 @@ export function ThreadWorkLog(props: {
               </Pressable>
 
               {fullDetail ? (
-                <View className="ml-7 border-l border-neutral-300/60 pb-1 pl-3 pt-0.5 dark:border-white/[0.12]">
+                <View className="ml-7 border-l border-adaptive-neutral-300-a60-white-a12 pb-1 pl-3 pt-0.5">
                   <ScrollView
                     nestedScrollEnabled
                     directionalLockEnabled
@@ -295,11 +292,11 @@ export function ThreadWorkSummary(props: {
   readonly onToggle: () => void;
   readonly onToggleRow: (rowId: string) => void;
 }) {
-  const pressedBackground = useThemeColor("--color-subtle");
+  const translator = useMobileInterfaceTranslator();
   const statusLabel = props.hasFailure
-    ? `${props.summary}, tool call failed`
+    ? translator.message("mobile.thread.toolFailedState", { summary: props.summary })
     : props.live
-      ? `${props.summary}, in progress`
+      ? translator.message("mobile.thread.toolInProgressState", { summary: props.summary })
       : props.summary;
 
   return (
@@ -307,17 +304,14 @@ export function ThreadWorkSummary(props: {
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={statusLabel}
-        accessibilityHint="Double tap to show tool call details."
+        accessibilityHint={translator.message("mobile.thread.toolDetailsHint")}
         accessibilityState={{ expanded: props.expanded }}
         hitSlop={4}
         onPress={() => {
           triggerDisclosureFeedback();
           props.onToggle();
         }}
-        style={({ pressed }) => ({
-          backgroundColor: pressed ? pressedBackground : "transparent",
-        })}
-        className="min-h-9 flex-row items-center gap-1.5 rounded-md px-0.5 py-0"
+        className="min-h-9 flex-row items-center gap-1.5 rounded-md px-0.5 py-0 active:bg-subtle"
       >
         <View className="h-6 w-6 shrink-0 items-center justify-center">
           <SymbolView
@@ -334,7 +328,7 @@ export function ThreadWorkSummary(props: {
         <Text
           className={cn(
             "min-w-0 flex-1 text-sm text-foreground-muted",
-            props.hasFailure && "text-rose-600 dark:text-rose-400",
+            props.hasFailure && "text-adaptive-rose-600-400",
             props.live && "text-foreground",
           )}
           numberOfLines={1}
@@ -380,7 +374,6 @@ export function ThreadWorkGroupToggle(props: {
   readonly onlyToolActivities: boolean;
   readonly onToggle: () => void;
 }) {
-  const pressedBackground = useThemeColor("--color-subtle");
   const noun = props.onlyToolActivities
     ? props.hiddenCount === 1
       ? "tool call"
@@ -404,10 +397,7 @@ export function ThreadWorkGroupToggle(props: {
           void Haptics.selectionAsync();
           props.onToggle();
         }}
-        style={({ pressed }) => ({
-          backgroundColor: pressed ? pressedBackground : "transparent",
-        })}
-        className="min-h-8 flex-row items-center gap-1.5 rounded-md px-0.5 py-0"
+        className="min-h-8 flex-row items-center gap-1.5 rounded-md px-0.5 py-0 active:bg-subtle"
       >
         <View className="h-[18px] w-5 items-center justify-center">
           <SymbolView

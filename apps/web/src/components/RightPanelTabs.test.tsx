@@ -4,10 +4,19 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   RightPanelTabs,
+  rightPanelSurfaceTitle,
   surfaceShortcutActionForKey,
   surfaceShortcutTargetsTypingContext,
   tabMuteMenuItem,
 } from "./RightPanelTabs";
+
+describe("Knowledge Graph surface", () => {
+  it("uses the project graph title without requiring provider or preview state", () => {
+    expect(
+      rightPanelSurfaceTitle({ id: "knowledge-graph", kind: "knowledge-graph" }, {}, new Map()),
+    ).toBe("Knowledge Graph");
+  });
+});
 
 function shortcutEvent(
   key: string,
@@ -83,12 +92,13 @@ function renderTabs(
   second?: DesktopPreviewFavicon,
   audio?: { audible?: boolean; audioMuted?: boolean },
   previewRuntimeTabId: ((tabId: string) => string) | null = (tabId) => `runtime:${tabId}`,
+  options: { readonly empty?: boolean; readonly knowledgeGraph?: boolean } = {},
 ) {
   return renderToStaticMarkup(
     <RightPanelTabs
       mode="inline"
-      surfaces={second ? [previewSurface, secondSurface] : [previewSurface]}
-      activeSurfaceId={previewSurface.id}
+      surfaces={options.empty ? [] : second ? [previewSurface, secondSurface] : [previewSurface]}
+      activeSurfaceId={options.empty ? null : previewSurface.id}
       pendingSurfaceIds={new Set()}
       previewSessions={sessions}
       desktopByTabId={{
@@ -108,6 +118,14 @@ function renderTabs(
       onAddPullRequest={() => undefined}
       onAddDiff={() => undefined}
       onAddFiles={() => undefined}
+      {...(options.knowledgeGraph
+        ? {
+            onAddKnowledgeGraph: () => undefined,
+            knowledgeGraphAvailable: true,
+            knowledgeGraphTitle: "Project Graph",
+            knowledgeGraphDescription: "Explore project relationships.",
+          }
+        : {})}
       browserAvailable
       terminalAvailable={false}
       diffAvailable={false}
@@ -139,6 +157,22 @@ describe("RightPanelTabs preview favicon", () => {
   it("hides a capture while the server session still describes another origin", () => {
     const html = renderTabs(favicon("data:image/png;base64,AAAA", "https://example.com/"));
     expect(html).not.toContain("data:image/png;base64,AAAA");
+  });
+});
+
+describe("Knowledge Graph launcher", () => {
+  it("appears as a first right-panel surface only while the feature is available", () => {
+    const enabled = renderTabs(null, undefined, undefined, null, {
+      empty: true,
+      knowledgeGraph: true,
+    });
+    const disabled = renderTabs(null, undefined, undefined, null, { empty: true });
+
+    expect(enabled).toContain('data-surface-launcher-keys="BK"');
+    expect(enabled).toContain("Project Graph");
+    expect(enabled).toContain("Explore project relationships.");
+    expect(disabled).toContain('data-surface-launcher-keys="B"');
+    expect(disabled).not.toContain("Project Graph");
   });
 });
 

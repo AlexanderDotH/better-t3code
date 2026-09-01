@@ -26,10 +26,12 @@ import { HardwareKeyboardCommandProvider } from "./features/keyboard/HardwareKey
 import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentComposerSheet";
 import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
-import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
-import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
-import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
-import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
+import {
+  GuardedGitBranchesSheet,
+  GuardedGitCommitSheet,
+  GuardedGitConfirmSheet,
+  GuardedGitOverviewSheet,
+} from "./features/threads/git/MobileGitRouteGate";
 import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
@@ -51,6 +53,9 @@ import {
 import { NewTaskFlowProvider } from "./features/threads/new-task-flow-provider";
 import { NewTaskRouteScreen } from "./features/threads/NewTaskRouteScreen";
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
+import { SettingsBetterT3RouteScreen } from "./features/settings/SettingsBetterT3RouteScreen";
+import { SettingsBetterT3ResourceDiagnosticsRouteScreen } from "./features/settings/SettingsBetterT3ResourceDiagnosticsRouteScreen";
+import { SettingsBetterT3TranscriptPortabilityRouteScreen } from "./features/settings/SettingsBetterT3TranscriptPortabilityRouteScreen";
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
 import { SettingsAgentEnvironmentsRouteScreen } from "./features/settings/SettingsAgentEnvironmentsRouteScreen";
@@ -59,6 +64,7 @@ import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRoute
 import { SettingsProjectGroupingRouteScreen } from "./features/settings/SettingsProjectGroupingRouteScreen";
 import { SettingsProjectsRouteScreen } from "./features/settings/SettingsProjectsRouteScreen";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
+import { KnowledgeGraphRouteScreen } from "./features/knowledge-graph/KnowledgeGraphRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
 import {
@@ -75,12 +81,31 @@ import { NATIVE_LIQUID_GLASS_SUPPORTED } from "./native/native-glass";
 import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { FORM_SHEET_PRESENTATION_OPTIONS } from "./native/sheet-surface";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
+import { rootHomeContentStyle } from "./lib/root-stack-options";
+import { useMobileInterfaceTranslator } from "./localization/useMobileInterfaceTranslator";
+import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
 type AppScreenOptions = NativeStackNavigationOptions & {
   readonly unstable_navigationItemStyle?: "editor";
 };
+
+function LocalizedStackTitle(props: { readonly messageKey: InterfaceMessageKey }) {
+  const translator = useMobileInterfaceTranslator();
+  return (
+    <Text className="text-lg font-t3-bold text-foreground" numberOfLines={1}>
+      {translator.message(props.messageKey)}
+    </Text>
+  );
+}
+
+function localizedStackTitle(messageKey: InterfaceMessageKey): AppScreenOptions {
+  return {
+    title: "",
+    headerTitle: () => <LocalizedStackTitle messageKey={messageKey} />,
+  };
+}
 
 // Shared header presets. Screens only override genuinely dynamic values (titles,
 // subtitles, toolbar items, search callbacks) via NativeStackScreenOptions.
@@ -148,70 +173,91 @@ const SettingsContentStack = createNativeStackNavigator({
       screen: SettingsRouteScreen,
       linking: "",
       options: {
-        title: "Settings",
+        ...localizedStackTitle("mobile.settings.title"),
       },
     }),
     SettingsEnvironments: createNativeStackScreen({
       screen: SettingsEnvironmentsRouteScreen,
       linking: "environments",
       options: {
-        title: "Environments",
+        ...localizedStackTitle("mobile.settings.environments"),
       },
     }),
     SettingsAgents: createNativeStackScreen({
       screen: SettingsAgentEnvironmentsRouteScreen,
       linking: "agents",
       options: {
-        title: "Agents & Servers",
+        ...localizedStackTitle("mobile.settings.agentsServers"),
       },
     }),
     SettingsEnvironmentNew: createNativeStackScreen({
       screen: ConnectionsNewRouteScreen,
       linking: "environment-new",
       options: {
-        title: "Add Environment",
+        ...localizedStackTitle("mobile.connection.addEnvironment"),
       },
     }),
     SettingsArchive: createNativeStackScreen({
       screen: ArchivedThreadsRouteScreen,
       linking: "archive",
       options: {
-        title: "Archived Threads",
+        ...localizedStackTitle("mobile.settings.archivedThreads"),
       },
     }),
     SettingsAppearance: createNativeStackScreen({
       screen: SettingsAppearanceRouteScreen,
       linking: "appearance",
       options: {
-        title: "Appearance",
+        ...localizedStackTitle("mobile.appearance.title"),
+      },
+    }),
+    SettingsBetterT3: createNativeStackScreen({
+      screen: SettingsBetterT3RouteScreen,
+      linking: "better-t3",
+      options: {
+        ...localizedStackTitle("settings.betterT3.title"),
+      },
+    }),
+    SettingsBetterT3TranscriptPortability: createNativeStackScreen({
+      screen: SettingsBetterT3TranscriptPortabilityRouteScreen,
+      linking: "better-t3/transcript-portability",
+      options: {
+        ...localizedStackTitle("settings.betterT3.mobile.transcript.title"),
+      },
+    }),
+    SettingsBetterT3ResourceDiagnostics: createNativeStackScreen({
+      screen: SettingsBetterT3ResourceDiagnosticsRouteScreen,
+      linking: "better-t3/resource-diagnostics",
+      options: {
+        ...localizedStackTitle("settings.betterT3.mobile.diagnostics.title"),
       },
     }),
     SettingsProjectGrouping: createNativeStackScreen({
       screen: SettingsProjectGroupingRouteScreen,
       linking: "project-grouping",
       options: {
-        title: "Project Grouping",
+        ...localizedStackTitle("mobile.settings.projectGrouping.title"),
       },
     }),
     SettingsProjects: createNativeStackScreen({
       screen: SettingsProjectsRouteScreen,
       linking: "projects",
       options: {
-        title: "Projects",
+        ...localizedStackTitle("mobile.settings.projects"),
       },
     }),
     SettingsClientStorage: createNativeStackScreen({
       screen: SettingsClientStorageRouteScreen,
       linking: "client-storage",
       options: {
-        title: "Client Storage",
+        ...localizedStackTitle("mobile.settings.clientStorage"),
       },
     }),
     SettingsUsage: createNativeStackScreen({
       screen: UsageRouteScreen,
       linking: "usage",
       options: {
-        title: "Usage",
+        ...localizedStackTitle("mobile.settings.usage"),
       },
     }),
   },
@@ -271,7 +317,7 @@ const NewTaskSheetStack = createNativeStackNavigator({
       screen: NewTaskRouteScreen,
       linking: "",
       options: {
-        title: "Choose project",
+        ...localizedStackTitle("mobile.thread.chooseProject"),
       },
     }),
     NewTaskDraft: createNativeStackScreen({
@@ -286,14 +332,14 @@ const NewTaskSheetStack = createNativeStackNavigator({
       screen: NewTaskEnvironmentPickerRouteScreen,
       linking: "draft/environment",
       options: {
-        title: "Environment",
+        ...localizedStackTitle("mobile.navigation.environment"),
       },
     }),
     NewTaskBranch: createNativeStackScreen({
       screen: NewTaskBranchPickerRouteScreen,
       linking: "draft/branch",
       options: {
-        title: "Branch",
+        ...localizedStackTitle("mobile.thread.branch"),
       },
     }),
     ThreadSettings: createNativeStackScreen({
@@ -315,7 +361,7 @@ const NewTaskSheetStack = createNativeStackNavigator({
       screen: AddProjectSourceRoute,
       linking: "add-project",
       options: {
-        title: "Add Project",
+        ...localizedStackTitle("mobile.thread.addProject"),
       },
     }),
     AddProjectRepository: createNativeStackScreen({
@@ -422,6 +468,7 @@ function RootStackLayout(props: {
 
 function NotFoundScreen() {
   const navigation = useNavigation();
+  const translator = useMobileInterfaceTranslator();
   const screenBgStyle = StyleSheet.flatten(useResolveClassNames("bg-screen"));
   const primaryBgStyle = StyleSheet.flatten(useResolveClassNames("bg-primary"));
   const returnHomeButtonStyle = StyleSheet.flatten([
@@ -447,13 +494,15 @@ function NotFoundScreen() {
       style={[{ flex: 1 }, screenBgStyle]}
     >
       <Text className="text-3xl font-t3-bold text-foreground" selectable>
-        Route not found
+        {translator.message("mobile.navigation.routeNotFound")}
       </Text>
       <Pressable
         style={returnHomeButtonStyle}
         onPress={() => navigation.dispatch(StackActions.replace("Home"))}
       >
-        <Text className="text-base font-t3-bold text-primary-foreground">Return home</Text>
+        <Text className="text-base font-t3-bold text-primary-foreground">
+          {translator.message("mobile.navigation.returnHome")}
+        </Text>
       </Pressable>
     </ScrollView>
   );
@@ -471,7 +520,10 @@ export const RootStack = createNativeStackNavigator({
       linking: "",
       options: {
         ...GLASS_HEADER_OPTIONS,
-        contentStyle: { backgroundColor: "transparent" },
+        // Predictive back renders Home before the Thread pop commits. Android
+        // needs the navigation theme's opaque background during that preview;
+        // a transparent native destination can remain blank after the gesture.
+        contentStyle: rootHomeContentStyle(Platform.OS === "android" ? "android" : "ios"),
         headerBackVisible: false,
         ...getCompactBrandHeaderOptions(),
       },
@@ -509,13 +561,21 @@ export const RootStack = createNativeStackNavigator({
       linking: `${THREAD_LINKING_PREFIX}/files`,
       options: {
         ...GLASS_HEADER_OPTIONS,
-        title: "Files",
+        ...localizedStackTitle("mobile.files.title"),
       },
     }),
     ThreadFile: createNativeStackScreen({
       screen: ThreadFileScreen,
       linking: `${THREAD_LINKING_PREFIX}/files/:path*`,
       options: SOLID_HEADER_OPTIONS,
+    }),
+    KnowledgeGraph: createNativeStackScreen({
+      screen: KnowledgeGraphRouteScreen,
+      linking: "environments/:environmentId/projects/:projectId/knowledge",
+      options: {
+        ...GLASS_HEADER_OPTIONS,
+        ...localizedStackTitle("knowledgeGraph.title"),
+      },
     }),
     ThreadSettingsSheet: createNativeStackScreen({
       screen: ExistingThreadSettingsRouteScreen,
@@ -532,7 +592,7 @@ export const RootStack = createNativeStackNavigator({
       },
     }),
     GitOverview: createNativeStackScreen({
-      screen: GitOverviewSheet,
+      screen: GuardedGitOverviewSheet,
       linking: `${THREAD_LINKING_PREFIX}/git`,
       options: {
         ...FORM_SHEET_PRESENTATION_OPTIONS,
@@ -541,7 +601,7 @@ export const RootStack = createNativeStackNavigator({
       },
     }),
     GitCommit: createNativeStackScreen({
-      screen: GitCommitSheet,
+      screen: GuardedGitCommitSheet,
       linking: `${THREAD_LINKING_PREFIX}/git/commit`,
       options: {
         ...FORM_SHEET_PRESENTATION_OPTIONS,
@@ -550,7 +610,7 @@ export const RootStack = createNativeStackNavigator({
       },
     }),
     GitBranches: createNativeStackScreen({
-      screen: GitBranchesSheet,
+      screen: GuardedGitBranchesSheet,
       linking: `${THREAD_LINKING_PREFIX}/git/branches`,
       options: {
         ...FORM_SHEET_PRESENTATION_OPTIONS,
@@ -559,7 +619,7 @@ export const RootStack = createNativeStackNavigator({
       },
     }),
     GitConfirm: createNativeStackScreen({
-      screen: GitConfirmSheet,
+      screen: GuardedGitConfirmSheet,
       linking: `${THREAD_LINKING_PREFIX}/git-confirm`,
       options: {
         ...FORM_SHEET_PRESENTATION_OPTIONS,
@@ -589,7 +649,7 @@ export const RootStack = createNativeStackNavigator({
       linking: "settings/legal",
       options: {
         ...LEGAL_DOCUMENT_HEADER_OPTIONS,
-        title: "Legal",
+        ...localizedStackTitle("mobile.settings.legal"),
       },
     }),
     ConnectOnboarding: createNativeStackScreen({
@@ -599,7 +659,7 @@ export const RootStack = createNativeStackNavigator({
         // A root-level Android formSheet does not host the native stack bar;
         // the route renders an embedded AndroidSheetHeader instead.
         ...(Platform.OS === "android" ? { headerShown: false } : SHEET_SOLID_HEADER_OPTIONS),
-        title: "Set up T3 Connect",
+        ...localizedStackTitle("mobile.connection.setupConnect"),
         gestureEnabled: true,
         ...FORM_SHEET_PRESENTATION_OPTIONS,
         sheetAllowedDetents: [0.6, 0.95],
@@ -610,7 +670,7 @@ export const RootStack = createNativeStackNavigator({
       screen: ConnectionsRouteScreen,
       linking: "connections",
       options: {
-        title: "Environments",
+        ...localizedStackTitle("mobile.settings.environments"),
         // Android: full page; the screen renders its own AndroidScreenHeader,
         // so the native bar stays hidden. iOS keeps the sheet.
         ...(Platform.OS === "android"

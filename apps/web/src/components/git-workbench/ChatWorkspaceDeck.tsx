@@ -1,6 +1,7 @@
 import { type FocusEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
+import { useBetterT3DeviceFeature } from "~/hooks/useBetterT3Feature";
 
 import {
   WorkspaceCardDeck,
@@ -93,6 +94,7 @@ const scheduleFrame = (callback: () => void): (() => void) => {
 };
 
 export function ChatWorkspaceDeck(props: ChatWorkspaceDeckProps) {
+  const cardMorphingEnabled = useBetterT3DeviceFeature("chat.cardMorphing");
   const chatBodyRef = useRef<HTMLDivElement | null>(null);
   const previouslyFocusedChatElementRef = useRef<HTMLElement | null>(null);
   const previousActiveCardRef = useRef<ChatWorkspaceCardId>(props.activeCard);
@@ -111,7 +113,9 @@ export function ChatWorkspaceDeck(props: ChatWorkspaceDeckProps) {
   const chatAvailable = cardIds.includes("chat");
   const policyActiveCard = props.actionRequired && chatAvailable ? "chat" : resolvedActiveCard;
   const deckSelectionMode =
-    props.actionRequired || resolvedActiveCard !== props.activeCard ? "immediate" : selectionMode;
+    !cardMorphingEnabled || props.actionRequired || resolvedActiveCard !== props.activeCard
+      ? "immediate"
+      : selectionMode;
 
   const cards = useMemo(
     () =>
@@ -181,7 +185,7 @@ export function ChatWorkspaceDeck(props: ChatWorkspaceDeckProps) {
       });
       if (result.blockedReason !== null) {
         props.onCardSelectionBlocked?.(result.blockedReason);
-        return;
+        return false;
       }
       if (result.shouldDismissChatUi) {
         rememberChatFocus();
@@ -196,12 +200,14 @@ export function ChatWorkspaceDeck(props: ChatWorkspaceDeckProps) {
         };
         setSelectionLocked(true);
         props.onExpandedCardChange(null);
-        return;
+        return true;
       }
       if (result.nextCard !== policyActiveCard) {
         setSelectionMode("animate");
         props.onActiveCardChange(result.nextCard, direction);
+        return true;
       }
+      return false;
     },
     [policyActiveCard, props, rememberChatFocus, selectionLocked],
   );

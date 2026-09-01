@@ -1,4 +1,7 @@
-import type { HostPowerSnapshot } from "@t3tools/contracts";
+import type {
+  HostPowerSnapshot,
+  ResourceMonitorProcessControlResultEvent,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -9,11 +12,16 @@ import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 
 import {
+  NativeTelemetryExited,
+  NativeTelemetryProcessControlFailed,
   NativeTelemetryRequestTimedOut,
   NativeTelemetryStreamClosed,
+  type PendingProcessControlRequest,
   canCommandNativeTelemetrySidecar,
+  completePendingProcessControlRequest,
   canRequestNativeTelemetryRetry,
   commitCollectionControlUpdate,
+  failPendingProcessControlRequests,
   nativeTelemetrySupervisorFailureMessage,
   retainRecentNativeTelemetryFailures,
   resolveNativeSampleIntervalMs,
@@ -112,6 +120,101 @@ describe("NativeTelemetryRequestTimedOut", () => {
     expect("cause" in historyTimeout).toBe(false);
     expect("cause" in sampleTimeout).toBe(false);
   });
+});
+
+describe("process-control request correlation", () => {
+  it.effect("completes only the request with the matching request and lease identity", () =>
+    Effect.gen(function* () {
+      const deferred = yield* Deferred.make<void, NativeTelemetryProcessControlFailed>();
+      const pending = yield* Ref.make(
+        new Map<string, PendingProcessControlRequest>([
+          [
+            "request-2",
+            {
+              operation: "suspend",
+              leaseId: "lease-1",
+              deferred,
+            },
+          ],
+        ]),
+      );
+      const lateResult: ResourceMonitorProcessControlResultEvent = {
+        version: 4,
+        type: "processControlResult",
+        requestId: "request-1",
+        leaseId: "lease-1",
+        operation: "suspend",
+        success: true,
+        resumeRequired: false,
+      };
+      const currentResult: ResourceMonitorProcessControlResultEvent = {
+        ...lateResult,
+        requestId: "request-2",
+      };
+
+      yield* completePendingProcessControlRequest(pending, lateResult);
+      expect((yield* Ref.get(pending)).size).toBe(1);
+
+      yield* completePendingProcessControlRequest(pending, currentResult);
+      yield* Deferred.await(deferred);
+      expect((yield* Ref.get(pending)).size).toBe(0);
+    }),
+  );
+
+  it.effect("fails a correlated request when the sidecar rejects the process identity", () =>
+    Effect.gen(function* () {
+      const deferred = yield* Deferred.make<void, NativeTelemetryProcessControlFailed>();
+      const pending = yield* Ref.make(
+        new Map<string, PendingProcessControlRequest>([
+          [
+            "request-3",
+            {
+              operation: "resume",
+              leaseId: "lease-2",
+              deferred,
+            },
+          ],
+        ]),
+      );
+
+      yield* completePendingProcessControlRequest(pending, {
+        version: 4,
+        type: "processControlResult",
+        requestId: "request-3",
+        leaseId: "lease-2",
+        operation: "resume",
+        success: false,
+        resumeRequired: true,
+        error: "process identity changed",
+      });
+      const failure = yield* Deferred.await(deferred).pipe(Effect.flip);
+
+      expect(failure).toBeInstanceOf(NativeTelemetryProcessControlFailed);
+      expect(failure.resumeRequired).toBe(true);
+      expect(failure.message).toContain("process identity changed");
+      expect((yield* Ref.get(pending)).size).toBe(0);
+    }),
+  );
+
+  it.effect("fails and clears every pending request when the sidecar exits", () =>
+    Effect.gen(function* () {
+      const suspend = yield* Deferred.make<void, NativeTelemetryExited>();
+      const resume = yield* Deferred.make<void, NativeTelemetryExited>();
+      const pending = yield* Ref.make(
+        new Map<string, PendingProcessControlRequest>([
+          ["request-4", { operation: "suspend", leaseId: "lease-3", deferred: suspend }],
+          ["request-5", { operation: "resume", leaseId: "lease-3", deferred: resume }],
+        ]),
+      );
+      const exit = new NativeTelemetryExited({ exitCode: 1 });
+
+      yield* failPendingProcessControlRequests(pending, exit);
+
+      expect(yield* Deferred.await(suspend).pipe(Effect.flip)).toBe(exit);
+      expect(yield* Deferred.await(resume).pipe(Effect.flip)).toBe(exit);
+      expect((yield* Ref.get(pending)).size).toBe(0);
+    }),
+  );
 });
 
 describe("native telemetry supervisor failures", () => {

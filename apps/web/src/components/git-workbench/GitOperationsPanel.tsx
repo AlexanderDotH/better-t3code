@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 import { validateRebasePlan } from "./GitWorkbench.logic";
 import { GitWorkbenchConfirmation } from "./GitWorkbenchConfirmation";
@@ -36,12 +37,13 @@ interface GitOperationsPanelProps {
 }
 
 export function GitOperationsPanel(props: GitOperationsPanelProps) {
+  const translate = useInterfaceTranslator().message;
   return (
     <div className="grid gap-4 p-4 @3xl/git-panel:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.7fr)]">
       <div className="space-y-4">
         {props.readOnly ? (
           <div className="rounded-xl border border-info/24 bg-info/5 p-3 text-info-foreground text-sm">
-            Read-only access: operations can be inspected but not changed.
+            {translate("git.operation.readOnly")}
           </div>
         ) : null}
         <ActiveOperation {...props} />
@@ -57,15 +59,16 @@ export function GitOperationsPanel(props: GitOperationsPanelProps) {
 }
 
 function ActiveOperation({ operation, onRunOperation, readOnly }: GitOperationsPanelProps) {
+  const translate = useInterfaceTranslator().message;
   if (!operation) {
     return (
       <section className="rounded-xl border bg-card p-4">
         <div className="flex items-center gap-2">
           <GitMerge aria-hidden="true" className="size-4" />
-          <h2 className="font-semibold text-sm">Active operation</h2>
+          <h2 className="font-semibold text-sm">{translate("git.operation.active")}</h2>
         </div>
         <p className="mt-2 text-muted-foreground text-sm">
-          No merge, rebase, cherry-pick, or revert is in progress.
+          {translate("git.operation.noneActive")}
         </p>
       </section>
     );
@@ -78,10 +81,14 @@ function ActiveOperation({ operation, onRunOperation, readOnly }: GitOperationsP
       <div className="flex flex-wrap items-center gap-2">
         <GitMerge aria-hidden="true" className="size-4 text-warning-foreground" />
         <h2 className="font-semibold text-sm" id="active-operation-heading">
-          {operation.kind.replaceAll("-", " ")} in progress
+          {translate("git.operation.inProgress", {
+            operation: operation.kind.replaceAll("-", " "),
+          })}
         </h2>
         <Badge variant={operation.conflicts.length ? "error" : "warning"}>
-          {operation.conflicts.length ? `${operation.conflicts.length} conflicts` : "Paused"}
+          {operation.conflicts.length
+            ? translate("git.workbench.conflictsCount", { count: operation.conflicts.length })
+            : translate("git.operation.paused")}
         </Badge>
       </div>
       <p className="mt-2 text-sm">{operation.detail}</p>
@@ -100,7 +107,7 @@ function ActiveOperation({ operation, onRunOperation, readOnly }: GitOperationsP
           onClick={() => onRunOperation({ kind: "continue" })}
           size="sm"
         >
-          Continue
+          {translate("git.common.continue")}
         </Button>
         <Button
           disabled={readOnly || !operation.canSkip}
@@ -108,15 +115,15 @@ function ActiveOperation({ operation, onRunOperation, readOnly }: GitOperationsP
           size="sm"
           variant="outline"
         >
-          Skip
+          {translate("git.operation.skip")}
         </Button>
         <GitWorkbenchConfirmation
-          confirmLabel="Abort operation"
-          description="Abort returns the repository to its pre-operation state when Git can do so."
+          confirmLabel={translate("git.operation.abortAction")}
+          description={translate("git.operation.abortDescription")}
           disabled={readOnly || !operation.canAbort}
           onConfirm={() => onRunOperation({ kind: "abort" })}
-          title={`Abort ${operation.kind}?`}
-          triggerLabel="Abort…"
+          title={translate("git.operation.abortTitle", { operation: operation.kind })}
+          triggerLabel={translate("git.operation.abort")}
         />
       </div>
     </section>
@@ -131,6 +138,7 @@ function RebasePlanEditor({
   rebasePlan,
   rebaseUpstreamRef,
 }: GitOperationsPanelProps) {
+  const translate = useInterfaceTranslator().message;
   const nodes = operation?.rebasePlan ?? rebasePlan;
   if (!nodes.length) return null;
   const validation = validateRebasePlan(nodes);
@@ -167,10 +175,10 @@ function RebasePlanEditor({
       <div className="flex flex-wrap items-center justify-between gap-2 border-b p-3">
         <div>
           <h2 className="font-semibold text-sm" id="interactive-rebase-heading">
-            Interactive rebase plan
+            {translate("git.operation.interactiveRebase")}
           </h2>
           <p className="text-muted-foreground text-xs">
-            Labels, resets, and merges preserve topology.
+            {translate("git.operation.rebaseTopology")}
           </p>
         </div>
         {!operation ? (
@@ -186,7 +194,7 @@ function RebasePlanEditor({
             }
             size="sm"
           >
-            <Play aria-hidden="true" /> Start rebase
+            <Play aria-hidden="true" /> {translate("git.operation.startRebase")}
           </Button>
         ) : null}
       </div>
@@ -198,7 +206,7 @@ function RebasePlanEditor({
             </span>
             {isCommitAction(node) ? (
               <select
-                aria-label={`Action for ${node.subject}`}
+                aria-label={translate("git.operation.actionFor", { subject: node.subject })}
                 className="h-7 rounded-md border bg-background px-1 text-xs"
                 disabled={readOnly || Boolean(operation)}
                 onChange={(event) =>
@@ -219,20 +227,22 @@ function RebasePlanEditor({
               <span className="block truncate">{rebaseNodeLabel(node)}</span>
               {node.kind === "reword" ? (
                 <Input
-                  aria-label={`New commit message for ${node.subject}`}
+                  aria-label={translate("git.operation.newCommitMessageFor", {
+                    subject: node.subject,
+                  })}
                   className="mt-1 h-8"
                   disabled={readOnly || Boolean(operation)}
                   onChange={(event) =>
                     replace(index, { ...node, message: event.currentTarget.value })
                   }
-                  placeholder="New commit message"
+                  placeholder={translate("git.operation.newCommitMessage")}
                   value={node.message ?? ""}
                 />
               ) : null}
             </span>
             <div className="flex gap-1">
               <Button
-                aria-label={`Move ${rebaseNodeLabel(node)} up`}
+                aria-label={translate("git.operation.moveUp", { label: rebaseNodeLabel(node) })}
                 disabled={readOnly || Boolean(operation) || index === 0}
                 onClick={() => move(index, -1)}
                 size="icon-xs"
@@ -241,7 +251,7 @@ function RebasePlanEditor({
                 <ArrowUp />
               </Button>
               <Button
-                aria-label={`Move ${rebaseNodeLabel(node)} down`}
+                aria-label={translate("git.operation.moveDown", { label: rebaseNodeLabel(node) })}
                 disabled={readOnly || Boolean(operation) || index === nodes.length - 1}
                 onClick={() => move(index, 1)}
                 size="icon-xs"
@@ -266,6 +276,7 @@ function RebasePlanEditor({
 }
 
 function QueueWorkflow(props: GitOperationsPanelProps) {
+  const translate = useInterfaceTranslator().message;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<GitQueuedWorkflowPlan | null>(props.queue?.plan ?? null);
   useEffect(() => {
@@ -279,7 +290,7 @@ function QueueWorkflow(props: GitOperationsPanelProps) {
         <div className="flex items-center gap-2">
           <ListTodo aria-hidden="true" className="size-4" />
           <h2 className="font-semibold text-sm" id="workflow-queue-heading">
-            Queued workflow
+            {translate("git.operation.queuedWorkflow")}
           </h2>
           <Badge variant={props.queue.status === "needs-review" ? "warning" : "info"}>
             {props.queue.status.replaceAll("-", " ")}
@@ -315,7 +326,7 @@ function QueueWorkflow(props: GitOperationsPanelProps) {
                 }}
                 size="xs"
               >
-                Save workflow
+                {translate("git.operation.saveWorkflow")}
               </Button>
               <Button
                 onClick={() => {
@@ -325,7 +336,7 @@ function QueueWorkflow(props: GitOperationsPanelProps) {
                 size="xs"
                 variant="ghost"
               >
-                Cancel edit
+                {translate("git.operation.cancelEdit")}
               </Button>
             </>
           ) : (
@@ -335,7 +346,7 @@ function QueueWorkflow(props: GitOperationsPanelProps) {
               size="xs"
               variant="outline"
             >
-              Review & edit
+              {translate("git.operation.reviewEdit")}
             </Button>
           )}
           {props.queue.status === "needs-review" || props.queue.status === "failed" ? (
@@ -345,16 +356,16 @@ function QueueWorkflow(props: GitOperationsPanelProps) {
               size="xs"
               variant="outline"
             >
-              Retry validation
+              {translate("git.operation.retryValidation")}
             </Button>
           ) : null}
           <GitWorkbenchConfirmation
-            confirmLabel="Replace workflow"
-            description="This replaces the existing workflow with stage all and commit. The server will revalidate it after the turn settles."
+            confirmLabel={translate("git.operation.replaceWorkflow")}
+            description={translate("git.operation.replaceWorkflowDescription")}
             disabled={props.readOnly}
             onConfirm={() => props.onQueueWorkflow({ kind: "stage-all-and-commit" })}
-            title="Replace the queued workflow?"
-            triggerLabel="Replace workflow…"
+            title={translate("git.operation.replaceWorkflowConfirm")}
+            triggerLabel={`${translate("git.operation.replaceWorkflow")}…`}
             variant="outline"
           />
           <Button
@@ -363,7 +374,7 @@ function QueueWorkflow(props: GitOperationsPanelProps) {
             size="xs"
             variant="outline"
           >
-            Cancel workflow
+            {translate("git.operation.cancelWorkflow")}
           </Button>
         </div>
       </section>
@@ -374,11 +385,11 @@ function QueueWorkflow(props: GitOperationsPanelProps) {
       <div className="flex items-center gap-2">
         <ListTodo aria-hidden="true" className="size-4" />
         <h2 className="font-semibold text-sm" id="workflow-queue-heading">
-          Run after active turn
+          {translate("git.operation.runAfterTurn")}
         </h2>
       </div>
       <p className="mt-1 text-muted-foreground text-xs">
-        One durable workflow is kept per worktree and revalidated before it runs.
+        {translate("git.operation.durableWorkflow")}
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         <Button
@@ -387,7 +398,7 @@ function QueueWorkflow(props: GitOperationsPanelProps) {
           size="xs"
           variant="outline"
         >
-          Queue stage & commit
+          {translate("git.operation.queueStageCommit")}
         </Button>
         <Button
           disabled={props.readOnly}
@@ -395,7 +406,7 @@ function QueueWorkflow(props: GitOperationsPanelProps) {
           size="xs"
           variant="outline"
         >
-          Queue push
+          {translate("git.operation.queuePush")}
         </Button>
         <Button
           disabled={props.readOnly}
@@ -403,7 +414,7 @@ function QueueWorkflow(props: GitOperationsPanelProps) {
           size="xs"
           variant="outline"
         >
-          Queue PR
+          {translate("git.operation.queuePullRequest")}
         </Button>
       </div>
     </section>
@@ -411,17 +422,18 @@ function QueueWorkflow(props: GitOperationsPanelProps) {
 }
 
 function QueuePlanSummary({ plan }: { readonly plan: GitQueuedWorkflowPlan }) {
+  const translate = useInterfaceTranslator().message;
   if (plan.kind === "delivery") {
     return (
       <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 rounded-md bg-muted/45 p-2 text-xs">
-        <dt className="text-muted-foreground">Selection</dt>
+        <dt className="text-muted-foreground">{translate("git.common.selection")}</dt>
         <dd>
           {plan.stage.mode === "paths" ? `${plan.stage.paths.length} paths` : plan.stage.mode}
         </dd>
-        <dt className="text-muted-foreground">Push</dt>
-        <dd>{plan.push ? "Yes" : "No"}</dd>
-        <dt className="text-muted-foreground">Pull request</dt>
-        <dd>{plan.createPullRequest ? "Yes" : "No"}</dd>
+        <dt className="text-muted-foreground">{translate("git.common.push")}</dt>
+        <dd>{translate(plan.push ? "git.common.yes" : "git.common.no")}</dd>
+        <dt className="text-muted-foreground">{translate("git.common.pullRequest")}</dt>
+        <dd>{translate(plan.createPullRequest ? "git.common.yes" : "git.common.no")}</dd>
       </dl>
     );
   }
@@ -439,11 +451,12 @@ function QueuePlanEditor({
   readonly onChange: (plan: GitQueuedWorkflowPlan) => void;
   readonly plan: GitQueuedWorkflowPlan;
 }) {
+  const translate = useInterfaceTranslator().message;
   if (plan.kind === "delivery") {
     return (
       <div className="mt-3 space-y-2 rounded-md border bg-muted/20 p-3">
         <label className="block text-xs">
-          Commit selection
+          {translate("git.operation.commitSelection")}
           <select
             className="mt-1 h-8 w-full rounded-md border bg-background px-2 text-sm"
             onChange={(event) => {
@@ -454,15 +467,17 @@ function QueuePlanEditor({
             }}
             value={plan.stage.mode}
           >
-            <option value="staged">Currently staged files</option>
-            <option value="all">All final worktree changes</option>
+            <option value="staged">{translate("git.operation.currentlyStaged")}</option>
+            <option value="all">{translate("git.operation.allFinalChanges")}</option>
             {plan.stage.mode === "paths" ? (
-              <option value="paths">Selected paths ({plan.stage.paths.length})</option>
+              <option value="paths">
+                {translate("git.operation.selectedPaths", { count: plan.stage.paths.length })}
+              </option>
             ) : null}
           </select>
         </label>
         <label className="block text-xs">
-          Commit message (optional)
+          {translate("git.actions.commitMessageOptional")}
           <Input
             className="mt-1"
             onChange={(event) => {
@@ -470,7 +485,7 @@ function QueuePlanEditor({
               const { commitMessage: _previous, ...base } = plan;
               onChange(commitMessage.trim().length > 0 ? { ...base, commitMessage } : base);
             }}
-            placeholder="Generate from final diff"
+            placeholder={translate("git.operation.generateFinalDiff")}
             value={plan.commitMessage ?? ""}
           />
         </label>
@@ -486,7 +501,7 @@ function QueuePlanEditor({
             }
             type="checkbox"
           />
-          Push after commit
+          {translate("git.operation.pushAfterCommit")}
         </label>
         <label className="flex items-center gap-2 text-xs">
           <input
@@ -500,7 +515,7 @@ function QueuePlanEditor({
             }
             type="checkbox"
           />
-          Create pull request
+          {translate("git.operation.createPullRequest")}
         </label>
       </div>
     );
@@ -509,13 +524,11 @@ function QueuePlanEditor({
   const action = plan.action;
   return (
     <div className="mt-3 space-y-2 rounded-md border bg-muted/20 p-3">
-      <p className="text-muted-foreground text-xs">
-        Advanced workflows contain exactly one typed Git operation.
-      </p>
+      <p className="text-muted-foreground text-xs">{translate("git.operation.advancedSingle")}</p>
       {action.kind === "reset" ? (
         <>
           <label className="block text-xs">
-            Reset mode
+            {translate("git.operation.resetMode")}
             <select
               className="mt-1 h-8 w-full rounded-md border bg-background px-2 text-sm"
               onChange={(event) =>
@@ -526,32 +539,32 @@ function QueuePlanEditor({
               }
               value={action.mode}
             >
-              <option value="soft">Soft</option>
-              <option value="mixed">Mixed</option>
-              <option value="hard">Hard</option>
+              <option value="soft">{translate("git.operation.soft")}</option>
+              <option value="mixed">{translate("git.operation.mixed")}</option>
+              <option value="hard">{translate("git.operation.hard")}</option>
             </select>
           </label>
           <QueueTextField
-            label="Target commit"
+            label={translate("git.operation.targetCommit")}
             onChange={(targetOid) => onChange({ ...plan, action: { ...action, targetOid } })}
             value={action.targetOid}
           />
         </>
       ) : action.kind === "revert" || action.kind === "cherry_pick" ? (
         <QueueTextField
-          label="Commit"
+          label={translate("git.common.commit")}
           onChange={(commitOid) => onChange({ ...plan, action: { ...action, commitOid } })}
           value={action.commitOid}
         />
       ) : action.kind === "guided_rebase" ? (
         <QueueTextField
-          label="Rebase onto"
+          label={translate("git.operation.rebaseOnto")}
           onChange={(ontoRef) => onChange({ ...plan, action: { ...action, ontoRef } })}
           value={action.ontoRef}
         />
       ) : (
         <QueueTextField
-          label="Upstream ref"
+          label={translate("git.operation.upstreamRef")}
           onChange={(upstreamRef) => onChange({ ...plan, action: { ...action, upstreamRef } })}
           value={action.upstreamRef}
         />
@@ -592,12 +605,13 @@ function validQueuePlan(plan: GitQueuedWorkflowPlan): boolean {
 }
 
 function UndoSnapshots(props: GitOperationsPanelProps) {
+  const translate = useInterfaceTranslator().message;
   return (
     <section aria-labelledby="undo-heading" className="rounded-xl border bg-card p-4">
       <div className="flex items-center gap-2">
         <Undo2 aria-hidden="true" className="size-4" />
         <h2 className="font-semibold text-sm" id="undo-heading">
-          Undo snapshots
+          {translate("git.operation.undoSnapshots")}
         </h2>
       </div>
       {props.undoSnapshots.length ? (
@@ -611,26 +625,29 @@ function UndoSnapshots(props: GitOperationsPanelProps) {
                 </p>
               </div>
               <GitWorkbenchConfirmation
-                confirmLabel="Restore snapshot"
-                description="The current state is snapshotted first. Restoring cannot undo remote changes."
+                confirmLabel={translate("git.operation.restoreSnapshot")}
+                description={translate("git.operation.restoreDescription")}
                 disabled={props.readOnly}
                 onConfirm={() => props.onRestoreUndo(snapshot.id)}
                 phrase="RESTORE"
-                title={`Restore ${snapshot.label}?`}
-                triggerLabel="Restore…"
+                title={translate("git.operation.restoreTitle", { label: snapshot.label })}
+                triggerLabel={`${translate("git.operation.restoreSnapshot")}…`}
                 variant="outline"
               />
             </li>
           ))}
         </ul>
       ) : (
-        <p className="mt-2 text-muted-foreground text-sm">No undo snapshots are available.</p>
+        <p className="mt-2 text-muted-foreground text-sm">
+          {translate("git.operation.noSnapshots")}
+        </p>
       )}
     </section>
   );
 }
 
 function ForcePush(props: GitOperationsPanelProps) {
+  const translate = useInterfaceTranslator().message;
   if (!props.forcePushTarget) return null;
   return (
     <section
@@ -640,17 +657,18 @@ function ForcePush(props: GitOperationsPanelProps) {
       <div className="flex items-center gap-2 text-destructive-foreground">
         <ShieldAlert aria-hidden="true" className="size-4" />
         <h2 className="font-semibold text-sm" id="force-push-heading">
-          Publish rewritten history
+          {translate("git.operation.forcePush.title")}
         </h2>
       </div>
       <p className="mt-2 text-muted-foreground text-xs">
-        Uses force-with-lease against {props.forcePushTarget.remoteRef}. Local undo snapshots cannot
-        restore remote history.
+        {translate("git.operation.forcePush.description", {
+          remote: props.forcePushTarget.remoteRef,
+        })}
       </p>
       <div className="mt-3">
         <GitWorkbenchConfirmation
-          confirmLabel="Force with lease"
-          description="The push is rejected if the remote moved since it was last observed."
+          confirmLabel={translate("git.operation.forceWithLease")}
+          description={translate("git.operation.forceLeaseDescription")}
           disabled={props.readOnly}
           onConfirm={() =>
             props.onRunOperation({
@@ -660,8 +678,8 @@ function ForcePush(props: GitOperationsPanelProps) {
             })
           }
           phrase="FORCE"
-          title="Publish rewritten history?"
-          triggerLabel="Force with lease…"
+          title={translate("git.operation.forcePushConfirm")}
+          triggerLabel={`${translate("git.operation.forceWithLease")}…`}
         />
       </div>
     </section>

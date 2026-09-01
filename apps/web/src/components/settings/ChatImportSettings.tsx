@@ -1,28 +1,39 @@
 import type { T3ChatImportRunResult, T3ChatImportSource } from "@t3tools/contracts";
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { DatabaseIcon, DownloadIcon, RefreshCwIcon } from "lucide-react";
 import { useState } from "react";
 
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useActiveEnvironmentId } from "../../state/entities";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { Button } from "../ui/button";
 import { requireSettingsEnvironment, resolveSettingsEnvironmentId } from "./settingsEnvironment";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 
-function formatLatestChat(value: string | null): string {
-  if (value === null) return "No dated chats";
+function formatLatestChat(value: string | null, translator: InterfaceTranslator): string {
+  if (value === null) return translator.message("settings.chatImport.noDatedChats");
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : `Latest chat ${date.toLocaleString()}`;
+  return Number.isNaN(date.getTime())
+    ? value
+    : translator.message("settings.chatImport.latestChat", { date: translator.date(date) });
 }
 
-function importSummary(result: T3ChatImportRunResult): string {
+function importSummary(result: T3ChatImportRunResult, translator: InterfaceTranslator): string {
   const attachmentSummary =
     result.attachmentsCopied > 0 || result.attachmentsSkipped > 0
-      ? ` ${result.attachmentsCopied} attachments copied${
-          result.attachmentsSkipped > 0 ? `, ${result.attachmentsSkipped} unavailable` : ""
-        }.`
+      ? ` ${translator.message(
+          result.attachmentsSkipped > 0
+            ? "settings.chatImport.attachments"
+            : "settings.chatImport.attachmentsCopied",
+          { copied: result.attachmentsCopied, skipped: result.attachmentsSkipped },
+        )}`
       : "";
-  return `Synced ${result.threadsImported} chats and ${result.messagesImported} messages from ${result.projectsImported} projects.${attachmentSummary}`;
+  return `${translator.message("settings.chatImport.summary", {
+    threads: result.threadsImported,
+    messages: result.messagesImported,
+    projects: result.projectsImported,
+  })}${attachmentSummary}`;
 }
 
 function SourceRow({
@@ -34,15 +45,20 @@ function SourceRow({
   isImporting: boolean;
   onImport: (source: T3ChatImportSource) => void;
 }) {
+  const translator = useInterfaceTranslator();
   return (
     <SettingsRow
       title={source.label}
       description={source.databasePath}
-      status={`${source.threadCount} ${source.threadCount === 1 ? "chat" : "chats"} · ${formatLatestChat(source.latestUpdatedAt)}`}
+      status={`${translator.message("settings.chatImport.chatCount", {
+        count: source.threadCount,
+      })} · ${formatLatestChat(source.latestUpdatedAt, translator)}`}
       control={
         <Button size="sm" disabled={isImporting} onClick={() => onImport(source)}>
           <DownloadIcon className="size-3.5" />
-          {isImporting ? "Importing…" : "Import chats"}
+          {isImporting
+            ? translator.message("settings.chatImport.importing")
+            : translator.message("settings.chatImport.title")}
         </Button>
       }
     />
@@ -50,6 +66,7 @@ function SourceRow({
 }
 
 export function ChatImportSettingsPanel() {
+  const translator = useInterfaceTranslator();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const activeEnvironmentId = useActiveEnvironmentId();
   const environmentSelection = {
@@ -75,7 +92,9 @@ export function ChatImportSettingsPanel() {
     },
     onSuccess: (result) => setLastResult(result),
     onError: (error) =>
-      setErrorMessage(error instanceof Error ? error.message : "Could not import chats."),
+      setErrorMessage(
+        error instanceof Error ? error.message : translator.message("settings.chatImport.failed"),
+      ),
   });
 
   const sources = sourcesQuery.data?.sources ?? [];
@@ -84,13 +103,13 @@ export function ChatImportSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection
-        title="Import chats"
+        title={translator.message("settings.chatImport.title")}
         icon={<DatabaseIcon className="size-3.5" />}
         headerAction={
           <Button
             size="icon-xs"
             variant="ghost"
-            aria-label="Scan for T3 Code instances"
+            aria-label={translator.message("settings.chatImport.scan")}
             disabled={sourcesQuery.isFetching || importMutation.isPending}
             onClick={() => void sourcesQuery.refetch()}
           >
@@ -102,19 +121,19 @@ export function ChatImportSettingsPanel() {
       >
         {sourcesQuery.isLoading ? (
           <div className="px-5 py-10 text-center text-sm text-muted-foreground">
-            Looking for other T3 Code instances…
+            {translator.message("settings.chatImport.scanning")}
           </div>
         ) : sourcesQuery.isError ? (
           <div className="px-5 py-10 text-center text-sm text-destructive">
             {sourcesQuery.error instanceof Error
               ? sourcesQuery.error.message
-              : "Could not scan for T3 Code instances."}
+              : translator.message("settings.chatImport.scanFailed")}
           </div>
         ) : sources.length === 0 ? (
           <div className="px-5 py-10 text-center">
-            <p className="text-sm font-medium">No other T3 Code chats found</p>
+            <p className="text-sm font-medium">{translator.message("settings.chatImport.empty")}</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              T3 Code scans local .t3 and .t3-* data directories on this computer.
+              {translator.message("settings.chatImport.scanDescription")}
             </p>
           </div>
         ) : (
@@ -131,7 +150,7 @@ export function ChatImportSettingsPanel() {
 
       {lastResult ? (
         <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/8 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300">
-          {importSummary(lastResult)}
+          {importSummary(lastResult, translator)}
         </div>
       ) : null}
       {errorMessage ? (
@@ -141,8 +160,7 @@ export function ChatImportSettingsPanel() {
       ) : null}
 
       <p className="px-1 text-xs leading-relaxed text-muted-foreground">
-        Imported chats receive new local IDs and do not resume sessions from the source instance.
-        Running the import again safely syncs the same chats without creating duplicates.
+        {translator.message("settings.chatImport.note")}
       </p>
     </SettingsPageContainer>
   );

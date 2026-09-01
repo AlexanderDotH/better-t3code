@@ -21,6 +21,36 @@ beforeEach(() => {
 });
 
 describe("rightPanelStore", () => {
+  it("keeps the project Knowledge Graph as one restorable singleton surface", () => {
+    useRightPanelStore.getState().open(refA, "knowledge-graph");
+    useRightPanelStore.getState().open(refA, "knowledge-graph");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "knowledge-graph",
+      surfaces: [{ id: "knowledge-graph", kind: "knowledge-graph" }],
+    });
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "knowledge-graph",
+            surfaces: [{ id: "knowledge-graph", kind: "knowledge-graph" }],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "knowledge-graph",
+          surfaces: [{ id: "knowledge-graph", kind: "knowledge-graph" }],
+        },
+      },
+    });
+  });
+
   it("drops retired plan, agent, subagent, and unknown surfaces while preserving valid tabs", () => {
     expect(
       migratePersistedRightPanelState({

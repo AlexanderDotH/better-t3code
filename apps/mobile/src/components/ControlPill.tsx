@@ -8,14 +8,40 @@ import {
   type ReactNode,
   useRef,
 } from "react";
-import { Platform, Pressable, View } from "react-native";
-import { useThemeColor } from "../lib/useThemeColor";
+import { Platform, Pressable, View, type PressableProps } from "react-native";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
+import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 
 import { cn } from "../lib/cn";
 import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
 import { SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
+import { createControlPillMenuPressController } from "./control-pill-menu-press";
+
+type AndroidLongPressMenuChildProps = {
+  readonly accessibilityActions?: ComponentProps<typeof Pressable>["accessibilityActions"];
+  readonly accessibilityHint?: string;
+  readonly accessibilityState?: ComponentProps<typeof Pressable>["accessibilityState"];
+  readonly onAccessibilityAction?: ComponentProps<typeof Pressable>["onAccessibilityAction"];
+  readonly onLongPress?: () => void;
+};
+
+type MenuAnchorChildProps = {
+  readonly accessibilityLabel?: string;
+  readonly label?: string;
+};
+
+function getMenuAnchorAccessibilityLabel(
+  children: ReactNode,
+  menuTitle: string | undefined,
+  fallback: string,
+): string {
+  if (!isValidElement(children)) {
+    return menuTitle ?? fallback;
+  }
+  const child = children as ReactElement<MenuAnchorChildProps>;
+  return child.props.accessibilityLabel ?? child.props.label ?? menuTitle ?? fallback;
+}
 
 export function ControlPill(props: {
   readonly icon?: ComponentProps<typeof SymbolView>["name"];
@@ -49,18 +75,14 @@ export function ControlPill(props: {
     props.onPress?.();
   };
 
-  const iconColor = useThemeColor("--color-icon");
-  const iconSubtle = useThemeColor("--color-icon-subtle");
-  const primaryFg = useThemeColor("--color-primary-foreground");
-  const dangerFg = useThemeColor("--color-danger-foreground");
-  const iconTintColor =
+  const iconTintClassName =
     variant === "primary"
       ? props.disabled
-        ? iconSubtle
-        : primaryFg
+        ? "accent-icon-subtle"
+        : "accent-primary-foreground"
       : variant === "danger"
-        ? dangerFg
-        : iconColor;
+        ? "accent-danger-foreground"
+        : "accent-icon";
 
   const isCircle =
     variant === "circle" || variant === "danger" || (variant === "primary" && !props.label);
@@ -92,6 +114,7 @@ export function ControlPill(props: {
     <Pressable
       accessibilityLabel={props.accessibilityLabel ?? props.label}
       accessibilityRole="button"
+      accessibilityState={{ disabled: props.disabled ?? false }}
       onPress={props.activateOnPressIn ? handlePress : props.onPress}
       onPressIn={props.activateOnPressIn ? handlePressIn : undefined}
       onPressOut={props.activateOnPressIn ? handlePressOut : undefined}
@@ -101,7 +124,12 @@ export function ControlPill(props: {
       {props.iconNode ? (
         <View className="h-4 w-4 items-center justify-center">{props.iconNode}</View>
       ) : props.icon ? (
-        <SymbolView name={props.icon} size={16} tintColor={iconTintColor} type="monochrome" />
+        <SymbolView
+          name={props.icon}
+          size={16}
+          tintColorClassName={iconTintClassName}
+          type="monochrome"
+        />
       ) : null}
       {props.label ? <Text className={labelClassName}>{props.label}</Text> : null}
     </Pressable>
@@ -119,14 +147,16 @@ export function ControlPillMenu(
   },
 ) {
   const { themeAppearance } = useAppearancePreferences();
+  const translator = useMobileInterfaceTranslator();
   const isDarkMode = themeAppearance === "dark";
+  const menuPress = useRef(createControlPillMenuPressController());
 
   if (Platform.OS === "android") {
     // Long-press menus keep their child interactive: the child element gets
     // an injected onLongPress (mirroring the iOS context-menu interaction)
     // so its own tap handling still works.
     if (props.shouldOpenOnLongPress && isValidElement(props.children)) {
-      const child = props.children as ReactElement<{ onLongPress?: () => void }>;
+      const child = props.children as ReactElement<AndroidLongPressMenuChildProps>;
       return (
         <AndroidAnchoredMenu
           actions={props.actions}
@@ -135,20 +165,49 @@ export function ControlPillMenu(
           style={props.style}
           onPressAction={props.onPressAction}
         >
-          {(open) =>
-            cloneElement(child, {
-              onLongPress: () => {
-                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                open();
+          {(open, expanded) => {
+            const existingActions = child.props.accessibilityActions ?? [];
+            const accessibilityActions = existingActions.some(
+              (action) => action.name === "longpress",
+            )
+              ? existingActions
+              : [
+                  ...existingActions,
+                  {
+                    name: "longpress",
+                    label: translator.message("mobile.accessibility.openMenu"),
+                  },
+                ];
+            const openWithFeedback = () => {
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              open();
+            };
+            return cloneElement(child, {
+              accessibilityActions,
+              accessibilityHint:
+                child.props.accessibilityHint ??
+                translator.message("mobile.accessibility.longPressMenu"),
+              accessibilityState: { ...child.props.accessibilityState, expanded },
+              onAccessibilityAction: (event) => {
+                child.props.onAccessibilityAction?.(event);
+                if (event.nativeEvent.actionName === "longpress") {
+                  openWithFeedback();
+                }
               },
-            })
-          }
+              onLongPress: openWithFeedback,
+            });
+          }}
         </AndroidAnchoredMenu>
       );
     }
     return (
       <AndroidAnchoredMenu
         actions={props.actions}
+        anchorAccessibilityLabel={getMenuAnchorAccessibilityLabel(
+          props.children,
+          props.title,
+          translator.message("mobile.accessibility.openMenu"),
+        )}
         className={props.className}
         title={props.title}
         style={props.style}
@@ -161,20 +220,42 @@ export function ControlPillMenu(
 
   const { className: _className, ...menuProps } = props;
   let children = menuProps.children;
-  // In long-press mode the wrapped pressable still receives the touch (the
-  // patched MenuView button is touch-transparent) and RN's Fabric touch
-  // handler is never cancelled by the in-tree UIContextMenuInteraction, so a
-  // bare onPress would fire on finger-up even after the menu opened — and
-  // also on a long press released just under the menu threshold. A dispatched
-  // onLongPress makes Pressability swallow the release, so holds past 350ms
-  // (below the ~500ms context-menu threshold) can only open the menu, never
-  // tap through.
   if (props.shouldOpenOnLongPress && isValidElement(children)) {
-    const child = children as ReactElement<{ onLongPress?: () => void; delayLongPress?: number }>;
+    const child = children as ReactElement<Pick<PressableProps, "onTouchStart" | "onPress">>;
     children = cloneElement(child, {
-      onLongPress: child.props.onLongPress ?? (() => undefined),
-      delayLongPress: child.props.delayLongPress ?? 350,
+      onTouchStart: (event) => {
+        // Reset for a new touch, not onPressIn, which also fires when a
+        // finger moves out of the row and back during the same gesture.
+        menuPress.current.onTouchStart();
+        child.props.onTouchStart?.(event);
+      },
+      onPress: (event) => {
+        // Accessibility clicks have no touch identifier and must not inherit
+        // cancellation from a previous physical gesture.
+        const isTouch = typeof event.nativeEvent.identifier === "number";
+        menuPress.current.onPress({
+          isTouch,
+          invoke: () => child.props.onPress?.(event),
+          persist: () => event.persist(),
+        });
+      },
     });
+    menuProps.onMenuInteractionStart = () => {
+      menuPress.current.onMenuInteractionStart();
+      props.onMenuInteractionStart?.();
+    };
+    menuProps.onOpenMenu = () => {
+      menuPress.current.onMenuOpen();
+      props.onOpenMenu?.();
+    };
+    menuProps.onCloseMenu = () => {
+      // Keep this gesture cancelled even if dismissal precedes finger-up.
+      // A separate JS long-press timer would also swallow holds that never
+      // open the native menu.
+      const pendingPress = menuPress.current.onMenuClose();
+      props.onCloseMenu?.();
+      pendingPress?.();
+    };
   }
   return (
     <MenuView {...menuProps} themeVariant={isDarkMode ? "dark" : "light"}>

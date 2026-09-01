@@ -19,7 +19,15 @@ import {
   FilesystemBrowseResult,
   FilesystemBrowseError,
 } from "./filesystem.ts";
-import { AssetAccessError, AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
+import {
+  AssetAccessError,
+  AssetCreateUrlInput,
+  AssetCreateUrlResult,
+  AttachmentCreateUploadUrlInput,
+  AttachmentCreateUploadUrlResult,
+  AttachmentDeleteInput,
+  AttachmentUploadSigningKeyError,
+} from "./assets.ts";
 import {
   GitActionProgressEvent,
   VcsSwitchRefInput,
@@ -86,6 +94,20 @@ import {
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
 import {
+  KnowledgeGraphCancelInput,
+  KnowledgeGraphClearInput,
+  KnowledgeGraphMutationResultV1,
+  KnowledgeGraphNodeContentInput,
+  KnowledgeGraphNodeContentResultV1,
+  KnowledgeGraphOperationError,
+  KnowledgeGraphPauseInput,
+  KnowledgeGraphQueryInput,
+  KnowledgeGraphQueryResultV1,
+  KnowledgeGraphRebuildInput,
+  KnowledgeGraphStreamEvent,
+  KnowledgeGraphSubscribeInput,
+} from "./knowledgeGraph.ts";
+import {
   ClientOrchestrationCommand,
   ORCHESTRATION_WS_METHODS,
   OrchestrationDispatchCommandError,
@@ -103,6 +125,25 @@ import {
   OrchestrationRpcSchemas,
   OrchestrationGetWorkflowScriptError,
 } from "./orchestration.ts";
+import {
+  ProviderCompactThreadInput,
+  ProviderCompactionError,
+  ProviderUploadFeedbackError,
+  ProviderUploadFeedbackInput,
+  ProviderUploadFeedbackResult,
+} from "./provider.ts";
+import {
+  ProjectMemoryDocumentClearRequest,
+  ProjectMemoryDocumentMutationResponse,
+  ProjectMemoryDocumentReplaceRequest,
+  ProjectMemoryDocumentViewRequest,
+  ProjectMemoryDocumentViewResponse,
+  ProjectMemoryError,
+  ProjectMemoryImportRequest,
+  ProjectMemoryImportResponse,
+  ProjectMemorySettingsResponse,
+  ProjectMemorySettingsUpdateRequest,
+} from "./projectMemory.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   PlanParallelismReviewError,
@@ -247,6 +288,18 @@ import {
   ServerConfig,
   AssemblyAiStreamingTokenError,
   AssemblyAiStreamingTokenResult,
+  SpeechStreamingAudioInput,
+  SpeechStreamingProxyError,
+  SpeechStreamingSessionInput,
+  SpeechStreamingSessionStartResult,
+  SpeechStreamingTranscriptResult,
+  ProviderAuthConnectEvent,
+  ProviderAuthConnectInput,
+  ProviderAuthDisconnectInput,
+  ProviderAuthDisconnectResult,
+  ProviderAuthOperationError,
+  ProviderAuthSetCredentialInput,
+  ProviderAuthSetCredentialResult,
   ServerProviderUpdateError,
   ServerProviderUpdateInput,
   ServerLifecycleStreamEvent,
@@ -303,6 +356,17 @@ import {
   T3ChatImportRunInput,
   T3ChatImportRunResult,
 } from "./t3ChatImport.ts";
+import {
+  HarnessChatSyncError,
+  HarnessChatSyncListInput,
+  HarnessChatSyncListResult,
+  HarnessChatSyncRunInput,
+  HarnessChatSyncRunResult,
+  HarnessChatSyncSourcesInput,
+  HarnessChatSyncSourcesResult,
+  HarnessChatSyncStatusInput,
+  HarnessChatSyncStatusResult,
+} from "./harnessChatSync.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -321,6 +385,11 @@ export const WS_METHODS = {
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
   assetsCreateUrl: "assets.createUrl",
+  attachmentsCreateUploadUrl: "attachments.createUploadUrl",
+  attachmentsDelete: "attachments.delete",
+
+  // Provider methods
+  providerUploadFeedback: "provider.uploadFeedback",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -381,13 +450,26 @@ export const WS_METHODS = {
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
   serverUpdateProvider: "server.updateProvider",
+  serverProviderAuthConnect: "server.providerAuthConnect",
+  serverProviderAuthSetCredential: "server.providerAuthSetCredential",
+  serverProviderAuthDisconnect: "server.providerAuthDisconnect",
   serverUpdateServer: "server.updateServer",
   serverUpdateServerWithProgress: "server.updateServerWithProgress",
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
+  providerCompactThread: "provider.compactThread",
+  projectMemoryView: "projectMemory.view",
+  projectMemoryUpdateSettings: "projectMemory.updateSettings",
+  projectMemoryReplace: "projectMemory.replace",
+  projectMemoryImport: "projectMemory.import",
+  projectMemoryClear: "projectMemory.clear",
   serverCreateAssemblyAiStreamingToken: "server.createAssemblyAiStreamingToken",
+  speechStartStreamingSession: "speech.startStreamingSession",
+  speechPushStreamingAudio: "speech.pushStreamingAudio",
+  speechFinishStreamingSession: "speech.finishStreamingSession",
+  speechCancelStreamingSession: "speech.cancelStreamingSession",
   speechGetProjectProfile: "speech.getProjectProfile",
   speechListProjectProfiles: "speech.listProjectProfiles",
   speechIndexProject: "speech.indexProject",
@@ -414,6 +496,12 @@ export const WS_METHODS = {
   // Local T3 instance chat import
   chatImportDiscover: "chatImport.discover",
   chatImportRun: "chatImport.run",
+
+  // Provider harness chat history sync
+  harnessChatSyncSources: "harnessChatSync.sources",
+  harnessChatSyncList: "harnessChatSync.list",
+  harnessChatSyncRun: "harnessChatSync.run",
+  harnessChatSyncStatus: "harnessChatSync.status",
 
   // Skills
   skillsList: "skills.list",
@@ -467,6 +555,15 @@ export const WS_METHODS = {
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
+
+  // Continuous project Knowledge Graph
+  knowledgeGraphSubscribe: "knowledgeGraph.subscribe",
+  knowledgeGraphQuery: "knowledgeGraph.query",
+  knowledgeGraphNodeContent: "knowledgeGraph.nodeContent",
+  knowledgeGraphRebuild: "knowledgeGraph.rebuild",
+  knowledgeGraphCancel: "knowledgeGraph.cancel",
+  knowledgeGraphPause: "knowledgeGraph.pause",
+  knowledgeGraphClear: "knowledgeGraph.clear",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -530,6 +627,28 @@ export const WsServerUpdateProviderRpc = Rpc.make(WS_METHODS.serverUpdateProvide
   error: Schema.Union([ServerProviderUpdateError, EnvironmentAuthorizationError]),
 });
 
+export const WsServerProviderAuthConnectRpc = Rpc.make(WS_METHODS.serverProviderAuthConnect, {
+  payload: ProviderAuthConnectInput,
+  success: ProviderAuthConnectEvent,
+  error: Schema.Union([ProviderAuthOperationError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+export const WsServerProviderAuthSetCredentialRpc = Rpc.make(
+  WS_METHODS.serverProviderAuthSetCredential,
+  {
+    payload: ProviderAuthSetCredentialInput,
+    success: ProviderAuthSetCredentialResult,
+    error: Schema.Union([ProviderAuthOperationError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerProviderAuthDisconnectRpc = Rpc.make(WS_METHODS.serverProviderAuthDisconnect, {
+  payload: ProviderAuthDisconnectInput,
+  success: ProviderAuthDisconnectResult,
+  error: Schema.Union([ProviderAuthOperationError, EnvironmentAuthorizationError]),
+});
+
 export const WsServerUpdateServerRpc = Rpc.make(WS_METHODS.serverUpdateServer, {
   payload: ServerSelfUpdateInput,
   success: ServerSelfUpdateResult,
@@ -558,6 +677,42 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
+export const WsProviderCompactThreadRpc = Rpc.make(WS_METHODS.providerCompactThread, {
+  payload: ProviderCompactThreadInput,
+  success: Schema.Void,
+  error: Schema.Union([ProviderCompactionError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectMemoryViewRpc = Rpc.make(WS_METHODS.projectMemoryView, {
+  payload: ProjectMemoryDocumentViewRequest,
+  success: ProjectMemoryDocumentViewResponse,
+  error: Schema.Union([ProjectMemoryError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectMemoryUpdateSettingsRpc = Rpc.make(WS_METHODS.projectMemoryUpdateSettings, {
+  payload: ProjectMemorySettingsUpdateRequest,
+  success: ProjectMemorySettingsResponse,
+  error: Schema.Union([ProjectMemoryError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectMemoryReplaceRpc = Rpc.make(WS_METHODS.projectMemoryReplace, {
+  payload: ProjectMemoryDocumentReplaceRequest,
+  success: ProjectMemoryDocumentMutationResponse,
+  error: Schema.Union([ProjectMemoryError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectMemoryImportRpc = Rpc.make(WS_METHODS.projectMemoryImport, {
+  payload: ProjectMemoryImportRequest,
+  success: ProjectMemoryImportResponse,
+  error: Schema.Union([ProjectMemoryError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectMemoryClearRpc = Rpc.make(WS_METHODS.projectMemoryClear, {
+  payload: ProjectMemoryDocumentClearRequest,
+  success: ProjectMemoryDocumentMutationResponse,
+  error: Schema.Union([ProjectMemoryError, EnvironmentAuthorizationError]),
+});
+
 export const WsServerCreateAssemblyAiStreamingTokenRpc = Rpc.make(
   WS_METHODS.serverCreateAssemblyAiStreamingToken,
   {
@@ -570,6 +725,35 @@ export const WsServerCreateAssemblyAiStreamingTokenRpc = Rpc.make(
     ]),
   },
 );
+
+export const WsSpeechStartStreamingSessionRpc = Rpc.make(WS_METHODS.speechStartStreamingSession, {
+  payload: ProjectSpeechProfileInput,
+  success: SpeechStreamingSessionStartResult,
+  error: Schema.Union([
+    SpeechStreamingProxyError,
+    AssemblyAiStreamingTokenError,
+    ProjectSpeechProfileError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
+export const WsSpeechPushStreamingAudioRpc = Rpc.make(WS_METHODS.speechPushStreamingAudio, {
+  payload: SpeechStreamingAudioInput,
+  success: SpeechStreamingTranscriptResult,
+  error: Schema.Union([SpeechStreamingProxyError, EnvironmentAuthorizationError]),
+});
+
+export const WsSpeechFinishStreamingSessionRpc = Rpc.make(WS_METHODS.speechFinishStreamingSession, {
+  payload: SpeechStreamingSessionInput,
+  success: SpeechStreamingTranscriptResult,
+  error: Schema.Union([SpeechStreamingProxyError, EnvironmentAuthorizationError]),
+});
+
+export const WsSpeechCancelStreamingSessionRpc = Rpc.make(WS_METHODS.speechCancelStreamingSession, {
+  payload: SpeechStreamingSessionInput,
+  success: Schema.Void,
+  error: Schema.Union([SpeechStreamingProxyError, EnvironmentAuthorizationError]),
+});
 
 export const WsSpeechGetProjectProfileRpc = Rpc.make(WS_METHODS.speechGetProjectProfile, {
   payload: ProjectSpeechProfileInput,
@@ -709,6 +893,30 @@ export const WsChatImportRunRpc = Rpc.make(WS_METHODS.chatImportRun, {
   payload: T3ChatImportRunInput,
   success: T3ChatImportRunResult,
   error: Schema.Union([T3ChatImportError, EnvironmentAuthorizationError]),
+});
+
+export const WsHarnessChatSyncSourcesRpc = Rpc.make(WS_METHODS.harnessChatSyncSources, {
+  payload: HarnessChatSyncSourcesInput,
+  success: HarnessChatSyncSourcesResult,
+  error: Schema.Union([HarnessChatSyncError, EnvironmentAuthorizationError]),
+});
+
+export const WsHarnessChatSyncListRpc = Rpc.make(WS_METHODS.harnessChatSyncList, {
+  payload: HarnessChatSyncListInput,
+  success: HarnessChatSyncListResult,
+  error: Schema.Union([HarnessChatSyncError, EnvironmentAuthorizationError]),
+});
+
+export const WsHarnessChatSyncRunRpc = Rpc.make(WS_METHODS.harnessChatSyncRun, {
+  payload: HarnessChatSyncRunInput,
+  success: HarnessChatSyncRunResult,
+  error: Schema.Union([HarnessChatSyncError, EnvironmentAuthorizationError]),
+});
+
+export const WsHarnessChatSyncStatusRpc = Rpc.make(WS_METHODS.harnessChatSyncStatus, {
+  payload: HarnessChatSyncStatusInput,
+  success: HarnessChatSyncStatusResult,
+  error: Schema.Union([HarnessChatSyncError, EnvironmentAuthorizationError]),
 });
 
 export const WsSkillsListRpc = Rpc.make(WS_METHODS.skillsList, {
@@ -1060,6 +1268,23 @@ export const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   payload: AssetCreateUrlInput,
   success: AssetCreateUrlResult,
   error: Schema.Union([AssetAccessError, EnvironmentAuthorizationError]),
+});
+
+export const WsAttachmentsCreateUploadUrlRpc = Rpc.make(WS_METHODS.attachmentsCreateUploadUrl, {
+  payload: AttachmentCreateUploadUrlInput,
+  success: AttachmentCreateUploadUrlResult,
+  error: Schema.Union([AttachmentUploadSigningKeyError, EnvironmentAuthorizationError]),
+});
+
+export const WsAttachmentsDeleteRpc = Rpc.make(WS_METHODS.attachmentsDelete, {
+  payload: AttachmentDeleteInput,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFeedback, {
+  payload: ProviderUploadFeedbackInput,
+  success: ProviderUploadFeedbackResult,
+  error: Schema.Union([ProviderUploadFeedbackError, EnvironmentAuthorizationError]),
 });
 
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
@@ -1451,6 +1676,54 @@ export const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTermina
   stream: true,
 });
 
+const KnowledgeGraphRpcError = Schema.Union([
+  KnowledgeGraphOperationError,
+  EnvironmentAuthorizationError,
+]);
+
+export const WsKnowledgeGraphSubscribeRpc = Rpc.make(WS_METHODS.knowledgeGraphSubscribe, {
+  payload: KnowledgeGraphSubscribeInput,
+  success: KnowledgeGraphStreamEvent,
+  error: KnowledgeGraphRpcError,
+  stream: true,
+});
+
+export const WsKnowledgeGraphQueryRpc = Rpc.make(WS_METHODS.knowledgeGraphQuery, {
+  payload: KnowledgeGraphQueryInput,
+  success: KnowledgeGraphQueryResultV1,
+  error: KnowledgeGraphRpcError,
+});
+
+export const WsKnowledgeGraphNodeContentRpc = Rpc.make(WS_METHODS.knowledgeGraphNodeContent, {
+  payload: KnowledgeGraphNodeContentInput,
+  success: KnowledgeGraphNodeContentResultV1,
+  error: KnowledgeGraphRpcError,
+});
+
+export const WsKnowledgeGraphRebuildRpc = Rpc.make(WS_METHODS.knowledgeGraphRebuild, {
+  payload: KnowledgeGraphRebuildInput,
+  success: KnowledgeGraphMutationResultV1,
+  error: KnowledgeGraphRpcError,
+});
+
+export const WsKnowledgeGraphCancelRpc = Rpc.make(WS_METHODS.knowledgeGraphCancel, {
+  payload: KnowledgeGraphCancelInput,
+  success: KnowledgeGraphMutationResultV1,
+  error: KnowledgeGraphRpcError,
+});
+
+export const WsKnowledgeGraphPauseRpc = Rpc.make(WS_METHODS.knowledgeGraphPause, {
+  payload: KnowledgeGraphPauseInput,
+  success: KnowledgeGraphMutationResultV1,
+  error: KnowledgeGraphRpcError,
+});
+
+export const WsKnowledgeGraphClearRpc = Rpc.make(WS_METHODS.knowledgeGraphClear, {
+  payload: KnowledgeGraphClearInput,
+  success: KnowledgeGraphMutationResultV1,
+  error: KnowledgeGraphRpcError,
+});
+
 export const WsSubscribeTerminalMetadataRpc = Rpc.make(WS_METHODS.subscribeTerminalMetadata, {
   payload: Schema.Struct({}),
   success: TerminalMetadataStreamEvent,
@@ -1459,7 +1732,16 @@ export const WsSubscribeTerminalMetadataRpc = Rpc.make(WS_METHODS.subscribeTermi
 });
 
 export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerConfig, {
-  payload: Schema.Struct({}),
+  payload: Schema.Struct({
+    /**
+     * Whether this client understands `environmentThemesUpdated` events.
+     * Already-shipped clients decode the stream against the old event union
+     * and would die on an unknown member, so the server emits the theme
+     * stream only to subscribers that ask for it. Absent on old clients;
+     * dropped by old servers.
+     */
+    environmentThemes: Schema.optional(Schema.Boolean),
+  }),
   success: ServerConfigStreamEvent,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),
   stream: true,
@@ -1505,13 +1787,26 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
+  WsServerProviderAuthConnectRpc,
+  WsServerProviderAuthSetCredentialRpc,
+  WsServerProviderAuthDisconnectRpc,
   WsServerUpdateServerRpc,
   WsServerUpdateServerWithProgressRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsProviderCompactThreadRpc,
+  WsProjectMemoryViewRpc,
+  WsProjectMemoryUpdateSettingsRpc,
+  WsProjectMemoryReplaceRpc,
+  WsProjectMemoryImportRpc,
+  WsProjectMemoryClearRpc,
   WsServerCreateAssemblyAiStreamingTokenRpc,
+  WsSpeechStartStreamingSessionRpc,
+  WsSpeechPushStreamingAudioRpc,
+  WsSpeechFinishStreamingSessionRpc,
+  WsSpeechCancelStreamingSessionRpc,
   WsSpeechGetProjectProfileRpc,
   WsSpeechListProjectProfilesRpc,
   WsSpeechIndexProjectRpc,
@@ -1534,6 +1829,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsCloudInstallRelayClientRpc,
   WsChatImportDiscoverRpc,
   WsChatImportRunRpc,
+  WsHarnessChatSyncSourcesRpc,
+  WsHarnessChatSyncListRpc,
+  WsHarnessChatSyncRunRpc,
+  WsHarnessChatSyncStatusRpc,
   WsSkillsListRpc,
   WsSkillsDiscoverImportSourcesRpc,
   WsSkillsImportSourcesRpc,
@@ -1587,6 +1886,16 @@ export const WsRpcGroup = RpcGroup.make(
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAssetsCreateUrlRpc,
+  WsAttachmentsCreateUploadUrlRpc,
+  WsAttachmentsDeleteRpc,
+  WsProviderUploadFeedbackRpc,
+  WsKnowledgeGraphSubscribeRpc,
+  WsKnowledgeGraphQueryRpc,
+  WsKnowledgeGraphNodeContentRpc,
+  WsKnowledgeGraphRebuildRpc,
+  WsKnowledgeGraphCancelRpc,
+  WsKnowledgeGraphPauseRpc,
+  WsKnowledgeGraphClearRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,

@@ -32,6 +32,6 @@ it("gives a direct repair command for a stale service", () => {
 it("explains where the service is supported", () => {
   assert.include(
     formatServiceStatus({ ...status, supported: false, installed: false }, "0.0.29"),
-    "Supported on: Linux with systemd, macOS with launchd",
+    "Supported on: Linux with systemd, macOS with launchd, Windows with Task Scheduler",
   );
 });

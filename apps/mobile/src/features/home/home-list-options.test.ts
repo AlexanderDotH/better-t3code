@@ -2,9 +2,18 @@ import {
   DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
   DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { hasCustomHomeListOptions, type HomeListOptions } from "./home-list-options";
+vi.mock("../../state/preferences", () => ({
+  mobilePreferencesAtom: {},
+  updateMobilePreferencesAtom: {},
+}));
+
+import {
+  hasCustomHomeListOptions,
+  resolvePersistedHomeListOptions,
+  type HomeListOptions,
+} from "./home-list-options";
 
 const defaults: HomeListOptions = {
   selectedEnvironmentId: null,
@@ -27,5 +36,22 @@ describe("home list options", () => {
     expect(
       hasCustomHomeListOptions({ ...defaults, selectedProjectKey: "environment-1:project-1" }),
     ).toBe(true);
+  });
+
+  it("uses persisted Better T3 sort orders without replacing the environment filter", () => {
+    expect(
+      resolvePersistedHomeListOptions(
+        { ...defaults, selectedEnvironmentId: "environment-1" as never },
+        { sidebarProjectSortOrder: "created_at", sidebarThreadSortOrder: "created_at" },
+      ),
+    ).toEqual({
+      selectedEnvironmentId: "environment-1",
+      projectSortOrder: "created_at",
+      threadSortOrder: "created_at",
+    });
+  });
+
+  it("keeps in-memory defaults while persisted Better T3 sorting is absent", () => {
+    expect(resolvePersistedHomeListOptions(defaults, {})).toEqual(defaults);
   });
 });

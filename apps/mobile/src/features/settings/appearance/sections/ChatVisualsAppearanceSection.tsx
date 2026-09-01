@@ -2,19 +2,19 @@ import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../../../components/AppText";
 import { SymbolView } from "../../../../components/AppSymbol";
-import { useThemeColor } from "../../../../lib/useThemeColor";
 import { SettingsSection } from "../../components/SettingsSection";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 import { CHAT_VISUAL_MODE_OPTIONS, chatVisualModeSyncMessages } from "../chatVisualsAppearance";
+import { useMobileInterfaceTranslator } from "../../../../localization/useMobileInterfaceTranslator";
 
 export function ChatVisualsAppearanceSection() {
-  const checkmarkColor = useThemeColor("--color-icon");
+  const translator = useMobileInterfaceTranslator();
   const { chatVisualMode, chatVisualModeSyncStatus, isReady, setChatVisualMode } =
     useAppearancePreferences();
   const messages = chatVisualModeSyncMessages(chatVisualModeSyncStatus);
 
   return (
-    <SettingsSection card title="Chat visuals">
+    <SettingsSection card title={translator.message("mobile.appearance.chatVisuals")}>
       {CHAT_VISUAL_MODE_OPTIONS.map((option, index) => (
         <Pressable
           key={option.mode}
@@ -42,7 +42,7 @@ export function ChatVisualsAppearanceSection() {
             <SymbolView
               name="checkmark"
               size={18}
-              tintColor={checkmarkColor}
+              tintColorClassName={"accent-icon"}
               type="monochrome"
               weight="semibold"
             />

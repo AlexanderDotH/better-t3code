@@ -24,6 +24,7 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopNetworkInterfaces from "./DesktopNetworkInterfaces.ts";
 import { resolveTailscaleAdvertisedEndpoints } from "./tailscaleEndpointProvider.ts";
+import { translateDesktopInterfaceMessage } from "../settings/DesktopInterfaceLanguage.ts";
 
 const TAILSCALE_STATUS_CACHE_TTL = Duration.seconds(60);
 
@@ -54,7 +55,7 @@ const DESKTOP_CORE_ENDPOINT_PROVIDER: AdvertisedEndpointProvider = {
 
 const DESKTOP_MANUAL_ENDPOINT_PROVIDER: AdvertisedEndpointProvider = {
   id: "manual",
-  label: "Manual",
+  label: translateDesktopInterfaceMessage("desktop.endpoint.provider.manual"),
   kind: "manual",
   isAddon: false,
 };
@@ -157,11 +158,11 @@ const resolveDesktopCoreAdvertisedEndpoints = (
   const endpoints: AdvertisedEndpoint[] = [
     createDesktopEndpoint({
       id: `desktop-loopback:${input.port}`,
-      label: "This machine",
+      label: translateDesktopInterfaceMessage("desktop.endpoint.thisMachine"),
       httpBaseUrl: input.exposure.localHttpUrl,
       reachability: "loopback",
       status: "available",
-      description: "Loopback endpoint for this desktop app.",
+      description: translateDesktopInterfaceMessage("desktop.endpoint.thisMachineDescription"),
     }),
   ];
 
@@ -169,12 +170,12 @@ const resolveDesktopCoreAdvertisedEndpoints = (
     endpoints.push(
       createDesktopEndpoint({
         id: `desktop-lan:${input.exposure.endpointUrl}`,
-        label: "Local network",
+        label: translateDesktopInterfaceMessage("desktop.endpoint.localNetwork"),
         httpBaseUrl: input.exposure.endpointUrl,
         reachability: "lan",
         status: "available",
         isDefault: true,
-        description: "Reachable from devices on the same network.",
+        description: translateDesktopInterfaceMessage("desktop.endpoint.localNetworkDescription"),
       }),
     );
   }
@@ -185,14 +186,18 @@ const resolveDesktopCoreAdvertisedEndpoints = (
       endpoints.push(
         createManualEndpoint({
           id: `manual:${customEndpointUrl}`,
-          label: isHttpsEndpoint ? "Custom HTTPS" : "Custom endpoint",
+          label: translateDesktopInterfaceMessage(
+            isHttpsEndpoint ? "desktop.endpoint.customHttps" : "desktop.endpoint.custom",
+          ),
           httpBaseUrl: customEndpointUrl,
           reachability: "public",
           ...(isHttpsEndpoint ? ({ hostedHttpsCompatibility: "compatible" } as const) : {}),
           status: "unknown",
-          description: isHttpsEndpoint
-            ? "User-configured HTTPS endpoint for this desktop backend."
-            : "User-configured endpoint for this desktop backend.",
+          description: translateDesktopInterfaceMessage(
+            isHttpsEndpoint
+              ? "desktop.endpoint.customHttpsDescription"
+              : "desktop.endpoint.customDescription",
+          ),
         }),
       );
     } catch {

@@ -6,16 +6,16 @@ import { WebView } from "react-native-webview";
 import { AppText as Text } from "../../../components/AppText";
 import { LoadingStrip } from "../../../components/LoadingStrip";
 import { SymbolView } from "../../../components/AppSymbol";
-import { useThemeColor } from "../../../lib/useThemeColor";
 import { isLegalDocumentUrl, LEGAL_URL } from "../lib/legal-document-url";
+import { useMobileInterfaceTranslator } from "../../../localization/useMobileInterfaceTranslator";
 
 export function SettingsLegalDocumentCloseHeaderButton() {
   const navigation = useNavigation();
-  const iconColor = useThemeColor("--color-icon");
+  const translator = useMobileInterfaceTranslator();
 
   return (
     <Pressable
-      accessibilityLabel="Close legal document"
+      accessibilityLabel={translator.message("mobile.settings.legal.closeDocument")}
       accessibilityRole="button"
       hitSlop={12}
       onPress={() => navigation.goBack()}
@@ -24,7 +24,7 @@ export function SettingsLegalDocumentCloseHeaderButton() {
       <SymbolView
         name="xmark"
         size={18}
-        tintColor={iconColor}
+        tintColorClassName={"accent-icon"}
         type="monochrome"
         weight="semibold"
       />
@@ -37,12 +37,12 @@ export function SettingsLegalDocumentExternalHeaderButton({
 }: {
   readonly externalUrl?: string;
 }) {
-  const iconColor = useThemeColor("--color-icon");
+  const translator = useMobileInterfaceTranslator();
   const safeExternalUrl = isLegalDocumentUrl(externalUrl) ? externalUrl : LEGAL_URL;
 
   return (
     <Pressable
-      accessibilityLabel="Open legal documents in external browser"
+      accessibilityLabel={translator.message("mobile.settings.legal.openExternal")}
       accessibilityRole="button"
       hitSlop={12}
       onPress={() => void Linking.openURL(safeExternalUrl).catch(() => undefined)}
@@ -51,7 +51,7 @@ export function SettingsLegalDocumentExternalHeaderButton({
       <SymbolView
         name="safari"
         size={19}
-        tintColor={iconColor}
+        tintColorClassName={"accent-icon"}
         type="monochrome"
         weight="regular"
       />
@@ -68,8 +68,8 @@ export function SettingsLegalDocumentRouteScreen({
   documentName,
   documentUrl,
 }: SettingsLegalDocumentRouteScreenProps) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation<NavigationProp<ParamListBase>>();
-  const iconColor = useThemeColor("--color-icon");
   const [reloadKey, setReloadKey] = useState(0);
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -94,13 +94,15 @@ export function SettingsLegalDocumentRouteScreen({
         <SymbolView
           name="exclamationmark.triangle"
           size={32}
-          tintColor={iconColor}
+          tintColorClassName={"accent-icon"}
           type="monochrome"
           weight="regular"
         />
         <View className="items-center gap-2">
           <Text className="text-center font-t3-bold text-lg text-foreground">
-            Couldn&apos;t load the {documentName.toLowerCase()}
+            {translator.message("mobile.settings.legal.loadFailed", {
+              document: documentName.toLowerCase(),
+            })}
           </Text>
           <Text selectable className="text-center text-sm leading-normal text-foreground-muted">
             {loadError}
@@ -115,14 +117,18 @@ export function SettingsLegalDocumentRouteScreen({
             }}
             className="items-center rounded-xl bg-foreground px-4 py-3 active:opacity-80"
           >
-            <Text className="font-t3-bold text-base text-sheet">Try Again</Text>
+            <Text className="font-t3-bold text-base text-sheet">
+              {translator.message("mobile.settings.legal.tryAgain")}
+            </Text>
           </Pressable>
           <Pressable
             accessibilityRole="link"
             onPress={() => openExternalUrl(documentUrl)}
             className="items-center rounded-xl px-4 py-3 active:bg-foreground/5"
           >
-            <Text className="font-t3-medium text-base text-foreground-muted">Open in Browser</Text>
+            <Text className="font-t3-medium text-base text-foreground-muted">
+              {translator.message("mobile.settings.legal.openBrowser")}
+            </Text>
           </Pressable>
         </View>
       </View>

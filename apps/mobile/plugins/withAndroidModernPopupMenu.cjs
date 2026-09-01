@@ -69,6 +69,13 @@ const COLORS = {
   night: { background: "#161616", itemText: "#F5F5F5" },
 };
 
+const DRAWABLES = {
+  "popup_menu_background.xml": POPUP_BACKGROUND_DRAWABLE,
+  "ic_menu_check.xml": CHECK_DRAWABLE,
+  "popup_menu_check_button.xml": CHECKBOX_BUTTON_SELECTOR,
+  "popup_menu_submenu_arrow.xml": SUBMENU_ARROW_DRAWABLE,
+};
+
 function assignStyleItem(style, name, value) {
   style.item = style.item ?? [];
   const existing = style.item.find((item) => item.$?.name === name);
@@ -79,136 +86,137 @@ function assignStyleItem(style, name, value) {
   }
 }
 
+function configureStyles(androidResources) {
+  const resources = androidResources.resources;
+  resources.style = resources.style ?? [];
+
+  const appTheme = resources.style.find((style) => style.$?.name === "AppTheme");
+  if (appTheme) {
+    assignStyleItem(appTheme, "popupMenuStyle", "@style/AppPopupMenu");
+    assignStyleItem(appTheme, "android:popupMenuStyle", "@style/AppPopupMenu");
+    assignStyleItem(appTheme, "textAppearanceLargePopupMenu", "@style/AppPopupMenu.TextAppearance");
+    assignStyleItem(appTheme, "textAppearanceSmallPopupMenu", "@style/AppPopupMenu.TextAppearance");
+    // Submenu popups show their parent item as a header row that reads a
+    // separate theme attribute, so it needs the same themed text color.
+    assignStyleItem(
+      appTheme,
+      "textAppearancePopupMenuHeader",
+      "@style/AppPopupMenu.HeaderTextAppearance",
+    );
+    // Menu item views resolve their submenu arrow from this style
+    // (android:listMenuViewStyle / android:subMenuArrow are public attrs).
+    assignStyleItem(appTheme, "android:listMenuViewStyle", "@style/AppPopupMenuListMenuView");
+    // Checkable rows inflate a plain CheckBox at the row end; restyle its
+    // button so the selected option shows a right-aligned check glyph
+    // instead of a square box. Both framework and AppCompat attrs are set
+    // since the popup may inflate either CheckBox flavor. App-wide for
+    // native checkboxes, which the app otherwise doesn't use.
+    assignStyleItem(appTheme, "android:checkboxStyle", "@style/AppPopupMenuCheckBox");
+    assignStyleItem(appTheme, "checkboxStyle", "@style/AppPopupMenuCheckBoxCompat");
+  }
+
+  resources.style = resources.style.filter(
+    (style) =>
+      ![
+        "AppPopupMenu",
+        "AppPopupMenu.TextAppearance",
+        "AppPopupMenu.HeaderTextAppearance",
+        "AppPopupMenuListMenuView",
+        "AppPopupMenuCheckBox",
+        "AppPopupMenuCheckBoxCompat",
+      ].includes(style.$?.name),
+  );
+  resources.style.push(
+    {
+      $: { name: "AppPopupMenu", parent: "Widget.AppCompat.PopupMenu" },
+      item: [
+        { _: "@drawable/popup_menu_background", $: { name: "android:popupBackground" } },
+        { _: "false", $: { name: "android:overlapAnchor" } },
+        { _: "4dp", $: { name: "android:dropDownVerticalOffset" } },
+      ],
+    },
+    {
+      $: { name: "AppPopupMenu.TextAppearance", parent: "TextAppearance.AppCompat.Menu" },
+      item: [
+        { _: "15sp", $: { name: "android:textSize" } },
+        { _: "@color/popup_menu_item_text", $: { name: "android:textColor" } },
+        // DM Sans (--font-sans); embedded by the expo-font plugin config in
+        // app.config.ts.
+        { _: "@font/xml_dm_sans_regular", $: { name: "android:fontFamily" } },
+      ],
+    },
+    {
+      $: {
+        name: "AppPopupMenu.HeaderTextAppearance",
+        parent: "TextAppearance.AppCompat.Widget.PopupMenu.Header",
+      },
+      item: [
+        { _: "15sp", $: { name: "android:textSize" } },
+        { _: "@color/popup_menu_item_text", $: { name: "android:textColor" } },
+        { _: "@font/xml_dm_sans_regular", $: { name: "android:fontFamily" } },
+      ],
+    },
+    // The framework default (Widget.Material.ListMenuView) only carries
+    // subMenuArrow, so replacing the style wholesale is safe.
+    {
+      $: { name: "AppPopupMenuListMenuView" },
+      item: [{ _: "@drawable/popup_menu_submenu_arrow", $: { name: "android:subMenuArrow" } }],
+    },
+    {
+      $: {
+        name: "AppPopupMenuCheckBox",
+        parent: "android:Widget.Material.CompoundButton.CheckBox",
+      },
+      item: [{ _: "@drawable/popup_menu_check_button", $: { name: "android:button" } }],
+    },
+    {
+      $: {
+        name: "AppPopupMenuCheckBoxCompat",
+        parent: "Widget.AppCompat.CompoundButton.CheckBox",
+      },
+      item: [
+        { _: "@drawable/popup_menu_check_button", $: { name: "android:button" } },
+        // buttonCompat wins over android:button in AppCompatCheckBox.
+        { _: "@drawable/popup_menu_check_button", $: { name: "buttonCompat" } },
+      ],
+    },
+  );
+
+  return androidResources;
+}
+
 function withPopupMenuStyles(config) {
   return withAndroidStyles(config, (config) => {
-    const resources = config.modResults.resources;
-    resources.style = resources.style ?? [];
-
-    const appTheme = resources.style.find((style) => style.$?.name === "AppTheme");
-    if (appTheme) {
-      assignStyleItem(appTheme, "popupMenuStyle", "@style/AppPopupMenu");
-      assignStyleItem(appTheme, "android:popupMenuStyle", "@style/AppPopupMenu");
-      assignStyleItem(
-        appTheme,
-        "textAppearanceLargePopupMenu",
-        "@style/AppPopupMenu.TextAppearance",
-      );
-      assignStyleItem(
-        appTheme,
-        "textAppearanceSmallPopupMenu",
-        "@style/AppPopupMenu.TextAppearance",
-      );
-      // Submenu popups show their parent item as a header row that reads a
-      // separate theme attribute, so it needs the same themed text color.
-      assignStyleItem(
-        appTheme,
-        "textAppearancePopupMenuHeader",
-        "@style/AppPopupMenu.HeaderTextAppearance",
-      );
-      // Menu item views resolve their submenu arrow from this style
-      // (android:listMenuViewStyle / android:subMenuArrow are public attrs).
-      assignStyleItem(appTheme, "android:listMenuViewStyle", "@style/AppPopupMenuListMenuView");
-      // Checkable rows inflate a plain CheckBox at the row end; restyle its
-      // button so the selected option shows a right-aligned check glyph
-      // instead of a square box. Both framework and AppCompat attrs are set
-      // since the popup may inflate either CheckBox flavor. App-wide for
-      // native checkboxes, which the app otherwise doesn't use.
-      assignStyleItem(appTheme, "android:checkboxStyle", "@style/AppPopupMenuCheckBox");
-      assignStyleItem(appTheme, "checkboxStyle", "@style/AppPopupMenuCheckBoxCompat");
-    }
-
-    resources.style = resources.style.filter(
-      (style) =>
-        ![
-          "AppPopupMenu",
-          "AppPopupMenu.TextAppearance",
-          "AppPopupMenu.HeaderTextAppearance",
-          "AppPopupMenuListMenuView",
-          "AppPopupMenuCheckBox",
-          "AppPopupMenuCheckBoxCompat",
-        ].includes(style.$?.name),
-    );
-    resources.style.push(
-      {
-        $: { name: "AppPopupMenu", parent: "Widget.AppCompat.PopupMenu" },
-        item: [
-          { _: "@drawable/popup_menu_background", $: { name: "android:popupBackground" } },
-          { _: "false", $: { name: "android:overlapAnchor" } },
-          { _: "4dp", $: { name: "android:dropDownVerticalOffset" } },
-        ],
-      },
-      {
-        $: { name: "AppPopupMenu.TextAppearance", parent: "TextAppearance.AppCompat.Menu" },
-        item: [
-          { _: "15sp", $: { name: "android:textSize" } },
-          { _: "@color/popup_menu_item_text", $: { name: "android:textColor" } },
-          // DM Sans (--font-sans); embedded by the expo-font plugin config in
-          // app.config.ts.
-          { _: "@font/xml_dm_sans_regular", $: { name: "android:fontFamily" } },
-        ],
-      },
-      {
-        $: {
-          name: "AppPopupMenu.HeaderTextAppearance",
-          parent: "TextAppearance.AppCompat.Widget.PopupMenu.Header",
-        },
-        item: [
-          { _: "15sp", $: { name: "android:textSize" } },
-          { _: "@color/popup_menu_item_text", $: { name: "android:textColor" } },
-          { _: "@font/xml_dm_sans_regular", $: { name: "android:fontFamily" } },
-        ],
-      },
-      // The framework default (Widget.Material.ListMenuView) only carries
-      // subMenuArrow, so replacing the style wholesale is safe.
-      {
-        $: { name: "AppPopupMenuListMenuView" },
-        item: [{ _: "@drawable/popup_menu_submenu_arrow", $: { name: "android:subMenuArrow" } }],
-      },
-      {
-        $: {
-          name: "AppPopupMenuCheckBox",
-          parent: "android:Widget.Material.CompoundButton.CheckBox",
-        },
-        item: [{ _: "@drawable/popup_menu_check_button", $: { name: "android:button" } }],
-      },
-      {
-        $: {
-          name: "AppPopupMenuCheckBoxCompat",
-          parent: "Widget.AppCompat.CompoundButton.CheckBox",
-        },
-        item: [
-          { _: "@drawable/popup_menu_check_button", $: { name: "android:button" } },
-          // buttonCompat wins over android:button in AppCompatCheckBox.
-          { _: "@drawable/popup_menu_check_button", $: { name: "buttonCompat" } },
-        ],
-      },
-    );
-
+    config.modResults = configureStyles(config.modResults);
     return config;
   });
 }
 
+function configureColors(androidResources, appearance) {
+  const palette = COLORS[appearance];
+  if (palette == null) {
+    throw new Error(`Unsupported Android popup menu appearance: ${appearance}`);
+  }
+
+  let result = androidResources;
+  result = AndroidConfig.Colors.assignColorValue(result, {
+    name: "popup_menu_background",
+    value: palette.background,
+  });
+  result = AndroidConfig.Colors.assignColorValue(result, {
+    name: "popup_menu_item_text",
+    value: palette.itemText,
+  });
+  return result;
+}
+
 function withPopupMenuColors(config) {
   config = withAndroidColors(config, (config) => {
-    config.modResults = AndroidConfig.Colors.assignColorValue(config.modResults, {
-      name: "popup_menu_background",
-      value: COLORS.light.background,
-    });
-    config.modResults = AndroidConfig.Colors.assignColorValue(config.modResults, {
-      name: "popup_menu_item_text",
-      value: COLORS.light.itemText,
-    });
+    config.modResults = configureColors(config.modResults, "light");
     return config;
   });
   config = withAndroidColorsNight(config, (config) => {
-    config.modResults = AndroidConfig.Colors.assignColorValue(config.modResults, {
-      name: "popup_menu_background",
-      value: COLORS.night.background,
-    });
-    config.modResults = AndroidConfig.Colors.assignColorValue(config.modResults, {
-      name: "popup_menu_item_text",
-      value: COLORS.night.itemText,
-    });
+    config.modResults = configureColors(config.modResults, "night");
     return config;
   });
   return config;
@@ -227,19 +235,9 @@ function withPopupMenuBackgroundDrawable(config) {
         "drawable",
       );
       fs.mkdirSync(drawableDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(drawableDir, "popup_menu_background.xml"),
-        POPUP_BACKGROUND_DRAWABLE,
-      );
-      fs.writeFileSync(path.join(drawableDir, "ic_menu_check.xml"), CHECK_DRAWABLE);
-      fs.writeFileSync(
-        path.join(drawableDir, "popup_menu_check_button.xml"),
-        CHECKBOX_BUTTON_SELECTOR,
-      );
-      fs.writeFileSync(
-        path.join(drawableDir, "popup_menu_submenu_arrow.xml"),
-        SUBMENU_ARROW_DRAWABLE,
-      );
+      for (const [fileName, contents] of Object.entries(DRAWABLES)) {
+        fs.writeFileSync(path.join(drawableDir, fileName), contents);
+      }
       return config;
     },
   ]);
@@ -248,3 +246,7 @@ function withPopupMenuBackgroundDrawable(config) {
 module.exports = function withAndroidModernPopupMenu(config) {
   return withPopupMenuBackgroundDrawable(withPopupMenuColors(withPopupMenuStyles(config)));
 };
+
+module.exports.configureColors = configureColors;
+module.exports.configureStyles = configureStyles;
+module.exports.drawables = DRAWABLES;

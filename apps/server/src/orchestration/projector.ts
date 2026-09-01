@@ -26,8 +26,13 @@ import {
   ThreadActivityAppendedPayload,
   ThreadArchivedPayload,
   ThreadCreatedPayload,
+  ThreadForkedPayload,
+  ThreadForkWorkspaceUpdatedPayload,
+  ThreadForkHandoffCompletedPayload,
   ThreadDeletedPayload,
   ThreadInteractionModeSetPayload,
+  ThreadHarnessSyncLinkedPayload,
+  ThreadHarnessSyncMessageImportedPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
@@ -58,6 +63,15 @@ const TERMINAL_SUBAGENT_STATUSES = new Set<OrchestrationSubagentStatus>([
   "error",
   "unavailable",
 ]);
+
+function retainFrozenWithNativeLimit<T extends { readonly historyOrigin?: unknown }>(
+  rows: ReadonlyArray<T>,
+  nativeLimit: number,
+): T[] {
+  const frozen = rows.filter((row) => row.historyOrigin !== undefined);
+  const native = rows.filter((row) => row.historyOrigin === undefined).slice(-nativeLimit);
+  return [...frozen, ...native];
+}
 
 function maxIsoDate(left: string, right: string): string {
   return left.localeCompare(right) >= 0 ? left : right;
@@ -239,13 +253,18 @@ function decodeForEvent<A>(
   );
 }
 
-function retainThreadMessagesAfterRevert(
-  messages: ReadonlyArray<OrchestrationMessage>,
+export function retainThreadMessagesAfterRevert<T extends OrchestrationMessage>(
+  messages: ReadonlyArray<T>,
   retainedTurnIds: ReadonlySet<string>,
   turnCount: number,
-): ReadonlyArray<OrchestrationMessage> {
+  isFrozen: (message: T) => boolean = (message) => message.historyOrigin !== undefined,
+): ReadonlyArray<T> {
   const retainedMessageIds = new Set<string>();
   for (const message of messages) {
+    if (isFrozen(message)) {
+      retainedMessageIds.add(message.id);
+      continue;
+    }
     if (message.role === "system") {
       retainedMessageIds.add(message.id);
       continue;
@@ -256,7 +275,8 @@ function retainThreadMessagesAfterRevert(
   }
 
   const retainedUserCount = messages.filter(
-    (message) => message.role === "user" && retainedMessageIds.has(message.id),
+    (message) =>
+      message.role === "user" && !isFrozen(message) && retainedMessageIds.has(message.id),
   ).length;
   const missingUserCount = Math.max(0, turnCount - retainedUserCount);
   if (missingUserCount > 0) {
@@ -264,6 +284,7 @@ function retainThreadMessagesAfterRevert(
       .filter(
         (message) =>
           message.role === "user" &&
+          !isFrozen(message) &&
           !retainedMessageIds.has(message.id) &&
           (message.turnId === null || retainedTurnIds.has(message.turnId)),
       )
@@ -278,7 +299,8 @@ function retainThreadMessagesAfterRevert(
   }
 
   const retainedAssistantCount = messages.filter(
-    (message) => message.role === "assistant" && retainedMessageIds.has(message.id),
+    (message) =>
+      message.role === "assistant" && !isFrozen(message) && retainedMessageIds.has(message.id),
   ).length;
   const missingAssistantCount = Math.max(0, turnCount - retainedAssistantCount);
   if (missingAssistantCount > 0) {
@@ -286,6 +308,7 @@ function retainThreadMessagesAfterRevert(
       .filter(
         (message) =>
           message.role === "assistant" &&
+          !isFrozen(message) &&
           !retainedMessageIds.has(message.id) &&
           (message.turnId === null || retainedTurnIds.has(message.turnId)),
       )
@@ -302,21 +325,31 @@ function retainThreadMessagesAfterRevert(
   return messages.filter((message) => retainedMessageIds.has(message.id));
 }
 
-function retainThreadActivitiesAfterRevert(
-  activities: ReadonlyArray<OrchestrationThread["activities"][number]>,
+export function retainThreadActivitiesAfterRevert<
+  T extends OrchestrationThread["activities"][number],
+>(
+  activities: ReadonlyArray<T>,
   retainedTurnIds: ReadonlySet<string>,
-): ReadonlyArray<OrchestrationThread["activities"][number]> {
+  isFrozen: (activity: T) => boolean = (activity) => activity.historyOrigin !== undefined,
+): ReadonlyArray<T> {
   return activities.filter(
-    (activity) => activity.turnId === null || retainedTurnIds.has(activity.turnId),
+    (activity) =>
+      isFrozen(activity) || activity.turnId === null || retainedTurnIds.has(activity.turnId),
   );
 }
 
-function retainThreadProposedPlansAfterRevert(
-  proposedPlans: ReadonlyArray<OrchestrationThread["proposedPlans"][number]>,
+export function retainThreadProposedPlansAfterRevert<
+  T extends OrchestrationThread["proposedPlans"][number],
+>(
+  proposedPlans: ReadonlyArray<T>,
   retainedTurnIds: ReadonlySet<string>,
-): ReadonlyArray<OrchestrationThread["proposedPlans"][number]> {
+  isFrozen: (plan: T) => boolean = (plan) => plan.historyOrigin !== undefined,
+): ReadonlyArray<T> {
   return proposedPlans.filter(
-    (proposedPlan) => proposedPlan.turnId === null || retainedTurnIds.has(proposedPlan.turnId),
+    (proposedPlan) =>
+      isFrozen(proposedPlan) ||
+      proposedPlan.turnId === null ||
+      retainedTurnIds.has(proposedPlan.turnId),
   );
 }
 
@@ -513,6 +546,7 @@ export function projectEvent(
             archivedAt: null,
             settledOverride: null,
             settledAt: null,
+            unsettledAt: null,
             snoozedUntil: null,
             snoozedAt: null,
             deletedAt: null,
@@ -534,6 +568,82 @@ export function projectEvent(
             : [...nextBase.threads, thread],
         };
       });
+
+    case "thread.forked":
+      return decodeForEvent(ThreadForkedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            fork: payload.fork,
+            messages: payload.history.messages,
+            proposedPlans: payload.history.proposedPlans,
+            activities: payload.history.activities,
+            subagents: payload.history.subagents,
+            checkpoints: payload.history.checkpoints,
+            latestTurn: null,
+            session: null,
+            updatedAt: event.occurredAt,
+          }),
+        })),
+      );
+
+    case "thread.fork-workspace-updated":
+      return decodeForEvent(
+        ThreadForkWorkspaceUpdatedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (thread?.fork === undefined) return nextBase;
+          if (thread.fork.workspace.status === "ready") return nextBase;
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              fork: {
+                ...thread.fork,
+                workspace: {
+                  ...thread.fork.workspace,
+                  status: payload.status,
+                  preparedAt: payload.preparedAt,
+                  lastError: payload.lastError,
+                },
+              },
+              updatedAt: payload.createdAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.fork-handoff-completed":
+      return decodeForEvent(
+        ThreadForkHandoffCompletedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (thread?.fork === undefined || thread.fork.handoff.status === "completed") {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              fork: {
+                ...thread.fork,
+                handoff: {
+                  ...thread.fork.handoff,
+                  status: "completed",
+                  completedAt: payload.completedAt,
+                },
+              },
+              updatedAt: payload.completedAt,
+            }),
+          };
+        }),
+      );
 
     case "thread.deleted":
       return decodeForEvent(ThreadDeletedPayload, event.payload, event.type, "payload").pipe(
@@ -576,6 +686,7 @@ export function projectEvent(
           threads: updateThread(nextBase.threads, payload.threadId, {
             settledOverride: "settled",
             settledAt: payload.settledAt,
+            unsettledAt: null,
             updatedAt: payload.updatedAt,
           }),
         })),
@@ -583,14 +694,24 @@ export function projectEvent(
 
     case "thread.unsettled":
       return decodeForEvent(ThreadUnsettledPayload, event.payload, event.type, "payload").pipe(
-        Effect.map((payload) => ({
-          ...nextBase,
-          threads: updateThread(nextBase.threads, payload.threadId, {
-            settledOverride: payload.reason === "user" ? "active" : null,
-            settledAt: null,
-            updatedAt: payload.updatedAt,
-          }),
-        })),
+        Effect.map((payload) => {
+          const existing = nextBase.threads.find((thread) => thread.id === payload.threadId);
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              settledOverride: payload.reason === "user" ? "active" : null,
+              settledAt: null,
+              // Re-entry stamp for active-list ordering. A thread already
+              // pinned active keeps its stamp: the activity reset that clears
+              // the pin is not a re-entry and must not reorder the list.
+              unsettledAt:
+                existing?.settledOverride === "active"
+                  ? (existing.unsettledAt ?? null)
+                  : payload.updatedAt,
+              updatedAt: payload.updatedAt,
+            }),
+          };
+        }),
       );
 
     case "thread.snoozed":
@@ -668,6 +789,9 @@ export function projectEvent(
               : {}),
             ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
             ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
+            ...(payload.linkedPullRequest !== undefined
+              ? { linkedPullRequest: payload.linkedPullRequest }
+              : {}),
             updatedAt: payload.updatedAt,
           }),
         })),
@@ -701,9 +825,12 @@ export function projectEvent(
       );
 
     case "thread.message-sent":
+    case "thread.harness-sync-message-imported":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
-          MessageSentPayloadSchema,
+          event.type === "thread.message-sent"
+            ? MessageSentPayloadSchema
+            : ThreadHarnessSyncMessageImportedPayload,
           event.payload,
           event.type,
           "payload",
@@ -753,7 +880,7 @@ export function projectEvent(
                 : entry,
             )
           : [...thread.messages, message];
-        const cappedMessages = messages.slice(-MAX_THREAD_MESSAGES);
+        const cappedMessages = retainFrozenWithNativeLimit(messages, MAX_THREAD_MESSAGES);
 
         return {
           ...nextBase,
@@ -763,6 +890,38 @@ export function projectEvent(
           }),
         };
       });
+
+    case "thread.harness-sync-linked":
+      return decodeForEvent(
+        ThreadHarnessSyncLinkedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (
+            thread?.harnessSync !== undefined &&
+            thread.harnessSync !== null &&
+            thread.harnessSync.lastSyncedAt.localeCompare(payload.lastSyncedAt) > 0
+          ) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              harnessSync: {
+                providerInstanceId: payload.providerInstanceId,
+                providerLabel: payload.providerLabel,
+                activity: payload.activity,
+                sourceUpdatedAt: payload.sourceUpdatedAt,
+                lastSyncedAt: payload.lastSyncedAt,
+              },
+              updatedAt: maxIsoDate(event.occurredAt, payload.lastSyncedAt),
+            }),
+          };
+        }),
+      );
 
     case "thread.session-set":
       return Effect.gen(function* () {
@@ -881,14 +1040,13 @@ export function projectEvent(
             : [
                 ...thread.activities.filter((activity) => !settlementActivityIds.has(activity.id)),
                 ...abortResolutionActivities,
-              ]
-                .toSorted(compareThreadActivities)
-                .slice(-500);
+              ].toSorted(compareThreadActivities);
+        const retainedActivities = retainFrozenWithNativeLimit(activities, 500);
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             session: nextSession,
-            activities,
+            activities: retainedActivities,
             latestTurn:
               payload.turnId !== null &&
               thread.latestTurn?.turnId === payload.turnId &&
@@ -920,15 +1078,16 @@ export function projectEvent(
           return nextBase;
         }
 
-        const proposedPlans = [
-          ...thread.proposedPlans.filter((entry) => entry.id !== payload.proposedPlan.id),
-          payload.proposedPlan,
-        ]
-          .toSorted(
+        const proposedPlans = retainFrozenWithNativeLimit(
+          [
+            ...thread.proposedPlans.filter((entry) => entry.id !== payload.proposedPlan.id),
+            payload.proposedPlan,
+          ].toSorted(
             (left, right) =>
               left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
-          )
-          .slice(-200);
+          ),
+          200,
+        );
 
         return {
           ...nextBase,
@@ -977,12 +1136,13 @@ export function projectEvent(
           return nextBase;
         }
 
-        const checkpoints = [
-          ...thread.checkpoints.filter((entry) => entry.turnId !== checkpoint.turnId),
-          checkpoint,
-        ]
-          .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)
-          .slice(-MAX_THREAD_CHECKPOINTS);
+        const checkpoints = retainFrozenWithNativeLimit(
+          [
+            ...thread.checkpoints.filter((entry) => entry.turnId !== checkpoint.turnId),
+            checkpoint,
+          ].toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount),
+          MAX_THREAD_CHECKPOINTS,
+        );
 
         // Mid-turn diff updates produce placeholder checkpoints; record the
         // checkpoint, but don't settle a turn its session is still running.
@@ -1022,23 +1182,32 @@ export function projectEvent(
             return nextBase;
           }
 
-          const checkpoints = thread.checkpoints
-            .filter((entry) => entry.checkpointTurnCount <= payload.turnCount)
-            .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)
-            .slice(-MAX_THREAD_CHECKPOINTS);
+          const checkpoints = retainFrozenWithNativeLimit(
+            thread.checkpoints
+              .filter(
+                (entry) =>
+                  entry.historyOrigin !== undefined ||
+                  entry.checkpointTurnCount <= payload.turnCount,
+              )
+              .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount),
+            MAX_THREAD_CHECKPOINTS,
+          );
           const retainedTurnIds = new Set(checkpoints.map((checkpoint) => checkpoint.turnId));
-          const messages = retainThreadMessagesAfterRevert(
-            thread.messages,
-            retainedTurnIds,
-            payload.turnCount,
-          ).slice(-MAX_THREAD_MESSAGES);
-          const proposedPlans = retainThreadProposedPlansAfterRevert(
-            thread.proposedPlans,
-            retainedTurnIds,
-          ).slice(-200);
-          const activities = retainThreadActivitiesAfterRevert(thread.activities, retainedTurnIds);
+          const messages = retainFrozenWithNativeLimit(
+            retainThreadMessagesAfterRevert(thread.messages, retainedTurnIds, payload.turnCount),
+            MAX_THREAD_MESSAGES,
+          );
+          const proposedPlans = retainFrozenWithNativeLimit(
+            retainThreadProposedPlansAfterRevert(thread.proposedPlans, retainedTurnIds),
+            200,
+          );
+          const activities = retainFrozenWithNativeLimit(
+            retainThreadActivitiesAfterRevert(thread.activities, retainedTurnIds),
+            500,
+          );
 
-          const latestCheckpoint = checkpoints.at(-1) ?? null;
+          const latestCheckpoint =
+            checkpoints.findLast((checkpoint) => checkpoint.historyOrigin === undefined) ?? null;
           const latestTurn =
             latestCheckpoint === null
               ? null
@@ -1081,12 +1250,13 @@ export function projectEvent(
             return nextBase;
           }
 
-          const activities = [
-            ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
-            payload.activity,
-          ]
-            .toSorted(compareThreadActivities)
-            .slice(-500);
+          const activities = retainFrozenWithNativeLimit(
+            [
+              ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
+              payload.activity,
+            ].toSorted(compareThreadActivities),
+            500,
+          );
 
           return {
             ...nextBase,

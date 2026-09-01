@@ -41,6 +41,7 @@ import {
 } from "../Errors.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
+import { planThreadFork } from "../ThreadForkPlanner.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -173,10 +174,24 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           });
         }
 
-        const eventBase = yield* decideOrchestrationCommand({
-          command: envelope.command,
-          readModel: commandReadModel,
-        }).pipe(
+        const sourceEvents =
+          envelope.command.type === "thread.fork"
+            ? yield* Stream.runCollect(
+                eventStore.readByThreadId(envelope.command.sourceThreadId),
+              ).pipe(Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)))
+            : null;
+        const eventBase = yield* (
+          envelope.command.type === "thread.fork"
+            ? planThreadFork({
+                command: envelope.command,
+                readModel: commandReadModel,
+                sourceEvents: sourceEvents ?? [],
+              })
+            : decideOrchestrationCommand({
+                command: envelope.command,
+                readModel: commandReadModel,
+              })
+        ).pipe(
           Effect.provideService(Crypto.Crypto, crypto),
           Effect.mapError((cause) =>
             isOrchestrationCommandInvariantError(cause)

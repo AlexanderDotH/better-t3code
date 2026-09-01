@@ -6,12 +6,15 @@
  *
  * @module usageMerge
  */
-import type {
-  EnvironmentId,
-  UsageBucket,
-  UsageProviderKind,
-  UsageSourceFingerprint,
-  UsageSummary,
+import {
+  USAGE_MERGE_COMPATIBLE_SINCE,
+  type EnvironmentId,
+  type UsageBucket,
+  type UsageCallKind,
+  type UsageContextDiagnostics,
+  type UsageProviderKind,
+  type UsageSourceFingerprint,
+  type UsageSummary,
 } from "@t3tools/contracts";
 
 export interface EnvironmentUsage {
@@ -61,6 +64,17 @@ export interface CostQuality {
   readonly cacheSavingsUsd: number;
 }
 
+export interface UsageCallTotals {
+  readonly kind: UsageCallKind;
+  readonly costUsd: number;
+  readonly totalTokens: number;
+  readonly records: number;
+}
+
+type MutableUsageContextDiagnostics = {
+  -readonly [Key in keyof UsageContextDiagnostics]: UsageContextDiagnostics[Key];
+};
+
 export interface MergedUsage {
   readonly costUsd: number;
   readonly uncachedInputTokens: number;
@@ -71,6 +85,8 @@ export interface MergedUsage {
   readonly totalTokens: number;
   readonly records: number;
   readonly sessions: number;
+  readonly calls: readonly UsageCallTotals[];
+  readonly contextDiagnostics: UsageContextDiagnostics;
   readonly providers: readonly ProviderTotals[];
   readonly models: readonly ModelTotals[];
   readonly daily: readonly DailyTotals[];
@@ -172,6 +188,10 @@ function bucketTokens(bucket: UsageBucket): number {
   );
 }
 
+function isCompatibleContractVersion(version: number, expected: number): boolean {
+  return version >= USAGE_MERGE_COMPATIBLE_SINCE && version <= expected;
+}
+
 const EMPTY_MERGED: MergedUsage = {
   costUsd: 0,
   uncachedInputTokens: 0,
@@ -182,6 +202,14 @@ const EMPTY_MERGED: MergedUsage = {
   totalTokens: 0,
   records: 0,
   sessions: 0,
+  calls: [],
+  contextDiagnostics: {
+    nativeForks: 0,
+    compactHandoffs: 0,
+    totalHandoffChars: 0,
+    compactionEvents: 0,
+    maxContextTokens: 0,
+  },
   providers: [],
   models: [],
   daily: [],
@@ -201,8 +229,10 @@ const EMPTY_MERGED: MergedUsage = {
  * Merges every connected environment's summary.
  *
  * `expectedContractVersion` guards against an environment running older server
- * code: rather than blocking the page, its data is excluded and its id is
- * reported so the UI can say coverage is partial.
+ * code: rather than blocking the page, incompatible data is excluded and its
+ * id is reported so the UI can say coverage is partial. Versions in
+ * [{@link USAGE_MERGE_COMPATIBLE_SINCE}, expected] still merge, so an additive
+ * provider expansion does not drop Claude/Codex totals from older servers.
  */
 export function mergeUsage(
   environments: readonly EnvironmentUsage[],
@@ -213,7 +243,7 @@ export function mergeUsage(
   const current: EnvironmentUsage[] = [];
   const staleEnvironments: EnvironmentId[] = [];
   for (const environment of environments) {
-    if (environment.summary.contractVersion === expectedContractVersion) {
+    if (isCompatibleContractVersion(environment.summary.contractVersion, expectedContractVersion)) {
       current.push(environment);
     } else {
       staleEnvironments.push(environment.environmentId);
@@ -233,6 +263,13 @@ export function mergeUsage(
   let cacheSavingsUsd = 0;
   let providerReportedRecords = 0;
   let unpricedRecords = 0;
+  const contextDiagnostics: MutableUsageContextDiagnostics = {
+    nativeForks: 0,
+    compactHandoffs: 0,
+    totalHandoffChars: 0,
+    compactionEvents: 0,
+    maxContextTokens: 0,
+  };
 
   const providerAccumulator = new Map<
     UsageProviderKind,
@@ -259,6 +296,10 @@ export function mergeUsage(
       totalTokens: number;
       byProvider: Map<UsageProviderKind, { costUsd: number; totalTokens: number }>;
     }
+  >();
+  const callAccumulator = new Map<
+    UsageCallKind,
+    { costUsd: number; totalTokens: number; records: number }
   >();
   const contributingEnvironments: EnvironmentId[] = [];
 
@@ -292,6 +333,49 @@ export function mergeUsage(
       records += bucket.records;
       unpricedRecords += bucket.unpricedRecords;
       if (bucket.costSource === "providerReported") providerReportedRecords += bucket.records;
+
+      const callKind = bucket.callKind ?? "unknown";
+      const call = callAccumulator.get(callKind) ?? { costUsd: 0, totalTokens: 0, records: 0 };
+      call.costUsd += bucket.costUsd;
+      call.totalTokens += tokens;
+      call.records += bucket.records;
+      callAccumulator.set(callKind, call);
+
+      if (bucket.diagnostics !== undefined) {
+        contextDiagnostics.nativeForks += bucket.diagnostics.nativeForks;
+        contextDiagnostics.compactHandoffs += bucket.diagnostics.compactHandoffs;
+        contextDiagnostics.totalHandoffChars += bucket.diagnostics.totalHandoffChars;
+        contextDiagnostics.compactionEvents += bucket.diagnostics.compactionEvents;
+        contextDiagnostics.maxContextTokens = Math.max(
+          contextDiagnostics.maxContextTokens,
+          bucket.diagnostics.maxContextTokens,
+        );
+        if (bucket.diagnostics.instructionChars !== undefined) {
+          contextDiagnostics.instructionChars =
+            (contextDiagnostics.instructionChars ?? 0) + bucket.diagnostics.instructionChars;
+        }
+        if (bucket.diagnostics.memoryInjectionChars !== undefined) {
+          contextDiagnostics.memoryInjectionChars =
+            (contextDiagnostics.memoryInjectionChars ?? 0) +
+            bucket.diagnostics.memoryInjectionChars;
+        }
+        if (bucket.diagnostics.toolSchemaChars !== undefined) {
+          contextDiagnostics.toolSchemaChars =
+            (contextDiagnostics.toolSchemaChars ?? 0) + bucket.diagnostics.toolSchemaChars;
+        }
+        if (bucket.diagnostics.subagentResultChars !== undefined) {
+          contextDiagnostics.subagentResultChars =
+            (contextDiagnostics.subagentResultChars ?? 0) + bucket.diagnostics.subagentResultChars;
+        }
+        if (bucket.diagnostics.toolDigestChars !== undefined) {
+          contextDiagnostics.toolDigestChars =
+            (contextDiagnostics.toolDigestChars ?? 0) + bucket.diagnostics.toolDigestChars;
+        }
+        if (bucket.diagnostics.autoRoutingChars !== undefined) {
+          contextDiagnostics.autoRoutingChars =
+            (contextDiagnostics.autoRoutingChars ?? 0) + bucket.diagnostics.autoRoutingChars;
+        }
+      }
 
       const provider = providerAccumulator.get(bucket.provider) ?? {
         costUsd: 0,
@@ -388,6 +472,12 @@ export function mergeUsage(
   const hourly: HourlyTotals[] = [...hourlyAccumulator.values()].sort((a, b) =>
     a.hourStart.localeCompare(b.hourStart),
   );
+  const calls = (["root", "subagent", "metadata", "auto-reasoning", "unknown"] as const).map(
+    (kind) => ({
+      kind,
+      ...(callAccumulator.get(kind) ?? { costUsd: 0, totalTokens: 0, records: 0 }),
+    }),
+  );
 
   return {
     costUsd,
@@ -399,6 +489,8 @@ export function mergeUsage(
     totalTokens,
     records,
     sessions,
+    calls,
+    contextDiagnostics,
     providers,
     models,
     daily,

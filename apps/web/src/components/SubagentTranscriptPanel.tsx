@@ -16,6 +16,7 @@ import {
 import { memo, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 
 import { formatShortTimestamp } from "../timestampFormat";
 import ChatMarkdown from "./ChatMarkdown";
@@ -90,6 +91,7 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
   isLoadingOlderActivities = false,
   onLoadOlderActivities,
 }: SubagentTranscriptPanelProps) {
+  const translate = useInterfaceTranslator().message;
   const entries = useMemo(
     () => (subagent ? deriveSubagentTranscriptEntries(subagent) : []),
     [subagent],
@@ -138,7 +140,9 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
         className="inline-flex h-8 items-center gap-2 rounded-md border border-border/70 bg-background px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:cursor-wait disabled:opacity-60"
       >
         {isLoadingOlderActivities ? <Spinner className="size-3" /> : null}
-        {isLoadingOlderActivities ? "Loading earlier activity" : "Load earlier activity"}
+        {isLoadingOlderActivities
+          ? translate("chat.agent.transcript.loadingEarlier")
+          : translate("chat.agent.transcript.loadEarlier")}
       </button>
     </div>
   ) : null;
@@ -147,7 +151,7 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
     return (
       <PanelState className={className}>
         <Spinner className="size-4 text-muted-foreground" />
-        <span>Loading agent transcript</span>
+        <span>{translate("chat.agent.transcript.loading")}</span>
       </PanelState>
     );
   }
@@ -156,7 +160,9 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
     return (
       <PanelState className={className}>
         <CircleAlertIcon aria-hidden="true" className="size-4 text-destructive" />
-        <span className="font-medium text-foreground">Agent transcript unavailable</span>
+        <span className="font-medium text-foreground">
+          {translate("chat.agent.transcript.unavailable")}
+        </span>
         <span className="max-w-sm text-center text-muted-foreground">{errorMessage}</span>
       </PanelState>
     );
@@ -166,7 +172,7 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
     return (
       <PanelState className={className}>
         <BotIcon aria-hidden="true" className="size-5 text-muted-foreground/70" />
-        <span>Select an agent to inspect its transcript</span>
+        <span>{translate("chat.agent.transcript.select")}</span>
       </PanelState>
     );
   }
@@ -175,7 +181,7 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
 
   return (
     <section
-      aria-label={`${name} transcript`}
+      aria-label={translate("chat.agent.transcript.aria", { name })}
       className={cn("flex h-full min-h-0 min-w-0 flex-col bg-background", className)}
     >
       <SubagentTranscriptHeader
@@ -207,7 +213,7 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
             ))}
             {entries.length === 0 ? (
               <li className="py-12 text-center text-sm text-muted-foreground">
-                No transcript events yet.
+                {translate("chat.agent.transcript.empty")}
               </li>
             ) : null}
           </ol>
@@ -315,6 +321,7 @@ function SubagentTranscriptEntryView({
   readonly streamScopeId: string;
   readonly animateInitialStreamChunk: boolean;
 }) {
+  const translate = useInterfaceTranslator().message;
   if (entry.kind === "message") {
     return (
       <TranscriptMessage
@@ -334,7 +341,7 @@ function SubagentTranscriptEntryView({
       <article className="rounded-xl border border-info/20 bg-info/5 p-3.5">
         <EntryHeading
           icon={<ClipboardListIcon aria-hidden="true" className="size-3.5" />}
-          label="Proposed plan"
+          label={translate("chat.agent.proposedPlan")}
           createdAt={entry.createdAt}
           timestampFormat={timestampFormat}
         />
@@ -369,8 +376,13 @@ function TranscriptMessage({
   readonly streamId: string;
   readonly animateInitialStreamChunk: boolean;
 }) {
+  const translate = useInterfaceTranslator().message;
   const roleLabel =
-    message.role === "assistant" ? agentName : message.role === "user" ? "Input" : "System";
+    message.role === "assistant"
+      ? agentName
+      : message.role === "user"
+        ? translate("chat.agent.transcript.input")
+        : translate("chat.agent.transcript.system");
 
   return (
     <article
@@ -386,7 +398,11 @@ function TranscriptMessage({
         label={roleLabel}
         createdAt={message.createdAt}
         timestampFormat={timestampFormat}
-        trailing={message.streaming ? <Badge size="sm">Streaming</Badge> : null}
+        trailing={
+          message.streaming ? (
+            <Badge size="sm">{translate("chat.agent.transcript.streaming")}</Badge>
+          ) : null
+        }
       />
       <ChatMarkdown
         className="mt-2.5"
@@ -462,6 +478,7 @@ function TranscriptActivity({
   readonly activity: OrchestrationThreadActivity;
   readonly timestampFormat: TimestampFormat;
 }) {
+  const translate = useInterfaceTranslator().message;
   const serializedPayload = serializeActivityPayload(activity.payload);
 
   return (
@@ -491,7 +508,7 @@ function TranscriptActivity({
       {serializedPayload ? (
         <details className="mt-2 text-[11px] text-muted-foreground">
           <summary className="cursor-pointer select-none outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
-            Event details
+            {translate("chat.agent.transcript.eventDetails")}
           </summary>
           <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-background/80 p-2.5 font-mono text-[10px] leading-4 text-foreground/75">
             {serializedPayload}

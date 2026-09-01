@@ -6,6 +6,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -52,10 +55,7 @@ jobs:
         run: vp run build:desktop
 
       - name: Verify preload bundle output
-        run: |
-          test -f apps/desktop/dist-electron/preload.cjs
-          grep -nE "desktopBridge|getLocalEnvironmentBootstrap|PICK_FOLDER_CHANNEL|wsUrl" apps/desktop/dist-electron/preload.cjs
-          grep -n "__clerk_internal_electron_passkeys" apps/desktop/dist-electron/preload.cjs
+        run: node apps/desktop/scripts/verify-preload-bundle.mjs
 
   # Everything except `t3` (apps/server). `--parallel` drops the package
   # dependency ordering that `vp run` applies by default: these `test` tasks
@@ -183,6 +183,89 @@ jobs:
       - name: Test resource monitor
         run: cargo test --locked --manifest-path native/resource-monitor/Cargo.toml
 
+  windows_x64:
+    name: Windows 2025 x64 Parity
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+ and Node 24
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Confirm native Windows x64 runtime
+        shell: pwsh
+        run: |
+          if ($env:RUNNER_OS -ne "Windows" -or (node -p "process.arch") -ne "x64") {
+            throw "Windows parity requires a native Windows x64 runner."
+          }
+          $major = [int](node -p "process.versions.node.split('.')[0]")
+          if ($major -ne 24) {
+            throw "Windows parity requires Node 24, received $(node --version)."
+          }
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Exercise real command shims, PowerShell, ConPTY, Git, and cleanup
+        run: node scripts/windows-native-runtime-smoke.mjs
+
+      - name: Test native Windows resource monitor
+        run: cargo test --locked --manifest-path native/resource-monitor/Cargo.toml
+
+      - name: Test Windows platform contracts
+        shell: pwsh
+        run: |
+          vp test run `
+            scripts/windows-smoke-logic.test.mjs `
+            packages/shared/src/shell.test.ts `
+            packages/shared/src/path.test.ts `
+            apps/server/src/processRunner.test.ts `
+            apps/server/src/process/OwnedChildProcess.test.ts `
+            apps/server/src/cloud/serviceLauncherClient.test.ts `
+            apps/server/src/resourceTelemetry/NativeTelemetryClient.test.ts `
+            apps/server/src/resourceProtection/SubagentResourceGovernor.test.ts `
+            apps/server/src/terminal/NodePtyAdapter.test.ts `
+            apps/server/src/terminal/Manager.test.ts `
+            apps/server/src/provider/CodexProcessArgs.test.ts `
+            apps/server/src/provider/Drivers/ClaudeExecutable.test.ts `
+            apps/server/src/provider/Layers/ProviderAdapterRegistry.test.ts `
+            apps/server/src/cli/connect.test.ts `
+            apps/server/src/checkpointing/CheckpointStore.test.ts `
+            apps/desktop/src/backend/DesktopBackendConfiguration.test.ts `
+            apps/desktop/src/wsl/DesktopWslEnvironment.test.ts
+
+      - name: Typecheck Windows desktop and server
+        shell: pwsh
+        run: |
+          vp run --filter t3 typecheck
+          vp run --filter @t3tools/desktop typecheck
+
+      - name: Build Windows desktop and server pipeline
+        run: vp run build:desktop
+
+      - name: Verify Windows preload bundle output
+        run: node apps/desktop/scripts/verify-preload-bundle.mjs
+
+      - name: Exercise installed per-user Task Scheduler service
+        shell: pwsh
+        run: |
+          ./scripts/windows-task-scheduler-service-smoke.ps1 `
+            -WorkRoot (Join-Path $env:RUNNER_TEMP "t3-task-scheduler-service-smoke")
+
   # The static analysis below needs a macOS runner, which bills ~6.7x a Linux
   # minute, so gate it on the native sources it actually lints instead of paying
   # for it on every push. Detection is API-only (no checkout) and fails open: if
@@ -196,6 +279,7 @@ jobs:
       pull-requests: read
     outputs:
       changed: ${{ steps.detect.outputs.changed }}
+      android_changed: ${{ steps.detect.outputs.android_changed }}
     steps:
       - name: Detect mobile native changes
         id: detect
@@ -207,8 +291,9 @@ jobs:
           set -uo pipefail
 
           fail_open() {
-            echo "$* Running native static analysis."
+            echo "$* Running native static analysis and the Android build."
             echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "android_changed=true" >> "$GITHUB_OUTPUT"
             exit 0
           }
 
@@ -250,15 +335,30 @@ jobs:
           # Sources scripts/mobile-native-static-check.ts lints, plus the tool
           # and rule configuration that decides how it lints them, plus the
           # root package.json that defines the lint:mobile command.
-          pattern='^apps/mobile/.*\.(swift|kt|kts)$|^apps/mobile/(\.swiftlint\.yml|detekt\.yml|\.editorconfig|Brewfile)$|^scripts/mobile-native-static-check\.ts$|^package\.json$|^\.github/workflows/ci\.yml$'
+          native_pattern='^apps/mobile/.*\.(swift|kt|kts)$|^apps/mobile/(\.swiftlint\.yml|detekt\.yml|\.editorconfig|Brewfile)$|^scripts/mobile-native-static-check\.ts$|^package\.json$|^\.github/workflows/ci\.yml$'
 
-          if grep -qE "$pattern" <<< "$paths"; then
+          # Files that can change the generated Android project or the native
+          # dependency graph. Ordinary mobile TypeScript stays on the faster
+          # unit/typecheck path because assembling a debug APK does not add
+          # useful coverage for JavaScript-only changes.
+          android_pattern='^apps/mobile/app\.config\.ts$|^apps/mobile/package\.json$|^apps/mobile/(babel|metro|react-native)\.config\.[^/]+$|^apps/mobile/assets/|^apps/mobile/plugins/withAndroid.*\.cjs$|^apps/mobile/modules/[^/]+/(android/|expo-module\.config\.json$|react-native\.config\.[^/]+$|package\.json$|CMakeLists\.txt$)|^apps/mobile/.*\.(java|kt|kts|c|cc|cpp|h|hpp)$|^assets/|^patches/|^scripts/lib/(brand-assets|public-config)\.ts$|^package\.json$|^pnpm-lock\.yaml$|^pnpm-workspace\.yaml$|^\.github/workflows/ci\.yml$'
+
+          if grep -qE "$native_pattern" <<< "$paths"; then
             echo "Native sources or lint configuration changed:"
-            grep -E "$pattern" <<< "$paths"
+            grep -E "$native_pattern" <<< "$paths"
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "No mobile native sources or lint configuration changed."
             echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if grep -qE "$android_pattern" <<< "$paths"; then
+            echo "Android native inputs changed:"
+            grep -E "$android_pattern" <<< "$paths"
+            echo "android_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No Android native inputs changed."
+            echo "android_changed=false" >> "$GITHUB_OUTPUT"
           fi
 
   mobile_native_static_analysis:
@@ -292,6 +392,64 @@ jobs:
 
       - name: Lint mobile native sources
         run: vp run lint:mobile
+
+  mobile_android_debug_build:
+    name: Mobile Android Debug Build
+    needs: mobile_native_changes
+    # Skip only on an explicit "no". If diff detection fails, the gate emits
+    # true; if the gate job itself errors, the empty output also fails open.
+    if: ${{ !cancelled() && needs.mobile_native_changes.outputs.android_changed != 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      APP_VARIANT: development
+      EXPO_NO_GIT_STATUS: 1
+      NODE_ENV: development
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/mobile...
+
+      - name: Expose pnpm
+        run: |
+          pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
+          vp_pnpm_bin="$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin"
+          echo "$vp_pnpm_bin" >> "$GITHUB_PATH"
+          "$vp_pnpm_bin/pnpm" --version
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Generate clean Android project
+        working-directory: apps/mobile
+        run: pnpm exec expo prebuild --clean --platform android
+
+      - name: Assemble arm64 debug APK
+        working-directory: apps/mobile/android
+        run: ./gradlew :app:assembleDebug --no-daemon -PreactNativeArchitectures=arm64-v8a
+
+      - name: Verify debug APK
+        run: test -f apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
 
   release_smoke:
     name: Release Smoke

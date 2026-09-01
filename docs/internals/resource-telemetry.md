@@ -4,6 +4,10 @@
 
 Status: implemented
 
+Resource telemetry supplies the bounded native measurements used by
+[resource protection](resource-protection.md). The protection coordinator, admission policy, and
+process-control recovery contract are documented separately.
+
 ## Purpose
 
 Resource telemetry replaces recurring `ps`, PowerShell, `ioreg`, and `pmset`
@@ -57,16 +61,19 @@ Electron telemetry is unavailable. The native monitor still runs beside the
 server and tracks the server process tree. Power fields degrade to `unknown`
 instead of invoking platform shell commands.
 
-### WSL backend limitation
+### WSL backend
 
-Windows desktop packages currently ship the Windows resource-monitor executable.
-That executable cannot run inside the Linux WSL backend, so a WSL-only backend
-does not receive `resourceMonitorPath` and reports native process telemetry as
-unavailable. Electron host-power telemetry remains available over the inherited
-desktop pipe. Supporting native WSL process telemetry requires publishing a
-Linux sidecar for each supported architecture in the Windows artifact and
-converting its packaged path into the selected distro; the configuration
-deliberately does not pass the Windows `.exe` into WSL as a false fallback.
+Windows x64 packages carry a separately built Linux x64/glibc monitor beside
+the Linux `node-pty` prebuild. The versioned WSL server-tree extraction includes
+that binary and a marker describing its architecture, libc, and app version.
+Before passing `resourceMonitorPath`, desktop converts the extracted Windows
+path through the selected distro and verifies x86_64, glibc, file presence, and
+executability. The Windows `.exe` is never passed into WSL.
+
+An absent marker, incompatible distro, failed path conversion, or sidecar start
+failure degrades only WSL native process telemetry to `unavailable`. It does not
+block either the WSL backend or the primary Windows backend. Electron host-power
+telemetry remains available over the inherited desktop pipe.
 
 ## Native monitor
 
@@ -81,10 +88,13 @@ line on stdout:
 - `setStreaming`
 - `sampleNow`
 - `readHistory`
+- `suspendProcessTree`
+- `resumeProcessTree`
 - `shutdown`
 - `hello`
 - `snapshot`
 - `historyChunk`
+- `processControlResult`
 - `error`
 
 The protocol version is defined by
@@ -304,9 +314,14 @@ Admission uses these rules:
 - measure one unknown configuration at a time for five samples;
 - after observations exist, reserve the larger of 4 GiB or 1.25 times the
   observed P95 growth;
+- reserve cooperative in-process turns as 64 MiB plus twice the serialized
+  history size plus attachment and tool-result buffers;
 - retain admitted Codex root-turn reservations through `Stop` and confirmed
   native-subagent reservations through the matching `SubagentStop`;
-- grant queued starts in strict FIFO order without an agent-count limit.
+- account for process and in-process reservations against the same core reserve
+  and grant their queued starts in strict FIFO order;
+- cap active in-process turns at 40 per provider instance while keeping
+  process-based provider admission memory-driven rather than count-driven.
 
 Codex root turns use additive synchronous `UserPromptSubmit` and `Stop` hooks.
 Native subagents reserve through `PreToolUse` for `spawn_agent`, bind that
@@ -325,12 +340,26 @@ before every signal, `/proc` is read again and compared at the same precision.
 This permits the real process while fencing PID reuse.
 
 The five-second growth projection sums all exact registered provider trees. If
-it falls below the core reserve for two consecutive samples, admission stops
-and the fastest-growing exact provider tree receives `SIGSTOP`, root first.
-After five healthy samples the same identities receive `SIGCONT`, children
-first. A failed partial stop is rolled back. T3's server, Electron, and
-unregistered host applications are never signal candidates; stop and scope
-cleanup resume a paused tree before removing its registration.
+it falls below the core reserve for two consecutive samples, admission stops.
+An active cooperative in-process turn is released first: the governor selects
+the largest reservation and breaks ties by newest admission, then invokes its
+explicit cancellation callback once. Cancelled turns are never automatically
+retried. When no in-process turn is available, the fastest-growing exact
+provider tree receives `SIGSTOP`, root first.
+After five healthy samples the same identities are resumed children first. On
+POSIX, the controller uses `SIGSTOP`/`SIGCONT` with the existing `/proc`
+creation-time fence. On Windows, protocol v4 delegates the exact tree to the
+Rust sidecar. It rechecks each PID with `GetProcessTimes`, enumerates threads
+with ToolHelp, and owns exactly one `SuspendThread` increment per live thread.
+The correlated lease is reported as throttled only after the complete suspend
+receipt; resume, reconnect, unregister, and shutdown retry that same lease.
+
+A failed partial suspend rolls back every acquired increment. If a receipt is
+lost or rollback itself is incomplete, `resumeRequired` keeps an unconfirmed
+cleanup lease without publishing `throttled`; the governor compensates before
+admitting more work. Bounded completed-lease tombstones make duplicate receipts
+idempotent, and the sidecar also retries outstanding resumes during shutdown.
+T3's server, Electron, and unregistered host applications are never candidates.
 
 The governor publishes the ephemeral `ResourceProtectionSnapshot` contract
 with `normal`, `waiting`, `throttled`, `recovering`, or `unavailable` state,
@@ -408,7 +437,9 @@ longer start recurring process-table commands.
 
 Desktop artifact builds compile the Rust target, stage it as
 `resources/resource-monitor/t3-resource-monitor[.exe]`, and pass its path to the
-backend bootstrap.
+backend bootstrap. Windows packaging additionally consumes the Linux x64/glibc
+prebuild and stages it inside the extracted WSL server tree under
+`resource-monitor/linux-x64-gnu/`.
 
 CLI release jobs upload each active platform monitor artifact and copy it into:
 

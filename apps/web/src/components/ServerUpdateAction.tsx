@@ -1,4 +1,5 @@
 import type { EnvironmentId, ServerSelfUpdateCapability } from "@t3tools/contracts";
+import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 import type { ServerUpdateStage, ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import {
   isAtomCommandInterrupted,
@@ -6,6 +7,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { manualServerUpdateCommand } from "~/versionSkew";
@@ -16,19 +18,19 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 // The wire "installing" stage is a sub-second launcher handoff, so the UI
 // folds it into the download phase; everything after the handoff is the
 // restart the user is actually waiting through.
-const UPDATE_STAGE_LABELS: Record<ServerUpdateStage, string> = {
-  downloading: "Downloading…",
-  installing: "Downloading…",
-  resuming: "Restarting…",
-};
+const UPDATE_STAGE_MESSAGE_IDS = {
+  downloading: "serverUpdate.stage.downloading",
+  installing: "serverUpdate.stage.downloading",
+  resuming: "serverUpdate.stage.restarting",
+} as const satisfies Record<ServerUpdateStage, InterfaceMessageKey>;
+
+export function serverUpdateStageMessageId(stage: ServerUpdateStage) {
+  return UPDATE_STAGE_MESSAGE_IDS[stage];
+}
 const pendingUpdateEnvironmentIds = new Set<EnvironmentId>();
 
-export function serverUpdateStageLabel(stage: ServerUpdateStage): string {
-  return UPDATE_STAGE_LABELS[stage];
-}
-
-function updateFailureMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Server update failed.";
+export function serverUpdateFailureMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
 }
 
 /**
@@ -42,6 +44,7 @@ export function ServerUpdateProgress({
 }: {
   readonly state: Exclude<ServerUpdateState, { status: "idle" }>;
 }) {
+  const translator = useInterfaceTranslator();
   if (state.status === "failed") {
     return (
       <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-destructive" role="alert">
@@ -61,7 +64,7 @@ export function ServerUpdateProgress({
         className="size-1.5 shrink-0 animate-status-pulse rounded-full bg-foreground"
         aria-hidden="true"
       />
-      <span>{serverUpdateStageLabel(state.stage)}</span>
+      <span>{translator.message(serverUpdateStageMessageId(state.stage))}</span>
     </div>
   );
 }
@@ -76,7 +79,7 @@ export function ServerUpdateAction({
   serverLabel,
   selfUpdate,
   targetVersion,
-  label = "Update",
+  label,
 }: {
   readonly environmentId: EnvironmentId;
   readonly serverLabel: string;
@@ -84,6 +87,7 @@ export function ServerUpdateAction({
   readonly targetVersion: string;
   readonly label?: string;
 }) {
+  const translator = useInterfaceTranslator();
   const updateServer = useAtomCommand(serverEnvironment.updateServer, {
     reportFailure: false,
   });
@@ -92,14 +96,17 @@ export function ServerUpdateAction({
     onCopy: ({ command }) => {
       toastManager.add({
         type: "success",
-        title: "Update command copied",
-        description: `Run \`${command}\` on ${serverLabel} to update it.`,
+        title: translator.message("serverUpdate.copy.successTitle"),
+        description: translator.message("serverUpdate.copy.successDescription", {
+          command,
+          server: serverLabel,
+        }),
       });
     },
     onError: (error) => {
       toastManager.add({
         type: "error",
-        title: "Could not copy update command",
+        title: translator.message("serverUpdate.copy.failureTitle"),
         description: error.message,
       });
     },
@@ -121,15 +128,20 @@ export function ServerUpdateAction({
         }
         toastManager.add({
           type: "error",
-          title: "Server update failed",
-          description: updateFailureMessage(squashAtomCommandFailure(result)),
+          title: translator.message("serverUpdate.failureTitle"),
+          description: serverUpdateFailureMessage(
+            squashAtomCommandFailure(result),
+            translator.message("serverUpdate.failureFallback"),
+          ),
         });
         return;
       }
       toastManager.add({
         type: "success",
-        title: `${serverLabel} updated`,
-        description: `Reconnected on t3@${result.value.targetVersion}.`,
+        title: translator.message("serverUpdate.successTitle", { server: serverLabel }),
+        description: translator.message("serverUpdate.successDescription", {
+          version: result.value.targetVersion,
+        }),
       });
     } finally {
       pendingUpdateEnvironmentIds.delete(environmentId);
@@ -139,7 +151,7 @@ export function ServerUpdateAction({
   if (selfUpdate === "desktop-managed") {
     return (
       <span className="text-muted-foreground text-xs">
-        Update the desktop app on that machine to update this server.
+        {translator.message("serverUpdate.desktopManaged")}
       </span>
     );
   }
@@ -147,7 +159,7 @@ export function ServerUpdateAction({
   if (selfUpdate === "container-managed") {
     return (
       <span className="text-muted-foreground text-xs">
-        Pull the updated image and recreate this container to update the server.
+        {translator.message("serverUpdate.containerManaged")}
       </span>
     );
   }
@@ -156,14 +168,14 @@ export function ServerUpdateAction({
     const command = manualServerUpdateCommand(targetVersion);
     return (
       <Button size="xs" variant="outline" onClick={() => copyToClipboard(command, { command })}>
-        Copy update command
+        {translator.message("serverUpdate.copyCommand")}
       </Button>
     );
   }
 
   return (
     <Button size="xs" onClick={() => void handleUpdate()}>
-      {label}
+      {label ?? translator.message("serverUpdate.action.update")}
     </Button>
   );
 }

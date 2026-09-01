@@ -21,6 +21,7 @@ export const RIGHT_PANEL_KINDS = [
   "preview",
   "terminal",
   "pull-request",
+  "knowledge-graph",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -37,6 +38,7 @@ export type RightPanelSurface =
     }
   | { id: "diff"; kind: "diff" }
   | { id: "files"; kind: "files" }
+  | { id: "knowledge-graph"; kind: "knowledge-graph" }
   | {
       id: `file:${string}`;
       kind: "file";
@@ -67,7 +69,7 @@ const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
 // v12 removes the duplicate Agents surface in favor of the chat's animated pill stack.
-const RIGHT_PANEL_STORAGE_VERSION = 12;
+const RIGHT_PANEL_STORAGE_VERSION = 13;
 
 /**
  * The pull-request list's shared panel (see PULL_REQUESTS_PANEL_ID in the route) is session
@@ -133,6 +135,8 @@ const singletonSurface = (
       return { id: "diff", kind };
     case "files":
       return { id: "files", kind };
+    case "knowledge-graph":
+      return { id: "knowledge-graph", kind };
   }
 };
 
@@ -258,6 +262,9 @@ function normalizePersistedRightPanelSurface(surface: unknown): RightPanelSurfac
   }
   if (kind === "files") {
     return id === kind ? { id: "files", kind: "files" } : null;
+  }
+  if (kind === "knowledge-graph") {
+    return id === kind ? { id: "knowledge-graph", kind: "knowledge-graph" } : null;
   }
   if (kind === "preview") {
     if (id === "browser:new" && record.resourceId === null) {

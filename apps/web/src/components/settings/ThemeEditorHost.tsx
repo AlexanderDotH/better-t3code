@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { useTheme } from "../../hooks/useTheme";
 import { getThemeDefinition, type ThemeAppearance, type ThemeDefinition } from "../../themePalette";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -12,6 +13,7 @@ import { useThemeEditorStore } from "./themeEditorStore";
  * through threads, panels, and pages while the colors are being tuned.
  */
 export function ThemeEditorHost() {
+  const translate = useInterfaceTranslator().message;
   const session = useThemeEditorStore((store) => store.session);
   const closeThemeEditor = useThemeEditorStore((store) => store.closeThemeEditor);
   const { theme, setTheme, themeHalves, refreshTheme } = useTheme();
@@ -31,8 +33,8 @@ export function ThemeEditorHost() {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Could not save your theme",
-              description: "Browser storage is unavailable, so the change was not kept.",
+              title: translate("settings.theme.toast.saveFailed"),
+              description: translate("settings.theme.toast.storageUnavailable"),
             }),
           );
           return false;
@@ -40,8 +42,14 @@ export function ThemeEditorHost() {
         toastManager.add(
           stackedThreadToast({
             type: "success",
-            title: `${savedTheme.label} updated`,
-            description: `Its ${mergedAppearance} palette was added.`,
+            title: translate("settings.theme.toast.updated", { theme: savedTheme.label }),
+            description: translate("settings.theme.toast.paletteAdded", {
+              appearance: translate(
+                mergedAppearance === "light"
+                  ? "settings.theme.editor.light"
+                  : "settings.theme.editor.dark",
+              ),
+            }),
           }),
         );
         return true;
@@ -58,8 +66,12 @@ export function ThemeEditorHost() {
         toastManager.add(
           stackedThreadToast({
             type: "success",
-            title: `${savedTheme.label} saved`,
-            description: wasActive ? "Your changes are now active." : "Your changes are saved.",
+            title: translate("settings.theme.toast.saved", { theme: savedTheme.label }),
+            description: translate(
+              wasActive
+                ? "settings.theme.toast.changesActive"
+                : "settings.theme.toast.changesSaved",
+            ),
           }),
         );
         return true;
@@ -69,8 +81,8 @@ export function ThemeEditorHost() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not save your theme",
-            description: "Browser storage is unavailable, so the change was not kept.",
+            title: translate("settings.theme.toast.saveFailed"),
+            description: translate("settings.theme.toast.storageUnavailable"),
           }),
         );
         return false;
@@ -78,13 +90,13 @@ export function ThemeEditorHost() {
       toastManager.add(
         stackedThreadToast({
           type: "success",
-          title: `${savedTheme.label} created`,
-          description: "It’s now active.",
+          title: translate("settings.theme.toast.created", { theme: savedTheme.label }),
+          description: translate("settings.theme.toast.nowActive"),
         }),
       );
       return true;
     },
-    [refreshTheme, setTheme, theme, themeHalves],
+    [refreshTheme, setTheme, theme, themeHalves, translate],
   );
 
   if (!session) return null;

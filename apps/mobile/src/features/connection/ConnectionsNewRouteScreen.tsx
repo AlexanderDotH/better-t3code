@@ -1,18 +1,31 @@
-import { CameraView, useCameraPermissions } from "expo-camera";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { useAtomValue } from "@effect/atom-react";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { AsyncResult } from "effect/unstable/reactivity";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import * as Clipboard from "expo-clipboard";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Linking, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { ErrorBanner } from "../../components/ErrorBanner";
-import { ConnectionSheetButton } from "./ConnectionSheetButton";
-import { buildPairingUrl, extractPairingUrlFromQrPayload, parsePairingUrl } from "./pairing";
+import { pairingOnboardingProgressAtom } from "../../connection/onboarding";
+import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { ConnectionSheetButton } from "./ConnectionSheetButton";
+import {
+  buildPairingUrl,
+  describePairingDestination,
+  extractPairingUrlFromQrPayload,
+  pairingFailureMessage,
+  pairingStageLabel,
+  parsePairingUrl,
+  resolvePairingRouteIntent,
+  type PairingDestinationReview,
+} from "./pairing";
 
 type ConnectionsNewRouteParams = {
   readonly mode?: string;
@@ -20,52 +33,100 @@ type ConnectionsNewRouteParams = {
   readonly autoConnect?: string;
 };
 
+type PairingFlowStep = "choose" | "manual" | "review";
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export function ConnectionsNewRouteScreen({
   route,
 }: StaticScreenProps<ConnectionsNewRouteParams | undefined>) {
+  const translator = useMobileInterfaceTranslator();
   const {
     connectionPairingUrl,
     onChangeConnectionPairingUrl,
     onConnectPress,
     pairingConnectionError,
   } = useRemoteConnections();
+  const pairingProgress = useAtomValue(pairingOnboardingProgressAtom);
   const navigation = useNavigation();
   const params = route.params ?? {};
-  // Deep-link prefill exists for development automation only. A production
-  // link must not arrive with attacker-chosen host and token already filled.
-  const routePairingUrl = __DEV__ ? (params.pairingUrl?.trim() ?? "") : "";
-  const shouldAutoConnect =
-    __DEV__ &&
-    routePairingUrl.length > 0 &&
-    (params.autoConnect === "1" || params.autoConnect === "true");
+  const { pairingUrl: routePairingUrl, shouldAutoConnect } = resolvePairingRouteIntent(
+    params,
+    __DEV__,
+  );
   const insets = useSafeAreaInsets();
+  const [flowStep, setFlowStep] = useState<PairingFlowStep>("choose");
   const [hostInput, setHostInput] = useState("");
   const [codeInput, setCodeInput] = useState("");
+  const [reviewPairingUrl, setReviewPairingUrl] = useState("");
+  const [destinationReview, setDestinationReview] = useState<PairingDestinationReview | null>(null);
+  const [submittedPairingUrl, setSubmittedPairingUrl] = useState("");
+  const [inputError, setInputError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showScanner, setShowScanner] = useState(params.mode === "scan_qr");
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [scannerLocked, setScannerLocked] = useState(false);
   const attemptedAutoConnectRef = useRef<string | null>(null);
 
-  const headerIconColor = useThemeColor("--color-icon");
+  const headerIconColor = useUniwindTheme()["--color-icon"];
+  const activePairingStage = pairingProgress?.stage ?? "validating";
+  const connectDisabled =
+    isSubmitting || reviewPairingUrl.length === 0 || destinationReview === null;
 
-  const connectDisabled = isSubmitting || hostInput.trim().length === 0;
+  const preparePairingRequestForReview = useCallback(
+    (pairingUrl: string) => {
+      const { host, code } = parsePairingUrl(pairingUrl);
+      const normalizedPairingUrl = buildPairingUrl(host, code);
+      const review = describePairingDestination(normalizedPairingUrl);
+      setHostInput(host);
+      setCodeInput(code);
+      setReviewPairingUrl(normalizedPairingUrl);
+      setDestinationReview(review);
+      setSubmittedPairingUrl("");
+      setInputError(null);
+      setFlowStep("review");
+      onChangeConnectionPairingUrl(normalizedPairingUrl);
+    },
+    [onChangeConnectionPairingUrl],
+  );
 
   useEffect(() => {
-    const { host, code } = parsePairingUrl(connectionPairingUrl);
-    setHostInput(host);
-    setCodeInput(code);
-  }, [connectionPairingUrl]);
+    if (routePairingUrl.length > 0 || connectionPairingUrl.length === 0) {
+      return;
+    }
+
+    try {
+      preparePairingRequestForReview(connectionPairingUrl);
+    } catch (error) {
+      const { host, code } = parsePairingUrl(connectionPairingUrl);
+      setHostInput(host);
+      setCodeInput(code);
+      setInputError(
+        errorMessage(error, translator.message("mobile.connection.savedPairingInvalid")),
+      );
+      setFlowStep("manual");
+    }
+  }, [connectionPairingUrl, preparePairingRequestForReview, routePairingUrl, translator]);
 
   useEffect(() => {
     if (routePairingUrl.length === 0) {
       return;
     }
 
-    const { host, code } = parsePairingUrl(routePairingUrl);
-    setHostInput(host);
-    setCodeInput(code);
-  }, [routePairingUrl]);
+    try {
+      preparePairingRequestForReview(routePairingUrl);
+    } catch (error) {
+      const { host, code } = parsePairingUrl(routePairingUrl);
+      setHostInput(host);
+      setCodeInput(code);
+      setInputError(
+        errorMessage(error, translator.message("mobile.connection.pairingLinkInvalid")),
+      );
+      setFlowStep("manual");
+    }
+  }, [preparePairingRequestForReview, routePairingUrl, translator]);
 
   useEffect(() => {
     if (pairingConnectionError) {
@@ -75,10 +136,12 @@ export function ConnectionsNewRouteScreen({
 
   const handleHostChange = useCallback((value: string) => {
     setHostInput(value);
+    setInputError(null);
   }, []);
 
   const handleCodeChange = useCallback((value: string) => {
     setCodeInput(value);
+    setInputError(null);
   }, []);
 
   const openScanner = useCallback(async () => {
@@ -97,21 +160,24 @@ export function ConnectionsNewRouteScreen({
 
     if (permission.canAskAgain) {
       Alert.alert(
-        "Camera access needed",
-        "Allow camera access to scan an environment pairing QR code.",
+        translator.message("mobile.connection.cameraAccessNeeded"),
+        translator.message("mobile.connection.cameraAccessDescription"),
       );
       return;
     }
 
     Alert.alert(
-      "Camera access needed",
-      "Camera access was denied for this app. Open Settings to enable it.",
+      translator.message("mobile.connection.cameraAccessNeeded"),
+      translator.message("mobile.connection.cameraAccessDenied"),
       [
-        { text: "Cancel", style: "cancel" },
-        { text: "Open Settings", onPress: () => void Linking.openSettings() },
+        { text: translator.message("common.cancel"), style: "cancel" },
+        {
+          text: translator.message("mobile.settings.notifications.openSettings"),
+          onPress: () => void Linking.openSettings(),
+        },
       ],
     );
-  }, [cameraPermission?.granted, requestCameraPermission]);
+  }, [cameraPermission?.granted, requestCameraPermission, translator]);
 
   const closeScanner = useCallback(() => {
     setShowScanner(false);
@@ -125,30 +191,41 @@ export function ConnectionsNewRouteScreen({
       }
 
       setScannerLocked(true);
-
       try {
-        const pairingUrl = extractPairingUrlFromQrPayload(data);
-        const { host, code } = parsePairingUrl(pairingUrl);
-        setHostInput(host);
-        setCodeInput(code);
-        onChangeConnectionPairingUrl(pairingUrl);
+        preparePairingRequestForReview(extractPairingUrlFromQrPayload(data));
         setShowScanner(false);
       } catch (error) {
         Alert.alert(
-          "Invalid QR code",
-          error instanceof Error ? error.message : "Scanned QR code was not recognized.",
+          translator.message("mobile.connection.invalidQr"),
+          errorMessage(error, translator.message("mobile.connection.invalidQrDescription")),
+          [
+            {
+              text: translator.message("common.retry"),
+              onPress: () => setScannerLocked(false),
+            },
+          ],
+          { cancelable: false },
         );
-      } finally {
-        setTimeout(() => {
-          setScannerLocked(false);
-        }, 600);
       }
     },
-    [onChangeConnectionPairingUrl, scannerLocked],
+    [preparePairingRequestForReview, scannerLocked, translator],
   );
+
+  const handlePastePairingLink = useCallback(async () => {
+    try {
+      const pairingUrl = await Clipboard.getStringAsync();
+      preparePairingRequestForReview(pairingUrl);
+    } catch (error) {
+      Alert.alert(
+        translator.message("mobile.connection.pairingNotRecognized"),
+        errorMessage(error, translator.message("mobile.connection.pairingCopyComplete")),
+      );
+    }
+  }, [preparePairingRequestForReview, translator]);
 
   const connectAndClose = useCallback(
     async (pairingUrl: string, replaceWithHome: boolean) => {
+      setSubmittedPairingUrl(pairingUrl);
       setIsSubmitting(true);
       onChangeConnectionPairingUrl(pairingUrl);
       try {
@@ -167,9 +244,20 @@ export function ConnectionsNewRouteScreen({
     [navigation, onChangeConnectionPairingUrl, onConnectPress],
   );
 
+  const handleManualReview = useCallback(() => {
+    try {
+      preparePairingRequestForReview(buildPairingUrl(hostInput, codeInput));
+    } catch (error) {
+      setInputError(errorMessage(error, translator.message("mobile.connection.checkHostCode")));
+    }
+  }, [codeInput, hostInput, preparePairingRequestForReview, translator]);
+
   const handleSubmit = useCallback(async () => {
-    await connectAndClose(buildPairingUrl(hostInput, codeInput), false);
-  }, [codeInput, connectAndClose, hostInput]);
+    if (reviewPairingUrl.length === 0) {
+      return;
+    }
+    await connectAndClose(reviewPairingUrl, false);
+  }, [connectAndClose, reviewPairingUrl]);
 
   useEffect(() => {
     if (!shouldAutoConnect || attemptedAutoConnectRef.current === routePairingUrl) {
@@ -180,22 +268,34 @@ export function ConnectionsNewRouteScreen({
     void connectAndClose(routePairingUrl, true);
   }, [connectAndClose, routePairingUrl, shouldAutoConnect]);
 
+  const pairingErrorMessage =
+    pairingConnectionError && submittedPairingUrl === reviewPairingUrl
+      ? pairingFailureMessage(activePairingStage, pairingConnectionError)
+      : null;
+
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
       <NativeStackScreenOptions
         options={{
-          // Android renders its own in-screen header below instead of the native bar.
           ...(Platform.OS === "android" ? { headerShown: false } : null),
-          title: showScanner ? "Scan QR Code" : "Add Environment",
+          title: showScanner
+            ? translator.message("mobile.connection.scanQrTitle")
+            : translator.message("mobile.connection.addEnvironment"),
         }}
       />
       {Platform.OS === "android" ? (
         <AndroidScreenHeader
-          title={showScanner ? "Scan QR Code" : "Add Environment"}
+          title={
+            showScanner
+              ? translator.message("mobile.connection.scanQrTitle")
+              : translator.message("mobile.connection.addEnvironment")
+          }
           onBack={() => navigation.goBack()}
           actions={[
             {
-              accessibilityLabel: showScanner ? "Close scanner" : "Scan QR code",
+              accessibilityLabel: showScanner
+                ? translator.message("mobile.connection.closeScanner")
+                : translator.message("mobile.connection.scanQr"),
               icon: showScanner ? "xmark" : "camera",
               onPress: () => {
                 if (showScanner) {
@@ -229,10 +329,7 @@ export function ConnectionsNewRouteScreen({
         showsVerticalScrollIndicator={false}
         className="flex-1"
         contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
-        contentContainerStyle={{
-          paddingHorizontal: 20,
-          paddingTop: 16,
-        }}
+        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16 }}
       >
         <View collapsable={false} className="gap-5">
           {showScanner ? (
@@ -247,12 +344,12 @@ export function ConnectionsNewRouteScreen({
             ) : (
               <View className="items-center gap-3 rounded-[24px] border-continuous bg-card px-5 py-8">
                 <Text className="text-center text-sm leading-normal text-foreground-muted">
-                  Camera permission is required to scan a QR code.
+                  {translator.message("mobile.connection.cameraRequired")}
                 </Text>
                 <ConnectionSheetButton
                   compact
                   icon="camera"
-                  label="Allow camera"
+                  label={translator.message("mobile.connection.allowCamera")}
                   tone="secondary"
                   onPress={() => {
                     void openScanner();
@@ -260,11 +357,44 @@ export function ConnectionsNewRouteScreen({
                 />
               </View>
             )
-          ) : (
+          ) : flowStep === "choose" ? (
+            <View collapsable={false} className="gap-4">
+              <View className="gap-1 px-1">
+                <Text className="font-t3-semibold text-lg text-foreground">
+                  {translator.message("mobile.connection.connectHost")}
+                </Text>
+                <Text className="text-sm leading-normal text-foreground-muted">
+                  {translator.message("mobile.connection.connectInstructions")}
+                </Text>
+              </View>
+              <View className="gap-3 rounded-[24px] bg-card p-4">
+                <ConnectionSheetButton
+                  icon="camera"
+                  label={translator.message("mobile.connection.scanQr")}
+                  tone="primary"
+                  onPress={() => {
+                    void openScanner();
+                  }}
+                />
+                <ConnectionSheetButton
+                  icon="link"
+                  label={translator.message("mobile.connection.pastePairing")}
+                  onPress={() => {
+                    void handlePastePairingLink();
+                  }}
+                />
+                <ConnectionSheetButton
+                  icon="keyboard"
+                  label={translator.message("mobile.connection.enterManually")}
+                  onPress={() => setFlowStep("manual")}
+                />
+              </View>
+            </View>
+          ) : flowStep === "manual" ? (
             <View collapsable={false} className="gap-4 rounded-[24px] bg-card p-4">
               <View collapsable={false} className="gap-1.5">
                 <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
-                  Host
+                  {translator.message("mobile.connection.host")}
                 </Text>
                 <TextInput
                   autoCapitalize="none"
@@ -279,31 +409,88 @@ export function ConnectionsNewRouteScreen({
 
               <View collapsable={false} className="gap-1.5">
                 <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
-                  Pairing code
+                  {translator.message("mobile.connection.pairingCode")}
                 </Text>
                 <TextInput
                   autoCapitalize="none"
                   autoCorrect={false}
                   placeholder="abc-123-xyz"
+                  secureTextEntry
                   value={codeInput}
                   onChangeText={handleCodeChange}
                   className="rounded-[14px] border border-input-border bg-input px-4 py-3.5 text-base text-foreground"
                 />
               </View>
 
-              {pairingConnectionError ? <ErrorBanner message={pairingConnectionError} /> : null}
+              {inputError ? <ErrorBanner message={inputError} /> : null}
+
+              <ConnectionSheetButton
+                icon="arrow.right"
+                label={translator.message("mobile.connection.review")}
+                disabled={hostInput.trim().length === 0 || codeInput.trim().length === 0}
+                tone="primary"
+                onPress={handleManualReview}
+              />
+              <ConnectionSheetButton
+                compact
+                icon="chevron.left"
+                label={translator.message("mobile.connection.backToOptions")}
+                onPress={() => setFlowStep("choose")}
+              />
+            </View>
+          ) : destinationReview ? (
+            <View collapsable={false} className="gap-4 rounded-[24px] bg-card p-4">
+              <View className="gap-1.5">
+                <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
+                  {translator.message("mobile.connection.destination")}
+                </Text>
+                <Text selectable className="font-t3-medium text-base text-foreground">
+                  {destinationReview.destination}
+                </Text>
+              </View>
+
+              <View className="gap-1.5 rounded-2xl bg-secondary px-3.5 py-3">
+                <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
+                  {translator.message("mobile.connection.transport")}
+                </Text>
+                <Text className="font-t3-semibold text-sm text-foreground">
+                  {destinationReview.transport} · {destinationReview.transportDetail}
+                </Text>
+                {!destinationReview.encrypted ? (
+                  <Text className="text-xs leading-normal text-foreground-muted">
+                    {translator.message("mobile.connection.unencryptedWarning")}
+                  </Text>
+                ) : null}
+              </View>
+
+              <Text className="text-xs leading-normal text-foreground-muted">
+                {translator.message("mobile.connection.pairingCodeHidden")}
+              </Text>
+
+              {pairingErrorMessage ? <ErrorBanner message={pairingErrorMessage} /> : null}
 
               <ConnectionSheetButton
                 icon="plus"
-                label={isSubmitting ? "Pairing..." : "Add environment"}
+                label={
+                  isSubmitting
+                    ? pairingStageLabel(activePairingStage)
+                    : translator.message("mobile.connection.pairEnvironment")
+                }
                 disabled={connectDisabled}
                 tone="primary"
                 onPress={() => {
                   void handleSubmit();
                 }}
               />
+              <ConnectionSheetButton
+                compact
+                icon="pencil"
+                label={translator.message("mobile.connection.editDetails")}
+                disabled={isSubmitting}
+                onPress={() => setFlowStep("manual")}
+              />
             </View>
-          )}
+          ) : null}
         </View>
       </ScrollView>
     </View>

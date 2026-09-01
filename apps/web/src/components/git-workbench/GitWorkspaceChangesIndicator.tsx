@@ -1,4 +1,6 @@
 import { cn } from "~/lib/utils";
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 import type { GitCompactStatus } from "./GitCompactCard";
 
@@ -7,25 +9,30 @@ export interface GitWorkspaceChangesIndicatorProps {
   readonly status: GitCompactStatus;
 }
 
-function indicatorCopy(status: GitCompactStatus): {
+function indicatorCopy(
+  status: GitCompactStatus,
+  translate: InterfaceTranslator["message"],
+): {
   readonly accessibleLabel: string;
   readonly visibleLabel: string;
 } {
   if (status.kind === "disconnected" || status.kind === "unavailable") {
     return {
-      accessibleLabel: "Repository unavailable",
-      visibleLabel: "Unavailable",
+      accessibleLabel: translate("git.workbench.repositoryUnavailable"),
+      visibleLabel: translate("git.common.unavailable"),
     };
   }
 
-  const countLabel = `${status.changeCount} ${status.changeCount === 1 ? "change" : "changes"}`;
+  const countLabel = translate("git.workbench.changeCount", { count: status.changeCount });
   return {
-    accessibleLabel: `${countLabel}${status.conflicts > 0 ? ", conflicts present" : ""}`,
+    accessibleLabel:
+      status.conflicts > 0 ? `${countLabel}, ${translate("git.common.conflicts")}` : countLabel,
     visibleLabel: countLabel,
   };
 }
 
 export function GitWorkspaceChangesIndicator(props: GitWorkspaceChangesIndicatorProps) {
+  const translate = useInterfaceTranslator().message;
   if (props.status.kind === "stale") {
     return (
       <span
@@ -33,12 +40,12 @@ export function GitWorkspaceChangesIndicator(props: GitWorkspaceChangesIndicator
         data-git-workspace-changes-indicator="true"
         data-repository-state={props.status.kind}
       >
-        Repository status refreshing
+        {translate("git.workbench.statusRefreshing")}
       </span>
     );
   }
 
-  const copy = indicatorCopy(props.status);
+  const copy = indicatorCopy(props.status, translate);
 
   return (
     <span

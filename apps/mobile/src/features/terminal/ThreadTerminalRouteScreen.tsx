@@ -66,6 +66,7 @@ import {
   type TerminalMenuSession,
 } from "./terminalMenu";
 import { cacheTerminalGridSize, getCachedTerminalGridSize } from "./terminalUiState";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const DEFAULT_TERMINAL_COLS = 80;
 const DEFAULT_TERMINAL_ROWS = 24;
@@ -159,6 +160,7 @@ type ThreadTerminalRouteScreenProps = StaticScreenProps<{
 }>;
 
 export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps) {
+  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const resizeTerminal = useAtomCommand(terminalEnvironment.resize, "terminal resize");
@@ -934,7 +936,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     () => [
       {
         id: "text-size",
-        title: "Text size",
+        title: translator.message("mobile.terminal.textSize"),
         subactions: [
           {
             id: "font-decrease",
@@ -960,12 +962,16 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       ),
       {
         id: "terminal-new",
-        title: "Open new terminal",
+        title: translator.message("mobile.terminal.openNew"),
         image: "plus",
-        subtitle: `Start another shell in ${basename(selectedThreadProject?.workspaceRoot ?? null) ?? "this workspace"}`,
+        subtitle: translator.message("mobile.terminal.startShellIn", {
+          workspace:
+            basename(selectedThreadProject?.workspaceRoot ?? null) ??
+            translator.message("mobile.terminal.thisWorkspace"),
+        }),
       },
     ],
-    [fontSize, selectedThreadProject?.workspaceRoot, terminalId, terminalMenuSessions],
+    [fontSize, selectedThreadProject?.workspaceRoot, terminalId, terminalMenuSessions, translator],
   );
 
   const handleAndroidTerminalMenuAction = useCallback(
@@ -1051,14 +1057,14 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
 
   if (!selectedThread) {
     if (workspaceState.isLoadingConnections) {
-      return <LoadingScreen message="Opening terminal…" />;
+      return <LoadingScreen message={translator.message("mobile.terminal.opening")} />;
     }
 
     return (
       <View className="flex-1 bg-screen">
         <EmptyState
-          title="Thread unavailable"
-          detail="This terminal route needs an active thread and workspace."
+          title={translator.message("mobile.terminal.threadUnavailable")}
+          detail={translator.message("mobile.terminal.threadUnavailableDetail")}
         />
       </View>
     );
@@ -1068,15 +1074,15 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     return (
       <View className="flex-1 bg-screen">
         <EmptyState
-          title="Terminal unavailable"
-          detail="This thread does not have a workspace root yet, so there is nowhere to open a shell."
+          title={translator.message("mobile.terminal.unavailable")}
+          detail={translator.message("mobile.terminal.unavailableDetail")}
         />
       </View>
     );
   }
 
   if (!environment.isReady && environment.presentation === null) {
-    return <LoadingScreen message="Opening terminal…" />;
+    return <LoadingScreen message={translator.message("mobile.terminal.opening")} />;
   }
 
   return (
@@ -1089,7 +1095,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           // Android draws its own in-flow header (AndroidScreenHeader below);
           // the native stack header stays iOS-only.
           headerShown: Platform.OS !== "android",
-          title: "Terminal",
+          title: translator.message("mobile.terminal.title"),
           unstable_headerSubtitle:
             usesNativeHeaderGlass && headerSubtitle.length > 0 ? headerSubtitle : undefined,
         }}
@@ -1097,16 +1103,18 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
 
       {Platform.OS === "android" ? (
         <AndroidScreenHeader
-          title="Terminal"
+          title={translator.message("mobile.terminal.title")}
           subtitle={headerSubtitle}
           onBack={navigation.canGoBack() ? () => navigation.goBack() : undefined}
           trailing={
             <>
               {layout.usesSplitView ? (
                 <AndroidHeaderIconButton
-                  accessibilityLabel={
-                    panes.primarySidebarVisible ? "Maximize terminal" : "Show threads"
-                  }
+                  accessibilityLabel={translator.message(
+                    panes.primarySidebarVisible
+                      ? "mobile.terminal.maximize"
+                      : "mobile.terminal.showThreads",
+                  )}
                   icon={
                     panes.primarySidebarVisible
                       ? "arrow.up.left.and.arrow.down.right"
@@ -1125,7 +1133,10 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                   })}
                   onPressAction={handleAndroidTerminalMenuAction}
                 >
-                  <AndroidHeaderIconButton accessibilityLabel="Terminal options" icon="terminal" />
+                  <AndroidHeaderIconButton
+                    accessibilityLabel={translator.message("mobile.terminal.options")}
+                    icon="terminal"
+                  />
                 </ControlPillMenu>
               ) : null}
             </>
@@ -1136,7 +1147,11 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       {layout.usesSplitView ? (
         <NativeHeaderToolbar placement="left">
           <NativeHeaderToolbar.Button
-            accessibilityLabel={panes.primarySidebarVisible ? "Maximize terminal" : "Show threads"}
+            accessibilityLabel={translator.message(
+              panes.primarySidebarVisible
+                ? "mobile.terminal.maximize"
+                : "mobile.terminal.showThreads",
+            )}
             icon={
               panes.primarySidebarVisible ? "arrow.up.left.and.arrow.down.right" : "sidebar.left"
             }
@@ -1148,25 +1163,35 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
 
       {isEnvironmentReady ? (
         <NativeHeaderToolbar placement="right">
-          <NativeHeaderToolbar.Menu icon="terminal" title="Terminal options" separateBackground>
+          <NativeHeaderToolbar.Menu
+            icon="terminal"
+            title={translator.message("mobile.terminal.options")}
+            separateBackground
+          >
             <NativeHeaderToolbar.Label>
               {getTerminalStatusLabel({
                 status: terminal.status,
                 hasRunningSubprocess: terminal.hasRunningSubprocess,
               })}
             </NativeHeaderToolbar.Label>
-            <NativeHeaderToolbar.Menu icon="textformat.size" inline title="Text size">
-              <NativeHeaderToolbar.Label>Text size</NativeHeaderToolbar.Label>
+            <NativeHeaderToolbar.Menu
+              icon="textformat.size"
+              inline
+              title={translator.message("mobile.terminal.textSize")}
+            >
+              <NativeHeaderToolbar.Label>
+                {translator.message("mobile.terminal.textSize")}
+              </NativeHeaderToolbar.Label>
               <NativeHeaderToolbar.MenuAction
                 disabled={fontSize <= MIN_TERMINAL_FONT_SIZE}
-                discoverabilityLabel="Decrease terminal text size"
+                discoverabilityLabel={translator.message("mobile.terminal.decreaseText")}
                 onPress={handleDecreaseFontSize}
               >
                 <NativeHeaderToolbar.Label>{`A- ${Math.max(MIN_TERMINAL_FONT_SIZE, fontSize - TERMINAL_FONT_SIZE_STEP).toFixed(1)} pt`}</NativeHeaderToolbar.Label>
               </NativeHeaderToolbar.MenuAction>
               <NativeHeaderToolbar.MenuAction
                 disabled={fontSize >= MAX_TERMINAL_FONT_SIZE}
-                discoverabilityLabel="Increase terminal text size"
+                discoverabilityLabel={translator.message("mobile.terminal.increaseText")}
                 onPress={handleIncreaseFontSize}
               >
                 <NativeHeaderToolbar.Label>{`A+ ${Math.min(MAX_TERMINAL_FONT_SIZE, fontSize + TERMINAL_FONT_SIZE_STEP).toFixed(1)} pt`}</NativeHeaderToolbar.Label>
@@ -1190,9 +1215,15 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
             <NativeHeaderToolbar.MenuAction
               icon="plus"
               onPress={handleOpenNewTerminal}
-              subtitle={`Start another shell in ${basename(selectedThreadProject.workspaceRoot) ?? "this workspace"}`}
+              subtitle={translator.message("mobile.terminal.startShellIn", {
+                workspace:
+                  basename(selectedThreadProject.workspaceRoot) ??
+                  translator.message("mobile.terminal.thisWorkspace"),
+              })}
             >
-              <NativeHeaderToolbar.Label>Open new terminal</NativeHeaderToolbar.Label>
+              <NativeHeaderToolbar.Label>
+                {translator.message("mobile.terminal.openNew")}
+              </NativeHeaderToolbar.Label>
             </NativeHeaderToolbar.MenuAction>
           </NativeHeaderToolbar.Menu>
         </NativeHeaderToolbar>
@@ -1275,7 +1306,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                       })}
                     </ComposerToolbarScroller>
                     <ComposerToolbarButton
-                      accessibilityLabel="Dismiss keyboard"
+                      accessibilityLabel={translator.message("mobile.terminal.dismissKeyboard")}
                       icon={{ ios: "keyboard.chevron.compact.down", android: "keyboard_hide" }}
                       onPress={handleDismissKeyboard}
                       showChevron={false}
@@ -1285,7 +1316,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
               </KeyboardStickyView>
             ) : !keyboardState.isVisible ? (
               <Pressable
-                accessibilityLabel="Show keyboard"
+                accessibilityLabel={translator.message("mobile.terminal.showKeyboard")}
                 accessibilityRole="button"
                 onPress={handleShowKeyboard}
                 style={({ pressed }) => ({

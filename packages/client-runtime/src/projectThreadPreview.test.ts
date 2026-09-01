@@ -128,15 +128,14 @@ describe("resolveProjectThreadSections", () => {
     const sections = resolveSections();
 
     expect(sections.visibleNonSettledItems.map((item) => item.id)).toEqual([
-      "active-1",
-      "active-2",
       "active-working",
+      "active-1",
     ]);
-    expect(sections.hiddenNonSettledItems.map((item) => item.id)).toEqual(["active-3"]);
+    expect(sections.hiddenNonSettledItems.map((item) => item.id)).toEqual(["active-2", "active-3"]);
     expect(sections.nonSettledItems.map((item) => item.id)).toEqual([
+      "active-working",
       "active-1",
       "active-2",
-      "active-working",
       "active-3",
     ]);
     expect(sections.visibleSettledItems).toEqual([]);
@@ -148,9 +147,9 @@ describe("resolveProjectThreadSections", () => {
 
     expect(sections.hiddenNonSettledItems).toEqual([]);
     expect(sections.visibleNonSettledItems.map((item) => item.id)).toEqual([
+      "active-working",
       "active-1",
       "active-2",
-      "active-working",
       "active-3",
     ]);
     expect(sections.visibleSettledItems.map((item) => item.id)).toEqual(["settled-1", "settled-2"]);
@@ -164,5 +163,108 @@ describe("resolveProjectThreadSections", () => {
 
     expect(sections.visibleSettledItems.map((item) => item.id)).toEqual(["settled-2"]);
     expect(sections.hiddenSettledItems.map((item) => item.id)).toEqual(["settled-1"]);
+  });
+
+  it("shows four priority chats when the preview limit is three", () => {
+    const priorityItems = [
+      { id: "priority-1", settled: false, priority: true },
+      { id: "priority-2", settled: false, priority: true },
+      { id: "priority-3", settled: false, priority: true },
+      { id: "priority-4", settled: false, priority: true },
+      { id: "ordinary", settled: false, priority: false },
+    ] as const;
+
+    const sections = resolveProjectThreadSections({
+      items: priorityItems,
+      count: 3,
+      showAllNonSettled: false,
+      showSettled: false,
+      isSettled: (item) => item.settled,
+      alwaysVisible: (item) => item.priority,
+      keepSettledVisible: () => false,
+    });
+
+    expect(sections.visibleNonSettledItems.map((item) => item.id)).toEqual([
+      "priority-1",
+      "priority-2",
+      "priority-3",
+      "priority-4",
+    ]);
+    expect(sections.hiddenNonSettledItems.map((item) => item.id)).toEqual(["ordinary"]);
+  });
+
+  it("promotes priority chats while preserving priority and ordinary sort order", () => {
+    const mixedItems = [
+      { id: "ordinary-1", settled: false, priority: false },
+      { id: "priority-1", settled: false, priority: true },
+      { id: "ordinary-2", settled: false, priority: false },
+      { id: "priority-2", settled: false, priority: true },
+      { id: "ordinary-3", settled: false, priority: false },
+    ] as const;
+
+    const sections = resolveProjectThreadSections({
+      items: mixedItems,
+      count: 3,
+      showAllNonSettled: false,
+      showSettled: false,
+      isSettled: (item) => item.settled,
+      alwaysVisible: (item) => item.priority,
+      keepSettledVisible: () => false,
+    });
+
+    expect(sections.visibleNonSettledItems.map((item) => item.id)).toEqual([
+      "priority-1",
+      "priority-2",
+      "ordinary-1",
+    ]);
+    expect(sections.hiddenNonSettledItems.map((item) => item.id)).toEqual([
+      "ordinary-2",
+      "ordinary-3",
+    ]);
+  });
+
+  it("promotes a settled priority chat without duplicating it", () => {
+    const mixedItems = [
+      { id: "ordinary", settled: false, priority: false },
+      { id: "settled-priority", settled: true, priority: true },
+      { id: "settled-ordinary", settled: true, priority: false },
+    ] as const;
+
+    const sections = resolveProjectThreadSections({
+      items: mixedItems,
+      count: 2,
+      showAllNonSettled: false,
+      showSettled: true,
+      isSettled: (item) => item.settled,
+      alwaysVisible: (item) => item.priority,
+      keepSettledVisible: () => false,
+    });
+
+    expect(sections.visibleNonSettledItems.map((item) => item.id)).toEqual([
+      "settled-priority",
+      "ordinary",
+    ]);
+    expect(sections.settledItems.map((item) => item.id)).toEqual(["settled-ordinary"]);
+    expect([...sections.visibleNonSettledItems, ...sections.visibleSettledItems]).toHaveLength(3);
+  });
+
+  it("returns a settled priority chat to the hidden settled section when priority clears", () => {
+    const settledItem = [{ id: "settled-priority", settled: true }] as const;
+    const resolveSettledItem = (hasPriority: boolean) =>
+      resolveProjectThreadSections({
+        items: settledItem,
+        count: 1,
+        showAllNonSettled: false,
+        showSettled: false,
+        isSettled: (item) => item.settled,
+        alwaysVisible: () => hasPriority,
+        keepSettledVisible: () => false,
+      });
+
+    expect(resolveSettledItem(true).visibleNonSettledItems).toEqual(settledItem);
+
+    const clearedSections = resolveSettledItem(false);
+    expect(clearedSections.visibleNonSettledItems).toEqual([]);
+    expect(clearedSections.hiddenSettledItems).toEqual(settledItem);
   });
 });

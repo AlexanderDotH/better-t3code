@@ -60,11 +60,8 @@ export const make = (
     const path = yield* Path.Path;
     const entryLimit = Math.max(1, Math.floor(options.entryLimit ?? DEFAULT_ENTRY_LIMIT));
 
-    const readDirectory = Effect.fn("ProjectSpeechWorkspaceScanner.readDirectory")(function* (
-      workspaceRoot: string,
-      directory: PendingDirectory,
-    ) {
-      return yield* Effect.tryPromise({
+    const readDirectory = (workspaceRoot: string, directory: PendingDirectory) =>
+      Effect.tryPromise({
         try: () => NodeFSP.readdir(directory.absolutePath, { withFileTypes: true }),
         catch: (cause) =>
           new ProjectSpeechWorkspaceScanError({
@@ -73,7 +70,6 @@ export const make = (
             cause,
           }),
       });
-    });
 
     const scan: ProjectSpeechWorkspaceScanner["Service"]["scan"] = Effect.fn(
       "ProjectSpeechWorkspaceScanner.scan",

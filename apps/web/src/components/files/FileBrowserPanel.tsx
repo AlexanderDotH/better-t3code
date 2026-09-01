@@ -14,6 +14,7 @@ import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -51,6 +52,7 @@ function treePath(entry: ProjectEntry): string {
 }
 
 function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -59,14 +61,18 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
             type="button"
             variant="ghost"
             size="icon-xs"
-            aria-label="Refresh workspace files"
+            aria-label={translate("browser.files.refreshWorkspace")}
             onClick={props.onRefresh}
           />
         }
       >
         <RotateCw className={cn(props.isPending && "animate-spin")} />
       </TooltipTrigger>
-      <TooltipPopup>{props.isPending ? "Refreshing…" : "Refresh files"}</TooltipPopup>
+      <TooltipPopup>
+        {props.isPending
+          ? translate("browser.files.refreshing")
+          : translate("browser.files.refresh")}
+      </TooltipPopup>
     </Tooltip>
   );
 }
@@ -78,6 +84,7 @@ function FileSearchField(props: {
   onValueChange: (value: string) => void;
   value: string;
 }) {
+  const translate = useInterfaceTranslator().message;
   return (
     <InputGroup variant="ghost" className="h-7 min-w-0 flex-1">
       <InputGroupInput
@@ -86,7 +93,7 @@ function FileSearchField(props: {
         size="sm"
         value={props.value}
         aria-label={props.ariaLabel}
-        placeholder="Search files"
+        placeholder={translate("browser.files.search")}
         spellCheck={false}
         onChange={(event) => props.onValueChange(event.target.value)}
         onKeyDown={(event) => {
@@ -108,6 +115,7 @@ export default function FileBrowserPanel({
   onOpenFile,
   onRefreshSelectedFile,
 }: FileBrowserPanelProps) {
+  const translate = useInterfaceTranslator().message;
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
   const entriesQuery = useProjectEntriesQuery(environmentId, cwd);
@@ -155,20 +163,25 @@ export default function FileBrowserPanel({
     try {
       const clicked = await api.contextMenu.show(
         [
-          { id: "copy-mention", label: "Copy mention" },
-          { id: "add-to-chat", label: "Add to chat" },
+          { id: "copy-mention", label: translate("browser.files.copyMention") },
+          { id: "add-to-chat", label: translate("browser.files.addToChat") },
         ],
         position,
       );
       if (clicked === "copy-mention") {
         try {
           await writeTextToClipboard(mention);
-          toastManager.add({ type: "success", title: "Mention copied", description: relativePath });
+          toastManager.add({
+            type: "success",
+            title: translate("browser.files.mentionCopied"),
+            description: relativePath,
+          });
         } catch (error) {
           toastManager.add({
             type: "error",
-            title: "Failed to copy mention",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: translate("browser.files.copyMentionFailed"),
+            description:
+              error instanceof Error ? error.message : translate("browser.files.errorOccurred"),
           });
         }
         return;
@@ -178,8 +191,8 @@ export default function FileBrowserPanel({
         if (!composer) {
           toastManager.add({
             type: "error",
-            title: "Unable to add to chat",
-            description: "Open a chat for this project and try again.",
+            title: translate("browser.files.unableToAddToChat"),
+            description: translate("browser.files.openChatFirst"),
           });
           return;
         }
@@ -187,8 +200,8 @@ export default function FileBrowserPanel({
         if (!inserted) {
           toastManager.add({
             type: "error",
-            title: "Unable to add to chat",
-            description: "The chat isn't ready to accept input right now.",
+            title: translate("browser.files.unableToAddToChat"),
+            description: translate("browser.files.chatNotReady"),
           });
         }
       }
@@ -363,7 +376,7 @@ export default function FileBrowserPanel({
         <RefreshFilesButton isPending={entriesQuery.isPending} onRefresh={handleRefresh} />
         <FileSearchField
           name="project-files-search"
-          ariaLabel={`Search ${projectName} files`}
+          ariaLabel={translate("browser.files.searchProject", { project: projectName })}
           value={search.value}
           onValueChange={handleSearchValueChange}
           onClose={search.close}
@@ -374,11 +387,11 @@ export default function FileBrowserPanel({
       ) : (
         <FileTree
           model={model}
-          aria-label={`${projectName} files`}
+          aria-label={translate("browser.files.projectFiles", { project: projectName })}
           className="min-h-0 flex-1 overflow-hidden"
           style={{
             colorScheme: resolvedTheme,
-            ["--trees-fg-override" as string]: "var(--foreground)",
+            ["--trees-fg-override" as string]: "var(--contrast-foreground)",
           }}
         />
       )}

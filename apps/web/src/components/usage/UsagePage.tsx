@@ -1,4 +1,5 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
+import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -10,7 +11,6 @@ import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import {
   enumerateDays,
   enumerateHourStarts,
-  formatCount,
   formatDateTimeShort,
   formatDayShort,
   formatHourShort,
@@ -32,16 +32,21 @@ import {
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
-import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
+import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 const WINDOW_OPTIONS = [
-  { days: 1, label: "Past 24h" },
-  { days: 7, label: "7 days" },
-  { days: 30, label: "30 days" },
-  { days: 90, label: "90 days" },
-] as const;
+  { days: 1, messageId: "usage.window.past24Hours" },
+  { days: 7, messageId: "usage.window.days7" },
+  { days: 30, messageId: "usage.window.days30" },
+  { days: 90, messageId: "usage.window.days90" },
+] as const satisfies ReadonlyArray<{
+  readonly days: number;
+  readonly messageId: InterfaceMessageKey;
+}>;
 
 export function UsagePage() {
+  const translator = useInterfaceTranslator();
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
     window: makeWindow(30),
@@ -74,6 +79,24 @@ export function UsagePage() {
     () => (isPast24Hours ? merged.hourly : merged.daily).toReversed(),
     [isPast24Hours, merged.daily, merged.hourly],
   );
+  const breakdownModels = useMemo(
+    () =>
+      breakdown === "model" && metric === "tokens"
+        ? merged.models.toSorted(
+            (left, right) => right.totalTokens - left.totalTokens || right.costUsd - left.costUsd,
+          )
+        : merged.models,
+    [breakdown, merged.models, metric],
+  );
+  const activeProviders = useMemo(() => providersWithUsage(merged.providers), [merged.providers]);
+  const visibleCalls = merged.calls.filter(
+    (call) => call.kind !== "unknown" || call.records > 0 || call.totalTokens > 0,
+  );
+  const hasCallUsage = visibleCalls.some((call) => call.records > 0 || call.totalTokens > 0);
+  const hasContextDiagnostics = Object.values(merged.contextDiagnostics).some(
+    (value) => (value ?? 0) > 0,
+  );
+  const timeValueColumnWidth = `${60 / (activeProviders.length + 2)}%`;
 
   const selectWindow = (days: number) => {
     setWindowSelection({
@@ -96,13 +119,24 @@ export function UsagePage() {
   };
   const windowLabel =
     isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
-      ? `${formatDateTimeShort(window.sinceTime, window.timeZone)} to ${formatDateTimeShort(window.untilTime, window.timeZone)}`
-      : `${formatDayShort(window.sinceDay)} to ${formatDayShort(window.untilDay)}`;
+      ? translator.message("usage.window.range", {
+          from: formatDateTimeShort(window.sinceTime, window.timeZone),
+          to: formatDateTimeShort(window.untilTime, window.timeZone),
+        })
+      : translator.message("usage.window.range", {
+          from: formatDayShort(window.sinceDay),
+          to: formatDayShort(window.untilDay),
+        });
+  const selectedWindowMessageId =
+    WINDOW_OPTIONS.find((option) => option.days === windowDays)?.messageId ?? "usage.window.days30";
   const topbarContent = (
     <div className="flex w-full min-w-0 items-center gap-3">
-      <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
+      <WorkspaceBreadcrumb
+        ariaLabel={translator.message("usage.breadcrumbAria")}
+        className="min-w-0"
+      >
         <WorkspaceBreadcrumbItem current>
-          <h1>Usage</h1>
+          <h1>{translator.message("usage.title")}</h1>
         </WorkspaceBreadcrumbItem>
         <WorkspaceBreadcrumbSeparator className="hidden md:flex" />
         <WorkspaceBreadcrumbItem className="hidden min-w-0 shrink md:flex">
@@ -111,7 +145,7 @@ export function UsagePage() {
       </WorkspaceBreadcrumb>
       <div className="ms-auto hidden min-w-0 items-center justify-end gap-2 lg:flex">
         <ToggleGroup
-          aria-label="Usage metric"
+          aria-label={translator.message("usage.metricAria")}
           variant="segmented"
           value={[metric]}
           onValueChange={(next) => {
@@ -121,12 +155,12 @@ export function UsagePage() {
         >
           {(["cost", "tokens"] as const).map((option) => (
             <Toggle key={option} value={option}>
-              {option === "cost" ? "Cost" : "Tokens"}
+              {translator.message(option === "cost" ? "usage.metric.cost" : "usage.metric.tokens")}
             </Toggle>
           ))}
         </ToggleGroup>
         <ToggleGroup
-          aria-label="Usage period"
+          aria-label={translator.message("usage.periodAria")}
           variant="segmented"
           value={[String(windowDays)]}
           onValueChange={(next) => {
@@ -136,11 +170,16 @@ export function UsagePage() {
         >
           {WINDOW_OPTIONS.map((option) => (
             <Toggle key={option.days} value={String(option.days)}>
-              {option.label}
+              {translator.message(option.messageId)}
             </Toggle>
           ))}
         </ToggleGroup>
-        <Button onClick={refreshWindow} aria-label="Refresh usage" size="icon-sm" variant="ghost">
+        <Button
+          onClick={refreshWindow}
+          aria-label={translator.message("usage.refreshAria")}
+          size="icon-sm"
+          variant="ghost"
+        >
           <RefreshCwIcon className="size-3.5" />
         </Button>
       </div>
@@ -152,38 +191,43 @@ export function UsagePage() {
           }}
         >
           <SelectTrigger
-            aria-label="Usage metric"
-            size="compact"
-            variant="ghost"
-            className="w-auto min-w-0"
-          >
-            <SelectValue>{metric === "cost" ? "Cost" : "Tokens"}</SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
-            <SelectItem value="cost">Cost</SelectItem>
-            <SelectItem value="tokens">Tokens</SelectItem>
-          </SelectPopup>
-        </Select>
-        <Select value={String(windowDays)} onValueChange={(value) => selectWindow(Number(value))}>
-          <SelectTrigger
-            aria-label="Usage period"
+            aria-label={translator.message("usage.metricAria")}
             size="compact"
             variant="ghost"
             className="w-auto min-w-0"
           >
             <SelectValue>
-              {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
+              {translator.message(metric === "cost" ? "usage.metric.cost" : "usage.metric.tokens")}
             </SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            <SelectItem value="cost">{translator.message("usage.metric.cost")}</SelectItem>
+            <SelectItem value="tokens">{translator.message("usage.metric.tokens")}</SelectItem>
+          </SelectPopup>
+        </Select>
+        <Select value={String(windowDays)} onValueChange={(value) => selectWindow(Number(value))}>
+          <SelectTrigger
+            aria-label={translator.message("usage.periodAria")}
+            size="compact"
+            variant="ghost"
+            className="w-auto min-w-0"
+          >
+            <SelectValue>{translator.message(selectedWindowMessageId)}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {WINDOW_OPTIONS.map((option) => (
               <SelectItem key={option.days} value={String(option.days)}>
-                {option.label}
+                {translator.message(option.messageId)}
               </SelectItem>
             ))}
           </SelectPopup>
         </Select>
-        <Button onClick={refreshWindow} aria-label="Refresh usage" size="icon-sm" variant="ghost">
+        <Button
+          onClick={refreshWindow}
+          aria-label={translator.message("usage.refreshAria")}
+          size="icon-sm"
+          variant="ghost"
+        >
           <RefreshCwIcon className="size-3.5" />
         </Button>
       </div>
@@ -210,7 +254,7 @@ export function UsagePage() {
                   staleEnvironments={merged.staleEnvironments}
                 />
 
-                <section className="grid gap-6 lg:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
+                <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
                   <div className="flex min-w-0 flex-col gap-5">
                     <div className="flex flex-col gap-1">
                       <span className="text-4xl font-semibold text-foreground tabular-nums">
@@ -219,20 +263,27 @@ export function UsagePage() {
                           : formatTokens(merged.totalTokens)}
                       </span>
                       <span className="text-xs text-muted-foreground">
-                        {metric === "cost"
-                          ? `${formatCount(merged.sessions)} sessions · API estimate`
-                          : `${formatCount(merged.sessions)} sessions`}
+                        {translator.message(
+                          metric === "cost" ? "usage.summary.cost" : "usage.summary.tokens",
+                          {
+                            sessions: translator.message("usage.sessions", {
+                              count: merged.sessions,
+                              formattedCount: translator.number(merged.sessions),
+                            }),
+                          },
+                        )}
                       </span>
                     </div>
 
-                    {PROVIDER_ORDER.map((provider) => {
+                    {activeProviders.map((provider) => {
                       const totals = merged.providers.find((entry) => entry.provider === provider);
                       const share =
                         metric === "cost" ? (totals?.costShare ?? 0) : (totals?.tokenShare ?? 0);
                       const providerSessions = totals?.sessions ?? 0;
-                      const sessionLabel = `${formatCount(providerSessions)} ${
-                        providerSessions === 1 ? "session" : "sessions"
-                      }`;
+                      const sessionLabel = translator.message("usage.sessions", {
+                        count: providerSessions,
+                        formattedCount: translator.number(providerSessions),
+                      });
                       return (
                         <div key={provider} className="flex flex-col gap-1">
                           <div className="flex items-baseline justify-between gap-4">
@@ -262,8 +313,14 @@ export function UsagePage() {
                           </div>
                           <span className="text-xs text-muted-foreground">
                             {metric === "cost"
-                              ? `${formatPercent(share)} of cost · ${formatTokens(totals?.totalTokens ?? 0)} tokens`
-                              : `${formatPercent(share)} of tokens · ${formatUsd(totals?.costUsd ?? 0)}`}
+                              ? translator.message("usage.provider.costShare", {
+                                  share: formatPercent(share),
+                                  tokens: formatTokens(totals?.totalTokens ?? 0),
+                                })
+                              : translator.message("usage.provider.tokenShare", {
+                                  share: formatPercent(share),
+                                  cost: formatUsd(totals?.costUsd ?? 0),
+                                })}
                           </span>
                         </div>
                       );
@@ -272,10 +329,18 @@ export function UsagePage() {
 
                   <div className="flex min-w-0 flex-col gap-3">
                     <h2 className="text-sm font-medium text-foreground">
-                      {isPast24Hours ? "Hourly" : "Daily"}{" "}
-                      {metric === "tokens" ? "processed tokens" : "cost"}
+                      {translator.message(
+                        isPast24Hours
+                          ? metric === "tokens"
+                            ? "usage.chart.hourlyTokens"
+                            : "usage.chart.hourlyCost"
+                          : metric === "tokens"
+                            ? "usage.chart.dailyTokens"
+                            : "usage.chart.dailyCost",
+                      )}
                     </h2>
                     <UsageProviderChart
+                      providers={activeProviders}
                       days={days}
                       daily={merged.daily}
                       hours={hours}
@@ -289,27 +354,141 @@ export function UsagePage() {
                 </section>
 
                 <section className="flex flex-col gap-2">
-                  <h2 className="text-sm font-medium text-foreground">Totals</h2>
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
-                    <Metric label="Processed tokens" value={formatTokens(merged.totalTokens)} />
-                    <Metric label="Cached input" value={formatTokens(merged.cachedInputTokens)} />
+                  <h2 className="text-sm font-medium text-foreground">
+                    {translator.message("usage.totals")}
+                  </h2>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-4">
                     <Metric
-                      label="Uncached input"
+                      label={translator.message("usage.newInput")}
                       value={formatTokens(merged.uncachedInputTokens)}
                     />
-                    <Metric label="Output" value={formatTokens(merged.outputTokens)} />
                     <Metric
-                      label="Cache savings"
+                      label={translator.message("usage.cachedInput")}
+                      value={formatTokens(merged.cachedInputTokens)}
+                    />
+                    <Metric
+                      label={translator.message("usage.output")}
+                      value={formatTokens(merged.outputTokens)}
+                    />
+                    <Metric
+                      label={translator.message("usage.reasoning")}
+                      value={formatTokens(merged.reasoningTokens)}
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-x-6 gap-y-1 border-t border-border/50 pt-2 text-xs text-muted-foreground">
+                    <SecondaryMetric
+                      label={translator.message("usage.processedTotal")}
+                      value={formatTokens(merged.totalTokens)}
+                    />
+                    <SecondaryMetric
+                      label={translator.message("usage.cacheWrites")}
+                      value={formatTokens(merged.cacheCreationTokens)}
+                    />
+                    <SecondaryMetric
+                      label={translator.message("usage.cacheSavings")}
                       value={formatUsd(merged.costQuality.cacheSavingsUsd)}
                     />
                   </div>
                 </section>
 
+                {hasCallUsage ? (
+                  <section className="flex flex-col gap-2">
+                    <h2 className="text-sm font-medium text-foreground">
+                      {translator.message("usage.calls")}
+                    </h2>
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-4">
+                      {visibleCalls.map((call) => (
+                        <Metric
+                          key={call.kind}
+                          label={translator.message(`usage.calls.${call.kind}`)}
+                          value={formatTokens(call.totalTokens)}
+                          detail={translator.message("usage.calls.records", {
+                            count: call.records,
+                            formattedCount: translator.number(call.records),
+                          })}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+
+                {hasContextDiagnostics ? (
+                  <section className="flex flex-col gap-2">
+                    <h2 className="text-sm font-medium text-foreground">
+                      {translator.message("usage.contextDiagnostics")}
+                    </h2>
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
+                      <Metric
+                        label={translator.message("usage.context.nativeForks")}
+                        value={translator.number(merged.contextDiagnostics.nativeForks)}
+                      />
+                      <Metric
+                        label={translator.message("usage.context.compactHandoffs")}
+                        value={translator.number(merged.contextDiagnostics.compactHandoffs)}
+                      />
+                      <Metric
+                        label={translator.message("usage.context.handoffCharacters")}
+                        value={translator.number(merged.contextDiagnostics.totalHandoffChars)}
+                      />
+                      <Metric
+                        label={translator.message("usage.context.compactionEvents")}
+                        value={translator.number(merged.contextDiagnostics.compactionEvents)}
+                      />
+                      <Metric
+                        label={translator.message("usage.context.maxContext")}
+                        value={formatTokens(merged.contextDiagnostics.maxContextTokens)}
+                      />
+                      {(merged.contextDiagnostics.instructionChars ?? 0) > 0 ? (
+                        <Metric
+                          label={translator.message("usage.context.instructionCharacters")}
+                          value={translator.number(merged.contextDiagnostics.instructionChars ?? 0)}
+                        />
+                      ) : null}
+                      {(merged.contextDiagnostics.memoryInjectionChars ?? 0) > 0 ? (
+                        <Metric
+                          label={translator.message("usage.context.memoryInjectionCharacters")}
+                          value={translator.number(
+                            merged.contextDiagnostics.memoryInjectionChars ?? 0,
+                          )}
+                        />
+                      ) : null}
+                      {(merged.contextDiagnostics.toolSchemaChars ?? 0) > 0 ? (
+                        <Metric
+                          label={translator.message("usage.context.toolSchemaCharacters")}
+                          value={translator.number(merged.contextDiagnostics.toolSchemaChars ?? 0)}
+                        />
+                      ) : null}
+                      {(merged.contextDiagnostics.subagentResultChars ?? 0) > 0 ? (
+                        <Metric
+                          label={translator.message("usage.context.subagentResultCharacters")}
+                          value={translator.number(
+                            merged.contextDiagnostics.subagentResultChars ?? 0,
+                          )}
+                        />
+                      ) : null}
+                      {(merged.contextDiagnostics.toolDigestChars ?? 0) > 0 ? (
+                        <Metric
+                          label={translator.message("usage.context.toolDigestCharacters")}
+                          value={translator.number(merged.contextDiagnostics.toolDigestChars ?? 0)}
+                        />
+                      ) : null}
+                      {(merged.contextDiagnostics.autoRoutingChars ?? 0) > 0 ? (
+                        <Metric
+                          label={translator.message("usage.context.autoRoutingCharacters")}
+                          value={translator.number(merged.contextDiagnostics.autoRoutingChars ?? 0)}
+                        />
+                      ) : null}
+                    </div>
+                  </section>
+                ) : null}
+
                 <section className="flex flex-col gap-3">
                   <div className="flex items-center justify-between gap-3">
-                    <h2 className="text-sm font-medium text-foreground">Breakdown</h2>
+                    <h2 className="text-sm font-medium text-foreground">
+                      {translator.message("usage.breakdown")}
+                    </h2>
                     <ToggleGroup
-                      aria-label="Usage breakdown"
+                      aria-label={translator.message("usage.breakdownAria")}
                       variant="segmented"
                       value={[breakdown]}
                       onValueChange={(next) => {
@@ -319,8 +498,11 @@ export function UsagePage() {
                     >
                       {(
                         [
-                          { value: "model", label: "Model" },
-                          { value: "time", label: isPast24Hours ? "Hour" : "Day" },
+                          { value: "model", label: translator.message("usage.model") },
+                          {
+                            value: "time",
+                            label: translator.message(isPast24Hours ? "usage.hour" : "usage.day"),
+                          },
                         ] as const
                       ).map((option) => (
                         <Toggle key={option.value} value={option.value}>
@@ -331,24 +513,36 @@ export function UsagePage() {
                   </div>
 
                   {breakdown === "model" ? (
-                    <table className="w-full text-sm">
+                    <table className="w-full table-fixed text-sm">
+                      <colgroup>
+                        <col className="w-2/5" />
+                        <col className="w-1/5" />
+                        <col className="w-1/5" />
+                        <col className="w-1/5" />
+                      </colgroup>
                       <thead>
                         <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                          <th className="py-2 font-normal">Model</th>
-                          <th className="py-2 text-right font-normal">Cost</th>
-                          <th className="py-2 text-right font-normal">Share</th>
-                          <th className="py-2 text-right font-normal">Tokens</th>
+                          <th className="py-2 font-normal">{translator.message("usage.model")}</th>
+                          <th className="py-2 text-right font-normal">
+                            {translator.message("usage.metric.cost")}
+                          </th>
+                          <th className="py-2 text-right font-normal">
+                            {translator.message("usage.share")}
+                          </th>
+                          <th className="py-2 text-right font-normal">
+                            {translator.message("usage.metric.tokens")}
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
-                        {merged.models.length === 0 ? (
+                        {breakdownModels.length === 0 ? (
                           <tr>
                             <td colSpan={4} className="py-6 text-center text-muted-foreground">
-                              No activity in this window.
+                              {translator.message("usage.emptyWindow")}
                             </td>
                           </tr>
                         ) : (
-                          merged.models.map((model) => (
+                          breakdownModels.map((model) => (
                             <tr
                               key={`${model.provider}:${model.model}`}
                               className="border-b border-border/50 transition-colors hover:bg-muted/50"
@@ -374,24 +568,41 @@ export function UsagePage() {
                       </tbody>
                     </table>
                   ) : (
-                    <table className="w-full text-sm">
+                    <table className="w-full table-fixed text-sm">
+                      <colgroup>
+                        <col className="w-2/5" />
+                        {activeProviders.map((provider) => (
+                          <col key={provider} style={{ width: timeValueColumnWidth }} />
+                        ))}
+                        <col style={{ width: timeValueColumnWidth }} />
+                        <col style={{ width: timeValueColumnWidth }} />
+                      </colgroup>
                       <thead>
                         <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                          <th className="py-2 font-normal">{isPast24Hours ? "Hour" : "Day"}</th>
-                          {PROVIDER_ORDER.map((provider) => (
+                          <th className="py-2 font-normal">
+                            {translator.message(isPast24Hours ? "usage.hour" : "usage.day")}
+                          </th>
+                          {activeProviders.map((provider) => (
                             <th key={provider} className="py-2 text-right font-normal">
                               {PROVIDER_PRESENTATION[provider].label}
                             </th>
                           ))}
-                          <th className="py-2 text-right font-normal">Total</th>
-                          <th className="py-2 text-right font-normal">Tokens</th>
+                          <th className="py-2 text-right font-normal">
+                            {translator.message("usage.total")}
+                          </th>
+                          <th className="py-2 text-right font-normal">
+                            {translator.message("usage.metric.tokens")}
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
                         {breakdownPeriods.length === 0 ? (
                           <tr>
-                            <td colSpan={5} className="py-6 text-center text-muted-foreground">
-                              No activity in this window.
+                            <td
+                              colSpan={activeProviders.length + 3}
+                              className="py-6 text-center text-muted-foreground"
+                            >
+                              {translator.message("usage.emptyWindow")}
                             </td>
                           </tr>
                         ) : (
@@ -405,7 +616,7 @@ export function UsagePage() {
                                   ? formatHourShort(period.hourStart, window.timeZone)
                                   : formatDayShort(period.day)}
                               </td>
-                              {PROVIDER_ORDER.map((provider) => (
+                              {activeProviders.map((provider) => (
                                 <td
                                   key={provider}
                                   className="py-2 text-right text-muted-foreground tabular-nums"
@@ -447,12 +658,31 @@ function ProviderMark({
   return <Mark className={cn("shrink-0", className)} aria-hidden />;
 }
 
-function Metric({ label, value }: { readonly label: string; readonly value: string }) {
+function Metric({
+  label,
+  value,
+  detail,
+}: {
+  readonly label: string;
+  readonly value: string;
+  readonly detail?: string;
+}) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
       <span className="text-xs text-muted-foreground">{label}</span>
       <span className="text-base font-medium text-foreground tabular-nums">{value}</span>
+      {detail === undefined ? null : (
+        <span className="text-xs text-muted-foreground">{detail}</span>
+      )}
     </div>
+  );
+}
+
+function SecondaryMetric({ label, value }: { readonly label: string; readonly value: string }) {
+  return (
+    <span>
+      {label}: <span className="font-medium text-foreground tabular-nums">{value}</span>
+    </span>
   );
 }
 
@@ -471,6 +701,7 @@ function UsageCoverageNotice({
   readonly duplicateSources: readonly string[];
   readonly staleEnvironments: readonly string[];
 }) {
+  const translator = useInterfaceTranslator();
   const failed = environments.filter((environment) => environment.error !== null);
   const stale = environments.filter((environment) =>
     staleEnvironments.includes(environment.environmentId),
@@ -482,17 +713,20 @@ function UsageCoverageNotice({
   return (
     <div className="flex flex-col gap-1 border border-border px-3 py-2 text-xs text-muted-foreground">
       {failed.map((environment) => (
-        <span key={environment.label}>{environment.label} could not report usage.</span>
+        <span key={environment.label}>
+          {translator.message("usage.coverage.failed", { environment: environment.label })}
+        </span>
       ))}
       {stale.map((environment) => (
         <span key={environment.label}>
-          {environment.label} runs an older server version and is excluded from totals.
+          {translator.message("usage.coverage.stale", { environment: environment.label })}
         </span>
       ))}
       {duplicateSources.length > 0 ? (
         <span>
-          Counted once across environments sharing a transcript directory:{" "}
-          {duplicateSources.join(", ")}
+          {translator.message("usage.coverage.duplicates", {
+            sources: translator.list(duplicateSources),
+          })}
         </span>
       ) : null}
     </div>
@@ -509,6 +743,7 @@ function UsageDeviceStrip({
 }: {
   readonly environments: readonly EnvironmentUsageStatus[];
 }) {
+  const translator = useInterfaceTranslator();
   const scanning = environments.filter(
     (environment) => environment.summary === null && environment.error === null,
   );
@@ -547,9 +782,10 @@ function UsageDeviceStrip({
         );
       })}
       <span className="ms-auto text-muted-foreground">
-        {scanning.length === 1
-          ? "1 device still scanning"
-          : `${scanning.length} devices still scanning`}
+        {translator.message("usage.deviceScanning", {
+          count: scanning.length,
+          formattedCount: translator.number(scanning.length),
+        })}
       </span>
     </div>
   );
@@ -560,9 +796,17 @@ function UsageDeviceStrip({
  * exactly once when the last device answers.
  */
 function UsageSkeleton() {
+  const translator = useInterfaceTranslator();
+  const metricLabels = [
+    translator.message("usage.processedTokens"),
+    translator.message("usage.cachedInput"),
+    translator.message("usage.uncachedInput"),
+    translator.message("usage.output"),
+    translator.message("usage.cacheSavings"),
+  ];
   return (
     <>
-      <section className="grid gap-6 lg:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
+      <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
         <div className="flex flex-col gap-5">
           <div className="flex flex-col gap-1">
             <div className="h-10 w-36 rounded-sm bg-muted" />
@@ -572,12 +816,8 @@ function UsageSkeleton() {
             <div key={provider} className="flex flex-col gap-1">
               <div className="flex min-h-5 items-center justify-between gap-4">
                 <span className="flex items-center gap-2">
-                  <span
-                    aria-hidden
-                    className="size-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: PROVIDER_PRESENTATION[provider].color }}
-                  />
-                  <ProviderMark provider={provider} className="size-4" />
+                  <span className="size-2 shrink-0 rounded-full bg-muted" />
+                  <span className="size-4 shrink-0 rounded-full bg-muted" />
                   <div className="h-3.5 w-20 rounded-sm bg-muted" />
                 </span>
                 <div className="h-3.5 w-14 rounded-sm bg-muted" />
@@ -591,23 +831,33 @@ function UsageSkeleton() {
           <div className="h-5 w-24 rounded-sm bg-muted" />
           <div className="flex flex-col gap-1">
             <div className="ml-16 h-56 rounded-sm bg-muted/35" />
-            <div className="ml-16 h-3 rounded-sm bg-muted/35" />
+            <div className="ml-16 h-4 rounded-sm bg-muted/35" />
           </div>
         </div>
       </section>
 
       <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium text-foreground">Totals</h2>
+        <h2 className="text-sm font-medium text-foreground">
+          {translator.message("usage.totals")}
+        </h2>
         <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
-          {["Processed tokens", "Cached input", "Uncached input", "Output", "Cache savings"].map(
-            (label) => (
-              <div key={label} className="flex flex-col gap-0.5">
-                <span className="text-xs text-muted-foreground">{label}</span>
-                <div className="my-0.5 h-4 w-16 rounded-sm bg-muted" />
-              </div>
-            ),
-          )}
+          {metricLabels.map((label) => (
+            <div key={label} className="flex flex-col gap-0.5">
+              <span className="text-xs text-muted-foreground">{label}</span>
+              <div className="h-6 w-16 rounded-sm bg-muted" />
+            </div>
+          ))}
         </div>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-sm font-medium text-foreground">
+            {translator.message("usage.breakdown")}
+          </h2>
+          <div className="h-7 w-28 rounded-lg bg-input/40" />
+        </div>
+        <div className="h-44 rounded-sm bg-muted/35" />
       </section>
     </>
   );

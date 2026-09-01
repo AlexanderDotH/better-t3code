@@ -145,7 +145,7 @@ describe("GitCurrentFilePanel", () => {
     );
 
     expect(markup).toContain("buffered until the active agent turn settles");
-    expect(markup).toContain("Current worktree file");
+    expect(markup).toContain("Current working tree file");
   });
 
   it("offers all three conflict choices without making the historical surface editable", () => {
@@ -212,7 +212,7 @@ describe("GitOperationsPanel", () => {
     expect(markup).toContain("One durable workflow is kept per worktree");
     expect(markup).toContain("Uses force-with-lease");
     expect(markup).toContain("cannot restore remote history");
-    expect(markup).toContain("Restore…");
+    expect(markup).toContain("Restore snapshot…");
   });
 
   it("lets a stale queued workflow be reviewed, retried, replaced, or cancelled", () => {
@@ -245,7 +245,7 @@ describe("GitOperationsPanel", () => {
       />,
     );
 
-    expect(markup).toContain("Review &amp; edit");
+    expect(markup).toContain("Review and edit");
     expect(markup).toContain("Retry validation");
     expect(markup).toContain("Replace workflow…");
     expect(markup).toContain("Cancel workflow");

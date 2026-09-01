@@ -1,6 +1,7 @@
 import type { ProjectCheckpointSetting } from "./projectCheckpointSettings";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 export function ProjectCheckpointControls({
   setting,
@@ -11,10 +12,11 @@ export function ProjectCheckpointControls({
   readonly isSaving: boolean;
   readonly onChange: (enabled: boolean) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   if (setting.state !== "mixed") {
     return (
       <Switch
-        aria-label="Create checkpoints after turns"
+        aria-label={translate("settings.projects.checkpoints.create")}
         checked={setting.effectiveEnabled}
         disabled={isSaving}
         onCheckedChange={onChange}
@@ -24,7 +26,9 @@ export function ProjectCheckpointControls({
 
   return (
     <div className="flex items-center gap-2">
-      <span className="text-xs text-muted-foreground">Mixed</span>
+      <span className="text-xs text-muted-foreground">
+        {translate("settings.projects.checkpoints.mixed")}
+      </span>
       <Button
         size="xs"
         variant="outline"
@@ -32,7 +36,7 @@ export function ProjectCheckpointControls({
         disabled={isSaving}
         onClick={() => onChange(false)}
       >
-        Disable all
+        {translate("settings.projects.checkpoints.disableAll")}
       </Button>
       <Button
         size="xs"
@@ -41,7 +45,7 @@ export function ProjectCheckpointControls({
         disabled={isSaving}
         onClick={() => onChange(true)}
       >
-        Enable all
+        {translate("settings.projects.checkpoints.enableAll")}
       </Button>
     </div>
   );

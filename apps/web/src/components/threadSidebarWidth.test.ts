@@ -50,7 +50,7 @@ describe("thread sidebar width", () => {
     );
   });
 
-  it("shows the desktop wordmark across the sidebar's full legal width range", () => {
+  it("shows the Better T3 Code desktop wordmark across the sidebar's full legal width range", () => {
     const sidebarSource = NodeFS.readFileSync(
       new URL("./sidebar/SidebarChrome.tsx", import.meta.url),
       "utf8",
@@ -58,6 +58,10 @@ describe("thread sidebar width", () => {
 
     expect(sidebarSource).toContain("hidden h-7 w-fit min-w-0 shrink-0 items-center gap-1");
     expect(sidebarSource).toContain("md:flex");
+    expect(sidebarSource).toMatch(/>\s*Better\s*</);
+    expect(
+      sidebarSource.match(/-translate-y-px truncate text-sm font-medium tracking-tight/g),
+    ).toHaveLength(2);
     expect(THREAD_SIDEBAR_MIN_WIDTH).toBe(13 * 16);
   });
 });

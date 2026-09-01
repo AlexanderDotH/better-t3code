@@ -4,8 +4,12 @@ import type { ResourceTelemetryProcess } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import {
+  resourceTelemetryCategoryMessageKey,
   resourceHistoryBarHeight,
   resourceHistoryCpuScaleMax,
+  resourceTelemetryIoSemanticsMessageKey,
+  resourceTelemetrySourceStatusMessageKey,
+  resourceTelemetryThermalMessageKey,
   shouldShowResourceMonitorRetry,
   visibleResourceTelemetryProcesses,
 } from "./ResourceTelemetryDiagnostics.logic";
@@ -86,5 +90,51 @@ describe("visibleResourceTelemetryProcesses", () => {
       processes[1],
       processes[3],
     ]);
+  });
+});
+
+describe("resource telemetry localization keys", () => {
+  it.each([
+    ["server", "settings.diagnostics.process.category.server"],
+    ["server-child", "settings.diagnostics.process.category.serverChild"],
+    ["provider-root", "settings.diagnostics.process.category.provider"],
+    ["terminal-root", "settings.diagnostics.process.category.terminal"],
+    ["electron-main", "settings.diagnostics.process.category.electronMain"],
+    ["electron-renderer", "settings.diagnostics.process.category.renderer"],
+    ["electron-gpu", "settings.diagnostics.process.category.gpu"],
+    ["electron-utility", "settings.diagnostics.process.category.electronUtility"],
+    ["resource-monitor", "settings.diagnostics.process.category.monitor"],
+    ["unknown-t3", "settings.diagnostics.process.category.t3"],
+  ] as const)("maps process category %s", (category, key) => {
+    expect(resourceTelemetryCategoryMessageKey(category)).toBe(key);
+  });
+
+  it.each([
+    ["storage", "settings.diagnostics.io.storage"],
+    ["logical", "settings.diagnostics.io.logical"],
+    ["all-io", "settings.diagnostics.io.all"],
+    ["unavailable", "settings.diagnostics.common.unavailable"],
+  ] as const)("maps I/O semantics %s", (semantics, key) => {
+    expect(resourceTelemetryIoSemanticsMessageKey(semantics)).toBe(key);
+  });
+
+  it.each([
+    ["starting", "settings.diagnostics.source.starting"],
+    ["healthy", "settings.diagnostics.source.healthy"],
+    ["degraded", "settings.diagnostics.source.degraded"],
+    ["unavailable", "settings.diagnostics.common.unavailable"],
+    ["stopped", "settings.diagnostics.source.stopped"],
+  ] as const)("maps source status %s", (status, key) => {
+    expect(resourceTelemetrySourceStatusMessageKey(status)).toBe(key);
+  });
+
+  it.each([
+    ["unknown", "settings.diagnostics.common.unknown"],
+    ["nominal", "settings.diagnostics.thermal.nominal"],
+    ["fair", "settings.diagnostics.thermal.fair"],
+    ["serious", "settings.diagnostics.thermal.serious"],
+    ["critical", "settings.diagnostics.thermal.critical"],
+  ] as const)("maps thermal state %s", (state, key) => {
+    expect(resourceTelemetryThermalMessageKey(state)).toBe(key);
   });
 });

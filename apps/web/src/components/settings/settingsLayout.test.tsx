@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { pseudoLocalizeInterfaceMessage } from "@t3tools/shared/interfaceLanguage";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -12,6 +13,25 @@ afterEach(() => {
 });
 
 describe("settings search targets", () => {
+  it("keeps long pseudo-localized labels on the shrinkable side of the responsive grid", () => {
+    const pseudoLabel = Array.from({ length: 3 }, () =>
+      pseudoLocalizeInterfaceMessage("settings.panels.background.profile.batterySaverDescription"),
+    ).join(" ");
+    const markup = renderToStaticMarkup(
+      <SettingsRow
+        title={pseudoLabel}
+        description={pseudoLabel}
+        control={<button>Control</button>}
+      />,
+    );
+
+    expect(pseudoLabel).toMatch(/^⟦.+⟧$/);
+    expect(pseudoLabel.length).toBeGreaterThan(80);
+    expect(markup).toContain("sm:grid-cols-[minmax(0,1fr)_minmax(10rem,auto)]");
+    expect(markup).toContain("min-w-0 flex-1 space-y-1");
+    expect(markup).toContain(pseudoLabel);
+  });
+
   it("does not persist destination styling in the rendered row", () => {
     const markup = renderToStaticMarkup(
       <SettingsSearchTargetProvider targetId="word-wrap">
@@ -23,6 +43,29 @@ describe("settings search targets", () => {
     expect(markup).toContain('id="word-wrap" tabindex="-1"');
     expect(markup).not.toContain("data-settings-search-target");
     expect(markup).not.toContain("settings-search-target-pulse");
+  });
+
+  it("keeps an explanatory visual inside the same row as its label and control", () => {
+    const markup = renderToStaticMarkup(
+      <SettingsRow
+        title="Plan mode"
+        description="Plan before changing files."
+        control={<button type="button">Enable</button>}
+        visual={<div data-example-setting-visual>Plan preview</div>}
+      />,
+    );
+
+    const titleIndex = markup.indexOf("Plan mode");
+    const controlIndex = markup.indexOf("Enable");
+    const visualIndex = markup.indexOf("data-example-setting-visual");
+
+    expect(markup).toContain("data-settings-row-visual");
+    expect(markup).toContain('aria-hidden="true"');
+    expect(markup).toContain("md:grid-cols-[minmax(12rem,1fr)_minmax(15rem,20rem)_auto]");
+    expect(markup).toContain("border-border/60 bg-card/35");
+    expect(titleIndex).toBeGreaterThan(-1);
+    expect(controlIndex).toBeGreaterThan(titleIndex);
+    expect(visualIndex).toBeGreaterThan(controlIndex);
   });
 
   it("scrolls directly to a section header and restarts the destination pulse", () => {

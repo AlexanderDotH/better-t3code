@@ -12,8 +12,12 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
+  CLAUDE_DRIVER_KIND,
+  CODEX_DRIVER_KIND,
+  CURSOR_DRIVER_KIND,
   ModelSelection,
   NonNegativeInt,
+  OPENCODE_DRIVER_KIND,
   ThreadId,
   ProviderInterruptTurnInput,
   ProviderRespondToRequestInput,
@@ -23,10 +27,14 @@ import {
   ProviderStopSessionInput,
   RuntimeSessionId,
   resolveProviderSessionPurpose,
+  ProviderUploadFeedbackInput,
   type ProviderInstanceId,
   type ProviderDriverKind,
+  type ProviderSandboxMode,
+  type ProviderSessionPurpose,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
@@ -61,7 +69,10 @@ import {
   withMetrics,
 } from "../../observability/Metrics.ts";
 import { type ProviderAdapterError, ProviderValidationError } from "../Errors.ts";
-import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
+import type {
+  ProviderAdapterShape,
+  ProviderNativeThreadForkInput,
+} from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
@@ -72,6 +83,27 @@ import { McpRuntimeRegistry } from "../../mcp/McpRuntimeRegistry.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 const isModelSelection = Schema.is(ModelSelection);
+
+const INTERNAL_WORKSPACE_PROVIDERS = new Set<ProviderDriverKind>([
+  CODEX_DRIVER_KIND,
+  CLAUDE_DRIVER_KIND,
+  CURSOR_DRIVER_KIND,
+  OPENCODE_DRIVER_KIND,
+]);
+
+export function providerSessionCanWriteWorkspace(input: {
+  readonly provider: ProviderDriverKind;
+  readonly purpose?: ProviderSessionPurpose;
+  readonly runtimeMode: RuntimeMode;
+  readonly sandboxMode?: ProviderSandboxMode;
+}): boolean {
+  return (
+    INTERNAL_WORKSPACE_PROVIDERS.has(input.provider) &&
+    resolveProviderSessionPurpose(input.purpose) !== "fetch-worker" &&
+    input.runtimeMode !== "approval-required" &&
+    input.sandboxMode !== "read-only"
+  );
+}
 
 /**
  * Hook for tests that want to override the canonical event logger pulled
@@ -449,6 +481,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     options?: {
       readonly workspaceContextThreadId?: ThreadId;
       readonly workspaceOnly?: boolean;
+      readonly projectMemoryEnabled?: boolean;
+      readonly workspaceWriteEnabled?: boolean;
     },
   ) =>
     Effect.gen(function* () {
@@ -517,6 +551,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly sessionInput: Parameters<
       ProviderAdapterShape<ProviderAdapterError>["startSession"]
     >[0];
+    readonly start?: (
+      sessionInput: Parameters<ProviderAdapterShape<ProviderAdapterError>["startSession"]>[0],
+    ) => Effect.Effect<ProviderSession, ProviderAdapterError>;
   }) {
     const runtimeSessionId = input.runtimeSessionId ?? (yield* nextRuntimeSessionId);
     const sessionInput = {
@@ -525,7 +562,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     };
     const startGate = yield* Deferred.make<void>();
     const startFiber = yield* Deferred.await(startGate).pipe(
-      Effect.andThen(input.adapter.startSession(sessionInput)),
+      Effect.andThen(
+        input.start === undefined
+          ? input.adapter.startSession(sessionInput)
+          : input.start(sessionInput),
+      ),
       Effect.forkIn(serviceScope),
     );
     const installed = yield* installRuntimeLease({
@@ -556,6 +597,21 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
                 : {}),
               ...(input.workspaceOnlyMcp !== undefined
                 ? { workspaceOnly: input.workspaceOnlyMcp }
+                : {}),
+              ...(input.sessionInput.projectMemoryMode !== undefined
+                ? { projectMemoryEnabled: input.sessionInput.projectMemoryMode === "project" }
+                : {}),
+              ...(providerSessionCanWriteWorkspace({
+                provider: input.adapter.provider,
+                runtimeMode: input.sessionInput.runtimeMode,
+                ...(input.sessionInput.purpose !== undefined
+                  ? { purpose: input.sessionInput.purpose }
+                  : {}),
+                ...(input.sessionInput.sandboxMode !== undefined
+                  ? { sandboxMode: input.sessionInput.sandboxMode }
+                  : {}),
+              })
+                ? { workspaceWriteEnabled: true }
                 : {}),
             },
           );
@@ -1064,6 +1120,133 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const forkSession: ProviderServiceMethod<"forkSession"> = Effect.fn("forkSession")(function* (
+    input: ProviderNativeThreadForkInput,
+  ) {
+    const parsed = yield* decodeInputOrValidationError({
+      operation: "ProviderService.forkSession",
+      schema: ProviderSessionStartInput,
+      payload: input.session,
+    });
+    if (parsed.threadId !== input.destinationThreadId) {
+      return yield* toValidationError(
+        "ProviderService.forkSession",
+        "The fork destination must match the destination session thread.",
+      );
+    }
+    if (resolveProviderSessionPurpose(parsed.purpose) !== "interactive") {
+      return yield* toValidationError(
+        "ProviderService.forkSession",
+        "Provider-native forks are only available for interactive sessions.",
+      );
+    }
+    if (input.sourceProviderThreadId.trim().length === 0) {
+      return yield* toValidationError(
+        "ProviderService.forkSession",
+        "A provider thread cursor is required for a native fork.",
+      );
+    }
+
+    const destinationInstanceId = yield* requireBindingInstanceId(
+      "ProviderService.forkSession",
+      parsed,
+    );
+    const sourceBinding = Option.getOrUndefined(yield* directory.getBinding(input.sourceThreadId));
+    if (sourceBinding?.providerInstanceId !== destinationInstanceId) {
+      return yield* toValidationError(
+        "ProviderService.forkSession",
+        "Provider-native forks require the source and destination to use the same provider instance.",
+      );
+    }
+
+    const instanceInfo = yield* registry.getInstanceInfo(destinationInstanceId);
+    if (!instanceInfo.enabled) {
+      return yield* toValidationError(
+        "ProviderService.forkSession",
+        `Provider instance '${destinationInstanceId}' is disabled in T3 Code settings.`,
+      );
+    }
+    const source = yield* resolveRoutableSession({
+      threadId: input.sourceThreadId,
+      operation: "ProviderService.forkSession",
+      allowRecovery: true,
+    });
+    const adapter = source.adapter;
+    if (adapter.capabilities.nativeThreadFork !== true || adapter.forkSession === undefined) {
+      return yield* toValidationError(
+        "ProviderService.forkSession",
+        `Provider '${adapter.provider}' does not support native thread forks.`,
+      );
+    }
+
+    const sessionInput = {
+      ...parsed,
+      provider: adapter.provider,
+      providerInstanceId: destinationInstanceId,
+      threadId: input.destinationThreadId,
+    };
+    const session = yield* startAdapterSessionWithLease({
+      adapter,
+      providerInstanceId: destinationInstanceId,
+      sessionInput,
+      start: (leasedSessionInput) =>
+        adapter.forkSession!({
+          ...input,
+          session: leasedSessionInput,
+        }),
+    });
+    if (session.provider !== adapter.provider) {
+      yield* cleanupExactRuntimeLeaseMcpSession({
+        threadId: input.destinationThreadId,
+        expectedRuntimeSessionId: session.runtimeSessionId,
+      });
+      return yield* toValidationError(
+        "ProviderService.forkSession",
+        `Adapter/provider mismatch: requested '${adapter.provider}', received '${session.provider}'.`,
+      );
+    }
+    yield* stopStaleSessionsForThread({
+      threadId: input.destinationThreadId,
+      currentInstanceId: destinationInstanceId,
+    });
+    yield* upsertSessionBinding(session, input.destinationThreadId, {
+      modelSelection: sessionInput.modelSelection,
+    });
+    yield* registerMcpRuntimeSession(session);
+    return session;
+  });
+
+  const compactThread: ProviderServiceMethod<"compactThread"> = Effect.fn("compactThread")(
+    function* (threadId, expectedRuntimeSessionId) {
+      const routed = yield* resolveRoutableSession({
+        threadId,
+        operation: "ProviderService.compactThread",
+        allowRecovery: false,
+      });
+      if (
+        !routed.isActive ||
+        routed.adapter.capabilities.manualCompaction !== true ||
+        routed.adapter.compactThread === undefined
+      ) {
+        return yield* toValidationError(
+          "ProviderService.compactThread",
+          `Provider '${routed.adapter.provider}' does not expose compaction for this active session.`,
+        );
+      }
+      const lease = (yield* Ref.get(runtimeLeases)).get(threadId);
+      if (
+        expectedRuntimeSessionId !== undefined &&
+        lease?.runtimeSessionId !== expectedRuntimeSessionId
+      ) {
+        return;
+      }
+      yield* routed.adapter.compactThread(
+        threadId,
+        expectedRuntimeSessionId ?? lease?.runtimeSessionId,
+      );
+    },
+  );
+
   const startTransientSession: ProviderServiceMethod<"startTransientSession"> = Effect.fn(
     "startTransientSession",
   )(function* (threadId, rawInput, options) {
@@ -1221,21 +1404,32 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       payload: rawInput,
     });
 
-    const attachments = parsed.attachments ?? [];
-    if (!parsed.input && attachments.length === 0) {
+    const { transcriptHandoff, ...currentTurn } = parsed;
+    const currentAttachments = currentTurn.attachments ?? [];
+    if (!currentTurn.input && currentAttachments.length === 0) {
       return yield* toValidationError(
         "ProviderService.sendTurn",
         "Either input text or at least one attachment is required",
       );
     }
 
-    // Adapters inline attachment pixels into the model prompt, but the model's
-    // tools cannot dereference pixels. Appending the on-disk path is what lets
-    // a turn like "include this screenshot in the PR" copy the actual file.
-    // This runs after schema decode, so the appended lines are exempt from the
-    // PROVIDER_SEND_TURN_MAX_INPUT_CHARS check; attachment count is capped, so
-    // the overhead is bounded. Unresolvable ids are skipped here and surface
-    // as adapter errors when the file is read for inlining.
+    const attachmentsById = new Map(
+      [...(transcriptHandoff?.attachments ?? []), ...currentAttachments].map((attachment) => [
+        attachment.id,
+        attachment,
+      ]),
+    );
+    const attachments = Array.from(attachmentsById.values());
+    const inputText = [transcriptHandoff?.text, currentTurn.input]
+      .filter((part): part is string => typeof part === "string" && part.length > 0)
+      .join("\n\n");
+
+    // Every attachment gets an on-disk path in the prompt so the model's tools
+    // can dereference the actual file. All attachments then go to the adapter,
+    // and each adapter decides what its provider ingests natively: OpenCode
+    // sends generic files as file parts, the others send images only and rely
+    // on the path line for everything else. Unresolvable ids are skipped here
+    // and surface as adapter errors when the file is read.
     const attachmentPathLines = attachments.flatMap((attachment) => {
       const attachmentPath = resolveAttachmentPath({
         attachmentsDir: serverConfig.attachmentsDir,
@@ -1247,23 +1441,21 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     });
     const inputTextWithAttachmentPaths =
       attachmentPathLines.length === 0
-        ? parsed.input
-        : [parsed.input, attachmentPathLines.join("\n")]
+        ? inputText
+        : [inputText, attachmentPathLines.join("\n")]
             .filter((part): part is string => typeof part === "string" && part.length > 0)
             .join("\n\n");
 
     const input = {
-      ...parsed,
-      ...(inputTextWithAttachmentPaths !== undefined
-        ? { input: inputTextWithAttachmentPaths }
-        : {}),
-      attachments,
+      ...currentTurn,
+      ...(inputTextWithAttachmentPaths.length > 0 ? { input: inputTextWithAttachmentPaths } : {}),
+      ...(attachments.length > 0 ? { attachments } : {}),
     };
     yield* Effect.annotateCurrentSpan({
       "provider.operation": "send-turn",
       "provider.thread_id": input.threadId,
       "provider.interaction_mode": input.interactionMode,
-      "provider.attachment_count": input.attachments.length,
+      "provider.attachment_count": attachments.length,
     });
     let metricProvider = "unknown";
     let metricModel = input.modelSelection?.model;
@@ -1790,6 +1982,47 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
+  const uploadFeedback: ProviderServiceMethod<"uploadFeedback"> = Effect.fn("uploadFeedback")(
+    function* (rawInput) {
+      const input = yield* decodeInputOrValidationError({
+        operation: "ProviderService.uploadFeedback",
+        schema: ProviderUploadFeedbackInput,
+        payload: rawInput,
+      });
+      let routed = yield* resolveRoutableSession({
+        threadId: input.threadId,
+        operation: "ProviderService.uploadFeedback",
+        allowRecovery: false,
+      });
+      if (routed.adapter.uploadFeedback === undefined) {
+        return yield* toValidationError(
+          "ProviderService.uploadFeedback",
+          `Provider '${routed.adapter.provider}' does not support feedback uploads.`,
+        );
+      }
+      if (!routed.isActive) {
+        routed = yield* resolveRoutableSession({
+          threadId: input.threadId,
+          operation: "ProviderService.uploadFeedback",
+          allowRecovery: true,
+        });
+      }
+      const uploadFeedback = routed.adapter.uploadFeedback;
+      if (uploadFeedback === undefined) {
+        return yield* toValidationError(
+          "ProviderService.uploadFeedback",
+          `Provider '${routed.adapter.provider}' does not support feedback uploads.`,
+        );
+      }
+      yield* Effect.annotateCurrentSpan({
+        "provider.operation": "upload-feedback",
+        "provider.kind": routed.adapter.provider,
+        "provider.thread_id": input.threadId,
+      });
+      return yield* uploadFeedback(input);
+    },
+  );
+
   const runStopAll = Effect.fn("runStopAll")(function* () {
     const currentAdapters = yield* getAdapterEntries;
     const activeSessions = yield* Effect.forEach(currentAdapters, ([instanceId, adapter]) =>
@@ -1863,8 +2096,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   return {
     startSession,
+    forkSession,
     startTransientSession,
     sendTurn,
+    compactThread,
     interruptTurn,
     resolveAbortTarget,
     interruptAbortTarget,
@@ -1879,6 +2114,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     getInstanceInfo,
     rollbackConversation,
     // Each access creates a fresh bounded subscription so that multiple
+    uploadFeedback,
     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
     // independently receive all runtime events.
     get streamEvents(): ProviderServiceMethod<"streamEvents"> {

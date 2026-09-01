@@ -134,11 +134,14 @@ already dispatch.
 ## Related
 
 - [Workspace layout](./workspace-layout.md), [Glossary](./glossary.md)
-- [Provider architecture](./providers.md), [Internal provider MCP](./internal-mcp.md)
+- [Provider architecture](./providers.md), [Native provider harness](./native-provider-harness.md),
+  [Internal provider MCP](./internal-mcp.md)
 - [MCP runtime status](./mcp-runtime-status.md), [Git workbench](./git-workbench.md)
 - [Workspace card deck](./workspace-card-deck.md)
+- [Mobile navigation headers](./mobile-navigation.md)
 - [Remote environments](./remote.md), [Server updates](./server-updates.md)
 - [Resource telemetry](./resource-telemetry.md)
+- [Product analytics](./product-analytics.md)
 - [Scripts](./scripts.md), [CI gates](./ci.md)
 
 [rpc]: ../../packages/contracts/src/rpc.ts

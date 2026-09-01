@@ -16,4 +16,10 @@ import type { ProviderAdapterShape } from "./ProviderAdapter.ts";
  * CodexAdapterShape — per-instance Codex adapter contract. Carries
  * a branded driver kind as the nominal discriminant.
  */
-export interface CodexAdapterShape extends ProviderAdapterShape<ProviderAdapterError> {}
+export interface CodexAdapterShape extends ProviderAdapterShape<ProviderAdapterError> {
+  readonly forkSession: NonNullable<ProviderAdapterShape<ProviderAdapterError>["forkSession"]>;
+  readonly compactThread: NonNullable<ProviderAdapterShape<ProviderAdapterError>["compactThread"]>;
+  readonly uploadFeedback: NonNullable<
+    ProviderAdapterShape<ProviderAdapterError>["uploadFeedback"]
+  >;
+}

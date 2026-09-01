@@ -1,4 +1,5 @@
 import { HStack, Image, Spacer, Text, VStack, ZStack } from "@expo/ui/swift-ui";
+import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import type { ComponentProps } from "react";
 import {
   font,
@@ -42,6 +43,7 @@ export interface AgentActivityRowProps {
 export interface AgentActivityProps {
   readonly title: string;
   readonly subtitle: string;
+  readonly language?: "en" | "de" | "fr";
   readonly activeCount: number;
   readonly updatedAt: string;
   readonly activities: ReadonlyArray<AgentActivityRowProps>;
@@ -55,6 +57,12 @@ export function AgentActivity(
   environment: LiveActivityEnvironment,
 ): LiveActivityLayout {
   "widget";
+
+  const language = props.language ?? "en";
+  const translator = createInterfaceTranslator({
+    language,
+    locale: language === "de" ? "de-DE" : language === "fr" ? "fr-FR" : "en-US",
+  });
 
   // Use SwiftUI's semantic label colors rather than fixed hex keyed off the
   // device color scheme. A Live Activity banner always renders over a dark
@@ -131,19 +139,28 @@ export function AgentActivity(
   // minimal glyph — must agree, and a failure anywhere should dominate a
   // newer success.
   const allDone = props.activeCount === 0;
-  const doneLabel = failedRow ? "Failed" : "Done";
-  const outcomeLabel = failedRow ? "Agent work failed" : "Agent work completed";
+  const doneLabel = failedRow
+    ? translator.message("mobile.agentActivity.failed")
+    : translator.message("mobile.agentActivity.done");
+  const outcomeLabel = failedRow
+    ? translator.message("mobile.agentActivity.outcomeFailed")
+    : translator.message("mobile.agentActivity.outcomeCompleted");
 
   // Header copy: "5 active agents" + (", 1 needs attention"). The banner renders
   // the two parts in-line so the attention half can carry the accent color;
   // `summary` is the short form for tight spots (expanded center, watch card).
-  const agentWord = props.activeCount === 1 ? "agent" : "agents";
-  const agentsLabel = allDone ? outcomeLabel : `${props.activeCount} active ${agentWord}`;
+  const agentsLabel = allDone
+    ? outcomeLabel
+    : translator.message("mobile.agentActivity.activeAgents", { count: props.activeCount });
   const attentionSuffix =
     attentionRows.length > 0
-      ? `${attentionRows.length} need${attentionRows.length === 1 ? "s" : ""} attention`
+      ? translator.message("mobile.agentActivity.needsAttention", {
+          count: attentionRows.length,
+        })
       : "";
-  const activeLabel = allDone ? doneLabel : `${props.activeCount} active`;
+  const activeLabel = allDone
+    ? doneLabel
+    : translator.message("mobile.agentActivity.active", { count: props.activeCount });
   const summary = attentionSuffix || activeLabel;
 
   // Any registered scheme variant routes back to this app; taps are delivered
@@ -328,8 +345,8 @@ export function AgentActivity(
       <Text modifiers={[font({ weight: "semibold", size: 11 }), foregroundStyle(tint)]}>
         {attentionRow
           ? attentionRow.phase === "waiting_for_approval"
-            ? "Approval"
-            : "Input"
+            ? translator.message("mobile.agentActivity.approval")
+            : translator.message("mobile.agentActivity.input")
           : activeLabel}
       </Text>
     ),

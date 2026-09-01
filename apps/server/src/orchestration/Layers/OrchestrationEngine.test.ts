@@ -106,6 +106,7 @@ describe("OrchestrationEngine", () => {
           return savedEvent;
         }),
       readFromSequence: () => Stream.empty,
+      readByThreadId: () => Stream.empty,
       readAll: () =>
         Stream.fail(
           new PersistenceSqlError({
@@ -113,6 +114,7 @@ describe("OrchestrationEngine", () => {
             detail: "historical replay should not be used during bootstrap",
           }),
         ),
+      hasEventAfter: () => Effect.succeed(false),
     };
 
     const projectionSnapshot = {
@@ -450,6 +452,114 @@ describe("OrchestrationEngine", () => {
       "thread.created",
       "thread.deleted",
     ]);
+    await system.dispose();
+  });
+
+  it("atomically creates a durable fork from the persisted source boundary", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+    const sourceThreadId = ThreadId.make("thread-fork-source");
+    const destinationThreadId = ThreadId.make("thread-fork-destination");
+    const boundaryMessageId = asMessageId("message-fork-boundary");
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-fork-project-create"),
+        projectId: asProjectId("project-fork"),
+        title: "Fork Project",
+        workspaceRoot: "/tmp/project-fork",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-fork-source-create"),
+        threadId: sourceThreadId,
+        projectId: asProjectId("project-fork"),
+        title: "Fork source",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: "main",
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.message.import",
+        commandId: CommandId.make("cmd-fork-boundary-import"),
+        threadId: sourceThreadId,
+        message: {
+          id: boundaryMessageId,
+          role: "user",
+          text: "Fork from this response",
+          attachments: [],
+          turnId: null,
+          streaming: false,
+          createdAt,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    const command = {
+      type: "thread.fork" as const,
+      commandId: CommandId.make("cmd-fork-create"),
+      threadId: destinationThreadId,
+      sourceThreadId,
+      boundary: { kind: "message" as const, messageId: boundaryMessageId },
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      },
+      runtimeMode: "approval-required" as const,
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      workspace: {
+        mode: "worktree" as const,
+        baseBranch: "main",
+        startFromOrigin: false,
+        runSetupScript: true,
+      },
+      createdAt,
+    };
+    const first = await system.run(engine.dispatch(command));
+    const duplicate = await system.run(engine.dispatch(command));
+    expect(duplicate).toEqual(first);
+
+    const events = await system.run(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(events.map((event) => event.type)).toEqual([
+      "project.created",
+      "thread.created",
+      "thread.message-sent",
+      "thread.created",
+      "thread.forked",
+    ]);
+    expect(events.filter((event) => event.commandId === command.commandId)).toHaveLength(2);
+    const snapshot = await system.readModel();
+    const fork = snapshot.threads.find((thread) => thread.id === destinationThreadId);
+    expect(fork?.fork?.provenance).toMatchObject({
+      sourceThreadId,
+      boundary: { kind: "message", messageId: boundaryMessageId },
+    });
+    expect(fork?.messages.map((message) => message.text)).toEqual(["Fork from this response"]);
+    expect(fork?.messages[0]?.id).not.toBe(boundaryMessageId);
+    expect(fork?.session).toBeNull();
     await system.dispose();
   });
 
@@ -809,9 +919,13 @@ describe("OrchestrationEngine", () => {
       readFromSequence(sequenceExclusive) {
         return Stream.fromIterable(events.filter((event) => event.sequence > sequenceExclusive));
       },
+      readByThreadId(threadId) {
+        return Stream.fromIterable(events.filter((event) => event.aggregateId === threadId));
+      },
       readAll() {
         return Stream.fromIterable(events);
       },
+      hasEventAfter: () => Effect.succeed(false),
     };
 
     const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
@@ -905,6 +1019,7 @@ describe("OrchestrationEngine", () => {
 
   it("rolls back all events for a multi-event command when projection fails mid-dispatch", async () => {
     let shouldFailRequestedProjection = true;
+    let shouldFailForkProjection = true;
     const flakyProjectionPipeline: OrchestrationProjectionPipelineShape = {
       bootstrap: Effect.void,
       projectEvent: (event) => {
@@ -918,6 +1033,15 @@ describe("OrchestrationEngine", () => {
             new PersistenceSqlError({
               operation: "test.projection",
               detail: "projection failed",
+            }),
+          );
+        }
+        if (shouldFailForkProjection && event.type === "thread.forked") {
+          shouldFailForkProjection = false;
+          return Effect.fail(
+            new PersistenceSqlError({
+              operation: "test.forkProjection",
+              detail: "fork projection failed",
             }),
           );
         }
@@ -1021,6 +1145,52 @@ describe("OrchestrationEngine", () => {
       eventsAfterRetry.filter((event) => event.commandId === turnStartCommand.commandId),
     ).toHaveLength(2);
 
+    const forkCommand = {
+      type: "thread.fork" as const,
+      commandId: CommandId.make("cmd-fork-atomic"),
+      threadId: ThreadId.make("thread-fork-atomic-destination"),
+      sourceThreadId: ThreadId.make("thread-atomic"),
+      boundary: { kind: "message" as const, messageId: turnStartCommand.message.messageId },
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      },
+      runtimeMode: "approval-required" as const,
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      workspace: {
+        mode: "worktree" as const,
+        baseBranch: "main",
+        startFromOrigin: false,
+        runSetupScript: true,
+      },
+      createdAt,
+    };
+    await expect(runtime.runPromise(engine.dispatch(forkCommand))).rejects.toThrow(
+      "fork projection failed",
+    );
+    const eventsAfterForkFailure = await runtime.runPromise(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(eventsAfterForkFailure).toEqual(eventsAfterRetry);
+
+    const forkRetry = await runtime.runPromise(engine.dispatch(forkCommand));
+    expect(forkRetry.sequence).toBe(6);
+    const eventsAfterForkRetry = await runtime.runPromise(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(eventsAfterForkRetry.map((event) => event.type)).toEqual([
+      "project.created",
+      "thread.created",
+      "thread.message-sent",
+      "thread.turn-start-requested",
+      "thread.created",
+      "thread.forked",
+    ]);
+
     await runtime.dispose();
   });
 
@@ -1045,9 +1215,13 @@ describe("OrchestrationEngine", () => {
       readFromSequence(sequenceExclusive) {
         return Stream.fromIterable(events.filter((event) => event.sequence > sequenceExclusive));
       },
+      readByThreadId(threadId) {
+        return Stream.fromIterable(events.filter((event) => event.aggregateId === threadId));
+      },
       readAll() {
         return Stream.fromIterable(events);
       },
+      hasEventAfter: () => Effect.succeed(false),
     };
 
     let shouldFailProjection = true;

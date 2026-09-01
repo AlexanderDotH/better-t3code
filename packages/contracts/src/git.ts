@@ -368,6 +368,7 @@ export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()(
 export const TextGenerationModelFailureReason = Schema.Literals([
   "model-unavailable",
   "entitlement",
+  "rate-limited",
 ]);
 export type TextGenerationModelFailureReason = typeof TextGenerationModelFailureReason.Type;
 
@@ -377,6 +378,7 @@ export class TextGenerationError extends Schema.TaggedErrorClass<TextGenerationE
     operation: Schema.String,
     detail: Schema.String,
     reason: Schema.optional(TextGenerationModelFailureReason),
+    retryAt: Schema.optional(NonNegativeInt),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {

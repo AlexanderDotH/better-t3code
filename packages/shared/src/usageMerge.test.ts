@@ -1,5 +1,6 @@
 import {
   USAGE_CONTRACT_VERSION,
+  USAGE_MERGE_COMPATIBLE_SINCE,
   type EnvironmentId,
   type UsageBucket,
   type UsageDay,
@@ -158,7 +159,7 @@ describe("mergeUsage", () => {
           summary(
             [bucket()],
             [{ provider: "claude", hostId: "linux", homePath: "/b" }],
-            USAGE_CONTRACT_VERSION - 1,
+            USAGE_MERGE_COMPATIBLE_SINCE - 1,
           ),
         ),
       ],
@@ -167,6 +168,32 @@ describe("mergeUsage", () => {
 
     expect(merged.costUsd).toBe(10);
     expect(merged.staleEnvironments).toEqual(["env-b"]);
+  });
+
+  it("keeps the previous compatible contract version so additive provider expansions still merge", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket({ costUsd: 10 })],
+            [{ provider: "claude", hostId: "mac", homePath: "/a" }],
+          ),
+        ),
+        environment(
+          "env-b",
+          summary(
+            [bucket({ costUsd: 4, provider: "codex", model: "gpt-5.6-sol" })],
+            [{ provider: "codex", hostId: "linux", homePath: "/b" }],
+            USAGE_CONTRACT_VERSION - 1,
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(14);
+    expect(merged.staleEnvironments).toEqual([]);
   });
 
   it("derives provider shares and cost quality", () => {
@@ -193,6 +220,117 @@ describe("mergeUsage", () => {
     expect(merged.providers[0]?.costShare).toBeCloseTo(0.75, 5);
     expect(merged.costQuality.unpricedShare).toBeCloseTo(0.5, 5);
     expect(merged.costQuality.cacheSavingsUsd).toBe(4);
+  });
+
+  it("maps missing call kinds to unknown and aggregates call diagnostics", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({ callKind: "root", records: 2 }),
+              bucket({
+                callKind: "subagent",
+                records: 3,
+                diagnostics: {
+                  nativeForks: 1,
+                  compactHandoffs: 1,
+                  totalHandoffChars: 400,
+                  compactionEvents: 2,
+                  maxContextTokens: 200_000,
+                },
+              }),
+              bucket({ callKind: "metadata", records: 1 }),
+              bucket({ callKind: "auto-reasoning", records: 6 }),
+              bucket({ records: 4 }),
+            ],
+            [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(Object.fromEntries(merged.calls.map((entry) => [entry.kind, entry.records]))).toEqual({
+      root: 2,
+      subagent: 3,
+      metadata: 1,
+      "auto-reasoning": 6,
+      unknown: 4,
+    });
+    expect(merged.contextDiagnostics).toEqual({
+      nativeForks: 1,
+      compactHandoffs: 1,
+      totalHandoffChars: 400,
+      compactionEvents: 2,
+      maxContextTokens: 200_000,
+    });
+  });
+
+  it("merges every content-free context counter without retaining content", () => {
+    const diagnostics = {
+      nativeForks: 1,
+      compactHandoffs: 2,
+      totalHandoffChars: 3,
+      compactionEvents: 4,
+      maxContextTokens: 200_000,
+      instructionChars: 10,
+      memoryInjectionChars: 20,
+      toolSchemaChars: 30,
+      subagentResultChars: 40,
+      toolDigestChars: 50,
+      autoRoutingChars: 60,
+    } as const;
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket({ diagnostics }), bucket({ diagnostics })],
+            [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.contextDiagnostics).toEqual({
+      nativeForks: 2,
+      compactHandoffs: 4,
+      totalHandoffChars: 6,
+      compactionEvents: 8,
+      maxContextTokens: 200_000,
+      instructionChars: 20,
+      memoryInjectionChars: 40,
+      toolSchemaChars: 60,
+      subagentResultChars: 80,
+      toolDigestChars: 100,
+      autoRoutingChars: 120,
+    });
+    expect(JSON.stringify(merged)).not.toContain("private");
+  });
+
+  it("does not double count diagnostics from a duplicate transcript source", () => {
+    const shared = { provider: "claude" as const, hostId: "mac", homePath: "/shared" };
+    const withDiagnostics = bucket({
+      diagnostics: {
+        nativeForks: 1,
+        compactHandoffs: 2,
+        totalHandoffChars: 300,
+        compactionEvents: 4,
+        maxContextTokens: 128_000,
+      },
+    });
+    const merged = mergeUsage(
+      [
+        environment("env-a", summary([withDiagnostics], [shared])),
+        environment("env-b", summary([withDiagnostics], [shared])),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.contextDiagnostics).toEqual(withDiagnostics.diagnostics);
   });
 
   it("keeps two machines apart when hostname and home path collide", () => {

@@ -52,6 +52,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeDiscoveredLocalServers
   | typeof WS_METHODS.subscribeResourceTelemetry
   | typeof WS_METHODS.subscribeResourceProtection
+  | typeof WS_METHODS.knowledgeGraphSubscribe
   | typeof WS_METHODS.mcpRuntimeContextChanges
   | typeof WS_METHODS.mcpRuntimeChanges
   | typeof WS_METHODS.previewAutomationConnect
@@ -61,6 +62,7 @@ export type EnvironmentSubscriptionRpcTag =
 
 export type EnvironmentStreamCommandRpcTag =
   | typeof WS_METHODS.cloudInstallRelayClient
+  | typeof WS_METHODS.serverProviderAuthConnect
   | typeof WS_METHODS.serverUpdateServerWithProgress
   | typeof WS_METHODS.gitRunStackedAction
   | typeof WS_METHODS.gitRunWorkbenchOperation;

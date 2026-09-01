@@ -100,6 +100,7 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal.ts";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type {
   DiscoveredLocalServerList,
@@ -217,6 +218,16 @@ import type {
   T3ChatImportRunInput,
   T3ChatImportRunResult,
 } from "./t3ChatImport.ts";
+import type {
+  HarnessChatSyncListInput,
+  HarnessChatSyncListResult,
+  HarnessChatSyncRunInput,
+  HarnessChatSyncRunResult,
+  HarnessChatSyncSourcesInput,
+  HarnessChatSyncSourcesResult,
+  HarnessChatSyncStatusInput,
+  HarnessChatSyncStatusResult,
+} from "./harnessChatSync.ts";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -700,6 +711,12 @@ export const DesktopPreviewTabIdSchema = Schema.String.check(Schema.isTrimmed())
   Schema.isNonEmpty(),
 );
 
+export const DesktopPreviewAutomationStatusSchema = Schema.Struct({
+  ...PreviewAutomationStatus.fields,
+  tabId: Schema.NullOr(DesktopPreviewTabIdSchema),
+});
+export type DesktopPreviewAutomationStatus = typeof DesktopPreviewAutomationStatusSchema.Type;
+
 export const DesktopPreviewNavStatusSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("Idle") }),
   Schema.Struct({
@@ -787,6 +804,7 @@ export const DesktopPreviewWebviewConfigSchema: Schema.Codec<DesktopPreviewWebvi
   });
 
 export interface DesktopPreviewAnnotationTheme {
+  interfaceLanguage?: "en" | "de" | "fr";
   colorScheme: "light" | "dark";
   radius: string;
   background: string;
@@ -806,26 +824,28 @@ export interface DesktopPreviewAnnotationTheme {
   fontMono: string;
 }
 
-export const DesktopPreviewAnnotationThemeSchema: Schema.Codec<DesktopPreviewAnnotationTheme> =
-  Schema.Struct({
-    colorScheme: Schema.Literals(["light", "dark"]),
-    radius: Schema.String,
-    background: Schema.String,
-    foreground: Schema.String,
-    popover: Schema.String,
-    popoverForeground: Schema.String,
-    primary: Schema.String,
-    primaryForeground: Schema.String,
-    muted: Schema.String,
-    mutedForeground: Schema.String,
-    accent: Schema.String,
-    accentForeground: Schema.String,
-    border: Schema.String,
-    input: Schema.String,
-    ring: Schema.String,
-    fontSans: Schema.String,
-    fontMono: Schema.String,
-  });
+export const DesktopPreviewAnnotationThemeSchema = Schema.Struct({
+  interfaceLanguage: Schema.Literals(["en", "de", "fr"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("en" as const)),
+  ),
+  colorScheme: Schema.Literals(["light", "dark"]),
+  radius: Schema.String,
+  background: Schema.String,
+  foreground: Schema.String,
+  popover: Schema.String,
+  popoverForeground: Schema.String,
+  primary: Schema.String,
+  primaryForeground: Schema.String,
+  muted: Schema.String,
+  mutedForeground: Schema.String,
+  accent: Schema.String,
+  accentForeground: Schema.String,
+  border: Schema.String,
+  input: Schema.String,
+  ring: Schema.String,
+  fontSans: Schema.String,
+  fontMono: Schema.String,
+});
 
 export interface DesktopPreviewRecordingFrame {
   tabId: string;
@@ -1179,6 +1199,8 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
 
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
+  /** The desktop client's OS platform, read from Electron's preload process. */
+  getClientPlatform?: () => string;
   /**
    * The OS locale as a BCP-47 tag, which the renderer cannot read for itself:
    * the packaged app ships only the `en-US` Chromium locale pak, so
@@ -1333,7 +1355,7 @@ export interface DesktopPreviewBridge {
     onFrame: (listener: (frame: DesktopPreviewRecordingFrame) => void) => () => void;
   };
   automation: {
-    status: (tabId: string) => Promise<PreviewAutomationStatus>;
+    status: (tabId: string) => Promise<DesktopPreviewAutomationStatus>;
     snapshot: (tabId: string) => Promise<PreviewAutomationSnapshot>;
     click: (tabId: string, input: PreviewAutomationClickInput) => Promise<void>;
     type: (tabId: string, input: PreviewAutomationTypeInput) => Promise<void>;
@@ -1468,6 +1490,12 @@ export interface EnvironmentApi {
   chatImport: {
     discover: (input?: T3ChatImportDiscoverInput) => Promise<T3ChatImportDiscoverResult>;
     run: (input: T3ChatImportRunInput) => Promise<T3ChatImportRunResult>;
+  };
+  harnessChatSync: {
+    sources: (input?: HarnessChatSyncSourcesInput) => Promise<HarnessChatSyncSourcesResult>;
+    list: (input: HarnessChatSyncListInput) => Promise<HarnessChatSyncListResult>;
+    run: (input: HarnessChatSyncRunInput) => Promise<HarnessChatSyncRunResult>;
+    status: (input: HarnessChatSyncStatusInput) => Promise<HarnessChatSyncStatusResult>;
   };
   skills: {
     list: (input: SkillListInput) => Promise<SkillListResult>;

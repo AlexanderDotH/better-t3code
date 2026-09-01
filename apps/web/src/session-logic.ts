@@ -1,13 +1,17 @@
 import * as Option from "effect/Option";
 import * as Arr from "effect/Array";
+import * as Schema from "effect/Schema";
 import { isBackgroundTaskActivity } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   ApprovalRequestId,
   isToolLifecycleItemType,
   type OrchestrationLatestTurn,
+  type OrchestrationHistoryOrigin,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
   ProviderDriverKind,
+  ProviderApprovalOption,
+  ProviderRequestKind,
   type ToolLifecycleItemType,
   type UserInputQuestion,
   type ThreadId,
@@ -71,6 +75,7 @@ export interface WorkLogEntry {
   id: string;
   createdAt: string;
   turnId?: TurnId | null;
+  historyOrigin?: OrchestrationHistoryOrigin;
   /** Stable provider identity across in-progress and completed lifecycle updates. */
   toolCallId?: string;
   label: string;
@@ -103,21 +108,33 @@ export interface WorkLogEntry {
   };
 }
 
+const workLogCollapseKey = Symbol();
+
 interface DerivedWorkLogEntry extends WorkLogEntry {
-  activityKind: OrchestrationThreadActivity["kind"];
-  collapseKey?: string;
+  sourceActivityKind: OrchestrationThreadActivity["kind"];
+  [workLogCollapseKey]?: string;
   toolCallId?: string;
   isWorkflowCoordinator?: boolean;
   /** Shell/monitor/plan tasks: ordinary work-log rows, never spawn notifications. */
   isBackgroundTask?: boolean;
 }
 
+const derivedWorkLogEntryByActivity = new WeakMap<
+  OrchestrationThreadActivity,
+  DerivedWorkLogEntry
+>();
+
 export interface PendingApproval {
   requestId: ApprovalRequestId;
-  requestKind: "command" | "file-read" | "file-change";
+  requestKind: ProviderRequestKind;
   createdAt: string;
   detail?: string;
+  appName?: string;
+  options?: ReadonlyArray<ProviderApprovalOption>;
 }
+
+const isProviderRequestKind = Schema.is(ProviderRequestKind);
+const isProviderApprovalOption = Schema.is(ProviderApprovalOption);
 
 export interface PendingUserInput {
   requestId: ApprovalRequestId;
@@ -269,6 +286,17 @@ export function workEntryDisplayIndicatesToolFailure(entry: WorkLogEntry): boole
   return workEntryIndicatesToolFailureFromOutput(entry, false);
 }
 
+/** Severe failures keep the red treatment ordinary tool failures lost: runtime
+ *  errors and orchestration `*.failed` activities (provider.turn.start.failed,
+ *  checkpoint.capture.failed, ...) mean the turn or a core side effect broke,
+ *  not that a command exited nonzero. */
+export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {
+  return (
+    entry.sourceActivityKind === "runtime.error" ||
+    entry.sourceActivityKind?.endsWith(".failed") === true
+  );
+}
+
 /** Tool/command row completed without failure (blue check affordance). */
 export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
   if (!workLogEntryIsToolLike(entry)) {
@@ -383,6 +411,8 @@ function requestKindFromRequestType(requestType: unknown): PendingApproval["requ
     case "file_change_approval":
     case "apply_patch_approval":
       return "file-change";
+    case "mcp_elicitation_approval":
+      return "mcp-elicitation";
     default:
       return null;
   }
@@ -411,6 +441,7 @@ export function derivePendingApprovals(
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
 
   for (const activity of ordered) {
+    if (activity.historyOrigin !== undefined) continue;
     const payload =
       activity.payload && typeof activity.payload === "object"
         ? (activity.payload as Record<string, unknown>)
@@ -420,15 +451,16 @@ export function derivePendingApprovals(
         ? ApprovalRequestId.make(payload.requestId)
         : null;
     const requestKind =
-      payload &&
-      (payload.requestKind === "command" ||
-        payload.requestKind === "file-read" ||
-        payload.requestKind === "file-change")
+      payload && isProviderRequestKind(payload.requestKind)
         ? payload.requestKind
         : payload
           ? requestKindFromRequestType(payload.requestType)
           : null;
     const detail = payload && typeof payload.detail === "string" ? payload.detail : undefined;
+    const appName = payload && typeof payload.appName === "string" ? payload.appName : undefined;
+    const options = Array.isArray(payload?.options)
+      ? payload.options.filter(isProviderApprovalOption)
+      : undefined;
 
     if (activity.kind === "approval.requested" && requestId && requestKind) {
       openByRequestId.set(requestId, {
@@ -436,6 +468,8 @@ export function derivePendingApprovals(
         requestKind,
         createdAt: activity.createdAt,
         ...(detail ? { detail } : {}),
+        ...(appName ? { appName } : {}),
+        ...(options && options.length > 0 ? { options } : {}),
       });
       continue;
     }
@@ -517,6 +551,7 @@ export function derivePendingUserInputs(
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
 
   for (const activity of ordered) {
+    if (activity.historyOrigin !== undefined) continue;
     const payload =
       activity.payload && typeof activity.payload === "object"
         ? (activity.payload as Record<string, unknown>)
@@ -663,7 +698,9 @@ export function deriveActivePlanState(
   latestTurnId: TurnId | undefined,
 ): ActivePlanState | null {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
-  const allPlanActivities = ordered.filter((activity) => activity.kind === "turn.plan.updated");
+  const allPlanActivities = ordered.filter(
+    (activity) => activity.kind === "turn.plan.updated" && activity.historyOrigin === undefined,
+  );
   // Prefer plan from the current turn; fall back to the most recent plan from any turn
   // so that TodoWrite tasks persist across follow-up messages.
   const latest = Option.firstSomeOf([
@@ -692,6 +729,7 @@ export interface TurnPlanEntry {
   /** Anchor timestamp: the turn's FIRST plan activity, so the chip renders where planning began. */
   createdAt: string;
   turnId: TurnId | null;
+  historyOrigin?: OrchestrationHistoryOrigin;
   plan: ActivePlanState;
 }
 
@@ -731,6 +769,7 @@ export function deriveTurnPlans(
           id: `turn-plan:${key}`,
           createdAt: activity.createdAt,
           turnId: activity.turnId,
+          ...(activity.historyOrigin ? { historyOrigin: activity.historyOrigin } : {}),
           plan,
         },
       });
@@ -746,8 +785,11 @@ export function findLatestProposedPlan(
   proposedPlans: ReadonlyArray<ProposedPlan>,
   latestTurnId: TurnId | string | null | undefined,
 ): LatestProposedPlanState | null {
+  const nativeProposedPlans = proposedPlans.filter(
+    (proposedPlan) => proposedPlan.historyOrigin === undefined,
+  );
   if (latestTurnId) {
-    const matchingTurnPlan = [...proposedPlans]
+    const matchingTurnPlan = [...nativeProposedPlans]
       .filter((proposedPlan) => proposedPlan.turnId === latestTurnId)
       .toSorted(
         (left, right) =>
@@ -759,7 +801,7 @@ export function findLatestProposedPlan(
     }
   }
 
-  const latestPlan = [...proposedPlans]
+  const latestPlan = [...nativeProposedPlans]
     .toSorted(
       (left, right) =>
         left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id),
@@ -854,15 +896,25 @@ export function deriveWorkLogEntries(
     if (activity.kind === "task.updated") continue;
     if (activity.kind === "tool.progress") continue;
     if (activity.kind === "context-window.updated") continue;
+    if (activity.kind === "turn.plan.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
+    if (isNoContentRuntimeWarning(activity)) continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
     if (isAgentInternalActivity(activity)) continue;
     entries.push(toDerivedWorkLogEntry(activity));
   }
-  return collapseDerivedWorkLogEntries(entries).map((entry) => {
-    const { activityKind, collapseKey: _collapseKey, ...rest } = entry;
-    return Object.assign(rest, { sourceActivityKind: activityKind });
-  });
+  return collapseDerivedWorkLogEntries(entries);
+}
+
+/** Adapters forward unknown wire-only SDK messages (background_tasks_changed,
+ *  commands_changed, ...) as runtime warnings. The suffix comes from
+ *  describeUnknownSdkMessage in the Claude adapter; a row with no displayable
+ *  text carries nothing a user can act on, so it does not render. */
+function isNoContentRuntimeWarning(activity: OrchestrationThreadActivity): boolean {
+  return (
+    activity.kind === "runtime.warning" &&
+    activity.summary.endsWith("(no displayable text content)")
+  );
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
@@ -897,6 +949,10 @@ function extractWorkLogToolLifecycleStatus(
 }
 
 function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWorkLogEntry {
+  const cachedEntry = derivedWorkLogEntryByActivity.get(activity);
+  if (cachedEntry) {
+    return cachedEntry;
+  }
   const payload =
     activity.payload && typeof activity.payload === "object"
       ? (activity.payload as Record<string, unknown>)
@@ -939,6 +995,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     id: activity.id,
     createdAt: activity.createdAt,
     turnId: activity.turnId,
+    ...(activity.historyOrigin ? { historyOrigin: activity.historyOrigin } : {}),
     label: taskLabel || activity.summary,
     tone:
       activity.kind === "task.progress" || isReasoningActivity
@@ -946,7 +1003,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
         : activity.tone === "approval"
           ? "info"
           : activity.tone,
-    activityKind: activity.kind,
+    sourceActivityKind: activity.kind,
   };
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
@@ -1005,8 +1062,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   const collapseKey = deriveToolLifecycleCollapseKey(entry);
   if (collapseKey) {
-    entry.collapseKey = collapseKey;
+    entry[workLogCollapseKey] = collapseKey;
   }
+  derivedWorkLogEntryByActivity.set(activity, entry);
   return entry;
 }
 
@@ -1037,7 +1095,10 @@ function agentSpawnGroupKey(entry: DerivedWorkLogEntry): string {
 }
 
 function toolLifecycleCollapseMapKey(entry: DerivedWorkLogEntry): string | undefined {
-  if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
+  if (
+    entry.sourceActivityKind !== "tool.updated" &&
+    entry.sourceActivityKind !== "tool.completed"
+  ) {
     return undefined;
   }
   return entry.toolCallId ? `tool:${entry.turnId ?? "no-turn"}:${entry.toolCallId}` : undefined;
@@ -1063,9 +1124,9 @@ function collapseDerivedWorkLogEntries(
     const isTaskRow =
       entry.taskId !== undefined &&
       !entry.isBackgroundTask &&
-      (entry.activityKind === "task.started" ||
-        entry.activityKind === "task.progress" ||
-        entry.activityKind === "task.completed");
+      (entry.sourceActivityKind === "task.started" ||
+        entry.sourceActivityKind === "task.progress" ||
+        entry.sourceActivityKind === "task.completed");
     if (isTaskRow && entry.taskId !== undefined) {
       const rememberedKey = groupKeyByTaskId.get(entry.taskId);
       const groupKey = rememberedKey ?? agentSpawnGroupKey(entry);
@@ -1141,19 +1202,25 @@ function shouldCollapseToolLifecycleEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
 ): boolean {
-  if (previous.activityKind !== "tool.updated" && previous.activityKind !== "tool.completed") {
+  if (
+    previous.sourceActivityKind !== "tool.updated" &&
+    previous.sourceActivityKind !== "tool.completed"
+  ) {
     return false;
   }
-  if (next.activityKind !== "tool.updated" && next.activityKind !== "tool.completed") {
+  if (next.sourceActivityKind !== "tool.updated" && next.sourceActivityKind !== "tool.completed") {
     return false;
   }
   if (previous.turnId !== next.turnId) {
     return false;
   }
-  if (previous.activityKind === "tool.completed") {
+  if (previous.sourceActivityKind === "tool.completed") {
     return false;
   }
-  if (previous.collapseKey !== undefined && previous.collapseKey === next.collapseKey) {
+  if (
+    previous[workLogCollapseKey] !== undefined &&
+    previous[workLogCollapseKey] === next[workLogCollapseKey]
+  ) {
     return true;
   }
   return (
@@ -1176,7 +1243,7 @@ function mergeDerivedWorkLogEntries(
   const toolTitle = next.toolTitle ?? previous.toolTitle;
   const itemType = next.itemType ?? previous.itemType;
   const requestKind = next.requestKind ?? previous.requestKind;
-  const collapseKey = next.collapseKey ?? previous.collapseKey;
+  const collapseKey = next[workLogCollapseKey] ?? previous[workLogCollapseKey];
   const toolCallId = next.toolCallId ?? previous.toolCallId;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
@@ -1190,7 +1257,7 @@ function mergeDerivedWorkLogEntries(
     ...(toolTitle ? { toolTitle } : {}),
     ...(itemType ? { itemType } : {}),
     ...(requestKind ? { requestKind } : {}),
-    ...(collapseKey ? { collapseKey } : {}),
+    ...(collapseKey ? { [workLogCollapseKey]: collapseKey } : {}),
     ...(toolCallId ? { toolCallId } : {}),
     ...(toolLifecycleStatus !== undefined ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
@@ -1213,11 +1280,14 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
   // progress ticks fold into it, the terminal row wins the label.
   if (
     entry.taskId &&
-    (entry.activityKind === "task.progress" || entry.activityKind === "task.completed")
+    (entry.sourceActivityKind === "task.progress" || entry.sourceActivityKind === "task.completed")
   ) {
     return `task${entry.taskId}`;
   }
-  if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
+  if (
+    entry.sourceActivityKind !== "tool.updated" &&
+    entry.sourceActivityKind !== "tool.completed"
+  ) {
     return undefined;
   }
   if (entry.toolCallId) {
@@ -1826,9 +1896,28 @@ export function deriveTimelineEntries(
     createdAt: entry.createdAt,
     entry,
   }));
-  return [...messageRows, ...proposedPlanRows, ...turnPlanRows, ...workRows].toSorted((a, b) =>
-    a.createdAt.localeCompare(b.createdAt),
+  return [...messageRows, ...proposedPlanRows, ...turnPlanRows, ...workRows].toSorted(
+    compareTimelineEntries,
   );
+}
+
+function timelineEntryHistoryOrigin(entry: TimelineEntry): OrchestrationHistoryOrigin | undefined {
+  if (entry.kind === "message") return entry.message.historyOrigin;
+  if (entry.kind === "proposed-plan") return entry.proposedPlan.historyOrigin;
+  if (entry.kind === "turn-plan") return entry.turnPlan.historyOrigin;
+  return entry.entry.historyOrigin;
+}
+
+function compareTimelineEntries(left: TimelineEntry, right: TimelineEntry): number {
+  const timestampOrder = left.createdAt.localeCompare(right.createdAt);
+  if (timestampOrder !== 0) return timestampOrder;
+
+  const leftOrigin = timelineEntryHistoryOrigin(left);
+  const rightOrigin = timelineEntryHistoryOrigin(right);
+  if (leftOrigin && rightOrigin) return leftOrigin.ordinal - rightOrigin.ordinal;
+  if (leftOrigin) return -1;
+  if (rightOrigin) return 1;
+  return 0;
 }
 
 export function inferCheckpointTurnCountByTurnId(

@@ -78,6 +78,12 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       discover: client.chatImport.discover,
       run: client.chatImport.run,
     },
+    harnessChatSync: {
+      sources: client.harnessChatSync.sources,
+      list: client.harnessChatSync.list,
+      run: client.harnessChatSync.run,
+      status: client.harnessChatSync.status,
+    },
     skills: {
       list: client.skills.list,
       discoverImportSources: client.skills.discoverImportSources,
@@ -140,6 +146,28 @@ function createRuntimeEnvironmentApi(environmentId: EnvironmentId): EnvironmentA
         }),
       run: (input: Parameters<EnvironmentApi["chatImport"]["run"]>[0]) =>
         runEnvironmentCommand(agentSettingsEnvironment.chatImport.run, {
+          environmentId,
+          input,
+        }),
+    },
+    harnessChatSync: {
+      sources: (input?: Parameters<EnvironmentApi["harnessChatSync"]["sources"]>[0]) =>
+        runEnvironmentCommand(agentSettingsEnvironment.harnessChatSync.sources, {
+          environmentId,
+          input: input ?? {},
+        }),
+      list: (input: Parameters<EnvironmentApi["harnessChatSync"]["list"]>[0]) =>
+        runEnvironmentCommand(agentSettingsEnvironment.harnessChatSync.list, {
+          environmentId,
+          input,
+        }),
+      run: (input: Parameters<EnvironmentApi["harnessChatSync"]["run"]>[0]) =>
+        runEnvironmentCommand(agentSettingsEnvironment.harnessChatSync.run, {
+          environmentId,
+          input,
+        }),
+      status: (input: Parameters<EnvironmentApi["harnessChatSync"]["status"]>[0]) =>
+        runEnvironmentCommand(agentSettingsEnvironment.harnessChatSync.status, {
           environmentId,
           input,
         }),

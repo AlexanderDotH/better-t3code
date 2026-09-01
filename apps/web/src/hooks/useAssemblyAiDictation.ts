@@ -18,6 +18,13 @@ export interface AssemblyAiDictationNotice {
   readonly error: Error;
 }
 
+export function shouldCancelAssemblyAiDictation(
+  configured: boolean,
+  state: AssemblyAiDictationState,
+): boolean {
+  return !configured && state !== "idle";
+}
+
 type StartTransport = typeof startAssemblyAiStreamingTranscription;
 type TransformTranscript = (transcript: string) => Promise<string>;
 const AUDIO_WAVEFORM_SAMPLE_COUNT = 14;
@@ -242,6 +249,10 @@ export function useAssemblyAiDictation(input: {
     resetAudioWaveform();
     transition("idle");
   }, [clearAttempt, resetAudioWaveform, transition]);
+
+  useEffect(() => {
+    if (shouldCancelAssemblyAiDictation(input.configured, stateRef.current)) cancel();
+  }, [cancel, input.configured]);
 
   useEffect(() => {
     if (state === "idle") return;

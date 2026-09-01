@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -34,8 +35,10 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import type { ClaudeDiscoveredModel } from "../Drivers/ClaudeDiscoveredModels.ts";
 import type { ClaudeGatewayCatalog } from "../Drivers/ClaudeGatewayCatalog.ts";
+import * as ModelManifest from "../ModelManifest.ts";
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./ProviderInstanceRegistryHydration.ts";
@@ -46,11 +49,17 @@ import {
 } from "./ProviderRegistry.ts";
 import * as ServerConfig from "../../config.ts";
 import { NoOpMcpConfigEngineLayer } from "../../mcp/testUtils.ts";
+import * as SubagentResourceGovernor from "../../resourceProtection/SubagentResourceGovernor.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
 import * as WorkspaceContext from "../../workspace/WorkspaceContext.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import { readProviderStatusCache, resolveProviderStatusCachePath } from "../providerStatusCache.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
+import {
+  makeInstanceHistorySyncSource,
+  makeUnsupportedProviderHistorySync,
+  NO_PROVIDER_HISTORY_SYNC_CAPABILITIES,
+} from "../Services/ProviderHistorySync.ts";
 import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
@@ -72,6 +81,23 @@ process.env.T3CODE_CURSOR_ENABLED = "1";
 const encoder = new TextEncoder();
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
+function makeTestHistorySync(
+  instanceId: ProviderInstanceId,
+  driverKind: ProviderDriverKind,
+): ProviderInstance["historySync"] {
+  const continuationKey = `${driverKind}:instance:${instanceId}`;
+  return makeUnsupportedProviderHistorySync({
+    source: makeInstanceHistorySyncSource({
+      instanceId,
+      driverKind,
+      continuationKey,
+      displayName: driverKind,
+      capabilities: NO_PROVIDER_HISTORY_SYNC_CAPABILITIES,
+    }),
+    reason: "History sync is outside this provider registry test.",
+  });
+}
+
 const TestHttpClientLive = Layer.succeed(
   HttpClient.HttpClient,
   HttpClient.make((request) =>
@@ -91,6 +117,7 @@ const GeminiWorkspaceLayer = Layer.merge(
     WorkspaceFileSystem.WorkspaceFileSystem.of({
       readFile: () => Effect.die("unused Gemini workspace read in provider registry test"),
       writeFile: () => Effect.die("unused Gemini workspace write in provider registry test"),
+      editFiles: () => Effect.die("unused Gemini workspace edit in provider registry test"),
     }),
   ),
 );
@@ -100,6 +127,20 @@ const ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem = Layer.m
   ServerSettingsModule.layerTest(),
   TestHttpClientLive,
   GeminiWorkspaceLayer,
+);
+
+const ProviderDriverIntegrationTestLayer = Layer.merge(
+  SubagentResourceGovernor.layer,
+  Layer.succeed(
+    ServerSecretStore.ServerSecretStore,
+    ServerSecretStore.ServerSecretStore.of({
+      get: () => Effect.succeed(Option.none()),
+      set: () => Effect.void,
+      create: () => Effect.void,
+      getOrCreateRandom: (_name, bytes) => Effect.succeed(new Uint8Array(bytes)),
+      remove: () => Effect.void,
+    }),
+  ),
 );
 
 const BackgroundPolicyAlwaysRunLayer = Layer.mock(BackgroundPolicy.BackgroundPolicy)({
@@ -436,6 +477,13 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
               shortDescription: "Debug failing GitHub Actions checks",
             },
           ]);
+          assert.deepStrictEqual(status.slashCommands, [
+            {
+              name: "feedback",
+              description: "Send this thread and Codex logs to OpenAI",
+              input: { hint: "Describe the issue (optional)" },
+            },
+          ]);
         }),
       );
 
@@ -549,10 +597,7 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
           assert.strictEqual(status.status, "error");
           assert.strictEqual(status.installed, false);
           assert.strictEqual(status.auth.status, "unknown");
-          assert.strictEqual(
-            status.message,
-            "Codex CLI (`codex`) is not installed or not on PATH.",
-          );
+          assert.strictEqual(status.message, "Codex CLI (`codex`) was not found on PATH.");
         }),
       );
 
@@ -639,18 +684,35 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
               }),
             },
           ],
-          slashCommands: [],
-          skills: [],
+          slashCommands: [{ name: "review", description: "Review changes" }],
+          skills: [
+            {
+              name: "typescript",
+              description: "TypeScript help",
+              path: "/skills/typescript/SKILL.md",
+              enabled: true,
+            },
+          ],
         } as const satisfies ServerProvider;
         const refreshedProvider = {
           ...previousProvider,
           checkedAt: "2026-04-14T00:01:00.000Z",
           models: [],
+          slashCommands: [],
+          skills: [],
         } satisfies ServerProvider;
 
         assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
           ...previousProvider.models,
         ]);
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, refreshedProvider).slashCommands,
+          [],
+        );
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, refreshedProvider).skills,
+          [],
+        );
       });
 
       it("drops stale OpenCode models missing from a successful refresh", () => {
@@ -720,8 +782,15 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
               capabilities: null,
             },
           ],
-          slashCommands: [],
-          skills: [],
+          slashCommands: [{ name: "review", description: "Review changes" }],
+          skills: [
+            {
+              name: "typescript",
+              description: "TypeScript help",
+              path: "/skills/typescript/SKILL.md",
+              enabled: true,
+            },
+          ],
         } as const satisfies ServerProvider;
         const refreshedProvider = {
           ...previousProvider,
@@ -735,6 +804,14 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
         assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
           ...previousProvider.models,
         ]);
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, refreshedProvider).slashCommands,
+          previousProvider.slashCommands,
+        );
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, refreshedProvider).skills,
+          previousProvider.skills,
+        );
       });
 
       it("classifies pending, logout, uninstall, and reconnect OpenCode inventories", () => {
@@ -763,8 +840,15 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
               capabilities: null,
             },
           ],
-          slashCommands: [],
-          skills: [],
+          slashCommands: [{ name: "review", description: "Review changes" }],
+          skills: [
+            {
+              name: "typescript",
+              description: "TypeScript help",
+              path: "/skills/typescript/SKILL.md",
+              enabled: true,
+            },
+          ],
         } as const satisfies ServerProvider;
         const pendingProvider = {
           ...previousProvider,
@@ -782,6 +866,8 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
           auth: { status: "unknown" },
           checkedAt: "2026-07-17T00:02:00.000Z",
           models: [],
+          slashCommands: [],
+          skills: [],
           message: "OpenCode is available, but it did not report any connected upstream providers.",
         } satisfies ServerProvider;
         const missingProvider = {
@@ -813,6 +899,14 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
         ]);
         assert.deepStrictEqual(
           mergeProviderSnapshot(previousProvider, loggedOutProvider).models,
+          [],
+        );
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, loggedOutProvider).slashCommands,
+          [],
+        );
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, loggedOutProvider).skills,
           [],
         );
         assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, missingProvider).models, []);
@@ -912,6 +1006,7 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
               streamChanges: Stream.empty,
             },
             adapter: {} as ProviderInstance["adapter"],
+            historySync: makeTestHistorySync(codexInstanceId, codexDriver),
             textGeneration: {} as ProviderInstance["textGeneration"],
           } satisfies ProviderInstance;
           const instanceRegistryLayer = Layer.succeed(
@@ -943,6 +1038,182 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
             assert.deepStrictEqual(yield* registry.getProviders, [initialProvider]);
             assert.strictEqual(yield* Ref.get(refreshCalls), 0);
           }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
+      it.effect("refreshes OpenCode catalogs and preserves other providers", () =>
+        Effect.gen(function* () {
+          const codexDriver = ProviderDriverKind.make("codex");
+          const openCodeDriver = ProviderDriverKind.make("opencode");
+          const codexInstanceId = ProviderInstanceId.make("codex");
+          const openCodeInstanceId = ProviderInstanceId.make("opencode");
+          const codexRefreshCalls = yield* Ref.make(0);
+          const openCodeRefreshCalls = yield* Ref.make(0);
+          const codexProvider = {
+            instanceId: codexInstanceId,
+            driver: codexDriver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const failedOpenCodeProvider = {
+            instanceId: openCodeInstanceId,
+            driver: openCodeDriver,
+            status: "error",
+            enabled: true,
+            installed: true,
+            auth: { status: "unknown" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: "1.0.0",
+            message: "Failed to refresh OpenCode models.",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const recoveredOpenCodeProvider = {
+            ...failedOpenCodeProvider,
+            status: "ready",
+            auth: { status: "authenticated" },
+            checkedAt: "2026-06-10T00:01:00.000Z",
+            message: "One upstream provider connected through OpenCode.",
+            models: [
+              {
+                slug: "github/gpt-5",
+                name: "GPT-5",
+                subProvider: "GitHub",
+                isCustom: false,
+                capabilities: null,
+              },
+            ],
+          } as const satisfies ServerProvider;
+          const changedCatalogProvider = {
+            ...recoveredOpenCodeProvider,
+            checkedAt: "2026-06-10T00:02:00.000Z",
+            models: [
+              {
+                slug: "anthropic/claude-sonnet-4",
+                name: "Claude Sonnet 4",
+                subProvider: "Anthropic",
+                isCustom: false,
+                capabilities: null,
+              },
+            ],
+          } as const satisfies ServerProvider;
+          const catalogSnapshot = yield* Ref.make<ServerProvider>(recoveredOpenCodeProvider);
+          const instances = [
+            {
+              instanceId: codexInstanceId,
+              driverKind: codexDriver,
+              continuationIdentity: {
+                driverKind: codexDriver,
+                continuationKey: "codex:instance:codex",
+              },
+              displayName: undefined,
+              enabled: true,
+              snapshot: {
+                maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: codexDriver,
+                  packageName: null,
+                }),
+                getSnapshot: Effect.succeed(codexProvider),
+                refresh: Ref.update(codexRefreshCalls, (count) => count + 1).pipe(
+                  Effect.as(codexProvider),
+                ),
+                streamChanges: Stream.empty,
+              },
+              adapter: {} as ProviderInstance["adapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            },
+            {
+              instanceId: openCodeInstanceId,
+              driverKind: openCodeDriver,
+              continuationIdentity: {
+                driverKind: openCodeDriver,
+                continuationKey: "opencode:instance:opencode",
+              },
+              displayName: undefined,
+              enabled: true,
+              snapshot: {
+                maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: openCodeDriver,
+                  packageName: null,
+                }),
+                getSnapshot: Effect.succeed(failedOpenCodeProvider),
+                refresh: Ref.update(openCodeRefreshCalls, (count) => count + 1).pipe(
+                  Effect.andThen(Ref.get(catalogSnapshot)),
+                ),
+                streamChanges: Stream.empty,
+              },
+              adapter: {} as ProviderInstance["adapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            },
+          ] satisfies ReadonlyArray<ProviderInstance>;
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (instanceId) =>
+                Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
+              listInstances: Effect.succeed(instances),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+            },
+          );
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-reconnect-refresh-",
+                }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            const initialProviders = yield* registry.getProviders;
+            assert.strictEqual(
+              initialProviders.find((provider) => provider.instanceId === openCodeInstanceId)
+                ?.status,
+              "error",
+            );
+
+            const recoveredProviders = yield* registry.refresh();
+            assert.deepStrictEqual(
+              recoveredProviders.find((provider) => provider.instanceId === openCodeInstanceId)
+                ?.models,
+              recoveredOpenCodeProvider.models,
+            );
+            assert.deepStrictEqual(
+              recoveredProviders.find((provider) => provider.instanceId === codexInstanceId),
+              codexProvider,
+            );
+
+            yield* Ref.set(catalogSnapshot, changedCatalogProvider);
+            const changedProviders = yield* registry.refresh();
+            assert.deepStrictEqual(
+              changedProviders.find((provider) => provider.instanceId === openCodeInstanceId)
+                ?.models,
+              changedCatalogProvider.models,
+            );
+            assert.deepStrictEqual(
+              changedProviders.find((provider) => provider.instanceId === codexInstanceId),
+              codexProvider,
+            );
+          }).pipe(Effect.provide(runtimeServices));
+
+          assert.strictEqual(yield* Ref.get(codexRefreshCalls), 2);
+          assert.strictEqual(yield* Ref.get(openCodeRefreshCalls), 2);
         }),
       );
 
@@ -1001,6 +1272,7 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
               streamChanges: Stream.fromPubSub(changes),
             },
             adapter: {} as ProviderInstance["adapter"],
+            historySync: makeTestHistorySync(cursorInstanceId, cursorDriver),
             textGeneration: {} as ProviderInstance["textGeneration"],
           } satisfies ProviderInstance;
           const instanceRegistryLayer = Layer.succeed(
@@ -1130,6 +1402,7 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
                 streamChanges: Stream.fromPubSub(changes),
               },
               adapter: {} as ProviderInstance["adapter"],
+              historySync: makeTestHistorySync(openCodeInstanceId, openCodeDriver),
               textGeneration: {} as ProviderInstance["textGeneration"],
             } satisfies ProviderInstance;
             const instanceRegistryLayer = Layer.succeed(
@@ -1237,6 +1510,7 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
               streamChanges: Stream.empty,
             },
             adapter: {} as ProviderInstance["adapter"],
+            historySync: makeTestHistorySync(codexInstanceId, codexDriver),
             textGeneration: {} as ProviderInstance["textGeneration"],
           } satisfies ProviderInstance;
           const instanceRegistryLayer = Layer.succeed(
@@ -1330,6 +1604,7 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
               streamChanges: Stream.empty,
             },
             adapter: {} as ProviderInstance["adapter"],
+            historySync: makeTestHistorySync(provider.instanceId, provider.driver),
             textGeneration: {} as ProviderInstance["textGeneration"],
           });
           const codexInstance = makeInstance(codexProvider);
@@ -1477,7 +1752,9 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
                 ProviderEventLoggers.NoOpProviderEventLoggers,
               ),
             ),
+            Layer.provideMerge(ModelManifest.layerTest),
             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+            Layer.provideMerge(ProviderDriverIntegrationTestLayer),
             Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
             // NO spawner mock — `ChildProcessSpawner` is supplied by the
             // outer `NodeServices.layer` on `it.layer(...)` and will
@@ -1520,7 +1797,7 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
             assert.strictEqual(codexPersonal?.installed, false);
             assert.strictEqual(
               codexPersonal?.message,
-              "Codex CLI (`codex`) is not installed or not on PATH.",
+              "Codex CLI (`codex`) was not found on PATH.",
             );
           }).pipe(Effect.provide(runtimeServices));
         }),
@@ -1573,7 +1850,9 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
                 ProviderEventLoggers.NoOpProviderEventLoggers,
               ),
             ),
+            Layer.provideMerge(ModelManifest.layerTest),
             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+            Layer.provideMerge(ProviderDriverIntegrationTestLayer),
             Layer.updateService(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
               ChildProcessSpawner.make((command) => {
                 spawnedCommands.push((command as { readonly command: string }).command);
@@ -1698,7 +1977,9 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
                 ProviderEventLoggers.NoOpProviderEventLoggers,
               ),
             ),
+            Layer.provideMerge(ModelManifest.layerTest),
             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+            Layer.provideMerge(ProviderDriverIntegrationTestLayer),
             Layer.provideMerge(NodeServices.layer),
             Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
           );
@@ -1721,7 +2002,7 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
       );
 
       it.effect(
-        "keeps cursor disabled and skips probing when the provider setting is disabled",
+        "keeps Cursor disabled and skips provider probing when settings use their defaults",
         () =>
           Effect.gen(function* () {
             const serverSettings = yield* makeMutableServerSettingsService(
@@ -1766,7 +2047,9 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
                   ProviderEventLoggers.NoOpProviderEventLoggers,
                 ),
               ),
+              Layer.provideMerge(ModelManifest.layerTest),
               Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+              Layer.provideMerge(ProviderDriverIntegrationTestLayer),
               Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
               Layer.provideMerge(
                 mockCommandSpawnerLayer((command, args) => {
@@ -1807,12 +2090,15 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
               );
 
               assert.deepStrictEqual(providers.map((provider) => provider.instanceId).toSorted(), [
+                "chatgpt",
                 "claudeAgent",
                 "codex",
                 "cursor",
                 "gemini",
                 "grok",
+                "openai",
                 "opencode",
+                "openrouter",
               ]);
               assert.strictEqual(cursorProvider?.enabled, false);
               assert.strictEqual(cursorProvider?.status, "disabled");
@@ -2326,6 +2612,10 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
 
           assert.deepStrictEqual(status.slashCommands, [
             {
+              name: "compact",
+              description: "Summarize the conversation and reduce context usage",
+            },
+            {
               name: "review",
               description: "Review a pull request",
               input: { hint: "pr-or-branch" },
@@ -2368,6 +2658,10 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
           );
 
           assert.deepStrictEqual(status.slashCommands, [
+            {
+              name: "compact",
+              description: "Summarize the conversation and reduce context usage",
+            },
             {
               name: "ui",
               description: "Explore and refine UI",
@@ -2427,10 +2721,7 @@ it.layer(ProviderRegistryTestLayerWithGeminiWorkspaceContextAndFileSystem)(
           assert.strictEqual(status.status, "error");
           assert.strictEqual(status.installed, false);
           assert.strictEqual(status.auth.status, "unknown");
-          assert.strictEqual(
-            status.message,
-            "Claude Agent CLI (`claude`) is not installed or not on PATH.",
-          );
+          assert.strictEqual(status.message, "Claude Agent CLI (`claude`) was not found on PATH.");
         }).pipe(Effect.provide(failingSpawnerLayer("spawn claude ENOENT"))),
       );
 

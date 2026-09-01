@@ -1,4 +1,18 @@
-import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
+import {
+  CODEX_REASONING_EFFORT_OPTION_ID,
+  T3_AUTO_REASONING_OPTION_ID,
+  type ModelSelection,
+  type ProviderDriverKind,
+  type ProviderOptionDescriptor,
+  type RuntimeMode,
+} from "@t3tools/contracts";
+import {
+  enableAutoReasoning,
+  isAutoReasoningEnabled,
+  selectManualReasoningEffort,
+} from "@t3tools/shared/model";
+
+import { applyProviderOptionSelection } from "../../lib/providerOptions";
 
 /**
  * Desktop-oriented effort keywords that don't belong in the phone picker.
@@ -43,4 +57,55 @@ export function selectableChoices(
   return descriptor.options.filter(
     (option) => !injected.has(option.id) && !HIDDEN_EFFORT_OPTION_IDS.has(option.id),
   );
+}
+
+export function threadReasoningChoices(
+  provider: ProviderDriverKind | null,
+  descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
+) {
+  const choices = selectableChoices(descriptor);
+  return provider === "codex" &&
+    descriptor.id === CODEX_REASONING_EFFORT_OPTION_ID &&
+    descriptor.options.length > 0
+    ? [
+        {
+          id: T3_AUTO_REASONING_OPTION_ID,
+          label: "Auto",
+          description: "Sets reasoning level based on your prompt input.",
+        },
+        ...choices,
+      ]
+    : choices;
+}
+
+/** Applies the choice surfaced by the thread sheet, including Auto's durable marker. */
+export function applyThreadOptionChoice(input: {
+  readonly selection: ModelSelection;
+  readonly descriptors: ReadonlyArray<ProviderOptionDescriptor>;
+  readonly id: string;
+  readonly value: string | boolean;
+}): ModelSelection | null {
+  if (
+    input.id === CODEX_REASONING_EFFORT_OPTION_ID &&
+    input.value === T3_AUTO_REASONING_OPTION_ID
+  ) {
+    return enableAutoReasoning(input.selection);
+  }
+  if (input.id === CODEX_REASONING_EFFORT_OPTION_ID && typeof input.value === "string") {
+    const next = applyProviderOptionSelection(input.descriptors, {
+      id: input.id,
+      value: input.value,
+    });
+    return next === null
+      ? null
+      : selectManualReasoningEffort({ ...input.selection, options: next }, input.value);
+  }
+
+  const next = applyProviderOptionSelection(input.descriptors, {
+    id: input.id,
+    value: input.value,
+  });
+  if (next === null) return null;
+  const selection = { ...input.selection, options: next };
+  return isAutoReasoningEnabled(input.selection) ? enableAutoReasoning(selection) : selection;
 }

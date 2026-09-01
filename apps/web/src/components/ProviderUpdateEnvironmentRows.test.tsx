@@ -94,6 +94,15 @@ vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: () => testState.updateProvider,
 }));
 
+vi.mock("~/hooks/useInterfaceTranslator", () => ({
+  useInterfaceTranslator: () => ({
+    message: (key: string) => key,
+    number: (value: number) => String(value),
+    list: (values: ReadonlyArray<string>) => values.join(", "),
+    date: (value: Date | number) => String(value),
+  }),
+}));
+
 vi.mock("./ProviderUpdateLaunchNotification.environments", () => ({
   useLocalEnvironmentUpdateGroups: () => ({
     groups: testState.groups,

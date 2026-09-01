@@ -57,7 +57,6 @@ describe("McpRuntimeServerList", () => {
     expect(html).toContain("12 tools");
     expect(html).toContain(">Authorize<");
     expect(html).toContain('aria-label="Actions for Notion"');
-    expect(html).toContain("T3 Code System Server");
     expect(html).toContain("T3-managed servers");
     expect(html).toContain("T3 Code system server");
     expect(html).toContain("Manage MCP servers");
@@ -161,11 +160,11 @@ describe("McpRuntimeServerList", () => {
       />,
     );
 
-    expect(html).toContain('aria-label="Notion tools"');
+    expect(html).toContain('aria-label="Notion Tools"');
     expect(html).toContain("Search pages");
-    expect(html).toContain('aria-label="Notion resources"');
+    expect(html).toContain('aria-label="Notion Resources"');
     expect(html).toContain("notion://workspace/readme");
-    expect(html).toContain('aria-label="Notion resource templates"');
+    expect(html).toContain('aria-label="Notion Resource templates"');
     expect(html).toContain("notion://database/{databaseId}");
   });
 });

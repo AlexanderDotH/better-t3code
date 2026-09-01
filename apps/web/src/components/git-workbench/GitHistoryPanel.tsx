@@ -5,6 +5,7 @@ import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 import { deriveHistoryWindow } from "./GitWorkbench.logic";
 import type {
@@ -34,6 +35,7 @@ interface GitHistoryPanelProps {
 const ROW_HEIGHT = 64;
 
 export function GitHistoryPanel(props: GitHistoryPanelProps) {
+  const translate = useInterfaceTranslator().message;
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(480);
   const range = deriveHistoryWindow({
@@ -71,36 +73,36 @@ export function GitHistoryPanel(props: GitHistoryPanelProps) {
       >
         <div className="grid gap-2 border-b p-2">
           <select
-            aria-label="Filter history by branch"
+            aria-label={translate("git.history.branchFilter")}
             className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onChange={(event) => props.onHistoryRefFilterChange?.(event.currentTarget.value)}
             value={props.refFilter ?? ""}
           >
-            <option value="">Current branch</option>
+            <option value="">{translate("git.history.currentBranch")}</option>
             {props.branches.map((branch) => (
               <option
                 key={`${branch.remote ? "remote" : "local"}:${branch.name}`}
                 value={branch.name}
               >
                 {branch.name}
-                {branch.remote ? " (remote)" : ""}
+                {branch.remote ? ` (${translate("git.history.remoteSuffix")})` : ""}
               </option>
             ))}
           </select>
           <Input
-            aria-label="Filter history by path"
+            aria-label={translate("git.history.pathFilter")}
             onChange={(event) => props.onHistoryPathFilterChange?.(event.currentTarget.value)}
-            placeholder="Filter by path"
+            placeholder={translate("git.history.pathPlaceholder")}
             value={props.pathFilter ?? ""}
           />
           {props.history.snapshotOid ? (
             <p className="truncate px-1 font-mono text-muted-foreground text-[11px]">
-              Snapshot {props.history.snapshotOid.slice(0, 12)}
+              {translate("git.history.snapshot", { id: props.history.snapshotOid.slice(0, 12) })}
             </p>
           ) : null}
         </div>
         <div
-          aria-label="Commit history"
+          aria-label={translate("git.history.aria")}
           className="min-h-0 flex-1 overflow-auto"
           data-git-history-scroll-region="commits"
           onScroll={onScroll}
@@ -148,7 +150,7 @@ export function GitHistoryPanel(props: GitHistoryPanelProps) {
                 aria-hidden="true"
                 className="size-4 animate-spin motion-reduce:animate-none"
               />
-              Loading history…
+              {translate("git.history.loading")}
             </p>
           ) : null}
           {props.history.error ? (
@@ -167,7 +169,7 @@ export function GitHistoryPanel(props: GitHistoryPanelProps) {
           <GitCommitDetailPanel {...props} commit={props.selectedCommit} />
         ) : (
           <div className="grid min-h-48 w-full place-content-center text-muted-foreground text-sm">
-            Select a commit to inspect its metadata and changed files.
+            {translate("git.history.selectCommit")}
           </div>
         )}
       </main>
@@ -183,11 +185,13 @@ function GitCommitDetailPanel({
   onSelectCommit,
   readOnly,
 }: GitHistoryPanelProps & { readonly commit: GitCommitDetail }) {
+  const translator = useInterfaceTranslator();
+  const translate = translator.message;
   return (
     <article className="p-4">
       <div className="flex items-start gap-2">
         <Button
-          aria-label="Back to commit history"
+          aria-label={translate("git.history.back")}
           className="@3xl/git-history:hidden"
           onClick={() => onSelectCommit(null)}
           size="icon-xs"
@@ -200,20 +204,28 @@ function GitCommitDetailPanel({
           <p className="mt-1 break-all font-mono text-muted-foreground text-xs">{commit.oid}</p>
           <dl className="mt-3 grid gap-1 text-sm sm:grid-cols-2">
             <div>
-              <dt className="inline text-muted-foreground">Author: </dt>
+              <dt className="inline text-muted-foreground">{translate("git.history.author")} </dt>
               <dd className="inline">{commit.author}</dd>
             </div>
             <div>
-              <dt className="inline text-muted-foreground">Committer: </dt>
+              <dt className="inline text-muted-foreground">
+                {translate("git.history.committer")}{" "}
+              </dt>
               <dd className="inline">{commit.committer}</dd>
             </div>
             <div>
-              <dt className="inline text-muted-foreground">Authored: </dt>
-              <dd className="inline">{new Date(commit.authoredAt).toLocaleString()}</dd>
+              <dt className="inline text-muted-foreground">{translate("git.history.authored")} </dt>
+              <dd className="inline">
+                {translator.date(new Date(commit.authoredAt), { timeStyle: "short" })}
+              </dd>
             </div>
             <div>
-              <dt className="inline text-muted-foreground">Committed: </dt>
-              <dd className="inline">{new Date(commit.committedAt).toLocaleString()}</dd>
+              <dt className="inline text-muted-foreground">
+                {translate("git.history.committed")}{" "}
+              </dt>
+              <dd className="inline">
+                {translator.date(new Date(commit.committedAt), { timeStyle: "short" })}
+              </dd>
             </div>
           </dl>
           {commit.body ? <p className="mt-3 whitespace-pre-wrap text-sm">{commit.body}</p> : null}
@@ -225,7 +237,7 @@ function GitCommitDetailPanel({
             size="xs"
             variant="outline"
           >
-            Revert
+            {translate("git.history.revert")}
           </Button>
           <Button
             disabled={readOnly}
@@ -233,16 +245,16 @@ function GitCommitDetailPanel({
             size="xs"
             variant="outline"
           >
-            Cherry-pick
+            {translate("git.history.cherryPick")}
           </Button>
         </div>
       </div>
 
       <div className="mt-5 flex items-center gap-2">
         <FileDiff aria-hidden="true" className="size-4" />
-        <h3 className="font-semibold text-sm">Changed files</h3>
+        <h3 className="font-semibold text-sm">{translate("git.workbench.changedFiles")}</h3>
       </div>
-      <p className="mt-1 text-muted-foreground text-xs">Historical files are read-only.</p>
+      <p className="mt-1 text-muted-foreground text-xs">{translate("git.history.readOnly")}</p>
       <div className="mt-2 space-y-2">
         {commit.files.map((file) => (
           <section className="rounded-lg border" key={`${file.kind}:${file.path}`}>
@@ -254,7 +266,7 @@ function GitCommitDetailPanel({
                 <span className="text-destructive-foreground">-{file.deletions}</span>
               </span>
               <Button onClick={() => onOpenCurrentFile(file.path)} size="xs" variant="outline">
-                Open current worktree version
+                {translate("git.history.openCurrent")}
               </Button>
               {!file.binary && !file.unifiedDiff ? (
                 <Button
@@ -262,12 +274,14 @@ function GitCommitDetailPanel({
                   size="xs"
                   variant="ghost"
                 >
-                  Load patch
+                  {translate("git.history.loadPatch")}
                 </Button>
               ) : null}
             </div>
             {file.binary ? (
-              <p className="border-t p-3 text-muted-foreground text-xs">Binary file changed.</p>
+              <p className="border-t p-3 text-muted-foreground text-xs">
+                {translate("git.diff.binaryChanged")}
+              </p>
             ) : null}
             {file.unifiedDiff ? (
               <pre className="max-h-80 overflow-auto border-t bg-muted/24 p-3 text-xs">
@@ -275,7 +289,9 @@ function GitCommitDetailPanel({
               </pre>
             ) : null}
             {file.truncated ? (
-              <p className="border-t p-2 text-warning-foreground text-xs">Patch truncated.</p>
+              <p className="border-t p-2 text-warning-foreground text-xs">
+                {translate("git.diff.patchTruncated")}
+              </p>
             ) : null}
           </section>
         ))}

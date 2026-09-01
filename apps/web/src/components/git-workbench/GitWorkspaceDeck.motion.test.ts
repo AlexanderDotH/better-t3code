@@ -3,6 +3,15 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
+import {
+  prefersReducedSurfaceMotion,
+  SURFACE_MORPH_PRIMARY_DURATION_MS,
+} from "../chat/surfaceMorph";
+import {
+  buildWorkspaceDeckFrameMorphDescriptor,
+  WORKSPACE_DECK_MORPH_DURATION_MS,
+} from "../workspace-deck/workspaceCardDeck.morph";
+
 const gitDeckCssPath = decodeURIComponent(
   new URL("./GitWorkspaceDeck.css", import.meta.url).pathname,
 );
@@ -18,11 +27,56 @@ const readWorkspaceDeckCss = Effect.gen(function* () {
   return yield* fileSystem.readFileString(workspaceDeckCssPath);
 }).pipe(Effect.provide(NodeServices.layer));
 
-describe("Git workspace deck motion CSS", () => {
-  it.effect("uses one equal-size compact viewport with 32px inset card peeks", () =>
+describe("Git workspace deck motion model behavior", () => {
+  it("builds the 560ms chrome morph without scaling compact card contents", () => {
+    const descriptor = buildWorkspaceDeckFrameMorphDescriptor({
+      direction: "forward",
+      durationMs: WORKSPACE_DECK_MORPH_DURATION_MS,
+      from: {
+        rect: { left: 22, top: 300, width: 356, height: 32 },
+        radii: { topLeft: 0, topRight: 0, bottomRight: 16, bottomLeft: 16 },
+      },
+      role: "incoming",
+      to: {
+        rect: { left: 0, top: 100, width: 400, height: 200 },
+        radii: { topLeft: 22, topRight: 22, bottomRight: 22, bottomLeft: 22 },
+      },
+    });
+
+    expect(SURFACE_MORPH_PRIMARY_DURATION_MS).toBe(480);
+    expect(WORKSPACE_DECK_MORPH_DURATION_MS).toBe(560);
+    expect(descriptor.options.duration).toBe(560);
+    expect(descriptor.geometryKeyframes).not.toHaveLength(0);
+    expect(descriptor.cornerKeyframes).not.toHaveLength(0);
+    expect(descriptor.appearanceKeyframes).not.toHaveLength(0);
+    expect(
+      descriptor.geometryKeyframes.every(
+        (frame) =>
+          !("scale" in frame) &&
+          !("scaleX" in frame) &&
+          !("scaleY" in frame) &&
+          !("borderRadius" in frame) &&
+          !("clipPath" in frame),
+      ),
+    ).toBe(true);
+  });
+
+  it("detects reduced motion before choosing an animated path", () => {
+    expect(prefersReducedSurfaceMotion({ matchMedia: () => ({ matches: true }) })).toBe(true);
+    expect(prefersReducedSurfaceMotion({ matchMedia: () => ({ matches: false }) })).toBe(false);
+  });
+});
+
+// Node has no CSS layout or animation engine. These source assertions are an
+// explicit repository policy for cascade-only constraints; the descriptor,
+// timing, and reduced-motion decisions are exercised through model APIs above.
+describe("Git workspace deck motion CSS repository policy", () => {
+  it.effect("keeps the equal-size compact viewport between mirrored 32px card peeks", () =>
     Effect.gen(function* () {
       const css = yield* readWorkspaceDeckCss;
+      const gitCss = yield* readGitDeckCss;
 
+      expect(css).toMatch(/\.workspace-card-deck\s*\{[^}]*padding-block:\s*2rem;/);
       expect(css).toMatch(
         /\.workspace-card-deck__viewport\s*\{[^}]*height:\s*var\(--workspace-card-deck-compact-height\);/,
       );
@@ -34,19 +88,32 @@ describe("Git workspace deck motion CSS", () => {
         /\.workspace-card-deck__peek\s*\{[^}]*inset-inline:\s*1\.375rem;[^}]*(?:height|block-size):\s*2rem;/,
       );
       expect(css).toMatch(
+        /\.workspace-card-deck__peek--previous\s*\{[^}]*inset-block-start:\s*-2rem;[^}]*border-radius:\s*1rem 1rem 0 0;/,
+      );
+      expect(css).toMatch(
+        /\.workspace-card-deck__peek--next\s*\{[^}]*inset-block-end:\s*-2rem;[^}]*border-radius:\s*0 0 1rem 1rem;/,
+      );
+      expect(gitCss).toMatch(/\.git-compact-card\s*\{[^}]*border-radius:\s*1\.375rem;/);
+      expect(css).toMatch(
         /\.workspace-card-deck__viewport\s*\{[^}]*transition:\s*height 200ms ease-out;/,
       );
     }),
   );
 
-  it.effect("keeps non-adjacent bodies mounted but visually hidden at rest", () =>
+  it.effect("keeps the reordered back shell at the destination edge", () =>
     Effect.gen(function* () {
       const css = yield* readWorkspaceDeckCss;
 
+      expect(css).toMatch(/\.workspace-card-deck__peeks\s*\{[^}]*z-index:\s*1;/);
+      expect(css).toMatch(/\.workspace-card-deck__viewport\s*\{[^}]*z-index:\s*2;/);
       expect(css).toMatch(/\.workspace-card-deck__card\s*\{[^}]*visibility:\s*hidden;/);
       expect(css).toMatch(
         /\.workspace-card-deck__card\[data-card-position="active"\]\s*\{[^}]*visibility:\s*visible;/,
       );
+      expect(css).toMatch(
+        /\.workspace-card-deck__viewport:not\(\[data-expanded="true"\]\)\s+\.workspace-card-deck__card\s*\{[^}]*overflow:\s*clip;/,
+      );
+      expect(css).toMatch(/\[data-deck-morph-back-peek="true"\]\s*\{[^}]*will-change:\s*opacity;/);
     }),
   );
 
@@ -89,67 +156,39 @@ describe("Git workspace deck motion CSS", () => {
     }),
   );
 
-  it.effect("moves cards on one clipped vertical track without fading their contents", () =>
+  it.effect("keeps compact card contents free of filter and opacity animation", () =>
     Effect.gen(function* () {
       const css = yield* readWorkspaceDeckCss;
-      const cardKeyframes = css.slice(
-        css.indexOf("@keyframes workspace-card-carousel-in"),
-        css.indexOf("@keyframes workspace-peek-carousel-settle"),
-      );
-
-      expect(css).toContain("@keyframes workspace-card-carousel-in");
-      expect(css).toContain("@keyframes workspace-card-carousel-out");
-      expect(css).toMatch(/workspace-card-carousel-in 420ms[^;]*both/);
-      expect(css).toMatch(/workspace-card-carousel-out 420ms[^;]*both/);
-      expect(css).toMatch(/translate3d\(0,\s*var\(--workspace-card-[^)]+-y\),\s*0\)/);
-      expect(css).not.toContain("rotate(");
-      expect(cardKeyframes).not.toContain("opacity:");
-      expect(css).toMatch(
-        /\.workspace-card-deck\[data-deck-transition\][\s\S]*?\.workspace-card-deck__card\[data-transition-role="incoming"\][\s\S]*?will-change:\s*transform;/,
-      );
       expect(css).not.toMatch(/\.workspace-card-deck__card\s*\{[^}]*filter:/);
       expect(css).not.toMatch(/\.workspace-card-deck__card\s*\{[^}]*(?:opacity|backdrop-filter):/);
     }),
   );
 
-  it.effect("settles peek labels after the card shuffle without animating card contents", () =>
+  it.effect("gives animated chrome pointerless proxy styling", () =>
     Effect.gen(function* () {
       const css = yield* readWorkspaceDeckCss;
-
-      expect(css).toContain("@keyframes workspace-peek-carousel-settle");
-      expect(css).toMatch(/workspace-peek-carousel-settle 180ms[^;]*240ms both/);
-      expect(css).toMatch(
-        /@keyframes workspace-peek-carousel-settle[\s\S]*?0%\s*\{[^}]*opacity:\s*0;[\s\S]*?100%\s*\{[^}]*opacity:\s*1;/,
-      );
-      expect(css).not.toMatch(/\.workspace-card-deck__card-content\s*\{[^}]*animation:/);
+      expect(css).toMatch(/\.workspace-card-deck__morph-proxy\s*\{[^}]*pointer-events:\s*none;/);
     }),
   );
 
-  it.effect("limits will-change to active transitions", () =>
+  it.effect("limits compositor hints to active transitions", () =>
     Effect.gen(function* () {
       const css = yield* readWorkspaceDeckCss;
 
       const idleCardRule = css.match(/\.workspace-card-deck__card\s*\{([^}]*)\}/)?.[1] ?? "";
       expect(idleCardRule).not.toContain("will-change");
-      expect(css).toMatch(
-        /\.workspace-card-deck\[data-deck-transition\][\s\S]*?\.workspace-card-deck__card\[data-transition-role="incoming"\][\s\S]*?will-change:\s*transform;/,
-      );
+      expect(css).not.toMatch(/\.workspace-card-deck__card-content\s*\{[^}]*will-change:/);
     }),
   );
 
-  it.effect("swaps and resizes immediately when reduced motion is requested", () =>
+  it.effect("swaps immediately for reduced motion and retains a safe non-WAAPI fallback", () =>
     Effect.gen(function* () {
       const css = yield* readWorkspaceDeckCss;
 
       expect(css).toMatch(
         /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.workspace-card-deck__viewport\s*\{[^}]*transition:\s*none;/,
       );
-      expect(css).toMatch(
-        /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.workspace-card-deck\[data-deck-transition\][\s\S]*?animation:\s*none;/,
-      );
-      expect(css).toMatch(
-        /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.workspace-card-deck__peek-content[\s\S]*?animation:\s*none;/,
-      );
+      expect(css).toMatch(/\[data-deck-motion="fallback"\]/);
     }),
   );
 });

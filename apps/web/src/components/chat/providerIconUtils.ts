@@ -1,5 +1,14 @@
-import { ProviderDriverKind } from "@t3tools/contracts";
-import { ClaudeAI, CursorIcon, GeminiIcon, GrokIcon, Icon, OpenAI, OpenCodeIcon } from "../Icons";
+import { ProviderDriverKind, type ModelCapabilities } from "@t3tools/contracts";
+import {
+  ClaudeAI,
+  CursorIcon,
+  GeminiIcon,
+  GrokIcon,
+  Icon,
+  OpenAI,
+  OpenCodeIcon,
+  OpenRouterIcon,
+} from "../Icons";
 import { PROVIDER_OPTIONS } from "../../session-logic";
 
 export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
@@ -9,6 +18,9 @@ export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>
   [ProviderDriverKind.make("cursor")]: CursorIcon,
   [ProviderDriverKind.make("grok")]: GrokIcon,
   [ProviderDriverKind.make("gemini")]: GeminiIcon,
+  [ProviderDriverKind.make("chatgpt")]: OpenAI,
+  [ProviderDriverKind.make("openrouter")]: OpenRouterIcon,
+  [ProviderDriverKind.make("openai")]: OpenAI,
 };
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
@@ -28,6 +40,10 @@ export type ModelEsque = {
   shortName?: string | undefined;
   subProvider?: string | undefined;
   isLegacy?: boolean | undefined;
+  isSelectable?: boolean | undefined;
+  unavailableReason?: string | undefined;
+  capabilities?: ModelCapabilities | null | undefined;
+  isUnavailable?: boolean | undefined;
 };
 
 function escapeRegExp(value: string): string {

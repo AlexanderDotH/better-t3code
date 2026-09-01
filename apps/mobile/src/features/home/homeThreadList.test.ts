@@ -853,4 +853,36 @@ describe("partitionHomeProjectGroupsByActivity", () => {
     expect(result.recentGroups).toEqual([group]);
     expect(result.olderGroups).toEqual([]);
   });
+
+  it("keeps a project recent when its final old thread is settled now", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project-settled"),
+      title: "Settled",
+    });
+    const oldTimestamp = new Date(NOW - HOME_PROJECT_INACTIVITY_MS - 1).toISOString();
+    const settledAt = new Date(NOW).toISOString();
+    const [group] = buildGroups(
+      [project],
+      [
+        makeThread({
+          environmentId,
+          id: ThreadId.make("thread-settled"),
+          projectId: project.id,
+          title: "Settled",
+          createdAt: oldTimestamp,
+          updatedAt: settledAt,
+          latestUserMessageAt: oldTimestamp,
+          settledOverride: "settled",
+          settledAt,
+        }),
+      ],
+    );
+
+    const result = partitionHomeProjectGroupsByActivity({ groups: [group!], nowMs: NOW });
+
+    expect(result.recentGroups).toEqual([group]);
+    expect(result.olderGroups).toEqual([]);
+  });
 });

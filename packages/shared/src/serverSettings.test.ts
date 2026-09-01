@@ -3,6 +3,7 @@ import {
   McpServerId,
   ProviderDriverKind,
   ProviderInstanceId,
+  resolveBetterT3FeatureFlag,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -20,6 +21,67 @@ import {
 } from "./serverSettings.ts";
 
 describe("serverSettings helpers", () => {
+  it("keeps the Better T3 Deep Thinking flag and legacy setting bidirectionally compatible", () => {
+    const enabledByCurrentClient = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      betterT3Environment: { flags: { "agent.deepThinking": true } },
+    });
+    expect(enabledByCurrentClient.agentEnhancement.deepThinking.enabled).toBe(true);
+
+    const disabledByLegacyClient = applyServerSettingsPatch(enabledByCurrentClient, {
+      agentEnhancement: { deepThinking: { enabled: false } },
+    });
+    expect(
+      resolveBetterT3FeatureFlag(disabledByLegacyClient.betterT3Environment, "agent.deepThinking"),
+    ).toBe(false);
+
+    const currentClientWins = applyServerSettingsPatch(disabledByLegacyClient, {
+      betterT3Environment: { flags: { "agent.deepThinking": true } },
+      agentEnhancement: { deepThinking: { enabled: false } },
+    });
+    expect(
+      resolveBetterT3FeatureFlag(currentClientWins.betterT3Environment, "agent.deepThinking"),
+    ).toBe(true);
+    expect(currentClientWins.agentEnhancement.deepThinking.enabled).toBe(true);
+  });
+
+  it("rejects stale locale writes while preserving the newest compatible legacy mirror", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      interfaceLanguageSyncRecord: {
+        preference: "de" as const,
+        updatedAt: 20,
+        updateId: "desktop:de:20",
+      },
+      interfaceLocaleSyncRecordV1: {
+        version: 1 as const,
+        preference: "fr" as const,
+        updatedAt: 30,
+        updateId: "mobile:fr:30",
+      },
+    };
+
+    const staleLocale = applyServerSettingsPatch(current, {
+      interfaceLocaleSyncRecordV1: {
+        version: 1,
+        preference: "en",
+        updatedAt: 10,
+        updateId: "web:en:10",
+      },
+    });
+    expect(staleLocale.interfaceLocaleSyncRecordV1).toEqual(current.interfaceLocaleSyncRecordV1);
+    expect(staleLocale.interfaceLanguageSyncRecord).toEqual(current.interfaceLanguageSyncRecord);
+
+    const staleLegacy = applyServerSettingsPatch(current, {
+      interfaceLanguageSyncRecord: {
+        preference: "en",
+        updatedAt: 10,
+        updateId: "legacy:en:10",
+      },
+    });
+    expect(staleLegacy.interfaceLocaleSyncRecordV1).toEqual(current.interfaceLocaleSyncRecordV1);
+    expect(staleLegacy.interfaceLanguageSyncRecord).toEqual(current.interfaceLanguageSyncRecord);
+  });
+
   it("maps the former streaming patch key without overriding the current key", () => {
     expect(
       applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { enableAssistantStreaming: true })

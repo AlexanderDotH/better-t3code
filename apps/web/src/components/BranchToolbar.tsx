@@ -24,14 +24,11 @@ import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { cn } from "../lib/utils";
 import { useProject, useThread, useThreadShellsForProjectRefs } from "../state/entities";
 import { useIsMobile } from "../hooks/useMediaQuery";
+import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 import {
   type EnvMode,
   type EnvironmentOption,
-  resolveCurrentWorkspaceLabel,
-  resolveEnvModeLabel,
   resolveEffectiveEnvMode,
-  resolveLockedWorkspaceLabel,
-  resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
@@ -50,6 +47,7 @@ import {
   MenuTrigger,
 } from "./ui/menu";
 import { Separator } from "./ui/separator";
+import { ComposerSurface } from "./chat/ComposerSurface";
 
 interface BranchToolbarProps {
   environmentId: EnvironmentId;
@@ -70,6 +68,19 @@ interface BranchToolbarProps {
   gitControl?: ReactNode;
   orientation?: "previous" | "next";
   cardPeek?: boolean;
+}
+
+export function branchToolbarContextStripClassName(input: {
+  readonly cardPeek: boolean;
+  readonly orientation: "previous" | "next";
+}): string {
+  if (input.cardPeek) {
+    return cn("mx-0 mt-0 mb-0 w-full max-w-none ps-0 pe-0 pt-0 pb-0", "before:hidden");
+  }
+
+  return input.orientation === "previous"
+    ? "chat-composer-context-strip--previous mt-0 -mb-4 pt-1 pb-5"
+    : "chat-composer-context-strip--next";
 }
 
 interface MobileRunContextSelectorProps {
@@ -101,6 +112,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   previousWorktreeLabel,
   onUsePreviousWorktree,
 }: MobileRunContextSelectorProps) {
+  const translator = useInterfaceTranslator();
   const activeEnvironment = useMemo(
     () => availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null,
     [availableEnvironments, environmentId],
@@ -112,10 +124,14 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
         ? FolderGitIcon
         : FolderIcon;
   const workspaceLabel = envModeLocked
-    ? resolveLockedWorkspaceLabel(activeWorktreePath)
+    ? translator.message(
+        activeWorktreePath ? "sidebar.branch.worktree" : "sidebar.branch.localCheckout",
+      )
     : effectiveEnvMode === "worktree"
-      ? resolveEnvModeLabel("worktree")
-      : resolveCurrentWorkspaceLabel(activeWorktreePath);
+      ? translator.message("sidebar.branch.newWorktree")
+      : translator.message(
+          activeWorktreePath ? "sidebar.branch.currentWorktree" : "sidebar.branch.currentCheckout",
+        );
   const isLocked = envLocked || envModeLocked;
   const EnvironmentIcon = activeEnvironment?.isPrimary ? MonitorIcon : CloudIcon;
   const icon = showEnvironmentIndicator ? (
@@ -132,7 +148,9 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
     <>
       {icon}
       <span className="min-w-0 truncate">
-        {showEnvironmentIndicator ? (activeEnvironment?.label ?? "Run on") : workspaceLabel}
+        {showEnvironmentIndicator
+          ? (activeEnvironment?.label ?? translator.message("sidebar.branch.runOn"))
+          : workspaceLabel}
       </span>
     </>
   );
@@ -158,7 +176,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
         {showEnvironmentPicker && availableEnvironments && onEnvironmentChange ? (
           <>
             <MenuGroup>
-              <MenuGroupLabel>Run on</MenuGroupLabel>
+              <MenuGroupLabel>{translator.message("sidebar.branch.runOn")}</MenuGroupLabel>
               <MenuRadioGroup
                 value={environmentId}
                 onValueChange={(value) => onEnvironmentChange(value as EnvironmentId)}
@@ -184,7 +202,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
           </>
         ) : null}
         <MenuGroup>
-          <MenuGroupLabel>Workspace</MenuGroupLabel>
+          <MenuGroupLabel>{translator.message("sidebar.branch.workspace")}</MenuGroupLabel>
           <MenuRadioGroup
             value={effectiveEnvMode}
             onValueChange={(value) => {
@@ -203,14 +221,20 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
                   <FolderIcon className="size-3" />
                 )}
                 <span className="min-w-0 truncate">
-                  {resolveCurrentWorkspaceLabel(activeWorktreePath)}
+                  {translator.message(
+                    activeWorktreePath
+                      ? "sidebar.branch.currentWorktree"
+                      : "sidebar.branch.currentCheckout",
+                  )}
                 </span>
               </span>
             </MenuRadioItem>
             <MenuRadioItem disabled={envModeLocked} value="worktree">
               <span className="flex min-w-0 items-center gap-1.5">
                 <FolderGit2Icon className="size-3" />
-                <span className="min-w-0 truncate">{resolveEnvModeLabel("worktree")}</span>
+                <span className="min-w-0 truncate">
+                  {translator.message("sidebar.branch.newWorktree")}
+                </span>
               </span>
             </MenuRadioItem>
             {previousWorktreeLabel ? (
@@ -406,6 +430,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   orientation = "next",
   cardPeek = false,
 }: BranchToolbarProps) {
+  const translator = useInterfaceTranslator();
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
@@ -452,7 +477,12 @@ export const BranchToolbar = memo(function BranchToolbar({
     [activeWorktreePath, canUsePreviousWorktree, projectThreads],
   );
   const previousWorktreeLabel = previousWorktreeSeed
-    ? resolvePreviousWorktreeLabel(previousWorktreeSeed)
+    ? translator.message(
+        previousWorktreeSeed.branch
+          ? "sidebar.branch.previousWorktreeBranch"
+          : "sidebar.branch.previousWorktree",
+        previousWorktreeSeed.branch ? { branch: previousWorktreeSeed.branch } : undefined,
+      )
     : null;
   const onUsePreviousWorktree = useCallback(() => {
     if (!previousWorktreeSeed || !activeProjectRef) return;
@@ -482,20 +512,10 @@ export const BranchToolbar = memo(function BranchToolbar({
   if (!hasActiveThread || !activeProject) return null;
 
   return (
-    <div
+    <ComposerSurface.ContextStrip
       ref={setStripElement}
       data-compact={labelsOverflow ? "" : undefined}
-      className={cn(
-        "chat-composer-context-strip group/composer-context flex items-center gap-2 overflow-x-clip overflow-y-visible",
-        cardPeek
-          ? "mx-0 w-full max-w-none px-0"
-          : "mx-auto w-[calc(100%-2.75rem)] max-w-[calc(48rem-2.75rem)] ps-1 pe-2",
-        cardPeek
-          ? "my-0 py-0"
-          : orientation === "previous"
-            ? "chat-composer-context-strip--previous -mb-4 pt-1 pb-5"
-            : "chat-composer-context-strip--next -mt-4 pt-5 pb-1",
-      )}
+      className={branchToolbarContextStripClassName({ cardPeek, orientation })}
       data-workspace-card-peek-position={orientation}
     >
       {isMobile && showGitControls ? (
@@ -563,6 +583,6 @@ export const BranchToolbar = memo(function BranchToolbar({
           {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
         />
       ) : null}
-    </div>
+    </ComposerSurface.ContextStrip>
   );
 });

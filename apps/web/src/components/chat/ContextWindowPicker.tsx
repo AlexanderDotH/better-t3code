@@ -22,6 +22,7 @@ import { type DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ComposerControl, ComposerControlChevron } from "./ComposerControl";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 type SelectDescriptor = Extract<ProviderOptionDescriptor, { type: "select" }>;
 
@@ -62,7 +63,10 @@ function contextWindowDescriptor(input: {
   return descriptor && descriptor.options.length > 0 ? { descriptor, descriptors } : null;
 }
 
-export function buildContextWindowSliderState(descriptor: SelectDescriptor): {
+export function buildContextWindowSliderState(
+  descriptor: SelectDescriptor,
+  modelDefaultLabel = "Model default",
+): {
   readonly currentIndex: number;
   readonly currentLabel: string;
   readonly maxIndex: number;
@@ -73,7 +77,7 @@ export function buildContextWindowSliderState(descriptor: SelectDescriptor): {
   const selectedIndex = descriptor.options.findIndex((option) => option.id === currentValue);
   const currentIndex = selectedIndex >= 0 ? selectedIndex : 0;
   const maxIndex = Math.max(0, descriptor.options.length - 1);
-  const currentLabel = descriptor.options[currentIndex]?.label ?? "Model default";
+  const currentLabel = descriptor.options[currentIndex]?.label ?? modelDefaultLabel;
   return {
     currentIndex,
     currentLabel,
@@ -121,6 +125,7 @@ type ContextWindowSelection = {
 };
 
 function useContextWindowSelection(props: ContextWindowPickerProps): ContextWindowSelection | null {
+  const translate = useInterfaceTranslator().message;
   const selected = contextWindowDescriptor(props);
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
   const externalValue = selected ? getProviderOptionCurrentValue(selected.descriptor) : undefined;
@@ -138,8 +143,14 @@ function useContextWindowSelection(props: ContextWindowPickerProps): ContextWind
     [optimisticValue, selected],
   );
   const slider = useMemo(
-    () => (visibleDescriptor ? buildContextWindowSliderState(visibleDescriptor) : null),
-    [visibleDescriptor],
+    () =>
+      visibleDescriptor
+        ? buildContextWindowSliderState(
+            visibleDescriptor,
+            translate("chat.contextWindow.modelDefault"),
+          )
+        : null,
+    [translate, visibleDescriptor],
   );
   const selectIndex = useCallback(
     (index: number, notifyThread: boolean) => {
@@ -197,6 +208,7 @@ function ContextWindowRangeSlider({
   readonly sliderId: string;
   readonly isolateFromMenu: boolean;
 }) {
+  const translate = useInterfaceTranslator().message;
   const { slider } = selection;
   const ratio = slider.progressPercent / 100;
   const sliderStyle = {
@@ -206,7 +218,7 @@ function ContextWindowRangeSlider({
 
   return (
     <input
-      aria-label="Context window size"
+      aria-label={translate("chat.contextWindow.size")}
       aria-valuetext={slider.currentLabel}
       className="settings-slider w-full"
       data-chat-context-window-slider={isolateFromMenu ? "menu" : "picker"}
@@ -270,6 +282,7 @@ function ContextWindowRangeEndpoints({ descriptor }: { readonly descriptor: Sele
 export const ContextWindowMenuContent = memo(function ContextWindowMenuContent(
   props: ContextWindowPickerProps,
 ) {
+  const translate = useInterfaceTranslator().message;
   const selection = useContextWindowSelection(props);
   if (!selection) {
     return null;
@@ -278,7 +291,9 @@ export const ContextWindowMenuContent = memo(function ContextWindowMenuContent(
   return (
     <div className="w-full px-2 py-1.5" data-chat-context-window-menu-content="true">
       <div className="mb-1 flex items-baseline justify-between gap-3">
-        <div className="font-medium text-muted-foreground text-xs">Context window</div>
+        <div className="font-medium text-muted-foreground text-xs">
+          {translate("chat.contextWindow.title")}
+        </div>
         <output
           className="font-medium tabular-nums text-foreground text-xs"
           htmlFor="chat-context-window-menu-slider"
@@ -299,6 +314,7 @@ export const ContextWindowMenuContent = memo(function ContextWindowMenuContent(
 export const ContextWindowPicker = memo(function ContextWindowPicker(
   props: ContextWindowPickerProps,
 ) {
+  const translate = useInterfaceTranslator().message;
   const selection = useContextWindowSelection(props);
   if (!selection) {
     return null;
@@ -309,7 +325,9 @@ export const ContextWindowPicker = memo(function ContextWindowPicker(
       <PopoverTrigger
         render={
           <ComposerControl
-            aria-label={`Context window: ${selection.slider.currentLabel}`}
+            aria-label={translate("chat.contextWindow.pickerLabel", {
+              label: selection.slider.currentLabel,
+            })}
             className="min-w-16 shrink-0 justify-between whitespace-nowrap px-2.5"
             data-chat-context-window-picker="true"
             variant="ghost"
@@ -334,9 +352,11 @@ export const ContextWindowPicker = memo(function ContextWindowPicker(
               <GaugeIcon aria-hidden="true" className="size-4" strokeWidth={2} />
             </div>
             <div className="min-w-0">
-              <div className="font-medium text-sm text-foreground">Context window</div>
+              <div className="font-medium text-sm text-foreground">
+                {translate("chat.contextWindow.title")}
+              </div>
               <div className="mt-0.5 text-pretty text-muted-foreground text-xs leading-relaxed">
-                Saved for this chat and applied to the next Codex turn.
+                {translate("chat.contextWindow.savedDescription")}
               </div>
             </div>
           </div>
@@ -350,8 +370,8 @@ export const ContextWindowPicker = memo(function ContextWindowPicker(
               </output>
               <span className="rounded-md border border-border/60 bg-background/55 px-2 py-1 font-medium text-[10px] uppercase tracking-wide text-muted-foreground">
                 {selection.visibleDescriptor.options[selection.slider.currentIndex]?.isDefault
-                  ? "Model default"
-                  : "Custom"}
+                  ? translate("chat.contextWindow.modelDefault")
+                  : translate("chat.contextWindow.custom")}
               </span>
             </div>
             <ContextWindowRangeSlider

@@ -48,7 +48,7 @@ describe("GitWorkspaceChangesIndicator", () => {
 
     expect(clean).toContain("0 changes");
     expect(conflicted).toContain("3 changes");
-    expect(conflicted).toContain("conflicts present");
+    expect(conflicted).toContain("Conflicts");
   });
 
   it("keeps refreshing accessible without rendering a label or dot", () => {

@@ -1,12 +1,8 @@
 import { FolderGit2Icon, FolderGitIcon, FolderIcon, HistoryIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
-import {
-  resolveCurrentWorkspaceLabel,
-  resolveEnvModeLabel,
-  resolveLockedWorkspaceLabel,
-  type EnvMode,
-} from "./BranchToolbar.logic";
+import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
+import { type EnvMode } from "./BranchToolbar.logic";
 import {
   Select,
   SelectGroup,
@@ -36,16 +32,22 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   previousWorktreeLabel,
   onUsePreviousWorktree,
 }: BranchToolbarEnvModeSelectorProps) {
+  const translator = useInterfaceTranslator();
   const showPreviousWorktree = Boolean(previousWorktreeLabel && onUsePreviousWorktree);
   const envModeItems = useMemo(
     () => [
-      { value: "local", label: resolveCurrentWorkspaceLabel(activeWorktreePath) },
-      { value: "worktree", label: resolveEnvModeLabel("worktree") },
+      {
+        value: "local",
+        label: translator.message(
+          activeWorktreePath ? "sidebar.branch.currentWorktree" : "sidebar.branch.currentCheckout",
+        ),
+      },
+      { value: "worktree", label: translator.message("sidebar.branch.newWorktree") },
       ...(showPreviousWorktree && previousWorktreeLabel
         ? [{ value: PREVIOUS_WORKTREE_SELECT_VALUE, label: previousWorktreeLabel }]
         : []),
     ],
-    [activeWorktreePath, previousWorktreeLabel, showPreviousWorktree],
+    [activeWorktreePath, previousWorktreeLabel, showPreviousWorktree, translator],
   );
 
   if (envLocked) {
@@ -57,12 +59,12 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         {activeWorktreePath ? (
           <>
             <FolderGitIcon className="size-3" />
-            {resolveLockedWorkspaceLabel(activeWorktreePath)}
+            {translator.message("sidebar.branch.worktree")}
           </>
         ) : (
           <>
             <FolderIcon className="size-3" />
-            {resolveLockedWorkspaceLabel(activeWorktreePath)}
+            {translator.message("sidebar.branch.localCheckout")}
           </>
         )}
       </span>
@@ -87,7 +89,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         size="xs"
         className="min-w-0 shrink font-medium"
         data-git-workspace-context-control="true"
-        aria-label="Workspace"
+        aria-label={translator.message("sidebar.branch.workspace")}
         data-composer-context-control
       >
         {effectiveEnvMode === "worktree" ? (
@@ -111,7 +113,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       </SelectTrigger>
       <SelectPopup>
         <SelectGroup>
-          <SelectGroupLabel>Workspace</SelectGroupLabel>
+          <SelectGroupLabel>{translator.message("sidebar.branch.workspace")}</SelectGroupLabel>
           <SelectItem value="local">
             <span className="inline-flex items-center gap-1.5">
               {activeWorktreePath ? (
@@ -119,13 +121,17 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
               ) : (
                 <FolderIcon className="size-3" />
               )}
-              {resolveCurrentWorkspaceLabel(activeWorktreePath)}
+              {translator.message(
+                activeWorktreePath
+                  ? "sidebar.branch.currentWorktree"
+                  : "sidebar.branch.currentCheckout",
+              )}
             </span>
           </SelectItem>
           <SelectItem value="worktree">
             <span className="inline-flex items-center gap-1.5">
               <FolderGit2Icon className="size-3" />
-              {resolveEnvModeLabel("worktree")}
+              {translator.message("sidebar.branch.newWorktree")}
             </span>
           </SelectItem>
           {showPreviousWorktree && previousWorktreeLabel ? (

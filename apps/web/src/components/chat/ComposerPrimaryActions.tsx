@@ -1,6 +1,10 @@
 import { Fragment, memo, type PointerEventHandler } from "react";
 import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
 import type { OrchestrationTurnAbortPhase } from "@t3tools/contracts";
+import {
+  createInterfaceTranslator,
+  type InterfaceTranslator,
+} from "@t3tools/shared/interfaceLanguage";
 import type {
   PlanImplementationStrategy,
   PlanImplementationSuggestion,
@@ -13,6 +17,7 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 interface PendingActionState {
   questionIndex: number;
@@ -62,7 +67,8 @@ interface PlanImplementationActionPresentation {
 }
 
 const STANDARD_IMPLEMENTATION_STRATEGY = { kind: "standard" } as const;
-const PLAN_REVIEW_FALLBACK_TOOLTIP = "AI review unavailable; using plan structure estimate.";
+const englishTranslate = createInterfaceTranslator({ language: "en", locale: "en-US" }).message;
+type Translate = InterfaceTranslator["message"];
 
 interface PlanImplementationReviewPresentation {
   readonly actionsDisabled: boolean;
@@ -72,11 +78,12 @@ interface PlanImplementationReviewPresentation {
 
 export function resolvePlanImplementationReviewPresentation(
   status: PlanParallelismReviewStatus,
+  translate: Translate = englishTranslate,
 ): PlanImplementationReviewPresentation {
   if (status === "reviewing") {
     return {
       actionsDisabled: true,
-      primaryLabel: "Analyzing plan…",
+      primaryLabel: translate("chat.composer.analyzingPlan"),
       tooltip: null,
     };
   }
@@ -84,7 +91,7 @@ export function resolvePlanImplementationReviewPresentation(
     return {
       actionsDisabled: false,
       primaryLabel: null,
-      tooltip: PLAN_REVIEW_FALLBACK_TOOLTIP,
+      tooltip: translate("chat.composer.planReviewFallback"),
     };
   }
   return {
@@ -97,16 +104,18 @@ export function resolvePlanImplementationReviewPresentation(
 export function buildPlanImplementationActionPresentation(input: {
   readonly compact: boolean;
   readonly suggestion: PlanImplementationSuggestion | null;
+  readonly translate?: Translate;
 }): PlanImplementationActionPresentation {
+  const translate = input.translate ?? englishTranslate;
   const suggestion = input.suggestion;
   if (!suggestion) {
     return {
-      primaryLabel: "Implement",
+      primaryLabel: translate("chat.composer.implement"),
       primaryAriaLabel: null,
       menuActions: [
         {
           id: "standard:new-thread",
-          label: "Implement in a new thread",
+          label: translate("chat.composer.implementNewThread"),
           target: "new-thread",
           strategy: STANDARD_IMPLEMENTATION_STRATEGY,
           suggested: false,
@@ -116,28 +125,34 @@ export function buildPlanImplementationActionPresentation(input: {
   }
 
   const suggestedCount = suggestion.strategy.count;
-  const fullPrimaryLabel = `Implement with ${suggestedCount} subagents`;
+  const fullPrimaryLabel = translate("chat.composer.implementWithSubagents", {
+    count: suggestedCount,
+  });
   return {
-    primaryLabel: input.compact ? `${suggestedCount} subagents` : fullPrimaryLabel,
+    primaryLabel: input.compact
+      ? translate("chat.composer.subagentCount", { count: suggestedCount })
+      : fullPrimaryLabel,
     primaryAriaLabel: fullPrimaryLabel,
     menuActions: [
       {
         id: "standard:same-thread",
-        label: "Implement normally",
+        label: translate("chat.composer.implementNormally"),
         target: "same-thread",
         strategy: STANDARD_IMPLEMENTATION_STRATEGY,
         suggested: false,
       },
       {
         id: "standard:new-thread",
-        label: "Implement normally in a new thread",
+        label: translate("chat.composer.implementNormallyNewThread"),
         target: "new-thread",
         strategy: STANDARD_IMPLEMENTATION_STRATEGY,
         suggested: false,
       },
       {
         id: `subagents:${suggestedCount}:new-thread`,
-        label: `Implement with ${suggestedCount} subagents in a new thread`,
+        label: translate("chat.composer.implementWithSubagentsNewThread", {
+          count: suggestedCount,
+        }),
         target: "new-thread",
         strategy: suggestion.strategy,
         suggested: true,
@@ -145,7 +160,7 @@ export function buildPlanImplementationActionPresentation(input: {
       ...suggestion.supportedCounts.map(
         (count): PlanImplementationMenuAction => ({
           id: `subagents:${count}:same-thread`,
-          label: `Implement with ${count} subagents`,
+          label: translate("chat.composer.implementWithSubagents", { count }),
           target: "same-thread",
           strategy: { kind: "subagents", count },
           suggested: count === suggestedCount,
@@ -160,27 +175,36 @@ export const formatPendingPrimaryActionLabel = (input: {
   isLastQuestion: boolean;
   isResponding: boolean;
   questionIndex: number;
+  translate?: Translate;
 }) => {
+  const translate = input.translate ?? englishTranslate;
   if (input.isResponding) {
-    return "Submitting...";
+    return translate("chat.composer.submitting");
   }
   if (input.compact) {
-    return input.isLastQuestion ? "Submit" : "Next";
+    return input.isLastQuestion
+      ? translate("chat.composer.submit")
+      : translate("chat.composer.next");
   }
   if (!input.isLastQuestion) {
-    return "Next question";
+    return translate("chat.composer.nextQuestion");
   }
-  return input.questionIndex > 0 ? "Submit answers" : "Submit answer";
+  return input.questionIndex > 0
+    ? translate("chat.composer.submitAnswers")
+    : translate("chat.composer.submitAnswer");
 };
 
-export const formatStopGenerationLabel = (abortPhase: OrchestrationTurnAbortPhase | null) => {
+export const formatStopGenerationLabel = (
+  abortPhase: OrchestrationTurnAbortPhase | null,
+  translate: Translate = englishTranslate,
+) => {
   if (abortPhase === "force-stopping") {
-    return "Force stopping generation";
+    return translate("chat.composer.forceStoppingGeneration");
   }
   if (abortPhase === "interrupting") {
-    return "Force stop generation";
+    return translate("chat.composer.forceStopGeneration");
   }
-  return "Stop generation";
+  return translate("chat.composer.stopGeneration");
 };
 
 const preventPointerFocus: PointerEventHandler<HTMLElement> = (event) => {
@@ -209,6 +233,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onImplementPlan,
   onImplementPlanInNewThread,
 }: ComposerPrimaryActionsProps) {
+  const translate = useInterfaceTranslator().message;
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
     : undefined;
@@ -235,7 +260,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         onClick={onInterrupt}
         disabled={forceStopPending}
         aria-busy={forceStopPending || undefined}
-        aria-label={formatStopGenerationLabel(abortPhase)}
+        aria-label={formatStopGenerationLabel(abortPhase, translate)}
       >
         {forceStopPending ? (
           <Spinner className="size-3.5" aria-hidden="true" />
@@ -261,7 +286,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               {...pointerFocusProps}
               onClick={onPreviousPendingQuestion}
               disabled={pendingAction.isResponding}
-              aria-label="Previous question"
+              aria-label={translate("chat.composer.previousQuestion")}
             >
               <ChevronLeftIcon className="size-3.5" />
             </Button>
@@ -274,7 +299,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               onClick={onPreviousPendingQuestion}
               disabled={pendingAction.isResponding}
             >
-              Previous
+              {translate("chat.composer.previous")}
             </Button>
           )
         ) : null}
@@ -297,6 +322,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             isLastQuestion: pendingAction.isLastQuestion,
             isResponding: pendingAction.isResponding,
             questionIndex: pendingAction.questionIndex,
+            translate,
           })}
         </Button>
       </div>
@@ -316,7 +342,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           {...pointerFocusProps}
           disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
         >
-          {isConnecting || isSendBusy ? "Sending..." : "Refine"}
+          {isConnecting || isSendBusy
+            ? translate("chat.composer.sendingProgress")
+            : translate("chat.composer.refine")}
         </Button>
       );
     }
@@ -324,9 +352,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     const implementationActions = buildPlanImplementationActionPresentation({
       compact,
       suggestion: planImplementationSuggestion,
+      translate,
     });
     const reviewPresentation = resolvePlanImplementationReviewPresentation(
       planParallelismReviewStatus,
+      translate,
     );
     const hasSubagentSuggestion = planImplementationSuggestion !== null;
     const actionsDisabled =
@@ -337,7 +367,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       reviewPresentation.actionsDisabled;
     const primaryLabel =
       isConnecting || isSendBusy
-        ? "Sending..."
+        ? translate("chat.composer.sendingProgress")
         : (reviewPresentation.primaryLabel ?? implementationActions.primaryLabel);
     const primaryButton = (
       <Button
@@ -375,7 +405,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                 size="sm"
                 variant="default"
                 className="h-9 rounded-l-none rounded-r-full border-l-message-action-foreground/20 bg-message-action px-2 text-message-action-foreground hover:bg-message-action-hover sm:h-8"
-                aria-label="Implementation actions"
+                aria-label={translate("chat.composer.implementationActions")}
                 {...pointerFocusProps}
                 disabled={actionsDisabled}
               />
@@ -399,7 +429,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                 >
                   <span>{action.label}</span>
                   {action.suggested ? (
-                    <span className="ms-auto text-xs text-muted-foreground">Suggested</span>
+                    <span className="ms-auto text-xs text-muted-foreground">
+                      {translate("chat.composer.suggested")}
+                    </span>
                   ) : null}
                 </MenuItem>
               </Fragment>
@@ -429,16 +461,16 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       }
       aria-label={
         isEnvironmentUnavailable
-          ? "Environment disconnected"
+          ? translate("chat.composer.environmentDisconnected")
           : sendDisabledReason
             ? sendDisabledReason
             : isConnecting
-              ? "Connecting"
+              ? translate("chat.composer.connecting")
               : isPreparingWorktree
-                ? "Preparing worktree"
+                ? translate("chat.composer.preparingWorktreeLabel")
                 : isSendBusy
-                  ? "Sending"
-                  : "Send message"
+                  ? translate("chat.composer.sending")
+                  : translate("chat.composer.sendMessage")
       }
     >
       {stageBackdropVariant ? (

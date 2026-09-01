@@ -8,6 +8,9 @@ import type {
 
 import { ComposerBannerStack } from "./ComposerBannerStack";
 import { buildReasoningRecommendationBannerItem } from "./ReasoningRecommendationBanner";
+import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
+
+const translate = createInterfaceTranslator({ language: "en", locale: "en-US" }).message;
 
 const recommendation = {
   evidenceTurnId: "turn-1",
@@ -36,6 +39,7 @@ const pending = {
 describe("reasoning recommendation banner", () => {
   it("renders the observed evidence, one-turn action, default reassurance, and dismissal label", () => {
     const item = buildReasoningRecommendationBannerItem({
+      translate,
       recommendation,
       pendingOverride: null,
       onAccept: vi.fn(),
@@ -53,6 +57,7 @@ describe("reasoning recommendation banner", () => {
 
   it("renders the armed next-turn state with an accessible undo action", () => {
     const item = buildReasoningRecommendationBannerItem({
+      translate,
       recommendation: null,
       pendingOverride: pending,
       onAccept: vi.fn(),
@@ -65,5 +70,19 @@ describe("reasoning recommendation banner", () => {
     expect(markup).toContain("Max resumes afterward.");
     expect(markup).toContain('aria-label="Undo one-turn reasoning override"');
     expect(markup).not.toContain("Dismiss reasoning suggestion");
+  });
+
+  it("suppresses the recommendation and pending override while Auto is active", () => {
+    expect(
+      buildReasoningRecommendationBannerItem({
+        translate,
+        recommendation,
+        pendingOverride: pending,
+        autoReasoningActive: true,
+        onAccept: vi.fn(),
+        onDismiss: vi.fn(),
+        onUndo: vi.fn(),
+      }),
+    ).toBeNull();
   });
 });
