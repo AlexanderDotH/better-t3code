@@ -97,9 +97,10 @@ describe("AssemblyAiTranscriptAccumulator", () => {
 
 describe("describeAssemblyAiMicrophoneError", () => {
   it("distinguishes permission, missing-device, and busy-device failures", () => {
-    expect(describeAssemblyAiMicrophoneError({ name: "NotAllowedError" }).message).toMatch(
-      /permission was denied/i,
-    );
+    const permissionError = describeAssemblyAiMicrophoneError({ name: "NotAllowedError" });
+    expect(permissionError.message).toMatch(/permission was denied/i);
+    expect(permissionError.message).toMatch(/system privacy settings/i);
+    expect(permissionError.message).toMatch(/try again/i);
     expect(describeAssemblyAiMicrophoneError({ name: "NotFoundError" }).message).toMatch(
       /no microphone/i,
     );

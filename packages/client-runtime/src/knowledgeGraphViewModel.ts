@@ -21,6 +21,8 @@ export interface KnowledgeGraphViewport {
 
 const MIN_KNOWLEDGE_GRAPH_SCALE = 0.5;
 const MAX_KNOWLEDGE_GRAPH_SCALE = 2.5;
+const KNOWLEDGE_GRAPH_HORIZONTAL_PADDING = 76;
+const KNOWLEDGE_GRAPH_VERTICAL_PADDING = 24;
 
 export function clampKnowledgeGraphViewport(
   viewport: KnowledgeGraphViewport,
@@ -158,6 +160,7 @@ export interface KnowledgeGraphLayoutInput {
   readonly width: number;
   readonly height: number;
   readonly pinned?: ReadonlyMap<KnowledgeGraphNodeId, KnowledgeGraphPosition>;
+  readonly initialPositions?: ReadonlyMap<KnowledgeGraphNodeId, KnowledgeGraphPosition>;
   readonly iterations?: number;
 }
 
@@ -168,6 +171,9 @@ interface MutablePosition {
 
 const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.min(maximum, Math.max(minimum, Number.isFinite(value) ? value : minimum));
+
+const collisionRadius = (node: KnowledgeGraphNodeV1): number =>
+  Math.min(72, Math.max(28, 18 + node.label.length * 3.2));
 
 function initialPosition(
   index: number,
@@ -194,23 +200,36 @@ export function computeKnowledgeGraphLayout(
 ): ReadonlyMap<KnowledgeGraphNodeId, KnowledgeGraphPosition> {
   const width = Math.max(1, Number.isFinite(input.width) ? input.width : 1);
   const height = Math.max(1, Number.isFinite(input.height) ? input.height : 1);
+  const horizontalPadding = Math.min(KNOWLEDGE_GRAPH_HORIZONTAL_PADDING, width / 2);
+  const verticalPadding = Math.min(KNOWLEDGE_GRAPH_VERTICAL_PADDING, height / 2);
   const nodes = input.nodes.slice(0, KNOWLEDGE_GRAPH_MAX_VISIBLE_NODES);
   const positions = new Map<KnowledgeGraphNodeId, MutablePosition>();
   const pinned = input.pinned ?? new Map<KnowledgeGraphNodeId, KnowledgeGraphPosition>();
+  const initialPositions =
+    input.initialPositions ?? new Map<KnowledgeGraphNodeId, KnowledgeGraphPosition>();
   const nodeIds = new Set(nodes.map((node) => node.nodeId));
   const edges = input.edges.filter(
     (edge) => nodeIds.has(edge.sourceNodeId) && nodeIds.has(edge.targetNodeId),
   );
+  const radii = new Map(nodes.map((node) => [node.nodeId, collisionRadius(node)] as const));
 
   nodes.forEach((node, index) => {
     const fixed = pinned.get(node.nodeId);
+    const initial = initialPositions.get(node.nodeId);
+    const position = initial ?? initialPosition(index, nodes.length, width, height);
     positions.set(
       node.nodeId,
-      fixed ? { ...fixed } : initialPosition(index, nodes.length, width, height),
+      fixed
+        ? { ...fixed }
+        : {
+            x: clamp(position.x, horizontalPadding, width - horizontalPadding),
+            y: clamp(position.y, verticalPadding, height - verticalPadding),
+          },
     );
   });
 
   const iterations = Math.max(0, Math.min(64, Math.trunc(input.iterations ?? 40)));
+  const repulsionScale = Math.min(1, 64 / Math.max(1, nodes.length));
   for (let iteration = 0; iteration < iterations; iteration += 1) {
     const movement = new Map<KnowledgeGraphNodeId, MutablePosition>(
       nodes.map((node) => [node.nodeId, { x: 0, y: 0 }]),
@@ -222,18 +241,25 @@ export function computeKnowledgeGraphLayout(
       for (let rightIndex = leftIndex + 1; rightIndex < nodes.length; rightIndex += 1) {
         const right = nodes[rightIndex]!;
         const rightPosition = positions.get(right.nodeId)!;
-        let dx = leftPosition.x - rightPosition.x;
-        let dy = leftPosition.y - rightPosition.y;
+        let dx = rightPosition.x - leftPosition.x;
+        let dy = rightPosition.y - leftPosition.y;
         if (dx === 0 && dy === 0) {
           dx = leftIndex % 2 === 0 ? 0.01 : -0.01;
           dy = rightIndex % 2 === 0 ? 0.01 : -0.01;
         }
-        const distanceSquared = Math.max(36, dx * dx + dy * dy);
-        const force = 90 / distanceSquared;
-        movement.get(left.nodeId)!.x += dx * force;
-        movement.get(left.nodeId)!.y += dy * force;
-        movement.get(right.nodeId)!.x -= dx * force;
-        movement.get(right.nodeId)!.y -= dy * force;
+        const distance = Math.max(1, Math.hypot(dx, dy));
+        const unitX = dx / distance;
+        const unitY = dy / distance;
+        const minimumDistance = radii.get(left.nodeId)! + radii.get(right.nodeId)! + 12;
+        const overlap = Math.max(0, minimumDistance - distance);
+        const repulsion =
+          Math.min(2.5, (minimumDistance * minimumDistance * 0.14) / (distance * distance)) *
+            repulsionScale +
+          Math.min(7, overlap * 0.1);
+        movement.get(left.nodeId)!.x -= unitX * repulsion;
+        movement.get(left.nodeId)!.y -= unitY * repulsion;
+        movement.get(right.nodeId)!.x += unitX * repulsion;
+        movement.get(right.nodeId)!.y += unitY * repulsion;
       }
     }
 
@@ -243,11 +269,14 @@ export function computeKnowledgeGraphLayout(
       const dx = target.x - source.x;
       const dy = target.y - source.y;
       const distance = Math.max(1, Math.hypot(dx, dy));
-      const spring = (distance - 84) * 0.0018;
-      movement.get(edge.sourceNodeId)!.x += dx * spring;
-      movement.get(edge.sourceNodeId)!.y += dy * spring;
-      movement.get(edge.targetNodeId)!.x -= dx * spring;
-      movement.get(edge.targetNodeId)!.y -= dy * spring;
+      const unitX = dx / distance;
+      const unitY = dy / distance;
+      const restingDistance = radii.get(edge.sourceNodeId)! + radii.get(edge.targetNodeId)! + 52;
+      const spring = clamp((distance - restingDistance) * 0.022, -4, 4);
+      movement.get(edge.sourceNodeId)!.x += unitX * spring;
+      movement.get(edge.sourceNodeId)!.y += unitY * spring;
+      movement.get(edge.targetNodeId)!.x -= unitX * spring;
+      movement.get(edge.targetNodeId)!.y -= unitY * spring;
     }
 
     for (const node of nodes) {
@@ -258,9 +287,19 @@ export function computeKnowledgeGraphLayout(
       }
       const current = positions.get(node.nodeId)!;
       const delta = movement.get(node.nodeId)!;
+      const deltaLength = Math.hypot(delta.x, delta.y);
+      const stepScale = deltaLength > 8 ? 8 / deltaLength : 1;
       positions.set(node.nodeId, {
-        x: clamp(current.x + delta.x + (width / 2 - current.x) * 0.003, 8, width - 8),
-        y: clamp(current.y + delta.y + (height / 2 - current.y) * 0.003, 8, height - 8),
+        x: clamp(
+          current.x + delta.x * stepScale + (width / 2 - current.x) * 0.004,
+          horizontalPadding,
+          width - horizontalPadding,
+        ),
+        y: clamp(
+          current.y + delta.y * stepScale + (height / 2 - current.y) * 0.004,
+          verticalPadding,
+          height - verticalPadding,
+        ),
       });
     }
   }

@@ -163,6 +163,10 @@ interface JsonRow {
   readonly json: string;
 }
 
+interface NodeIdRow {
+  readonly nodeId: string;
+}
+
 interface SemanticEnvironmentRow {
   readonly semanticModelKey: string | null;
   readonly modelGeneration: number;
@@ -198,6 +202,25 @@ const encodeProgressJson = Schema.encodeSync(Schema.fromJsonString(KnowledgeGrap
 const encodeTruncationJson = Schema.encodeSync(
   Schema.fromJsonString(KnowledgeGraphTruncationSchema),
 );
+
+const SQLITE_SAFE_BIND_PARAMETER_LIMIT = 900;
+const KNOWLEDGE_GRAPH_OVERVIEW_NODE_LIMIT = 48;
+const KNOWLEDGE_GRAPH_OVERVIEW_EDGE_LIMIT = 120;
+
+const bindSafeBatches = <A>(
+  values: ReadonlyArray<A>,
+  bindParametersPerValue: number,
+  fixedBindParameters = 0,
+): ReadonlyArray<ReadonlyArray<A>> => {
+  const batchSize = Math.floor(
+    (SQLITE_SAFE_BIND_PARAMETER_LIMIT - fixedBindParameters) / bindParametersPerValue,
+  );
+  const batches: Array<ReadonlyArray<A>> = [];
+  for (let offset = 0; offset < values.length; offset += batchSize) {
+    batches.push(values.slice(offset, offset + batchSize));
+  }
+  return batches;
+};
 
 const decodeJson = <A>(
   decoder: (input: unknown) => Effect.Effect<A, Schema.SchemaError>,
@@ -538,6 +561,115 @@ const make = Effect.gen(function* () {
       };
     },
   );
+
+  const readOverview = (scopeId: KnowledgeGraphScopeId) =>
+    Effect.gen(function* () {
+      const nodeIdRows = yield* sql<NodeIdRow>`
+        WITH meaningful_degree AS (
+          SELECT node_id, count(*) AS degree
+          FROM (
+            SELECT source_node_id AS node_id
+            FROM knowledge_graph_edges
+            WHERE scope_id = ${scopeId} AND kind <> 'declares'
+            UNION ALL
+            SELECT target_node_id AS node_id
+            FROM knowledge_graph_edges
+            WHERE scope_id = ${scopeId} AND kind <> 'declares'
+          )
+          GROUP BY node_id
+        ), ranked AS (
+          SELECT
+            node.node_id AS "nodeId",
+            node.kind,
+            node.label,
+            coalesce(meaningful_degree.degree, 0) AS degree,
+            row_number() OVER (
+              PARTITION BY node.kind
+              ORDER BY coalesce(meaningful_degree.degree, 0) DESC, node.label, node.node_id
+            ) AS kind_rank
+          FROM knowledge_graph_nodes AS node
+          LEFT JOIN meaningful_degree ON meaningful_degree.node_id = node.node_id
+          WHERE node.scope_id = ${scopeId}
+        )
+        SELECT "nodeId"
+        FROM ranked
+        WHERE
+          (kind = 'repository' AND kind_rank <= 1)
+          OR (kind = 'architecture' AND kind_rank <= 1)
+          OR (kind = 'package' AND kind_rank <= 10)
+          OR (kind = 'directory' AND kind_rank <= 10)
+          OR (kind = 'file' AND kind_rank <= 12)
+          OR (kind = 'dependency' AND kind_rank <= 6)
+          OR (kind = 'technology' AND kind_rank <= 4)
+          OR (kind = 'documentation' AND kind_rank <= 4)
+        ORDER BY
+          CASE kind
+            WHEN 'repository' THEN 0
+            WHEN 'architecture' THEN 1
+            WHEN 'package' THEN 2
+            WHEN 'directory' THEN 3
+            WHEN 'file' THEN 4
+            WHEN 'dependency' THEN 5
+            WHEN 'technology' THEN 6
+            WHEN 'documentation' THEN 7
+            ELSE 8
+          END,
+          degree DESC,
+          label,
+          "nodeId"
+        LIMIT ${KNOWLEDGE_GRAPH_OVERVIEW_NODE_LIMIT}
+      `;
+      const nodes = yield* readNodesByIds(
+        scopeId,
+        nodeIdRows.map(({ nodeId }) => nodeId as KnowledgeGraphNodeId),
+      );
+      if (nodes.length === 0) {
+        return { nodes, edges: [], evidence: [], truncated: false };
+      }
+      const nodeIds = nodes.map(({ nodeId }) => String(nodeId));
+      const placeholders = nodeIds.map(() => "?").join(", ");
+      const edgeRows = yield* sql.unsafe<JsonRow>(
+        `SELECT edge_json AS json
+         FROM knowledge_graph_edges
+         WHERE scope_id = ?
+           AND source_node_id IN (${placeholders})
+           AND target_node_id IN (${placeholders})
+         ORDER BY
+           CASE kind
+             WHEN 'contains' THEN 0
+             WHEN 'configures' THEN 1
+             WHEN 'documents' THEN 2
+             WHEN 'depends-on' THEN 3
+             WHEN 'uses' THEN 4
+             WHEN 'imports' THEN 5
+             WHEN 'implements' THEN 6
+             WHEN 'extends' THEN 7
+             WHEN 'relates-to' THEN 8
+             WHEN 'co-changes-with' THEN 9
+             WHEN 'declares' THEN 10
+             ELSE 11
+           END,
+           source_node_id,
+           target_node_id,
+           edge_id
+         LIMIT ?`,
+        [scopeId, ...nodeIds, ...nodeIds, KNOWLEDGE_GRAPH_OVERVIEW_EDGE_LIMIT + 1],
+      );
+      const decodedEdges = yield* Effect.forEach(edgeRows, ({ json }) =>
+        decodeJson(decodeEdgeJson, json, "decode-query-overview-edge"),
+      );
+      const edges = decodedEdges.slice(0, KNOWLEDGE_GRAPH_OVERVIEW_EDGE_LIMIT);
+      const evidence = yield* evidenceForEntities({ scopeId, nodes, edges });
+      return {
+        nodes,
+        edges,
+        evidence: evidence.evidence,
+        // This projection is used only after the full graph exceeds the query
+        // result bound, so nodes were necessarily omitted even when a kind has
+        // fewer entries than its overview quota.
+        truncated: true,
+      };
+    }).pipe(mapError("read-query-overview"));
 
   const queryNeighbors = Effect.fn("KnowledgeGraphRepository.queryNeighbors")(function* (input: {
     readonly scopeId: KnowledgeGraphScopeId;
@@ -924,104 +1056,217 @@ const make = Effect.gen(function* () {
       });
     }).pipe(mapError("get-deterministic-state"));
 
-  const writeEvidence = (evidence: KnowledgeGraphEvidenceV1) =>
-    sql`
-      INSERT INTO knowledge_graph_evidence (
-        scope_id, evidence_id, kind, source_path, source_start_line, source_end_line,
-        source_symbol, excerpt, fingerprint, confidence, evidence_revision, evidence_json
-      ) VALUES (
-        ${evidence.scopeId}, ${evidence.evidenceId}, ${evidence.kind},
-        ${evidence.source?.path ?? null}, ${evidence.source?.startLine ?? null},
-        ${evidence.source?.endLine ?? null}, ${evidence.source?.symbol ?? null},
-        ${evidence.excerpt ?? null}, ${evidence.fingerprint}, ${evidence.confidence},
-        ${evidence.evidenceRevision}, ${encodeEvidenceJson(evidence)}
-      ) ON CONFLICT (scope_id, evidence_id) DO UPDATE SET
-        kind = excluded.kind,
-        source_path = excluded.source_path,
-        source_start_line = excluded.source_start_line,
-        source_end_line = excluded.source_end_line,
-        source_symbol = excluded.source_symbol,
-        excerpt = excluded.excerpt,
-        fingerprint = excluded.fingerprint,
-        confidence = excluded.confidence,
-        evidence_revision = excluded.evidence_revision,
-        evidence_json = excluded.evidence_json
-    `;
+  const deleteByIds = (
+    table: "knowledge_graph_edges" | "knowledge_graph_nodes" | "knowledge_graph_evidence",
+    idColumn: "edge_id" | "node_id" | "evidence_id",
+    scopeId: KnowledgeGraphScopeId,
+    ids: ReadonlyArray<string>,
+  ) =>
+    Effect.forEach(
+      bindSafeBatches(ids, 1, 1),
+      (batch) =>
+        sql.unsafe(
+          `DELETE FROM ${table} WHERE scope_id = ? AND ${idColumn} IN (${batch.map(() => "?").join(", ")})`,
+          [scopeId, ...batch],
+        ),
+      { discard: true },
+    );
 
-  const writeNode = (node: KnowledgeGraphNodeV1) =>
-    Effect.gen(function* () {
-      yield* sql`
-        INSERT INTO knowledge_graph_nodes (
-          scope_id, node_id, kind, label, source_path, source_start_line, source_end_line,
-          source_symbol, summary, language, provenance, confidence, node_revision, node_json
-        ) VALUES (
-          ${node.scopeId}, ${node.nodeId}, ${node.kind}, ${node.label},
-          ${node.source?.path ?? null}, ${node.source?.startLine ?? null},
-          ${node.source?.endLine ?? null}, ${node.source?.symbol ?? null},
-          ${node.summary ?? null}, ${node.language ?? null}, ${node.provenance},
-          ${node.confidence}, ${node.nodeRevision}, ${encodeNodeJson(node)}
-        ) ON CONFLICT (scope_id, node_id) DO UPDATE SET
-          kind = excluded.kind,
-          label = excluded.label,
-          source_path = excluded.source_path,
-          source_start_line = excluded.source_start_line,
-          source_end_line = excluded.source_end_line,
-          source_symbol = excluded.source_symbol,
-          summary = excluded.summary,
-          language = excluded.language,
-          provenance = excluded.provenance,
-          confidence = excluded.confidence,
-          node_revision = excluded.node_revision,
-          node_json = excluded.node_json
-      `;
-      yield* sql`
-        DELETE FROM knowledge_graph_node_evidence
-        WHERE scope_id = ${node.scopeId} AND node_id = ${node.nodeId}
-      `;
+  const deleteFingerprints = (scopeId: KnowledgeGraphScopeId, paths: ReadonlyArray<string>) =>
+    Effect.forEach(
+      bindSafeBatches(paths, 1, 1),
+      (batch) =>
+        sql.unsafe(
+          `DELETE FROM knowledge_graph_file_fingerprints WHERE scope_id = ? AND path IN (${batch.map(() => "?").join(", ")})`,
+          [scopeId, ...batch],
+        ),
+      { discard: true },
+    );
+
+  const upsertEvidence = (evidence: ReadonlyArray<KnowledgeGraphEvidenceV1>) =>
+    Effect.forEach(
+      bindSafeBatches(evidence, 12),
+      (batch) =>
+        sql.unsafe(
+          `INSERT INTO knowledge_graph_evidence (
+             scope_id, evidence_id, kind, source_path, source_start_line, source_end_line,
+             source_symbol, excerpt, fingerprint, confidence, evidence_revision, evidence_json
+           ) VALUES ${batch.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ")}
+           ON CONFLICT (scope_id, evidence_id) DO UPDATE SET
+             kind = excluded.kind,
+             source_path = excluded.source_path,
+             source_start_line = excluded.source_start_line,
+             source_end_line = excluded.source_end_line,
+             source_symbol = excluded.source_symbol,
+             excerpt = excluded.excerpt,
+             fingerprint = excluded.fingerprint,
+             confidence = excluded.confidence,
+             evidence_revision = excluded.evidence_revision,
+             evidence_json = excluded.evidence_json`,
+          batch.flatMap((item) => [
+            item.scopeId,
+            item.evidenceId,
+            item.kind,
+            item.source?.path ?? null,
+            item.source?.startLine ?? null,
+            item.source?.endLine ?? null,
+            item.source?.symbol ?? null,
+            item.excerpt ?? null,
+            item.fingerprint,
+            item.confidence,
+            item.evidenceRevision,
+            encodeEvidenceJson(item),
+          ]),
+        ),
+      { discard: true },
+    );
+
+  const upsertNodes = (nodes: ReadonlyArray<KnowledgeGraphNodeV1>) =>
+    Effect.forEach(
+      bindSafeBatches(nodes, 14),
+      (batch) =>
+        sql.unsafe(
+          `INSERT INTO knowledge_graph_nodes (
+             scope_id, node_id, kind, label, source_path, source_start_line, source_end_line,
+             source_symbol, summary, language, provenance, confidence, node_revision, node_json
+           ) VALUES ${batch.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ")}
+           ON CONFLICT (scope_id, node_id) DO UPDATE SET
+             kind = excluded.kind,
+             label = excluded.label,
+             source_path = excluded.source_path,
+             source_start_line = excluded.source_start_line,
+             source_end_line = excluded.source_end_line,
+             source_symbol = excluded.source_symbol,
+             summary = excluded.summary,
+             language = excluded.language,
+             provenance = excluded.provenance,
+             confidence = excluded.confidence,
+             node_revision = excluded.node_revision,
+             node_json = excluded.node_json`,
+          batch.flatMap((node) => [
+            node.scopeId,
+            node.nodeId,
+            node.kind,
+            node.label,
+            node.source?.path ?? null,
+            node.source?.startLine ?? null,
+            node.source?.endLine ?? null,
+            node.source?.symbol ?? null,
+            node.summary ?? null,
+            node.language ?? null,
+            node.provenance,
+            node.confidence,
+            node.nodeRevision,
+            encodeNodeJson(node),
+          ]),
+        ),
+      { discard: true },
+    );
+
+  const upsertEdges = (edges: ReadonlyArray<KnowledgeGraphEdgeV1>) =>
+    Effect.forEach(
+      bindSafeBatches(edges, 9),
+      (batch) =>
+        sql.unsafe(
+          `INSERT INTO knowledge_graph_edges (
+             scope_id, edge_id, kind, source_node_id, target_node_id, provenance,
+             confidence, edge_revision, edge_json
+           ) VALUES ${batch.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ")}
+           ON CONFLICT (scope_id, edge_id) DO UPDATE SET
+             kind = excluded.kind,
+             source_node_id = excluded.source_node_id,
+             target_node_id = excluded.target_node_id,
+             provenance = excluded.provenance,
+             confidence = excluded.confidence,
+             edge_revision = excluded.edge_revision,
+             edge_json = excluded.edge_json`,
+          batch.flatMap((edge) => [
+            edge.scopeId,
+            edge.edgeId,
+            edge.kind,
+            edge.sourceNodeId,
+            edge.targetNodeId,
+            edge.provenance,
+            edge.confidence,
+            edge.edgeRevision,
+            encodeEdgeJson(edge),
+          ]),
+        ),
+      { discard: true },
+    );
+
+  const replaceEntityEvidence = (
+    entity: "node" | "edge",
+    scopeId: KnowledgeGraphScopeId,
+    entities: ReadonlyArray<KnowledgeGraphNodeV1 | KnowledgeGraphEdgeV1>,
+  ) => {
+    const table = `knowledge_graph_${entity}_evidence`;
+    const idColumn = `${entity}_id`;
+    const entityIds = entities.map((item) =>
+      entity === "node"
+        ? String((item as KnowledgeGraphNodeV1).nodeId)
+        : String((item as KnowledgeGraphEdgeV1).edgeId),
+    );
+    const links = entities.flatMap((item) => {
+      const entityId =
+        entity === "node"
+          ? String((item as KnowledgeGraphNodeV1).nodeId)
+          : String((item as KnowledgeGraphEdgeV1).edgeId);
+      return item.evidenceIds.map((evidenceId) => [scopeId, entityId, evidenceId] as const);
+    });
+    return Effect.gen(function* () {
       yield* Effect.forEach(
-        node.evidenceIds,
-        (evidenceId) =>
-          sql`
-          INSERT OR IGNORE INTO knowledge_graph_node_evidence (scope_id, node_id, evidence_id)
-          VALUES (${node.scopeId}, ${node.nodeId}, ${evidenceId})
-        `,
+        bindSafeBatches(entityIds, 1, 1),
+        (batch) =>
+          sql.unsafe(
+            `DELETE FROM ${table} WHERE scope_id = ? AND ${idColumn} IN (${batch.map(() => "?").join(", ")})`,
+            [scopeId, ...batch],
+          ),
+        { discard: true },
+      );
+      yield* Effect.forEach(
+        bindSafeBatches(links, 3),
+        (batch) =>
+          sql.unsafe(
+            `INSERT OR IGNORE INTO ${table} (scope_id, ${idColumn}, evidence_id)
+             VALUES ${batch.map(() => "(?, ?, ?)").join(", ")}`,
+            batch.flat(),
+          ),
         { discard: true },
       );
     });
+  };
 
-  const writeEdge = (edge: KnowledgeGraphEdgeV1) =>
-    Effect.gen(function* () {
-      yield* sql`
-        INSERT INTO knowledge_graph_edges (
-          scope_id, edge_id, kind, source_node_id, target_node_id, provenance,
-          confidence, edge_revision, edge_json
-        ) VALUES (
-          ${edge.scopeId}, ${edge.edgeId}, ${edge.kind}, ${edge.sourceNodeId},
-          ${edge.targetNodeId}, ${edge.provenance}, ${edge.confidence},
-          ${edge.edgeRevision}, ${encodeEdgeJson(edge)}
-        ) ON CONFLICT (scope_id, edge_id) DO UPDATE SET
-          kind = excluded.kind,
-          source_node_id = excluded.source_node_id,
-          target_node_id = excluded.target_node_id,
-          provenance = excluded.provenance,
-          confidence = excluded.confidence,
-          edge_revision = excluded.edge_revision,
-          edge_json = excluded.edge_json
-      `;
-      yield* sql`
-        DELETE FROM knowledge_graph_edge_evidence
-        WHERE scope_id = ${edge.scopeId} AND edge_id = ${edge.edgeId}
-      `;
-      yield* Effect.forEach(
-        edge.evidenceIds,
-        (evidenceId) =>
-          sql`
-          INSERT OR IGNORE INTO knowledge_graph_edge_evidence (scope_id, edge_id, evidence_id)
-          VALUES (${edge.scopeId}, ${edge.edgeId}, ${evidenceId})
-        `,
-        { discard: true },
-      );
-    });
+  const upsertFingerprints = (
+    scopeId: KnowledgeGraphScopeId,
+    fingerprints: ReadonlyArray<KnowledgeGraphFileFingerprintV1>,
+  ) =>
+    Effect.forEach(
+      bindSafeBatches(fingerprints, 7),
+      (batch) =>
+        sql.unsafe(
+          `INSERT INTO knowledge_graph_file_fingerprints (
+             scope_id, path, fingerprint, size_bytes, modified_at_ms,
+             extraction_version, seen_generation
+           ) VALUES ${batch.map(() => "(?, ?, ?, ?, ?, ?, ?)").join(", ")}
+           ON CONFLICT (scope_id, path) DO UPDATE SET
+             fingerprint = excluded.fingerprint,
+             size_bytes = excluded.size_bytes,
+             modified_at_ms = excluded.modified_at_ms,
+             extraction_version = excluded.extraction_version,
+             seen_generation = excluded.seen_generation`,
+          batch.flatMap((fingerprint) => [
+            scopeId,
+            fingerprint.path,
+            fingerprint.fingerprint,
+            fingerprint.sizeBytes,
+            fingerprint.modifiedAtMs,
+            fingerprint.extractionVersion,
+            fingerprint.seenGeneration,
+          ]),
+        ),
+      { discard: true },
+    );
 
   const readCounts = (scopeId: KnowledgeGraphScopeId) =>
     Effect.gen(function* () {
@@ -1065,114 +1310,94 @@ const make = Effect.gen(function* () {
   }) =>
     sql
       .withTransaction(
-        Effect.gen(function* () {
-          yield* ensureScope(input.scope);
-          const scopeRows = yield* readScope(input.scope.scopeId);
-          const scopeRow = scopeRows[0];
-          if (scopeRow === undefined) {
-            return yield* new KnowledgeGraphRepositoryError({
-              operation: input.operation,
-              reason: "scope-not-found",
-            });
-          }
-          if (scopeRow.revision !== input.baseRevision) {
-            return yield* new KnowledgeGraphRepositoryError({
-              operation: input.operation,
-              reason: "revision-conflict",
-            });
-          }
-          const revision = scopeRow.revision + 1;
+        Effect.uninterruptible(
+          Effect.gen(function* () {
+            yield* ensureScope(input.scope);
+            const scopeRows = yield* readScope(input.scope.scopeId);
+            const scopeRow = scopeRows[0];
+            if (scopeRow === undefined) {
+              return yield* new KnowledgeGraphRepositoryError({
+                operation: input.operation,
+                reason: "scope-not-found",
+              });
+            }
+            if (scopeRow.revision !== input.baseRevision) {
+              return yield* new KnowledgeGraphRepositoryError({
+                operation: input.operation,
+                reason: "revision-conflict",
+              });
+            }
+            const revision = scopeRow.revision + 1;
 
-          yield* Effect.forEach(
-            input.removedEdgeIds,
-            (edgeId) =>
-              sql`DELETE FROM knowledge_graph_edges WHERE scope_id = ${input.scope.scopeId} AND edge_id = ${edgeId}`,
-            { discard: true },
-          );
-          yield* Effect.forEach(
-            input.removedNodeIds,
-            (nodeId) =>
-              sql`DELETE FROM knowledge_graph_nodes WHERE scope_id = ${input.scope.scopeId} AND node_id = ${nodeId}`,
-            { discard: true },
-          );
-          yield* Effect.forEach(
-            input.removedEvidenceIds,
-            (evidenceId) =>
-              sql`DELETE FROM knowledge_graph_evidence WHERE scope_id = ${input.scope.scopeId} AND evidence_id = ${evidenceId}`,
-            { discard: true },
-          );
-          yield* Effect.forEach(
-            input.removedFingerprintPaths,
-            (path) =>
-              sql`DELETE FROM knowledge_graph_file_fingerprints WHERE scope_id = ${input.scope.scopeId} AND path = ${path}`,
-            { discard: true },
-          );
-          yield* Effect.forEach(input.evidence, writeEvidence, { discard: true });
-          yield* Effect.forEach(input.nodes, writeNode, { discard: true });
-          yield* Effect.forEach(input.edges, writeEdge, { discard: true });
-          yield* Effect.forEach(
-            input.fingerprints,
-            (fingerprint) => sql`
-            INSERT INTO knowledge_graph_file_fingerprints (
-              scope_id, path, fingerprint, size_bytes, modified_at_ms,
-              extraction_version, seen_generation
-            ) VALUES (
-              ${input.scope.scopeId}, ${fingerprint.path}, ${fingerprint.fingerprint},
-              ${fingerprint.sizeBytes}, ${fingerprint.modifiedAtMs},
-              ${fingerprint.extractionVersion}, ${fingerprint.seenGeneration}
-            ) ON CONFLICT (scope_id, path) DO UPDATE SET
-              fingerprint = excluded.fingerprint,
-              size_bytes = excluded.size_bytes,
-              modified_at_ms = excluded.modified_at_ms,
-              extraction_version = excluded.extraction_version,
-              seen_generation = excluded.seen_generation
-          `,
-            { discard: true },
-          );
+            yield* deleteByIds(
+              "knowledge_graph_edges",
+              "edge_id",
+              input.scope.scopeId,
+              input.removedEdgeIds,
+            );
+            yield* deleteByIds(
+              "knowledge_graph_nodes",
+              "node_id",
+              input.scope.scopeId,
+              input.removedNodeIds,
+            );
+            yield* deleteByIds(
+              "knowledge_graph_evidence",
+              "evidence_id",
+              input.scope.scopeId,
+              input.removedEvidenceIds,
+            );
+            yield* deleteFingerprints(input.scope.scopeId, input.removedFingerprintPaths);
+            yield* upsertEvidence(input.evidence);
+            yield* upsertNodes(input.nodes);
+            yield* upsertEdges(input.edges);
+            yield* replaceEntityEvidence("node", input.scope.scopeId, input.nodes);
+            yield* replaceEntityEvidence("edge", input.scope.scopeId, input.edges);
+            yield* upsertFingerprints(input.scope.scopeId, input.fingerprints);
 
-          const counts = yield* readCounts(input.scope.scopeId);
-          const queueRows = yield* sql<{ readonly count: number }>`
+            const counts = yield* readCounts(input.scope.scopeId);
+            const queueRows = yield* sql<{ readonly count: number }>`
           SELECT count(*) AS count
           FROM knowledge_graph_semantic_queue
           WHERE scope_id = ${input.scope.scopeId}
         `;
-          const status: KnowledgeGraphStatusV1 = {
-            version: 1,
-            scopeId: input.scope.scopeId,
-            state: "ready",
-            revision,
-            ...counts,
-            semanticQueueDepth: queueRows[0]?.count ?? 0,
-            lastIndexedAt: input.committedAt,
-            truncated: input.truncation,
-          };
-          const requiresSnapshot =
-            input.nodes.length > KNOWLEDGE_GRAPH_MAX_VISIBLE_NODES ||
-            input.removedNodeIds.length > KNOWLEDGE_GRAPH_MAX_VISIBLE_NODES ||
-            input.changedNodeIds.length > KNOWLEDGE_GRAPH_MAX_VISIBLE_NODES ||
-            input.edges.length > KNOWLEDGE_GRAPH_MAX_VISIBLE_EDGES ||
-            input.removedEdgeIds.length > KNOWLEDGE_GRAPH_MAX_VISIBLE_EDGES ||
-            input.evidence.length > KNOWLEDGE_GRAPH_MAX_VISIBLE_EVIDENCE ||
-            input.removedEvidenceIds.length > KNOWLEDGE_GRAPH_MAX_VISIBLE_EVIDENCE;
-          const patch: KnowledgeGraphPatchV1 = {
-            version: 1,
-            type: "patch",
-            scopeId: input.scope.scopeId,
-            baseRevision: input.baseRevision,
-            revision,
-            upsertedNodes: input.nodes.slice(0, KNOWLEDGE_GRAPH_MAX_VISIBLE_NODES),
-            removedNodeIds: input.removedNodeIds.slice(0, KNOWLEDGE_GRAPH_MAX_VISIBLE_NODES),
-            upsertedEdges: input.edges.slice(0, KNOWLEDGE_GRAPH_MAX_VISIBLE_EDGES),
-            removedEdgeIds: input.removedEdgeIds.slice(0, KNOWLEDGE_GRAPH_MAX_VISIBLE_EDGES),
-            upsertedEvidence: input.evidence.slice(0, KNOWLEDGE_GRAPH_MAX_VISIBLE_EVIDENCE),
-            removedEvidenceIds: input.removedEvidenceIds.slice(
-              0,
-              KNOWLEDGE_GRAPH_MAX_VISIBLE_EVIDENCE,
-            ),
-            changedNodeIds: input.changedNodeIds.slice(0, KNOWLEDGE_GRAPH_MAX_VISIBLE_NODES),
-            status,
-          };
-          yield* sql`
+            const status: KnowledgeGraphStatusV1 = {
+              version: 1,
+              scopeId: input.scope.scopeId,
+              state: "ready",
+              revision,
+              ...counts,
+              semanticQueueDepth: queueRows[0]?.count ?? 0,
+              lastIndexedAt: input.committedAt,
+              truncated: input.truncation,
+            };
+            const requiresSnapshot =
+              input.nodes.length > KNOWLEDGE_GRAPH_MAX_VISIBLE_NODES ||
+              input.removedNodeIds.length > KNOWLEDGE_GRAPH_MAX_VISIBLE_NODES ||
+              input.changedNodeIds.length > KNOWLEDGE_GRAPH_MAX_VISIBLE_NODES ||
+              input.edges.length > KNOWLEDGE_GRAPH_MAX_VISIBLE_EDGES ||
+              input.removedEdgeIds.length > KNOWLEDGE_GRAPH_MAX_VISIBLE_EDGES ||
+              input.evidence.length > KNOWLEDGE_GRAPH_MAX_VISIBLE_EVIDENCE ||
+              input.removedEvidenceIds.length > KNOWLEDGE_GRAPH_MAX_VISIBLE_EVIDENCE;
+            const patch: KnowledgeGraphPatchV1 = {
+              version: 1,
+              type: "patch",
+              scopeId: input.scope.scopeId,
+              baseRevision: input.baseRevision,
+              revision,
+              upsertedNodes: input.nodes.slice(0, KNOWLEDGE_GRAPH_MAX_VISIBLE_NODES),
+              removedNodeIds: input.removedNodeIds.slice(0, KNOWLEDGE_GRAPH_MAX_VISIBLE_NODES),
+              upsertedEdges: input.edges.slice(0, KNOWLEDGE_GRAPH_MAX_VISIBLE_EDGES),
+              removedEdgeIds: input.removedEdgeIds.slice(0, KNOWLEDGE_GRAPH_MAX_VISIBLE_EDGES),
+              upsertedEvidence: input.evidence.slice(0, KNOWLEDGE_GRAPH_MAX_VISIBLE_EVIDENCE),
+              removedEvidenceIds: input.removedEvidenceIds.slice(
+                0,
+                KNOWLEDGE_GRAPH_MAX_VISIBLE_EVIDENCE,
+              ),
+              changedNodeIds: input.changedNodeIds.slice(0, KNOWLEDGE_GRAPH_MAX_VISIBLE_NODES),
+              status,
+            };
+            yield* sql`
           UPDATE knowledge_graph_scopes SET
             revision = ${revision},
             state = ${status.state},
@@ -1183,8 +1408,8 @@ const make = Effect.gen(function* () {
             last_indexed_at = ${input.committedAt}
           WHERE scope_id = ${input.scope.scopeId} AND revision = ${input.baseRevision}
         `;
-          if (!requiresSnapshot) {
-            yield* sql`
+            if (!requiresSnapshot) {
+              yield* sql`
             INSERT INTO knowledge_graph_patch_log (
               scope_id, revision, base_revision, patch_json, created_at
             ) VALUES (
@@ -1192,24 +1417,30 @@ const make = Effect.gen(function* () {
               ${encodePatchJson(patch)}, ${input.committedAt}
             )
           `;
-          }
-          yield* sql`
+            }
+            yield* sql`
           DELETE FROM knowledge_graph_patch_log
           WHERE scope_id = ${input.scope.scopeId}
             AND revision <= ${revision - KNOWLEDGE_GRAPH_MAX_REPLAY_PATCHES}
         `;
-          return {
-            version: 1,
-            scopeId: input.scope.scopeId,
-            baseRevision: input.baseRevision,
-            revision,
-            patch,
-            changedNodes: input.nodes
-              .filter((node) => input.changedNodeIds.includes(node.nodeId))
-              .map((node) => ({ node, nodeRevision: node.nodeRevision, scopeRevision: revision })),
-            delivery: requiresSnapshot ? "invalidate" : "patch",
-          } satisfies KnowledgeGraphRepositoryCommit;
-        }),
+            const changedNodeIds = new Set(input.changedNodeIds);
+            return {
+              version: 1,
+              scopeId: input.scope.scopeId,
+              baseRevision: input.baseRevision,
+              revision,
+              patch,
+              changedNodes: input.nodes
+                .filter((node) => changedNodeIds.has(node.nodeId))
+                .map((node) => ({
+                  node,
+                  nodeRevision: node.nodeRevision,
+                  scopeRevision: revision,
+                })),
+              delivery: requiresSnapshot ? "invalidate" : "patch",
+            } satisfies KnowledgeGraphRepositoryCommit;
+          }),
+        ),
       )
       .pipe(mapError(input.operation));
 
@@ -1376,6 +1607,19 @@ const make = Effect.gen(function* () {
                 maxDepth: operation.maxDepth ?? 8,
               });
               return { id: operation.id, type: operation.type, ...result };
+            }
+            if (snapshot.status.nodeCount > KNOWLEDGE_GRAPH_MAX_QUERY_RESULT_NODES) {
+              const overview = yield* readOverview(input.scopeId);
+              return {
+                id: operation.id,
+                type: operation.type,
+                ...overview,
+                truncated:
+                  overview.truncated ||
+                  snapshot.status.truncated.eligibleFiles ||
+                  snapshot.status.truncated.nodes ||
+                  snapshot.status.truncated.visibleNodes,
+              };
             }
             const nodes = snapshot.nodes.slice(0, KNOWLEDGE_GRAPH_MAX_QUERY_RESULT_NODES);
             const nodeIds = new Set(nodes.map(({ nodeId }) => nodeId));

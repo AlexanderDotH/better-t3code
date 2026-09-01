@@ -24,16 +24,15 @@ const decodeScope = Schema.decodeUnknownSync(KnowledgeGraphScopeV1);
 const migratedSqlite = Layer.effectDiscard(Migration0059).pipe(
   Layer.provideMerge(NodeSqliteClient.layerMemory()),
 );
-const testLayer = layer.pipe(
-  Layer.provideMerge(KnowledgeGraphRepositoryLive),
-  Layer.provideMerge(migratedSqlite),
-);
+const repositoryTestLayer = KnowledgeGraphRepositoryLive.pipe(Layer.provideMerge(migratedSqlite));
+const testLayer = layer.pipe(Layer.provideMerge(repositoryTestLayer));
 
 it.effect("persists only incremental changes across repeated external edits", () =>
   Effect.acquireUseRelease(
     Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-kg-indexer-"))),
-    (workspaceRoot) =>
+    (temporaryRoot) =>
       Effect.gen(function* () {
+        const workspaceRoot = yield* Effect.promise(() => NodeFSP.realpath(temporaryRoot));
         yield* Effect.promise(() =>
           NodeFSP.writeFile(NodePath.join(workspaceRoot, "index.ts"), "export const first = 1;\n"),
         );
@@ -56,6 +55,13 @@ it.effect("persists only incremental changes across repeated external edits", ()
           errorMessage: "stale indexing failure",
           retryAt: 123,
         });
+        yield* Effect.promise(() =>
+          NodeFSP.utimes(
+            NodePath.join(workspaceRoot, "index.ts"),
+            new Date(1_000),
+            new Date(2_000),
+          ),
+        );
         const unchanged = yield* indexer.indexScope(scope);
         const recoveredStatus = Option.getOrThrow(yield* repository.getStatus(scope.scopeId));
         yield* Effect.promise(() =>
@@ -76,6 +82,78 @@ it.effect("persists only incremental changes across repeated external edits", ()
         assert.strictEqual(snapshot.revision, 2);
         assert.isTrue(snapshot.nodes.some(({ label }) => label === "second"));
       }).pipe(Effect.provide(testLayer)),
+    (workspaceRoot) =>
+      Effect.promise(() => NodeFSP.rm(workspaceRoot, { recursive: true, force: true })),
+  ),
+);
+
+it.effect("publishes accurate persisting progress before committing", () =>
+  Effect.acquireUseRelease(
+    Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-kg-indexer-"))),
+    (temporaryRoot) =>
+      Effect.gen(function* () {
+        const workspaceRoot = yield* Effect.promise(() => NodeFSP.realpath(temporaryRoot));
+        yield* Effect.promise(() =>
+          Promise.all([
+            NodeFSP.writeFile(
+              NodePath.join(workspaceRoot, "first.ts"),
+              "export const first = 1;\n",
+            ),
+            NodeFSP.writeFile(
+              NodePath.join(workspaceRoot, "second.ts"),
+              "export const second = 2;\n",
+            ),
+          ]),
+        );
+        const scope = decodeScope({
+          version: 1,
+          scopeId: "scope-indexer-progress",
+          environmentId: "environment-1",
+          projectId: "project-progress",
+          effectiveWorkspaceRoot: workspaceRoot,
+          isWorktree: false,
+        });
+        const repository = yield* KnowledgeGraphRepository;
+        const events: string[] = [];
+        let persistingProgress:
+          | {
+              readonly discoveredFileCount: number;
+              readonly processedFileCount: number;
+              readonly totalFileCount?: number;
+              readonly queuedSemanticNodeCount: number;
+            }
+          | undefined;
+        const observedRepository = KnowledgeGraphRepository.of({
+          ...repository,
+          updateStatus: (status) =>
+            Effect.sync(() => {
+              events.push(`status:${status.progress?.phase ?? status.state}`);
+              if (status.progress?.phase === "persisting") persistingProgress = status.progress;
+            }).pipe(Effect.andThen(repository.updateStatus(status))),
+          applyDeterministicPatch: (patch) =>
+            Effect.sync(() => events.push("commit")).pipe(
+              Effect.andThen(repository.applyDeterministicPatch(patch)),
+            ),
+        });
+        const indexer = yield* KnowledgeGraphIndexer.pipe(
+          Effect.provide(
+            layer.pipe(Layer.provide(Layer.succeed(KnowledgeGraphRepository, observedRepository))),
+          ),
+        );
+
+        const result = yield* indexer.indexScope(scope);
+
+        assert.isTrue(Option.isSome(result));
+        assert.deepStrictEqual(events, ["status:discovering", "status:persisting", "commit"]);
+        assert.deepStrictEqual(persistingProgress, {
+          version: 1,
+          phase: "persisting",
+          discoveredFileCount: 2,
+          processedFileCount: 2,
+          totalFileCount: 2,
+          queuedSemanticNodeCount: 0,
+        });
+      }).pipe(Effect.provide(repositoryTestLayer)),
     (workspaceRoot) =>
       Effect.promise(() => NodeFSP.rm(workspaceRoot, { recursive: true, force: true })),
   ),

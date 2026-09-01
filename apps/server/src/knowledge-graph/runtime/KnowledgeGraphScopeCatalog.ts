@@ -1,5 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import {
   type EnvironmentId,
@@ -62,6 +64,7 @@ export interface KnowledgeGraphScopeCatalogDependencies {
   readonly getEnvironmentId: Effect.Effect<EnvironmentId, Error>;
   readonly getShellSnapshot: Effect.Effect<ScopeShellSnapshot, Error>;
   readonly canonicalizeWorkspaceRoot: (workspaceRoot: string) => Effect.Effect<string, Error>;
+  readonly homeDirectory: string;
 }
 
 export interface KnowledgeGraphResolvedThreadScope {
@@ -101,6 +104,17 @@ function scopeId(input: {
     .update(input.effectiveWorkspaceRoot)
     .digest("hex");
   return KnowledgeGraphScopeId.make(`kg:${digest}`);
+}
+
+export function isKnowledgeGraphWorkspaceRootIndexable(
+  workspaceRoot: string,
+  homeDirectory: string,
+): boolean {
+  const resolvedRoot = NodePath.resolve(workspaceRoot);
+  return (
+    resolvedRoot !== NodePath.resolve(homeDirectory) &&
+    NodePath.dirname(resolvedRoot) !== resolvedRoot
+  );
 }
 
 export function makeKnowledgeGraphScopeCatalog(
@@ -144,6 +158,15 @@ export function makeKnowledgeGraphScopeCatalog(
             }),
         ),
       );
+    if (
+      !isKnowledgeGraphWorkspaceRootIndexable(effectiveWorkspaceRoot, dependencies.homeDirectory)
+    ) {
+      return yield* new KnowledgeGraphScopeResolutionError({
+        reason: "workspace-root-unavailable",
+        projectId: input.projectId,
+        workspaceRoot: input.workspaceRoot,
+      });
+    }
     const canonicalProjectRoot = yield* dependencies
       .canonicalizeWorkspaceRoot(input.projectWorkspaceRoot)
       .pipe(
@@ -295,12 +318,17 @@ export const layer = Layer.effect(
     const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const resolvedHomeDirectory = path.resolve(NodeOS.homedir());
+    const homeDirectory = yield* fileSystem
+      .realPath(resolvedHomeDirectory)
+      .pipe(Effect.orElseSucceed(() => resolvedHomeDirectory));
     return KnowledgeGraphScopeCatalog.of(
       makeKnowledgeGraphScopeCatalog({
         getEnvironmentId: environment.getEnvironmentId,
         getShellSnapshot: projections.getShellSnapshot(),
         canonicalizeWorkspaceRoot: (workspaceRoot) =>
           fileSystem.realPath(path.resolve(workspaceRoot)),
+        homeDirectory,
       }),
     );
   }),

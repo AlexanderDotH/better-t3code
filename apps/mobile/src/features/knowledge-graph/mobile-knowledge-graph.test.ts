@@ -24,7 +24,10 @@ import {
   toggleKnowledgeGraphKind,
 } from "./mobile-knowledge-graph";
 
-const status = (state: KnowledgeGraphStatusV1["state"]): KnowledgeGraphStatusV1 => ({
+const status = (
+  state: KnowledgeGraphStatusV1["state"],
+  progress?: KnowledgeGraphStatusV1["progress"],
+): KnowledgeGraphStatusV1 => ({
   version: 1,
   scopeId: "scope-1" as KnowledgeGraphStatusV1["scopeId"],
   state,
@@ -34,6 +37,7 @@ const status = (state: KnowledgeGraphStatusV1["state"]): KnowledgeGraphStatusV1 
   edgeCount: 0,
   evidenceCount: 0,
   semanticQueueDepth: 0,
+  ...(progress === undefined ? {} : { progress }),
   truncated: {
     eligibleFiles: false,
     nodes: false,
@@ -214,6 +218,31 @@ describe("mobile Knowledge Graph behavior", () => {
       canPause: true,
       canRebuild: true,
       pauseAction: "resume",
+    });
+    expect(
+      resolveMobileKnowledgeGraphActions(
+        status("indexing", {
+          version: 1,
+          phase: "persisting",
+          discoveredFileCount: 10,
+          processedFileCount: 10,
+          totalFileCount: 10,
+          queuedSemanticNodeCount: 0,
+        }),
+      ),
+    ).toEqual({
+      canCancel: true,
+      canClear: true,
+      canPause: true,
+      canRebuild: false,
+      pauseAction: "pause",
+    });
+    expect(resolveMobileKnowledgeGraphActions(status("cancelling"))).toEqual({
+      canCancel: false,
+      canClear: false,
+      canPause: false,
+      canRebuild: false,
+      pauseAction: "pause",
     });
   });
 

@@ -100,7 +100,13 @@ const translate = (key: string, values: Readonly<Record<string, string | number>
         "knowledgeGraph.relationships": "Relationships",
         "knowledgeGraph.openSource": "Open source",
         "knowledgeGraph.resultCount": "{{count}} results",
-        "knowledgeGraph.empty": "No indexed knowledge is available yet.",
+        "knowledgeGraph.noResults": "No graph results match the current search and filters.",
+        "knowledgeGraph.empty.ready": "No indexed knowledge is available yet.",
+        "knowledgeGraph.empty.indexing": "Indexing project files…",
+        "knowledgeGraph.empty.extracting": "Extracting project relationships…",
+        "knowledgeGraph.empty.persisting": "Saving the Knowledge Graph…",
+        "knowledgeGraph.empty.idle": "Indexing is idle or was cancelled. Rebuild to start again.",
+        "knowledgeGraph.empty.error": "Indexing failed. Rebuild to try again.",
         "knowledgeGraph.truncated": "Some graph results are omitted by safety bounds.",
         "knowledgeGraph.omittedNodes": "{{count}} nodes omitted",
         "knowledgeGraph.direction.incoming": "Incoming",
@@ -125,7 +131,10 @@ describe("KnowledgeGraphPanelView", () => {
         query=""
         kinds={new Set()}
         expandedNodeId={fileNode.nodeId}
-        zoom={1}
+        hoveredNodeId={null}
+        draggingNodeId={null}
+        viewport={{ scale: 1, translateX: 0, translateY: 0 }}
+        layoutAnimating={false}
         prefersReducedMotion
         translate={translate}
         formatConfidence={(confidence) => `${Math.round(confidence * 100)} localized percent`}
@@ -134,7 +143,9 @@ describe("KnowledgeGraphPanelView", () => {
         onZoomChange={() => undefined}
         onResetView={() => undefined}
         onExpandNode={() => undefined}
+        onNodeHover={() => undefined}
         onOpenSource={() => undefined}
+        onCanvasPointerDown={() => undefined}
         onNodePointerDown={() => undefined}
       />,
     );
@@ -143,6 +154,10 @@ describe("KnowledgeGraphPanelView", () => {
     expect(markup).toContain('aria-label="Search graph"');
     expect(markup).toContain('aria-label="Node filters"');
     expect(markup).toContain('data-motion="reduced"');
+    expect(markup).toContain('data-knowledge-graph-canvas="true"');
+    expect(markup).toContain('data-layout-state="settled"');
+    expect(markup).toContain('data-graph-node-kind="package"');
+    expect(markup).toContain('data-highlighted="true"');
     expect(markup.match(/data-expanded-node=/g)).toHaveLength(1);
     expect(markup).toContain("knowledgeGraphState.ts");
     expect(markup).toContain("Semantic provenance");
@@ -152,17 +167,26 @@ describe("KnowledgeGraphPanelView", () => {
     expect(markup).toContain("Open source");
   });
 
-  it("makes empty and explicitly truncated graph states visible", () => {
-    const emptyMarkup = renderToStaticMarkup(
+  it("renders a panned live physics frame and highlights the hovered neighborhood", () => {
+    const markup = renderToStaticMarkup(
       <KnowledgeGraphPanelView
-        snapshot={{ ...snapshot, nodes: [], edges: [], evidence: [] }}
-        positions={new Map()}
+        snapshot={snapshot}
+        positions={
+          new Map([
+            [packageNode.nodeId, { x: 80, y: 80 }],
+            [fileNode.nodeId, { x: 220, y: 160 }],
+          ])
+        }
         width={480}
         height={360}
         query=""
         kinds={new Set()}
         expandedNodeId={null}
-        zoom={1}
+        hoveredNodeId={packageNode.nodeId}
+        draggingNodeId={null}
+        pinnedNodeIds={new Set([packageNode.nodeId])}
+        viewport={{ scale: 1, translateX: 20, translateY: 10 }}
+        layoutAnimating
         prefersReducedMotion={false}
         translate={translate}
         formatConfidence={(confidence) => `${Math.round(confidence * 100)}%`}
@@ -171,7 +195,56 @@ describe("KnowledgeGraphPanelView", () => {
         onZoomChange={() => undefined}
         onResetView={() => undefined}
         onExpandNode={() => undefined}
+        onNodeHover={() => undefined}
         onOpenSource={() => undefined}
+        onCanvasPointerDown={() => undefined}
+        onNodePointerDown={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain('data-layout-state="animating"');
+    expect(markup).toContain('data-highlighted="true"');
+    expect(markup).toContain('data-graph-node-kind="package"');
+    expect(markup).toContain('data-pinned="true"');
+    expect(markup).toContain("will-change-[left,top]");
+    expect(markup).not.toContain("transition-[left,top");
+    expect(markup).toContain(
+      '<svg class="pointer-events-none absolute inset-0 size-full" aria-hidden="true" data-knowledge-graph-edges="true">',
+    );
+    expect(markup).toContain("left:100px;top:90px");
+  });
+
+  it("makes empty and explicitly truncated graph states visible", () => {
+    const emptyMarkup = renderToStaticMarkup(
+      <KnowledgeGraphPanelView
+        snapshot={{
+          ...snapshot,
+          nodes: [],
+          edges: [],
+          evidence: [],
+          status: { ...snapshot.status, nodeCount: 0, edgeCount: 0 },
+        }}
+        positions={new Map()}
+        width={480}
+        height={360}
+        query=""
+        kinds={new Set()}
+        expandedNodeId={null}
+        hoveredNodeId={null}
+        draggingNodeId={null}
+        viewport={{ scale: 1, translateX: 0, translateY: 0 }}
+        layoutAnimating={false}
+        prefersReducedMotion={false}
+        translate={translate}
+        formatConfidence={(confidence) => `${Math.round(confidence * 100)}%`}
+        onQueryChange={() => undefined}
+        onToggleKind={() => undefined}
+        onZoomChange={() => undefined}
+        onResetView={() => undefined}
+        onExpandNode={() => undefined}
+        onNodeHover={() => undefined}
+        onOpenSource={() => undefined}
+        onCanvasPointerDown={() => undefined}
         onNodePointerDown={() => undefined}
       />,
     );
@@ -199,7 +272,10 @@ describe("KnowledgeGraphPanelView", () => {
         query=""
         kinds={new Set()}
         expandedNodeId={null}
-        zoom={1}
+        hoveredNodeId={null}
+        draggingNodeId={null}
+        viewport={{ scale: 1, translateX: 0, translateY: 0 }}
+        layoutAnimating={false}
         prefersReducedMotion={false}
         translate={translate}
         formatConfidence={(confidence) => `${Math.round(confidence * 100)}%`}
@@ -208,7 +284,9 @@ describe("KnowledgeGraphPanelView", () => {
         onZoomChange={() => undefined}
         onResetView={() => undefined}
         onExpandNode={() => undefined}
+        onNodeHover={() => undefined}
         onOpenSource={() => undefined}
+        onCanvasPointerDown={() => undefined}
         onNodePointerDown={() => undefined}
       />,
     );
@@ -216,5 +294,140 @@ describe("KnowledgeGraphPanelView", () => {
     expect(emptyMarkup).toContain("No indexed knowledge is available yet.");
     expect(truncatedMarkup).toContain("Some graph results are omitted by safety bounds.");
     expect(truncatedMarkup).toContain("7 nodes omitted");
+  });
+
+  it("presents status and progress-specific zero-node states with actionable errors", () => {
+    const renderEmpty = (
+      state: KnowledgeGraphSnapshotV1["status"]["state"],
+      phase?: NonNullable<KnowledgeGraphSnapshotV1["status"]["progress"]>["phase"],
+      errorMessage?: string,
+    ) =>
+      renderToStaticMarkup(
+        <KnowledgeGraphPanelView
+          snapshot={{
+            ...snapshot,
+            nodes: [],
+            edges: [],
+            evidence: [],
+            status: {
+              ...snapshot.status,
+              state,
+              nodeCount: 0,
+              edgeCount: 0,
+              ...(phase
+                ? {
+                    progress: {
+                      version: 1,
+                      phase,
+                      discoveredFileCount: 8,
+                      processedFileCount: 3,
+                      totalFileCount: 8,
+                      queuedSemanticNodeCount: 0,
+                    },
+                  }
+                : {}),
+              ...(errorMessage ? { errorMessage } : {}),
+            },
+          }}
+          positions={new Map()}
+          width={480}
+          height={360}
+          query=""
+          kinds={new Set()}
+          expandedNodeId={null}
+          hoveredNodeId={null}
+          draggingNodeId={null}
+          viewport={{ scale: 1, translateX: 0, translateY: 0 }}
+          layoutAnimating={false}
+          prefersReducedMotion={false}
+          translate={translate}
+          formatConfidence={(confidence) => `${Math.round(confidence * 100)}%`}
+          onQueryChange={() => undefined}
+          onToggleKind={() => undefined}
+          onZoomChange={() => undefined}
+          onResetView={() => undefined}
+          onExpandNode={() => undefined}
+          onNodeHover={() => undefined}
+          onOpenSource={() => undefined}
+          onCanvasPointerDown={() => undefined}
+          onNodePointerDown={() => undefined}
+        />,
+      );
+
+    expect(renderEmpty("indexing", "discovering")).toContain("Indexing project files…");
+    expect(renderEmpty("indexing", "extracting")).toContain("Extracting project relationships…");
+    expect(renderEmpty("indexing", "persisting")).toContain("Saving the Knowledge Graph…");
+    expect(renderEmpty("idle")).toContain("idle or was cancelled");
+
+    const errorMarkup = renderEmpty("error", undefined, "The repository could not be read.");
+    expect(errorMarkup).toContain('role="alert"');
+    expect(errorMarkup).toContain("Indexing failed. Rebuild to try again.");
+    expect(errorMarkup).toContain("The repository could not be read.");
+  });
+
+  it("uses a filter-specific message when a populated graph has no visible matches", () => {
+    const markup = renderToStaticMarkup(
+      <KnowledgeGraphPanelView
+        snapshot={snapshot}
+        positions={new Map()}
+        width={480}
+        height={360}
+        query="missing node"
+        kinds={new Set()}
+        expandedNodeId={null}
+        hoveredNodeId={null}
+        draggingNodeId={null}
+        viewport={{ scale: 1, translateX: 0, translateY: 0 }}
+        layoutAnimating={false}
+        prefersReducedMotion={false}
+        translate={translate}
+        formatConfidence={(confidence) => `${Math.round(confidence * 100)}%`}
+        onQueryChange={() => undefined}
+        onToggleKind={() => undefined}
+        onZoomChange={() => undefined}
+        onResetView={() => undefined}
+        onExpandNode={() => undefined}
+        onNodeHover={() => undefined}
+        onOpenSource={() => undefined}
+        onCanvasPointerDown={() => undefined}
+        onNodePointerDown={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain("No graph results match the current search and filters.");
+    expect(markup).not.toContain("No indexed knowledge is available yet.");
+  });
+
+  it("treats an empty bounded search result as no matches when status reports graph nodes", () => {
+    const markup = renderToStaticMarkup(
+      <KnowledgeGraphPanelView
+        snapshot={{ ...snapshot, nodes: [], edges: [], evidence: [] }}
+        positions={new Map()}
+        width={480}
+        height={360}
+        query="remote miss"
+        kinds={new Set()}
+        expandedNodeId={null}
+        hoveredNodeId={null}
+        draggingNodeId={null}
+        viewport={{ scale: 1, translateX: 0, translateY: 0 }}
+        layoutAnimating={false}
+        prefersReducedMotion={false}
+        translate={translate}
+        formatConfidence={(confidence) => `${Math.round(confidence * 100)}%`}
+        onQueryChange={() => undefined}
+        onToggleKind={() => undefined}
+        onZoomChange={() => undefined}
+        onResetView={() => undefined}
+        onExpandNode={() => undefined}
+        onNodeHover={() => undefined}
+        onOpenSource={() => undefined}
+        onCanvasPointerDown={() => undefined}
+        onNodePointerDown={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain("No graph results match the current search and filters.");
+    expect(markup).not.toContain("No indexed knowledge is available yet.");
   });
 });
