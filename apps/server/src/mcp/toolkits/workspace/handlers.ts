@@ -52,6 +52,8 @@ export const invokeWorkspaceContext = Effect.fn("WorkspaceToolkit.invoke")(funct
 });
 
 export const WorkspaceToolkitHandlersLive = WorkspaceToolkit.toLayer({
+  workspace_find: invokeWorkspaceContext,
+  workspace_read: invokeWorkspaceContext,
   workspace_context: invokeWorkspaceContext,
 });
 

@@ -15,13 +15,17 @@ import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  BETTER_T3_ADVANCED_FEATURE_IDS,
+  BETTER_T3_SETTINGS_TABS,
   BetterT3SettingsIntroduction,
   BetterT3SettingsPanelView,
   resolveBetterT3ControlDestination,
   resolveBetterT3PreparedStatusMessageId,
   resolveBetterT3PreparedStatusText,
+  resolveBetterT3SettingsSearchTarget,
   resolveWebBetterT3ControlRenderingPath,
 } from "./BetterT3SettingsPanel";
+import { SettingsSearchTargetProvider } from "./settingsLayout";
 
 vi.mock("./settingsLayout", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./settingsLayout")>()),
@@ -47,38 +51,158 @@ const sectionTitles: Readonly<Record<BetterT3FeatureSection, string>> = {
   "integration-status": "Integration status",
 };
 
-describe("BetterT3SettingsPanelView", () => {
-  it("renders every registry control exactly once under the seven titled sections", () => {
-    const controls = Object.fromEntries(
-      BETTER_T3_FEATURE_REGISTRY.filter((entry) => entry.controlKind !== "switch").map((entry) => [
-        entry.id,
-        <button key={entry.id}>{entry.id}</button>,
-      ]),
-    ) as Partial<Record<BetterT3FeatureId, ReactNode>>;
+const renderWithSearchTarget = (targetId: string | null, panel: ReactNode): string =>
+  renderToStaticMarkup(
+    <SettingsSearchTargetProvider targetId={targetId}>{panel}</SettingsSearchTargetProvider>,
+  );
 
+describe("BetterT3SettingsPanelView", () => {
+  it("renders eight accessible tabs with General selected by default", () => {
     const markup = renderToStaticMarkup(
       <BetterT3SettingsPanelView
         features={states}
         sectionTitles={sectionTitles}
         translate={(messageId) => messageId}
-        controls={controls}
+        controls={{}}
+        languageControl={<div data-better-t3-language-control />}
         onSwitchChange={() => undefined}
       />,
     );
 
+    expect(markup.match(/role="tablist"/g)).toHaveLength(1);
+    expect(markup.match(/role="tab"/g)).toHaveLength(8);
+    expect(markup.match(/aria-selected="true"/g)).toHaveLength(1);
+    expect(markup).toMatch(
+      /role="tab"[^>]*aria-selected="true"[^>]*>settings\.betterT3\.tab\.general<\/button>/,
+    );
+    for (const tab of BETTER_T3_SETTINGS_TABS) expect(markup).toContain(tab.labelMessageId);
+    expect(markup).toContain("data-better-t3-language-control");
+    expect(markup).not.toContain("settings.betterT3.advancedSettings");
+  });
+
+  it("assigns every registry control to exactly one of the eight tabs", () => {
+    const assignedFeatureIds = BETTER_T3_SETTINGS_TABS.flatMap((tab) =>
+      tab.section === null
+        ? []
+        : BETTER_T3_FEATURE_REGISTRY.filter((descriptor) => descriptor.section === tab.section).map(
+            (descriptor) => descriptor.id,
+          ),
+    );
+
+    expect(BETTER_T3_SETTINGS_TABS.map((tab) => tab.id)).toEqual([
+      "general",
+      "agents",
+      "visual",
+      "workspace",
+      "voice",
+      "knowledge",
+      "system",
+      "integrations",
+    ]);
+    expect(assignedFeatureIds).toHaveLength(BETTER_T3_FEATURE_REGISTRY.length);
+    expect(new Set(assignedFeatureIds)).toEqual(
+      new Set(BETTER_T3_FEATURE_REGISTRY.map((descriptor) => descriptor.id)),
+    );
+  });
+
+  it("keeps the requested controls in Advanced settings and no others", () => {
+    expect(BETTER_T3_ADVANCED_FEATURE_IDS).toEqual(
+      new Set<BetterT3FeatureId>([
+        "agent.fetchModel",
+        "agent.parallelPlanReviewer",
+        "agent.autoReasoningModel",
+        "agent.cavemanMode",
+        "chat.cardMorphing",
+        "chat.previewCount",
+        "chat.sorting",
+        "chat.settling",
+        "chat.shiftClickShowLess",
+        "workspace.checkpoints",
+        "workspace.chatPortability",
+        "voice.outputLanguage",
+        "voice.transcriptPortability",
+        "voice.credentials",
+        "knowledge.model",
+        "knowledge.progress",
+        "knowledge.rebuild",
+        "knowledge.pause",
+        "knowledge.clear",
+        "resource.diagnostics",
+        "integration.mcp",
+        "integration.skills",
+      ]),
+    );
+  });
+
+  it("routes Settings search to the owning tab and opens Advanced settings when needed", () => {
+    expect(resolveBetterT3SettingsSearchTarget("knowledge.graph")).toEqual({
+      tabId: "knowledge",
+      advanced: false,
+    });
+    expect(resolveBetterT3SettingsSearchTarget("knowledge.model")).toEqual({
+      tabId: "knowledge",
+      advanced: true,
+    });
+    expect(resolveBetterT3SettingsSearchTarget("better-t3-interface-language")).toEqual({
+      tabId: "general",
+      advanced: false,
+    });
+
     for (const descriptor of BETTER_T3_FEATURE_REGISTRY) {
-      expect(
-        markup.match(new RegExp(`data-better-t3-feature=\\"${descriptor.id}\\"`, "g")),
-      ).toHaveLength(1);
+      const owningTab = BETTER_T3_SETTINGS_TABS.find((tab) => tab.section === descriptor.section);
+      expect(resolveBetterT3SettingsSearchTarget(descriptor.id), descriptor.id).toEqual({
+        tabId: owningTab?.id,
+        advanced: BETTER_T3_ADVANCED_FEATURE_IDS.has(descriptor.id),
+      });
     }
-    for (const title of Object.values(sectionTitles)) {
-      expect(markup).toContain(title);
-    }
+  });
+
+  it("selects Knowledge for a Knowledge Graph search target", () => {
+    const markup = renderToStaticMarkup(
+      <SettingsSearchTargetProvider targetId="knowledge.graph">
+        <BetterT3SettingsPanelView
+          features={states}
+          sectionTitles={sectionTitles}
+          translate={(messageId) => messageId}
+          controls={{}}
+          onSwitchChange={() => undefined}
+        />
+      </SettingsSearchTargetProvider>,
+    );
+
+    expect(markup).toMatch(
+      /role="tab"[^>]*aria-selected="true"[^>]*>settings\.betterT3\.tab\.knowledge<\/button>/,
+    );
+    expect(markup.match(/data-better-t3-feature="knowledge\.graph"/g)).toHaveLength(1);
+    expect(markup).toContain("settings.betterT3.advancedSettings");
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).not.toContain('data-better-t3-feature="knowledge.model"');
+  });
+
+  it("opens the owning tab and Advanced settings for an advanced search target", () => {
+    const markup = renderToStaticMarkup(
+      <SettingsSearchTargetProvider targetId="knowledge.model">
+        <BetterT3SettingsPanelView
+          features={states}
+          sectionTitles={sectionTitles}
+          translate={(messageId) => messageId}
+          controls={{}}
+          onSwitchChange={() => undefined}
+        />
+      </SettingsSearchTargetProvider>,
+    );
+
+    expect(markup).toMatch(
+      /role="tab"[^>]*aria-selected="true"[^>]*>settings\.betterT3\.tab\.knowledge<\/button>/,
+    );
+    expect(markup).toContain('aria-expanded="true"');
+    expect(markup.match(/data-better-t3-feature="knowledge\.model"/g)).toHaveLength(1);
   });
 
   it("keeps a blocked stored switch visibly on but prevents activation changes", () => {
     const cardMorphing = states.find((entry) => entry.descriptor.id === "chat.cardMorphing")!;
-    const markup = renderToStaticMarkup(
+    const markup = renderWithSearchTarget(
+      "chat.cardMorphing",
       <BetterT3SettingsPanelView
         features={[
           {
@@ -102,7 +226,8 @@ describe("BetterT3SettingsPanelView", () => {
 
   it("uses translated labels for switch accessibility names", () => {
     const workspaceDeck = states.find((entry) => entry.descriptor.id === "chat.workspaceCardDeck")!;
-    const markup = renderToStaticMarkup(
+    const markup = renderWithSearchTarget(
+      "chat.workspaceCardDeck",
       <BetterT3SettingsPanelView
         features={[workspaceDeck]}
         sectionTitles={sectionTitles}
@@ -123,7 +248,8 @@ describe("BetterT3SettingsPanelView", () => {
     const invalidMessageId = "betterT3.chat.workspaceCardDeck.not-real";
     const translate = vi.fn((messageId: string) => messageId);
 
-    const markup = renderToStaticMarkup(
+    const markup = renderWithSearchTarget(
+      "chat.workspaceCardDeck",
       <BetterT3SettingsPanelView
         features={[
           {
@@ -148,7 +274,8 @@ describe("BetterT3SettingsPanelView", () => {
   it("keeps long pseudo-localized labels inside the responsive settings grid", () => {
     const workspaceDeck = states.find((entry) => entry.descriptor.id === "chat.workspaceCardDeck")!;
     const longLabel = `⟦${"Fonction Better T3 très détaillée ".repeat(6).trim()}⟧`;
-    const markup = renderToStaticMarkup(
+    const markup = renderWithSearchTarget(
+      "chat.workspaceCardDeck",
       <BetterT3SettingsPanelView
         features={[workspaceDeck]}
         sectionTitles={sectionTitles}
@@ -164,56 +291,60 @@ describe("BetterT3SettingsPanelView", () => {
     expect(markup).toContain("sm:grid-cols-[minmax(0,1fr)_minmax(10rem,auto)]");
   });
 
-  it("places language first and keeps each visual with the setting it explains", () => {
+  it("keeps each visual with the setting it explains in the active tab", () => {
     const agentFeature = states.find((entry) => entry.descriptor.id === "agent.planMode")!;
     const chatFeature = states.find((entry) => entry.descriptor.id === "chat.workspaceCardDeck")!;
-    const markup = renderToStaticMarkup(
+    const panel = (
       <BetterT3SettingsPanelView
         features={[agentFeature, chatFeature]}
         sectionTitles={sectionTitles}
         translate={(messageId) => messageId}
         controls={{}}
-        languageControl={<div data-better-t3-language-control />}
         featureVisuals={{
           "agent.planMode": <div data-better-t3-agent-visual />,
           "chat.workspaceCardDeck": <div data-better-t3-chat-visual />,
         }}
         onSwitchChange={() => undefined}
-      />,
+      />
     );
+    const agentMarkup = renderWithSearchTarget("agent.planMode", panel);
+    const chatMarkup = renderWithSearchTarget("chat.workspaceCardDeck", panel);
 
-    const languageIndex = markup.indexOf("data-better-t3-language-control");
-    const agentControlIndex = markup.indexOf('data-better-t3-feature="agent.planMode"');
-    const agentVisualIndex = markup.indexOf("data-better-t3-agent-visual");
-    const chatControlIndex = markup.indexOf('data-better-t3-feature="chat.workspaceCardDeck"');
-    const chatVisualIndex = markup.indexOf("data-better-t3-chat-visual");
+    const agentControlIndex = agentMarkup.indexOf('data-better-t3-feature="agent.planMode"');
+    const agentVisualIndex = agentMarkup.indexOf("data-better-t3-agent-visual");
+    const chatControlIndex = chatMarkup.indexOf('data-better-t3-feature="chat.workspaceCardDeck"');
+    const chatVisualIndex = chatMarkup.indexOf("data-better-t3-chat-visual");
 
-    expect(markup).toContain("settings.betterT3.section.interface");
-    expect(languageIndex).toBeGreaterThan(-1);
-    expect(agentControlIndex).toBeGreaterThan(languageIndex);
+    expect(agentControlIndex).toBeGreaterThan(-1);
     expect(agentVisualIndex).toBeGreaterThan(agentControlIndex);
-    expect(chatControlIndex).toBeGreaterThan(agentVisualIndex);
+    expect(agentMarkup).not.toContain("data-better-t3-chat-visual");
+    expect(chatControlIndex).toBeGreaterThan(-1);
     expect(chatVisualIndex).toBeGreaterThan(chatControlIndex);
+    expect(chatMarkup).not.toContain("data-better-t3-agent-visual");
   });
 
-  it("renders the normal control and one explanatory visual for a visualized setting", () => {
+  it("places a visual choice below its title and omits the old switch", () => {
     const agentFeature = states.find((entry) => entry.descriptor.id === "agent.planMode")!;
-    const markup = renderToStaticMarkup(
+    const markup = renderWithSearchTarget(
+      "agent.planMode",
       <BetterT3SettingsPanelView
         features={[agentFeature]}
         sectionTitles={sectionTitles}
         translate={(messageId) => messageId}
         controls={{}}
-        featureVisuals={{
-          "agent.planMode": <div data-plan-mode-visual />,
+        featureChoices={{
+          "agent.planMode": <div data-plan-mode-choice role="radiogroup" />,
         }}
         onSwitchChange={() => undefined}
       />,
     );
 
     expect(markup.match(/data-better-t3-feature="agent\.planMode"/g)).toHaveLength(1);
-    expect(markup.match(/data-plan-mode-visual/g)).toHaveLength(1);
-    expect(markup).toContain('role="switch"');
+    expect(markup.match(/data-plan-mode-choice/g)).toHaveLength(1);
+    expect(markup.indexOf("betterT3.agent.planMode.label")).toBeLessThan(
+      markup.indexOf("data-plan-mode-choice"),
+    );
+    expect(markup).not.toContain('role="switch"');
   });
 });
 

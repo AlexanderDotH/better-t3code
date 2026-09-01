@@ -15,13 +15,6 @@ import {
 } from "@t3tools/contracts";
 import { resolveThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
 import {
-  acceptReasoningRecommendation,
-  deriveReasoningRecommendation,
-  dismissReasoningRecommendation,
-  pendingReasoningOverrideMatchesSelection,
-  undoReasoningRecommendationOverride,
-} from "@t3tools/client-runtime/reasoning-recommendation";
-import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
@@ -254,8 +247,6 @@ function ThreadRouteContent(
   }, [selectedThread, selectedThreadDetailState]);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const composer = useThreadComposerState();
-  const reasoningRecommendationState = composer.reasoningRecommendationState;
-  const setReasoningRecommendation = composer.onSetReasoningRecommendation;
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
@@ -442,74 +433,7 @@ function ThreadRouteContent(
     busy: composer.activeThreadBusy,
     fetchEnabled: composer.fetchEnabled,
   });
-  const reasoningRecommendationSelection = selectedThreadWithDraftSettings?.modelSelection ?? null;
   const autoReasoningStatus = readAutoReasoningStatus(selectedThreadDetail?.activities ?? []);
-  const reasoningRecommendationCapabilities = useMemo(() => {
-    if (reasoningRecommendationSelection === null) {
-      return null;
-    }
-    const provider = serverConfig?.providers.find(
-      (candidate) => candidate.instanceId === reasoningRecommendationSelection.instanceId,
-    );
-    return (
-      provider?.models.find((model) => model.slug === reasoningRecommendationSelection.model)
-        ?.capabilities ?? null
-    );
-  }, [reasoningRecommendationSelection, serverConfig]);
-  const validPendingReasoningOverride =
-    reasoningRecommendationSelection !== null &&
-    pendingReasoningOverrideMatchesSelection(
-      reasoningRecommendationState?.pendingOverride,
-      reasoningRecommendationSelection,
-    )
-      ? (reasoningRecommendationState?.pendingOverride ?? null)
-      : null;
-  const reasoningRecommendation = useMemo(
-    () =>
-      reasoningRecommendationSelection === null || selectedThreadDetail === null
-        ? null
-        : deriveReasoningRecommendation({
-            activities: selectedThreadDetail.activities,
-            capabilities: reasoningRecommendationCapabilities,
-            durableSelection: reasoningRecommendationSelection,
-            latestCompletedTurnId:
-              selectedThreadDetail.latestTurn?.state === "completed"
-                ? selectedThreadDetail.latestTurn.turnId
-                : null,
-            threadIdle: !composer.activeThreadBusy && composer.selectedThreadQueueCount === 0,
-            handledEvidenceTurnId: reasoningRecommendationState?.handledEvidenceTurnId ?? null,
-          }),
-    [
-      composer.activeThreadBusy,
-      composer.selectedThreadQueueCount,
-      reasoningRecommendationCapabilities,
-      reasoningRecommendationSelection,
-      reasoningRecommendationState?.handledEvidenceTurnId,
-      selectedThreadDetail,
-    ],
-  );
-  const handleAcceptReasoningRecommendation = useCallback(() => {
-    if (reasoningRecommendation === null) {
-      return;
-    }
-    setReasoningRecommendation(
-      acceptReasoningRecommendation(reasoningRecommendationState, reasoningRecommendation),
-    );
-  }, [reasoningRecommendation, reasoningRecommendationState, setReasoningRecommendation]);
-  const handleDismissReasoningRecommendation = useCallback(() => {
-    if (reasoningRecommendation === null) {
-      return;
-    }
-    setReasoningRecommendation(
-      dismissReasoningRecommendation(reasoningRecommendationState, reasoningRecommendation),
-    );
-  }, [reasoningRecommendation, reasoningRecommendationState, setReasoningRecommendation]);
-  const handleUndoReasoningRecommendation = useCallback(() => {
-    if (reasoningRecommendationState === null) {
-      return;
-    }
-    setReasoningRecommendation(undoReasoningRecommendationOverride(reasoningRecommendationState));
-  }, [reasoningRecommendationState, setReasoningRecommendation]);
 
   /* ─── Native header theming ──────────────────────────────────────── */
   const usesNativeHeaderGlass = NATIVE_LIQUID_GLASS_SUPPORTED;
@@ -1081,8 +1005,6 @@ function ThreadRouteContent(
           activePendingUserInputDrafts={requests.activePendingUserInputDrafts}
           activePendingUserInputAnswers={requests.activePendingUserInputAnswers}
           respondingUserInputId={requests.respondingUserInputId}
-          reasoningRecommendation={reasoningRecommendation}
-          pendingReasoningOverride={validPendingReasoningOverride}
           draftMessage={composer.draftMessage}
           draftAttachments={composer.draftAttachments}
           connectionStateLabel={routeConnectionState}
@@ -1129,9 +1051,6 @@ function ThreadRouteContent(
           onSelectUserInputOption={requests.onSelectUserInputOption}
           onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}
           onSubmitUserInput={requests.onSubmitUserInput}
-          onAcceptReasoningRecommendation={handleAcceptReasoningRecommendation}
-          onDismissReasoningRecommendation={handleDismissReasoningRecommendation}
-          onUndoReasoningRecommendation={handleUndoReasoningRecommendation}
         />
       </View>
     </>

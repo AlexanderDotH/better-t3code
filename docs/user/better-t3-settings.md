@@ -1,17 +1,23 @@
 # Better T3 settings
 
-Better T3 settings collect optional Better T3 behavior in one place. Open **Settings > Better T3** on the web or desktop app. On mobile, open **Settings > Better T3** from the native settings screen.
+Better T3 settings collect optional Better T3 behavior in one place. Open **Settings > Better T3** in the web or Electron desktop app. The selected environment stays above eight responsive tabs:
 
-Settings are grouped by what they affect:
+- **General** contains the synchronized interface-language choice.
+- **Agents** contains agent workflows, model choices, planning modes, and agent coordination.
+- **Visual** contains chat presentation, motion, previews, sorting, and sidebar layout.
+- **Workspace** contains Git workbench, checkpoints, and chat portability.
+- **Voice** contains AssemblyAI dictation, output language, transcript portability, and credentials.
+- **Knowledge** contains the Project Knowledge Graph and its indexing controls.
+- **[System](resource-protection.md)** contains resource-protection controls and diagnostics.
+- **Integrations** contains remote, lifecycle, MCP, skills, analytics, and compatibility status.
 
-- **Interface** contains the synchronized language choice for English, German, French, or the current device language.
-- **Agent workflows** includes Fetch and its model, the Auto Reasoning decision model, parallel plan implementation and review, Plan Mode, Deep Thinking, Caveman Mode, prompt improvement, expanded composer controls, reasoning visibility, general subagents, and project-agent coordination.
-- **Chat and layout** includes the workspace card deck, card morphing, character streaming motion, chat presentation, the option to keep plans only in the blue Classic composer bubble, Classic sidebar, preview count, sorting and settling, Shift-click Show Less, draft indicators, and left or right sidebar placement.
-- **Workspace and source control** includes Git workbench and deck availability, checkpoint status, and links to chat import, export, and harness synchronization.
-- **Voice and synchronization** includes AssemblyAI voice input, voice-output language, transcript portability, and a link to credential management.
-- **Knowledge and automation** includes the Project Knowledge Graph, its model, indexing progress, pause and resume, rebuild, and clear actions.
-- **[Resource protection](resource-protection.md)** includes separate switches for adaptive admission and provider-process suspension, plus a diagnostics link.
-- **Integration status** shows remote readiness, lifecycle health, MCP and skills availability, analytics-removal status, and client compatibility.
+Each tab shows its basic settings first. Tabs that need deeper configuration also include an **Advanced settings** section, which is collapsed by default. Opening it keeps advanced settings visible while you move between tabs during the current page visit; returning to the page starts with it collapsed again. General does not show an empty advanced section.
+
+For example, **Knowledge Graph** is the basic setting that turns the feature on or off. Its model, indexing progress, rebuild, pause or resume, and clear controls are advanced settings. Agents keeps model selectors, the parallel-plan reviewer, and Caveman Mode under Advanced. Visual keeps card morphing, preview count, sorting, settling, and Shift-click Show Less there. Workspace uses it for checkpoints and portability, Voice for output language, transcript portability, and credentials, System for diagnostics, and Integrations for MCP and Skills links.
+
+Settings search selects the tab containing its result automatically. If the result is advanced, the Advanced settings section expands so the setting can be focused.
+
+Mobile keeps its native Better T3 settings routes and section layout instead of using the web tabs.
 
 Switches change optional behavior. Selectors choose a mode or model. Actions perform a bounded operation such as rebuilding the graph. Links open the setting that owns a feature, while status-only rows explain current availability without pretending to be controls.
 
@@ -22,12 +28,11 @@ select an effort. **Automatic** stores no dedicated override and follows the env
 text-generation model. This selector never offers the chat-level Auto marker: its own model options
 remain concrete so the decision call cannot recursively route itself.
 
-Selected Agent workflows and Chat and layout settings include compact live visuals in their own
-setting row. The label and description explain the outcome, the normal switch or selector remains
-the only control, and the visual updates immediately beside it. This keeps capability and dependency
-messages attached to the same setting instead of separating them into a dashboard. The shared
-settings-row visual slot can also be used by other settings pages without introducing a second
-interaction model. Only the affected visual replays its motion after a represented value changes.
+Selected Agent workflows and Chat and layout settings show two compact visual choices below the
+setting title and description. Click the preview for the result you want; the selected card exposes
+radio state to assistive technology, and the old switch or dropdown is not duplicated. Capability and
+dependency messages stay attached to the same setting, while settings without useful previews keep
+their normal controls. Only the affected visual replays its motion after a represented value changes.
 Motion never loops and resolves directly to the final state when reduced motion is enabled.
 
 ## Defaults and existing installations

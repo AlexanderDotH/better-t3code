@@ -8,8 +8,16 @@ import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import {
   NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
   NATIVE_HARNESS_WORKSPACE_EDIT_TOOL,
+  NATIVE_HARNESS_WORKSPACE_FIND_TOOL,
+  NATIVE_HARNESS_WORKSPACE_READ_TOOL,
 } from "./NativeHarnessTools.ts";
 import { makeNativeProviderHarness } from "./NativeProviderHarness.ts";
+
+const WORKSPACE_READ_TOOL_NAMES = [
+  NATIVE_HARNESS_WORKSPACE_FIND_TOOL,
+  NATIVE_HARNESS_WORKSPACE_READ_TOOL,
+  NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
+] as const;
 
 const unusedProcessRunner: ProcessRunner["Service"] = {
   run: () => Effect.dieMessage("process runner is not used while listing tools"),
@@ -100,12 +108,12 @@ describe("NativeProviderHarness", () => {
         });
 
         expect(normal.map(({ name }) => name)).toEqual([
-          NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
+          ...WORKSPACE_READ_TOOL_NAMES,
           "configured_read",
         ]);
-        expect(fetch.map(({ name }) => name)).toEqual([NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL]);
+        expect(fetch.map(({ name }) => name)).toEqual([...WORKSPACE_READ_TOOL_NAMES]);
         expect(writable.map(({ name }) => name)).toEqual([
-          NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
+          ...WORKSPACE_READ_TOOL_NAMES,
           NATIVE_HARNESS_WORKSPACE_EDIT_TOOL,
           "configured_read",
         ]);

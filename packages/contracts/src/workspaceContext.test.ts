@@ -7,9 +7,13 @@ import {
   WorkspaceContextResult,
   WorkspaceContextSearchError,
   WorkspaceContextUnavailableError,
+  WorkspaceFindInput,
+  WorkspaceReadInput,
 } from "./workspaceContext.ts";
 
 const decodeInput = Schema.decodeUnknownSync(WorkspaceContextInput);
+const decodeFind = Schema.decodeUnknownSync(WorkspaceFindInput);
+const decodeRead = Schema.decodeUnknownSync(WorkspaceReadInput);
 
 describe("WorkspaceContextInput", () => {
   it("accepts bounded batched queries and reads while trimming user text", () => {
@@ -28,9 +32,18 @@ describe("WorkspaceContextInput", () => {
     });
   });
 
-  it("requires at least one query or read", () => {
+  it("requires at least one operation in mixed and focused inputs", () => {
     expect(() => decodeInput({})).toThrow();
     expect(() => decodeInput({ queries: [], reads: [] })).toThrow();
+    expect(() => decodeFind({ queries: [] })).toThrow();
+    expect(() => decodeRead({ reads: [] })).toThrow();
+
+    expect(decodeFind({ queries: [{ text: "  tools.ts  ", mode: "path" }] })).toEqual({
+      queries: [{ text: "tools.ts", mode: "path" }],
+    });
+    expect(decodeRead({ reads: [{ path: "  src/index.ts  ", startLine: 2 }] })).toEqual({
+      reads: [{ path: "src/index.ts", startLine: 2 }],
+    });
   });
 
   it("rejects requests beyond public count and scalar limits", () => {

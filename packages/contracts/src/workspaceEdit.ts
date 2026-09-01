@@ -1,4 +1,6 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
@@ -18,11 +20,31 @@ export type WorkspaceRevision = typeof WorkspaceRevision.Type;
 export const WorkspaceEditWriteMode = Schema.Literals(["create", "overwrite", "upsert"]);
 export type WorkspaceEditWriteMode = typeof WorkspaceEditWriteMode.Type;
 
-export const WorkspaceEditWrite = Schema.Struct({
+const WorkspaceEditWriteContent = Schema.Struct({
   type: Schema.Literal("write"),
-  mode: WorkspaceEditWriteMode,
+  mode: WorkspaceEditWriteMode.pipe(
+    Schema.withDecodingDefaultType(Effect.succeed("create" as const)),
+  ),
   content: Schema.String,
 });
+
+const WorkspaceEditWriteText = Schema.Struct({
+  type: Schema.Literal("write"),
+  mode: WorkspaceEditWriteMode.pipe(
+    Schema.withDecodingDefaultType(Effect.succeed("create" as const)),
+  ),
+  text: Schema.String,
+}).pipe(
+  Schema.decodeTo(
+    Schema.toType(WorkspaceEditWriteContent),
+    SchemaTransformation.transform({
+      decode: ({ type, mode, text }) => ({ type, mode, content: text }),
+      encode: ({ type, mode, content }) => ({ type, mode, text: content }),
+    }),
+  ),
+);
+
+export const WorkspaceEditWrite = Schema.Union([WorkspaceEditWriteContent, WorkspaceEditWriteText]);
 export type WorkspaceEditWrite = typeof WorkspaceEditWrite.Type;
 
 export const WorkspaceEditReplaceOccurrence = Schema.Literals(["one", "all"]);
@@ -184,6 +206,10 @@ export class WorkspaceEditError extends Schema.TaggedErrorClass<WorkspaceEditErr
   },
 ) {
   override get message(): string {
-    return "Workspace edit failed.";
+    const location =
+      this.change_index === undefined
+        ? ""
+        : ` (change ${this.change_index}${this.edit_index === undefined ? "" : `, edit ${this.edit_index}`})`;
+    return `Workspace edit failed: ${this.reason}${location}.`;
   }
 }

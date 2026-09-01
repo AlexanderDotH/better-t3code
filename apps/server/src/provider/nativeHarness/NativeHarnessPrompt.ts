@@ -7,7 +7,9 @@ export function nativeHarnessWorkspaceInstructions(input: {
 }): string {
   const canEdit =
     input.interactionMode !== "plan" && input.sandboxMode !== "read-only" && !input.fetchWorker;
+  const reads =
+    "Prefer workspace_find for path or content searches and workspace_read for bounded line reads. Batch independent operations into the fewest calls; use workspace_context only for mixed search-and-read batches. Do not use shell text readers or searchers.";
   return canEdit
-    ? "Use workspace_context for repository discovery. Searches or reads spanning multiple regular UTF-8 files MUST use batched `workspace_context` calls, using the fewest calls its limits allow; do not use shell text readers/searchers. Prefer workspace_edit for ordinary UTF-8 text changes and batch related files in one call. Use an available command tool only for formatters, generators, binaries, large files, or permission changes."
-    : "Use workspace_context for repository discovery. Searches or reads spanning multiple regular UTF-8 files MUST use batched `workspace_context` calls, using the fewest calls its limits allow; do not use shell text readers/searchers.";
+    ? `${reads} Prefer workspace_edit for ordinary UTF-8 text changes and batch related files in one call. Use an available command tool only for formatters, generators, binaries, large files, or permission changes.`
+    : reads;
 }

@@ -44,6 +44,8 @@ describe("FetchWorkerCoordinator helpers", () => {
     expect(prompt).toContain("Where is session validation?");
     expect(prompt).toContain("exact paths");
     expect(prompt).toContain("Do not edit files");
+    expect(prompt).toContain("workspace_find");
+    expect(prompt).toContain("workspace_read");
     expect(prompt).toContain("workspace_context");
     expect(prompt).toContain("Do not execute shell or terminal commands");
     expect(prompt).toContain("Do not start or delegate to nested agents");

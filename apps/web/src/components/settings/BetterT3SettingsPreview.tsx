@@ -1,4 +1,4 @@
-import type { BetterT3FeatureId } from "@t3tools/contracts";
+import type { BetterT3FeatureId, ChatVisualMode, SidebarPosition } from "@t3tools/contracts";
 import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { BotIcon, CheckIcon, MessageSquareIcon, SparklesIcon, WorkflowIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -321,6 +321,117 @@ function WorkspaceCardDeckPreview(props: {
           <MessageSquareIcon className="size-2" />
         </span>
       </div>
+    </div>
+  );
+}
+
+export type BetterT3VisualChoiceValue = boolean | ChatVisualMode | SidebarPosition;
+
+function visualChoiceValues(
+  featureId: BetterT3VisualFeatureId,
+): ReadonlyArray<BetterT3VisualChoiceValue> {
+  if (featureId === "chat.sidebarPosition") return ["left", "right"];
+  if (featureId === "chat.presentation") return ["current", "classic"];
+  return [false, true];
+}
+
+function visualChoiceLabel(
+  featureId: BetterT3VisualFeatureId,
+  value: BetterT3VisualChoiceValue,
+  translate: Translate,
+): string {
+  if (featureId === "chat.sidebarPosition") {
+    return translate(
+      value === "right"
+        ? "settings.betterT3.sidebarPosition.right"
+        : "settings.betterT3.sidebarPosition.left",
+    );
+  }
+  if (featureId === "chat.presentation") {
+    return translate(
+      value === "classic" ? "settings.betterT3.value.classic" : "settings.betterT3.value.current",
+    );
+  }
+  return translate(
+    value === true
+      ? "settings.betterT3.control.statusEnabled"
+      : "settings.betterT3.control.statusDisabled",
+  );
+}
+
+function visualChoiceModel(
+  featureId: BetterT3VisualFeatureId,
+  value: BetterT3VisualChoiceValue,
+  model: BetterT3SettingsPreviewModel,
+): BetterT3SettingsPreviewModel {
+  switch (featureId) {
+    case "agent.planMode":
+      return { ...model, agent: { ...model.agent, planMode: value === true } };
+    case "agent.generalSubagents":
+      return { ...model, agent: { ...model.agent, generalSubagents: value === true } };
+    case "agent.reasoningVisibility":
+      return { ...model, agent: { ...model.agent, reasoningVisibility: value === true } };
+    case "chat.sidebarPosition":
+      return {
+        ...model,
+        chat: { ...model.chat, sidebarPosition: value === "right" ? "right" : "left" },
+      };
+    case "chat.presentation":
+      return {
+        ...model,
+        chat: { ...model.chat, presentation: value === "classic" ? "classic" : "current" },
+      };
+    case "chat.workspaceCardDeck":
+      return { ...model, chat: { ...model.chat, workspaceCardDeck: value === true } };
+  }
+}
+
+export function BetterT3FeatureChoice(props: {
+  readonly disabled: boolean;
+  readonly featureId: BetterT3VisualFeatureId;
+  readonly model: BetterT3SettingsPreviewModel;
+  readonly onChange: (value: BetterT3VisualChoiceValue) => void;
+  readonly translate: Translate;
+  readonly value: BetterT3VisualChoiceValue;
+}) {
+  return (
+    <div
+      aria-label={props.translate(`betterT3.${props.featureId}.label`)}
+      className="grid grid-cols-1 gap-2 pb-2 pt-3 sm:grid-cols-2"
+      data-better-t3-feature-choice={props.featureId}
+      role="radiogroup"
+    >
+      {visualChoiceValues(props.featureId).map((value) => {
+        const selected = value === props.value;
+        return (
+          <button
+            aria-checked={selected}
+            className={cn(
+              "overflow-hidden rounded-xl border bg-background/65 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60",
+              selected
+                ? "border-primary/70 bg-primary/5 ring-1 ring-primary/40"
+                : "border-border/60 hover:border-border hover:bg-accent/10",
+            )}
+            disabled={props.disabled}
+            key={String(value)}
+            onClick={() => props.onChange(value)}
+            role="radio"
+            type="button"
+          >
+            <span className="flex items-center justify-between gap-2 border-b border-border/50 px-3 py-2 text-xs font-medium">
+              {visualChoiceLabel(props.featureId, value, props.translate)}
+              {selected ? <CheckIcon aria-hidden className="size-3.5 text-primary" /> : null}
+            </span>
+            <div aria-hidden="true">
+              <BetterT3FeatureVisual
+                featureId={props.featureId}
+                model={visualChoiceModel(props.featureId, value, props.model)}
+                translate={props.translate}
+              />
+            </div>
+          </button>
+        );
+      })}
     </div>
   );
 }

@@ -853,11 +853,6 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Eine oder mehrere Optionen auswählen.",
     "Sélectionnez une ou plusieurs options.",
   ],
-  "chat.composer.undoReasoning": [
-    "Undo one-turn reasoning override",
-    "Reasoning-Überschreibung für einen Turn zurücknehmen",
-    "Annuler le remplacement du raisonnement pour un tour",
-  ],
   "chat.composer.voiceStart": [
     "Start voice input",
     "Spracheingabe starten",
@@ -1439,49 +1434,6 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
   "chat.openIn.thisMachine": ["this machine", "diesem Gerät", "cette machine"],
   "chat.copy.failed": ["Failed to copy", "Kopieren fehlgeschlagen", "Échec de la copie"],
   "chat.copy.copied": ["Copied!", "Kopiert!", "Copié !"],
-  "chat.reasoning.overrideTitle": [
-    "Next turn uses {{target}}",
-    "Der nächste Turn verwendet {{target}}",
-    "Le prochain tour utilise {{target}}",
-  ],
-  "chat.reasoning.overrideDescription": [
-    "{{from}} resumes afterward.",
-    "Danach wird {{from}} fortgesetzt.",
-    "{{from}} reprend ensuite.",
-  ],
-  "chat.reasoning.undo": ["Undo", "Rückgängig", "Annuler"],
-  "chat.reasoning.recommendationTitle": [
-    "{{target}} is likely enough for repository exploration",
-    "{{target}} reicht wahrscheinlich für die Repository-Erkundung aus",
-    "{{target}} devrait suffire pour l’exploration du dépôt",
-  ],
-  "chat.reasoning.recommendationDescription": [
-    {
-      one: "{{count}} read-only discovery operation was observed. Your current {{current}} effort remains the chat default.",
-      other:
-        "{{count}} read-only discovery operations were observed. Your current {{current}} effort remains the chat default.",
-    },
-    {
-      one: "Es wurde {{count}} schreibgeschützte Erkundungsaktion erkannt. Dein aktueller Aufwand {{current}} bleibt der Chat-Standard.",
-      other:
-        "Es wurden {{count}} schreibgeschützte Erkundungsaktionen erkannt. Dein aktueller Aufwand {{current}} bleibt der Chat-Standard.",
-    },
-    {
-      one: "{{count}} opération d’exploration en lecture seule a été observée. Votre effort actuel {{current}} reste la valeur par défaut du chat.",
-      other:
-        "{{count}} opérations d’exploration en lecture seule ont été observées. Votre effort actuel {{current}} reste la valeur par défaut du chat.",
-    },
-  ],
-  "chat.reasoning.useOnce": [
-    "Use {{target}} once",
-    "{{target}} einmal verwenden",
-    "Utiliser {{target}} une fois",
-  ],
-  "chat.reasoning.dismiss": [
-    "Dismiss reasoning suggestion",
-    "Reasoning-Vorschlag ausblenden",
-    "Masquer la suggestion de raisonnement",
-  ],
   "chat.contextWindow.usedPercent": [
     "Context window {{percent}} used",
     "Kontextfenster zu {{percent}} verwendet",

@@ -81,6 +81,8 @@ describe("buildCodexDeveloperInstructions delegation history policy", () => {
 
     expect(instructions).not.toContain("preview_status");
     expect(instructions).not.toContain("workspace_context");
+    expect(instructions).not.toContain("workspace_find");
+    expect(instructions).not.toContain("workspace_read");
     expect(instructions).not.toContain("Project memory");
     expect(instructions).toContain("thread_context");
     expect(instructions).not.toMatch(/## (?:Coordination|Knowledge graph|Workspace context)/);
@@ -102,9 +104,11 @@ describe("buildCodexDeveloperInstructions delegation history policy", () => {
       tools,
     );
 
+    expect(instructions).toContain("workspace_find");
+    expect(instructions).toContain("workspace_read");
     expect(instructions).toContain("workspace_context");
     expect(instructions).toContain(
-      "Searches or reads spanning multiple regular UTF-8 files MUST use batched `workspace_context` calls, using the fewest calls its limits allow; do not use shell text readers/searchers.",
+      "Batch independent operations into the fewest calls; use `workspace_context` only for mixed search-and-read batches.",
     );
     expect(instructions).toContain("workspace_edit");
     expect(instructions).toMatch(/batch/i);
@@ -115,9 +119,11 @@ describe("buildCodexDeveloperInstructions delegation history policy", () => {
       { model: "gpt-5.6", reasoningEffort: "high" },
       tools,
     );
+    expect(plan).toContain("workspace_find");
+    expect(plan).toContain("workspace_read");
     expect(plan).toContain("workspace_context");
     expect(plan).toContain(
-      "Searches or reads spanning multiple regular UTF-8 files MUST use batched `workspace_context` calls, using the fewest calls its limits allow; do not use shell text readers/searchers.",
+      "Batch independent operations into the fewest calls; use `workspace_context` only for mixed search-and-read batches.",
     );
     expect(plan).not.toContain("workspace_edit");
     expect(plan).not.toContain("formatters");
@@ -138,6 +144,8 @@ describe("buildCodexDeveloperInstructions delegation history policy", () => {
       },
     );
 
+    expect(instructions).toContain("workspace_find");
+    expect(instructions).toContain("workspace_read");
     expect(instructions).toContain("workspace_context");
     expect(instructions).not.toContain("workspace_edit");
   });

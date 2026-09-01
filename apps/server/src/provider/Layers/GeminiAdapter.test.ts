@@ -342,7 +342,9 @@ describe("GeminiAdapter", () => {
         expect(executed).toEqual([]);
         expect(
           requests[0]?.config?.tools?.[0]?.functionDeclarations?.map(({ name }) => name),
-        ).toEqual(["workspace_context"]);
+        ).toEqual(["workspace_find", "workspace_read", "workspace_context"]);
+        expect(requests[0]?.config?.systemInstruction).toContain("workspace_find");
+        expect(requests[0]?.config?.systemInstruction).toContain("workspace_read");
         expect(requests[0]?.config?.systemInstruction).toContain("workspace_context");
         expect(requests[0]?.config?.systemInstruction).not.toContain("workspace_edit");
         expect(JSON.stringify(requests[1]?.contents)).toContain(

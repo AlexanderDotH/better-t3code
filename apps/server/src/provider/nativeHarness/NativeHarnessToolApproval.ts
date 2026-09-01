@@ -4,16 +4,23 @@ import {
   NATIVE_HARNESS_EXEC_COMMAND_TOOL,
   NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
   NATIVE_HARNESS_WORKSPACE_EDIT_TOOL,
+  NATIVE_HARNESS_WORKSPACE_FIND_TOOL,
+  NATIVE_HARNESS_WORKSPACE_READ_TOOL,
 } from "./NativeHarnessToolTypes.ts";
 
 const isFileMutationTool = (toolName: string): boolean =>
   toolName === NATIVE_HARNESS_WORKSPACE_EDIT_TOOL;
 
+const isWorkspaceReadTool = (toolName: string): boolean =>
+  toolName === NATIVE_HARNESS_WORKSPACE_FIND_TOOL ||
+  toolName === NATIVE_HARNESS_WORKSPACE_READ_TOOL ||
+  toolName === NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL;
+
 export function nativeHarnessToolRequiresApproval(
   toolName: string,
   runtimeMode: RuntimeMode,
 ): boolean {
-  if (toolName === NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL) return false;
+  if (isWorkspaceReadTool(toolName)) return false;
   if (isFileMutationTool(toolName)) return runtimeMode === "approval-required";
   return runtimeMode !== "full-access";
 }

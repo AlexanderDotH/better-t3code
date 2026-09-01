@@ -47,10 +47,6 @@
       "types": "./src/openRouterModelSelection.ts",
       "default": "./src/openRouterModelSelection.ts"
     },
-    "./reasoning-recommendation": {
-      "types": "./src/reasoningRecommendation.ts",
-      "default": "./src/reasoningRecommendation.ts"
-    },
     "./project-thread-preview-sync": {
       "types": "./src/projectThreadPreviewSync.ts",
       "default": "./src/projectThreadPreviewSync.ts"

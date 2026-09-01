@@ -107,6 +107,50 @@ describe("WorkspaceEditInput", () => {
     });
   });
 
+  it("normalizes common MCP write calls without risking an overwrite", () => {
+    expect(
+      decodeInput({
+        changes: [
+          {
+            path: "explicit-create.ts",
+            edits: [{ type: "write", mode: "create", text: "created" }],
+          },
+          {
+            path: "default-create.ts",
+            edits: [{ type: "write", text: "created" }],
+          },
+          {
+            path: "explicit-overwrite.ts",
+            edits: [{ type: "write", mode: "overwrite", text: "replaced" }],
+          },
+          {
+            path: "canonical.ts",
+            edits: [{ type: "write", content: "canonical" }],
+          },
+        ],
+      }),
+    ).toEqual({
+      changes: [
+        {
+          path: "explicit-create.ts",
+          edits: [{ type: "write", mode: "create", content: "created" }],
+        },
+        {
+          path: "default-create.ts",
+          edits: [{ type: "write", mode: "create", content: "created" }],
+        },
+        {
+          path: "explicit-overwrite.ts",
+          edits: [{ type: "write", mode: "overwrite", content: "replaced" }],
+        },
+        {
+          path: "canonical.ts",
+          edits: [{ type: "write", mode: "create", content: "canonical" }],
+        },
+      ],
+    });
+  });
+
   it("accepts all write modes and all-match replacement with an expected count", () => {
     expect(
       decodeInput({
@@ -292,7 +336,7 @@ describe("workspace edit outcomes", () => {
       uncertain_paths: ["src/example.ts"],
     });
 
-    expect(error.message).toBe("Workspace edit failed.");
+    expect(error.message).toBe("Workspace edit failed: rollback_incomplete (change 0, edit 1).");
     expect(isWorkspaceEditError(error)).toBe(true);
   });
 });

@@ -11,24 +11,26 @@ T3 server, scoped to one provider session, and passed directly to the provider a
 
 ## Endpoints and toolsets
 
-The HTTP server exposes two non-workspace profiles and twelve workspace profiles:
+The HTTP server exposes two non-workspace profiles and twelve workspace profiles. "Read tools"
+below means `workspace_find`, `workspace_read`, and the mixed compatibility tool
+`workspace_context`.
 
-| Endpoint                                    | Workspace tools                       | Other tools                                                                             |
-| ------------------------------------------- | ------------------------------------- | --------------------------------------------------------------------------------------- |
-| `/mcp`                                      | None                                  | Preview, `thread_context`, project coordination, and general subagents                  |
-| `/mcp/coordination`                         | None                                  | `thread_context`, project coordination, and general subagents                           |
-| `/mcp/workspace`                            | `workspace_context`                   | Preview, `thread_context`, coordination, subagents, project memory, and Knowledge Graph |
-| `/mcp/workspace-no-memory`                  | `workspace_context`                   | Preview, `thread_context`, coordination, subagents, and Knowledge Graph                 |
-| `/mcp/workspace-no-preview`                 | `workspace_context`                   | `thread_context`, coordination, subagents, project memory, and Knowledge Graph          |
-| `/mcp/workspace-no-preview-no-memory`       | `workspace_context`                   | `thread_context`, coordination, subagents, and Knowledge Graph                          |
-| `/mcp/workspace-only`                       | `workspace_context`                   | `thread_context` and project memory                                                     |
-| `/mcp/workspace-only-no-memory`             | `workspace_context`                   | `thread_context`                                                                        |
-| `/mcp/workspace-write`                      | `workspace_context`, `workspace_edit` | Preview, `thread_context`, coordination, subagents, project memory, and Knowledge Graph |
-| `/mcp/workspace-write-no-memory`            | `workspace_context`, `workspace_edit` | Preview, `thread_context`, coordination, subagents, and Knowledge Graph                 |
-| `/mcp/workspace-write-no-preview`           | `workspace_context`, `workspace_edit` | `thread_context`, coordination, subagents, project memory, and Knowledge Graph          |
-| `/mcp/workspace-write-no-preview-no-memory` | `workspace_context`, `workspace_edit` | `thread_context`, coordination, subagents, and Knowledge Graph                          |
-| `/mcp/workspace-write-only`                 | `workspace_context`, `workspace_edit` | `thread_context` and project memory                                                     |
-| `/mcp/workspace-write-only-no-memory`       | `workspace_context`, `workspace_edit` | `thread_context`                                                                        |
+| Endpoint                                    | Workspace tools              | Other tools                                                                             |
+| ------------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------- |
+| `/mcp`                                      | None                         | Preview, `thread_context`, project coordination, and general subagents                  |
+| `/mcp/coordination`                         | None                         | `thread_context`, project coordination, and general subagents                           |
+| `/mcp/workspace`                            | Read tools                   | Preview, `thread_context`, coordination, subagents, project memory, and Knowledge Graph |
+| `/mcp/workspace-no-memory`                  | Read tools                   | Preview, `thread_context`, coordination, subagents, and Knowledge Graph                 |
+| `/mcp/workspace-no-preview`                 | Read tools                   | `thread_context`, coordination, subagents, project memory, and Knowledge Graph          |
+| `/mcp/workspace-no-preview-no-memory`       | Read tools                   | `thread_context`, coordination, subagents, and Knowledge Graph                          |
+| `/mcp/workspace-only`                       | Read tools                   | `thread_context` and project memory                                                     |
+| `/mcp/workspace-only-no-memory`             | Read tools                   | `thread_context`                                                                        |
+| `/mcp/workspace-write`                      | Read tools, `workspace_edit` | Preview, `thread_context`, coordination, subagents, project memory, and Knowledge Graph |
+| `/mcp/workspace-write-no-memory`            | Read tools, `workspace_edit` | Preview, `thread_context`, coordination, subagents, and Knowledge Graph                 |
+| `/mcp/workspace-write-no-preview`           | Read tools, `workspace_edit` | `thread_context`, coordination, subagents, project memory, and Knowledge Graph          |
+| `/mcp/workspace-write-no-preview-no-memory` | Read tools, `workspace_edit` | `thread_context`, coordination, subagents, and Knowledge Graph                          |
+| `/mcp/workspace-write-only`                 | Read tools, `workspace_edit` | `thread_context` and project memory                                                     |
+| `/mcp/workspace-write-only-no-memory`       | Read tools, `workspace_edit` | `thread_context`                                                                        |
 
 The endpoint in a provider's generated MCP configuration determines its maximum toolset. A
 credential issued for the preview endpoint cannot be used to obtain workspace tools from a
@@ -60,7 +62,7 @@ MCP-capable built-in drivers receive project-agent coordination and general-suba
 server-owned ChatGPT, OpenRouter, OpenAI, and Gemini harnesses instead expose the same workspace
 contracts as direct function tools. Gemini receives no MCP credential and cannot initiate
 T3-managed delegation, though it can still run as a selected general subagent. Grok remains
-preview-only, so it receives neither workspace tool. An explicit instance for an unregistered
+preview-only, so it receives no workspace tools. An explicit instance for an unregistered
 driver remains visible as unavailable, but no adapter exists to receive an internal MCP credential.
 
 ## Credentials and authorization
@@ -162,16 +164,20 @@ All returned paths use forward slashes and are relative to that root. Explicit r
 workspace filesystem service, including its root-containment, symlink, file-kind, binary-file, and
 size checks.
 
-## `workspace_context`
+## Workspace read tools
 
-`workspace_context` is a read-only batching tool for repository discovery. One call can contain up
-to eight independent path/content queries and twelve targeted file reads. Queries support `path`,
-`content`, and combined `auto` modes. Reads use one-indexed inclusive line ranges. A successful
-targeted read includes a content revision suitable for a later `workspace_edit` revision guard.
-Provider guidance requires searches or reads spanning multiple regular UTF-8 files to use the fewest
-batched `workspace_context` calls allowed by these limits instead of shell text readers or searchers.
+`workspace_find` batches up to eight independent path or literal-content queries in `path`,
+`content`, or combined `auto` mode. `workspace_read` batches up to twelve one-indexed inclusive
+line-range reads; successful reads include a revision suitable for a later `workspace_edit` guard.
+`workspace_context` retains the same mixed query-and-read contract for compatibility and for calls
+that genuinely need both operations.
 
-Tool annotations declare it read-only, non-destructive, idempotent, and closed-world. It cannot
+All three route through the same deterministic engine, limits, path safety, partial-result handling,
+and response budget. Provider guidance prefers the focused tools, batches independent operations
+into the fewest calls, and reserves `workspace_context` for mixed batches instead of using shell text
+readers or searchers.
+
+Their annotations declare them read-only, non-destructive, idempotent, and closed-world. They cannot
 write files or execute arbitrary commands.
 
 ### Deterministic search
@@ -187,7 +193,7 @@ Non-Git workspaces use a bounded, one-shot Node filesystem scan. It skips symlin
 oversized files, dependency/build/cache/VCS directories, environment files, and private-key files.
 Useful metadata directories such as `.github` and `.agents` remain discoverable.
 
-The tool deliberately does not use the native file-picker index, persistent watchers, embeddings,
+The engine deliberately does not use the native file-picker index, persistent watchers, embeddings,
 a semantic index, or a background daemon.
 
 ### Limits and partial results
@@ -253,7 +259,9 @@ Tool annotations declare it non-read-only, destructive, non-idempotent, and clos
 
 The edit variants are:
 
-- `write` creates, overwrites, or upserts a complete file.
+- `write` creates, overwrites, or upserts a complete file. The canonical body key is `content`;
+  the decoder also accepts the common `text` alias. An omitted `mode` safely defaults to `create`,
+  which refuses to overwrite an existing file.
 - `replace` performs exact literal replacement, requiring one match by default or all matches with
   an optional expected count.
 - `splice` replaces one-based inclusive line ranges, zero-based end-exclusive Unicode code-point
@@ -285,8 +293,8 @@ globs, regular expressions, copy, and move continue through approved provider co
 
 Codex, Claude, Cursor, and OpenCode receive writable authenticated MCP profiles when their session
 mode permits edits. ChatGPT Subscription, OpenRouter, OpenAI Responses, and Gemini receive the
-identical contract through the direct harness. Fetch workers and read-only sessions receive only
-`workspace_context`; Grok does not support internal workspace tools.
+identical contract through the direct harness. Fetch workers and read-only sessions receive the three
+read tools but never `workspace_edit`; Grok does not support internal workspace tools.
 
 No client RPC, setting, feature flag, command-palette action, keybinding, or database migration is
 added. Web, hosted web, desktop, and mobile already project provider tool activity, changed files,

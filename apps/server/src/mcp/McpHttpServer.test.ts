@@ -14,7 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
+import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
 import * as McpHttpServer from "./McpHttpServer.ts";
@@ -28,6 +28,12 @@ import * as WorkspaceContext from "../workspace/WorkspaceContext.ts";
 import * as WorkspaceFileSystem from "../workspace/WorkspaceFileSystem.ts";
 import * as ProjectMemoryPolicy from "../projectMemory/ProjectMemoryPolicy.ts";
 import * as ProjectMemoryStore from "../projectMemory/ProjectMemoryStore.ts";
+import {
+  WorkspaceContextTool,
+  WorkspaceEditTool,
+  WorkspaceFindTool,
+  WorkspaceReadTool,
+} from "./toolkits/workspace/tools.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -119,6 +125,80 @@ it("normalizes MCP tool schemas without dropping class-backed tool metadata", ()
   expect(normalized.inputSchema).toEqual({
     properties: { text: { type: "string" } },
     type: "object",
+  });
+});
+
+it("keeps every refined workspace operation readable to MCP clients", () => {
+  const normalize = (tool: Parameters<typeof Tool.getJsonSchema>[0]) =>
+    McpHttpServer.normalizeMcpToolInputSchema(Tool.getJsonSchema(tool));
+  const context = normalize(WorkspaceContextTool);
+  const find = normalize(WorkspaceFindTool);
+  const read = normalize(WorkspaceReadTool);
+  const edit = normalize(WorkspaceEditTool);
+
+  for (const schema of [context, find, read, edit]) {
+    expect(JSON.stringify(schema)).not.toContain('"allOf"');
+  }
+  const findSchema = JSON.stringify(find);
+  const editSchema = JSON.stringify(edit);
+  for (const mode of ["auto", "path", "content"]) {
+    expect(findSchema).toContain(`"${mode}"`);
+  }
+  for (const operation of ["write", "replace", "splice", "delete"]) {
+    expect(editSchema).toContain(`"${operation}"`);
+  }
+  expect(editSchema).toContain('"content"');
+  expect(editSchema).toContain('"text"');
+  expect(context).toMatchObject({
+    properties: {
+      queries: {
+        anyOf: expect.arrayContaining([
+          expect.objectContaining({
+            type: "array",
+            maxItems: 8,
+            items: expect.objectContaining({ type: "object" }),
+          }),
+        ]),
+      },
+      reads: {
+        anyOf: expect.arrayContaining([
+          expect.objectContaining({
+            type: "array",
+            maxItems: 12,
+            items: expect.objectContaining({ type: "object" }),
+          }),
+        ]),
+      },
+    },
+  });
+  expect(find).toMatchObject({
+    properties: {
+      queries: { type: "array", minItems: 1, maxItems: 8, items: { type: "object" } },
+    },
+  });
+  expect(read).toMatchObject({
+    properties: {
+      reads: { type: "array", minItems: 1, maxItems: 12, items: { type: "object" } },
+    },
+  });
+  expect(edit).toMatchObject({
+    properties: {
+      changes: {
+        type: "array",
+        minItems: 1,
+        maxItems: 64,
+        items: {
+          properties: {
+            edits: {
+              type: "array",
+              minItems: 1,
+              maxItems: 256,
+              items: { anyOf: expect.any(Array) },
+            },
+          },
+        },
+      },
+    },
   });
 });
 
@@ -421,6 +501,11 @@ it.effect(
           const body = JSON.parse(yield* response.text) as { readonly result: unknown };
           return ListToolsResultSchema.parse(body.result).tools;
         });
+        const workspaceReadToolNames = [
+          "workspace_context",
+          "workspace_find",
+          "workspace_read",
+        ] as const;
 
         const rejected = yield* initialize("/mcp/workspace", "preview-token");
         expect(rejected.status).toBe(401);
@@ -444,7 +529,9 @@ it.effect(
         expect(previewTools.map(({ name }) => name)).toContain("subagent_wait");
         expect(previewTools.map(({ name }) => name)).toContain("subagent_cancel");
         expect(previewTools.filter(({ name }) => name === "thread_context")).toHaveLength(1);
-        expect(previewTools.map(({ name }) => name)).not.toContain("workspace_context");
+        for (const name of workspaceReadToolNames) {
+          expect(previewTools.map(({ name }) => name)).not.toContain(name);
+        }
         expect(previewTools.map(({ name }) => name)).not.toContain("workspace_edit");
         expect(previewTools.map(({ name }) => name)).not.toContain("knowledge_graph_query");
         expect(
@@ -482,15 +569,19 @@ it.effect(
         expect(workspaceTools.filter(({ name }) => name === "thread_context")).toHaveLength(1);
         expect(workspaceTools.filter(({ name }) => name === "project_memory")).toHaveLength(1);
         expect(workspaceTools.map(({ name }) => name)).toContain("knowledge_graph_query");
-        expect(
-          workspaceTools.find(({ name }) => name === "workspace_context")?.annotations,
-        ).toEqual({
-          title: "Search and read workspace context",
-          readOnlyHint: true,
-          destructiveHint: false,
-          idempotentHint: true,
-          openWorldHint: false,
-        });
+        for (const [name, title] of [
+          ["workspace_context", "Search and read workspace context"],
+          ["workspace_find", "Find workspace files and text"],
+          ["workspace_read", "Read workspace files"],
+        ] as const) {
+          expect(workspaceTools.find((tool) => tool.name === name)?.annotations).toEqual({
+            title,
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: false,
+          });
+        }
         expect(workspaceTools.map(({ name }) => name)).not.toContain("workspace_edit");
 
         const workspaceWithoutPreview = yield* initialize(
@@ -503,7 +594,9 @@ it.effect(
           "workspace-no-preview-token",
           workspaceWithoutPreview.headers["mcp-session-id"]!,
         );
-        expect(workspaceWithoutPreviewTools.map(({ name }) => name)).toContain("workspace_context");
+        for (const name of workspaceReadToolNames) {
+          expect(workspaceWithoutPreviewTools.map(({ name }) => name)).toContain(name);
+        }
         expect(workspaceWithoutPreviewTools.map(({ name }) => name)).toContain(
           "knowledge_graph_query",
         );
@@ -534,7 +627,9 @@ it.effect(
         expect(coordinationTools.map(({ name }) => name)).toContain("project_agent_list");
         expect(coordinationTools.map(({ name }) => name)).toContain("subagent_spawn");
         expect(coordinationTools.filter(({ name }) => name === "thread_context")).toHaveLength(1);
-        expect(coordinationTools.map(({ name }) => name)).not.toContain("workspace_context");
+        for (const name of workspaceReadToolNames) {
+          expect(coordinationTools.map(({ name }) => name)).not.toContain(name);
+        }
         expect(coordinationTools.map(({ name }) => name)).not.toContain("workspace_edit");
         expect(coordinationTools.map(({ name }) => name)).not.toContain("knowledge_graph_query");
         expect(coordinationTools.map(({ name }) => name)).not.toContain("preview_status");
@@ -550,6 +645,8 @@ it.effect(
           "project_memory",
           "thread_context",
           "workspace_context",
+          "workspace_find",
+          "workspace_read",
         ]);
         const workspaceOnlyNoMemory = yield* initialize(
           "/mcp/workspace-only-no-memory",
@@ -564,6 +661,8 @@ it.effect(
         expect(workspaceOnlyNoMemoryTools.map(({ name }) => name).toSorted()).toEqual([
           "thread_context",
           "workspace_context",
+          "workspace_find",
+          "workspace_read",
         ]);
         const readOnlyProfiles = [
           ["/mcp", "preview-token"],
@@ -596,7 +695,9 @@ it.effect(
           const initialized = yield* initialize(path, token);
           expect(initialized.status).toBe(200);
           const tools = yield* listTools(path, token, initialized.headers["mcp-session-id"]!);
-          expect(tools.map(({ name }) => name)).toContain("workspace_context");
+          for (const name of workspaceReadToolNames) {
+            expect(tools.map(({ name }) => name)).toContain(name);
+          }
           expect(tools.filter(({ name }) => name === "workspace_edit")).toHaveLength(1);
           expect(tools.find(({ name }) => name === "workspace_edit")?.annotations).toEqual({
             title: "Edit workspace files",

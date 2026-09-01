@@ -10,18 +10,31 @@ const eventBase = {
 };
 
 describe("Fetch worker event policy", () => {
-  it("allows only authenticated workspace context and bounded native reads", () => {
+  it("allows only authenticated workspace reads and bounded native reads", () => {
+    for (const tool of ["workspace_find", "workspace_read", "workspace_context"]) {
+      expect(
+        isFetchMutationEvent({
+          ...eventBase,
+          type: "item.started",
+          payload: {
+            itemId: tool,
+            itemType: "mcp_tool_call",
+            data: { item: { server: "t3-code", tool } },
+          },
+        }),
+      ).toBe(false);
+    }
     expect(
       isFetchMutationEvent({
         ...eventBase,
         type: "item.started",
         payload: {
-          itemId: "workspace-context",
+          itemId: "workspace-edit",
           itemType: "mcp_tool_call",
-          data: { item: { server: "t3-code", tool: "workspace_context" } },
+          data: { item: { server: "t3-code", tool: "workspace_edit" } },
         },
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       isFetchMutationEvent({
         ...eventBase,

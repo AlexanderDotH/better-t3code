@@ -82,11 +82,34 @@ export const normalizeMcpHttpResponse = (
     : response;
 };
 
+// Codex reduces array schemas wrapped in `allOf` to `unknown`, so merge only
+// keyword fragments that cannot overwrite one another.
+function flattenMcpSchemaAllOf(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(flattenMcpSchemaAllOf);
+  if (!Predicate.isObject(value)) return value;
+
+  const normalized = Object.fromEntries(
+    Object.entries(value).map(([key, nested]) => [key, flattenMcpSchemaAllOf(nested)]),
+  );
+  if (!Array.isArray(normalized.allOf)) return normalized;
+
+  const { allOf, ...merged } = normalized;
+  for (const constraint of allOf) {
+    if (!Predicate.isObject(constraint) || Array.isArray(constraint)) return normalized;
+    for (const [key, nested] of Object.entries(constraint)) {
+      if (Object.hasOwn(merged, key)) return normalized;
+      merged[key] = nested;
+    }
+  }
+  return merged;
+}
+
 export function normalizeMcpToolInputSchema(
   inputSchema: unknown,
 ): Readonly<Record<string, unknown>> & { readonly type: "object" } {
+  const normalized = flattenMcpSchemaAllOf(inputSchema);
   return {
-    ...(Predicate.isObject(inputSchema) && !Array.isArray(inputSchema) ? inputSchema : {}),
+    ...(Predicate.isObject(normalized) && !Array.isArray(normalized) ? normalized : {}),
     type: "object",
   };
 }

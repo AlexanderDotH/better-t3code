@@ -141,11 +141,11 @@ The authenticated MCP server that T3 Code injects into supported provider sessio
 T3-owned tools with trusted environment and thread context and is separate from user-configured MCP
 servers. See [internal-mcp.md][25].
 
-#### Workspace context
+#### Workspace read tools
 
-The read-only `workspace_context` internal MCP tool. It batches deterministic repository path and
-content searches with targeted line-range reads. Its workspace root comes from the authenticated
-thread and project rather than tool input. See [internal-mcp.md][25].
+The read-only `workspace_find`, `workspace_read`, and mixed `workspace_context` internal tools.
+They share deterministic repository discovery, bounded line-range reads, and a workspace root from
+the authenticated thread and project rather than tool input. See [internal-mcp.md][25].
 
 #### Workspace edit
 
