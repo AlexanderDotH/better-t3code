@@ -134,37 +134,28 @@ async function runPowerShellArgumentProbe(tempRoot) {
 }
 
 async function runConPtyProbe(tempRoot) {
-  const nodePty = serverRequire("node-pty");
+  const probePath = NodePath.join(tempRoot, "conpty-probe.cjs");
   const token = `t3-conpty-${process.pid}`;
-  await new Promise((resolve, reject) => {
-    const terminal = nodePty.spawn(
-      "powershell.exe",
-      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", `Write-Output '${token}'`],
-      {
-        cols: 100,
-        rows: 20,
-        cwd: tempRoot,
-        env: process.env,
-        name: "xterm-color",
-      },
-    );
-    let output = "";
-    const timeout = setTimeout(() => {
-      terminal.kill();
-      reject(new Error(`ConPTY probe timed out. Output:\n${output}`));
-    }, 15_000);
-    terminal.onData((chunk) => {
-      output += chunk;
-    });
-    terminal.onExit(({ exitCode }) => {
-      clearTimeout(timeout);
-      if (exitCode !== 0 || !output.includes(token)) {
-        reject(new Error(`ConPTY probe failed with ${exitCode}. Output:\n${output}`));
-        return;
-      }
-      resolve();
-    });
-  });
+  await NodeFSP.writeFile(
+    probePath,
+    [
+      "const nodePty = require(process.argv[2]);",
+      "const [, , , cwd, token] = process.argv;",
+      "const terminal = nodePty.spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', `Write-Output '${token}'`], { cols: 100, rows: 20, cwd, env: process.env, name: 'xterm-color' });",
+      "terminal.onData((chunk) => process.stdout.write(chunk));",
+      "terminal.onExit(({ exitCode }) => { process.exitCode = exitCode; });",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  const result = await runFile(process.execPath, [
+    probePath,
+    serverRequire.resolve("node-pty"),
+    tempRoot,
+    token,
+  ]);
+  if (!result.stdout.includes(token))
+    fail(`ConPTY probe produced unexpected output:\n${result.stdout}`);
 }
 
 async function runGitCheckpointProbe(tempRoot) {
