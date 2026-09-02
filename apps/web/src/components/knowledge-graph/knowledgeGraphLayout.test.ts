@@ -1,7 +1,8 @@
-import type { KnowledgeGraphNodeV1 } from "@t3tools/contracts";
+import type { KnowledgeGraphEdgeV1, KnowledgeGraphNodeV1 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  advanceKnowledgeGraphLayoutFrame,
   makeKnowledgeGraphLayoutRequest,
   mergeKnowledgeGraphPinnedPositions,
 } from "./knowledgeGraphLayout";
@@ -36,6 +37,7 @@ describe("makeKnowledgeGraphLayoutRequest", () => {
     });
 
     expect(request.nodes).toHaveLength(300);
+    expect(request.type).toBe("start");
     expect(request.iterations).toBe(0);
     expect(request.requestId).toBe(7);
   });
@@ -54,6 +56,87 @@ describe("makeKnowledgeGraphLayoutRequest", () => {
     expect(request.iterations).toBeGreaterThan(0);
     expect(request.iterations).toBeLessThanOrEqual(64);
     expect(request.pinned).toEqual([[nodes[0]!.nodeId, { x: 20, y: 30 }]]);
+  });
+
+  it("advances the live physics map in bounded frames while keeping drag pins fixed", () => {
+    const request = makeKnowledgeGraphLayoutRequest({
+      requestId: 9,
+      nodes: nodes.slice(0, 3),
+      edges: [
+        {
+          version: 1,
+          edgeId: "edge-1" as KnowledgeGraphEdgeV1["edgeId"],
+          scopeId,
+          kind: "uses",
+          sourceNodeId: nodes[0]!.nodeId,
+          targetNodeId: nodes[1]!.nodeId,
+          provenance: "deterministic",
+          confidence: 1,
+          evidenceIds: [],
+          edgeRevision: 1,
+        },
+      ],
+      width: 640,
+      height: 480,
+      pinned: new Map([[nodes[0]!.nodeId, { x: 100, y: 120 }]]),
+      initialPositions: new Map([
+        [nodes[0]!.nodeId, { x: 100, y: 120 }],
+        [nodes[1]!.nodeId, { x: 500, y: 120 }],
+        [nodes[2]!.nodeId, { x: 320, y: 360 }],
+      ]),
+      prefersReducedMotion: false,
+    });
+    const frame = advanceKnowledgeGraphLayoutFrame({
+      request,
+      positions: new Map(request.initialPositions),
+      pinned: new Map(request.pinned),
+      remainingIterations: request.iterations,
+    });
+
+    expect(frame.remainingIterations).toBe(request.iterations - 2);
+    expect(frame.positions.get(nodes[0]!.nodeId)).toEqual({ x: 100, y: 120 });
+    expect(frame.positions.get(nodes[1]!.nodeId)).not.toEqual({ x: 500, y: 120 });
+  });
+
+  it("exhausts the animation budget without requiring a continuous timer", () => {
+    const request = makeKnowledgeGraphLayoutRequest({
+      requestId: 10,
+      nodes: nodes.slice(0, 6),
+      edges: [],
+      width: 640,
+      height: 480,
+      pinned: new Map(),
+      prefersReducedMotion: false,
+    });
+    let positions = new Map(request.initialPositions);
+    if (positions.size === 0) {
+      positions = new Map(
+        request.nodes.map((entry, index) => [entry.nodeId, { x: 100 + index * 60, y: 200 }]),
+      );
+    }
+    let remainingIterations = request.iterations;
+    let frameCount = 0;
+    while (remainingIterations > 0) {
+      const frame = advanceKnowledgeGraphLayoutFrame({
+        request,
+        positions,
+        pinned: new Map(),
+        remainingIterations,
+      });
+      positions = new Map(frame.positions);
+      remainingIterations = frame.remainingIterations;
+      frameCount += 1;
+    }
+
+    expect(frameCount).toBe(32);
+    const finished = advanceKnowledgeGraphLayoutFrame({
+      request,
+      positions,
+      pinned: new Map(),
+      remainingIterations,
+    });
+    expect(finished.positions).toBe(positions);
+    expect(finished.stable).toBe(true);
   });
 
   it("overlays live drag pins without mutating the finite worker result", () => {

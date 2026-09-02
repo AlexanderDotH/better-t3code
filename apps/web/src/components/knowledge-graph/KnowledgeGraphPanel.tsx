@@ -5,7 +5,9 @@ import {
 } from "@t3tools/contracts";
 import {
   deriveKnowledgeGraphView,
+  screenPointFromGraphPoint,
   type KnowledgeGraphPosition,
+  type KnowledgeGraphViewport,
 } from "@t3tools/client-runtime/knowledge-graph";
 import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 import { MinusIcon, RotateCcwIcon, SearchIcon, PlusIcon } from "lucide-react";
@@ -14,6 +16,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { resolveKnowledgeGraphZeroNodeState } from "./knowledgeGraphPanelState";
 
 export type KnowledgeGraphTranslate = (
   key: InterfaceMessageKey,
@@ -32,6 +35,24 @@ const NODE_KINDS = [
   "architecture",
 ] as const satisfies ReadonlyArray<KnowledgeGraphNodeKind>;
 
+const NODE_KIND_CLASS_NAMES = {
+  repository: "border-violet-500/50 bg-violet-500/12",
+  package: "border-blue-500/45 bg-blue-500/10",
+  directory: "border-amber-500/45 bg-amber-500/10",
+  file: "border-slate-500/45 bg-slate-500/10",
+  symbol: "border-zinc-500/45 bg-zinc-500/10",
+  dependency: "border-cyan-500/45 bg-cyan-500/10",
+  technology: "border-emerald-500/45 bg-emerald-500/10",
+  documentation: "border-orange-500/45 bg-orange-500/10",
+  architecture: "border-fuchsia-500/45 bg-fuchsia-500/10",
+} as const satisfies Readonly<Record<KnowledgeGraphNodeKind, string>>;
+
+const PROMINENT_NODE_KINDS = new Set<KnowledgeGraphNodeKind>([
+  "repository",
+  "package",
+  "architecture",
+]);
+
 export interface KnowledgeGraphPanelViewProps {
   readonly snapshot: KnowledgeGraphSnapshotV1;
   readonly positions: ReadonlyMap<KnowledgeGraphNodeId, KnowledgeGraphPosition>;
@@ -40,7 +61,11 @@ export interface KnowledgeGraphPanelViewProps {
   readonly query: string;
   readonly kinds: ReadonlySet<KnowledgeGraphNodeKind>;
   readonly expandedNodeId: KnowledgeGraphNodeId | null;
-  readonly zoom: number;
+  readonly hoveredNodeId: KnowledgeGraphNodeId | null;
+  readonly draggingNodeId: KnowledgeGraphNodeId | null;
+  readonly pinnedNodeIds?: ReadonlySet<KnowledgeGraphNodeId>;
+  readonly viewport: KnowledgeGraphViewport;
+  readonly layoutAnimating: boolean;
   readonly prefersReducedMotion: boolean;
   readonly translate: KnowledgeGraphTranslate;
   readonly formatConfidence: (confidence: number) => string;
@@ -49,7 +74,9 @@ export interface KnowledgeGraphPanelViewProps {
   readonly onZoomChange: (zoom: number) => void;
   readonly onResetView: () => void;
   readonly onExpandNode: (nodeId: KnowledgeGraphNodeId | null) => void;
+  readonly onNodeHover: (nodeId: KnowledgeGraphNodeId | null) => void;
   readonly onOpenSource: (path: string, line: number | null) => void;
+  readonly onCanvasPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
   readonly onNodePointerDown: (
     nodeId: KnowledgeGraphNodeId,
     event: ReactPointerEvent<HTMLButtonElement>,
@@ -101,7 +128,7 @@ function GraphToolbar(props: KnowledgeGraphPanelViewProps) {
             size="icon-xs"
             variant="ghost-muted"
             aria-label={props.translate("knowledgeGraph.zoomOut")}
-            onClick={() => props.onZoomChange(clampZoom(props.zoom - 0.1))}
+            onClick={() => props.onZoomChange(clampZoom(props.viewport.scale - 0.1))}
           >
             <MinusIcon className="size-3.5" />
           </Button>
@@ -109,7 +136,7 @@ function GraphToolbar(props: KnowledgeGraphPanelViewProps) {
             size="icon-xs"
             variant="ghost-muted"
             aria-label={props.translate("knowledgeGraph.zoomIn")}
-            onClick={() => props.onZoomChange(clampZoom(props.zoom + 0.1))}
+            onClick={() => props.onZoomChange(clampZoom(props.viewport.scale + 0.1))}
           >
             <PlusIcon className="size-3.5" />
           </Button>
@@ -201,6 +228,22 @@ export function KnowledgeGraphPanelView(props: KnowledgeGraphPanelViewProps) {
     expandedNodeId: props.expandedNodeId,
   });
   const visibleNodeIds = new Set(view.nodes.map((node) => node.nodeId));
+  const candidateFocusedNodeId = props.hoveredNodeId ?? props.expandedNodeId;
+  const focusedNodeId =
+    candidateFocusedNodeId && visibleNodeIds.has(candidateFocusedNodeId)
+      ? candidateFocusedNodeId
+      : null;
+  const relatedNodeIds = new Set<KnowledgeGraphNodeId>(focusedNodeId ? [focusedNodeId] : []);
+  if (focusedNodeId) {
+    for (const edge of view.edges) {
+      if (edge.sourceNodeId === focusedNodeId) relatedNodeIds.add(edge.targetNodeId);
+      if (edge.targetNodeId === focusedNodeId) relatedNodeIds.add(edge.sourceNodeId);
+    }
+  }
+  const zeroNodeState =
+    props.snapshot.status.nodeCount === 0
+      ? resolveKnowledgeGraphZeroNodeState(props.snapshot.status)
+      : null;
   return (
     <section
       className="flex min-h-0 flex-1 flex-col bg-background text-foreground"
@@ -229,19 +272,31 @@ export function KnowledgeGraphPanelView(props: KnowledgeGraphPanelViewProps) {
         </div>
       ) : null}
       <div
-        className="relative min-h-64 flex-1 overflow-hidden bg-muted/15"
+        className="relative min-h-64 flex-1 touch-none cursor-grab overflow-hidden bg-muted/15 active:cursor-grabbing"
         role="region"
         aria-label={props.translate("knowledgeGraph.accessibility.canvas")}
+        data-knowledge-graph-canvas="true"
+        data-layout-state={props.layoutAnimating ? "animating" : "settled"}
+        onPointerDown={props.onCanvasPointerDown}
       >
         {view.nodes.length === 0 ? (
-          <p className="absolute inset-0 grid place-items-center p-6 text-center text-sm text-muted-foreground">
-            {props.translate("knowledgeGraph.empty")}
-          </p>
+          <div
+            className="absolute inset-0 grid place-items-center p-6 text-center text-sm text-muted-foreground"
+            data-empty-state={zeroNodeState?.messageKey ?? "knowledgeGraph.noResults"}
+            role={zeroNodeState?.role ?? "status"}
+          >
+            <div className="max-w-sm space-y-1">
+              <p>{props.translate(zeroNodeState?.messageKey ?? "knowledgeGraph.noResults")}</p>
+              {zeroNodeState?.role === "alert" && props.snapshot.status.errorMessage ? (
+                <p className="text-xs">{props.snapshot.status.errorMessage}</p>
+              ) : null}
+            </div>
+          </div>
         ) : null}
         <svg
           className="pointer-events-none absolute inset-0 size-full"
-          viewBox={`0 0 ${props.width} ${props.height}`}
           aria-hidden="true"
+          data-knowledge-graph-edges="true"
         >
           {view.edges.map((edge) => {
             if (!visibleNodeIds.has(edge.sourceNodeId) || !visibleNodeIds.has(edge.targetNodeId)) {
@@ -250,15 +305,26 @@ export function KnowledgeGraphPanelView(props: KnowledgeGraphPanelViewProps) {
             const source = props.positions.get(edge.sourceNodeId);
             const target = props.positions.get(edge.targetNodeId);
             if (!source || !target) return null;
+            const sourcePoint = screenPointFromGraphPoint(source, props.viewport);
+            const targetPoint = screenPointFromGraphPoint(target, props.viewport);
+            const highlighted =
+              focusedNodeId !== null &&
+              (edge.sourceNodeId === focusedNodeId || edge.targetNodeId === focusedNodeId);
             return (
               <line
                 key={edge.edgeId}
-                x1={source.x * props.zoom}
-                y1={source.y * props.zoom}
-                x2={target.x * props.zoom}
-                y2={target.y * props.zoom}
-                className="stroke-border"
-                strokeWidth={1.25}
+                x1={sourcePoint.x}
+                y1={sourcePoint.y}
+                x2={targetPoint.x}
+                y2={targetPoint.y}
+                data-highlighted={highlighted ? "true" : "false"}
+                className={cn(
+                  "transition-[stroke,opacity,stroke-width] duration-150",
+                  highlighted
+                    ? "stroke-primary opacity-90"
+                    : cn("stroke-border", focusedNodeId ? "opacity-30" : "opacity-65"),
+                )}
+                strokeWidth={highlighted ? 2.25 : 1.25}
               />
             );
           })}
@@ -266,24 +332,41 @@ export function KnowledgeGraphPanelView(props: KnowledgeGraphPanelViewProps) {
         {view.nodes.map((node) => {
           const position = props.positions.get(node.nodeId);
           if (!position) return null;
+          const screenPosition = screenPointFromGraphPoint(position, props.viewport);
           const expanded = node.nodeId === props.expandedNodeId;
+          const related = focusedNodeId === null || relatedNodeIds.has(node.nodeId);
+          const dragging = node.nodeId === props.draggingNodeId;
+          const pinned = props.pinnedNodeIds?.has(node.nodeId) ?? false;
           return (
             <button
               key={node.nodeId}
               type="button"
               data-graph-node={node.nodeId}
+              data-graph-node-kind={node.kind}
+              data-related={related ? "true" : "false"}
+              data-pinned={pinned ? "true" : "false"}
               aria-expanded={expanded}
               aria-label={props.translate("knowledgeGraph.accessibility.node", {
                 label: node.label,
               })}
               className={cn(
-                "absolute max-w-36 -translate-x-1/2 -translate-y-1/2 touch-none rounded-full border px-3 py-1.5 text-xs shadow-sm",
+                "absolute max-w-36 -translate-x-1/2 -translate-y-1/2 touch-none cursor-grab select-none rounded-full border px-3 py-1.5 text-xs shadow-sm active:cursor-grabbing",
+                NODE_KIND_CLASS_NAMES[node.kind],
+                PROMINENT_NODE_KINDS.has(node.kind) && "px-3.5 py-2 font-medium shadow-md",
+                pinned && "ring-2 ring-primary/35 ring-offset-1 ring-offset-background",
+                props.layoutAnimating && !props.prefersReducedMotion && !dragging
+                  ? "will-change-[left,top]"
+                  : null,
+                "transition-[opacity,border-color,background-color,box-shadow] duration-150",
+                !related && "opacity-60",
                 expanded
                   ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border bg-background hover:border-foreground/40",
+                  : "hover:border-foreground/60 hover:shadow-md",
               )}
-              style={{ left: position.x * props.zoom, top: position.y * props.zoom }}
+              style={{ left: screenPosition.x, top: screenPosition.y }}
               onClick={() => props.onExpandNode(expanded ? null : node.nodeId)}
+              onPointerEnter={() => props.onNodeHover(node.nodeId)}
+              onPointerLeave={() => props.onNodeHover(null)}
               onPointerDown={(event) => props.onNodePointerDown(node.nodeId, event)}
             >
               <span className="block truncate">{node.label}</span>

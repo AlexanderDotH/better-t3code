@@ -1,14 +1,24 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodePath from "node:path";
+
 import { assert, describe, it } from "@effect/vitest";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import { makeKnowledgeGraphScopeCatalog } from "./KnowledgeGraphScopeCatalog.ts";
+import {
+  isKnowledgeGraphWorkspaceRootIndexable,
+  makeKnowledgeGraphScopeCatalog,
+} from "./KnowledgeGraphScopeCatalog.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
 const projectOne = ProjectId.make("project-1");
 const projectTwo = ProjectId.make("project-2");
+const rootProject = ProjectId.make("project-root");
+const homeProject = ProjectId.make("project-home");
+const aliasProject = ProjectId.make("project-home-alias");
 const mainThread = ThreadId.make("thread-main");
 const featureThread = ThreadId.make("thread-feature");
+const homeDirectory = NodePath.resolve(NodePath.sep, "home", "test-user");
 
 const shell = {
   projects: [
@@ -25,9 +35,23 @@ const catalog = makeKnowledgeGraphScopeCatalog({
   getEnvironmentId: Effect.succeed(environmentId),
   getShellSnapshot: Effect.succeed(shell),
   canonicalizeWorkspaceRoot: (root) => Effect.succeed(`/canonical${root}`),
+  homeDirectory,
 });
 
 describe("KnowledgeGraphScopeCatalog", () => {
+  it("rejects the filesystem root and user home but permits a project below home", () => {
+    assert.isFalse(
+      isKnowledgeGraphWorkspaceRootIndexable(NodePath.parse(homeDirectory).root, homeDirectory),
+    );
+    assert.isFalse(isKnowledgeGraphWorkspaceRootIndexable(homeDirectory, homeDirectory));
+    assert.isTrue(
+      isKnowledgeGraphWorkspaceRootIndexable(
+        NodePath.join(homeDirectory, "project"),
+        homeDirectory,
+      ),
+    );
+  });
+
   it.effect("isolates the project root and each known worktree into stable scopes", () =>
     Effect.gen(function* () {
       const scopes = yield* catalog.listKnownScopes();
@@ -88,6 +112,7 @@ describe("KnowledgeGraphScopeCatalog", () => {
         }),
         canonicalizeWorkspaceRoot: (root) =>
           Effect.succeed(root === "/repo" ? "/canonical/repo" : "/canonical/worktrees/feature"),
+        homeDirectory,
       });
 
       const scopes = yield* aliasCatalog.listKnownScopes();
@@ -114,6 +139,7 @@ describe("KnowledgeGraphScopeCatalog", () => {
           root === "/deleted-worktree"
             ? Effect.fail(new Error("worktree no longer exists"))
             : Effect.succeed("/canonical/repo"),
+        homeDirectory,
       });
 
       const scopes = yield* catalogWithStaleWorktree.listKnownScopes();
@@ -131,6 +157,7 @@ describe("KnowledgeGraphScopeCatalog", () => {
         getEnvironmentId: Effect.succeed(environmentId),
         getShellSnapshot: Effect.succeed({ projects: [], threads: [] }),
         canonicalizeWorkspaceRoot: (root) => Effect.succeed(root),
+        homeDirectory,
       });
 
       assert.strictEqual(yield* emptyCatalog.getEnvironmentId, environmentId);
@@ -153,6 +180,7 @@ describe("KnowledgeGraphScopeCatalog", () => {
           root === "/missing"
             ? Effect.fail(new Error("project root no longer exists"))
             : Effect.succeed("/canonical/healthy"),
+        homeDirectory,
       });
 
       const scopes = yield* catalogWithMissingProject.listKnownScopes();
@@ -160,6 +188,53 @@ describe("KnowledgeGraphScopeCatalog", () => {
         scopes.map(({ projectId, effectiveWorkspaceRoot }) => [projectId, effectiveWorkspaceRoot]),
         [[projectTwo, "/canonical/healthy"]],
       );
+    }),
+  );
+
+  it.effect("rejects canonical root and home scopes while allowing descendants", () =>
+    Effect.gen(function* () {
+      const filesystemRoot = NodePath.parse(homeDirectory).root;
+      const safeProjectRoot = NodePath.join(homeDirectory, "project");
+      const safeWorktreeRoot = NodePath.join(homeDirectory, "project-worktree");
+      const homeAlias = NodePath.join(filesystemRoot, "home-alias");
+      const broadRootCatalog = makeKnowledgeGraphScopeCatalog({
+        getEnvironmentId: Effect.succeed(environmentId),
+        getShellSnapshot: Effect.succeed({
+          projects: [
+            { id: rootProject, workspaceRoot: filesystemRoot },
+            { id: homeProject, workspaceRoot: homeDirectory },
+            { id: aliasProject, workspaceRoot: homeAlias },
+            { id: projectTwo, workspaceRoot: safeProjectRoot },
+          ],
+          threads: [{ id: featureThread, projectId: homeProject, worktreePath: safeWorktreeRoot }],
+        }),
+        canonicalizeWorkspaceRoot: (root) =>
+          Effect.succeed(root === homeAlias ? homeDirectory : NodePath.resolve(root)),
+        homeDirectory,
+      });
+
+      const scopes = yield* broadRootCatalog.listKnownScopes();
+      assert.deepStrictEqual(
+        scopes.map(({ projectId, effectiveWorkspaceRoot }) => [projectId, effectiveWorkspaceRoot]),
+        [
+          [projectTwo, safeProjectRoot],
+          [homeProject, safeWorktreeRoot],
+        ],
+      );
+
+      for (const projectId of [rootProject, homeProject, aliasProject]) {
+        const error = yield* Effect.flip(broadRootCatalog.resolveScope({ projectId }));
+        assert.strictEqual(error.reason, "workspace-root-unavailable");
+      }
+
+      const projectScope = yield* broadRootCatalog.resolveScope({ projectId: projectTwo });
+      assert.strictEqual(projectScope.effectiveWorkspaceRoot, safeProjectRoot);
+
+      const worktreeScope = yield* broadRootCatalog.resolveScope({
+        projectId: homeProject,
+        threadId: featureThread,
+      });
+      assert.strictEqual(worktreeScope.effectiveWorkspaceRoot, safeWorktreeRoot);
     }),
   );
 });

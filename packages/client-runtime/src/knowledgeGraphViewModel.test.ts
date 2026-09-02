@@ -166,6 +166,63 @@ describe("computeKnowledgeGraphLayout", () => {
       expect(position.y).toBeLessThanOrEqual(420);
     }
   });
+
+  it("keeps unpinned node labels inside the canvas gutters", () => {
+    const layout = computeKnowledgeGraphLayout({
+      nodes: Array.from({ length: 12 }, (_, index) => node(index)),
+      edges: [],
+      width: 640,
+      height: 420,
+      iterations: 40,
+    });
+
+    for (const position of layout.values()) {
+      expect(position.x).toBeGreaterThanOrEqual(76);
+      expect(position.x).toBeLessThanOrEqual(640 - 76);
+      expect(position.y).toBeGreaterThanOrEqual(24);
+      expect(position.y).toBeLessThanOrEqual(420 - 24);
+    }
+  });
+
+  it("relaxes linked nodes from a previous animation frame without moving drag pins", () => {
+    const nodes = [node(1), node(2), node(3)];
+    const initialPositions = new Map([
+      [nodes[0]!.nodeId, { x: 100, y: 120 }],
+      [nodes[1]!.nodeId, { x: 520, y: 120 }],
+      [nodes[2]!.nodeId, { x: 320, y: 330 }],
+    ]);
+    const layout = computeKnowledgeGraphLayout({
+      nodes,
+      edges: [edge(1, nodes[0]!.nodeId, nodes[1]!.nodeId)],
+      width: 640,
+      height: 420,
+      pinned: new Map([[nodes[0]!.nodeId, initialPositions.get(nodes[0]!.nodeId)!]]),
+      initialPositions,
+      iterations: 2,
+    });
+
+    expect(layout.get(nodes[0]!.nodeId)).toEqual({ x: 100, y: 120 });
+    expect(layout.get(nodes[1]!.nodeId)!.x).toBeLessThan(520);
+  });
+
+  it("separates overlapping labels with deterministic collision forces", () => {
+    const nodes = [node(1, { label: "Long overlapping node" }), node(2, { label: "Peer node" })];
+    const initialPositions = new Map(
+      nodes.map((entry) => [entry.nodeId, { x: 320, y: 210 }] as const),
+    );
+    const layout = computeKnowledgeGraphLayout({
+      nodes,
+      edges: [],
+      width: 640,
+      height: 420,
+      initialPositions,
+      iterations: 8,
+    });
+    const first = layout.get(nodes[0]!.nodeId)!;
+    const second = layout.get(nodes[1]!.nodeId)!;
+
+    expect(Math.hypot(first.x - second.x, first.y - second.y)).toBeGreaterThan(20);
+  });
 });
 
 describe("Knowledge Graph viewport", () => {

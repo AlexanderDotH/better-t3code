@@ -12,7 +12,7 @@ A graph scope is versioned and identified by:
 
 The effective root is the project root for a normal thread and the canonical worktree root for a worktree thread. The scope ID is derived from all three values. Two worktrees of the same project therefore never share nodes, fingerprints, revisions, semantic jobs, or patches. Canonicalization also prevents aliases to the same root from creating duplicate scopes.
 
-When the feature is enabled, the server resolves every registered project plus every known live worktree. Project and thread lifecycle events reconcile this catalog. A deleted or changed scope is removed from active watching without changing another scope.
+When the feature is enabled, the server resolves every registered project plus every known live worktree, except scopes rooted at the user's home directory or a filesystem root. Those broad roots remain valid T3 projects, but the graph refuses to recursively index or watch them; a narrower project folder or worktree remains eligible. Project and thread lifecycle events reconcile this catalog. A deleted, changed, or ineligible scope is removed from active watching without changing another scope.
 
 ## Indexing pipeline
 
@@ -21,7 +21,11 @@ Indexing has two stages.
 1. Deterministic extraction inventories eligible repository files, computes incremental fingerprints, and derives repository, package, directory, file, symbol, dependency, technology, documentation, architecture, and co-change records.
 2. Optional semantic enrichment receives schema-bounded candidates and evidence from the deterministic graph. A model response may only refer to valid candidate nodes and evidence. Invalid, stale, or unsupported output is rejected before a revision is committed.
 
-One environment-owned watcher multiplexer holds one recursive watcher per effective workspace root. It shares that watcher between scopes rooted at the same directory, ignores generated and sensitive paths before dispatch, and coalesces changes for 175 ms. Index jobs are serialized, and a newer request for the same scope interrupts the superseded job.
+One environment-owned watcher multiplexer holds one recursive watcher per effective workspace root. It shares that watcher between scopes rooted at the same directory, ignores generated and sensitive paths before dispatch, and coalesces changes for 175 ms. Index jobs are serialized. While a deterministic run is active, any number of watcher-triggered requests for the same scope coalesce into one pending follow-up; ordinary watcher changes do not interrupt or supersede the active run.
+
+Extraction and diff construction remain cancellable. Once the SQLite revision commit begins, it completes atomically and is not interrupted. Explicit cancel, pause, or feature disable waits for an in-progress commit, then settles the scope to `idle`, `paused`, or `disabled` respectively. Unexpected typed failures publish `error`. Startup repairs orphan `indexing` or `cancelling` states and schedules a fresh index so a process interruption does not leave a scope permanently busy.
+
+The default query for a large graph is a curated overview, not the alphabetically first nodes from the bounded subscription snapshot. It ranks meaningful connectivity without letting `declares` edges make symbol-heavy files dominate, applies per-kind quotas, and returns at most 48 nodes with 120 structurally prioritized internal edges. Graphs with at most 100 nodes retain their complete overview. Web and desktop render this query result; search continues to query the full persisted graph.
 
 The semantic queue is durable and has no usage ceiling. Execution is intentionally bounded to one claimed batch per environment, with at most two candidates in a batch. Claims are fenced by token, scope, node revision, and model generation. Pause, feature disable, environment stop, and server shutdown return running claims to the queue before workers stop. Startup recovery makes interrupted claims available again. A provider rate limit stores its absolute retry deadline and resumes without dropping queued work.
 
@@ -39,6 +43,10 @@ Every committed deterministic or semantic update advances the scope revision. Su
 - an invalidation when the client must request a fresh snapshot.
 
 The server retains at most 256 replay patches per scope. A subscription whose requested revision is outside the replay window receives an invalidation or snapshot instead of an unsafe partial history. Revision and schema fields let newer servers reject incompatible payloads rather than guessing.
+
+Web and desktop use the same React graph panel. When a snapshot contains no nodes, that panel projects `status.state` and `status.progress.phase` into distinct discovery/indexing, extraction, persistence, idle/cancelled, error, and ready-empty presentations. It preserves a separate no-results presentation when a populated snapshot is emptied only by the current search or filters. Snapshot error detail is shown only with the error presentation; mutation controls remain driven by the existing status and actions.
+
+The web layout runs as a bounded force simulation in a dedicated Worker. It streams finite position frames to React, treats relationships as springs, applies node repulsion and label-sized collision radii, and reheats when a dragged pin changes. The Worker stops after 64 iterations or four stable frames, suspends its timer while the document is hidden, and performs no iterative motion under `prefers-reduced-motion`. Pointer coordinates are projected through the same zoom and pan viewport in both directions, so dragging remains accurate after navigating the map. Presentation coordinates and pins remain client-local and never enter the graph contract or database.
 
 ## Contract bounds
 

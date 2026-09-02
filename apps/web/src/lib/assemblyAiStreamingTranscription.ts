@@ -157,7 +157,9 @@ export function describeAssemblyAiMicrophoneError(value: unknown): Error {
     case "NotAllowedError":
     case "PermissionDeniedError":
     case "SecurityError":
-      return new Error("Microphone permission was denied.");
+      return new Error(
+        "Microphone permission was denied. Enable microphone access for T3 Code in your system privacy settings, then try again.",
+      );
     case "NotFoundError":
     case "DevicesNotFoundError":
       return new Error("No microphone is available.");
