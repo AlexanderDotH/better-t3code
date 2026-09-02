@@ -141,8 +141,9 @@ export function extractKnowledgeGraphImports(
 }
 
 export function knowledgeGraphDependencyNameFromSpecifier(specifier: string): string {
-  if (specifier.startsWith("@")) return specifier.split("/").slice(0, 2).join("/");
-  return specifier.split(/[/:]/u)[0] ?? specifier;
+  const normalized = specifier.trim();
+  if (normalized.startsWith("@")) return normalized.split("/").slice(0, 2).join("/");
+  return normalized.split(/[/:]/u).find((part) => part.length > 0) ?? "unknown";
 }
 
 export function resolveKnowledgeGraphRelativeImport(

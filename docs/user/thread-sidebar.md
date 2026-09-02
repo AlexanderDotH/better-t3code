@@ -60,10 +60,11 @@ a normal preference.
 
 Both sidebar layouts use the same activity rule for **Older projects**. A project remains in the
 recent area through exactly seven days without work and moves to **Older projects** only after that
-boundary. Starting work in the project or one of its threads moves it back to the recent area
-immediately. Work that still needs attention, such as a running session or a pending approval, also
-keeps the project recent. Mobile's project-grouped thread list uses the same boundary and stores the
-Older projects disclosure state on that device.
+boundary. A project whose remaining chats are all settled moves there immediately. Starting work in
+the project or one of its threads moves it back to the recent area immediately. Work that still
+needs attention, such as a running session or a pending approval, also keeps the project recent.
+Mobile's project-grouped thread list uses the same rules and stores the Older projects disclosure
+state on that device.
 
 ## Pin and arrange threads
 

@@ -215,6 +215,13 @@ export function partitionHomeProjectGroupsByActivity(input: {
       recentGroups.push(group);
       continue;
     }
+    if (
+      activeThreads.length > 0 &&
+      activeThreads.every((thread) => thread.settledOverride === "settled")
+    ) {
+      olderGroups.push(group);
+      continue;
+    }
 
     const activityTimestamps =
       activeThreads.length > 0

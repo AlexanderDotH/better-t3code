@@ -1,23 +1,18 @@
 import {
   type KnowledgeGraphEdgeV1,
-  KnowledgeGraphEdgeV1 as KnowledgeGraphEdgeSchema,
   type KnowledgeGraphEvidenceV1,
-  KnowledgeGraphEvidenceV1 as KnowledgeGraphEvidenceSchema,
   type KnowledgeGraphFileFingerprintV1,
-  KnowledgeGraphFileFingerprintV1 as KnowledgeGraphFileFingerprintSchema,
   type KnowledgeGraphNodeId,
   type KnowledgeGraphNodeV1,
-  KnowledgeGraphNodeV1 as KnowledgeGraphNodeSchema,
   KnowledgeGraphOperationError,
   type KnowledgeGraphScopeV1,
-  KnowledgeGraphTruncationV1 as KnowledgeGraphTruncationSchema,
+  type KnowledgeGraphTruncationV1,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 
 import { extractKnowledgeGraphInventory } from "../extraction/KnowledgeGraphInventory.ts";
 import * as KnowledgeGraphRepository from "../persistence/KnowledgeGraphRepository.ts";
@@ -36,26 +31,68 @@ export class KnowledgeGraphIndexer extends Context.Service<
   KnowledgeGraphIndexerShape
 >()("t3/knowledge-graph/runtime/KnowledgeGraphIndexer") {}
 
-const encodeNode = Schema.encodeSync(Schema.fromJsonString(KnowledgeGraphNodeSchema));
-const encodeEdge = Schema.encodeSync(Schema.fromJsonString(KnowledgeGraphEdgeSchema));
-const encodeEvidence = Schema.encodeSync(Schema.fromJsonString(KnowledgeGraphEvidenceSchema));
-const encodeFingerprint = Schema.encodeSync(
-  Schema.fromJsonString(KnowledgeGraphFileFingerprintSchema),
-);
-const encodeTruncation = Schema.encodeSync(Schema.fromJsonString(KnowledgeGraphTruncationSchema));
+function sameArray<A>(left: readonly A[], right: readonly A[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
+function sameSource(
+  left: KnowledgeGraphNodeV1["source"],
+  right: KnowledgeGraphNodeV1["source"],
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return (
+    left.path === right.path &&
+    left.startLine === right.startLine &&
+    left.endLine === right.endLine &&
+    left.symbol === right.symbol
+  );
+}
 
 function sameNode(left: KnowledgeGraphNodeV1, right: KnowledgeGraphNodeV1): boolean {
-  return encodeNode({ ...left, nodeRevision: 0 }) === encodeNode({ ...right, nodeRevision: 0 });
+  return (
+    left.version === right.version &&
+    left.nodeId === right.nodeId &&
+    left.scopeId === right.scopeId &&
+    left.kind === right.kind &&
+    left.label === right.label &&
+    left.summary === right.summary &&
+    sameSource(left.source, right.source) &&
+    left.language === right.language &&
+    left.provenance === right.provenance &&
+    left.confidence === right.confidence &&
+    sameArray(left.evidenceIds, right.evidenceIds)
+  );
 }
 
 function sameEdge(left: KnowledgeGraphEdgeV1, right: KnowledgeGraphEdgeV1): boolean {
-  return encodeEdge({ ...left, edgeRevision: 0 }) === encodeEdge({ ...right, edgeRevision: 0 });
+  return (
+    left.version === right.version &&
+    left.edgeId === right.edgeId &&
+    left.scopeId === right.scopeId &&
+    left.kind === right.kind &&
+    left.sourceNodeId === right.sourceNodeId &&
+    left.targetNodeId === right.targetNodeId &&
+    left.summary === right.summary &&
+    left.provenance === right.provenance &&
+    left.confidence === right.confidence &&
+    sameArray(left.evidenceIds, right.evidenceIds)
+  );
 }
 
 function sameEvidence(left: KnowledgeGraphEvidenceV1, right: KnowledgeGraphEvidenceV1): boolean {
   return (
-    encodeEvidence({ ...left, evidenceRevision: 0 }) ===
-    encodeEvidence({ ...right, evidenceRevision: 0 })
+    left.version === right.version &&
+    left.evidenceId === right.evidenceId &&
+    left.scopeId === right.scopeId &&
+    left.kind === right.kind &&
+    sameSource(left.source, right.source) &&
+    left.excerpt === right.excerpt &&
+    left.fingerprint === right.fingerprint &&
+    left.confidence === right.confidence
   );
 }
 
@@ -64,8 +101,23 @@ function sameFingerprint(
   right: KnowledgeGraphFileFingerprintV1,
 ): boolean {
   return (
-    encodeFingerprint({ ...left, modifiedAtMs: 0, seenGeneration: 0 }) ===
-    encodeFingerprint({ ...right, modifiedAtMs: 0, seenGeneration: 0 })
+    left.path === right.path &&
+    left.fingerprint === right.fingerprint &&
+    left.sizeBytes === right.sizeBytes &&
+    left.extractionVersion === right.extractionVersion
+  );
+}
+
+function sameTruncation(
+  left: KnowledgeGraphTruncationV1,
+  right: KnowledgeGraphTruncationV1,
+): boolean {
+  return (
+    left.eligibleFiles === right.eligibleFiles &&
+    left.nodes === right.nodes &&
+    left.visibleNodes === right.visibleNodes &&
+    left.omittedFileCount === right.omittedFileCount &&
+    left.omittedNodeCount === right.omittedNodeCount
   );
 }
 
@@ -176,48 +228,46 @@ const make = Effect.gen(function* () {
       current.fileFingerprints.map((fingerprint) => [fingerprint.path, fingerprint] as const),
     );
 
-    const nextNodes = extraction.nodes.map((node) => {
+    const nextNodes: KnowledgeGraphNodeV1[] = [];
+    const upsertedNodes: KnowledgeGraphNodeV1[] = [];
+    for (const node of extraction.nodes) {
       const previous = currentNodes.get(node.nodeId);
-      return {
+      const changed = previous === undefined || !sameNode(previous, node);
+      const nextNode: KnowledgeGraphNodeV1 = {
         ...node,
-        nodeRevision:
-          previous !== undefined && sameNode(previous, node) ? previous.nodeRevision : nextRevision,
+        nodeRevision: changed ? nextRevision : previous.nodeRevision,
       };
-    });
-    const nextEdges = extraction.edges.map((edge) => {
+      nextNodes.push(nextNode);
+      if (changed) upsertedNodes.push(nextNode);
+    }
+    const nextEdges: KnowledgeGraphEdgeV1[] = [];
+    const upsertedEdges: KnowledgeGraphEdgeV1[] = [];
+    for (const edge of extraction.edges) {
       const previous = currentEdges.get(edge.edgeId);
-      return {
+      const changed = previous === undefined || !sameEdge(previous, edge);
+      const nextEdge: KnowledgeGraphEdgeV1 = {
         ...edge,
-        edgeRevision:
-          previous !== undefined && sameEdge(previous, edge) ? previous.edgeRevision : nextRevision,
+        edgeRevision: changed ? nextRevision : previous.edgeRevision,
       };
-    });
-    const nextEvidence = extraction.evidence.map((evidence) => {
+      nextEdges.push(nextEdge);
+      if (changed) upsertedEdges.push(nextEdge);
+    }
+    const nextEvidence: KnowledgeGraphEvidenceV1[] = [];
+    const upsertedEvidence: KnowledgeGraphEvidenceV1[] = [];
+    for (const evidence of extraction.evidence) {
       const previous = currentEvidence.get(evidence.evidenceId);
-      return {
+      const changed = previous === undefined || !sameEvidence(previous, evidence);
+      const nextEntry: KnowledgeGraphEvidenceV1 = {
         ...evidence,
-        evidenceRevision:
-          previous !== undefined && sameEvidence(previous, evidence)
-            ? previous.evidenceRevision
-            : nextRevision,
+        evidenceRevision: changed ? nextRevision : previous.evidenceRevision,
       };
-    });
+      nextEvidence.push(nextEntry);
+      if (changed) upsertedEvidence.push(nextEntry);
+    }
     const nextNodeIds = new Set(nextNodes.map(({ nodeId }) => nodeId));
     const nextEdgeIds = new Set(nextEdges.map(({ edgeId }) => edgeId));
     const nextEvidenceIds = new Set(nextEvidence.map(({ evidenceId }) => evidenceId));
     const nextFingerprintPaths = new Set(extraction.fileFingerprints.map(({ path }) => path));
-    const upsertedNodes = nextNodes.filter((node) => {
-      const previous = currentNodes.get(node.nodeId);
-      return previous === undefined || !sameNode(previous, node);
-    });
-    const upsertedEdges = nextEdges.filter((edge) => {
-      const previous = currentEdges.get(edge.edgeId);
-      return previous === undefined || !sameEdge(previous, edge);
-    });
-    const upsertedEvidence = nextEvidence.filter((evidence) => {
-      const previous = currentEvidence.get(evidence.evidenceId);
-      return previous === undefined || !sameEvidence(previous, evidence);
-    });
     const removedNodeIds = current.nodes
       .filter(({ nodeId }) => !nextNodeIds.has(nodeId))
       .map(({ nodeId }) => nodeId);
@@ -255,7 +305,7 @@ const make = Effect.gen(function* () {
       removedEdgeIds.length > 0 ||
       removedEvidenceIds.length > 0 ||
       fingerprintsChanged ||
-      encodeTruncation(current.truncation) !== encodeTruncation(extraction.truncation);
+      !sameTruncation(current.truncation, extraction.truncation);
 
     if (!graphChanged) {
       const {
@@ -283,6 +333,32 @@ const make = Effect.gen(function* () {
       return Option.none<KnowledgeGraphRepository.KnowledgeGraphRepositoryCommit>();
     }
 
+    const processedFileCount = extraction.fileFingerprints.length;
+    const discoveredFileCount = processedFileCount + extraction.truncation.omittedFileCount;
+    yield* repository
+      .updateStatus({
+        ...indexingStatus,
+        state: "indexing",
+        progress: {
+          version: 1,
+          phase: "persisting",
+          discoveredFileCount,
+          processedFileCount,
+          totalFileCount: discoveredFileCount,
+          queuedSemanticNodeCount: currentStatus.semanticQueueDepth,
+        },
+      })
+      .pipe(
+        Effect.mapError(() =>
+          operationError({
+            operation: "index",
+            code: "persistence",
+            retryable: true,
+            detail: "The indexing progress could not be persisted.",
+            scopeId: scope.scopeId,
+          }),
+        ),
+      );
     const committedAt = DateTime.formatIso(yield* DateTime.now);
     const committed = yield* repository
       .applyDeterministicPatch({

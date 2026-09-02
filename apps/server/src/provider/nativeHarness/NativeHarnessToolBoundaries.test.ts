@@ -20,6 +20,8 @@ import {
   NATIVE_HARNESS_EXEC_COMMAND_TOOL,
   NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
   NATIVE_HARNESS_WORKSPACE_EDIT_TOOL,
+  NATIVE_HARNESS_WORKSPACE_FIND_TOOL,
+  NATIVE_HARNESS_WORKSPACE_READ_TOOL,
 } from "./NativeHarnessToolTypes.ts";
 
 describe("NativeHarnessTool boundaries", () => {
@@ -29,7 +31,11 @@ describe("NativeHarnessTool boundaries", () => {
         interactionMode: "plan",
         sandboxMode: "danger-full-access",
       }).map((declaration) => declaration.name),
-    ).toEqual([NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL]);
+    ).toEqual([
+      NATIVE_HARNESS_WORKSPACE_FIND_TOOL,
+      NATIVE_HARNESS_WORKSPACE_READ_TOOL,
+      NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
+    ]);
     expect(
       nativeHarnessToolIsAvailable({
         toolName: NATIVE_HARNESS_EXEC_COMMAND_TOOL,
@@ -38,6 +44,12 @@ describe("NativeHarnessTool boundaries", () => {
       }),
     ).toBe(false);
 
+    expect(
+      nativeHarnessToolRequiresApproval(NATIVE_HARNESS_WORKSPACE_FIND_TOOL, "approval-required"),
+    ).toBe(false);
+    expect(
+      nativeHarnessToolRequiresApproval(NATIVE_HARNESS_WORKSPACE_READ_TOOL, "approval-required"),
+    ).toBe(false);
     expect(
       nativeHarnessToolRequiresApproval(NATIVE_HARNESS_WORKSPACE_EDIT_TOOL, "approval-required"),
     ).toBe(true);

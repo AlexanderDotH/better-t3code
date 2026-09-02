@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as NodeSqliteClient from "../../persistence/NodeSqliteClient.ts";
 import Migration0059 from "../../persistence/Migrations/059_KnowledgeGraphDerivedData.ts";
@@ -123,6 +124,165 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
       assert.equal(error.operation, "apply-deterministic-patch");
       assert.equal(error.reason, "revision-conflict");
       assert.equal(Option.getOrThrow(status).revision, 1);
+    }),
+  );
+
+  it.effect("commits bind-safe entity, fingerprint, and evidence-link batches", () =>
+    Effect.gen(function* () {
+      const repository = yield* KnowledgeGraphRepository;
+      const sql = yield* SqlClient.SqlClient;
+      const batchScope = {
+        ...scope,
+        scopeId: "scope-bind-batches",
+        effectiveWorkspaceRoot: "/workspace/bind-batches",
+      };
+      const itemCount = 1_802;
+      const suffixes = Array.from({ length: itemCount }, (_, index) =>
+        String(index).padStart(4, "0"),
+      );
+      const evidence = suffixes.map((suffix) => ({
+        version: 1 as const,
+        evidenceId: `batch-evidence-${suffix}`,
+        scopeId: batchScope.scopeId,
+        kind: "source" as const,
+        source: { path: `src/batch-${suffix}.ts`, startLine: 1, endLine: 2 },
+        excerpt: `export const batch${suffix} = true;`,
+        fingerprint: `sha256:evidence-${suffix}`,
+        confidence: 1,
+        evidenceRevision: 1,
+      }));
+      const nodes = suffixes.map((suffix) => ({
+        version: 1 as const,
+        nodeId: `batch-node-${suffix}`,
+        scopeId: batchScope.scopeId,
+        kind: "file" as const,
+        label: `src/batch-${suffix}.ts`,
+        source: { path: `src/batch-${suffix}.ts` },
+        provenance: "deterministic" as const,
+        confidence: 1,
+        evidenceIds: [`batch-evidence-${suffix}`],
+        nodeRevision: 1,
+      }));
+      const edges = suffixes.map((suffix) => ({
+        version: 1 as const,
+        edgeId: `batch-edge-${suffix}`,
+        scopeId: batchScope.scopeId,
+        kind: "documents" as const,
+        sourceNodeId: `batch-node-${suffix}`,
+        targetNodeId: `batch-node-${suffix}`,
+        provenance: "deterministic" as const,
+        confidence: 1,
+        evidenceIds: [`batch-evidence-${suffix}`],
+        edgeRevision: 1,
+      }));
+      const fileFingerprints = suffixes.map((suffix) => ({
+        path: `src/batch-${suffix}.ts`,
+        fingerprint: `sha256:file-${suffix}`,
+        sizeBytes: 100,
+        modifiedAtMs: 1_788_000_000_000,
+        extractionVersion: 1,
+        seenGeneration: 1,
+      }));
+      const initialPatch = decodeDeterministicPatch({
+        ...patch,
+        scope: batchScope,
+        nodes,
+        edges,
+        evidence,
+        fileFingerprints,
+        changedNodeIds: nodes.map(({ nodeId }) => nodeId),
+      });
+      yield* repository.applyDeterministicPatch(initialPatch);
+
+      const removedSuffixes = suffixes.slice(0, itemCount / 2);
+      const retainedSuffixes = suffixes.slice(itemCount / 2);
+      const retainedSuffix = retainedSuffixes.at(-1)!;
+      const updatedEvidence = evidence.slice(itemCount / 2).map((item, index) => ({
+        ...item,
+        excerpt: `export const retained${retainedSuffixes[index]} = 'updated';`,
+        fingerprint: `sha256:evidence-updated-${retainedSuffixes[index]}`,
+        evidenceRevision: 2,
+      }));
+      const updatedNodes = nodes.slice(itemCount / 2).map((node, index) => ({
+        ...node,
+        label: `src/retained-${retainedSuffixes[index]}.ts`,
+        summary: "Retained after the batched removals.",
+        nodeRevision: 2,
+      }));
+      const updatedEdges = edges.slice(itemCount / 2).map((edge) => ({
+        ...edge,
+        confidence: 0.75,
+        edgeRevision: 2,
+      }));
+      const updatedFingerprints = fileFingerprints
+        .slice(itemCount / 2)
+        .map((fingerprint, index) => ({
+          ...fingerprint,
+          fingerprint: `sha256:file-updated-${retainedSuffixes[index]}`,
+          sizeBytes: 200,
+          seenGeneration: 2,
+        }));
+      const updatePatch = decodeDeterministicPatch({
+        ...patch,
+        scope: batchScope,
+        baseRevision: 1,
+        nodes: updatedNodes,
+        edges: updatedEdges,
+        evidence: updatedEvidence,
+        removals: {
+          nodeIds: removedSuffixes.map((suffix) => `batch-node-${suffix}`),
+          edgeIds: removedSuffixes.map((suffix) => `batch-edge-${suffix}`),
+          evidenceIds: removedSuffixes.map((suffix) => `batch-evidence-${suffix}`),
+          fingerprintPaths: removedSuffixes.map((suffix) => `src/batch-${suffix}.ts`),
+        },
+        fileFingerprints: updatedFingerprints,
+        changedNodeIds: updatedNodes.map(({ nodeId }) => nodeId),
+        committedAt: "2026-08-29T10:01:00.000Z",
+      });
+      const committed = yield* repository.applyDeterministicPatch(updatePatch);
+      const state = Option.getOrThrow(yield* repository.getDeterministicState(batchScope.scopeId));
+      const bundle = Option.getOrThrow(
+        yield* repository.getNodeBundle({
+          scopeId: batchScope.scopeId,
+          nodeId: updatedNodes.at(-1)!.nodeId,
+        }),
+      );
+      const nodeEvidenceRows = yield* sql<{ readonly count: number }>`
+        SELECT count(*) AS count
+        FROM knowledge_graph_node_evidence
+        WHERE scope_id = ${batchScope.scopeId}
+      `;
+      const edgeEvidenceRows = yield* sql<{ readonly count: number }>`
+        SELECT count(*) AS count
+        FROM knowledge_graph_edge_evidence
+        WHERE scope_id = ${batchScope.scopeId}
+      `;
+
+      assert.strictEqual(committed.revision, 2);
+      assert.deepStrictEqual(
+        committed.changedNodes.map(({ node }) => node.nodeId),
+        updatedNodes.map(({ nodeId }) => nodeId),
+      );
+      assert.strictEqual(state.nodes.length, retainedSuffixes.length);
+      assert.strictEqual(state.edges.length, retainedSuffixes.length);
+      assert.strictEqual(state.evidence.length, retainedSuffixes.length);
+      assert.strictEqual(state.fileFingerprints.length, retainedSuffixes.length);
+      assert.strictEqual(state.nodes.at(-1)?.label, `src/retained-${retainedSuffix}.ts`);
+      assert.strictEqual(state.edges.at(-1)?.confidence, 0.75);
+      assert.strictEqual(
+        state.evidence.at(-1)?.fingerprint,
+        `sha256:evidence-updated-${retainedSuffix}`,
+      );
+      assert.strictEqual(
+        state.fileFingerprints.at(-1)?.fingerprint,
+        `sha256:file-updated-${retainedSuffix}`,
+      );
+      assert.deepStrictEqual(
+        bundle.evidence.map(({ evidenceId }) => evidenceId),
+        [`batch-evidence-${retainedSuffix}`],
+      );
+      assert.strictEqual(nodeEvidenceRows[0]?.count, retainedSuffixes.length);
+      assert.strictEqual(edgeEvidenceRows[0]?.count, retainedSuffixes.length);
     }),
   );
 
@@ -383,6 +543,94 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
       assert.strictEqual(result.results[0]?.nodes.length, 26);
       assert.strictEqual(result.results[0]?.edges.length, 400);
       assert.isTrue(result.results[0]?.truncated);
+    }),
+  );
+
+  it.effect("builds a balanced connected overview for repositories larger than the snapshot", () =>
+    Effect.gen(function* () {
+      const repository = yield* KnowledgeGraphRepository;
+      const overviewScope = {
+        ...scope,
+        scopeId: "scope-balanced-overview",
+        effectiveWorkspaceRoot: "/workspace/balanced-overview",
+      };
+      const dependencies = Array.from({ length: 120 }, (_, index) => ({
+        version: 1 as const,
+        nodeId: `dependency-${String(index).padStart(3, "0")}`,
+        scopeId: overviewScope.scopeId,
+        kind: "dependency" as const,
+        label: `dependency-${String(index).padStart(3, "0")}`,
+        provenance: "deterministic" as const,
+        confidence: 1,
+        evidenceIds: [],
+        nodeRevision: 1,
+      }));
+      const structuralNodes = [
+        { nodeId: "repository", kind: "repository" as const, label: "project" },
+        { nodeId: "package", kind: "package" as const, label: "web" },
+        { nodeId: "directory", kind: "directory" as const, label: "src" },
+        { nodeId: "file", kind: "file" as const, label: "App.tsx" },
+        { nodeId: "technology", kind: "technology" as const, label: "TypeScript" },
+      ].map((node) => ({
+        version: 1 as const,
+        ...node,
+        scopeId: overviewScope.scopeId,
+        provenance: "deterministic" as const,
+        confidence: 1,
+        evidenceIds: [],
+        nodeRevision: 1,
+      }));
+      const edges = [
+        ["repository-directory", "contains", "repository", "directory"],
+        ["directory-package", "contains", "directory", "package"],
+        ["directory-file", "contains", "directory", "file"],
+        ["package-technology", "uses", "package", "technology"],
+        ...dependencies.map((dependency, index) => [
+          `file-dependency-${index}`,
+          "imports",
+          "file",
+          dependency.nodeId,
+        ]),
+      ].map(([edgeId, kind, sourceNodeId, targetNodeId]) => ({
+        version: 1 as const,
+        edgeId: edgeId!,
+        scopeId: overviewScope.scopeId,
+        kind: kind as "contains" | "uses" | "imports",
+        sourceNodeId: sourceNodeId!,
+        targetNodeId: targetNodeId!,
+        provenance: "deterministic" as const,
+        confidence: 1,
+        evidenceIds: [],
+        edgeRevision: 1,
+      }));
+      const nodes = [...dependencies, ...structuralNodes];
+      yield* repository.applyDeterministicPatch(
+        decodeDeterministicPatch({
+          ...patch,
+          scope: overviewScope,
+          nodes,
+          edges,
+          fileFingerprints: [],
+          changedNodeIds: nodes.map(({ nodeId }) => nodeId),
+        }),
+      );
+
+      const result = yield* repository.query({
+        scopeId: overviewScope.scopeId,
+        query: { queries: [{ id: "overview", type: "overview" }] },
+      });
+      const overview = result.results[0]!;
+      const kinds = new Set(overview.nodes.map(({ kind }) => kind));
+
+      assert.isAtMost(overview.nodes.length, 48);
+      assert.isAtMost(overview.nodes.filter(({ kind }) => kind === "dependency").length, 6);
+      assert.include([...kinds], "repository");
+      assert.include([...kinds], "package");
+      assert.include([...kinds], "directory");
+      assert.include([...kinds], "file");
+      assert.include([...kinds], "technology");
+      assert.isAbove(overview.edges.length, 0);
+      assert.isTrue(overview.truncated);
     }),
   );
 

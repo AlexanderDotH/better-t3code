@@ -854,7 +854,7 @@ describe("partitionHomeProjectGroupsByActivity", () => {
     expect(result.olderGroups).toEqual([]);
   });
 
-  it("keeps a project recent when its final old thread is settled now", () => {
+  it("moves a project to older when its final chat is settled", () => {
     const environmentId = EnvironmentId.make("environment-1");
     const project = makeProject({
       environmentId,
@@ -873,7 +873,7 @@ describe("partitionHomeProjectGroupsByActivity", () => {
           title: "Settled",
           createdAt: oldTimestamp,
           updatedAt: settledAt,
-          latestUserMessageAt: oldTimestamp,
+          latestUserMessageAt: new Date(NOW - 1_000).toISOString(),
           settledOverride: "settled",
           settledAt,
         }),
@@ -882,7 +882,7 @@ describe("partitionHomeProjectGroupsByActivity", () => {
 
     const result = partitionHomeProjectGroupsByActivity({ groups: [group!], nowMs: NOW });
 
-    expect(result.recentGroups).toEqual([group]);
-    expect(result.olderGroups).toEqual([]);
+    expect(result.recentGroups).toEqual([]);
+    expect(result.olderGroups).toEqual([group]);
   });
 });

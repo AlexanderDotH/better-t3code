@@ -28,8 +28,8 @@ After a routed turn is accepted, orchestration projects a content-free activity:
 - router provider/model identity, duration, and optional aggregate token usage
 
 Clients read the latest valid resolution but display it only while the current durable selection
-still has the Auto marker. This prevents a previous resolution from surviving a manual switch.
-While Auto is active, clients suppress manual post-turn effort recommendations.
+still has the Auto marker. This prevents a previous resolution from surviving a manual switch. The
+routed effort applies directly to that turn; clients do not show post-turn effort recommendations.
 
 Usage scanners attribute the existing `<t3code_auto_reasoning_call>` marker to the distinct
 `auto-reasoning` call kind. They retain token totals and routing character counts, not routing

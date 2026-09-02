@@ -8,7 +8,7 @@ Architecture and vocabulary live in [the internal overview](docs/internals/overv
 
 These rules override general repository guidance on this machine:
 
-- `/home/alex/Workspace/Projects/Apps/better-t3code` is the only canonical checkout. The sibling `t3code` checkout and temporary integration worktrees are donor/reference copies only. Carry useful source changes here before publishing or producing an installable artifact.
+- `/Users/alexanderheuschkel/Projects/better-t3code` is the only canonical checkout on this machine. Sibling checkouts and temporary integration worktrees are donor/reference copies only. Carry useful source changes here before publishing or producing an installable artifact.
 - Never start, stop, restart, replace, hand off, or otherwise control a T3 Code process from an agent session. This includes installed apps, desktop clients, dev servers, background jobs, delayed restart jobs, and processes owned by another session.
 - Never invoke `app2unit`, `systemctl`, or a user-scope handoff to manage T3 Code. Never arrange a delayed command to do so after the agent exits.
 - Never kill by pattern: no `pkill -f`, `pgrep | kill`, or killing a PID found from a name, path, or worktree match. Kill only a PID captured when you spawned the process, or a port owner found with `ss -H -ltnp` after confirming `/proc/<pid>/cwd` is this worktree.
@@ -17,9 +17,21 @@ These rules override general repository guidance on this machine:
 
 ### Required local artifact refresh
 
-After successfully verifying a source change that affects the shipped application, refresh the user-local T3 Code Local installation before reporting completion unless the developer explicitly opts out. Documentation-only and test-only changes are exempt.
+After successfully verifying a source change that affects the shipped application, refresh the currently installed local T3 Code application before reporting completion unless the developer explicitly opts out. Documentation-only and test-only changes are exempt.
 
-Run, in order:
+On this macOS machine:
+
+1. Build the current checkout for the host architecture with `vp run dist:desktop:dmg`.
+2. Mount the generated DMG without opening the app.
+3. Replace only `~/Applications/T3 Code (Alpha).app` with the freshly built app bundle, then detach the DMG.
+4. Do not start, stop, restart, or otherwise control the running app. The developer restarts it manually when ready; that next launch must use the newly installed build.
+
+- Preserve all user data. Never modify or remove T3 Code data under `~/Library/Application Support`, `~/.t3`, or any other user-data location during the app-bundle refresh.
+- Validate the source and destination bundle identifiers before replacement; both must be `com.t3tools.t3code`.
+- Stage the new bundle beside the destination and replace the destination atomically where practical, so a failed copy does not leave a partial installation.
+- Replacing the app bundle on disk authorizes only the install refresh. It never authorizes process management.
+
+On Linux, run in order:
 
 ```bash
 scripts/build-and-install-t3code-local-linux.sh --no-install-deps

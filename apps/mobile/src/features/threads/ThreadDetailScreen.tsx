@@ -1,8 +1,4 @@
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
-import type {
-  PendingReasoningOverride,
-  ReasoningRecommendation,
-} from "@t3tools/client-runtime/reasoning-recommendation";
 import type { PlanImplementationStrategy } from "@t3tools/client-runtime/plan-implementation";
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
@@ -59,7 +55,6 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
-import { isAutoReasoningEnabled } from "@t3tools/shared/model";
 
 import { ControlPill } from "../../components/ControlPill";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -77,7 +72,6 @@ import type {
 } from "../../lib/threadActivity";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { PendingUserInputCard } from "./PendingUserInputCard";
-import { ReasoningRecommendationCard } from "./ReasoningRecommendationCard";
 import {
   derivePendingUserInputMaxHeight,
   ESTIMATED_KEYBOARD_HEIGHT,
@@ -111,8 +105,6 @@ export interface ThreadDetailScreenProps {
   readonly activePendingUserInputDrafts: Record<string, PendingUserInputDraftAnswer>;
   readonly activePendingUserInputAnswers: Record<string, string | ReadonlyArray<string>> | null;
   readonly respondingUserInputId: ApprovalRequestId | null;
-  readonly reasoningRecommendation: ReasoningRecommendation | null;
-  readonly pendingReasoningOverride: PendingReasoningOverride | null;
   readonly draftMessage: string;
   readonly draftAttachments: ReadonlyArray<DraftComposerImageAttachment>;
   readonly connectionStateLabel: EnvironmentConnectionPhase;
@@ -176,9 +168,6 @@ export interface ThreadDetailScreenProps {
     customAnswer: string,
   ) => void;
   readonly onSubmitUserInput: () => Promise<unknown>;
-  readonly onAcceptReasoningRecommendation: () => void;
-  readonly onDismissReasoningRecommendation: () => void;
-  readonly onUndoReasoningRecommendation: () => void;
   readonly showContent?: boolean;
 }
 
@@ -857,25 +846,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                       onSubmit={props.onSubmitUserInput}
                     />
                   ) : null}
-                </Animated.View>
-              ) : null}
-              {(props.reasoningRecommendation || props.pendingReasoningOverride) &&
-              !isAutoReasoningEnabled(props.selectedThread.modelSelection) ? (
-                <Animated.View
-                  className="shrink-0 px-4 pb-3"
-                  entering={FadeInDown.duration(220)}
-                  exiting={FadeOut.duration(140)}
-                >
-                  <ReasoningRecommendationCard
-                    recommendation={props.reasoningRecommendation}
-                    pendingOverride={props.pendingReasoningOverride}
-                    autoReasoningActive={isAutoReasoningEnabled(
-                      props.selectedThread.modelSelection,
-                    )}
-                    onAccept={props.onAcceptReasoningRecommendation}
-                    onDismiss={props.onDismissReasoningRecommendation}
-                    onUndo={props.onUndoReasoningRecommendation}
-                  />
                 </Animated.View>
               ) : null}
             </View>

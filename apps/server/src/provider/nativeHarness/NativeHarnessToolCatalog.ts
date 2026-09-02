@@ -1,4 +1,9 @@
-import { WorkspaceContextInput, WorkspaceEditInput } from "@t3tools/contracts";
+import {
+  WorkspaceContextInput,
+  WorkspaceEditInput,
+  WorkspaceFindInput,
+  WorkspaceReadInput,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -7,6 +12,8 @@ import {
   NATIVE_HARNESS_MAX_TOOL_DEFINITIONS,
   NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
   NATIVE_HARNESS_WORKSPACE_EDIT_TOOL,
+  NATIVE_HARNESS_WORKSPACE_FIND_TOOL,
+  NATIVE_HARNESS_WORKSPACE_READ_TOOL,
   NativeHarnessToolPolicyError,
   type NativeHarnessToolAvailabilityInput,
   type NativeHarnessToolDeclaration,
@@ -18,10 +25,26 @@ const OBJECT_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+const WORKSPACE_FIND_DECLARATION: NativeHarnessToolDeclaration = {
+  name: NATIVE_HARNESS_WORKSPACE_FIND_TOOL,
+  description:
+    "Batch workspace path or literal text searches in auto, path, or content mode. Prefer this over shell find, rg, or grep.",
+  inputSchema: Schema.toJsonSchemaDocument(WorkspaceFindInput).schema,
+  availability: "read-only",
+};
+
+const WORKSPACE_READ_DECLARATION: NativeHarnessToolDeclaration = {
+  name: NATIVE_HARNESS_WORKSPACE_READ_TOOL,
+  description:
+    "Batch bounded one-indexed inclusive line reads from regular UTF-8 workspace files. Prefer this over shell cat or sed.",
+  inputSchema: Schema.toJsonSchemaDocument(WorkspaceReadInput).schema,
+  availability: "read-only",
+};
+
 const WORKSPACE_CONTEXT_DECLARATION: NativeHarnessToolDeclaration = {
   name: NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
   description:
-    "Search paths or text and read bounded line ranges inside the current workspace. Searches or reads spanning multiple regular UTF-8 files MUST use batched `workspace_context` calls, using the fewest calls its limits allow; do not use shell text readers/searchers.",
+    "Batch mixed workspace searches and bounded line reads. Prefer workspace_find or workspace_read for single-operation batches.",
   inputSchema: Schema.toJsonSchemaDocument(WorkspaceContextInput).schema,
   availability: "read-only",
 };
@@ -55,6 +78,8 @@ const EXEC_COMMAND_DECLARATION: NativeHarnessToolDeclaration = {
 };
 
 const BUILTIN_DECLARATIONS = [
+  WORKSPACE_FIND_DECLARATION,
+  WORKSPACE_READ_DECLARATION,
   WORKSPACE_CONTEXT_DECLARATION,
   WORKSPACE_EDIT_DECLARATION,
   EXEC_COMMAND_DECLARATION,
@@ -129,6 +154,8 @@ const ExecCommandArgs = Schema.Struct({
   timeout_ms: Schema.optionalKey(Schema.Number),
 });
 
+export const decodeWorkspaceFindArgs = Schema.decodeUnknownEffect(WorkspaceFindInput);
+export const decodeWorkspaceReadArgs = Schema.decodeUnknownEffect(WorkspaceReadInput);
 export const decodeWorkspaceContextArgs = Schema.decodeUnknownEffect(WorkspaceContextInput);
 export const decodeWorkspaceEditArgs = Schema.decodeUnknownEffect(WorkspaceEditInput);
 export const decodeExecCommandArgs = Schema.decodeUnknownEffect(ExecCommandArgs);

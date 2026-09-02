@@ -323,7 +323,11 @@ describe("OpenAI provider conformance", () => {
 
         expect(observedSandboxModes).toEqual(["read-only"]);
         expect(observedFetchWorkers).toEqual([true]);
-        expect(requests[0]?.tools.map(({ name }) => name)).toEqual(["workspace_context"]);
+        expect(requests[0]?.tools.map(({ name }) => name)).toEqual([
+          "workspace_find",
+          "workspace_read",
+          "workspace_context",
+        ]);
         expect(requests[0]?.tools.map(({ name }) => name)).not.toContain(
           NATIVE_HARNESS_WORKSPACE_EDIT_TOOL,
         );

@@ -30,9 +30,11 @@ describe("OpenAI adapter module boundaries", () => {
     expect(instructions).toContain("Read-only");
     expect(instructions).toContain("Plan mode is active");
     expect(instructions).toContain("/workspace");
+    expect(instructions).toContain("workspace_find");
+    expect(instructions).toContain("workspace_read");
     expect(instructions).toContain("workspace_context");
     expect(instructions).toContain(
-      "Searches or reads spanning multiple regular UTF-8 files MUST use batched `workspace_context` calls, using the fewest calls its limits allow; do not use shell text readers/searchers.",
+      "Batch independent operations into the fewest calls; use workspace_context only for mixed search-and-read batches.",
     );
     expect(instructions).not.toContain("workspace_edit");
   });
@@ -45,9 +47,11 @@ describe("OpenAI adapter module boundaries", () => {
       fetchWorker: false,
     });
 
+    expect(instructions).toContain("workspace_find");
+    expect(instructions).toContain("workspace_read");
     expect(instructions).toContain("workspace_context");
     expect(instructions).toContain(
-      "Searches or reads spanning multiple regular UTF-8 files MUST use batched `workspace_context` calls, using the fewest calls its limits allow; do not use shell text readers/searchers.",
+      "Batch independent operations into the fewest calls; use workspace_context only for mixed search-and-read batches.",
     );
     expect(instructions).toContain("workspace_edit");
     expect(instructions).toMatch(/formatters.*generators.*binaries/i);

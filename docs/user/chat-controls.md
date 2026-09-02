@@ -122,9 +122,8 @@ can justify a higher level. The decision model does not inspect project files or
 
 The control shows the durable choice and latest content-free resolution, for example
 **Auto · High**. **Fallback** appears when routing could not provide a usable decision and the saved
-concrete level was used. A stale resolution is not shown after switching back to manual. The usual
-post-turn suggestion to raise or lower reasoning is hidden while Auto is active because Auto owns
-that decision.
+concrete level was used. A stale resolution is not shown after switching back to manual. Auto applies
+its chosen effort directly to each turn without showing post-turn reasoning recommendations.
 
 ### Codex context window
 
@@ -250,24 +249,6 @@ the measured growth of the active configurations. A start can wait for as long a
 scarce, and **Stop generation** remains available while it waits or while a provider is paused. The
 server owns these decisions, so the same behavior and status apply to web, desktop, and mobile
 clients over local, LAN, relay, or tunnel connections.
-
-## Temporarily lowering reasoning effort
-
-After an exploration-heavy completed turn, T3 Code may suggest that **High** reasoning is likely
-enough for similar repository discovery. The suggestion appears only when the current provider and
-model expose a higher reasoning setting, the thread is idle, and the completed turn consisted almost
-entirely of read-only search and file-inspection operations.
-
-Choose **Use High once** to apply High to the next turn only. The composer keeps the reasoning effort
-you selected as the thread default and automatically resumes it after that turn. The armed notice
-shows both values and offers **Undo** before sending.
-
-Dismissal is tied to the completed turn that supplied the evidence. The suggestion can appear again
-only after a later qualifying turn. A manual provider, model, or reasoning-effort change cancels a
-pending one-turn override; changing an unrelated option does not.
-
-Suggestion and pending-override state is stored locally by each client. It is not synchronized
-between web, desktop, and mobile, and T3 Code never silently lowers the saved thread default.
 
 ## Exploring repositories with Fetch
 

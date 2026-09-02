@@ -4,12 +4,17 @@ import {
   type KnowledgeGraphNodeKind,
   type KnowledgeGraphNodeV1,
   type KnowledgeGraphEdgeV1,
+  type KnowledgeGraphQueryOperationResultV1,
+  type KnowledgeGraphSnapshotV1,
   type EnvironmentId,
   type ProjectId,
   resolveBetterT3FeatureFlag,
   type ThreadId,
 } from "@t3tools/contracts";
-import type { KnowledgeGraphPosition } from "@t3tools/client-runtime/knowledge-graph";
+import type {
+  KnowledgeGraphPosition,
+  KnowledgeGraphViewport,
+} from "@t3tools/client-runtime/knowledge-graph";
 import { AsyncResult } from "effect/unstable/reactivity";
 import * as Option from "effect/Option";
 import {
@@ -58,6 +63,29 @@ export function resolveKnowledgeGraphPanelMode(input: {
 
 const EMPTY_NODES: ReadonlyArray<KnowledgeGraphNodeV1> = [];
 const EMPTY_EDGES: ReadonlyArray<KnowledgeGraphEdgeV1> = [];
+const DEFAULT_VIEWPORT: KnowledgeGraphViewport = { scale: 1, translateX: 0, translateY: 0 };
+
+export function applyKnowledgeGraphQueryResult(
+  snapshot: KnowledgeGraphSnapshotV1 | null,
+  result: KnowledgeGraphQueryOperationResultV1 | null,
+  revision: number | undefined,
+): KnowledgeGraphSnapshotV1 | null {
+  if (!snapshot || !result) return snapshot;
+  return {
+    ...snapshot,
+    revision: revision ?? snapshot.revision,
+    nodes: [...result.nodes],
+    edges: [...result.edges],
+    evidence: [...result.evidence],
+    status: {
+      ...snapshot.status,
+      truncated: {
+        ...snapshot.status.truncated,
+        visibleNodes: snapshot.status.truncated.visibleNodes || result.truncated,
+      },
+    },
+  };
+}
 
 function KnowledgeGraphNodeContent(props: {
   readonly environmentId: EnvironmentId;
@@ -173,7 +201,10 @@ function ConnectedKnowledgeGraphPanel(props: KnowledgeGraphPanelControllerProps)
   const deferredQuery = useDeferredValue(query.trim());
   const [kinds, setKinds] = useState<ReadonlySet<KnowledgeGraphNodeKind>>(() => new Set());
   const [expandedNodeId, setExpandedNodeId] = useState<KnowledgeGraphNodeId | null>(null);
-  const [zoom, setZoom] = useState(1);
+  const [hoveredNodeId, setHoveredNodeId] = useState<KnowledgeGraphNodeId | null>(null);
+  const [draggingNodeId, setDraggingNodeId] = useState<KnowledgeGraphNodeId | null>(null);
+  const [viewport, setViewport] = useState<KnowledgeGraphViewport>(DEFAULT_VIEWPORT);
+  const [layoutRestartToken, setLayoutRestartToken] = useState(0);
   const [pinned, setPinned] = useState<ReadonlyMap<KnowledgeGraphNodeId, KnowledgeGraphPosition>>(
     () => new Map(),
   );
@@ -201,37 +232,36 @@ function ConnectedKnowledgeGraphPanel(props: KnowledgeGraphPanelControllerProps)
     }),
   );
   const remoteQuery = Option.getOrNull(AsyncResult.value(remoteQueryResult));
-  const remoteSearchResult = deferredQuery.length > 0 ? remoteQuery?.results[0] : null;
-  const displayedSnapshot = useMemo(() => {
-    if (!snapshot || !remoteSearchResult) return snapshot;
-    return {
-      ...snapshot,
-      revision: remoteQuery?.revision ?? snapshot.revision,
-      nodes: [...remoteSearchResult.nodes],
-      edges: [...remoteSearchResult.edges],
-      evidence: [...remoteSearchResult.evidence],
-      status: {
-        ...snapshot.status,
-        truncated: {
-          ...snapshot.status.truncated,
-          visibleNodes: snapshot.status.truncated.visibleNodes || remoteSearchResult.truncated,
-        },
-      },
-    };
-  }, [remoteQuery?.revision, remoteSearchResult, snapshot]);
+  const remoteGraphResult = remoteQuery?.results[0] ?? null;
+  const displayedSnapshot = useMemo(
+    () => applyKnowledgeGraphQueryResult(snapshot, remoteGraphResult, remoteQuery?.revision),
+    [remoteGraphResult, remoteQuery?.revision, snapshot],
+  );
 
-  const positions = useKnowledgeGraphLayout({
+  const layout = useKnowledgeGraphLayout({
     nodes: displayedSnapshot?.nodes ?? EMPTY_NODES,
     edges: displayedSnapshot?.edges ?? EMPTY_EDGES,
     width: size.width,
     height: size.height,
     pinned,
     prefersReducedMotion,
+    restartToken: layoutRestartToken,
   });
+  const pinnedNodeIds = useMemo(() => new Set(pinned.keys()), [pinned]);
 
   const panelNode = useCallback((node: HTMLDivElement | null) => {
-    panelRef.current = node;
-    if (!node || typeof ResizeObserver === "undefined") return;
+    if (!node) {
+      panelRef.current = null;
+      return;
+    }
+    const canvas = node.querySelector<HTMLDivElement>("[data-knowledge-graph-canvas]") ?? node;
+    panelRef.current = canvas;
+    const initialBounds = canvas.getBoundingClientRect();
+    setSize({
+      width: Math.max(1, Math.round(initialBounds.width)),
+      height: Math.max(1, Math.round(initialBounds.height)),
+    });
+    if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(([entry]) => {
       if (!entry) return;
       setSize({
@@ -239,8 +269,11 @@ function ConnectedKnowledgeGraphPanel(props: KnowledgeGraphPanelControllerProps)
         height: Math.max(1, Math.round(entry.contentRect.height)),
       });
     });
-    observer.observe(node);
-    return () => observer.disconnect();
+    observer.observe(canvas);
+    return () => {
+      observer.disconnect();
+      if (panelRef.current === canvas) panelRef.current = null;
+    };
   }, []);
 
   const toggleKind = useCallback((kind: KnowledgeGraphNodeKind) => {
@@ -259,32 +292,37 @@ function ConnectedKnowledgeGraphPanel(props: KnowledgeGraphPanelControllerProps)
     [],
   );
 
-  const startNodeDrag = useCallback(
-    (nodeId: KnowledgeGraphNodeId, event: ReactPointerEvent<HTMLButtonElement>) => {
+  const changeZoom = useCallback(
+    (scale: number) => {
+      setViewport((current) => {
+        const center = { x: size.width / 2, y: size.height / 2 };
+        const graphCenter = {
+          x: (center.x - current.translateX) / current.scale,
+          y: (center.y - current.translateY) / current.scale,
+        };
+        return {
+          scale,
+          translateX: center.x - graphCenter.x * scale,
+          translateY: center.y - graphCenter.y * scale,
+        };
+      });
+    },
+    [size.height, size.width],
+  );
+
+  const startCanvasPan = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
       if (event.button !== 0) return;
       dragCleanupRef.current?.();
-      suppressNodeClickRef.current = false;
       const start = { x: event.clientX, y: event.clientY };
-      const canvas = event.currentTarget.offsetParent;
+      const initialViewport = viewport;
       event.currentTarget.setPointerCapture(event.pointerId);
       const move = (pointerEvent: PointerEvent) => {
-        if (
-          !suppressNodeClickRef.current &&
-          isKnowledgeGraphDragGesture(start, {
-            x: pointerEvent.clientX,
-            y: pointerEvent.clientY,
-          })
-        ) {
-          suppressNodeClickRef.current = true;
-        }
-        const bounds = canvas?.getBoundingClientRect() ?? panelRef.current?.getBoundingClientRect();
-        if (!bounds) return;
-        const position = resolveKnowledgeGraphDraggedPosition(
-          { x: pointerEvent.clientX, y: pointerEvent.clientY },
-          bounds,
-          zoom,
-        );
-        setPinned((current) => new Map(current).set(nodeId, position));
+        setViewport({
+          ...initialViewport,
+          translateX: initialViewport.translateX + pointerEvent.clientX - start.x,
+          translateY: initialViewport.translateY + pointerEvent.clientY - start.y,
+        });
       };
       const finish = () => {
         window.removeEventListener("pointermove", move);
@@ -297,7 +335,56 @@ function ConnectedKnowledgeGraphPanel(props: KnowledgeGraphPanelControllerProps)
       window.addEventListener("pointerup", finish, { once: true });
       window.addEventListener("pointercancel", finish, { once: true });
     },
-    [zoom],
+    [viewport],
+  );
+
+  const startNodeDrag = useCallback(
+    (nodeId: KnowledgeGraphNodeId, event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (event.button !== 0) return;
+      event.stopPropagation();
+      dragCleanupRef.current?.();
+      suppressNodeClickRef.current = false;
+      const start = { x: event.clientX, y: event.clientY };
+      const canvas = event.currentTarget.offsetParent;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      let dragging = false;
+      const move = (pointerEvent: PointerEvent) => {
+        if (!dragging) {
+          dragging = isKnowledgeGraphDragGesture(start, {
+            x: pointerEvent.clientX,
+            y: pointerEvent.clientY,
+          });
+          if (!dragging) return;
+          suppressNodeClickRef.current = true;
+          setDraggingNodeId(nodeId);
+        }
+        const bounds = canvas?.getBoundingClientRect() ?? panelRef.current?.getBoundingClientRect();
+        if (!bounds) return;
+        const position = resolveKnowledgeGraphDraggedPosition(
+          { x: pointerEvent.clientX, y: pointerEvent.clientY },
+          bounds,
+          viewport,
+        );
+        setPinned((current) => new Map(current).set(nodeId, position));
+      };
+      const finish = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", finish);
+        window.removeEventListener("pointercancel", finish);
+        if (dragging) {
+          setDraggingNodeId(null);
+          window.setTimeout(() => {
+            suppressNodeClickRef.current = false;
+          }, 0);
+        }
+        if (dragCleanupRef.current === finish) dragCleanupRef.current = null;
+      };
+      dragCleanupRef.current = finish;
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", finish, { once: true });
+      window.addEventListener("pointercancel", finish, { once: true });
+    },
+    [viewport],
   );
   const expandNode = useCallback((nodeId: KnowledgeGraphNodeId | null) => {
     if (suppressNodeClickRef.current) {
@@ -324,13 +411,17 @@ function ConnectedKnowledgeGraphPanel(props: KnowledgeGraphPanelControllerProps)
     <div ref={panelNode} className="flex min-h-0 flex-1">
       <KnowledgeGraphPanelView
         snapshot={displayedSnapshot}
-        positions={positions}
+        positions={layout.positions}
         width={size.width}
         height={size.height}
         query={query}
         kinds={kinds}
         expandedNodeId={expandedNodeId}
-        zoom={zoom}
+        hoveredNodeId={hoveredNodeId}
+        draggingNodeId={draggingNodeId}
+        pinnedNodeIds={pinnedNodeIds}
+        viewport={viewport}
+        layoutAnimating={layout.isAnimating || draggingNodeId !== null}
         prefersReducedMotion={prefersReducedMotion}
         translate={translate}
         formatConfidence={(confidence) =>
@@ -338,13 +429,16 @@ function ConnectedKnowledgeGraphPanel(props: KnowledgeGraphPanelControllerProps)
         }
         onQueryChange={setQuery}
         onToggleKind={toggleKind}
-        onZoomChange={setZoom}
+        onZoomChange={changeZoom}
         onResetView={() => {
           setPinned(new Map());
-          setZoom(1);
+          setViewport(DEFAULT_VIEWPORT);
+          setLayoutRestartToken((current) => current + 1);
         }}
         onExpandNode={expandNode}
+        onNodeHover={setHoveredNodeId}
         onOpenSource={props.onOpenSource}
+        onCanvasPointerDown={startCanvasPan}
         onNodePointerDown={startNodeDrag}
         expandedDetails={
           expandedNodeId ? (

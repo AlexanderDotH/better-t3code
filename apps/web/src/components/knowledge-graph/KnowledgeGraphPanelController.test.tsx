@@ -1,8 +1,13 @@
+import type {
+  KnowledgeGraphQueryOperationResultV1,
+  KnowledgeGraphSnapshotV1,
+} from "@t3tools/contracts";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  applyKnowledgeGraphQueryResult,
   KnowledgeGraphDisabledOwnerView,
   resolveKnowledgeGraphPanelMode,
 } from "./KnowledgeGraphPanelController";
@@ -36,5 +41,32 @@ describe("KnowledgeGraphDisabledOwnerView", () => {
     expect(markup).not.toContain("Rebuild");
     expect(markup).not.toContain("Pause indexing");
     expect(markup).not.toContain("Cancel indexing");
+  });
+});
+
+describe("applyKnowledgeGraphQueryResult", () => {
+  it("uses the connected server overview instead of the alphabetical snapshot prefix", () => {
+    const snapshot = {
+      revision: 1,
+      nodes: [{ nodeId: "isolated-dependency" }],
+      edges: [],
+      evidence: [],
+      status: { truncated: { visibleNodes: false } },
+    } as unknown as KnowledgeGraphSnapshotV1;
+    const overview = {
+      id: "web-overview",
+      type: "overview",
+      nodes: [{ nodeId: "repository" }, { nodeId: "package" }],
+      edges: [{ edgeId: "contains" }],
+      evidence: [],
+      truncated: true,
+    } as unknown as KnowledgeGraphQueryOperationResultV1;
+
+    const displayed = applyKnowledgeGraphQueryResult(snapshot, overview, 2);
+
+    expect(displayed?.revision).toBe(2);
+    expect(displayed?.nodes.map(({ nodeId }) => nodeId)).toEqual(["repository", "package"]);
+    expect(displayed?.edges.map(({ edgeId }) => edgeId)).toEqual(["contains"]);
+    expect(displayed?.status.truncated.visibleNodes).toBe(true);
   });
 });

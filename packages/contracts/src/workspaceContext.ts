@@ -37,6 +37,31 @@ export const WorkspaceContextRead = Schema.Struct({
 }).check(validReadRange);
 export type WorkspaceContextRead = typeof WorkspaceContextRead.Type;
 
+const WorkspaceContextQueries = Schema.Array(WorkspaceContextQuery).check(
+  Schema.isMaxLength(WORKSPACE_CONTEXT_MAX_QUERIES),
+);
+const WorkspaceContextReads = Schema.Array(WorkspaceContextRead).check(
+  Schema.isMaxLength(WORKSPACE_CONTEXT_MAX_READS),
+);
+const WorkspaceContextLines = NonNegativeInt.check(
+  Schema.isLessThanOrEqualTo(WORKSPACE_CONTEXT_MAX_CONTEXT_LINES),
+);
+const WorkspaceContextResultsPerQuery = PositiveInt.check(
+  Schema.isLessThanOrEqualTo(WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY),
+);
+
+export const WorkspaceFindInput = Schema.Struct({
+  queries: WorkspaceContextQueries.check(Schema.isMinLength(1)),
+  contextLines: Schema.optional(WorkspaceContextLines),
+  maxResultsPerQuery: Schema.optional(WorkspaceContextResultsPerQuery),
+});
+export type WorkspaceFindInput = typeof WorkspaceFindInput.Type;
+
+export const WorkspaceReadInput = Schema.Struct({
+  reads: WorkspaceContextReads.check(Schema.isMinLength(1)),
+});
+export type WorkspaceReadInput = typeof WorkspaceReadInput.Type;
+
 const hasAtLeastOneOperation = Schema.makeFilter(
   (input: {
     readonly queries?: ReadonlyArray<WorkspaceContextQuery> | undefined;
@@ -47,18 +72,10 @@ const hasAtLeastOneOperation = Schema.makeFilter(
 );
 
 export const WorkspaceContextInput = Schema.Struct({
-  queries: Schema.optional(
-    Schema.Array(WorkspaceContextQuery).check(Schema.isMaxLength(WORKSPACE_CONTEXT_MAX_QUERIES)),
-  ),
-  reads: Schema.optional(
-    Schema.Array(WorkspaceContextRead).check(Schema.isMaxLength(WORKSPACE_CONTEXT_MAX_READS)),
-  ),
-  contextLines: Schema.optional(
-    NonNegativeInt.check(Schema.isLessThanOrEqualTo(WORKSPACE_CONTEXT_MAX_CONTEXT_LINES)),
-  ),
-  maxResultsPerQuery: Schema.optional(
-    PositiveInt.check(Schema.isLessThanOrEqualTo(WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY)),
-  ),
+  queries: Schema.optional(WorkspaceContextQueries),
+  reads: Schema.optional(WorkspaceContextReads),
+  contextLines: Schema.optional(WorkspaceContextLines),
+  maxResultsPerQuery: Schema.optional(WorkspaceContextResultsPerQuery),
 }).check(hasAtLeastOneOperation);
 export type WorkspaceContextInput = typeof WorkspaceContextInput.Type;
 

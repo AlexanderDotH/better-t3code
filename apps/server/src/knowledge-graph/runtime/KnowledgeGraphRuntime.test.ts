@@ -89,9 +89,11 @@ const makeRuntimeHarness = (
   indexScopeOverride?: KnowledgeGraphIndexer.KnowledgeGraphIndexerShape["indexScope"],
   initialQueuePaused = false,
   semanticModelSelection: ModelSelection | null = null,
+  initialStatusState: KnowledgeGraphStatusV1["state"] = "ready",
 ) =>
   Effect.gen(function* () {
     const settingsChanges = yield* Queue.unbounded<typeof DEFAULT_SERVER_SETTINGS>();
+    const idleStatuses = yield* Queue.unbounded<void>();
     const indexed = yield* Ref.make(0);
     const indexedScopeIds = yield* Ref.make<ReadonlyArray<string>>([]);
     const cancelledScopes = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -109,11 +111,13 @@ const makeRuntimeHarness = (
     const disabledCount = yield* Ref.make(0);
     const disabled = yield* Deferred.make<void>();
     const initialIndexed = yield* Deferred.make<void>();
+    const initialIndexSettled = yield* Deferred.make<void>();
     const semanticRan = yield* Deferred.make<void>();
     const indexFailed = yield* Deferred.make<void>();
     const reindexed = yield* Deferred.make<void>();
+    const reindexedSettled = yield* Deferred.make<void>();
     const incrementalIndexed = yield* Deferred.make<void>();
-    const currentStatus = yield* Ref.make(status("ready"));
+    const currentStatus = yield* Ref.make(status(initialStatusState));
     const persistedScopes =
       yield* Ref.make<ReadonlyArray<KnowledgeGraphScopeV1>>(initiallyPersistedScopes);
     const failNextStatusRead = yield* Ref.make(false);
@@ -160,6 +164,9 @@ const makeRuntimeHarness = (
       updateStatus: (next) =>
         Ref.set(currentStatus, next).pipe(
           Effect.andThen(
+            next.state === "idle" ? Queue.offer(idleStatuses, undefined) : Effect.void,
+          ),
+          Effect.andThen(
             next.state === "disabled"
               ? Ref.updateAndGet(disabledCount, (count) => count + 1).pipe(
                   Effect.flatMap((count) =>
@@ -172,6 +179,25 @@ const makeRuntimeHarness = (
           ),
           Effect.andThen(
             next.state === "error" ? Deferred.succeed(indexFailed, undefined) : Effect.void,
+          ),
+          Effect.andThen(
+            next.state !== "indexing"
+              ? Ref.get(indexed).pipe(
+                  Effect.flatMap((count) =>
+                    Effect.all(
+                      [
+                        count >= knownScopes.length
+                          ? Deferred.succeed(initialIndexSettled, undefined)
+                          : Effect.void,
+                        count >= knownScopes.length * 2
+                          ? Deferred.succeed(reindexedSettled, undefined)
+                          : Effect.void,
+                      ],
+                      { discard: true },
+                    ),
+                  ),
+                )
+              : Effect.void,
           ),
           Effect.asVoid,
         ),
@@ -304,6 +330,7 @@ const makeRuntimeHarness = (
     return {
       runtime,
       settingsChanges,
+      idleStatuses,
       enabledSettings,
       disabledSettings,
       currentStatus,
@@ -326,8 +353,10 @@ const makeRuntimeHarness = (
       publishedEvents,
       disabled,
       initialIndexed,
+      initialIndexSettled,
       indexFailed,
       reindexed,
+      reindexedSettled,
       incrementalIndexed,
     };
   });
@@ -352,6 +381,7 @@ it.effect("feature-off preserves queued work and re-enables all registered scope
 
       yield* Queue.offer(harness.settingsChanges, harness.enabledSettings);
       yield* Deferred.await(harness.reindexed);
+      yield* Deferred.await(harness.reindexedSettled);
       assert.strictEqual((yield* Ref.get(harness.currentStatus)).state, "idle");
       assert.deepStrictEqual(yield* Ref.get(harness.indexedScopeIds), [
         String(scope.scopeId),
@@ -422,6 +452,7 @@ it.effect("clears stale failure metadata when a disabled scope is re-enabled", (
       yield* Deferred.await(harness.disabled);
       yield* Queue.offer(harness.settingsChanges, harness.enabledSettings);
       yield* Deferred.await(harness.reindexed);
+      yield* Deferred.await(harness.reindexedSettled);
 
       const reenabled = yield* Ref.get(harness.currentStatus);
       assert.strictEqual(reenabled.state, "idle");
@@ -599,6 +630,98 @@ it.effect("indexes every registered project scope and only the externally change
         String(worktreeScope.scopeId),
       ]);
     }),
+  ),
+);
+
+it.effect("coalesces watcher bursts into one pending rerun without interrupting owned work", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const firstStarted = yield* Deferred.make<void>();
+      const secondStarted = yield* Deferred.make<void>();
+      const releaseFirst = yield* Deferred.make<void>();
+      const releaseSecond = yield* Deferred.make<void>();
+      const starts = yield* Ref.make(0);
+      const interruptions = yield* Ref.make(0);
+      const harness = yield* makeRuntimeHarness([scope], [scope], () =>
+        Effect.gen(function* () {
+          const count = yield* Ref.updateAndGet(starts, (current) => current + 1);
+          yield* Deferred.succeed(count === 1 ? firstStarted : secondStarted, undefined);
+          yield* Deferred.await(count === 1 ? releaseFirst : releaseSecond);
+          return Option.none();
+        }).pipe(Effect.onInterrupt(() => Ref.update(interruptions, (current) => current + 1))),
+      );
+
+      yield* Deferred.await(firstStarted);
+      const onChange = yield* Ref.get(harness.watcherChangeHandler);
+      assert.isNotNull(onChange);
+      yield* onChange?.([scope]);
+      yield* onChange?.([scope]);
+      yield* onChange?.([scope]);
+
+      assert.strictEqual(yield* Ref.get(starts), 1);
+      assert.strictEqual(yield* Ref.get(interruptions), 0);
+      assert.strictEqual((yield* Ref.get(harness.currentStatus)).state, "indexing");
+
+      yield* Deferred.succeed(releaseFirst, undefined);
+      yield* Deferred.await(secondStarted);
+      assert.strictEqual(yield* Ref.get(starts), 2);
+      assert.strictEqual(yield* Ref.get(interruptions), 0);
+
+      yield* Deferred.succeed(releaseSecond, undefined);
+      yield* Queue.take(harness.idleStatuses);
+      assert.strictEqual((yield* Ref.get(harness.currentStatus)).state, "idle");
+      assert.strictEqual(yield* Ref.get(interruptions), 0);
+    }),
+  ),
+);
+
+it.effect("interrupts owned indexing for an explicit pause and settles paused", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const interrupted = yield* Deferred.make<void>();
+      const harness = yield* makeRuntimeHarness([scope], [scope], () =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+        ),
+      );
+
+      yield* Deferred.await(started);
+      yield* harness.runtime.pause({ scope: { projectId, threadId }, paused: true });
+      yield* Deferred.await(interrupted);
+
+      assert.strictEqual((yield* Ref.get(harness.currentStatus)).state, "paused");
+      assert.deepStrictEqual(yield* Ref.get(harness.pausedEnvironments), [String(environmentId)]);
+    }),
+  ),
+);
+
+it.effect("repairs orphan indexing and cancelling states before startup indexing", () =>
+  Effect.forEach(
+    ["indexing", "cancelling"] as const,
+    (orphanState) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeRuntimeHarness(
+            [scope],
+            [scope],
+            undefined,
+            false,
+            null,
+            orphanState,
+          );
+          yield* Deferred.await(harness.initialIndexSettled);
+
+          const statusEvents = (yield* Ref.get(harness.publishedEvents)).filter(
+            (event) => event.type === "status",
+          );
+          assert.isNotEmpty(statusEvents);
+          assert.strictEqual(statusEvents[0]?.status.state, "idle");
+          assert.strictEqual((yield* Ref.get(harness.currentStatus)).state, "idle");
+        }),
+      ),
+    { discard: true },
   ),
 );
 

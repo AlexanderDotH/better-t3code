@@ -6,19 +6,28 @@ import {
   WorkspaceContextTool,
   WorkspaceEditTool,
   WorkspaceEditToolkit,
+  WorkspaceFindTool,
+  WorkspaceReadTool,
   WorkspaceToolkit,
 } from "./tools.ts";
 
-it("publishes one bounded read-only workspace tool", () => {
-  expect(Object.keys(WorkspaceToolkit.tools)).toEqual(["workspace_context"]);
-  expect(WorkspaceContextTool.description).toContain(
-    "Searches or reads spanning multiple regular UTF-8 files MUST use batched `workspace_context` calls, using the fewest calls its limits allow; do not use shell text readers/searchers.",
-  );
-  expect(Tool.getJsonSchema(WorkspaceContextTool)).toMatchObject({ type: "object" });
-  expect(Context.get(WorkspaceContextTool.annotations, Tool.Readonly)).toBe(true);
-  expect(Context.get(WorkspaceContextTool.annotations, Tool.Destructive)).toBe(false);
-  expect(Context.get(WorkspaceContextTool.annotations, Tool.Idempotent)).toBe(true);
-  expect(Context.get(WorkspaceContextTool.annotations, Tool.OpenWorld)).toBe(false);
+it("publishes focused and mixed bounded read-only workspace tools", () => {
+  expect(Object.keys(WorkspaceToolkit.tools)).toEqual([
+    "workspace_find",
+    "workspace_read",
+    "workspace_context",
+  ]);
+  expect(WorkspaceFindTool.description).toContain("Prefer this over shell find, rg, or grep");
+  expect(WorkspaceReadTool.description).toContain("Prefer this over shell cat or sed");
+  expect(WorkspaceContextTool.description).toContain("mixed workspace searches");
+
+  for (const tool of [WorkspaceFindTool, WorkspaceReadTool, WorkspaceContextTool]) {
+    expect(Tool.getJsonSchema(tool)).toMatchObject({ type: "object" });
+    expect(Context.get(tool.annotations, Tool.Readonly)).toBe(true);
+    expect(Context.get(tool.annotations, Tool.Destructive)).toBe(false);
+    expect(Context.get(tool.annotations, Tool.Idempotent)).toBe(true);
+    expect(Context.get(tool.annotations, Tool.OpenWorld)).toBe(false);
+  }
 });
 
 it("publishes workspace editing as one destructive closed-world batch tool", () => {

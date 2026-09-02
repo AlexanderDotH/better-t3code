@@ -2,7 +2,11 @@ import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { BETTER_T3_VISUAL_FEATURE_IDS, BetterT3FeatureVisual } from "./BetterT3SettingsPreview";
+import {
+  BETTER_T3_VISUAL_FEATURE_IDS,
+  BetterT3FeatureChoice,
+  BetterT3FeatureVisual,
+} from "./BetterT3SettingsPreview";
 import type {
   BetterT3AgentPreviewModel,
   BetterT3ChatPreviewModel,
@@ -60,5 +64,26 @@ describe("Better T3 settings previews", () => {
     expect(markup).toContain("Disabled");
     expect(markup).toContain("opacity-40");
     expect(markup).not.toContain("aria-pressed");
+  });
+
+  it("offers both visual states as accessible side-by-side choices", () => {
+    const markup = renderToStaticMarkup(
+      <BetterT3FeatureChoice
+        disabled={false}
+        featureId="agent.planMode"
+        model={{ agent: agentModel, chat: chatModel }}
+        onChange={() => undefined}
+        translate={translate}
+        value={true}
+      />,
+    );
+
+    expect(markup).toContain('role="radiogroup"');
+    expect(markup.match(/role="radio"/g)).toHaveLength(2);
+    expect(markup.match(/data-better-t3-feature-visual="agent\.planMode"/g)).toHaveLength(2);
+    expect(markup.match(/aria-checked="true"/g)).toHaveLength(1);
+    expect(markup).toContain("Build");
+    expect(markup).toContain("Plan");
+    expect(markup).not.toContain('role="switch"');
   });
 });

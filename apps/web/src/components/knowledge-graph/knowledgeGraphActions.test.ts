@@ -54,8 +54,18 @@ describe("isKnowledgeGraphDragGesture", () => {
       resolveKnowledgeGraphDraggedPosition(
         { x: 260, y: 190 },
         { left: 100, top: 70, width: 400, height: 300 },
-        2,
+        { scale: 2, translateX: 0, translateY: 0 },
       ),
     ).toEqual({ x: 80, y: 60 });
+  });
+
+  it("maps dragged nodes back into graph coordinates after panning", () => {
+    expect(
+      resolveKnowledgeGraphDraggedPosition(
+        { x: 260, y: 190 },
+        { left: 100, top: 70, width: 400, height: 300 },
+        { scale: 2, translateX: 40, translateY: -20 },
+      ),
+    ).toEqual({ x: 60, y: 70 });
   });
 });

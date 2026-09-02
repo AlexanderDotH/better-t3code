@@ -43,10 +43,65 @@ export const knowledgeGraphInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Keine Beziehungen gefunden",
     "Aucune relation trouvée",
   ],
+  "knowledgeGraph.noResults": [
+    "No graph results match the current search and filters.",
+    "Keine Graphergebnisse entsprechen der aktuellen Suche und den Filtern.",
+    "Aucun résultat du graphe ne correspond à la recherche et aux filtres actuels.",
+  ],
   "knowledgeGraph.empty": [
     "No indexed knowledge is available yet.",
     "Noch kein indexiertes Wissen verfügbar.",
     "Aucune connaissance indexée n’est encore disponible.",
+  ],
+  "knowledgeGraph.empty.ready": [
+    "No indexed knowledge is available yet.",
+    "Noch kein indexiertes Wissen verfügbar.",
+    "Aucune connaissance indexée n’est encore disponible.",
+  ],
+  "knowledgeGraph.empty.indexing": [
+    "Indexing project files…",
+    "Projektdateien werden indexiert…",
+    "Indexation des fichiers du projet…",
+  ],
+  "knowledgeGraph.empty.extracting": [
+    "Extracting project relationships…",
+    "Projektbeziehungen werden extrahiert…",
+    "Extraction des relations du projet…",
+  ],
+  "knowledgeGraph.empty.persisting": [
+    "Saving the Knowledge Graph…",
+    "Wissensgraph wird gespeichert…",
+    "Enregistrement du graphe de connaissances…",
+  ],
+  "knowledgeGraph.empty.semantic": [
+    "Enriching project relationships…",
+    "Projektbeziehungen werden angereichert…",
+    "Enrichissement des relations du projet…",
+  ],
+  "knowledgeGraph.empty.idle": [
+    "Indexing is idle or was cancelled. Rebuild to start again.",
+    "Die Indexierung ist inaktiv oder wurde abgebrochen. Starten Sie den Neuaufbau, um erneut zu beginnen.",
+    "L’indexation est inactive ou a été annulée. Relancez la reconstruction pour recommencer.",
+  ],
+  "knowledgeGraph.empty.paused": [
+    "Indexing is paused. Resume to continue.",
+    "Die Indexierung ist pausiert. Setzen Sie sie fort, um weiterzumachen.",
+    "L’indexation est en pause. Reprenez-la pour continuer.",
+  ],
+  "knowledgeGraph.empty.cancelling": [
+    "Cancelling indexing…",
+    "Indexierung wird abgebrochen…",
+    "Annulation de l’indexation…",
+  ],
+  "knowledgeGraph.empty.rateLimited": [
+    "Indexing is waiting for the model rate limit.",
+    "Die Indexierung wartet auf das Modell-Limit.",
+    "L’indexation attend la fin de la limite du modèle.",
+  ],
+  "knowledgeGraph.empty.error": [
+    "Indexing failed. Rebuild to try again.",
+    "Die Indexierung ist fehlgeschlagen. Starten Sie den Neuaufbau, um es erneut zu versuchen.",
+    "L’indexation a échoué. Relancez la reconstruction pour réessayer.",
   ],
   "knowledgeGraph.loading": [
     "Loading Knowledge Graph…",

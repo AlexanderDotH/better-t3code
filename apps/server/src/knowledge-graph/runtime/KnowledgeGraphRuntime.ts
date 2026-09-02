@@ -6,11 +6,13 @@ import {
   type ModelSelection,
   resolveBetterT3FeatureFlag,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -35,6 +37,7 @@ export { KnowledgeGraphRuntime } from "./KnowledgeGraphRuntimeService.ts";
 interface IndexRegistration {
   readonly generation: number;
   readonly fiber: Fiber.Fiber<void, never>;
+  readonly pending: KnowledgeGraphScopeV1 | null;
 }
 
 function isScopeCatalogEvent(type: string): boolean {
@@ -196,50 +199,184 @@ export const makeKnowledgeGraphRuntime = Effect.gen(function* () {
     });
   });
 
+  const setIndexingStatus = Effect.fn("KnowledgeGraphRuntime.setIndexingStatus")(function* (
+    scopeId: KnowledgeGraphScopeId,
+  ) {
+    const current = yield* repository
+      .getStatus(scopeId)
+      .pipe(mapPersistenceError("index", scopeId));
+    if (Option.isNone(current)) return;
+    const {
+      errorMessage: _errorMessage,
+      progress: _progress,
+      retryAt: _retryAt,
+      ...indexing
+    } = current.value;
+    yield* repository
+      .updateStatus({ ...indexing, state: "indexing" })
+      .pipe(mapPersistenceError("index", scopeId));
+    yield* publishStatus(scopeId);
+  });
+
+  const releaseIndexOwnership = Effect.fn("KnowledgeGraphRuntime.releaseIndexOwnership")(function* (
+    scopeId: KnowledgeGraphScopeId,
+    ownedGeneration: number,
+  ) {
+    yield* indexRegistrationSemaphore.withPermits(1)(
+      Ref.update(indexes, (registrations) => {
+        if (registrations.get(scopeId)?.generation !== ownedGeneration) {
+          return registrations;
+        }
+        const next = new Map(registrations);
+        next.delete(scopeId);
+        return next;
+      }),
+    );
+  });
+
+  const repairUnownedIndexStatus = Effect.fn("KnowledgeGraphRuntime.repairUnownedIndexStatus")(
+    function* (scopeId: KnowledgeGraphScopeId, operation: string) {
+      yield* indexRegistrationSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          if ((yield* Ref.get(indexes)).has(scopeId)) return;
+          const current = yield* repository
+            .getStatus(scopeId)
+            .pipe(mapPersistenceError(operation, scopeId));
+          if (
+            Option.isNone(current) ||
+            (current.value.state !== "indexing" && current.value.state !== "cancelling")
+          ) {
+            return;
+          }
+          const {
+            errorMessage: _errorMessage,
+            progress: _progress,
+            retryAt: _retryAt,
+            ...settled
+          } = current.value;
+          yield* repository
+            .updateStatus({ ...settled, state: "idle" })
+            .pipe(mapPersistenceError(operation, scopeId));
+          yield* publishStatus(scopeId);
+        }),
+      );
+    },
+  );
+
+  const publishOwnedIndexFailure = Effect.fn("KnowledgeGraphRuntime.publishOwnedIndexFailure")(
+    function* (
+      scope: KnowledgeGraphScopeV1,
+      ownedGeneration: number,
+      error: KnowledgeGraphOperationError,
+    ) {
+      yield* indexRegistrationSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          const current = yield* Ref.get(indexes);
+          if (current.get(scope.scopeId)?.generation !== ownedGeneration) return;
+          const next = new Map(current);
+          next.delete(scope.scopeId);
+          yield* Ref.set(indexes, next);
+          yield* publishIndexFailure(scope, error);
+        }),
+      );
+    },
+  );
+
+  const takePendingIndex = Effect.fn("KnowledgeGraphRuntime.takePendingIndex")(function* (
+    scopeId: KnowledgeGraphScopeId,
+    ownedGeneration: number,
+  ) {
+    return yield* indexRegistrationSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(indexes);
+        const registration = current.get(scopeId);
+        if (registration?.generation !== ownedGeneration) {
+          return Option.none<KnowledgeGraphScopeV1>();
+        }
+        const next = new Map(current);
+        if (registration.pending === null) {
+          next.delete(scopeId);
+          yield* Ref.set(indexes, next);
+          return Option.none<KnowledgeGraphScopeV1>();
+        }
+        next.set(scopeId, { ...registration, pending: null });
+        yield* Ref.set(indexes, next);
+        return Option.some(registration.pending);
+      }),
+    );
+  });
+
+  const runOwnedIndex = Effect.fn("KnowledgeGraphRuntime.runOwnedIndex")(function* (
+    initialScope: KnowledgeGraphScopeV1,
+    ownedGeneration: number,
+  ) {
+    let nextScope: KnowledgeGraphScopeV1 | null = initialScope;
+    while (nextScope !== null) {
+      const activeScope: KnowledgeGraphScopeV1 = nextScope;
+      const outcome = yield* setIndexingStatus(activeScope.scopeId).pipe(
+        Effect.andThen(indexingSemaphore.withPermits(1)(runIndex(activeScope))),
+        Effect.result,
+      );
+      if (Result.isFailure(outcome)) {
+        yield* publishOwnedIndexFailure(activeScope, ownedGeneration, outcome.failure).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Knowledge Graph index failure status could not be persisted", {
+              scopeId: activeScope.scopeId,
+              cause,
+            }),
+          ),
+          Effect.andThen(
+            Effect.logWarning("Knowledge Graph indexing failed", {
+              scopeId: activeScope.scopeId,
+              error: outcome.failure.message,
+            }),
+          ),
+        );
+        return;
+      }
+      const pending: Option.Option<KnowledgeGraphScopeV1> = yield* takePendingIndex(
+        activeScope.scopeId,
+        ownedGeneration,
+      );
+      if (Option.isNone(pending)) {
+        yield* repairUnownedIndexStatus(activeScope.scopeId, "index-complete");
+        return;
+      }
+      nextScope = pending.value;
+    }
+  });
+
   const scheduleIndex = Effect.fn("KnowledgeGraphRuntime.scheduleIndex")(function* (
     scope: KnowledgeGraphScopeV1,
   ) {
-    if (!(yield* Ref.get(enabled)) || (yield* Ref.get(paused))) return;
     yield* indexRegistrationSemaphore.withPermits(1)(
       Effect.gen(function* () {
+        if (!(yield* Ref.get(enabled)) || (yield* Ref.get(paused))) return;
         const current = yield* Ref.get(indexes);
         const existing = current.get(scope.scopeId);
-        if (existing !== undefined) yield* Fiber.interrupt(existing.fiber);
+        if (existing !== undefined) {
+          const next = new Map(current);
+          next.set(scope.scopeId, { ...existing, pending: scope });
+          yield* Ref.set(indexes, next);
+          return;
+        }
         const nextGeneration = yield* Ref.updateAndGet(generation, (value) => value + 1);
-        const task = indexingSemaphore
-          .withPermits(1)(runIndex(scope))
-          .pipe(
-            Effect.catch((error) =>
-              publishIndexFailure(scope, error).pipe(
-                Effect.catchCause((cause) =>
-                  Effect.logWarning("Knowledge Graph index failure status could not be persisted", {
-                    scopeId: scope.scopeId,
-                    cause,
-                  }),
-                ),
-                Effect.andThen(
-                  Effect.logWarning("Knowledge Graph indexing failed", {
-                    scopeId: scope.scopeId,
-                    error: error.message,
-                  }),
-                ),
-              ),
-            ),
-            Effect.ensuring(
-              Ref.update(indexes, (registrations) => {
-                if (registrations.get(scope.scopeId)?.generation !== nextGeneration) {
-                  return registrations;
-                }
-                const next = new Map(registrations);
-                next.delete(scope.scopeId);
-                return next;
-              }),
-            ),
-          );
+        const start = yield* Deferred.make<void>();
+        const task = Deferred.await(start).pipe(
+          Effect.andThen(runOwnedIndex(scope, nextGeneration)),
+          Effect.catch((error) =>
+            Effect.logWarning("Knowledge Graph index completion could not be settled", {
+              scopeId: scope.scopeId,
+              error: error.message,
+            }),
+          ),
+          Effect.ensuring(releaseIndexOwnership(scope.scopeId, nextGeneration)),
+        );
         const fiber = yield* task.pipe(Effect.forkIn(parentScope));
         const next = new Map(yield* Ref.get(indexes));
-        next.set(scope.scopeId, { generation: nextGeneration, fiber });
+        next.set(scope.scopeId, { generation: nextGeneration, fiber, pending: null });
         yield* Ref.set(indexes, next);
+        yield* Deferred.succeed(start, undefined);
       }),
     );
   });
@@ -247,27 +384,31 @@ export const makeKnowledgeGraphRuntime = Effect.gen(function* () {
   const cancelIndex = Effect.fn("KnowledgeGraphRuntime.cancelIndex")(function* (
     scopeId: KnowledgeGraphScopeId,
   ) {
-    yield* indexRegistrationSemaphore.withPermits(1)(
+    const registration = yield* indexRegistrationSemaphore.withPermits(1)(
       Effect.gen(function* () {
-        const registration = (yield* Ref.get(indexes)).get(scopeId);
-        if (registration !== undefined) yield* Fiber.interrupt(registration.fiber);
-        yield* Ref.update(indexes, (registrations) => {
-          const next = new Map(registrations);
-          next.delete(scopeId);
-          return next;
-        });
+        const current = yield* Ref.get(indexes);
+        const registration = current.get(scopeId);
+        if (registration === undefined) return Option.none<IndexRegistration>();
+        const next = new Map(current);
+        next.delete(scopeId);
+        yield* Ref.set(indexes, next);
+        return Option.some(registration);
       }),
     );
+    if (Option.isSome(registration)) yield* Fiber.interrupt(registration.value.fiber);
   });
 
-  const cancelAllIndexes = indexRegistrationSemaphore.withPermits(1)(
-    Effect.gen(function* () {
-      const current = yield* Ref.getAndSet(indexes, new Map());
-      yield* Effect.forEach(current.values(), ({ fiber }) => Fiber.interrupt(fiber), {
-        discard: true,
-      });
-    }),
-  );
+  const cancelAllIndexes = Effect.gen(function* () {
+    const current = yield* indexRegistrationSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* Ref.getAndSet(indexes, new Map());
+        return [...current.values()];
+      }),
+    );
+    yield* Effect.forEach(current, ({ fiber }) => Fiber.interrupt(fiber), {
+      discard: true,
+    });
+  });
 
   const reconcileKnownScopes = Effect.fn("KnowledgeGraphRuntime.reconcileKnownScopes")(function* (
     indexAll: boolean,
@@ -296,6 +437,7 @@ export const makeKnowledgeGraphRuntime = Effect.gen(function* () {
       (scope) =>
         repository.ensureScope(scope).pipe(
           mapPersistenceError("activate", scope.scopeId),
+          Effect.andThen(repairUnownedIndexStatus(scope.scopeId, "activate")),
           Effect.andThen(
             repository
               .getStatus(scope.scopeId)

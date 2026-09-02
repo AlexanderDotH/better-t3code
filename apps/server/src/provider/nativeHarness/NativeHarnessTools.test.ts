@@ -1,5 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import { WorkspaceEditError, WorkspaceEditInput } from "@t3tools/contracts";
+import {
+  WorkspaceEditError,
+  WorkspaceEditInput,
+  WorkspaceFindInput,
+  WorkspaceReadInput,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -12,6 +17,8 @@ import {
   NATIVE_HARNESS_MAX_TOOL_OUTPUT_BYTES,
   NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
   NATIVE_HARNESS_WORKSPACE_EDIT_TOOL,
+  NATIVE_HARNESS_WORKSPACE_FIND_TOOL,
+  NATIVE_HARNESS_WORKSPACE_READ_TOOL,
   buildNativeHarnessToolCatalog,
   enforceNativeHarnessToolResultLimit,
   nativeHarnessCommandEnvironment,
@@ -21,6 +28,12 @@ import {
   type NativeHarnessToolDeclaration,
 } from "./NativeHarnessTools.ts";
 import { makeNativeHarnessWorkspaceToolExecutor } from "./NativeHarnessWorkspaceTools.ts";
+
+const WORKSPACE_READ_TOOL_NAMES = [
+  NATIVE_HARNESS_WORKSPACE_FIND_TOOL,
+  NATIVE_HARNESS_WORKSPACE_READ_TOOL,
+  NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
+] as const;
 
 function extensionTool(name: string): NativeHarnessToolDeclaration {
   return {
@@ -38,26 +51,26 @@ describe("NativeHarnessTools", () => {
         interactionMode: "plan",
         sandboxMode: "danger-full-access",
       }).map(({ name }) => name),
-    ).toEqual([NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL]);
+    ).toEqual([...WORKSPACE_READ_TOOL_NAMES]);
     expect(
       nativeHarnessToolDeclarations({
         interactionMode: "default",
         sandboxMode: "read-only",
       }).map(({ name }) => name),
-    ).toEqual([NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL]);
+    ).toEqual([...WORKSPACE_READ_TOOL_NAMES]);
     expect(
       nativeHarnessToolDeclarations({
         interactionMode: "default",
         sandboxMode: "workspace-write",
       }).map(({ name }) => name),
-    ).toEqual([NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL, NATIVE_HARNESS_WORKSPACE_EDIT_TOOL]);
+    ).toEqual([...WORKSPACE_READ_TOOL_NAMES, NATIVE_HARNESS_WORKSPACE_EDIT_TOOL]);
     expect(
       nativeHarnessToolDeclarations({
         interactionMode: "default",
         sandboxMode: "danger-full-access",
       }).map(({ name }) => name),
     ).toEqual([
-      NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
+      ...WORKSPACE_READ_TOOL_NAMES,
       NATIVE_HARNESS_WORKSPACE_EDIT_TOOL,
       NATIVE_HARNESS_EXEC_COMMAND_TOOL,
     ]);
@@ -68,6 +81,12 @@ describe("NativeHarnessTools", () => {
       interactionMode: "default",
       sandboxMode: "workspace-write",
     });
+    const workspaceFind = declarations.find(
+      (declaration) => declaration.name === NATIVE_HARNESS_WORKSPACE_FIND_TOOL,
+    );
+    const workspaceRead = declarations.find(
+      (declaration) => declaration.name === NATIVE_HARNESS_WORKSPACE_READ_TOOL,
+    );
     const workspaceContext = declarations.find(
       (declaration) => declaration.name === NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
     );
@@ -75,9 +94,13 @@ describe("NativeHarnessTools", () => {
       (declaration) => declaration.name === NATIVE_HARNESS_WORKSPACE_EDIT_TOOL,
     );
 
-    expect(workspaceContext?.description).toContain(
-      "Searches or reads spanning multiple regular UTF-8 files MUST use batched `workspace_context` calls, using the fewest calls its limits allow; do not use shell text readers/searchers.",
+    expect(workspaceFind?.inputSchema).toEqual(
+      Schema.toJsonSchemaDocument(WorkspaceFindInput).schema,
     );
+    expect(workspaceRead?.inputSchema).toEqual(
+      Schema.toJsonSchemaDocument(WorkspaceReadInput).schema,
+    );
+    expect(workspaceContext?.description).toContain("mixed workspace searches");
     expect(workspaceEdit?.inputSchema).toEqual(
       Schema.toJsonSchemaDocument(WorkspaceEditInput).schema,
     );
@@ -92,6 +115,39 @@ describe("NativeHarnessTools", () => {
       }),
     ).toBe(false);
   });
+
+  it.effect("routes focused and mixed reads through the shared workspace engine", () =>
+    Effect.gen(function* () {
+      const requests: Array<unknown> = [];
+      const execute = makeNativeHarnessWorkspaceToolExecutor(
+        {
+          execute: (request) =>
+            Effect.sync(() => {
+              requests.push(request);
+              return { queries: [], reads: [], truncated: false, warnings: [] };
+            }),
+        },
+        {} as WorkspaceFileSystem.WorkspaceFileSystem["Service"],
+      );
+      const calls = [
+        [NATIVE_HARNESS_WORKSPACE_FIND_TOOL, { queries: [{ text: "tools.ts" }] }],
+        [NATIVE_HARNESS_WORKSPACE_READ_TOOL, { reads: [{ path: "README.md" }] }],
+        [
+          NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
+          { queries: [{ text: "workspace" }], reads: [{ path: "README.md" }] },
+        ],
+      ] as const;
+      const titles: Array<string | undefined> = [];
+
+      for (const [name, args] of calls) {
+        const result = yield* execute({ name, args, cwd: "/workspace", environment: {} });
+        titles.push(result?.title);
+      }
+
+      expect(requests).toEqual(calls.map(([, input]) => ({ workspaceRoot: "/workspace", input })));
+      expect(titles).toEqual(["Workspace find", "Workspace read", "Workspace context"]);
+    }),
+  );
 
   it.effect("delegates one mixed workspace_edit batch and returns only compact summaries", () =>
     Effect.gen(function* () {
@@ -251,9 +307,9 @@ describe("NativeHarnessTools", () => {
   });
 
   it("maps approvals and strips provider credentials from bounded shell commands", () => {
-    expect(
-      nativeHarnessToolRequiresApproval(NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL, "approval-required"),
-    ).toBe(false);
+    for (const name of WORKSPACE_READ_TOOL_NAMES) {
+      expect(nativeHarnessToolRequiresApproval(name, "approval-required")).toBe(false);
+    }
     expect(
       nativeHarnessToolRequiresApproval(NATIVE_HARNESS_WORKSPACE_EDIT_TOOL, "approval-required"),
     ).toBe(true);

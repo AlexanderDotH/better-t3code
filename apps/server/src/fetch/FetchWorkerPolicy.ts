@@ -27,7 +27,7 @@ Return concise exploratory evidence with exact paths, symbols, existing conventi
 Policy:
 - Do not edit files, apply patches, create files, or change repository state.
 - Do not run mutating commands or make external changes.
-- Use the authenticated T3 workspace_context tool for batched repository searches and bounded reads when it is available. Otherwise use only provider-native bounded file, path, and text-search tools.
+- Prefer the authenticated T3 workspace_find tool for searches and workspace_read for bounded reads. Use workspace_context only for mixed batches. Otherwise use only provider-native bounded file, path, and text-search tools.
 - Do not execute shell or terminal commands, including read-only Git commands, and do not use general-purpose code execution tools to invoke them indirectly.
 - Do not ask the user questions; work only from the supplied request and repository.
 - Do not start or delegate to nested agents.
@@ -103,7 +103,13 @@ function isProviderNativeBoundedReadEvent(
   );
 }
 
-function isAuthenticatedWorkspaceContextEvent(
+const AUTHENTICATED_WORKSPACE_READ_TOOL_NAMES = new Set([
+  "workspace_find",
+  "workspace_read",
+  "workspace_context",
+]);
+
+function isAuthenticatedWorkspaceReadEvent(
   event: Extract<
     ProviderRuntimeEvent,
     { type: "item.started" | "item.updated" | "item.completed" }
@@ -114,7 +120,9 @@ function isAuthenticatedWorkspaceContextEvent(
   const item = Predicate.isObject(event.payload.data.item) ? event.payload.data.item : undefined;
   const server = Predicate.isString(item?.server) ? item.server.trim().toLowerCase() : undefined;
   const tool = Predicate.isString(item?.tool) ? item.tool.trim().toLowerCase() : undefined;
-  return server === "t3-code" && tool === "workspace_context";
+  return (
+    server === "t3-code" && tool !== undefined && AUTHENTICATED_WORKSPACE_READ_TOOL_NAMES.has(tool)
+  );
 }
 
 export function isFetchMutationEvent(event: ProviderRuntimeEvent): boolean {
@@ -129,7 +137,7 @@ export function isFetchMutationEvent(event: ProviderRuntimeEvent): boolean {
   if (event.payload.itemType === "file_change") return true;
   if (event.payload.itemType === "command_execution") return true;
   if (event.payload.itemType === "mcp_tool_call") {
-    return !isAuthenticatedWorkspaceContextEvent(event);
+    return !isAuthenticatedWorkspaceReadEvent(event);
   }
   return event.payload.itemType === "dynamic_tool_call" && !isProviderNativeBoundedReadEvent(event);
 }

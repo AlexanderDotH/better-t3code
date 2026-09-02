@@ -19,12 +19,6 @@ import {
 } from "@t3tools/client-runtime/plan-implementation";
 import { resolveOpenRouterBootstrapModelPatch } from "@t3tools/client-runtime/openrouter-model-selection";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import {
-  consumeReasoningRecommendationOverride,
-  reconcileReasoningRecommendationState,
-  resolveReasoningTurnModelSelection,
-  type ReasoningRecommendationState,
-} from "@t3tools/client-runtime/reasoning-recommendation";
 import { resolveCodexContextWindowTokens } from "@t3tools/shared/model";
 import {
   codexFeedbackMessage,
@@ -182,7 +176,6 @@ export function useThreadComposerState() {
   const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   const interactionMode = selectedDraft?.interactionMode ?? selectedThread?.interactionMode ?? null;
-  const reasoningRecommendationState = selectedDraft?.reasoningRecommendation ?? null;
 
   const selectedThreadSessionActivity = useMemo(() => {
     const selectedThread = selectedThreadDetail ?? selectedThreadShell;
@@ -331,13 +324,6 @@ export function useThreadComposerState() {
     // is rolled out of the queue and the content is merged back into the
     // draft, preserving anything typed since.
     const durableModelSelection = draft.modelSelection ?? thread.modelSelection;
-    const reasoningTurnSelection = resolveReasoningTurnModelSelection(
-      durableModelSelection,
-      draft.reasoningRecommendation?.pendingOverride,
-    );
-    const consumedPendingOverride = reasoningTurnSelection.applied
-      ? draft.reasoningRecommendation?.pendingOverride
-      : undefined;
     const enqueuePromise = enqueueThreadOutboxMessage({
       environmentId: selectedThreadShell.environmentId,
       threadId: selectedThreadShell.id,
@@ -346,9 +332,6 @@ export function useThreadComposerState() {
       text,
       attachments,
       modelSelection: durableModelSelection,
-      ...(reasoningTurnSelection.applied
-        ? { turnModelSelection: reasoningTurnSelection.turnModelSelection }
-        : {}),
       ...(workflowSettings.fetchMode === undefined
         ? {}
         : { fetchMode: workflowSettings.fetchMode }),
@@ -360,22 +343,6 @@ export function useThreadComposerState() {
       createdAt: metadata.createdAt,
     });
     clearComposerDraftContent(threadKey);
-    void enqueuePromise.then(
-      () => {
-        if (!consumedPendingOverride) {
-          return;
-        }
-        const current = getComposerDraftSnapshot(threadKey).reasoningRecommendation;
-        if (!current) {
-          return;
-        }
-        const next = consumeReasoningRecommendationOverride(current, consumedPendingOverride);
-        if (next !== current) {
-          updateComposerDraftSettings(threadKey, { reasoningRecommendation: next });
-        }
-      },
-      () => undefined,
-    );
     enqueuePromise.catch((error: unknown) => {
       // Restore text via merge (idempotent) but attachments via the uncapped
       // append: the merge path slots existing attachments first and truncates
@@ -596,12 +563,7 @@ export function useThreadComposerState() {
       if (!selectedThreadKey) {
         return;
       }
-      const current = getComposerDraftSnapshot(selectedThreadKey).reasoningRecommendation;
-      const reconciled = reconcileReasoningRecommendationState(current, value);
-      updateComposerDraftSettings(selectedThreadKey, {
-        modelSelection: value,
-        ...(reconciled && reconciled !== current ? { reasoningRecommendation: reconciled } : {}),
-      });
+      updateComposerDraftSettings(selectedThreadKey, { modelSelection: value });
 
       const provider = serverConfig?.providers.find(
         (candidate) => candidate.instanceId === value.instanceId,
@@ -647,16 +609,6 @@ export function useThreadComposerState() {
     ],
   );
 
-  const onSetReasoningRecommendation = useCallback(
-    (value: ReasoningRecommendationState) => {
-      if (!selectedThreadKey) {
-        return;
-      }
-      updateComposerDraftSettings(selectedThreadKey, { reasoningRecommendation: value });
-    },
-    [selectedThreadKey],
-  );
-
   const onUpdateRuntimeMode = useCallback(
     (value: RuntimeMode) => {
       if (!selectedThreadKey) {
@@ -696,7 +648,6 @@ export function useThreadComposerState() {
     modelSelection,
     runtimeMode,
     interactionMode,
-    reasoningRecommendationState,
     fetchSupported: workflowSettings.supported,
     fetchEnabled: workflowSettings.fetchEnabled,
     parallelPlanImplementationEnabled:
@@ -715,6 +666,5 @@ export function useThreadComposerState() {
     onUpdateModelSelection,
     onUpdateRuntimeMode,
     onUpdateInteractionMode,
-    onSetReasoningRecommendation,
   };
 }

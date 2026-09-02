@@ -481,6 +481,13 @@ function enableLegacySidebarForTest(): void {
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     legacySidebarEnabled: true,
+    betterT3Device: {
+      ...DEFAULT_CLIENT_SETTINGS.betterT3Device,
+      flags: {
+        ...DEFAULT_CLIENT_SETTINGS.betterT3Device.flags,
+        "chat.classicSidebar": true,
+      },
+    },
   });
 }
 
@@ -2584,6 +2591,79 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       await expect.element(page.getByText("No threads yet")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens a secondary project's existing server thread from the classic sidebar", async () => {
+    enableLegacySidebarForTest();
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSecondaryProject(),
+    });
+    try {
+      const secondaryProjectTitle = page.getByText("Docs Portal", { exact: true });
+      await expect.element(secondaryProjectTitle).toBeInTheDocument();
+
+      const secondaryThreadRow = page.getByTestId(`thread-row-${SECONDARY_THREAD_ID}`);
+      await expect.element(secondaryThreadRow).toBeInTheDocument();
+      await secondaryThreadRow.click();
+
+      const nextPath = await waitForURL(
+        mounted.router,
+        (path) => path === serverThreadPath(SECONDARY_THREAD_ID),
+        "Classic sidebar should open the selected secondary-project server thread.",
+      );
+      expect(nextPath).toBe(serverThreadPath(SECONDARY_THREAD_ID));
+      expect(
+        useComposerDraftStore.getState().getDraftThread(threadRefFor(SECONDARY_THREAD_ID)),
+      ).toBeNull();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("creates a secondary-project draft from the classic sidebar", async () => {
+    enableLegacySidebarForTest();
+    const blockedProjectFileRead = new Promise<never>(() => undefined);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSecondaryProject({ includeSecondaryThread: false }),
+      resolveRpc: (body) => {
+        if (
+          body._tag === WS_METHODS.projectsReadFile &&
+          body.cwd === "/repo/clients/docs-portal" &&
+          body.relativePath === "t3.json"
+        ) {
+          return blockedProjectFileRead;
+        }
+        return undefined;
+      },
+    });
+    try {
+      const secondaryProjectTitle = page.getByText("Docs Portal", { exact: true });
+      await expect.element(secondaryProjectTitle).toBeInTheDocument();
+      await secondaryProjectTitle.hover();
+
+      const createThreadButton = page.getByRole("button", {
+        name: "Create new thread in Docs Portal",
+      });
+      await expect.element(createThreadButton).toBeInTheDocument();
+      await createThreadButton.click();
+
+      const nextPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Classic sidebar should open a draft for the empty secondary project.",
+      );
+      const draftThread = useComposerDraftStore
+        .getState()
+        .getDraftSession(draftIdFromPath(nextPath));
+      expect(draftThread).toMatchObject({
+        environmentId: LOCAL_ENVIRONMENT_ID,
+        projectId: SECOND_PROJECT_ID,
+      });
     } finally {
       await mounted.cleanup();
     }

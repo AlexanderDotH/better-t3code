@@ -19,10 +19,11 @@ import {
 } from "@t3tools/shared/interfaceLanguage";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { ChevronRightIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { isElectron } from "../../env";
-import { useChatVisualMode } from "../../chatVisualModeSync";
+import { useChatVisualMode, useSetChatVisualMode } from "../../chatVisualModeSync";
 import {
   useEnvironments,
   usePrimaryEnvironmentId,
@@ -37,9 +38,15 @@ import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { Button } from "../ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+  useSettingsSearchTargetId,
+} from "./settingsLayout";
 import {
   buildBetterT3ControlStates,
   buildBetterT3SwitchSettingsPatch,
@@ -50,7 +57,11 @@ import {
   useBetterT3PreparedControls,
   WEB_BETTER_T3_PREPARED_CONTROL_IDS,
 } from "./BetterT3SettingsPanel.controls";
-import { BETTER_T3_VISUAL_FEATURE_IDS, BetterT3FeatureVisual } from "./BetterT3SettingsPreview";
+import {
+  BETTER_T3_VISUAL_FEATURE_IDS,
+  BetterT3FeatureChoice,
+  type BetterT3VisualChoiceValue,
+} from "./BetterT3SettingsPreview";
 import { buildBetterT3SettingsPreviewModel } from "./BetterT3SettingsPreview.logic";
 import { InterfaceLanguageSetting } from "./InterfaceLanguageSetting";
 import { requireSettingsEnvironment } from "./settingsEnvironment";
@@ -67,6 +78,92 @@ const BETTER_T3_SECTIONS = [
   "integration-status",
 ] as const satisfies ReadonlyArray<BetterT3FeatureSection>;
 
+export type BetterT3SettingsTabId =
+  | "general"
+  | "agents"
+  | "visual"
+  | "workspace"
+  | "voice"
+  | "knowledge"
+  | "system"
+  | "integrations";
+
+export const BETTER_T3_SETTINGS_TABS = [
+  { id: "general", section: null, labelMessageId: "settings.betterT3.tab.general" },
+  { id: "agents", section: "agent-workflows", labelMessageId: "settings.betterT3.tab.agents" },
+  { id: "visual", section: "chat-layout", labelMessageId: "settings.betterT3.tab.visual" },
+  {
+    id: "workspace",
+    section: "workspace-source-control",
+    labelMessageId: "settings.betterT3.tab.workspace",
+  },
+  {
+    id: "voice",
+    section: "voice-synchronization",
+    labelMessageId: "settings.betterT3.tab.voice",
+  },
+  {
+    id: "knowledge",
+    section: "knowledge-automation",
+    labelMessageId: "settings.betterT3.tab.knowledge",
+  },
+  {
+    id: "system",
+    section: "resource-protection",
+    labelMessageId: "settings.betterT3.tab.system",
+  },
+  {
+    id: "integrations",
+    section: "integration-status",
+    labelMessageId: "settings.betterT3.tab.integrations",
+  },
+] as const satisfies ReadonlyArray<{
+  readonly id: BetterT3SettingsTabId;
+  readonly section: BetterT3FeatureSection | null;
+  readonly labelMessageId: InterfaceMessageKey;
+}>;
+
+export const BETTER_T3_ADVANCED_FEATURE_IDS: ReadonlySet<BetterT3FeatureId> = new Set([
+  "agent.fetchModel",
+  "agent.parallelPlanReviewer",
+  "agent.autoReasoningModel",
+  "agent.cavemanMode",
+  "chat.cardMorphing",
+  "chat.previewCount",
+  "chat.sorting",
+  "chat.settling",
+  "chat.shiftClickShowLess",
+  "workspace.checkpoints",
+  "workspace.chatPortability",
+  "voice.outputLanguage",
+  "voice.transcriptPortability",
+  "voice.credentials",
+  "knowledge.model",
+  "knowledge.progress",
+  "knowledge.rebuild",
+  "knowledge.pause",
+  "knowledge.clear",
+  "resource.diagnostics",
+  "integration.mcp",
+  "integration.skills",
+]);
+
+export function resolveBetterT3SettingsSearchTarget(
+  targetId: string | null,
+): { readonly tabId: BetterT3SettingsTabId; readonly advanced: boolean } | null {
+  if (targetId === "better-t3-interface" || targetId === "better-t3-interface-language") {
+    return { tabId: "general", advanced: false };
+  }
+  const descriptor = BETTER_T3_FEATURE_REGISTRY.find((feature) => feature.id === targetId);
+  if (!descriptor) return null;
+  const tab = BETTER_T3_SETTINGS_TABS.find((candidate) => candidate.section === descriptor.section);
+  if (!tab) return null;
+  return {
+    tabId: tab.id,
+    advanced: BETTER_T3_ADVANCED_FEATURE_IDS.has(descriptor.id),
+  };
+}
+
 export interface BetterT3SettingsPanelViewProps {
   readonly features: ReadonlyArray<BetterT3FeatureControlStateV1>;
   readonly sectionTitles: Readonly<Record<BetterT3FeatureSection, string>>;
@@ -76,6 +173,7 @@ export interface BetterT3SettingsPanelViewProps {
   readonly introduction?: ReactNode;
   readonly languageControl?: ReactNode;
   readonly featureVisuals?: Partial<Record<BetterT3FeatureId, ReactNode>>;
+  readonly featureChoices?: Partial<Record<BetterT3FeatureId, ReactNode>>;
 }
 
 const availabilityStatus = (
@@ -128,55 +226,136 @@ function BetterT3InterfaceSection(props: {
   );
 }
 
-export function BetterT3SettingsPanelView({
-  features,
-  sectionTitles,
-  translate,
-  controls,
-  onSwitchChange,
-  introduction,
-  languageControl,
-  featureVisuals,
-}: BetterT3SettingsPanelViewProps) {
-  const sections = Object.keys(sectionTitles) as BetterT3FeatureSection[];
+function BetterT3SettingsTabs(props: BetterT3SettingsPanelViewProps) {
+  const searchTargetId = useSettingsSearchTargetId();
+  const initialSearchTarget = resolveBetterT3SettingsSearchTarget(searchTargetId);
+  const [activeTab, setActiveTab] = useState<BetterT3SettingsTabId>(
+    initialSearchTarget?.tabId ?? "general",
+  );
+  const [advancedOpen, setAdvancedOpen] = useState(initialSearchTarget?.advanced ?? false);
+
+  useEffect(() => {
+    const searchTarget = resolveBetterT3SettingsSearchTarget(searchTargetId);
+    if (!searchTarget) return;
+    setActiveTab(searchTarget.tabId);
+    if (searchTarget.advanced) setAdvancedOpen(true);
+  }, [searchTargetId]);
+
+  const activeTabDefinition =
+    BETTER_T3_SETTINGS_TABS.find((tab) => tab.id === activeTab) ?? BETTER_T3_SETTINGS_TABS[0];
+  const sectionFeatures =
+    activeTabDefinition.section === null
+      ? []
+      : props.features.filter(
+          (feature) => feature.descriptor.section === activeTabDefinition.section,
+        );
+  const basicFeatures = sectionFeatures.filter(
+    (feature) => !BETTER_T3_ADVANCED_FEATURE_IDS.has(feature.descriptor.id),
+  );
+  const advancedFeatures = sectionFeatures.filter((feature) =>
+    BETTER_T3_ADVANCED_FEATURE_IDS.has(feature.descriptor.id),
+  );
+  const renderFeatureRows = (visibleFeatures: ReadonlyArray<BetterT3FeatureControlStateV1>) =>
+    visibleFeatures.map((feature) => {
+      const messageIds = resolveBetterT3DescriptorMessageKeys(feature.descriptor);
+      const featureChoice = props.featureChoices?.[feature.descriptor.id];
+      return (
+        <SettingsRow
+          key={feature.descriptor.id}
+          id={feature.descriptor.id}
+          data-better-t3-feature={feature.descriptor.id}
+          title={props.translate(messageIds.labelMessageId)}
+          description={props.translate(messageIds.descriptionMessageId)}
+          status={availabilityStatus(feature, props.translate)}
+          visual={featureChoice ? null : props.featureVisuals?.[feature.descriptor.id]}
+          control={
+            featureChoice ? null : (
+              <FeatureControl
+                feature={feature}
+                control={props.controls[feature.descriptor.id] ?? null}
+                translate={props.translate}
+                onSwitchChange={props.onSwitchChange}
+              />
+            )
+          }
+        >
+          {featureChoice}
+        </SettingsRow>
+      );
+    });
+
+  return (
+    <div className="min-w-0 space-y-8">
+      <div
+        aria-label={props.translate("settings.betterT3.title")}
+        className="mx-3 flex min-w-0 gap-1 overflow-x-auto rounded-xl border border-border/60 bg-background/30 p-1 sm:mx-4"
+        role="tablist"
+      >
+        {BETTER_T3_SETTINGS_TABS.map((tab) => {
+          const selected = tab.id === activeTab;
+          return (
+            <button
+              role="tab"
+              aria-controls={`better-t3-tabpanel-${tab.id}`}
+              aria-selected={selected}
+              className={`inline-flex h-9 shrink-0 items-center rounded-lg px-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring ${
+                selected
+                  ? "bg-accent font-medium text-foreground"
+                  : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+              }`}
+              id={`better-t3-tab-${tab.id}`}
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              type="button"
+            >
+              {props.translate(tab.labelMessageId)}
+            </button>
+          );
+        })}
+      </div>
+
+      <div
+        aria-labelledby={`better-t3-tab-${activeTab}`}
+        id={`better-t3-tabpanel-${activeTab}`}
+        role="tabpanel"
+      >
+        {activeTabDefinition.section === null ? (
+          props.languageControl ? (
+            <BetterT3InterfaceSection control={props.languageControl} translate={props.translate} />
+          ) : null
+        ) : (
+          <SettingsSection title={props.sectionTitles[activeTabDefinition.section]}>
+            {renderFeatureRows(basicFeatures)}
+            {advancedFeatures.length > 0 ? (
+              <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+                <CollapsibleTrigger
+                  className="group flex min-h-10 w-full items-center gap-2 border-t border-border/60 px-3 pt-3 text-left text-sm font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:px-4"
+                  data-better-t3-advanced-trigger
+                  type="button"
+                >
+                  <ChevronRightIcon
+                    aria-hidden
+                    className="size-4 shrink-0 transition-transform duration-200 group-data-panel-open:rotate-90"
+                  />
+                  {props.translate("settings.betterT3.advancedSettings")}
+                </CollapsibleTrigger>
+                <CollapsiblePanel data-better-t3-advanced-panel>
+                  <div className="space-y-1 pt-2">{renderFeatureRows(advancedFeatures)}</div>
+                </CollapsiblePanel>
+              </Collapsible>
+            ) : null}
+          </SettingsSection>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function BetterT3SettingsPanelView(props: BetterT3SettingsPanelViewProps) {
   return (
     <SettingsPageContainer>
-      {introduction}
-      {languageControl ? (
-        <BetterT3InterfaceSection control={languageControl} translate={translate} />
-      ) : null}
-      {sections.map((section) => {
-        const sectionFeatures = features.filter(
-          (feature) => feature.descriptor.section === section,
-        );
-        if (sectionFeatures.length === 0) return null;
-        return (
-          <SettingsSection key={section} title={sectionTitles[section]}>
-            {sectionFeatures.map((feature) => {
-              const messageIds = resolveBetterT3DescriptorMessageKeys(feature.descriptor);
-              return (
-                <SettingsRow
-                  key={feature.descriptor.id}
-                  id={feature.descriptor.id}
-                  data-better-t3-feature={feature.descriptor.id}
-                  title={translate(messageIds.labelMessageId)}
-                  description={translate(messageIds.descriptionMessageId)}
-                  status={availabilityStatus(feature, translate)}
-                  visual={featureVisuals?.[feature.descriptor.id]}
-                  control={
-                    <FeatureControl
-                      feature={feature}
-                      control={controls[feature.descriptor.id] ?? null}
-                      translate={translate}
-                      onSwitchChange={onSwitchChange}
-                    />
-                  }
-                />
-              );
-            })}
-          </SettingsSection>
-        );
-      })}
+      {props.introduction}
+      <BetterT3SettingsTabs {...props} />
     </SettingsPageContainer>
   );
 }
@@ -555,6 +734,7 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
     [capabilities, environmentAvailable, settings.betterT3Device, settings.betterT3Environment],
   );
   const chatVisualMode = useChatVisualMode();
+  const setChatVisualMode = useSetChatVisualMode();
   const previewModel = useMemo(
     () =>
       buildBetterT3SettingsPreviewModel({
@@ -582,21 +762,55 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
     },
     [updateSettings],
   );
-  const featureVisuals = useMemo(
-    () =>
-      Object.fromEntries(
-        BETTER_T3_VISUAL_FEATURE_IDS.map((featureId) => [
-          featureId,
-          <BetterT3FeatureVisual
-            featureId={featureId}
-            key={featureId}
-            model={previewModel}
-            translate={translate}
-          />,
-        ]),
-      ) as Partial<Record<BetterT3FeatureId, ReactNode>>,
-    [previewModel, translate],
+  const onVisualChoiceChange = useCallback(
+    (
+      featureId: (typeof BETTER_T3_VISUAL_FEATURE_IDS)[number],
+      value: BetterT3VisualChoiceValue,
+    ) => {
+      if (featureId === "chat.sidebarPosition") {
+        if (value === "left" || value === "right") updateSettings({ sidebarPosition: value });
+        return;
+      }
+      if (featureId === "chat.presentation") {
+        if (value === "current" || value === "classic") setChatVisualMode(value);
+        return;
+      }
+      if (typeof value === "boolean") onSwitchChange(featureId, value);
+    },
+    [onSwitchChange, setChatVisualMode, updateSettings],
   );
+  const featureChoices = useMemo(() => {
+    const choices: Partial<Record<BetterT3FeatureId, ReactNode>> = {};
+    for (const featureId of BETTER_T3_VISUAL_FEATURE_IDS) {
+      const feature = features.find((entry) => entry.descriptor.id === featureId);
+      if (!feature) continue;
+      const value =
+        featureId === "chat.sidebarPosition"
+          ? settings.sidebarPosition
+          : featureId === "chat.presentation"
+            ? chatVisualMode
+            : feature.value === true;
+      choices[featureId] = (
+        <BetterT3FeatureChoice
+          disabled={feature.availability.state !== "available"}
+          featureId={featureId}
+          key={featureId}
+          model={previewModel}
+          onChange={(nextValue) => onVisualChoiceChange(featureId, nextValue)}
+          translate={translate}
+          value={value}
+        />
+      );
+    }
+    return choices;
+  }, [
+    chatVisualMode,
+    features,
+    onVisualChoiceChange,
+    previewModel,
+    settings.sidebarPosition,
+    translate,
+  ]);
   const preparedControls = useBetterT3PreparedControls({
     environmentId: props.environment.environmentId,
     settings,
@@ -712,7 +926,7 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
       sectionTitles={sectionTitles}
       translate={translate}
       controls={controls}
-      featureVisuals={featureVisuals}
+      featureChoices={featureChoices}
       languageControl={<InterfaceLanguageSetting searchTargetId="better-t3-interface-language" />}
       onSwitchChange={onSwitchChange}
       introduction={

@@ -60,6 +60,14 @@ export function partitionSidebarProjectsByActivity(input: {
       (thread) => thread.archivedAt === null,
     );
     const requiresAttention = activeThreads.some(sidebarThreadRequiresAttention);
+    if (
+      !requiresAttention &&
+      activeThreads.length > 0 &&
+      activeThreads.every((thread) => thread.settledOverride === "settled")
+    ) {
+      olderProjects.push(project);
+      continue;
+    }
     let latestActivityAtMs = Number.NEGATIVE_INFINITY;
 
     const activityTimestamps =

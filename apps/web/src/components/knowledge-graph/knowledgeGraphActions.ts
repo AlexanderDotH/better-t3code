@@ -3,6 +3,10 @@ import type {
   KnowledgeGraphClearInput,
   KnowledgeGraphScopeInput,
 } from "@t3tools/contracts";
+import {
+  graphPointFromScreenPoint,
+  type KnowledgeGraphViewport,
+} from "@t3tools/client-runtime/knowledge-graph";
 
 interface KnowledgeGraphClearRequest {
   readonly environmentId: EnvironmentId;
@@ -31,13 +35,15 @@ export function isKnowledgeGraphDragGesture(
 export function resolveKnowledgeGraphDraggedPosition(
   pointer: PointerPosition,
   bounds: PointerBounds,
-  zoom: number,
+  viewport: KnowledgeGraphViewport,
 ): PointerPosition {
-  const scale = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
-  return {
-    x: Math.min(Math.max(pointer.x - bounds.left, 0), Math.max(0, bounds.width)) / scale,
-    y: Math.min(Math.max(pointer.y - bounds.top, 0), Math.max(0, bounds.height)) / scale,
-  };
+  return graphPointFromScreenPoint(
+    {
+      x: Math.min(Math.max(pointer.x - bounds.left, 0), Math.max(0, bounds.width)),
+      y: Math.min(Math.max(pointer.y - bounds.top, 0), Math.max(0, bounds.height)),
+    },
+    viewport,
+  );
 }
 
 export async function confirmAndClearKnowledgeGraph(input: {

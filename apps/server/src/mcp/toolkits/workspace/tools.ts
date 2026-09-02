@@ -3,6 +3,8 @@ import {
   WorkspaceContextInput,
   WorkspaceContextResult,
   WorkspaceEditError,
+  WorkspaceFindInput,
+  WorkspaceReadInput,
   WorkspaceEditInput,
   WorkspaceEditResult,
 } from "@t3tools/contracts";
@@ -19,9 +21,37 @@ const dependencies = [
   WorkspaceContext.WorkspaceContext,
 ];
 
+export const WorkspaceFindTool = Tool.make("workspace_find", {
+  description:
+    "Batch independent workspace path or literal text searches. Supports auto, path, and content modes with bounded context. Prefer this over shell find, rg, or grep. The server selects the trusted workspace root; callers cannot override it.",
+  parameters: WorkspaceFindInput,
+  success: WorkspaceContextResult,
+  failure: WorkspaceContextError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Find workspace files and text")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+export const WorkspaceReadTool = Tool.make("workspace_read", {
+  description:
+    "Batch bounded one-indexed inclusive line reads from regular UTF-8 workspace files. Successful reads include a revision for guarded edits. Prefer this over shell cat or sed. The server selects the trusted workspace root; callers cannot override it.",
+  parameters: WorkspaceReadInput,
+  success: WorkspaceContextResult,
+  failure: WorkspaceContextError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Read workspace files")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 export const WorkspaceContextTool = Tool.make("workspace_context", {
   description:
-    "Batch independent repository path/content searches and bounded line reads against this authenticated thread's trusted workspace. Searches or reads spanning multiple regular UTF-8 files MUST use batched `workspace_context` calls, using the fewest calls its limits allow; do not use shell text readers/searchers. The server selects the project or worktree root; callers cannot override it.",
+    "Batch mixed workspace searches and bounded line reads in one authenticated call. Prefer workspace_find for search-only work and workspace_read for read-only work. The server selects the trusted workspace root; callers cannot override it.",
   parameters: WorkspaceContextInput,
   success: WorkspaceContextResult,
   failure: WorkspaceContextError,
@@ -33,7 +63,11 @@ export const WorkspaceContextTool = Tool.make("workspace_context", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
-export const WorkspaceToolkit = Toolkit.make(WorkspaceContextTool);
+export const WorkspaceToolkit = Toolkit.make(
+  WorkspaceFindTool,
+  WorkspaceReadTool,
+  WorkspaceContextTool,
+);
 
 export const WorkspaceEditTool = Tool.make("workspace_edit", {
   description:
