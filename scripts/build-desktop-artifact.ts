@@ -50,6 +50,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import sharp from "sharp";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = "com.t3tools.t3code";
@@ -320,6 +321,20 @@ export class DesktopIconSourceMissingError extends Schema.TaggedErrorClass<Deskt
   }
 }
 
+export class DesktopIconGenerationError extends Schema.TaggedErrorClass<DesktopIconGenerationError>()(
+  "DesktopIconGenerationError",
+  {
+    platform: BuildPlatform,
+    sourcePath: Schema.String,
+    targetPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Could not generate the Desktop ${desktopIconPlatformNames[this.platform]} icon from ${this.sourcePath}`;
+  }
+}
+
 export class DesktopDmgBackgroundSourceMissingError extends Schema.TaggedErrorClass<DesktopDmgBackgroundSourceMissingError>()(
   "DesktopDmgBackgroundSourceMissingError",
   {
@@ -329,6 +344,20 @@ export class DesktopDmgBackgroundSourceMissingError extends Schema.TaggedErrorCl
 ) {
   override get message(): string {
     return `Desktop ${this.channel} DMG background source is missing at ${this.sourcePath}`;
+  }
+}
+
+export class DesktopDmgBackgroundRasterizationError extends Schema.TaggedErrorClass<DesktopDmgBackgroundRasterizationError>()(
+  "DesktopDmgBackgroundRasterizationError",
+  {
+    channel: Schema.Literals(["latest", "nightly"]),
+    sourcePath: Schema.String,
+    targetPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Could not rasterize the Desktop ${this.channel} DMG background at ${this.sourcePath}`;
   }
 }
 
@@ -1882,40 +1911,45 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
   }
 });
 
-function generateMacIconSet(
-  sourcePng: string,
-  targetIcns: string,
-  tmpRoot: string,
-  path: Path.Path,
-  verbose: boolean,
-) {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const iconsetDir = path.join(tmpRoot, "icon.iconset");
-    yield* fs.makeDirectory(iconsetDir, { recursive: true });
-
-    const iconSizes = [16, 32, 128, 256, 512] as const;
-    for (const size of iconSizes) {
-      yield* runCommand(
-        ChildProcess.make(
-          {},
-        )`sips -z ${size} ${size} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}.png`)}`,
-        { label: `sips icon ${size}x${size}`, verbose },
+export function generateMacIconSet(sourcePng: string, targetIcns: string) {
+  return Effect.tryPromise({
+    try: async () => {
+      const entries = await Promise.all(
+        (
+          [
+            ["icp4", 16],
+            ["icp5", 32],
+            ["icp6", 64],
+            ["ic07", 128],
+            ["ic08", 256],
+            ["ic09", 512],
+            ["ic10", 1024],
+          ] as const
+        ).map(async ([type, size]) => ({
+          type,
+          png: await sharp(sourcePng).resize(size, size, { fit: "fill" }).png().toBuffer(),
+        })),
       );
-
-      const retinaSize = size * 2;
-      yield* runCommand(
-        ChildProcess.make(
-          {},
-        )`sips -z ${retinaSize} ${retinaSize} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}@2x.png`)}`,
-        { label: `sips icon ${size}x${size}@2x`, verbose },
-      );
-    }
-
-    yield* runCommand(ChildProcess.make({})`iconutil -c icns ${iconsetDir} -o ${targetIcns}`, {
-      label: "iconutil icns",
-      verbose,
-    });
+      const totalLength = 8 + entries.reduce((length, entry) => length + 8 + entry.png.length, 0);
+      const icns = Buffer.allocUnsafe(totalLength);
+      icns.write("icns", 0, 4, "ascii");
+      icns.writeUInt32BE(totalLength, 4);
+      let offset = 8;
+      for (const entry of entries) {
+        icns.write(entry.type, offset, 4, "ascii");
+        icns.writeUInt32BE(entry.png.length + 8, offset + 4);
+        entry.png.copy(icns, offset + 8);
+        offset += entry.png.length + 8;
+      }
+      await NodeFSP.writeFile(targetIcns, icns);
+    },
+    catch: (cause) =>
+      new DesktopIconGenerationError({
+        platform: "mac",
+        sourcePath: sourcePng,
+        targetPath: targetIcns,
+        cause,
+      }),
   });
 }
 
@@ -1930,19 +1964,29 @@ function stageMacIcons(stageResourcesDir: string, sourcePng: string, verbose: bo
       });
     }
 
-    const tmpRoot = yield* fs.makeTempDirectoryScoped({
-      prefix: "t3code-icon-build-",
-    });
-
     const iconPngPath = path.join(stageResourcesDir, "icon.png");
     const iconIcnsPath = path.join(stageResourcesDir, "icon.icns");
 
-    yield* runCommand(ChildProcess.make({})`sips -z 512 512 ${sourcePng} --out ${iconPngPath}`, {
-      label: "sips mac icon",
-      verbose,
+    yield* Effect.tryPromise({
+      try: () =>
+        sharp(sourcePng)
+          .resize(512, 512, { fit: "fill" })
+          .png()
+          .toFile(iconPngPath)
+          .then(() => undefined),
+      catch: (cause) =>
+        new DesktopIconGenerationError({
+          platform: "mac",
+          sourcePath: sourcePng,
+          targetPath: iconPngPath,
+          cause,
+        }),
     });
 
-    yield* generateMacIconSet(sourcePng, iconIcnsPath, tmpRoot, path, verbose);
+    yield* generateMacIconSet(sourcePng, iconIcnsPath);
+    if (verbose) {
+      yield* Effect.log("[desktop-artifact] Generated macOS PNG and ICNS icons.");
+    }
   });
 }
 
@@ -1967,15 +2011,26 @@ export const stageDesktopDmgBackground = Effect.fn("stageDesktopDmgBackground")(
       "dmg",
       `dmg-background-${channel}${output.suffix}.png`,
     );
-    yield* runCommand(
-      ChildProcess.make(
-        {},
-      )`sips -s format png -z ${output.height} ${output.width} ${sourcePath} --out ${targetPath}`,
-      {
-        label: `sips ${channel} DMG background${output.suffix || "@1x"}`,
-        verbose,
-      },
-    );
+    yield* Effect.tryPromise({
+      try: () =>
+        sharp(sourcePath)
+          .resize(output.width, output.height, { fit: "fill" })
+          .png()
+          .toFile(targetPath)
+          .then(() => undefined),
+      catch: (cause) =>
+        new DesktopDmgBackgroundRasterizationError({
+          channel,
+          sourcePath,
+          targetPath,
+          cause,
+        }),
+    });
+    if (verbose) {
+      yield* Effect.log(
+        `[desktop-artifact] Rasterized ${channel} DMG background${output.suffix || "@1x"}.`,
+      );
+    }
   }
 });
 
@@ -2183,7 +2238,7 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 
 export function resolveDesktopProductName(version: string): string {
   return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "T3 Code (Nightly)"
+    ? "Better T3 Code (Nightly)"
     : (desktopPackageJson.productName ?? "T3 Code");
 }
 

@@ -16,6 +16,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   BundleNotSelfContainedError,
   BuildCommandFailedError,
+  DesktopDmgBackgroundRasterizationError,
+  DesktopIconGenerationError,
   buildWslRuntimeArchiveArgs,
   parseWslRuntimeArchiveMembers,
   DesktopDmgBackgroundSourceMissingError,
@@ -50,6 +52,7 @@ import {
   resolveWindowsServerAsarIgnoreGlobs,
   resourceMonitorExecutableName,
   resolveGitHubPublishConfig,
+  generateMacIconSet,
   resolveMockUpdateServerPort,
   resolveMockUpdateServerUrl,
   resolvePackageManagerUserAgent,
@@ -253,8 +256,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   });
 
   it("switches desktop packaging product names to nightly for nightly builds", () => {
-    assert.equal(resolveDesktopProductName("0.0.17"), "T3 Code (Alpha)");
-    assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "T3 Code (Nightly)");
+    assert.equal(resolveDesktopProductName("0.0.17"), "Better T3 Code (Alpha)");
+    assert.equal(
+      resolveDesktopProductName("0.0.17-nightly.20260413.42"),
+      "Better T3 Code (Nightly)",
+    );
   });
 
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
@@ -639,7 +645,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "**/node_modules/.bin/**",
       ]);
       assert.deepStrictEqual(mac.dmg, {
-        title: "T3 Code (Alpha) 1.2.3 Installer",
+        title: "Better T3 Code (Alpha) 1.2.3 Installer",
         background: "dmg/dmg-background-latest.png",
         window: { width: 540, height: 412 },
         contents: [
@@ -1212,43 +1218,49 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const dmgDir = path.join(stageResourcesDir, "dmg");
         yield* fs.makeDirectory(dmgDir, { recursive: true });
         const sourcePath = path.join(dmgDir, "dmg-background-nightly.svg");
-        yield* fs.writeFileString(sourcePath, '<svg xmlns="http://www.w3.org/2000/svg"/>');
-        const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> =
-          [];
-
-        yield* stageDesktopDmgBackground(stageResourcesDir, "nightly", false).pipe(
-          Effect.provide(iconResizeSpawnerLayer(commands, [0, 0])),
+        yield* fs.writeFileString(
+          sourcePath,
+          '<svg width="1080" height="760" xmlns="http://www.w3.org/2000/svg"><rect width="1080" height="760" fill="#fff"/></svg>',
         );
 
-        assert.deepStrictEqual(
-          commands.map((command) => [command.command, ...command.args]),
-          [
-            [
-              "sips",
-              "-s",
-              "format",
-              "png",
-              "-z",
-              "380",
-              "540",
-              sourcePath,
-              "--out",
-              path.join(dmgDir, "dmg-background-nightly.png"),
-            ],
-            [
-              "sips",
-              "-s",
-              "format",
-              "png",
-              "-z",
-              "760",
-              "1080",
-              sourcePath,
-              "--out",
-              path.join(dmgDir, "dmg-background-nightly@2x.png"),
-            ],
-          ],
+        yield* stageDesktopDmgBackground(stageResourcesDir, "nightly", false);
+
+        for (const output of [
+          { path: path.join(dmgDir, "dmg-background-nightly.png"), width: 540, height: 380 },
+          {
+            path: path.join(dmgDir, "dmg-background-nightly@2x.png"),
+            width: 1080,
+            height: 760,
+          },
+        ]) {
+          const png = yield* fs.readFile(output.path);
+          assert.equal(new TextDecoder().decode(png.slice(1, 4)), "PNG");
+          const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
+          assert.equal(view.getUint32(16), output.width);
+          assert.equal(view.getUint32(20), output.height);
+        }
+      }),
+    ),
+  );
+
+  it.effect("fails clearly when a DMG background cannot be rasterized", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const stageResourcesDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "t3code-dmg-background-invalid-",
+        });
+        const dmgDir = path.join(stageResourcesDir, "dmg");
+        yield* fs.makeDirectory(dmgDir, { recursive: true });
+        yield* fs.writeFileString(path.join(dmgDir, "dmg-background-latest.svg"), "not svg");
+
+        const error = yield* stageDesktopDmgBackground(stageResourcesDir, "latest", false).pipe(
+          Effect.flip,
         );
+
+        assert.instanceOf(error, DesktopDmgBackgroundRasterizationError);
+        assert.include(error.message, "latest");
       }),
     ),
   );
@@ -1268,6 +1280,45 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.instanceOf(error, DesktopDmgBackgroundSourceMissingError);
         assert.equal(error.channel, "latest");
         assert.include(error.sourcePath, "dmg-background-latest.svg");
+      }),
+    ),
+  );
+
+  it.effect("generates a macOS icon container without iconutil", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-icns-" });
+        const sourcePath = path.join(tempDir, "source.png");
+        const targetPath = path.join(tempDir, "icon.icns");
+        yield* Effect.tryPromise({
+          try: () =>
+            import("sharp").then(({ default: sharp }) =>
+              sharp({
+                create: { width: 1024, height: 1024, channels: 4, background: "#000" },
+              })
+                .png()
+                .toFile(sourcePath),
+            ),
+          catch: (cause) =>
+            new DesktopIconGenerationError({
+              platform: "mac",
+              sourcePath,
+              targetPath,
+              cause,
+            }),
+        });
+
+        yield* generateMacIconSet(sourcePath, targetPath);
+
+        const icns = yield* fs.readFile(targetPath);
+        assert.equal(new TextDecoder().decode(icns.slice(0, 4)), "icns");
+        const view = new DataView(icns.buffer, icns.byteOffset, icns.byteLength);
+        assert.equal(view.getUint32(4), icns.byteLength);
+        for (const type of ["icp4", "icp5", "icp6", "ic07", "ic08", "ic09", "ic10"]) {
+          assert.include(new TextDecoder().decode(icns), type);
+        }
       }),
     ),
   );
