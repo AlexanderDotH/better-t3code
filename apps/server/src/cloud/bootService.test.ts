@@ -77,6 +77,7 @@ it("renders a per-user Windows task with no elevation or runtime limit", () => {
     userId: "WORKSTATION\\alex",
   });
 
+  expect(task.startsWith(`<?xml version="1.0" encoding="UTF-16"?>`)).toBe(true);
   expect(task).toContain("<LogonTrigger>\n      <Enabled>true</Enabled>");
   expect(task).toContain("<UserId>WORKSTATION\\alex</UserId>");
   expect(task).toContain("<LogonType>InteractiveToken</LogonType>");
@@ -386,17 +387,15 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
   it.effect("installs, verifies, repairs, and uninstalls a per-user Windows task", () =>
     Effect.gen(function* () {
-      const { service, fs, home, commands, control } = yield* makeHarness("win32");
+      const { service, home, commands, control } = yield* makeHarness("win32");
       const plan = yield* service.install;
 
-      expect([...NodeFS.readFileSync(plan.unitPath).subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+      const taskFile = NodeFS.readFileSync(plan.unitPath);
+      expect([...taskFile.subarray(0, 2)]).toEqual([0xff, 0xfe]);
+      const taskXml = taskFile.toString("utf16le");
       expect(plan.unitPath.endsWith("runtime/t3code-task.xml")).toBe(true);
-      expect(yield* fs.readFileString(plan.unitPath)).toContain(
-        `<WorkingDirectory>${home}</WorkingDirectory>`,
-      );
-      expect(yield* fs.readFileString(plan.unitPath)).toContain(
-        "<UserId>S-1-5-21-111-222-333-1001</UserId>",
-      );
+      expect(taskXml).toContain(`<WorkingDirectory>${home}</WorkingDirectory>`);
+      expect(taskXml).toContain("<UserId>S-1-5-21-111-222-333-1001</UserId>");
       expect((yield* service.status).current).toBe(true);
       expect(commands).toContain(
         `schtasks.exe /Create /TN ${BootService.BOOT_SERVICE_WINDOWS_TASK_NAME} /XML ${plan.unitPath} /F`,

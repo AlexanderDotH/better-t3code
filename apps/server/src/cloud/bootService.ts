@@ -223,7 +223,7 @@ export function renderBootServiceTaskXml(
     quoteWindowsCommandLineArgument(plan.logPath),
   ].join(" ");
   return [
-    `<?xml version="1.0" encoding="UTF-8"?>`,
+    `<?xml version="1.0" encoding="UTF-16"?>`,
     `<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">`,
     `  <RegistrationInfo>`,
     `    <Description>T3 Code server</Description>`,
@@ -720,13 +720,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const launcherSourcePath =
     host.launcherSourcePath ??
     path.join(path.dirname(runtimePaths.entryPath), SERVICE_LAUNCHER_FILE);
-  const writeDurably = (filePath: string, contents: string) =>
+  const writeDurably = (filePath: string, contents: string | Uint8Array) =>
     Effect.scoped(
       Effect.gen(function* () {
         const directory = path.dirname(filePath);
         yield* fs.makeDirectory(directory, { recursive: true });
         const tempPath = yield* fs.makeTempFileScoped({ directory, prefix: ".service-write-" });
-        yield* fs.writeFileString(tempPath, contents, { mode: 0o600 });
+        yield* typeof contents === "string"
+          ? fs.writeFileString(tempPath, contents, { mode: 0o600 })
+          : fs.writeFile(tempPath, contents, { mode: 0o600 });
         yield* (yield* fs.open(tempPath, { flag: "r+" })).sync;
         yield* fs.rename(tempPath, filePath);
         if (platform !== "win32") {
@@ -982,12 +984,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           2,
         )}\n`,
       );
-      // schtasks.exe needs a BOM to honor the declared UTF-8 encoding.
+      const unit = manager.render(plan);
+      // schtasks.exe imports task files as UTF-16 with a byte-order mark.
       yield* writeDurably(
         unitPath,
-        `${manager.kind === "task-scheduler" ? "\uFEFF" : ""}${manager.render(plan)}`,
+        manager.kind === "task-scheduler" ? Buffer.from(`\uFEFF${unit}`, "utf16le") : unit,
       );
-
       yield* removeStopControlFiles;
       yield* runSteps(manager.activate);
     }).pipe(
@@ -1030,9 +1032,19 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (!unitExists || !registered) {
       return { supported: true, installed: false, current: false, unitPath, logPath };
     }
+    const readUnit =
+      detectedManager.kind === "task-scheduler"
+        ? fs.readFile(unitPath).pipe(
+            Effect.map((bytes) =>
+              Buffer.from(bytes)
+                .toString("utf16le")
+                .replace(/^\uFEFF/, ""),
+            ),
+          )
+        : fs.readFileString(unitPath);
     const [unit, launcherExists, runtimeEntryExists, runtimeSentinel, stateText] =
       yield* Effect.all([
-        fs.readFileString(unitPath),
+        readUnit,
         fs.exists(launcherPath),
         fs.exists(runtimePaths.entryPath),
         fs.readFileString(runtimePaths.sentinelPath).pipe(Effect.option),
