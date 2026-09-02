@@ -389,6 +389,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const { service, fs, home, commands, control } = yield* makeHarness("win32");
       const plan = yield* service.install;
 
+      expect([...NodeFS.readFileSync(plan.unitPath).subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
       expect(plan.unitPath.endsWith("runtime/t3code-task.xml")).toBe(true);
       expect(yield* fs.readFileString(plan.unitPath)).toContain(
         `<WorkingDirectory>${home}</WorkingDirectory>`,

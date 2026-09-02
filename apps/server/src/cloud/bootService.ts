@@ -982,7 +982,11 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           2,
         )}\n`,
       );
-      yield* writeDurably(unitPath, manager.render(plan));
+      // schtasks.exe needs a BOM to honor the declared UTF-8 encoding.
+      yield* writeDurably(
+        unitPath,
+        `${manager.kind === "task-scheduler" ? "\uFEFF" : ""}${manager.render(plan)}`,
+      );
 
       yield* removeStopControlFiles;
       yield* runSteps(manager.activate);
