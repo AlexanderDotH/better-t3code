@@ -268,3 +268,4 @@ finally {
     }
   }
 }
+exit 0

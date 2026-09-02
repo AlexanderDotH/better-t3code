@@ -79,6 +79,7 @@ it("renders a per-user Windows task with no elevation or runtime limit", () => {
 
   expect(task.startsWith(`<?xml version="1.0" encoding="UTF-16"?>`)).toBe(true);
   expect(task).toContain("<LogonTrigger>\n      <Enabled>true</Enabled>");
+  expect(task.match(/<Repetition>\n        <Interval>PT1M<\/Interval>/g)).toHaveLength(2);
   expect(task).toContain("<UserId>WORKSTATION\\alex</UserId>");
   expect(task).toContain("<LogonType>InteractiveToken</LogonType>");
   expect(task).toContain("<RunLevel>LeastPrivilege</RunLevel>");
