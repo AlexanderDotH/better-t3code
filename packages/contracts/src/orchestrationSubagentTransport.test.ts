@@ -23,6 +23,7 @@ const subagent = {
   task: "Implement transport contracts",
   model: "gpt-5.6-codex",
   reasoningEffort: "ultra",
+  serviceTier: "priority",
   depth: 1,
   status: "running",
   statusMessage: "Adding stream contracts",

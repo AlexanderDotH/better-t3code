@@ -46,6 +46,7 @@ const expectedTail = [
   [57, "ProjectionThreadsUnsettledAt"],
   [58, "Upstream42And43SchemaConvergence"],
   [59, "KnowledgeGraphDerivedData"],
+  [60, "ProjectionThreadSubagentServiceTier"],
 ] as const;
 
 const applyUpstreamSchema = Effect.gen(function* () {

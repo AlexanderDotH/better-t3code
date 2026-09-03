@@ -42,7 +42,10 @@ describe("general subagent state", () => {
         selection: {
           instanceId: ProviderInstanceId.make("codex-worker"),
           model: "gpt-5.6-sol",
-          options: [{ id: "reasoningEffort", value: "high" }],
+          options: [
+            { id: "reasoningEffort", value: "high" },
+            { id: "serviceTier", value: "priority" },
+          ],
         },
         providerDriver: ProviderDriverKind.make("codex"),
         cwd: "/workspace",
@@ -64,6 +67,7 @@ describe("general subagent state", () => {
         status: "starting",
         task: "Inspect lifecycle state",
         reasoningEffort: "high",
+        serviceTier: "priority",
       });
     }),
   );

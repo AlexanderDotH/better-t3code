@@ -21,14 +21,20 @@ export function mobileSubagentDisplayName(
 export function mobileSubagentTranscriptMetadata(
   agent: Pick<
     OrchestrationSubagentSummary,
-    "origin" | "providerInstanceId" | "providerDriver" | "status" | "model" | "reasoningEffort"
+    | "origin"
+    | "providerInstanceId"
+    | "providerDriver"
+    | "status"
+    | "model"
+    | "reasoningEffort"
+    | "serviceTier"
   >,
 ): string[] {
   const provider =
     agent.origin === "provider-native"
       ? null
       : (agent.providerInstanceId ?? agent.providerDriver ?? null);
-  return [agent.status, provider, agent.model, agent.reasoningEffort].filter(
+  return [agent.status, provider, agent.model, agent.reasoningEffort, agent.serviceTier].filter(
     (value): value is string => typeof value === "string" && value.trim().length > 0,
   );
 }

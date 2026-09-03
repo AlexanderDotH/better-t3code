@@ -599,6 +599,7 @@ describe("FetchWorkerCoordinator service", () => {
         expect(finalUpsert?.type).toBe("thread.subagent.upsert");
         if (finalUpsert?.type === "thread.subagent.upsert") {
           expect(finalUpsert.subagent.status).toBe("interrupted");
+          expect(finalUpsert.subagent.serviceTier).toBe("priority");
         }
         yield* Deferred.succeed(harness.releaseStarts, undefined);
         yield* Fiber.interrupt(runFiber);

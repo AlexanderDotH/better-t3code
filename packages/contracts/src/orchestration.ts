@@ -578,6 +578,7 @@ export const OrchestrationSubagentSummary = Schema.Struct({
   task: Schema.NullOr(TrimmedNonEmptyString),
   model: Schema.NullOr(TrimmedNonEmptyString),
   reasoningEffort: Schema.NullOr(TrimmedNonEmptyString),
+  serviceTier: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   depth: NonNegativeInt,
   status: OrchestrationSubagentStatus,
   statusMessage: Schema.NullOr(TrimmedNonEmptyString),

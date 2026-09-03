@@ -13,6 +13,11 @@ import {
   stripAutoReasoning,
 } from "@t3tools/shared/model";
 
+import {
+  getCodexServiceTierOptionValue,
+  normalizeCodexModelSelectionServiceTier,
+} from "../codexModelOptions.ts";
+
 const REASONING_OPTION_IDS = ["reasoningEffort", "effort"] as const;
 
 export interface GeneralSubagentSelectionRequest {
@@ -179,14 +184,18 @@ export function resolveGeneralSubagentSelection(input: {
     );
   }
 
+  const selection: ModelSelection = {
+    instanceId: provider.instanceId,
+    model: selectedModel.slug,
+    ...(options.length > 0 ? { options } : {}),
+  };
   return {
     status: "resolved",
     provider,
-    selection: {
-      instanceId: provider.instanceId,
-      model: selectedModel.slug,
-      ...(options.length > 0 ? { options } : {}),
-    },
+    selection:
+      provider.driver === "codex" && getCodexServiceTierOptionValue(selection) === undefined
+        ? normalizeCodexModelSelectionServiceTier(selection, selectedModel.capabilities)
+        : selection,
   };
 }
 

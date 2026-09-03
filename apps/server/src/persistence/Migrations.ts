@@ -72,6 +72,7 @@ import Migration0056 from "./Migrations/056_ProjectionThreadLinkedPullRequest.ts
 import Migration0057 from "./Migrations/057_ProjectionThreadsUnsettledAt.ts";
 import Migration0058 from "./Migrations/058_Upstream42And43SchemaConvergence.ts";
 import Migration0059 from "./Migrations/059_KnowledgeGraphDerivedData.ts";
+import Migration0060 from "./Migrations/060_ProjectionThreadSubagentServiceTier.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -143,6 +144,7 @@ export const migrationEntries = [
   [57, "ProjectionThreadsUnsettledAt", Migration0057],
   [58, "Upstream42And43SchemaConvergence", Migration0058],
   [59, "KnowledgeGraphDerivedData", Migration0059],
+  [60, "ProjectionThreadSubagentServiceTier", Migration0060],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

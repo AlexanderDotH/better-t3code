@@ -1645,11 +1645,13 @@ it.effect("decodes T3-managed general subagent provider metadata", () =>
       origin: "t3-managed",
       providerInstanceId: "codex",
       providerDriver: "codex",
+      serviceTier: "priority",
     });
 
     assert.strictEqual(parsed.origin, "t3-managed");
     assert.strictEqual(parsed.providerInstanceId, "codex");
     assert.strictEqual(parsed.providerDriver, "codex");
+    assert.strictEqual(parsed.serviceTier, "priority");
   }),
 );
 
