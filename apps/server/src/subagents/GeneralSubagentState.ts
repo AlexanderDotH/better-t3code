@@ -15,6 +15,7 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 
+import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 import type {
   GeneralSubagentActionSnapshot,
   GeneralSubagentIdentity,
@@ -93,6 +94,8 @@ export const makeActiveGeneralSubagent = Effect.fn("GeneralSubagentState.makeWor
   const reasoningEffort =
     getModelSelectionStringOptionValue(input.selection, "reasoningEffort") ??
     getModelSelectionStringOptionValue(input.selection, "effort");
+  const serviceTier =
+    input.providerDriver === "codex" ? getCodexServiceTierOptionValue(input.selection) : undefined;
   const summary: OrchestrationSubagentSummary = {
     id: subagentId,
     origin: "t3-managed",
@@ -107,6 +110,7 @@ export const makeActiveGeneralSubagent = Effect.fn("GeneralSubagentState.makeWor
     task: input.task,
     model: input.selection.model,
     reasoningEffort: reasoningEffort ?? null,
+    ...(serviceTier ? { serviceTier } : {}),
     depth: 1,
     status: "starting",
     statusMessage: null,

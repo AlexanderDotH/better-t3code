@@ -43,6 +43,16 @@ function model(input: {
                 })),
                 currentValue: "medium",
               },
+              {
+                id: "serviceTier",
+                label: "Service Tier",
+                type: "select",
+                options: [
+                  { id: "default", label: "Standard", isDefault: true },
+                  { id: "priority", label: "Fast" },
+                ],
+                currentValue: "default",
+              },
             ],
           },
   };
@@ -213,7 +223,10 @@ describe("general subagent selection", () => {
     expect(resolution.selection).toEqual({
       instanceId: codex.instanceId,
       model: "gpt-daybreak-blue-latest",
-      options: [{ id: "reasoningEffort", value: "max" }],
+      options: [
+        { id: "reasoningEffort", value: "max" },
+        { id: "serviceTier", value: "default" },
+      ],
     });
   });
 

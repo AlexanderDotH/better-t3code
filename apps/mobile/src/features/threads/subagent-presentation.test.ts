@@ -117,6 +117,7 @@ describe("mobile subagent presentation", () => {
       status: "running",
       model: "gpt-daybreak-blue-latest",
       reasoningEffort: "max",
+      serviceTier: "priority",
       updatedAt: "2026-08-22T12:00:00.000Z",
     });
 
@@ -125,6 +126,7 @@ describe("mobile subagent presentation", () => {
       "codex-security",
       "gpt-daybreak-blue-latest",
       "max",
+      "priority",
     ]);
   });
 

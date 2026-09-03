@@ -129,6 +129,7 @@ function mergeSubagentSummary(
     task: incoming.task ?? existing.task,
     model: incoming.model ?? existing.model,
     reasoningEffort: incoming.reasoningEffort ?? existing.reasoningEffort,
+    serviceTier: incoming.serviceTier ?? existing.serviceTier,
     status: lifecycle.status,
     statusMessage: lifecycle.statusMessage,
     latestProgress: lifecycle.latestProgress,

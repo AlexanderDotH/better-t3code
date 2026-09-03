@@ -167,7 +167,13 @@ export function resolveSubagentStatusPresentation(
 export function resolveSubagentTranscriptMetadata(
   agent: Pick<
     OrchestrationSubagentSummary,
-    "origin" | "providerInstanceId" | "providerDriver" | "role" | "model" | "reasoningEffort"
+    | "origin"
+    | "providerInstanceId"
+    | "providerDriver"
+    | "role"
+    | "model"
+    | "reasoningEffort"
+    | "serviceTier"
   >,
 ): string[] {
   if (agent.origin === "t3-fetch") {
@@ -176,6 +182,7 @@ export function resolveSubagentTranscriptMetadata(
       firstNonEmpty(agent.providerInstanceId, agent.providerDriver),
       firstNonEmpty(agent.model),
       firstNonEmpty(agent.reasoningEffort),
+      firstNonEmpty(agent.serviceTier),
     ].filter((value): value is string => value !== null);
   }
 
@@ -185,10 +192,11 @@ export function resolveSubagentTranscriptMetadata(
       firstNonEmpty(agent.providerInstanceId, agent.providerDriver),
       firstNonEmpty(agent.model),
       firstNonEmpty(agent.reasoningEffort),
+      firstNonEmpty(agent.serviceTier),
     ].filter((value): value is string => value !== null);
   }
 
-  return [agent.role, agent.model, agent.reasoningEffort].filter(
+  return [agent.role, agent.model, agent.reasoningEffort, agent.serviceTier].filter(
     (value): value is string => firstNonEmpty(value) !== null,
   );
 }

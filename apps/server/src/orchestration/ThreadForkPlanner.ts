@@ -291,6 +291,7 @@ function upsertSubagent(
     task: subagent.task ?? existing?.task ?? null,
     model: subagent.model ?? existing?.model ?? null,
     reasoningEffort: subagent.reasoningEffort ?? existing?.reasoningEffort ?? null,
+    serviceTier: subagent.serviceTier ?? existing?.serviceTier,
     status: lifecycle.status,
     statusMessage: lifecycle.statusMessage,
     latestProgress: lifecycle.latestProgress,

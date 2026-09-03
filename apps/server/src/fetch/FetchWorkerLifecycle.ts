@@ -17,6 +17,7 @@ import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 import {
   buildFetchWorkerPrompt,
   fetchApprovalAction,
@@ -221,6 +222,8 @@ export const makeFetchWorkerLifecycle = Effect.fn("FetchWorkerLifecycle.make")(f
     const reasoningEffort =
       getModelSelectionStringOptionValue(run.selection, "reasoningEffort") ??
       getModelSelectionStringOptionValue(run.selection, "effort");
+    const serviceTier =
+      run.providerDriver === "codex" ? getCodexServiceTierOptionValue(run.selection) : undefined;
     const summary: OrchestrationSubagentSummary = {
       id: subagentId,
       origin: "t3-fetch",
@@ -235,6 +238,7 @@ export const makeFetchWorkerLifecycle = Effect.fn("FetchWorkerLifecycle.make")(f
       task: assignment.scope,
       model: run.selection.model,
       reasoningEffort: reasoningEffort ?? null,
+      ...(serviceTier ? { serviceTier } : {}),
       depth: 1,
       status: "starting",
       statusMessage: null,

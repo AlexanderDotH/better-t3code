@@ -61,6 +61,7 @@ function summary(): OrchestrationSubagentSummary {
     task: "Implement the projection",
     model: "gpt-5.6",
     reasoningEffort: "ultra",
+    serviceTier: "priority",
     depth: 1,
     status: "running",
     statusMessage: "Projecting child events",
@@ -232,6 +233,7 @@ it.layer(TestLayer)("OrchestrationProjectionPipeline subagent projections", (it)
           readonly origin: string;
           readonly providerInstanceId: string | null;
           readonly providerDriver: string | null;
+          readonly serviceTier: string | null;
           readonly status: string;
           readonly statusMessage: string | null;
           readonly progressJson: string | null;
@@ -241,6 +243,7 @@ it.layer(TestLayer)("OrchestrationProjectionPipeline subagent projections", (it)
             origin,
             provider_instance_id AS "providerInstanceId",
             provider_driver AS "providerDriver",
+            service_tier AS "serviceTier",
             status,
             status_message AS "statusMessage",
             latest_progress_json AS "progressJson",
@@ -252,6 +255,7 @@ it.layer(TestLayer)("OrchestrationProjectionPipeline subagent projections", (it)
         assert.equal(summaryRows[0]?.origin, "t3-fetch");
         assert.equal(summaryRows[0]?.providerInstanceId, "claude-work");
         assert.equal(summaryRows[0]?.providerDriver, "claudeAgent");
+        assert.equal(summaryRows[0]?.serviceTier, "priority");
         assert.equal(summaryRows[0]?.status, "completed");
         assert.equal(summaryRows[0]?.statusMessage, "Done");
         assert.deepEqual(JSON.parse(summaryRows[0]?.progressJson ?? "null"), {
