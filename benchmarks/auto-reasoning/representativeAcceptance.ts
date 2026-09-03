@@ -6,7 +6,7 @@
  */
 export const REPRESENTATIVE_AUTO_REASONING_ACCEPTANCE = {
   manualReasoning: { before: "high", after: "high" },
-  autoUi: { web: "Auto · High · Fallback", mobile: "Auto · High · Fallback" },
+  autoUi: { web: "Auto · High", mobile: "Auto · High" },
   usageAttribution: {
     marker: "<t3code_auto_reasoning_call>",
     callKind: "auto-reasoning",

@@ -4200,8 +4200,10 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 2);
     expect(harness.decideAutoReasoning).toHaveBeenCalledTimes(2);
     expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.decideAutoReasoning.mock.calls[1]?.[0].userPrompt).toBe(
+      "Follow up without changing sessions",
+    );
     expect(harness.decideAutoReasoning.mock.calls[1]?.[0].conversation).toEqual([
-      { role: "user", text: "Original work items: contract and server wiring" },
       { role: "assistant", text: "Contract and server wiring are complete." },
       { role: "user", text: completeMainPrompt },
       { role: "assistant", text: "Previous assistant result" },
@@ -4401,6 +4403,53 @@ describe("ProviderCommandReactor", () => {
       modelSelection: {
         options: [
           { id: "reasoningEffort", value: "low" },
+          { id: "serviceTier", value: "default" },
+        ],
+      },
+    });
+  });
+
+  it("falls back to the stored concrete effort when routing fails", async () => {
+    const model = "gpt-5.6-sol";
+    const autoSelection = createModelSelection(ProviderInstanceId.make("codex"), model, [
+      { id: "reasoningEffort", value: "medium" },
+      { id: "t3AutoReasoning", value: true },
+    ]);
+    const harness = await createHarness({
+      threadModelSelection: autoSelection,
+      providerSnapshots: [codexAutoReasoningProviderFixture(model)],
+      decideAutoReasoningEffect: () =>
+        Effect.fail(
+          new TextGenerationError({
+            operation: "decideAutoReasoning",
+            detail: "router unavailable",
+          }),
+        ),
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-auto-reasoning-failure"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-auto-reasoning-failure"),
+          role: "user",
+          text: "Continue even when the router is unavailable",
+          attachments: [],
+        },
+        interactionMode: "default",
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.decideAutoReasoning).toHaveBeenCalledTimes(1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      modelSelection: {
+        options: [
+          { id: "reasoningEffort", value: "medium" },
           { id: "serviceTier", value: "default" },
         ],
       },

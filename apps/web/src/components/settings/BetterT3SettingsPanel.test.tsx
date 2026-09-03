@@ -110,7 +110,6 @@ describe("BetterT3SettingsPanelView", () => {
       new Set<BetterT3FeatureId>([
         "agent.fetchModel",
         "agent.parallelPlanReviewer",
-        "agent.autoReasoningModel",
         "agent.cavemanMode",
         "chat.cardMorphing",
         "chat.previewCount",
@@ -142,6 +141,10 @@ describe("BetterT3SettingsPanelView", () => {
     expect(resolveBetterT3SettingsSearchTarget("knowledge.model")).toEqual({
       tabId: "knowledge",
       advanced: true,
+    });
+    expect(resolveBetterT3SettingsSearchTarget("agent.autoReasoningModel")).toEqual({
+      tabId: "agents",
+      advanced: false,
     });
     expect(resolveBetterT3SettingsSearchTarget("better-t3-interface-language")).toEqual({
       tabId: "general",

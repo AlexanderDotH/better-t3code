@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import {
+  buildAutoReasoningModelSelectionPatch,
   buildKnowledgeGraphOwnerThreadOptions,
   buildBetterT3ScalarControlPatch,
   knowledgeGraphOwnerThreadKey,
@@ -18,6 +19,7 @@ import {
   resolveKnowledgeGraphPauseAction,
   resolveSelectedKnowledgeGraphOwnerThread,
   resolveSelectedKnowledgeGraphProjectId,
+  supportsAutoReasoningEvaluationProvider,
   supportsKnowledgeGraphEnrichment,
 } from "./BetterT3SettingsPanel.controls";
 
@@ -76,6 +78,53 @@ describe("resolveBetterT3ModelSelection", () => {
       instanceId: codexId,
       model: "current",
       options: [{ id: "reasoningEffort", value: "high" }],
+    });
+  });
+});
+
+describe("Auto Reasoning evaluation model settings", () => {
+  it("keeps every supported evaluation provider available", () => {
+    for (const driver of [
+      "codex",
+      "claudeAgent",
+      "cursor",
+      "grok",
+      "opencode",
+      "gemini",
+      "chatgpt",
+      "openrouter",
+      "openai",
+    ]) {
+      expect(
+        supportsAutoReasoningEvaluationProvider({ driver: ProviderDriverKind.make(driver) }),
+      ).toBe(true);
+    }
+    expect(
+      supportsAutoReasoningEvaluationProvider({
+        driver: ProviderDriverKind.make("unsupported-evaluator"),
+      }),
+    ).toBe(false);
+  });
+
+  it("persists a concrete evaluator without the chat Auto marker and resets to Automatic", () => {
+    const selected = {
+      instanceId: codexId,
+      model: "gpt-5.6-luna",
+      options: [
+        { id: "reasoningEffort", value: "low" },
+        { id: "t3AutoReasoning", value: true },
+      ],
+    };
+
+    expect(buildAutoReasoningModelSelectionPatch(selected)).toEqual({
+      autoReasoningModelSelection: {
+        instanceId: codexId,
+        model: "gpt-5.6-luna",
+        options: [{ id: "reasoningEffort", value: "low" }],
+      },
+    });
+    expect(buildAutoReasoningModelSelectionPatch(null)).toEqual({
+      autoReasoningModelSelection: null,
     });
   });
 });

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
+  WORKSPACE_CONTEXT_MAX_QUERIES,
+  WORKSPACE_CONTEXT_MAX_READS,
+  WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY,
   WorkspaceEditError,
   WorkspaceEditInput,
   WorkspaceFindInput,
@@ -97,10 +100,16 @@ describe("NativeHarnessTools", () => {
     expect(workspaceFind?.inputSchema).toEqual(
       Schema.toJsonSchemaDocument(WorkspaceFindInput).schema,
     );
+    expect(workspaceFind?.description).toContain(`up to ${WORKSPACE_CONTEXT_MAX_QUERIES}`);
+    expect(workspaceFind?.description).toContain(
+      `above ${WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY}`,
+    );
     expect(workspaceRead?.inputSchema).toEqual(
       Schema.toJsonSchemaDocument(WorkspaceReadInput).schema,
     );
+    expect(workspaceRead?.description).toContain(`up to ${WORKSPACE_CONTEXT_MAX_READS}`);
     expect(workspaceContext?.description).toContain("mixed workspace searches");
+    expect(workspaceEdit?.description).toContain("create requires a missing file");
     expect(workspaceEdit?.inputSchema).toEqual(
       Schema.toJsonSchemaDocument(WorkspaceEditInput).schema,
     );

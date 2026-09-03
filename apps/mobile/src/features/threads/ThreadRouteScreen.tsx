@@ -23,6 +23,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
+import { readAutoReasoningResolution } from "@t3tools/shared/model";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import { Alert, Platform, ScrollView, View } from "react-native";
@@ -62,7 +63,6 @@ import {
 } from "../terminal/terminalLaunchContext";
 import { terminalDebugLog } from "../terminal/terminalDebugLog";
 import { ThreadDetailScreen } from "./ThreadDetailScreen";
-import { readAutoReasoningStatus } from "./thread-settings-summary";
 import {
   ThreadGitControls,
   useThreadGitCenterHeaderItems,
@@ -231,6 +231,15 @@ function ThreadRouteContent(
   const gitWorkbenchEnabled = mobileGitWorkbenchCanActivate(gitWorkbenchAvailability);
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
+  const latestAutoReasoningEffort = useMemo(
+    () =>
+      readAutoReasoningResolution(
+        selectedThreadDetail?.activities.filter(
+          (activity) => activity.historyOrigin === undefined,
+        ) ?? [],
+      )?.effectiveEffort ?? null,
+    [selectedThreadDetail?.activities],
+  );
   // "Load earlier turns" header state for windowed (paginated) thread loads.
   const loadEarlierTurns = useMemo(() => {
     if (selectedThread === null || !threadHasOlderTurns(selectedThreadDetailState)) {
@@ -433,7 +442,6 @@ function ThreadRouteContent(
     busy: composer.activeThreadBusy,
     fetchEnabled: composer.fetchEnabled,
   });
-  const autoReasoningStatus = readAutoReasoningStatus(selectedThreadDetail?.activities ?? []);
 
   /* ─── Native header theming ──────────────────────────────────────── */
   const usesNativeHeaderGlass = NATIVE_LIQUID_GLASS_SUPPORTED;
@@ -1015,7 +1023,7 @@ function ThreadRouteContent(
           threadCwd={selectedThreadCwd}
           selectedThreadQueueCount={composer.selectedThreadQueueCount}
           activeThreadBusy={composer.activeThreadBusy}
-          {...(autoReasoningStatus ? { autoReasoningStatus } : {})}
+          autoReasoningEffort={latestAutoReasoningEffort}
           layoutVariant={layout.variant}
           usesAutomaticContentInsets={usesNativeHeaderGlass}
           onOpenConnectionEditor={handleOpenConnectionEditor}

@@ -32,11 +32,11 @@ describe("grokAcpSpawnArgs", () => {
     ]);
   });
 
-  it("maps Full access to Grok always-approve", () => {
+  it("maps Full to Grok always-approve", () => {
     expect(grokAcpSpawnArgs("full-access")).toEqual(["agent", "--always-approve", "stdio"]);
   });
 
-  it("maps Auto-accept edits and Auto onto Grok permission modes", () => {
+  it("maps Ruled and Auto onto Grok permission modes", () => {
     expect(grokAcpSpawnArgs("auto-accept-edits")).toEqual([
       "--permission-mode",
       "acceptEdits",

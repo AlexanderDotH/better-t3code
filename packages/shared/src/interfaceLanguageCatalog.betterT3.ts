@@ -494,9 +494,9 @@ const featureLabels = {
     "Réviseur du plan parallèle",
   ],
   "agent.autoReasoningModel": [
-    "Auto Reasoning decision model",
-    "Entscheidungsmodell für Auto Reasoning",
-    "Modèle de décision du raisonnement automatique",
+    "Auto Reasoning evaluation model",
+    "Auswertungsmodell für Auto Reasoning",
+    "Modèle d’évaluation du raisonnement automatique",
   ],
   "agent.planMode": ["Plan Mode", "Planmodus", "Mode Plan"],
   "agent.deepThinking": ["Deep Thinking", "Tiefes Denken", "Réflexion approfondie"],
@@ -636,9 +636,9 @@ const featureLabels = {
 
 const featureDescriptionOverrides: Partial<Record<BetterT3FeatureId, FeatureLabel>> = {
   "agent.autoReasoningModel": [
-    "Choose the model that selects reasoning effort for Auto. Automatic uses the text-generation model.",
-    "Wählt das Modell, das den Reasoning-Aufwand für Auto bestimmt. Automatisch verwendet das Textgenerierungsmodell.",
-    "Choisissez le modèle qui détermine l’effort de raisonnement pour Auto. Automatique utilise le modèle de génération de texte.",
+    "Used to select the reasoning level. Automatic uses the text-generation model.",
+    "Wird zur Auswahl der Reasoning-Stufe verwendet. Automatisch verwendet das Textgenerierungsmodell.",
+    "Utilisé pour sélectionner le niveau de raisonnement. Automatique utilise le modèle de génération de texte.",
   ],
   "agent.planMode": [
     "Start agent work in planning mode so it proposes a plan before changing files.",

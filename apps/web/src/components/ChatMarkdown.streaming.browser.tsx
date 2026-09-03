@@ -219,12 +219,13 @@ describe("ChatMarkdown streamed-character reveal", () => {
       (rule): rule is CSSKeyframesRule =>
         rule instanceof CSSKeyframesRule && rule.name === "stream-character-reveal",
     );
-    expect(keyframesRule?.cssRules[0]?.style.opacity).toBe("0.08");
-    expect(keyframesRule?.cssRules[0]?.style.transform).toBe("translate3d(0px, 0.22em, 0px)");
+    expect(keyframesRule?.cssRules[0]?.style.opacity).toBe("0");
+    expect(keyframesRule?.cssRules[0]?.style.transform).toBe("translateY(0.22em)");
     expect(getComputedStyle(character!).animationName).toBe("stream-character-reveal");
     expect(getComputedStyle(character!).animationTimingFunction).toBe(
       "cubic-bezier(0.22, 1, 0.36, 1)",
     );
+    expect(getComputedStyle(character!).animationFillMode).toBe("backwards");
     expect(getComputedStyle(character!).willChange).toBe("auto");
 
     mediaRule!.media.mediaText = "all";

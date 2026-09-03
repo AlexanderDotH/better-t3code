@@ -45,12 +45,6 @@ import { ComposerControl, ComposerControlChevron, ComposerControlIcon } from "./
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
-export interface AutoReasoningStatus {
-  readonly enabled: boolean;
-  readonly effectiveEffort?: string;
-  readonly fallback?: boolean;
-}
-
 const SAVED_OPTION_LABELS: Readonly<Record<string, string>> = {
   agent: "Agent",
   effort: "Effort",
@@ -322,7 +316,7 @@ export interface TraitsMenuContentProps {
   planModeEnabled: boolean;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
-  autoReasoningStatus?: AutoReasoningStatus;
+  autoReasoningEffort?: string | null | undefined;
 }
 
 export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
@@ -562,9 +556,9 @@ export function buildTraitsTriggerDisplay(input: {
   descriptors: ReadonlyArray<ProviderOptionDescriptor>;
   primarySelectDescriptorId: string | null;
   ultrathinkPromptControlled: boolean;
-  autoReasoning?: AutoReasoningStatus;
+  autoReasoningEnabled?: boolean;
+  autoReasoningEffort?: string | null | undefined;
   autoLabel?: string;
-  fallbackLabel?: string;
 }): { label: string; showFastModeIcon: boolean } {
   let fastModeFallbackLabel: string | null = null;
   let fastModeEnabled = false;
@@ -597,21 +591,13 @@ export function buildTraitsTriggerDisplay(input: {
       input.provider === "codex" &&
       descriptor.id === CODEX_REASONING_EFFORT_OPTION_ID &&
       descriptor.type === "select" &&
-      input.autoReasoning?.enabled
+      input.autoReasoningEnabled
     ) {
-      const fallbackEffort = getProviderOptionCurrentValue(descriptor);
-      const effectiveEffort = input.autoReasoning.effectiveEffort ?? fallbackEffort;
-      const effectiveLabel =
-        descriptor.options.find(({ id }) => id === effectiveEffort)?.label ?? effectiveEffort;
-      labels.push(
-        [
-          input.autoLabel ?? "Auto",
-          effectiveLabel,
-          input.autoReasoning.fallback ? (input.fallbackLabel ?? "Fallback") : null,
-        ]
-          .filter((part): part is string => typeof part === "string" && part.length > 0)
-          .join(" · "),
-      );
+      const autoLabel = input.autoLabel ?? "Auto";
+      const effortLabel = input.autoReasoningEffort
+        ? descriptor.options.find(({ id }) => id === input.autoReasoningEffort)?.label
+        : null;
+      labels.push(effortLabel ? `${autoLabel} · ${effortLabel}` : autoLabel);
       continue;
     }
     const label =
@@ -646,7 +632,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   planModeEnabled,
   triggerVariant,
   triggerClassName,
-  autoReasoningStatus,
+  autoReasoningEffort,
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
   const translate = useInterfaceTranslator().message;
@@ -680,9 +666,9 @@ export const TraitsPicker = memo(function TraitsPicker({
     descriptors,
     primarySelectDescriptorId: primarySelectDescriptor?.id ?? null,
     ultrathinkPromptControlled,
-    autoReasoning: autoReasoningStatus ?? { enabled: autoReasoningEnabled },
+    autoReasoningEnabled,
+    autoReasoningEffort,
     autoLabel: translate("chat.traits.auto"),
-    fallbackLabel: translate("chat.traits.fallback"),
   });
   const fastModeIcon = showFastModeIcon ? (
     <>

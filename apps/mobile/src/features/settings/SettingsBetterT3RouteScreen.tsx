@@ -77,6 +77,7 @@ import {
   resolveMobileBetterT3Destination,
   resolveMobileBetterT3EnvironmentTarget,
   resolveMobileBetterT3ProjectSelection,
+  supportsMobileAutoReasoningModelOption,
   supportsMobileKnowledgeGraphModelOption,
   shouldSubscribeMobileKnowledgeGraphProgress,
   type MobilePreparedStatusInput,
@@ -1113,10 +1114,11 @@ export function SettingsBetterT3RouteScreen() {
               void updateEnvironmentSettings(
                 createMobileBetterT3EnvironmentControlPatch({
                   id: "agent.autoReasoningModel",
-                  value: selection === null ? null : stripAutoReasoning(selection),
+                  value: selection,
                 }),
               )
             }
+            optionPredicate={supportsMobileAutoReasoningModelOption}
             visible={autoReasoningModelPickerOpen}
           />
           <ModelSelectionModal

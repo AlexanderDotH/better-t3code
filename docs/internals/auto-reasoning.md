@@ -7,29 +7,41 @@ fallback. Selecting a concrete effort removes the Auto marker. Provider adapters
 selection after the marker is stripped.
 
 `ServerSettings.autoReasoningModelSelection` selects the structured text-generation model used for
-the decision. `null` means the existing `textGenerationModelSelection`. The settings selector
-accepts normal model options but never the Auto marker, preventing recursive routing.
+evaluation. `null` means the existing `textGenerationModelSelection`, which the Better T3 selector
+presents as **Automatic**. The selector accepts normal model options but never the Auto marker,
+preventing recursive routing. Auto remains a Codex-only target, while Codex, Claude, Cursor, Grok,
+OpenCode, and any other provider exposed by the structured text-generation selector can supply the
+evaluator model.
 
-When an Auto-enabled user message is submitted, the isolated router receives the conversation
-origin, the newest prior user/assistant messages that fit the routing budget, attachment metadata,
-and a head-and-tail view of the current prompt. It compares individual requests and bullet items
+When an Auto-enabled user message is submitted, orchestration passes the isolated evaluator the
+current prompt, attachment metadata, and exactly the three newest earlier user or assistant
+messages, in chronological order. If the thread has fewer than three eligible prior messages, it
+passes all available messages. The current prompt remains separate and never counts toward the
+three-message limit; user and assistant messages count equally. Prompt and message text still use
+the router's bounded representation. The evaluator compares individual requests and bullet items
 with explicit prior outcomes, then chooses effort for only the remaining or newly requested work.
 Deep cross-layer or cross-client wiring, difficult diagnosis, persistence, concurrency, security,
 and verification can raise effort. Conversation length, prompt verbosity, and already completed
-work cannot by themselves raise it. The router still has no project files, tools, MCP, memory,
-skills, or subagents. Retrying the same message reuses its resolved effort and does not call the
-router again.
+work cannot by themselves raise it. The evaluator has no project files, tools, MCP, memory, skills,
+or subagents.
+
+The evaluator must return one effort from the live `reasoningEffort` options advertised by the
+target Codex model. Orchestration validates that value before applying it to the main turn. A failed
+or invalid evaluation, or the 15-second timeout, uses the stored concrete fallback. Retrying the
+same submitted message reuses its resolved effort and does not call the evaluator again.
 
 After a routed turn is accepted, orchestration projects a content-free activity:
 
 - kind: `auto-reasoning.resolved`
 - real parent turn ID
 - resolved effort and whether the saved fallback was used
-- router provider/model identity, duration, and optional aggregate token usage
+- evaluator provider/model identity, duration, and optional aggregate token usage
 
-Clients read the latest valid resolution but display it only while the current durable selection
-still has the Auto marker. This prevents a previous resolution from surviving a manual switch. The
-routed effort applies directly to that turn; clients do not show post-turn effort recommendations.
+Web, desktop, and mobile display **Auto** until a resolution exists, then append the effort actually
+used, for example **Auto \* High**. They read this value from the content-free resolution activity;
+the display does not change the durable model selection and never appends the fallback state. The
+activity also remains available for retry reuse, subagent inheritance, diagnostics, and usage
+attribution, and it does not expose routing prompt content.
 
 Usage scanners attribute the existing `<t3code_auto_reasoning_call>` marker to the distinct
 `auto-reasoning` call kind. They retain token totals and routing character counts, not routing

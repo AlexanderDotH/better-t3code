@@ -47,6 +47,7 @@ function serviceTierDescriptor(
 const EFFORT = selectDescriptor(
   "reasoningEffort",
   [
+    { id: "low", label: "Low" },
     { id: "high", label: "High" },
     { id: "max", label: "Max" },
   ],
@@ -65,18 +66,16 @@ const CODEX = ProviderDriverKind.make("codex");
 
 function display(
   descriptors: ReadonlyArray<ProviderOptionDescriptor>,
-  autoReasoning?: {
-    readonly enabled: boolean;
-    readonly effectiveEffort?: string;
-    readonly fallback?: boolean;
-  },
+  autoReasoningEnabled = false,
+  autoReasoningEffort?: string,
 ) {
   return buildTraitsTriggerDisplay({
     provider: CODEX,
     descriptors,
     primarySelectDescriptorId: "reasoningEffort",
     ultrathinkPromptControlled: false,
-    ...(autoReasoning ? { autoReasoning } : {}),
+    autoReasoningEnabled,
+    autoReasoningEffort,
   });
 }
 
@@ -195,17 +194,21 @@ describe("buildTraitsTriggerDisplay", () => {
     ).toEqual({ label: "Ultrathink", showFastModeIcon: true });
   });
 
-  it("shows Auto with the concrete fallback, effective effort, and fallback marker", () => {
-    expect(display([EFFORT], { enabled: true })).toEqual({
-      label: "Auto · High",
+  it("shows Auto until a resolution exists, then appends only the resolved effort", () => {
+    expect(display([EFFORT], true)).toEqual({
+      label: "Auto",
       showFastModeIcon: false,
     });
-    expect(display([EFFORT], { enabled: true, effectiveEffort: "max" })).toEqual({
+    expect(display([{ ...EFFORT, currentValue: "max" }], true)).toEqual({
+      label: "Auto",
+      showFastModeIcon: false,
+    });
+    expect(display([EFFORT], true, "low")).toEqual({
+      label: "Auto · Low",
+      showFastModeIcon: false,
+    });
+    expect(display([EFFORT], true, "max")).toEqual({
       label: "Auto · Max",
-      showFastModeIcon: false,
-    });
-    expect(display([EFFORT], { enabled: true, effectiveEffort: "high", fallback: true })).toEqual({
-      label: "Auto · High · Fallback",
       showFastModeIcon: false,
     });
   });

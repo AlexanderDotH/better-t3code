@@ -327,16 +327,37 @@ describe("workspace edit outcomes", () => {
     expect(decoded.changes[0]).not.toHaveProperty("content");
   });
 
-  it("exposes stable typed failures with bounded rollback uncertainty", () => {
-    const error = new WorkspaceEditError({
+  it("exposes paths and recovery guidance without submitted contents", () => {
+    const rollback = new WorkspaceEditError({
       reason: "rollback_incomplete",
       path: "src/example.ts",
       change_index: 0,
       edit_index: 1,
       uncertain_paths: ["src/example.ts"],
     });
+    const missing = new WorkspaceEditError({
+      reason: "not_found",
+      path: ".quality/splice-test.txt",
+      change_index: 0,
+      edit_index: 0,
+    });
+    const invalidRange = new WorkspaceEditError({
+      reason: "invalid_range",
+      path: "internal/githubenrich/client.go",
+      change_index: 0,
+      edit_index: 0,
+    });
 
-    expect(error.message).toBe("Workspace edit failed: rollback_incomplete (change 0, edit 1).");
-    expect(isWorkspaceEditError(error)).toBe(true);
+    expect(rollback.message).toBe(
+      'Workspace edit failed: rollback_incomplete for "src/example.ts" (change 0, edit 1).',
+    );
+    expect(missing.message).toContain(
+      "Create missing files with a write edit in create or upsert mode.",
+    );
+    expect(invalidRange.message).toContain(
+      "line ranges are one-indexed and inclusive, and each edit sees the result of earlier edits.",
+    );
+    expect(isWorkspaceEditError(rollback)).toBe(true);
+    expect(missing.message).not.toContain("submitted contents");
   });
 });

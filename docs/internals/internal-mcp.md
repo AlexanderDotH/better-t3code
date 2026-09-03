@@ -166,19 +166,22 @@ size checks.
 
 ## Workspace read tools
 
-`workspace_find` batches up to eight independent path or literal-content queries in `path`,
-`content`, or combined `auto` mode. `workspace_read` batches up to twelve one-indexed inclusive
+`workspace_find` batches up to sixteen independent path or literal-content queries in `path`,
+`content`, or combined `auto` mode. `workspace_read` batches up to sixteen one-indexed inclusive
 line-range reads; successful reads include a revision suitable for a later `workspace_edit` guard.
 `workspace_context` retains the same mixed query-and-read contract for compatibility and for calls
-that genuinely need both operations.
+that genuinely need both operations. Oversized `contextLines` and `maxResultsPerQuery` preferences
+are capped at their server limits and reported as warnings instead of rejecting the call.
 
 All three route through the same deterministic engine, limits, path safety, partial-result handling,
-and response budget. Provider guidance prefers the focused tools, batches independent operations
-into the fewest calls, and reserves `workspace_context` for mixed batches instead of using shell text
-readers or searchers.
+and response budget. Provider guidance names the batch limits, tells callers to split larger sets,
+and reserves `workspace_context` for mixed batches instead of using shell text readers or searchers.
 
 Their annotations declare them read-only, non-destructive, idempotent, and closed-world. They cannot
-write files or execute arbitrary commands.
+write files or execute arbitrary commands. `workspace_edit` keeps file preconditions strict: `create`
+requires a missing path, `overwrite` requires an existing file, and `upsert` accepts either. Ordered
+splices apply to the contents left by earlier edits, with one-indexed inclusive line ranges; failures
+include recovery guidance rather than weakening those safety checks.
 
 ### Deterministic search
 
@@ -204,6 +207,8 @@ Each invocation is bounded by:
 - 200 internal candidates per query
 - four concurrent search/read operations
 - a two-second search deadline
+- eight context lines around a search match
+- 20 matches per query
 - 400 lines per explicit read
 - 1 MiB per source file
 - 64 KiB of returned excerpt and read text

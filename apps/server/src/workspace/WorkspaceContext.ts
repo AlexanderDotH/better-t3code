@@ -18,7 +18,9 @@ import type {
 import {
   WORKSPACE_CONTEXT_DEFAULT_CONTEXT_LINES,
   WORKSPACE_CONTEXT_DEFAULT_RESULTS_PER_QUERY,
+  WORKSPACE_CONTEXT_MAX_CONTEXT_LINES,
   WORKSPACE_CONTEXT_MAX_READ_LINES,
+  WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY,
   WorkspaceContextPathError,
   WorkspaceContextSearchError,
   WorkspaceContextUnavailableError,
@@ -306,11 +308,32 @@ function applyTextBudget(queries: MutableQueryResult[], reads: MutableReadResult
 }
 
 function engineQueries(input: WorkspaceContextInput): ReadonlyArray<WorkspaceContextEngineQuery> {
+  const maxResults = Math.min(
+    input.maxResultsPerQuery ?? WORKSPACE_CONTEXT_DEFAULT_RESULTS_PER_QUERY,
+    WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY,
+  );
   return (input.queries ?? []).map((query) => ({
     text: query.text,
     mode: query.mode ?? "auto",
-    maxResults: input.maxResultsPerQuery ?? WORKSPACE_CONTEXT_DEFAULT_RESULTS_PER_QUERY,
+    maxResults,
   }));
+}
+
+function inputLimitWarnings(input: WorkspaceContextInput): ReadonlyArray<string> {
+  const warnings: string[] = [];
+  if (
+    input.contextLines !== undefined &&
+    input.contextLines > WORKSPACE_CONTEXT_MAX_CONTEXT_LINES
+  ) {
+    warnings.push(`contextLines was capped at ${WORKSPACE_CONTEXT_MAX_CONTEXT_LINES}.`);
+  }
+  if (
+    input.maxResultsPerQuery !== undefined &&
+    input.maxResultsPerQuery > WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY
+  ) {
+    warnings.push(`maxResultsPerQuery was capped at ${WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY}.`);
+  }
+  return warnings;
 }
 
 function contentMatchPaths(discovery: WorkspaceContextDiscovery): ReadonlyArray<string> {
@@ -373,7 +396,10 @@ export const make = Effect.gen(function* () {
         { concurrency: WORKSPACE_CONTEXT_READ_CONCURRENCY },
       );
       const readByPath = new Map(cachedReads);
-      const contextLines = request.input.contextLines ?? WORKSPACE_CONTEXT_DEFAULT_CONTEXT_LINES;
+      const contextLines = Math.min(
+        request.input.contextLines ?? WORKSPACE_CONTEXT_DEFAULT_CONTEXT_LINES,
+        WORKSPACE_CONTEXT_MAX_CONTEXT_LINES,
+      );
       const queryResults: MutableQueryResult[] = discovery.queries.map((query) => {
         const failedContextRead = query.matches.some(
           (match) => match.kind === "content" && readByPath.get(match.path)?.status === "error",
@@ -420,7 +446,7 @@ export const make = Effect.gen(function* () {
         queries: queryResults as WorkspaceContextQueryResult[],
         reads: readResults as WorkspaceContextReadResult[],
         truncated,
-        warnings: [...discovery.warnings],
+        warnings: [...inputLimitWarnings(request.input), ...discovery.warnings],
       } satisfies WorkspaceContextResult;
     },
   );

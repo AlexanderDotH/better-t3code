@@ -1,4 +1,8 @@
 import {
+  WORKSPACE_CONTEXT_MAX_CONTEXT_LINES,
+  WORKSPACE_CONTEXT_MAX_QUERIES,
+  WORKSPACE_CONTEXT_MAX_READS,
+  WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY,
   WorkspaceContextInput,
   WorkspaceEditInput,
   WorkspaceFindInput,
@@ -27,24 +31,21 @@ const OBJECT_SCHEMA = {
 
 const WORKSPACE_FIND_DECLARATION: NativeHarnessToolDeclaration = {
   name: NATIVE_HARNESS_WORKSPACE_FIND_TOOL,
-  description:
-    "Batch workspace path or literal text searches in auto, path, or content mode. Prefer this over shell find, rg, or grep.",
+  description: `Batch up to ${WORKSPACE_CONTEXT_MAX_QUERIES} workspace path or literal text queries; split larger sets across calls. contextLines above ${WORKSPACE_CONTEXT_MAX_CONTEXT_LINES} and maxResultsPerQuery above ${WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY} are capped. Prefer this over shell find, rg, or grep.`,
   inputSchema: Schema.toJsonSchemaDocument(WorkspaceFindInput).schema,
   availability: "read-only",
 };
 
 const WORKSPACE_READ_DECLARATION: NativeHarnessToolDeclaration = {
   name: NATIVE_HARNESS_WORKSPACE_READ_TOOL,
-  description:
-    "Batch bounded one-indexed inclusive line reads from regular UTF-8 workspace files. Prefer this over shell cat or sed.",
+  description: `Batch up to ${WORKSPACE_CONTEXT_MAX_READS} bounded one-indexed inclusive line reads from regular UTF-8 workspace files; split larger sets across calls. Prefer this over shell cat or sed.`,
   inputSchema: Schema.toJsonSchemaDocument(WorkspaceReadInput).schema,
   availability: "read-only",
 };
 
 const WORKSPACE_CONTEXT_DECLARATION: NativeHarnessToolDeclaration = {
   name: NATIVE_HARNESS_WORKSPACE_CONTEXT_TOOL,
-  description:
-    "Batch mixed workspace searches and bounded line reads. Prefer workspace_find or workspace_read for single-operation batches.",
+  description: `Batch mixed workspace searches and bounded line reads, with at most ${WORKSPACE_CONTEXT_MAX_QUERIES} queries and ${WORKSPACE_CONTEXT_MAX_READS} reads. Prefer workspace_find or workspace_read for single-operation batches.`,
   inputSchema: Schema.toJsonSchemaDocument(WorkspaceContextInput).schema,
   availability: "read-only",
 };
@@ -52,7 +53,7 @@ const WORKSPACE_CONTEXT_DECLARATION: NativeHarnessToolDeclaration = {
 const WORKSPACE_EDIT_DECLARATION: NativeHarnessToolDeclaration = {
   name: NATIVE_HARNESS_WORKSPACE_EDIT_TOOL,
   description:
-    "Create, replace, splice, or delete one or more regular UTF-8 workspace files in one revision-safe batch.",
+    "Create, replace, splice, or delete regular UTF-8 workspace files in one revision-safe batch. Write mode create requires a missing file, overwrite requires an existing file, and upsert accepts either. Each edit sees earlier edits; line ranges are one-indexed and inclusive. Prefer exact replacements for existing text.",
   inputSchema: Schema.toJsonSchemaDocument(WorkspaceEditInput).schema,
   availability: "workspace-write",
 };

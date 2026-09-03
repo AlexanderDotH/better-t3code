@@ -190,6 +190,32 @@ function selectableProviderEntries(
   ).filter((entry) => entry.enabled && entry.models.some((model) => model.isSelectable !== false));
 }
 
+const AUTO_REASONING_EVALUATION_DRIVER_KINDS: ReadonlySet<string> = new Set([
+  "codex",
+  "claudeAgent",
+  "cursor",
+  "grok",
+  "opencode",
+  "gemini",
+  "chatgpt",
+  "openrouter",
+  "openai",
+]);
+
+export function supportsAutoReasoningEvaluationProvider(
+  provider: Pick<ServerProvider, "driver">,
+): boolean {
+  return AUTO_REASONING_EVALUATION_DRIVER_KINDS.has(provider.driver);
+}
+
+export function buildAutoReasoningModelSelectionPatch(
+  selection: ModelSelection | null,
+): ServerSettingsPatch {
+  return {
+    autoReasoningModelSelection: selection === null ? null : stripAutoReasoning(selection),
+  };
+}
+
 export function supportsKnowledgeGraphEnrichment(
   provider: Pick<ServerProvider, "driver">,
 ): boolean {
@@ -677,18 +703,6 @@ export function useBetterT3PreparedControls(input: {
   );
   const scalarControlDisabled = (featureId: BetterT3FeatureId) =>
     !availableFeature(input.features, featureId);
-  const reviewProviders = (provider: ServerProvider) =>
-    [
-      "codex",
-      "claudeAgent",
-      "cursor",
-      "grok",
-      "opencode",
-      "gemini",
-      "chatgpt",
-      "openrouter",
-      "openai",
-    ].includes(provider.driver);
 
   return {
     "agent.fetchModel": (
@@ -714,10 +728,10 @@ export function useBetterT3PreparedControls(input: {
         fallbackSelection={input.settings.textGenerationModelSelection}
         allowAutomatic
         disabled={scalarControlDisabled("agent.autoReasoningModel")}
-        predicate={reviewProviders}
+        predicate={supportsAutoReasoningEvaluationProvider}
         translate={input.translate}
         onChange={(autoReasoningModelSelection) =>
-          input.updateSettings({ autoReasoningModelSelection })
+          input.updateSettings(buildAutoReasoningModelSelectionPatch(autoReasoningModelSelection))
         }
       />
     ),
@@ -730,7 +744,7 @@ export function useBetterT3PreparedControls(input: {
         fallbackSelection={input.settings.parallelPlanReviewModelSelection}
         allowAutomatic={false}
         disabled={scalarControlDisabled("agent.parallelPlanReviewer")}
-        predicate={reviewProviders}
+        predicate={supportsAutoReasoningEvaluationProvider}
         translate={input.translate}
         onChange={(parallelPlanReviewModelSelection) => {
           if (parallelPlanReviewModelSelection) {

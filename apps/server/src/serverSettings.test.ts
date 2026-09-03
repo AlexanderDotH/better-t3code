@@ -1549,7 +1549,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("persists and clears the Auto Reasoning decision model", () =>
+  it.effect("persists and clears the Auto Reasoning evaluation model", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       const serverConfig = yield* ServerConfig.ServerConfig;

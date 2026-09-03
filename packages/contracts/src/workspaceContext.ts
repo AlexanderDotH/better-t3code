@@ -3,8 +3,8 @@ import * as Schema from "effect/Schema";
 import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { WorkspaceRevision } from "./workspaceEdit.ts";
 
-export const WORKSPACE_CONTEXT_MAX_QUERIES = 8;
-export const WORKSPACE_CONTEXT_MAX_READS = 12;
+export const WORKSPACE_CONTEXT_MAX_QUERIES = 16;
+export const WORKSPACE_CONTEXT_MAX_READS = 16;
 export const WORKSPACE_CONTEXT_MAX_QUERY_LENGTH = 256;
 export const WORKSPACE_CONTEXT_MAX_PATH_LENGTH = 512;
 export const WORKSPACE_CONTEXT_MAX_CONTEXT_LINES = 8;
@@ -43,12 +43,8 @@ const WorkspaceContextQueries = Schema.Array(WorkspaceContextQuery).check(
 const WorkspaceContextReads = Schema.Array(WorkspaceContextRead).check(
   Schema.isMaxLength(WORKSPACE_CONTEXT_MAX_READS),
 );
-const WorkspaceContextLines = NonNegativeInt.check(
-  Schema.isLessThanOrEqualTo(WORKSPACE_CONTEXT_MAX_CONTEXT_LINES),
-);
-const WorkspaceContextResultsPerQuery = PositiveInt.check(
-  Schema.isLessThanOrEqualTo(WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY),
-);
+const WorkspaceContextLines = NonNegativeInt;
+const WorkspaceContextResultsPerQuery = PositiveInt;
 
 export const WorkspaceFindInput = Schema.Struct({
   queries: WorkspaceContextQueries.check(Schema.isMinLength(1)),

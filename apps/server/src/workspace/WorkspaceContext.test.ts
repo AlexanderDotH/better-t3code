@@ -5,6 +5,10 @@ import * as NodeUtil from "node:util";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { FileFinder } from "@ff-labs/fff-node";
+import {
+  WORKSPACE_CONTEXT_MAX_CONTEXT_LINES,
+  WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY,
+} from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -188,6 +192,50 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceContextLive", (it) 
         expect(result.queries[0]?.matches[0]?.path).toBe("src/full-coverage.ts");
         expect(result.queries[1]?.matches).toHaveLength(2);
         expect(result.queries[1]?.truncated).toBe(true);
+      }),
+    );
+
+    it.effect("caps oversized result and context preferences instead of failing", () =>
+      Effect.gen(function* () {
+        const context = yield* WorkspaceContext.WorkspaceContext;
+        const cwd = yield* makeTempDir;
+        yield* initializeGit(cwd);
+        yield* Effect.forEach(
+          Array.from({ length: WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY + 1 }, (_, index) => index),
+          (index) =>
+            writeTextFile(cwd, `src/result-${index}.ts`, `export const value = ${index};\n`),
+        );
+        const markerLine = WORKSPACE_CONTEXT_MAX_CONTEXT_LINES + 3;
+        yield* writeTextFile(
+          cwd,
+          "src/context.ts",
+          Array.from({ length: markerLine + WORKSPACE_CONTEXT_MAX_CONTEXT_LINES + 2 }, (_, index) =>
+            index + 1 === markerLine ? "oversizedContextMarker" : `line-${index + 1}`,
+          ).join("\n"),
+        );
+
+        const result = yield* context.execute({
+          workspaceRoot: cwd,
+          input: {
+            queries: [
+              { text: "result-", mode: "path" },
+              { text: "oversizedContextMarker", mode: "content" },
+            ],
+            contextLines: WORKSPACE_CONTEXT_MAX_CONTEXT_LINES + 10,
+            maxResultsPerQuery: WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY + 30,
+          },
+        });
+
+        expect(result.queries[0]?.matches).toHaveLength(WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY);
+        expect(result.queries[1]?.matches[0]).toMatchObject({
+          matchLine: markerLine,
+          lineStart: markerLine - WORKSPACE_CONTEXT_MAX_CONTEXT_LINES,
+          lineEnd: markerLine + WORKSPACE_CONTEXT_MAX_CONTEXT_LINES,
+        });
+        expect(result.warnings).toEqual([
+          `contextLines was capped at ${WORKSPACE_CONTEXT_MAX_CONTEXT_LINES}.`,
+          `maxResultsPerQuery was capped at ${WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY}.`,
+        ]);
       }),
     );
   });
