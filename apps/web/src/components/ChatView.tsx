@@ -53,6 +53,7 @@ import {
 import {
   applyClaudePromptEffortPrefix,
   createModelSelection,
+  readAutoReasoningResolution,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
@@ -2751,6 +2752,10 @@ function ChatViewContent(props: ChatViewProps) {
   const liveThreadActivities = useMemo(
     () => threadActivities.filter((activity) => activity.historyOrigin === undefined),
     [threadActivities],
+  );
+  const latestAutoReasoningEffort = useMemo(
+    () => readAutoReasoningResolution(liveThreadActivities)?.effectiveEffort ?? null,
+    [liveThreadActivities],
   );
   const liveSubagents = useMemo(
     () => activeThread?.subagents.filter((subagent) => subagent.historyOrigin === undefined) ?? [],
@@ -8376,7 +8381,7 @@ function ChatViewContent(props: ChatViewProps) {
                                     activeProject?.defaultModelSelection
                                   }
                                   activeThreadModelSelection={activeThread?.modelSelection}
-                                  activeThreadActivities={liveThreadActivities}
+                                  autoReasoningEffort={latestAutoReasoningEffort}
                                   firstTurnForkBudget={firstTurnForkBudget}
                                   activeContextWindow={activeContextWindow}
                                   compactDisabled={compactDisabled}

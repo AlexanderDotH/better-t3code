@@ -114,16 +114,26 @@ remains stored as the fallback, so enabling Auto does not discard a deliberate m
 Choosing Low, Medium, High, or another concrete level turns Auto off and restores the existing
 manual behavior.
 
-When you send a prompt, the configured fast decision model runs before the main Codex turn. It
-reviews the conversation origin and recent outcomes, separates the prompt into individual work
-items, discounts work explicitly reported as complete, and rates only the remaining scope. Deep
-cross-layer wiring, difficult diagnosis, persistence, concurrency, security, or heavy verification
-can justify a higher level. The decision model does not inspect project files or use tools.
+When you send a prompt, the configured evaluation model runs before the main Codex turn. It
+receives the current prompt, attachment metadata, and the three most recent earlier user or
+assistant messages in chronological order. The current prompt is separate and does not count as one
+of those three messages; either role counts equally. The evaluator separates the prompt into
+individual work items, discounts work explicitly reported as complete, and rates only the remaining
+scope. Deep cross-layer wiring, difficult diagnosis, persistence, concurrency, security, or heavy
+verification can justify a higher level. It does not inspect project files or use tools.
 
-The control shows the durable choice and latest content-free resolution, for example
-**Auto · High**. **Fallback** appears when routing could not provide a usable decision and the saved
-concrete level was used. A stale resolution is not shown after switching back to manual. Auto applies
-its chosen effort directly to each turn without showing post-turn reasoning recommendations.
+Choose the evaluator under **Settings > Better T3 > Agents > Auto Reasoning evaluation model**.
+**Automatic** stores no dedicated override and follows the environment's text-generation model.
+The evaluator can use any provider supported by that structured text-generation selector, even
+though Auto remains available only for Codex main turns.
+
+The evaluator must return an effort supported by the selected Codex model. T3 Code validates the
+result and uses the saved concrete level if evaluation fails, returns an invalid value, or exceeds
+the 15-second timeout. The control displays **Auto** before the first resolution and then the effort
+actually used, for example **Auto \* High**. This is only a status display: it does not change the
+saved selection and does not append a fallback marker. The content-free resolution remains
+available for diagnostics and usage attribution, and retrying the same message reuses it instead of
+evaluating again.
 
 ### Codex context window
 

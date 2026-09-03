@@ -17,13 +17,13 @@ These rules override general repository guidance on this machine:
 
 ### Required local artifact refresh
 
-After successfully verifying a source change that affects the shipped application, refresh the currently installed local T3 Code application before reporting completion unless the developer explicitly opts out. Documentation-only and test-only changes are exempt.
+After successfully verifying a source change that affects the shipped application, automatically refresh the currently installed local T3 Code application before reporting completion unless the developer explicitly opts out. This section is standing authorization for the build and on-disk app-bundle replacement; do not ask for confirmation each time. Perform the refresh in the current agent session, never as a detached or delayed job. Documentation-only and test-only changes are exempt.
 
 On this macOS machine:
 
 1. Build the current checkout for the host architecture with `vp run dist:desktop:dmg`.
 2. Mount the generated DMG without opening the app.
-3. Replace only `~/Applications/T3 Code (Alpha).app` with the freshly built app bundle, then detach the DMG.
+3. Replace only `~/Applications/Better T3 Code (Alpha).app` with the freshly built app bundle, then detach the DMG.
 4. Do not start, stop, restart, or otherwise control the running app. The developer restarts it manually when ready; that next launch must use the newly installed build.
 
 - Preserve all user data. Never modify or remove T3 Code data under `~/Library/Application Support`, `~/.t3`, or any other user-data location during the app-bundle refresh.

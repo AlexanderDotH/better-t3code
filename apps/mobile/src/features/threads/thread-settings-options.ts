@@ -35,7 +35,7 @@ export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
   },
   {
     mode: "auto-accept-edits",
-    label: "Auto-accept edits",
+    label: "Ruled",
     description: "Auto-approve edits, ask before other actions.",
   },
   {
@@ -45,7 +45,7 @@ export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
   },
   {
     mode: "full-access",
-    label: "Full access",
+    label: "Full",
     description: "Allow commands and edits without prompts.",
   },
 ];

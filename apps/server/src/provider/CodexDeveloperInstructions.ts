@@ -1,4 +1,8 @@
-import type { ProviderInteractionMode } from "@t3tools/contracts";
+import {
+  type ProviderInteractionMode,
+  WORKSPACE_CONTEXT_MAX_QUERIES,
+  WORKSPACE_CONTEXT_MAX_READS,
+} from "@t3tools/contracts";
 
 export interface CodexT3ToolAvailability {
   readonly preview: boolean;
@@ -48,9 +52,9 @@ Use the attached T3 preview tools for browser work. Start with \`preview_status\
     tools.workspace
       ? `## T3 workspace
 
-Prefer \`workspace_find\` for path or content searches and \`workspace_read\` for bounded line reads. Batch independent operations into the fewest calls; use \`workspace_context\` only for mixed search-and-read batches. Do not use shell text readers or searchers.${
+Prefer \`workspace_find\` for path or content searches and \`workspace_read\` for bounded line reads. Batch at most ${WORKSPACE_CONTEXT_MAX_QUERIES} queries or ${WORKSPACE_CONTEXT_MAX_READS} reads per call; split larger sets and use \`workspace_context\` only for mixed batches. Do not use shell text readers or searchers.${
           tools.workspaceWrite && workspaceEditAllowed
-            ? " Prefer `workspace_edit` for ordinary UTF-8 text changes and batch related files in one call. Use provider patch or command tools only for approval-required edits, formatters, generators, binaries, large files, or permission changes."
+            ? " Prefer `workspace_edit` for small UTF-8 edits; create new files with write mode `create` and prefer exact replacements for existing text. Use provider patch or command tools only for approval-required or large edits, formatters, generators, binaries, large files, or permissions."
             : ""
         }`
       : "",

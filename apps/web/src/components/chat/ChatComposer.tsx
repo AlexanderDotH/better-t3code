@@ -172,7 +172,6 @@ import {
   renderProviderContextWindowPicker,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
-  resolveAutoReasoningStatus,
 } from "./composerProviderState";
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import {
@@ -879,9 +878,9 @@ export interface ChatComposerProps {
   providerStatuses: ServerProvider[];
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
   activeThreadModelSelection: ModelSelection | null | undefined;
+  autoReasoningEffort: string | null;
 
   // Context window
-  activeThreadActivities: Thread["activities"] | undefined;
   firstTurnForkBudget: FirstTurnForkBudget | null;
   activeContextWindow: ContextWindowSnapshot | null;
   compactDisabled: boolean;
@@ -1833,17 +1832,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
     [composerDraftTarget, promptRef, scheduleComposerFocus, setComposerDraftPrompt],
   );
-  const autoReasoningStatus = resolveAutoReasoningStatus(
-    {
-      instanceId: selectedInstanceId,
-      model: selectedModel,
-      ...(composerModelOptions?.[selectedInstanceId]
-        ? { options: composerModelOptions[selectedInstanceId] }
-        : {}),
-    },
-    props.activeThreadActivities ?? [],
-  );
-
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
     provider: selectedProvider,
     instanceId: selectedInstanceId,
@@ -1855,7 +1843,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     prompt,
     onPromptChange: setPromptFromTraits,
     planModeEnabled: settings.planModeEnabled,
-    ...(autoReasoningStatus ? { autoReasoningStatus } : {}),
+    autoReasoningEffort: props.autoReasoningEffort,
   });
   const providerTraitsPicker = renderProviderTraitsPicker({
     provider: selectedProvider,
@@ -1868,7 +1856,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     prompt,
     onPromptChange: setPromptFromTraits,
     planModeEnabled: settings.planModeEnabled,
-    ...(autoReasoningStatus ? { autoReasoningStatus } : {}),
+    autoReasoningEffort: props.autoReasoningEffort,
   });
   const providerContextWindowMenuContent = renderProviderContextWindowMenuContent({
     provider: selectedProvider,
@@ -4612,7 +4600,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   showMobilePendingAnswerActions && "hidden sm:flex",
                 )}
               >
-                <div className="-m-1 -ms-3.5 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 ps-3.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                <div className="-m-1 -ms-3.5 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 ps-3.5 [scrollbar-color:color-mix(in_srgb,var(--contrast-border)_78%,transparent)_transparent] [&>*]:shrink-0 [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[color-mix(in_srgb,var(--contrast-border)_78%,transparent)] [&::-webkit-scrollbar-track]:bg-transparent">
                   {noProviderAvailable ? (
                     <Button
                       type="button"

@@ -8,9 +8,10 @@ describe("representative Auto Reasoning acceptance fixtures", () => {
     expect(fixture.after).toBe(fixture.before);
   });
 
-  it("presents the same effective Auto fallback on web and mobile", () => {
+  it("presents the resolved Auto effort on web and mobile", () => {
     const fixture = REPRESENTATIVE_AUTO_REASONING_ACCEPTANCE.autoUi;
-    expect(fixture.mobile).toBe(fixture.web);
+    expect(fixture.web).toBe("Auto · High");
+    expect(fixture.mobile).toBe("Auto · High");
   });
 
   it("reserves a distinct content-free Auto routing attribution", () => {

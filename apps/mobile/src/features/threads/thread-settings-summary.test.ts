@@ -1,10 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import {
-  readAutoReasoningStatus,
-  threadReasoningValueLabel,
-  threadSettingsSummaryLabel,
-} from "./thread-settings-summary";
+import { threadReasoningValueLabel, threadSettingsSummaryLabel } from "./thread-settings-summary";
 
 describe("threadSettingsSummaryLabel", () => {
   it("shows Fetch in the compact composer summary when enabled", () => {
@@ -19,31 +15,37 @@ describe("threadSettingsSummaryLabel", () => {
     ).toBe("Sol · Supervised · Fetch");
   });
 
-  it("shows the same Auto effective and fallback status as web", () => {
-    const autoReasoning = readAutoReasoningStatus([
-      {
-        kind: "runtime.warning",
-        payload: { autoReasoningEffort: "low", autoReasoningFallback: true },
-      },
-      {
-        kind: "auto-reasoning.resolved",
-        payload: { autoReasoningEffort: "high", autoReasoningFallback: true },
-      },
-    ] as never);
+  it("shows the resolved Auto effort without exposing fallback state", () => {
+    const resolvedAutoReasoning = {
+      enabled: true,
+      effectiveEffort: "high",
+      fallback: true,
+    } as const;
+    const resolvedReasoningLabelInput = {
+      autoReasoningEnabled: true,
+      manualLabel: "Medium",
+      resolvedEffortLabel: "High",
+    } as const;
     expect(
       threadSettingsSummaryLabel({
         modelLabel: "Sol",
         optionDescriptors: [],
         runtimeMode: "approval-required",
         interactionMode: "default",
-        autoReasoning: autoReasoning!,
+        autoReasoning: resolvedAutoReasoning,
       }),
-    ).toBe("Sol · Auto · High · Fallback · Supervised");
+    ).toBe("Sol · Auto · High · Supervised");
+    expect(threadReasoningValueLabel(resolvedReasoningLabelInput)).toBe("Auto · High");
+    expect(
+      threadReasoningValueLabel({
+        autoReasoningEnabled: true,
+        manualLabel: "Medium",
+      }),
+    ).toBe("Auto");
     expect(
       threadReasoningValueLabel({
         autoReasoningEnabled: false,
         manualLabel: "Medium",
-        status: autoReasoning,
       }),
     ).toBe("Medium");
   });

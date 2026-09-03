@@ -118,6 +118,54 @@ describe("mobile model options", () => {
     ]);
   });
 
+  it("preserves Auto Reasoning while normalizing live Codex options", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "codex",
+          driver: "codex",
+          displayName: "Codex",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "gpt-5.6-sol",
+              name: "GPT-5.6 Sol",
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "reasoningEffort",
+                    label: "Reasoning",
+                    type: "select",
+                    options: [
+                      { id: "low", label: "Low", isDefault: true },
+                      { id: "high", label: "High" },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    const [model] = buildModelOptions(config, {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.6-sol",
+      options: [
+        { id: "reasoningEffort", value: "low" },
+        { id: "t3AutoReasoning", value: true },
+      ],
+    });
+
+    expect(model?.selection.options).toEqual([
+      { id: "reasoningEffort", value: "low" },
+      { id: "t3AutoReasoning", value: true },
+    ]);
+  });
+
   it("keeps started threads locked unless the environment capability is enabled", () => {
     const config = {
       providers: [

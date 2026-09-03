@@ -2,6 +2,12 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  WORKSPACE_CONTEXT_MAX_CONTEXT_LINES,
+  WORKSPACE_CONTEXT_MAX_PATH_LENGTH,
+  WORKSPACE_CONTEXT_MAX_QUERIES,
+  WORKSPACE_CONTEXT_MAX_QUERY_LENGTH,
+  WORKSPACE_CONTEXT_MAX_READS,
+  WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY,
   WorkspaceContextInput,
   WorkspaceContextPathError,
   WorkspaceContextResult,
@@ -46,17 +52,41 @@ describe("WorkspaceContextInput", () => {
     });
   });
 
-  it("rejects requests beyond public count and scalar limits", () => {
+  it("accepts common large batches and clampable preferences within hard input limits", () => {
+    expect(
+      decodeFind({
+        queries: Array.from({ length: 14 }, (_, index) => ({ text: `q${index}` })),
+        contextLines: WORKSPACE_CONTEXT_MAX_CONTEXT_LINES + 1,
+        maxResultsPerQuery: WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY + 30,
+      }).queries,
+    ).toHaveLength(14);
+
     expect(() =>
-      decodeInput({ queries: Array.from({ length: 9 }, (_, index) => ({ text: `q${index}` })) }),
+      decodeInput({
+        queries: Array.from({ length: WORKSPACE_CONTEXT_MAX_QUERIES + 1 }, (_, index) => ({
+          text: `q${index}`,
+        })),
+      }),
     ).toThrow();
     expect(() =>
-      decodeInput({ reads: Array.from({ length: 13 }, (_, index) => ({ path: `f${index}.ts` })) }),
+      decodeInput({
+        reads: Array.from({ length: WORKSPACE_CONTEXT_MAX_READS + 1 }, (_, index) => ({
+          path: `f${index}.ts`,
+        })),
+      }),
     ).toThrow();
-    expect(() => decodeInput({ queries: [{ text: "x".repeat(257) }] })).toThrow();
-    expect(() => decodeInput({ reads: [{ path: "x".repeat(513) }] })).toThrow();
-    expect(() => decodeInput({ queries: [{ text: "x" }], contextLines: 9 })).toThrow();
-    expect(() => decodeInput({ queries: [{ text: "x" }], maxResultsPerQuery: 21 })).toThrow();
+    expect(() =>
+      decodeInput({
+        queries: [{ text: "x".repeat(WORKSPACE_CONTEXT_MAX_QUERY_LENGTH + 1) }],
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeInput({
+        reads: [{ path: "x".repeat(WORKSPACE_CONTEXT_MAX_PATH_LENGTH + 1) }],
+      }),
+    ).toThrow();
+    expect(() => decodeInput({ queries: [{ text: "x" }], contextLines: -1 })).toThrow();
+    expect(() => decodeInput({ queries: [{ text: "x" }], maxResultsPerQuery: 0 })).toThrow();
   });
 
   it("rejects non-positive and reversed read ranges but accepts ranges that will be clamped", () => {

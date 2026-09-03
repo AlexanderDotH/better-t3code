@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { WORKSPACE_CONTEXT_MAX_QUERIES, WORKSPACE_CONTEXT_MAX_READS } from "@t3tools/contracts";
 
 import * as Facade from "./OpenAiAdapter.ts";
 import { normalizeOpenAiAdapterRoundEvent } from "./OpenAiAdapterEventNormalization.ts";
@@ -9,6 +10,8 @@ import {
 } from "./OpenAiAdapterPersistence.ts";
 import { buildOpenAiSystemInstructions } from "./OpenAiAdapterSystemPrompt.ts";
 import { makeOpenAiAdapter } from "./OpenAiAdapterWiring.ts";
+
+const workspaceBatchGuidance = `Batch at most ${WORKSPACE_CONTEXT_MAX_QUERIES} queries or ${WORKSPACE_CONTEXT_MAX_READS} reads per call; split larger sets and use workspace_context only for mixed batches.`;
 
 describe("OpenAI adapter module boundaries", () => {
   it("keeps the public adapter facade stable across focused modules", () => {
@@ -33,9 +36,7 @@ describe("OpenAI adapter module boundaries", () => {
     expect(instructions).toContain("workspace_find");
     expect(instructions).toContain("workspace_read");
     expect(instructions).toContain("workspace_context");
-    expect(instructions).toContain(
-      "Batch independent operations into the fewest calls; use workspace_context only for mixed search-and-read batches.",
-    );
+    expect(instructions).toContain(workspaceBatchGuidance);
     expect(instructions).not.toContain("workspace_edit");
   });
 
@@ -50,10 +51,9 @@ describe("OpenAI adapter module boundaries", () => {
     expect(instructions).toContain("workspace_find");
     expect(instructions).toContain("workspace_read");
     expect(instructions).toContain("workspace_context");
-    expect(instructions).toContain(
-      "Batch independent operations into the fewest calls; use workspace_context only for mixed search-and-read batches.",
-    );
+    expect(instructions).toContain(workspaceBatchGuidance);
     expect(instructions).toContain("workspace_edit");
-    expect(instructions).toMatch(/formatters.*generators.*binaries/i);
+    expect(instructions).toMatch(/new files.*write mode.*create.*exact replacements/i);
+    expect(instructions).toMatch(/large edits.*formatters.*generators.*binaries/i);
   });
 });

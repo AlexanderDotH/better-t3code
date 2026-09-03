@@ -151,6 +151,7 @@ const FIRST_USER_CONTEXT_TRUNCATION_MARKER = "\n[First user message truncated]";
 const STARTUP_PENDING_INTERACTION_ID_PREFIX = "startup-pending-interaction";
 const STARTUP_PENDING_INTERACTION_REASON = "provider-runtime-unavailable-after-startup";
 const AUTO_REASONING_TIMEOUT = Duration.seconds(15);
+const AUTO_REASONING_CONVERSATION_MESSAGE_LIMIT = 3;
 
 interface AutoReasoningDiagnostic {
   readonly routerModel: {
@@ -173,6 +174,7 @@ function collectAutoReasoningConversation(
       (message): message is OrchestrationMessage & { readonly role: "user" | "assistant" } =>
         message.role === "user" || message.role === "assistant",
     )
+    .slice(-AUTO_REASONING_CONVERSATION_MESSAGE_LIMIT)
     .map((message) => ({ role: message.role, text: message.text }));
 }
 

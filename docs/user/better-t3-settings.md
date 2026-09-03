@@ -13,7 +13,7 @@ Better T3 settings collect optional Better T3 behavior in one place. Open **Sett
 
 Each tab shows its basic settings first. Tabs that need deeper configuration also include an **Advanced settings** section, which is collapsed by default. Opening it keeps advanced settings visible while you move between tabs during the current page visit; returning to the page starts with it collapsed again. General does not show an empty advanced section.
 
-For example, **Knowledge Graph** is the basic setting that turns the feature on or off. Its model, indexing progress, rebuild, pause or resume, and clear controls are advanced settings. Agents keeps model selectors, the parallel-plan reviewer, and Caveman Mode under Advanced. Visual keeps card morphing, preview count, sorting, settling, and Shift-click Show Less there. Workspace uses it for checkpoints and portability, Voice for output language, transcript portability, and credentials, System for diagnostics, and Integrations for MCP and Skills links.
+For example, **Knowledge Graph** is the basic setting that turns the feature on or off. Its model, indexing progress, rebuild, pause or resume, and clear controls are advanced settings. Agents exposes **Auto Reasoning evaluation model** directly, while Fetch model, the parallel-plan reviewer, and Caveman Mode remain under Advanced. Visual keeps card morphing, preview count, sorting, settling, and Shift-click Show Less there. Workspace uses it for checkpoints and portability, Voice for output language, transcript portability, and credentials, System for diagnostics, and Integrations for MCP and Skills links.
 
 Settings search selects the tab containing its result automatically. If the result is advanced, the Advanced settings section expands so the setting can be focused.
 
@@ -23,10 +23,13 @@ Switches change optional behavior. Selectors choose a mode or model. Actions per
 
 Character streaming motion applies only to newly arriving assistant text in Classic presentation; reduced motion and Current presentation render it immediately.
 
-**Auto Reasoning decision model** chooses the normal structured text-generation model used to
-select an effort. **Automatic** stores no dedicated override and follows the environment's general
-text-generation model. This selector never offers the chat-level Auto marker: its own model options
-remain concrete so the decision call cannot recursively route itself.
+**Auto Reasoning evaluation model** chooses the structured text-generation model that analyzes the
+current prompt, attachment metadata, and exactly the three latest earlier user or assistant messages
+in chronological order. The current prompt does not count as one of those three messages.
+**Automatic** stores no dedicated override and follows the environment's general text-generation
+model. This selector never offers the chat-level Auto marker: its own model options remain concrete
+so the evaluation call cannot recursively route itself. Auto remains a Codex-only main-turn option,
+but every supported structured text-generation provider can supply the evaluation model.
 
 Selected Agent workflows and Chat and layout settings show two compact visual choices below the
 setting title and description. Click the preview for the result you want; the selected card exposes

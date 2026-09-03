@@ -4475,16 +4475,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const runtimeModeSelect = await waitForButtonByText("Full access");
+      const runtimeModeSelect = await waitForButtonByText("Full");
       runtimeModeSelect.click();
 
       expect((await waitForSelectItemContainingText("Supervised")).textContent).toContain(
         "Ask before commands and file changes",
       );
 
-      const autoAcceptItem = await waitForSelectItemContainingText("Auto-accept edits");
+      const autoAcceptItem = await waitForSelectItemContainingText("Ruled");
       expect(autoAcceptItem.textContent).toContain("Auto-approve edits");
-      expect((await waitForSelectItemContainingText("Full access")).textContent).toContain(
+      expect((await waitForSelectItemContainingText("Full")).textContent).toContain(
         "Allow commands and edits without prompts",
       );
     } finally {

@@ -1,3 +1,4 @@
+import { WORKSPACE_CONTEXT_MAX_QUERIES, WORKSPACE_CONTEXT_MAX_READS } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { buildCodexDeveloperInstructions } from "./CodexDeveloperInstructions.ts";
@@ -7,6 +8,7 @@ const preChangeDefaultFixture = {
   estimatedTokens: Math.ceil(2_606 / 4),
 };
 const estimatedTokens = (value: string) => Math.ceil(value.length / 4);
+const workspaceBatchGuidance = `Batch at most ${WORKSPACE_CONTEXT_MAX_QUERIES} queries or ${WORKSPACE_CONTEXT_MAX_READS} reads per call; split larger sets and use \`workspace_context\` only for mixed batches.`;
 
 describe("buildCodexDeveloperInstructions delegation history policy", () => {
   for (const interactionMode of ["default", "plan"] as const) {
@@ -107,12 +109,10 @@ describe("buildCodexDeveloperInstructions delegation history policy", () => {
     expect(instructions).toContain("workspace_find");
     expect(instructions).toContain("workspace_read");
     expect(instructions).toContain("workspace_context");
-    expect(instructions).toContain(
-      "Batch independent operations into the fewest calls; use `workspace_context` only for mixed search-and-read batches.",
-    );
+    expect(instructions).toContain(workspaceBatchGuidance);
     expect(instructions).toContain("workspace_edit");
-    expect(instructions).toMatch(/batch/i);
-    expect(instructions).toMatch(/formatters.*generators.*binaries.*large files.*permission/i);
+    expect(instructions).toMatch(/new files.*write mode.*create.*exact replacements/i);
+    expect(instructions).toMatch(/large edits.*formatters.*generators.*binaries/i);
 
     const plan = buildCodexDeveloperInstructions(
       "plan",
@@ -122,9 +122,7 @@ describe("buildCodexDeveloperInstructions delegation history policy", () => {
     expect(plan).toContain("workspace_find");
     expect(plan).toContain("workspace_read");
     expect(plan).toContain("workspace_context");
-    expect(plan).toContain(
-      "Batch independent operations into the fewest calls; use `workspace_context` only for mixed search-and-read batches.",
-    );
+    expect(plan).toContain(workspaceBatchGuidance);
     expect(plan).not.toContain("workspace_edit");
     expect(plan).not.toContain("formatters");
   });

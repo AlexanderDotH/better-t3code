@@ -73,7 +73,6 @@ import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
-import type { AutoReasoningStatus } from "./thread-settings-summary";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -114,7 +113,7 @@ export interface ThreadComposerProps {
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
   readonly activeThreadBusy: boolean;
-  readonly autoReasoningStatus?: AutoReasoningStatus;
+  readonly autoReasoningEffort: string | null;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
@@ -585,7 +584,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       onUpdateFetchEnabled: props.onUpdateFetchEnabled,
       onCopyTranscript: props.onCopyTranscript,
       transcriptExportBusy: props.transcriptExportBusy === true || props.activeThreadBusy,
-      ...(props.autoReasoningStatus ? { autoReasoningStatus: props.autoReasoningStatus } : {}),
+      autoReasoningEffort: props.autoReasoningEffort,
     }),
     [
       currentModelSelection,
@@ -598,7 +597,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       props.onCopyTranscript,
       props.transcriptExportBusy,
       props.activeThreadBusy,
-      props.autoReasoningStatus,
+      props.autoReasoningEffort,
       props.environmentId,
       providerOptionDescriptors,
       providerGroups,

@@ -8,15 +8,12 @@ import {
 import {
   getComposerPromptInjectionState,
   getComposerProviderState,
-  readAutoReasoningStatus,
-  resolveAutoReasoningStatus,
   renderProviderContextWindowMenuContent,
   renderProviderContextWindowPicker,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
 } from "./composerProviderState";
 import { DraftId } from "../../composerDraftStore";
-import { buildTraitsTriggerDisplay } from "./TraitsPicker";
 
 // Everything in composerProviderState is now data-driven by the model's
 // optionDescriptors, so these tests use a single synthetic provider/model and
@@ -102,65 +99,6 @@ const ULTRATHINK_FRAME_CLASSES = {
   modelPickerIconClassName: "ultrathink-chroma",
 } as const;
 
-describe("readAutoReasoningStatus", () => {
-  it("reads the latest content-free runtime decision and fallback signal", () => {
-    const activities = [
-      { kind: "runtime.warning", payload: { autoReasoningEffort: "low" } },
-      {
-        kind: "auto-reasoning.resolved",
-        payload: { autoReasoningEffort: "high", autoReasoningFallback: true },
-      },
-    ] as never;
-    expect(readAutoReasoningStatus(activities)).toEqual({
-      enabled: true,
-      effectiveEffort: "high",
-      fallback: true,
-    });
-    expect(
-      readAutoReasoningStatus([
-        { kind: "auto-reasoning.resolved", payload: { privatePrompt: "secret" } },
-      ] as never),
-    ).toBeNull();
-
-    const status = resolveAutoReasoningStatus(
-      {
-        instanceId: "codex" as never,
-        model: MODEL,
-        options: [
-          { id: "reasoningEffort", value: "high" },
-          { id: "t3AutoReasoning", value: true },
-        ],
-      },
-      activities,
-    );
-    expect(status).toEqual({ enabled: true, effectiveEffort: "high", fallback: true });
-    expect(
-      buildTraitsTriggerDisplay({
-        provider: PROVIDER,
-        descriptors: [
-          selectDescriptor("reasoningEffort", [
-            { id: "medium", label: "Medium" },
-            { id: "high", label: "High", isDefault: true },
-          ]),
-        ],
-        primarySelectDescriptorId: "reasoningEffort",
-        ultrathinkPromptControlled: false,
-        ...(status ? { autoReasoning: status } : {}),
-      }).label,
-    ).toBe("Auto · High · Fallback");
-    expect(
-      resolveAutoReasoningStatus(
-        {
-          instanceId: "codex" as never,
-          model: MODEL,
-          options: [{ id: "reasoningEffort", value: "high" }],
-        },
-        activities,
-      ),
-    ).toBeNull();
-  });
-});
-
 describe("getComposerProviderState", () => {
   it("upgrades legacy Codex fast mode to the canonical service tier", () => {
     const models = modelWith([
@@ -198,6 +136,23 @@ describe("getComposerProviderState", () => {
         planModeEnabled: true,
       }).modelOptionsForDispatch,
     ).toEqual(selections(["serviceTier", "default"]));
+  });
+
+  it("preserves Auto Reasoning in dispatched Codex options", () => {
+    expect(
+      getComposerProviderState({
+        provider: PROVIDER,
+        model: MODEL,
+        models: modelWith([
+          selectDescriptor("reasoningEffort", [
+            { id: "low", label: "Low", isDefault: true },
+            { id: "high", label: "High" },
+          ]),
+        ]),
+        modelOptions: selections(["reasoningEffort", "low"], ["t3AutoReasoning", true]),
+        planModeEnabled: true,
+      }).modelOptionsForDispatch,
+    ).toEqual(selections(["reasoningEffort", "low"], ["t3AutoReasoning", true]));
   });
 
   it("derives a stable prompt injection state for ordinary prompt edits", () => {

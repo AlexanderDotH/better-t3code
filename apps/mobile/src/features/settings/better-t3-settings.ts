@@ -22,6 +22,7 @@ import {
 import type { BetterT3PreparedStatusModel } from "@t3tools/client-runtime/better-t3-status";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
+import { stripAutoReasoning } from "@t3tools/shared/model";
 import { knowledgeGraphStatusMessageKey } from "../knowledge-graph/mobile-knowledge-graph";
 
 export type MobilePreparedStatusInput = {
@@ -313,10 +314,34 @@ export function createMobileBetterT3EnvironmentControlPatch(
     case "agent.cavemanMode":
       return { agentEnhancement: { cavemanMode: update.value } };
     case "agent.autoReasoningModel":
-      return { autoReasoningModelSelection: update.value };
+      return {
+        autoReasoningModelSelection:
+          update.value === null ? null : stripAutoReasoning(update.value),
+      };
     case "knowledge.model":
       return { knowledgeGraphModelSelection: update.value };
   }
+}
+
+const MOBILE_AUTO_REASONING_EVALUATION_DRIVER_KINDS: ReadonlySet<string> = new Set([
+  "codex",
+  "claudeAgent",
+  "cursor",
+  "grok",
+  "opencode",
+  "gemini",
+  "chatgpt",
+  "openrouter",
+  "openai",
+]);
+
+export function supportsMobileAutoReasoningModelOption(option: {
+  readonly providerDriver: string;
+  readonly isSelectable: boolean;
+}): boolean {
+  return (
+    MOBILE_AUTO_REASONING_EVALUATION_DRIVER_KINDS.has(option.providerDriver) && option.isSelectable
+  );
 }
 
 export function supportsMobileKnowledgeGraphModelOption(option: {

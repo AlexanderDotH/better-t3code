@@ -38,6 +38,7 @@ import {
   resolveMobileBetterT3Destination,
   resolveMobileBetterT3ProjectSelection,
   shouldSubscribeMobileKnowledgeGraphProgress,
+  supportsMobileAutoReasoningModelOption,
   supportsMobileKnowledgeGraphModelOption,
   buildMobileTranscriptPortabilityOptions,
   formatMobileResourceBytes,
@@ -679,15 +680,53 @@ describe("mobile Better T3 settings", () => {
     expect(
       createMobileBetterT3EnvironmentControlPatch({
         id: "agent.autoReasoningModel",
-        value: selection,
+        value: {
+          ...selection,
+          options: [
+            { id: "reasoningEffort", value: "low" },
+            { id: "t3AutoReasoning", value: true },
+          ],
+        },
       }),
-    ).toEqual({ autoReasoningModelSelection: selection });
+    ).toEqual({
+      autoReasoningModelSelection: {
+        ...selection,
+        options: [{ id: "reasoningEffort", value: "low" }],
+      },
+    });
     expect(
       createMobileBetterT3EnvironmentControlPatch({
         id: "agent.autoReasoningModel",
         value: null,
       }),
     ).toEqual({ autoReasoningModelSelection: null });
+  });
+
+  it("keeps supported, selectable Auto Reasoning evaluation models available", () => {
+    for (const providerDriver of [
+      "codex",
+      "claudeAgent",
+      "cursor",
+      "grok",
+      "opencode",
+      "gemini",
+      "chatgpt",
+      "openrouter",
+      "openai",
+    ]) {
+      expect(supportsMobileAutoReasoningModelOption({ providerDriver, isSelectable: true })).toBe(
+        true,
+      );
+    }
+    expect(
+      supportsMobileAutoReasoningModelOption({ providerDriver: "codex", isSelectable: false }),
+    ).toBe(false);
+    expect(
+      supportsMobileAutoReasoningModelOption({
+        providerDriver: "unsupported-evaluator",
+        isSelectable: true,
+      }),
+    ).toBe(false);
   });
 
   it("offers only selectable OpenAI models for Knowledge Graph enrichment", () => {

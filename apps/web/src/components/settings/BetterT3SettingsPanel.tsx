@@ -126,7 +126,6 @@ export const BETTER_T3_SETTINGS_TABS = [
 export const BETTER_T3_ADVANCED_FEATURE_IDS: ReadonlySet<BetterT3FeatureId> = new Set([
   "agent.fetchModel",
   "agent.parallelPlanReviewer",
-  "agent.autoReasoningModel",
   "agent.cavemanMode",
   "chat.cardMorphing",
   "chat.previewCount",

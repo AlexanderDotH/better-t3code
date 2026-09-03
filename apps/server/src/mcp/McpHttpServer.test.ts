@@ -8,6 +8,8 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  WORKSPACE_CONTEXT_MAX_QUERIES,
+  WORKSPACE_CONTEXT_MAX_READS,
   type WorkspaceContextResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -155,7 +157,7 @@ it("keeps every refined workspace operation readable to MCP clients", () => {
         anyOf: expect.arrayContaining([
           expect.objectContaining({
             type: "array",
-            maxItems: 8,
+            maxItems: WORKSPACE_CONTEXT_MAX_QUERIES,
             items: expect.objectContaining({ type: "object" }),
           }),
         ]),
@@ -164,7 +166,7 @@ it("keeps every refined workspace operation readable to MCP clients", () => {
         anyOf: expect.arrayContaining([
           expect.objectContaining({
             type: "array",
-            maxItems: 12,
+            maxItems: WORKSPACE_CONTEXT_MAX_READS,
             items: expect.objectContaining({ type: "object" }),
           }),
         ]),
@@ -173,12 +175,22 @@ it("keeps every refined workspace operation readable to MCP clients", () => {
   });
   expect(find).toMatchObject({
     properties: {
-      queries: { type: "array", minItems: 1, maxItems: 8, items: { type: "object" } },
+      queries: {
+        type: "array",
+        minItems: 1,
+        maxItems: WORKSPACE_CONTEXT_MAX_QUERIES,
+        items: { type: "object" },
+      },
     },
   });
   expect(read).toMatchObject({
     properties: {
-      reads: { type: "array", minItems: 1, maxItems: 12, items: { type: "object" } },
+      reads: {
+        type: "array",
+        minItems: 1,
+        maxItems: WORKSPACE_CONTEXT_MAX_READS,
+        items: { type: "object" },
+      },
     },
   });
   expect(edit).toMatchObject({

@@ -832,13 +832,9 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
   "chat.composer.mode.plan": ["Plan", "Plan", "Plan"],
   "chat.composer.access": ["Access", "Zugriff", "Accès"],
   "chat.composer.access.supervised": ["Supervised", "Überwacht", "Supervisé"],
-  "chat.composer.access.autoAccept": [
-    "Auto-accept edits",
-    "Änderungen automatisch annehmen",
-    "Accepter automatiquement les modifications",
-  ],
-  "chat.composer.access.auto": ["Auto", "Automatisch", "Auto"],
-  "chat.composer.access.full": ["Full access", "Vollzugriff", "Accès complet"],
+  "chat.composer.access.autoAccept": ["Ruled", "Regeln", "Règles"],
+  "chat.composer.access.auto": ["Auto", "Auto", "Auto"],
+  "chat.composer.access.full": ["Full", "Voll", "Complet"],
   "chat.composer.previousQuestion": ["Previous question", "Vorherige Frage", "Question précédente"],
   "chat.composer.previous": ["Previous", "Zurück", "Précédent"],
   "chat.composer.implementationActions": [
@@ -1667,11 +1663,10 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
   "chat.traits.default": ["Default", "Standard", "Par défaut"],
   "chat.traits.auto": ["Auto", "Auto", "Auto"],
   "chat.traits.autoDescription": [
-    "Sets reasoning level based on your prompt input.",
-    "Legt die Reasoning-Stufe anhand deiner Eingabe fest.",
-    "Définit le niveau de raisonnement selon votre saisie.",
+    "Selects the reasoning level automatically.",
+    "Wählt die Reasoning-Stufe automatisch.",
+    "Sélectionne automatiquement le niveau de raisonnement.",
   ],
-  "chat.traits.fallback": ["Fallback", "Fallback", "Repli"],
   "chat.traits.ultrathinkLocked": [
     'Your prompt contains "ultrathink" in the text. Remove it to change this option.',
     'Deine Eingabe enthält "ultrathink" im Text. Entferne es, um diese Option zu ändern.',

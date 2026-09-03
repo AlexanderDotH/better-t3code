@@ -7,7 +7,9 @@ import {
 import { normalizeClientModelSelection } from "@t3tools/client-runtime/model-options";
 import {
   buildProviderOptionSelectionsFromDescriptors,
+  enableAutoReasoning,
   getProviderOptionDescriptors,
+  isAutoReasoningEnabled,
 } from "@t3tools/shared/model";
 
 export type ModelOption = {
@@ -62,12 +64,15 @@ function normalizeSelectionOptions(
       selections: normalizedSelection.options,
     }),
   );
-  return options
+  const descriptorSelection = options
     ? { ...normalizedSelection, options }
     : {
         instanceId: normalizedSelection.instanceId,
         model: normalizedSelection.model,
       };
+  return isAutoReasoningEnabled(normalizedSelection)
+    ? enableAutoReasoning(descriptorSelection)
+    : descriptorSelection;
 }
 
 /**

@@ -38,7 +38,6 @@ const crossSurfaceKeys = [
   "betterT3.agent.autoReasoningModel.description",
   "chat.traits.auto",
   "chat.traits.autoDescription",
-  "chat.traits.fallback",
   "usage.calls.auto-reasoning",
   "mobile.usage.calls.auto-reasoning",
 ] as const satisfies readonly InterfaceMessageKey[];
@@ -205,12 +204,32 @@ describe("interface language", () => {
 
   it("ships Auto reasoning controls and usage labels on web and mobile", () => {
     expect(translateInterfaceMessage("en", "chat.traits.autoDescription")).toBe(
-      "Sets reasoning level based on your prompt input.",
+      "Selects the reasoning level automatically.",
     );
+    const settingsCopy = {
+      en: {
+        label: "Auto Reasoning evaluation model",
+        description:
+          "Used to select the reasoning level. Automatic uses the text-generation model.",
+      },
+      de: {
+        label: "Auswertungsmodell für Auto Reasoning",
+        description:
+          "Wird zur Auswahl der Reasoning-Stufe verwendet. Automatisch verwendet das Textgenerierungsmodell.",
+      },
+      fr: {
+        label: "Modèle d’évaluation du raisonnement automatique",
+        description:
+          "Utilisé pour sélectionner le niveau de raisonnement. Automatique utilise le modèle de génération de texte.",
+      },
+    } as const;
     for (const language of ["en", "de", "fr"] as const) {
+      expect(translateInterfaceMessage(language, "betterT3.agent.autoReasoningModel.label")).toBe(
+        settingsCopy[language].label,
+      );
       expect(
-        translateInterfaceMessage(language, "betterT3.agent.autoReasoningModel.label"),
-      ).not.toBe("betterT3.agent.autoReasoningModel.label");
+        translateInterfaceMessage(language, "betterT3.agent.autoReasoningModel.description"),
+      ).toBe(settingsCopy[language].description);
       expect(translateInterfaceMessage(language, "chat.traits.auto")).not.toBe("chat.traits.auto");
       expect(translateInterfaceMessage(language, "usage.calls.auto-reasoning")).not.toBe(
         "usage.calls.auto-reasoning",

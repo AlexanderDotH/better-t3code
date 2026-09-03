@@ -538,7 +538,7 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
     expect(decodeServerSettings({}).autoReasoningModelSelection).toBeNull();
   });
 
-  it("round-trips an explicit Auto Reasoning decision model", () => {
+  it("round-trips an explicit Auto Reasoning evaluation model", () => {
     const selection = {
       instanceId: ProviderInstanceId.make("openai_work"),
       model: "gpt-5.6-luna",

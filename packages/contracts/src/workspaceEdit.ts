@@ -191,6 +191,21 @@ export const WorkspaceEditFailureReason = Schema.Literals([
 ]);
 export type WorkspaceEditFailureReason = typeof WorkspaceEditFailureReason.Type;
 
+function workspaceEditRecoveryHint(reason: WorkspaceEditFailureReason): string {
+  switch (reason) {
+    case "not_found":
+      return " Create missing files with a write edit in create or upsert mode.";
+    case "already_exists":
+      return " Replace existing files with a write edit in overwrite or upsert mode.";
+    case "invalid_range":
+      return " Re-read the file; line ranges are one-indexed and inclusive, and each edit sees the result of earlier edits.";
+    case "revision_conflict":
+      return " Re-read the file and retry with its current revision.";
+    default:
+      return "";
+  }
+}
+
 export class WorkspaceEditError extends Schema.TaggedErrorClass<WorkspaceEditError>()(
   "WorkspaceEditError",
   {
@@ -206,10 +221,11 @@ export class WorkspaceEditError extends Schema.TaggedErrorClass<WorkspaceEditErr
   },
 ) {
   override get message(): string {
+    const target = this.path === undefined ? "" : ` for ${JSON.stringify(this.path)}`;
     const location =
       this.change_index === undefined
         ? ""
         : ` (change ${this.change_index}${this.edit_index === undefined ? "" : `, edit ${this.edit_index}`})`;
-    return `Workspace edit failed: ${this.reason}${location}.`;
+    return `Workspace edit failed: ${this.reason}${target}${location}.${workspaceEditRecoveryHint(this.reason)}`;
   }
 }

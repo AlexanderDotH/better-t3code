@@ -1,4 +1,8 @@
 import {
+  WORKSPACE_CONTEXT_MAX_CONTEXT_LINES,
+  WORKSPACE_CONTEXT_MAX_QUERIES,
+  WORKSPACE_CONTEXT_MAX_READS,
+  WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY,
   WorkspaceContextError,
   WorkspaceContextInput,
   WorkspaceContextResult,
@@ -22,8 +26,7 @@ const dependencies = [
 ];
 
 export const WorkspaceFindTool = Tool.make("workspace_find", {
-  description:
-    "Batch independent workspace path or literal text searches. Supports auto, path, and content modes with bounded context. Prefer this over shell find, rg, or grep. The server selects the trusted workspace root; callers cannot override it.",
+  description: `Batch up to ${WORKSPACE_CONTEXT_MAX_QUERIES} independent workspace path or literal text queries; split larger sets across calls. Supports auto, path, and content modes. contextLines above ${WORKSPACE_CONTEXT_MAX_CONTEXT_LINES} and maxResultsPerQuery above ${WORKSPACE_CONTEXT_MAX_RESULTS_PER_QUERY} are capped. Prefer this over shell find, rg, or grep. The server selects the trusted workspace root; callers cannot override it.`,
   parameters: WorkspaceFindInput,
   success: WorkspaceContextResult,
   failure: WorkspaceContextError,
@@ -36,8 +39,7 @@ export const WorkspaceFindTool = Tool.make("workspace_find", {
   .annotate(Tool.OpenWorld, false);
 
 export const WorkspaceReadTool = Tool.make("workspace_read", {
-  description:
-    "Batch bounded one-indexed inclusive line reads from regular UTF-8 workspace files. Successful reads include a revision for guarded edits. Prefer this over shell cat or sed. The server selects the trusted workspace root; callers cannot override it.",
+  description: `Batch up to ${WORKSPACE_CONTEXT_MAX_READS} bounded one-indexed inclusive line reads from regular UTF-8 workspace files; split larger sets across calls. Successful reads include a revision for guarded edits. Prefer this over shell cat or sed. The server selects the trusted workspace root; callers cannot override it.`,
   parameters: WorkspaceReadInput,
   success: WorkspaceContextResult,
   failure: WorkspaceContextError,
@@ -50,8 +52,7 @@ export const WorkspaceReadTool = Tool.make("workspace_read", {
   .annotate(Tool.OpenWorld, false);
 
 export const WorkspaceContextTool = Tool.make("workspace_context", {
-  description:
-    "Batch mixed workspace searches and bounded line reads in one authenticated call. Prefer workspace_find for search-only work and workspace_read for read-only work. The server selects the trusted workspace root; callers cannot override it.",
+  description: `Batch mixed workspace searches and bounded line reads in one authenticated call, with at most ${WORKSPACE_CONTEXT_MAX_QUERIES} queries and ${WORKSPACE_CONTEXT_MAX_READS} reads. Prefer workspace_find for search-only work and workspace_read for read-only work. The server selects the trusted workspace root; callers cannot override it.`,
   parameters: WorkspaceContextInput,
   success: WorkspaceContextResult,
   failure: WorkspaceContextError,
@@ -71,7 +72,7 @@ export const WorkspaceToolkit = Toolkit.make(
 
 export const WorkspaceEditTool = Tool.make("workspace_edit", {
   description:
-    "Apply one authenticated batch of ordered UTF-8 text edits across one or more workspace files. Supports whole-file writes, exact replacements, line or Unicode code-point splices, prepend, append, and file deletion. The server selects the trusted workspace root; callers cannot override it.",
+    "Apply one authenticated batch of ordered UTF-8 text edits across one or more workspace files. Write mode create requires a missing file, overwrite requires an existing file, and upsert accepts either. Each edit sees earlier edits; line ranges are one-indexed and inclusive. Prefer exact replacements for existing text. The server selects the trusted workspace root; callers cannot override it.",
   parameters: WorkspaceEditInput,
   success: WorkspaceEditResult,
   failure: WorkspaceEditError,

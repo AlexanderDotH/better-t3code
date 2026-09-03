@@ -86,7 +86,7 @@ import {
   RUNTIME_MODE_CHOICES,
   threadReasoningChoices,
 } from "./thread-settings-options";
-import { threadReasoningValueLabel, type AutoReasoningStatus } from "./thread-settings-summary";
+import { threadReasoningValueLabel } from "./thread-settings-summary";
 import {
   MOBILE_MODEL_FILTER_MIN_TOUCH_TARGET,
   filterOpenRouterProviderCatalog,
@@ -385,7 +385,7 @@ type ThreadSettingsSessionProps = {
   readonly onUpdateFetchEnabled?: (enabled: boolean) => void;
   readonly onCopyTranscript?: () => Promise<void>;
   readonly transcriptExportBusy?: boolean;
-  readonly autoReasoningStatus?: AutoReasoningStatus;
+  readonly autoReasoningEffort: string | null;
 };
 
 export type ExistingThreadSettingsRouteSession = ThreadSettingsSessionProps & {
@@ -442,7 +442,7 @@ type ThreadSettingsSessionValue = {
   readonly displayedDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
   readonly displayedProvider: ProviderDriverKind | null;
   readonly autoReasoningEnabled: boolean;
-  readonly autoReasoningStatus: AutoReasoningStatus | null;
+  readonly autoReasoningEffort: string | null;
   readonly providerExpansionOverrides: ReadonlySet<string>;
   readonly hasLegacyModels: boolean;
   readonly pendingModel: ModelOption | null;
@@ -637,7 +637,7 @@ function ThreadSettingsSessionProvider(
       displayedDescriptors,
       displayedProvider,
       autoReasoningEnabled,
-      autoReasoningStatus: props.autoReasoningStatus ?? null,
+      autoReasoningEffort: props.autoReasoningEffort,
       providerExpansionOverrides,
       hasLegacyModels,
       pendingModel,
@@ -681,7 +681,7 @@ function ThreadSettingsSessionProvider(
       props.onUpdateFetchEnabled,
       props.onCopyTranscript,
       props.transcriptExportBusy,
-      props.autoReasoningStatus,
+      props.autoReasoningEffort,
       props.providerGroups,
       props.runtimeMode,
       searchQuery,
@@ -908,9 +908,12 @@ function ThreadSettingsOptionsItem(props: {
                       ? threadReasoningValueLabel({
                           autoReasoningEnabled: session.autoReasoningEnabled,
                           manualLabel: getProviderOptionCurrentLabel(descriptor) ?? "",
-                          status: session.autoReasoningStatus,
                           autoLabel: translator.message("chat.traits.auto"),
-                          fallbackLabel: translator.message("chat.traits.fallback"),
+                          resolvedEffortLabel: session.autoReasoningEffort
+                            ? descriptor.options.find(
+                                ({ id }) => id === session.autoReasoningEffort,
+                              )?.label
+                            : null,
                         })
                       : getProviderOptionCurrentLabel(descriptor)
                   }
@@ -1867,6 +1870,7 @@ export function NewTaskThreadSettingsRouteScreen() {
       fetchSupported={workflowSettings.supported}
       fetchEnabled={workflowSettings.fetchEnabled}
       onUpdateFetchEnabled={updateFetchEnabled}
+      autoReasoningEffort={null}
     >
       <ThreadSettingsPickerNavigator onClose={() => navigation.goBack()} />
     </ThreadSettingsSessionProvider>

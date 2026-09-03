@@ -534,7 +534,7 @@ export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): Permissi
     ];
   }
 
-  // "Auto-accept edits" is documented as "auto-approve edits, ask before other
+  // "Ruled" is documented as "auto-approve edits, ask before other
   // actions", so prompting for every edit ignores the mode the user picked.
   // "auto" is left asking on purpose: the docs say providers without an AI
   // reviewer, OpenCode among them, fall back to Supervised for that mode.

@@ -88,7 +88,6 @@ import { useMobilePlanParallelismReview } from "./use-plan-parallelism-review";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { resolveForkComposerBudget } from "./thread-fork";
-import type { AutoReasoningStatus } from "./thread-settings-summary";
 
 export interface ThreadDetailScreenProps {
   readonly selectedThread: OrchestrationThreadShell;
@@ -117,7 +116,7 @@ export interface ThreadDetailScreenProps {
   readonly threadCwd: string | null;
   readonly selectedThreadQueueCount: number;
   readonly activeThreadBusy: boolean;
-  readonly autoReasoningStatus?: AutoReasoningStatus;
+  readonly autoReasoningEffort: string | null;
   readonly serverConfig: T3ServerConfig | null;
   readonly layoutVariant?: LayoutVariant;
   readonly usesAutomaticContentInsets?: boolean;
@@ -867,9 +866,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 serverConfig={props.serverConfig}
                 queueCount={props.selectedThreadQueueCount}
                 activeThreadBusy={props.activeThreadBusy}
-                {...(props.autoReasoningStatus
-                  ? { autoReasoningStatus: props.autoReasoningStatus }
-                  : {})}
+                autoReasoningEffort={props.autoReasoningEffort}
                 environmentId={props.environmentId}
                 projectCwd={props.projectWorkspaceRoot}
                 bottomInset={composerBottomInset}
