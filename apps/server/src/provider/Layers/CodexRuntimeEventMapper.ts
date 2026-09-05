@@ -13,6 +13,7 @@ import {
 } from "./CodexCollaborationEventMapper.ts";
 import {
   ApprovalDecisionPayload,
+  type CodexSubagentRuntimeMetadata,
   contentStreamKindFromMethod,
   isFatalCodexProcessStderrMessage,
   itemDetail,
@@ -72,7 +73,10 @@ function mapItemLifecycle(
   };
 }
 
-export function makeCodexRuntimeEventMapper(initialRootProviderThreadId?: string) {
+export function makeCodexRuntimeEventMapper(
+  initialRootProviderThreadId?: string,
+  subagentMetadata?: CodexSubagentRuntimeMetadata,
+) {
   let rootProviderThreadId = trimText(initialRootProviderThreadId);
   const knownProviderThreadIds = new Set<string>();
 
@@ -114,7 +118,24 @@ export function makeCodexRuntimeEventMapper(initialRootProviderThreadId?: string
       ...(suppressGenericChildThreadEvent(event)
         ? []
         : mapCanonicalRuntimeEvents(event, canonicalThreadId)),
-    ];
+    ].map((runtimeEvent) => {
+      if (runtimeEvent.type !== "subagent.discovered" || !subagentMetadata) {
+        return runtimeEvent;
+      }
+      return {
+        ...runtimeEvent,
+        payload: {
+          ...(trimText(subagentMetadata.model) ? { model: trimText(subagentMetadata.model) } : {}),
+          ...(trimText(subagentMetadata.reasoningEffort)
+            ? { reasoningEffort: trimText(subagentMetadata.reasoningEffort) }
+            : {}),
+          ...(trimText(subagentMetadata.serviceTier)
+            ? { serviceTier: trimText(subagentMetadata.serviceTier) }
+            : {}),
+          ...runtimeEvent.payload,
+        },
+      };
+    });
   };
 }
 

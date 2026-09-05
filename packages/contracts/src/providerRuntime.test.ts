@@ -97,6 +97,7 @@ describe("ProviderRuntimeEvent", () => {
         task: "Add the schema contracts",
         model: "gpt-5.6-codex",
         reasoningEffort: "ultra",
+        serviceTier: "priority",
         depth: 1,
       },
     });
@@ -108,6 +109,7 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.subagentId).toBe("agent-child");
     expect(parsed.providerRefs?.providerThreadId).toBe("provider-thread-child");
     expect(parsed.payload.parentSubagentId).toBe("agent-parent");
+    expect(parsed.payload.serviceTier).toBe("priority");
     expect(parsed.payload.depth).toBe(1);
   });
 

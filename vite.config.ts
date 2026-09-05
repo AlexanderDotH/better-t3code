@@ -28,6 +28,9 @@ export default defineConfig({
     ignorePatterns: [
       ".reference",
       ".repos/**",
+      ".agents/skills/**",
+      ".claude/skills/**",
+      ".t3code/skills/**",
       ".alchemy",
       "dist",
       "dist-electron",
@@ -56,6 +59,9 @@ export default defineConfig({
     ignorePatterns: [
       ".repos",
       ".repos/**",
+      ".agents/skills/**",
+      ".claude/skills/**",
+      ".t3code/skills/**",
       "dist",
       "dist-electron",
       "node_modules",

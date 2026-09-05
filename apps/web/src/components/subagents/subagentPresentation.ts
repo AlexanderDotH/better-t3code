@@ -181,8 +181,8 @@ export function resolveSubagentTranscriptMetadata(
       "Fetch",
       firstNonEmpty(agent.providerInstanceId, agent.providerDriver),
       firstNonEmpty(agent.model),
-      firstNonEmpty(agent.reasoningEffort),
-      firstNonEmpty(agent.serviceTier),
+      formatReasoningEffort(agent.reasoningEffort),
+      formatServiceTier(agent.serviceTier),
     ].filter((value): value is string => value !== null);
   }
 
@@ -191,14 +191,29 @@ export function resolveSubagentTranscriptMetadata(
       "Subagent",
       firstNonEmpty(agent.providerInstanceId, agent.providerDriver),
       firstNonEmpty(agent.model),
-      firstNonEmpty(agent.reasoningEffort),
-      firstNonEmpty(agent.serviceTier),
+      formatReasoningEffort(agent.reasoningEffort),
+      formatServiceTier(agent.serviceTier),
     ].filter((value): value is string => value !== null);
   }
 
-  return [agent.role, agent.model, agent.reasoningEffort, agent.serviceTier].filter(
-    (value): value is string => firstNonEmpty(value) !== null,
-  );
+  return [
+    agent.role,
+    agent.model,
+    formatReasoningEffort(agent.reasoningEffort),
+    formatServiceTier(agent.serviceTier),
+  ].filter((value): value is string => firstNonEmpty(value) !== null);
+}
+
+function formatReasoningEffort(value: string | null): string | null {
+  const effort = firstNonEmpty(value);
+  return effort ? `Reasoning ${effort}` : null;
+}
+
+function formatServiceTier(value: string | null | undefined): string | null {
+  const tier = firstNonEmpty(value);
+  if (tier === "priority" || tier === "fast") return "Fast";
+  if (tier === "default") return "Standard";
+  return tier;
 }
 
 export function deriveSubagentTranscriptEntries(

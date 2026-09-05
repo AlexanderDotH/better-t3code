@@ -270,7 +270,7 @@ function SubagentTranscriptHeader({
             </Badge>
           </div>
           {metadata.length > 0 ? (
-            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+            <p className="mt-0.5 text-pretty text-[11px] text-muted-foreground">
               {metadata.join(" · ")}
             </p>
           ) : null}

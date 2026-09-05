@@ -390,6 +390,7 @@ export const SubagentDiscoveredPayload = Schema.Struct({
   task: Schema.optional(TrimmedNonEmptyStringSchema),
   model: Schema.optional(TrimmedNonEmptyStringSchema),
   reasoningEffort: Schema.optional(TrimmedNonEmptyStringSchema),
+  serviceTier: Schema.optional(TrimmedNonEmptyStringSchema),
   depth: Schema.optional(NonNegativeInt),
 });
 export type SubagentDiscoveredPayload = typeof SubagentDiscoveredPayload.Type;

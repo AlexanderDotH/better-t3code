@@ -14,6 +14,7 @@ import * as ResourceProtection from "../../resourceProtection/SubagentResourceGo
 import { ProviderAdapterProcessError, ProviderAdapterSessionNotFoundError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import type { CodexMcpStartupObservation } from "./CodexMcpRuntimeView.ts";
+import type { CodexSubagentRuntimeMetadata } from "./CodexRuntimeEventShared.ts";
 import type { CodexSessionRuntimeShape } from "./CodexSessionRuntime.ts";
 
 const PROVIDER = ProviderDriverKind.make("codex");
@@ -28,6 +29,7 @@ export interface CodexAdapterSessionContext {
   managedMcpServers: ReadonlyMap<string, McpServerDefinition>;
   readonly mcpStartupStatuses: Map<string, CodexMcpStartupObservation>;
   readonly builtInMcpExpected: boolean;
+  readonly subagentMetadata: CodexSubagentRuntimeMetadata;
   stopped: boolean;
 }
 

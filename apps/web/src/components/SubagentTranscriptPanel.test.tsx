@@ -189,7 +189,7 @@ describe("SubagentTranscriptPanel", () => {
     );
 
     expect(html).toContain('aria-label="Bernoulli transcript"');
-    expect(html).toContain("Fetch · claude-work · gpt-5.6 · ultra · priority");
+    expect(html).toContain("Fetch · claude-work · gpt-5.6 · Reasoning ultra · Fast");
     expect(html).toContain("Checking reconnect behavior");
     expect(html).toContain("Comparing cursor frames");
     expect(html).toContain("The reconnect path keeps the cursor monotonic.");

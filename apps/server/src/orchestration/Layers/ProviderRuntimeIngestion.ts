@@ -392,6 +392,7 @@ function discoveredSubagentSummary(
     task: payload.task ?? existing?.task ?? null,
     model: payload.model ?? existing?.model ?? null,
     reasoningEffort: payload.reasoningEffort ?? existing?.reasoningEffort ?? null,
+    serviceTier: payload.serviceTier ?? existing?.serviceTier,
     depth: payload.depth ?? (path ? subagentDepth(path) : (existing?.depth ?? 0)),
     status: existing?.status ?? "starting",
     statusMessage: existing?.statusMessage ?? null,

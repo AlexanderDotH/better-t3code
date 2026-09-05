@@ -19,6 +19,12 @@ export type CodexLifecycleItem =
   | EffectCodexSchema.V2ItemStartedNotification["item"]
   | EffectCodexSchema.V2ItemCompletedNotification["item"];
 
+export interface CodexSubagentRuntimeMetadata {
+  model: string | undefined;
+  reasoningEffort: string | undefined;
+  serviceTier: string | undefined;
+}
+
 export type CodexToolUserInputQuestion =
   | EffectCodexSchema.ServerRequest__ToolRequestUserInputQuestion
   | EffectCodexSchema.ToolRequestUserInputParams__ToolRequestUserInputQuestion;

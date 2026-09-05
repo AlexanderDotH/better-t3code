@@ -1,3 +1,8 @@
 # git autocrlf=true converts LF to CRLF on Windows, causing issues with oxfmt
 * text=auto eol=lf
 patches/*.patch -whitespace
+.agents/skills/beautiful-article/** -whitespace
+.agents/skills/gpt-image-2/** -whitespace
+.agents/skills/kb-retriever/** -whitespace
+.agents/skills/web-design-engineer/** -whitespace
+.agents/skills/web-video-presentation/** -whitespace
