@@ -98,6 +98,45 @@ function makeProviderNotification(
 }
 
 describe("Codex subagent event mapping", () => {
+  it("adds the current model traits to native subagents while preserving spawn overrides", () => {
+    const events = makeCodexRuntimeEventMapper("provider-root", {
+      model: "gpt-5.6",
+      reasoningEffort: "xhigh",
+      serviceTier: "priority",
+    })(
+      makeProviderNotification({
+        id: asEventId("evt-subagent-traits"),
+        method: "item/completed",
+        providerThreadId: "provider-root",
+        payload: {
+          threadId: "provider-root",
+          turnId: "root-turn",
+          item: {
+            id: "spawn-child-2",
+            type: "collabAgentToolCall",
+            tool: "spawnAgent",
+            senderThreadId: "provider-root",
+            receiverThreadIds: ["provider-child-2"],
+            agentsStates: {},
+            status: "completed",
+            reasoningEffort: "high",
+          },
+        },
+      }),
+      asThreadId("thread-1"),
+    );
+    NodeAssert.deepStrictEqual(
+      events.find((event) => event.type === "subagent.discovered")?.payload,
+      {
+        subagentId: SubagentId.make("codex:provider-child-2"),
+        providerThreadId: "provider-child-2",
+        model: "gpt-5.6",
+        reasoningEffort: "high",
+        serviceTier: "priority",
+      },
+    );
+  });
+
   it("discovers a placeholder before child metadata and preserves child turn and item ids", () => {
     const mapEvent = makeCodexRuntimeEventMapper();
     const childId = SubagentId.make("codex:provider-child");

@@ -80,6 +80,7 @@ import {
   sanitizeCodexMcpNativeEvent,
 } from "./CodexMcpRuntimeView.ts";
 import { makeCodexRuntimeEventMapper } from "./CodexRuntimeEventMapper.ts";
+import type { CodexSubagentRuntimeMetadata } from "./CodexRuntimeEventShared.ts";
 import { makeCodexMcpRuntime } from "./CodexMcpRuntime.ts";
 import { makeCodexAdapterSessionStore } from "./CodexAdapterSession.ts";
 
@@ -329,7 +330,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               }),
           ),
         );
-        const mapRuntimeEvent = makeCodexRuntimeEventMapper(runtimeInput.resumeCursor?.threadId);
+        const subagentMetadata: CodexSubagentRuntimeMetadata = {
+          model: runtimeInput.model,
+          reasoningEffort,
+          serviceTier,
+        };
+        const mapRuntimeEvent = makeCodexRuntimeEventMapper(
+          runtimeInput.resumeCursor?.threadId,
+          subagentMetadata,
+        );
         const mcpStartupStatuses = new Map<string, CodexMcpStartupObservation>();
 
         // Fork into the session scope, not the calling fiber. `forkChild` makes
@@ -387,6 +396,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           managedMcpServers: codexManagedMcpServers(resolvedMcpServers),
           mcpStartupStatuses,
           builtInMcpExpected: mcpSession !== undefined,
+          subagentMetadata,
           stopped: false,
         });
         sessionScopeTransferred = true;
@@ -449,6 +459,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       input.modelSelection?.instanceId === boundInstanceId
         ? getCodexServiceTierOptionValue(input.modelSelection)
         : undefined;
+    if (input.modelSelection?.instanceId === boundInstanceId) {
+      session.subagentMetadata.model = input.modelSelection.model;
+      session.subagentMetadata.reasoningEffort = reasoningEffort;
+      session.subagentMetadata.serviceTier = serviceTier;
+    }
     return yield* session.runtime
       .sendTurn({
         ...(input.input !== undefined ? { input: input.input } : {}),

@@ -167,7 +167,7 @@ describe("subagent presentation", () => {
           serviceTier: "priority",
         }),
       ),
-    ).toEqual(["Fetch", "claude-work", "claude-opus-4-1", "high", "priority"]);
+    ).toEqual(["Fetch", "claude-work", "claude-opus-4-1", "Reasoning high", "Fast"]);
 
     expect(
       resolveSubagentTranscriptMetadata(
@@ -178,7 +178,7 @@ describe("subagent presentation", () => {
           serviceTier: "priority",
         }),
       ),
-    ).toEqual(["reviewer", "gpt-5.6", "ultra", "priority"]);
+    ).toEqual(["reviewer", "gpt-5.6", "Reasoning ultra", "Fast"]);
   });
 
   it("labels T3-managed subagents with the exact provider instance and selected traits", () => {
@@ -194,7 +194,7 @@ describe("subagent presentation", () => {
           serviceTier: "priority",
         }),
       ),
-    ).toEqual(["Subagent", "codex-security", "gpt-daybreak-blue-latest", "max", "priority"]);
+    ).toEqual(["Subagent", "codex-security", "gpt-daybreak-blue-latest", "Reasoning max", "Fast"]);
   });
 });
 

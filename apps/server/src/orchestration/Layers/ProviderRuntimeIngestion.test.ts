@@ -4648,6 +4648,9 @@ describe("ProviderRuntimeIngestion", () => {
           ...(entry.agentPath !== undefined ? { agentPath: entry.agentPath } : {}),
           ...(entry.nickname !== undefined ? { nickname: entry.nickname } : {}),
           ...(entry.role !== undefined ? { role: entry.role } : {}),
+          ...(index === 0
+            ? { model: "gpt-5.6", reasoningEffort: "xhigh", serviceTier: "priority" }
+            : {}),
         },
       });
     }
@@ -4682,8 +4685,9 @@ describe("ProviderRuntimeIngestion", () => {
         nickname: entry.nickname ?? null,
         role: entry.role ?? null,
         task: null,
-        model: null,
-        reasoningEffort: null,
+        model: entry === cases[0] ? "gpt-5.6" : null,
+        reasoningEffort: entry === cases[0] ? "xhigh" : null,
+        ...(entry === cases[0] ? { serviceTier: "priority" } : {}),
         depth: entry.agentPath ? 1 : 0,
         status: "starting",
         statusMessage: null,
