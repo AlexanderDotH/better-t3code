@@ -4051,8 +4051,9 @@ export default function LegacySidebar() {
         projects: sortedProjects,
         threadsByProjectKey,
         nowMs: sidebarActivityNowMs,
+        isThreadSettled: isProjectThreadSettled,
       }),
-    [sidebarActivityNowMs, sortedProjects, threadsByProjectKey],
+    [isProjectThreadSettled, sidebarActivityNowMs, sortedProjects, threadsByProjectKey],
   );
   const activeRouteProjectIsOlder =
     activeRouteProjectKey !== null &&

@@ -46,7 +46,8 @@ windows, and reasoning levels come only from the live account catalog.
 
 T3 exposes workspace reads, bounded writes and shell execution, configured MCP tools, preview tools,
 and project-agent coordination under the thread's permission boundary. Enforce at most 90 declared
-tools, 1 MiB output per tool, and 64 tool rounds per turn. When an MCP catalog exceeds the direct
+tools and 1 MiB output per tool. Tool rounds continue until completion, interruption, or failure,
+without a fixed round-count cutoff. When an MCP catalog exceeds the direct
 definition budget, keep T3's internal tools first and expose the remaining session-local catalog
 through bounded search and call gateway tools. Limit breaches after that compaction finish the turn
 with an explicit provider error.

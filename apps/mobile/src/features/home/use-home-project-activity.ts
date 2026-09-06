@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 
 import {
   partitionHomeProjectGroupsByActivity,
@@ -11,14 +12,20 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 export function useHomeProjectActivity(
   groups: ReadonlyArray<HomeThreadGroup>,
   enabled: boolean,
+  settledThreadKeys: ReadonlySet<string>,
 ): HomeProjectActivityPartition {
   const [boundaryTick, setBoundaryTick] = useState(0);
   const partition = useMemo(
     () =>
       enabled
-        ? partitionHomeProjectGroupsByActivity({ groups, nowMs: Date.now() })
+        ? partitionHomeProjectGroupsByActivity({
+            groups,
+            nowMs: Date.now(),
+            isThreadSettled: (thread) =>
+              settledThreadKeys.has(scopedThreadKey(thread.environmentId, thread.id)),
+          })
         : { recentGroups: groups, olderGroups: [], nextTransitionAtMs: null },
-    [boundaryTick, enabled, groups],
+    [boundaryTick, enabled, groups, settledThreadKeys],
   );
 
   useEffect(() => {

@@ -42,6 +42,7 @@ export function partitionSidebarProjectsByActivity(input: {
   readonly projects: readonly SidebarProjectSnapshot[];
   readonly threadsByProjectKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
   readonly nowMs: number;
+  readonly isThreadSettled?: (thread: SidebarThreadSummary) => boolean;
 }): SidebarProjectActivityPartition {
   const recentProjects: SidebarProjectSnapshot[] = [];
   const olderProjects: SidebarProjectSnapshot[] = [];
@@ -59,11 +60,15 @@ export function partitionSidebarProjectsByActivity(input: {
     const activeThreads = (input.threadsByProjectKey.get(project.projectKey) ?? []).filter(
       (thread) => thread.archivedAt === null,
     );
-    const requiresAttention = activeThreads.some(sidebarThreadRequiresAttention);
+    const requiresAttention = activeThreads.some(
+      (thread) => sidebarThreadRequiresAttention(thread) && !input.isThreadSettled?.(thread),
+    );
     if (
       !requiresAttention &&
       activeThreads.length > 0 &&
-      activeThreads.every((thread) => thread.settledOverride === "settled")
+      activeThreads.every(
+        (thread) => input.isThreadSettled?.(thread) ?? thread.settledOverride === "settled",
+      )
     ) {
       olderProjects.push(project);
       continue;

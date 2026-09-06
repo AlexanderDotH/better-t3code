@@ -1981,6 +1981,38 @@ export default function Sidebar() {
     }
     return groupedThreads;
   }, [projectKeyByMemberKey, threads]);
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  // Tick automatic settlement while the sidebar stays open.
+  const nowMinute = useNowMinute();
+  const changeRequestSnapshotByKey = useAtomValue(threadChangeRequestSnapshotsAtom);
+  const resolveProjectThreadLifecycle = useCallback(
+    (thread: SidebarThreadSummary, now: string) => {
+      const supportsSettlement =
+        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement === true;
+      const supportsSnooze =
+        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
+      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+      const snapshot = changeRequestSnapshotByKey.get(threadKey);
+      const changeRequest =
+        snapshot != null &&
+        (thread.linkedPullRequest == null
+          ? thread.worktreePath === null || snapshot.branch === thread.branch
+          : snapshot.linkedPullRequest?.projectId === thread.linkedPullRequest.projectId &&
+            snapshot.linkedPullRequest.repository === thread.linkedPullRequest.repository &&
+            snapshot.linkedPullRequest.number === thread.linkedPullRequest.number)
+          ? snapshot.pr
+          : null;
+      return resolveThreadSidebarLifecycle(thread, {
+        now,
+        autoSettleAfterDays,
+        autoSettleOnMerge,
+        changeRequest,
+        supportsSettlement,
+        supportsSnooze,
+      });
+    },
+    [autoSettleAfterDays, autoSettleOnMerge, changeRequestSnapshotByKey, serverConfigs],
+  );
   const [sidebarActivityNowMs, setSidebarActivityNowMs] = useState(() => Date.now());
   const { olderProjects, nextTransitionAtMs } = useMemo(
     () =>
@@ -1988,8 +2020,16 @@ export default function Sidebar() {
         projects: projectGroups,
         threadsByProjectKey,
         nowMs: sidebarActivityNowMs,
+        isThreadSettled: (thread) =>
+          resolveProjectThreadLifecycle(thread, `${nowMinute}:00.000Z`) === "settled",
       }),
-    [projectGroups, sidebarActivityNowMs, threadsByProjectKey],
+    [
+      nowMinute,
+      projectGroups,
+      resolveProjectThreadLifecycle,
+      sidebarActivityNowMs,
+      threadsByProjectKey,
+    ],
   );
   const olderProjectKeys = useMemo(
     () => new Set(olderProjects.map((project) => project.projectKey)),
@@ -2062,7 +2102,6 @@ export default function Sidebar() {
       setSidebarOlderProjectsExpanded,
     ],
   );
-  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   // Threads on non-primary environments (T3 Connect, hosted) resolve their
   // provider entry from their own environment's config: default instance ids
   // are driver slugs, so a flat map would collide across environments.
@@ -2104,17 +2143,12 @@ export default function Sidebar() {
     [projectGroups],
   );
 
-  // now is quantized to the minute so effectiveSettled memoization doesn't
-  // churn on every render; auto-settle thresholds are day-granular anyway.
-  const nowMinute = useNowMinute();
   // Snooze wake times are second-precise, so classifying with the quantized
   // minute would hold a woken thread on the shelf for up to a minute. The
   // tick is a plain counter bumped exactly at the next wake boundary (armed
   // below, after the partition knows the boundary); the partition reads a
   // fresh clock whenever it recomputes.
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
-
-  const changeRequestSnapshotByKey = useAtomValue(threadChangeRequestSnapshotsAtom);
 
   // Project scope: one menu above the list. Scoping filters the list without
   // making the header width depend on the number or length of project names.
@@ -2245,7 +2279,6 @@ export default function Sidebar() {
     settledThreads,
     snoozeNow,
   } = useMemo(() => {
-    const now = `${nowMinute}:00.000Z`;
     // Snooze classification uses a REAL clock, not the quantized minute:
     // wake times are second-precise and a woken thread must not linger on
     // the shelf for the rest of the minute. snoozeWakeTick re-runs this
@@ -2267,29 +2300,7 @@ export default function Sidebar() {
       // or descriptor not loaded yet) never classify as settled: the user
       // could neither un-settle nor pin them, so auto-settling them would
       // strand rows in a tail with no working affordances.
-      const supportsSettlement =
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement === true;
-      const supportsSnooze =
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
-      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-      const snapshot = changeRequestSnapshotByKey.get(threadKey);
-      const changeRequest =
-        snapshot != null &&
-        (thread.linkedPullRequest == null
-          ? thread.worktreePath === null || snapshot.branch === thread.branch
-          : snapshot.linkedPullRequest?.projectId === thread.linkedPullRequest.projectId &&
-            snapshot.linkedPullRequest.repository === thread.linkedPullRequest.repository &&
-            snapshot.linkedPullRequest.number === thread.linkedPullRequest.number)
-          ? snapshot.pr
-          : null;
-      const lifecycle = resolveThreadSidebarLifecycle(thread, {
-        now: supportsSnooze ? preciseNow : now,
-        autoSettleAfterDays,
-        autoSettleOnMerge,
-        changeRequest,
-        supportsSettlement,
-        supportsSnooze,
-      });
+      const lifecycle = resolveProjectThreadLifecycle(thread, preciseNow);
       if (lifecycle === "snoozed") snoozed.push(thread);
       else if (lifecycle === "pinned") pinned.push(thread);
       else if (lifecycle === "settled") settled.push(thread);
@@ -2322,9 +2333,7 @@ export default function Sidebar() {
       snoozeNow: preciseNow,
     };
   }, [
-    autoSettleAfterDays,
-    autoSettleOnMerge,
-    changeRequestSnapshotByKey,
+    resolveProjectThreadLifecycle,
     nowMinute,
     scopedProjectKeys,
     serverConfigs,

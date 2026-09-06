@@ -5,6 +5,7 @@ import type {
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { resolveThreadSidebarLifecycle } from "@t3tools/client-runtime/state/thread-settled";
 
 import {
   buildHomeProjectScopes,
@@ -749,6 +750,39 @@ describe("buildHomeThreadGroups", () => {
 });
 
 describe("partitionHomeProjectGroupsByActivity", () => {
+  it("moves automatically settled chats with old proposed plans to older and restores renewed work", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const project = makeProject({ environmentId, id: ProjectId.make("settled"), title: "Settled" });
+    const timestamp = new Date(NOW - 4 * 24 * 60 * 60 * 1_000).toISOString();
+    const thread = makeThread({
+      environmentId,
+      id: ThreadId.make("settled"),
+      projectId: project.id,
+      title: "Settled",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      latestUserMessageAt: timestamp,
+      hasActionableProposedPlan: true,
+    });
+    const classify = (current: EnvironmentThreadShell) =>
+      partitionHomeProjectGroupsByActivity({
+        groups: buildGroups([project], [current]),
+        nowMs: NOW,
+        isThreadSettled: (candidate) =>
+          resolveThreadSidebarLifecycle(candidate, {
+            now: new Date(NOW).toISOString(),
+            autoSettleAfterDays: 3,
+            supportsSettlement: true,
+            supportsSnooze: true,
+          }) === "settled",
+      });
+    expect(classify(thread).olderGroups).toHaveLength(1);
+    expect(
+      classify({ ...thread, latestUserMessageAt: new Date(NOW).toISOString() }).recentGroups,
+    ).toHaveLength(1);
+    expect(classify({ ...thread, hasPendingApprovals: true }).recentGroups).toHaveLength(1);
+  });
+
   it("keeps exactly seven days recent and moves one millisecond older", () => {
     const environmentId = EnvironmentId.make("environment-1");
     const exactProject = makeProject({

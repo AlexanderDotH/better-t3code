@@ -24,6 +24,9 @@ enforces path, size, revision, and rollback rules. Commands run through T3's bou
 for formatters, generators, binaries, large files, permission changes, and directory operations.
 T3 applies the thread's permission mode before any protected tool executes.
 
+Long tasks can continue beyond 64 tool rounds. T3 keeps running tools until Gemini finishes or a
+request fails; use **Stop** in chat to interrupt a turn at any time.
+
 Plan mode and read-only sessions expose only `workspace_context`. A workspace-write sandbox exposes
 workspace reads and edits but no shell. Fetch workers are always read-only. Stopping a turn aborts
 the local SDK stream and any in-flight T3 tool effect; Google may still account for an API request

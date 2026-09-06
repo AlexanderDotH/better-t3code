@@ -433,30 +433,6 @@ export function HomeScreen(props: HomeScreenProps) {
   );
 
   const hasSearchQuery = props.searchQuery.trim().length > 0;
-  const projectActivity = useHomeProjectActivity(projectGroups, !hasSearchQuery);
-  const persistedOlderProjectsExpanded =
-    AsyncResult.isSuccess(preferencesResult) &&
-    preferencesResult.value.olderProjectsExpanded === true;
-  const selectedOlderProjectKey =
-    selectedProjectScope !== null &&
-    projectActivity.olderGroups.some((group) => group.key === selectedProjectScope.key)
-      ? selectedProjectScope.key
-      : null;
-  const [dismissedAutoRevealProjectKey, setDismissedAutoRevealProjectKey] = useState<string | null>(
-    null,
-  );
-  const autoRevealOlderProjects =
-    selectedOlderProjectKey !== null && selectedOlderProjectKey !== dismissedAutoRevealProjectKey;
-  const olderProjectsExpanded = persistedOlderProjectsExpanded || autoRevealOlderProjects;
-  const toggleOlderProjects = useCallback(() => {
-    if (olderProjectsExpanded) {
-      savePreferences({ olderProjectsExpanded: false });
-      setDismissedAutoRevealProjectKey(selectedOlderProjectKey);
-      return;
-    }
-    setDismissedAutoRevealProjectKey(null);
-    savePreferences({ olderProjectsExpanded: true });
-  }, [olderProjectsExpanded, savePreferences, selectedOlderProjectKey]);
   const projectCwdByKey = useMemo(() => {
     const map = new Map<string, string>();
     for (const project of props.projects) {
@@ -708,6 +684,34 @@ export function HomeScreen(props: HomeScreenProps) {
       snoozeEnvironmentIds,
     ],
   );
+  const projectActivity = useHomeProjectActivity(
+    projectGroups,
+    !hasSearchQuery,
+    groupedSettledThreadKeys,
+  );
+  const persistedOlderProjectsExpanded =
+    AsyncResult.isSuccess(preferencesResult) &&
+    preferencesResult.value.olderProjectsExpanded === true;
+  const selectedOlderProjectKey =
+    selectedProjectScope !== null &&
+    projectActivity.olderGroups.some((group) => group.key === selectedProjectScope.key)
+      ? selectedProjectScope.key
+      : null;
+  const [dismissedAutoRevealProjectKey, setDismissedAutoRevealProjectKey] = useState<string | null>(
+    null,
+  );
+  const autoRevealOlderProjects =
+    selectedOlderProjectKey !== null && selectedOlderProjectKey !== dismissedAutoRevealProjectKey;
+  const olderProjectsExpanded = persistedOlderProjectsExpanded || autoRevealOlderProjects;
+  const toggleOlderProjects = useCallback(() => {
+    if (olderProjectsExpanded) {
+      savePreferences({ olderProjectsExpanded: false });
+      setDismissedAutoRevealProjectKey(selectedOlderProjectKey);
+      return;
+    }
+    setDismissedAutoRevealProjectKey(null);
+    savePreferences({ olderProjectsExpanded: true });
+  }, [olderProjectsExpanded, savePreferences, selectedOlderProjectKey]);
   const listLayout = useMemo(
     () =>
       buildHomeListLayout({

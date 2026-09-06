@@ -365,7 +365,6 @@ esac
 
 export APPDIR="$appdir"
 export T3CODE_DISABLE_AUTO_UPDATE="${T3CODE_DISABLE_AUTO_UPDATE:-1}"
-export T3CODE_DESKTOP_DISPLAY_NAME="${T3CODE_DESKTOP_DISPLAY_NAME:-T3 Code Local}"
 export T3CODE_DESKTOP_APP_USER_MODEL_ID="${T3CODE_DESKTOP_APP_USER_MODEL_ID:-com.t3tools.t3code.local}"
 export T3CODE_DESKTOP_USER_DATA_DIR_NAME="${T3CODE_DESKTOP_USER_DATA_DIR_NAME:-t3code-local}"
 export T3CODE_DESKTOP_LEGACY_USER_DATA_DIR_NAME="${T3CODE_DESKTOP_LEGACY_USER_DATA_DIR_NAME:-T3 Code Local}"
@@ -401,8 +400,8 @@ mv -fT "$WRAPPER_TEMP" "$WRAPPER_PATH"
 
 cat >"$DESKTOP_TEMP" <<EOF
 [Desktop Entry]
-Name=T3 Code Local
-Comment=T3 Code local development build
+Name=Better T3 Code (Alpha)
+Comment=Better T3 Code local development build
 Exec=$WRAPPER_PATH %U
 TryExec=$WRAPPER_PATH
 Terminal=false

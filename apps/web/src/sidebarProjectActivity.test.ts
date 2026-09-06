@@ -1,5 +1,6 @@
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { resolveThreadSidebarLifecycle } from "@t3tools/client-runtime/state/thread-settled";
 
 import type { SidebarProjectGroupMember, SidebarProjectSnapshot } from "./sidebarProjectGrouping";
 import {
@@ -103,6 +104,45 @@ function partition(
 }
 
 describe("partitionSidebarProjectsByActivity", () => {
+  it("uses displayed settlement, including automatic settlement with an old proposed plan", () => {
+    const project = makeProject("project");
+    const timestamp = timestampAtAge(4 * 24 * 60 * 60 * 1_000);
+    const settled = makeThread({
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      latestUserMessageAt: timestamp,
+      hasActionableProposedPlan: true,
+    });
+    const classify = (threads: SidebarThreadSummary[]) =>
+      partitionSidebarProjectsByActivity({
+        projects: [project],
+        threadsByProjectKey: new Map([[project.projectKey, threads]]),
+        nowMs: NOW_MS,
+        isThreadSettled: (thread) =>
+          resolveThreadSidebarLifecycle(thread, {
+            now: new Date(NOW_MS).toISOString(),
+            autoSettleAfterDays: 3,
+            supportsSettlement: true,
+            supportsSnooze: true,
+          }) === "settled",
+      });
+
+    expect(classify([settled]).olderProjects).toEqual([project]);
+    expect(classify([settled, makeThread({ archivedAt: timestamp })]).olderProjects).toEqual([
+      project,
+    ]);
+    for (const active of [
+      makeThread(),
+      { ...settled, settledOverride: "active" as const, unsettledAt: timestampAtAge(0) },
+      { ...settled, latestUserMessageAt: timestampAtAge(0) },
+      { ...settled, hasPendingApprovals: true },
+      { ...settled, hasPendingUserInput: true },
+    ]) {
+      expect(classify([settled, active]).recentProjects).toEqual([project]);
+    }
+    expect(classify([]).recentProjects).toEqual([project]);
+  });
+
   it("keeps exactly seven days recent and moves one millisecond older", () => {
     const exactlySevenDays = makeProject("exact", [
       makeMember("exact", {

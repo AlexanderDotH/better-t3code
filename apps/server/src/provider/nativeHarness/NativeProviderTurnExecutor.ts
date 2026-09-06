@@ -221,7 +221,7 @@ export function makeNativeProviderTurnExecutor<
             });
 
             const runToolLoop = Effect.gen(function* () {
-              for (let round = 0; round < definition.limits.maxToolRounds; round += 1) {
+              while (true) {
                 const beforeRound = yield* (
                   definition.beforeRound?.({
                     session: toNativeProviderSessionView(context),
@@ -277,11 +277,6 @@ export function makeNativeProviderTurnExecutor<
                   })),
                 );
               }
-              return yield* new ProviderAdapterRequestError({
-                provider: definition.provider,
-                method: "session/prompt",
-                detail: `${definition.provider} exceeded T3's ${definition.limits.maxToolRounds}-round tool-call limit.`,
-              });
             });
             const admittedToolLoop = dependencies.admission.withLease(
               {
