@@ -8038,7 +8038,7 @@ function ChatViewContent(props: ChatViewProps) {
     />
   );
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background window-surface">
       {rightPanelOpen && !shouldUseRightPanelSheet ? panelLayoutControls : null}
       <div
         className={cn(
@@ -8052,7 +8052,7 @@ function ChatViewContent(props: ChatViewProps) {
           data-chat-header
           electron={isElectron}
           reserveNativeControls={reserveTitleBarControlInset && !inlineRightPanelOwnsTitleBar}
-          className="relative bg-background"
+          className="relative bg-background window-surface"
         >
           {!rightPanelOpen ? panelLayoutControls : null}
           <ChatHeader

@@ -95,6 +95,13 @@ describe("searchSettings", () => {
     expect(searchSettings("quit confirmation")).toEqual([]);
   });
 
+  it("hides macOS window transparency from browser search", () => {
+    expect(
+      SETTINGS_SEARCH_ITEMS.find((item) => item.id === "macos-window-transparency"),
+    ).toMatchObject({ to: "/settings/better-t3" });
+    expect(searchSettings("Background transparency and blur")).toEqual([]);
+  });
+
   it("keeps catalog result ids unique", () => {
     const ids = SETTINGS_SEARCH_ITEMS.map((item) => item.id);
     expect(new Set(ids).size).toBe(ids.length);
@@ -112,18 +119,6 @@ describe("searchSettings", () => {
     });
     expect(searchSettings("word wrap")[0]).toMatchObject({
       id: "word-wrap",
-      to: "/settings/appearance",
-    });
-    expect(searchSettings("model reasoning")[0]).toMatchObject({
-      id: "model-reasoning",
-      to: "/settings/appearance",
-    });
-    expect(searchSettings("chat visuals")[0]).toMatchObject({
-      id: "chat-visuals",
-      to: "/settings/appearance",
-    });
-    expect(searchSettings("expanded chat controls")[0]).toMatchObject({
-      id: "expanded-chat-controls",
       to: "/settings/appearance",
     });
     expect(searchSettings("environment identification")[0]).toMatchObject({
@@ -206,6 +201,29 @@ describe("searchSettings", () => {
       title: "Knowledge Graph",
       to: "/settings/better-t3",
       targetId: "knowledge.graph",
+    });
+    expect(searchSettings("Glass opacity")).toContainEqual({
+      id: "setting-glass-opacity",
+      title: "Glass opacity",
+      to: "/settings/better-t3",
+    });
+    expect(searchSettings("Model reasoning")).toContainEqual({
+      id: "model-reasoning",
+      title: "Model reasoning",
+      to: "/settings/better-t3",
+      targetId: "agent.reasoningVisibility",
+    });
+    expect(searchSettings("Chat visuals")).toContainEqual({
+      id: "chat-visuals",
+      title: "Chat visuals",
+      to: "/settings/better-t3",
+      targetId: "chat.presentation",
+    });
+    expect(searchSettings("Expanded chat controls")).toContainEqual({
+      id: "expanded-chat-controls",
+      title: "Expanded chat controls",
+      to: "/settings/better-t3",
+      targetId: "agent.expandedComposerControls",
     });
   });
 });

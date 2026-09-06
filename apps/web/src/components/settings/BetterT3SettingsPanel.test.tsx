@@ -150,6 +150,14 @@ describe("BetterT3SettingsPanelView", () => {
       tabId: "general",
       advanced: false,
     });
+    expect(resolveBetterT3SettingsSearchTarget("setting-glass-opacity")).toEqual({
+      tabId: "visual",
+      advanced: false,
+    });
+    expect(resolveBetterT3SettingsSearchTarget("macos-window-transparency")).toEqual({
+      tabId: "visual",
+      advanced: false,
+    });
 
     for (const descriptor of BETTER_T3_FEATURE_REGISTRY) {
       const owningTab = BETTER_T3_SETTINGS_TABS.find((tab) => tab.section === descriptor.section);
@@ -158,6 +166,25 @@ describe("BetterT3SettingsPanelView", () => {
         advanced: BETTER_T3_ADVANCED_FEATURE_IDS.has(descriptor.id),
       });
     }
+  });
+
+  it("opens Visual for a moved appearance setting", () => {
+    const markup = renderWithSearchTarget(
+      "setting-glass-opacity",
+      <BetterT3SettingsPanelView
+        features={states}
+        sectionTitles={sectionTitles}
+        translate={(messageId) => messageId}
+        controls={{}}
+        visualSettings={<div data-better-t3-appearance-settings />}
+        onSwitchChange={() => undefined}
+      />,
+    );
+
+    expect(markup).toMatch(
+      /role="tab"[^>]*aria-selected="true"[^>]*>settings\.betterT3\.tab\.visual<\/button>/,
+    );
+    expect(markup).toContain("data-better-t3-appearance-settings");
   });
 
   it("selects Knowledge for a Knowledge Graph search target", () => {

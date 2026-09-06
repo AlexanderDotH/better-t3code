@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
 import * as DesktopApplicationMenu from "../../window/DesktopApplicationMenu.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 
@@ -51,6 +52,10 @@ export const setClientSettings = DesktopIpc.makeIpcMethod({
     const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
     const previousSettings = Option.getOrNull(yield* clientSettings.get);
     yield* clientSettings.set(settings);
+    if (previousSettings?.macosWindowTransparency !== settings.macosWindowTransparency) {
+      const desktopWindow = yield* DesktopWindow.DesktopWindow;
+      yield* desktopWindow.syncAppearance;
+    }
     if (!didInterfaceLocaleSelectionChange(previousSettings, settings)) return;
     const applicationMenu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
     yield* applicationMenu.configure;

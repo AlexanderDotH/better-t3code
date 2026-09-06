@@ -1,4 +1,4 @@
-import { isElectron } from "~/env";
+import { isElectron, isMacElectron } from "~/env";
 import {
   translateInterfaceMessage,
   type InterfaceMessageKey,
@@ -29,6 +29,7 @@ export interface SettingsSearchItem {
   // Its row only renders in the desktop app, so a browser result would land on
   // an anchor that isn't there.
   readonly desktopOnly?: boolean;
+  readonly macosOnly?: boolean;
 }
 
 type Translate = InterfaceTranslator["message"];
@@ -133,22 +134,31 @@ const SETTINGS_SEARCH_ITEM_DEFINITIONS = [
     // Prefixed because the slider control already owns the `glass-opacity` id.
     id: "setting-glass-opacity",
     titleMessageId: "settings.application.title.glassOpacity",
-    to: "/settings/appearance",
+    to: "/settings/better-t3",
   },
   {
     id: "model-reasoning",
     titleMessageId: "settings.application.title.modelReasoning",
-    to: "/settings/appearance",
+    to: "/settings/better-t3",
+    targetId: "agent.reasoningVisibility",
+  },
+  {
+    id: "macos-window-transparency",
+    titleMessageId: "settings.application.title.macosTransparency",
+    to: "/settings/better-t3",
+    macosOnly: true,
   },
   {
     id: "chat-visuals",
     titleMessageId: "settings.application.title.chatVisuals",
-    to: "/settings/appearance",
+    to: "/settings/better-t3",
+    targetId: "chat.presentation",
   },
   {
     id: "expanded-chat-controls",
     titleMessageId: "settings.application.title.expandedChatControls",
-    to: "/settings/appearance",
+    to: "/settings/better-t3",
+    targetId: "agent.expandedComposerControls",
   },
   {
     id: "environment-identification",
@@ -424,6 +434,7 @@ export function searchSettings(
   return items.filter(
     (item) =>
       (isElectron || item.desktopOnly !== true) &&
+      (isMacElectron || item.macosOnly !== true) &&
       normalizeSearchText(item.title).includes(normalizedQuery),
   );
 }

@@ -8,6 +8,11 @@ import type {
 } from "@t3tools/contracts";
 import { BETTER_T3_FEATURE_REGISTRY, type SidebarPosition } from "@t3tools/contracts";
 import {
+  DEFAULT_UNIFIED_SETTINGS,
+  MAX_GLASS_OPACITY,
+  MIN_GLASS_OPACITY,
+} from "@t3tools/contracts/settings";
+import {
   prepareBetterT3StatusModel,
   type BetterT3PreparedStatusModel,
   type BetterT3PreparedStatusState,
@@ -20,9 +25,16 @@ import {
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRightIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 
-import { isElectron } from "../../env";
+import { isElectron, isMacElectron } from "../../env";
 import { useChatVisualMode, useSetChatVisualMode } from "../../chatVisualModeSync";
 import {
   useEnvironments,
@@ -42,6 +54,7 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collaps
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import {
+  SettingResetButton,
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
@@ -65,6 +78,7 @@ import {
 import { buildBetterT3SettingsPreviewModel } from "./BetterT3SettingsPreview.logic";
 import { InterfaceLanguageSetting } from "./InterfaceLanguageSetting";
 import { requireSettingsEnvironment } from "./settingsEnvironment";
+import { searchableSetting } from "./settingsSearch";
 
 type Translate = InterfaceTranslator["message"];
 
@@ -153,6 +167,9 @@ export function resolveBetterT3SettingsSearchTarget(
   if (targetId === "better-t3-interface" || targetId === "better-t3-interface-language") {
     return { tabId: "general", advanced: false };
   }
+  if (targetId === "setting-glass-opacity" || targetId === "macos-window-transparency") {
+    return { tabId: "visual", advanced: false };
+  }
   const descriptor = BETTER_T3_FEATURE_REGISTRY.find((feature) => feature.id === targetId);
   if (!descriptor) return null;
   const tab = BETTER_T3_SETTINGS_TABS.find((candidate) => candidate.section === descriptor.section);
@@ -171,6 +188,7 @@ export interface BetterT3SettingsPanelViewProps {
   readonly onSwitchChange: (featureId: BetterT3SwitchFeatureId, enabled: boolean) => void;
   readonly introduction?: ReactNode;
   readonly languageControl?: ReactNode;
+  readonly visualSettings?: ReactNode;
   readonly featureVisuals?: Partial<Record<BetterT3FeatureId, ReactNode>>;
   readonly featureChoices?: Partial<Record<BetterT3FeatureId, ReactNode>>;
 }
@@ -222,6 +240,83 @@ function BetterT3InterfaceSection(props: {
     >
       {props.control}
     </SettingsSection>
+  );
+}
+
+function BetterT3AppearanceSettings(props: {
+  readonly glassOpacity: number;
+  readonly macosWindowTransparency: boolean;
+  readonly translate: Translate;
+  readonly onGlassOpacityChange: (glassOpacity: number) => void;
+  readonly onMacosWindowTransparencyChange: (enabled: boolean) => void;
+}) {
+  const glassOpacityRatio =
+    (props.glassOpacity - MIN_GLASS_OPACITY) / (MAX_GLASS_OPACITY - MIN_GLASS_OPACITY);
+  const sliderStyle = {
+    "--settings-slider-progress": `${glassOpacityRatio * 100}%`,
+    "--settings-slider-fill-offset": `${0.5 - glassOpacityRatio}rem`,
+  } as CSSProperties;
+
+  return (
+    <>
+      <SettingsRow
+        {...searchableSetting("setting-glass-opacity", props.translate)}
+        description={props.translate("settings.appearance.glassDescription")}
+        resetAction={
+          props.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? (
+            <SettingResetButton
+              label={props.translate("settings.appearance.glassOpacity")}
+              onClick={() => props.onGlassOpacityChange(DEFAULT_UNIFIED_SETTINGS.glassOpacity)}
+            />
+          ) : null
+        }
+        control={
+          <div className="flex w-full items-center gap-3 sm:w-52">
+            <output
+              className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
+              htmlFor="glass-opacity"
+            >
+              {props.glassOpacity}%
+            </output>
+            <input
+              aria-label={props.translate("settings.appearance.glassOpacity")}
+              className="settings-slider min-w-0 flex-1"
+              id="glass-opacity"
+              max={MAX_GLASS_OPACITY}
+              min={MIN_GLASS_OPACITY}
+              onChange={(event) => {
+                const glassOpacity = Number(event.currentTarget.value);
+                if (
+                  Number.isInteger(glassOpacity) &&
+                  glassOpacity >= MIN_GLASS_OPACITY &&
+                  glassOpacity <= MAX_GLASS_OPACITY
+                ) {
+                  props.onGlassOpacityChange(glassOpacity);
+                }
+              }}
+              step={5}
+              style={sliderStyle}
+              type="range"
+              value={props.glassOpacity}
+            />
+          </div>
+        }
+      />
+
+      {isMacElectron ? (
+        <SettingsRow
+          {...searchableSetting("macos-window-transparency", props.translate)}
+          description={props.translate("settings.appearance.macosTransparencyDescription")}
+          control={
+            <Switch
+              checked={props.macosWindowTransparency}
+              onCheckedChange={(checked) => props.onMacosWindowTransparencyChange(Boolean(checked))}
+              aria-label={props.translate("settings.application.title.macosTransparency")}
+            />
+          }
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -324,6 +419,7 @@ function BetterT3SettingsTabs(props: BetterT3SettingsPanelViewProps) {
           ) : null
         ) : (
           <SettingsSection title={props.sectionTitles[activeTabDefinition.section]}>
+            {activeTab === "visual" ? props.visualSettings : null}
             {renderFeatureRows(basicFeatures)}
             {advancedFeatures.length > 0 ? (
               <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
@@ -927,6 +1023,17 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
       controls={controls}
       featureChoices={featureChoices}
       languageControl={<InterfaceLanguageSetting searchTargetId="better-t3-interface-language" />}
+      visualSettings={
+        <BetterT3AppearanceSettings
+          glassOpacity={settings.glassOpacity}
+          macosWindowTransparency={settings.macosWindowTransparency}
+          translate={translate}
+          onGlassOpacityChange={(glassOpacity) => updateSettings({ glassOpacity })}
+          onMacosWindowTransparencyChange={(macosWindowTransparency) =>
+            updateSettings({ macosWindowTransparency })
+          }
+        />
+      }
       onSwitchChange={onSwitchChange}
       introduction={
         <BetterT3SettingsIntroduction

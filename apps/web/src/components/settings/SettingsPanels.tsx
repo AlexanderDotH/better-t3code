@@ -23,14 +23,12 @@ import {
   type EnvironmentIdentificationMode,
   MAX_APPEARANCE_CONTRAST,
   MAX_CODE_FONT_SIZE,
-  MAX_GLASS_OPACITY,
   MAX_INTERFACE_FONT_SIZE,
   MAX_PROMPT_FONT_SIZE,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MAX_TERMINAL_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
   MIN_APPEARANCE_CONTRAST,
-  MIN_GLASS_OPACITY,
   MIN_INTERFACE_FONT_SIZE,
   MIN_PROMPT_FONT_SIZE,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
@@ -123,15 +121,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThemeLibrary } from "./ThemeSettings";
 import { SidebarLayoutSelector } from "./SidebarLayoutSetting";
 import { ProjectThreadPreviewCountSetting } from "./ProjectThreadPreviewCountSetting";
-import { ChatVisualModeSetting } from "./ChatVisualModeSetting";
-import { ExpandedComposerControlsSetting } from "./ExpandedComposerControlsSetting";
 import { InterfaceLanguageSetting } from "./InterfaceLanguageSetting";
-import {
-  chatVisualModeSyncStatusText,
-  useChatVisualMode,
-  useChatVisualModeSyncStatus,
-  useSetChatVisualMode,
-} from "../../chatVisualModeSync";
 import {
   projectThreadPreviewSyncStatusText,
   useProjectThreadPreviewCount,
@@ -1108,12 +1098,6 @@ export function AppearanceSettingsPanel() {
   const [isImportThemeOpen, setIsImportThemeOpen] = useState(false);
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
-  const chatVisualMode = useChatVisualMode();
-  const setChatVisualMode = useSetChatVisualMode();
-  const chatVisualModeSyncStatus = useChatVisualModeSyncStatus();
-  const chatVisualModeStatusText =
-    chatVisualModeSyncStatusText(chatVisualModeSyncStatus) ??
-    (chatVisualModeSyncStatus.isSyncing ? translate("settings.interfaceLanguage.syncing") : null);
   const { count: projectThreadPreviewCount, setCount: setProjectThreadPreviewCount } =
     useProjectThreadPreviewCount();
   const projectThreadPreviewSyncStatus = useProjectThreadPreviewSyncStatus();
@@ -1125,12 +1109,6 @@ export function AppearanceSettingsPanel() {
   const environmentStageLabel = useEnvironmentStageLabel();
   const showEnvironmentIdentification =
     resolveEnvironmentIdentificationPillLabel(environmentStageLabel) !== null;
-  const glassOpacityRatio =
-    (settings.glassOpacity - MIN_GLASS_OPACITY) / (MAX_GLASS_OPACITY - MIN_GLASS_OPACITY);
-  const glassOpacitySliderStyle = {
-    "--settings-slider-progress": `${glassOpacityRatio * 100}%`,
-    "--settings-slider-fill-offset": `${0.5 - glassOpacityRatio}rem`,
-  } as CSSProperties;
   const appearanceContrastRatio =
     (settings.appearanceContrast - MIN_APPEARANCE_CONTRAST) /
     (MAX_APPEARANCE_CONTRAST - MIN_APPEARANCE_CONTRAST);
@@ -1207,87 +1185,6 @@ export function AppearanceSettingsPanel() {
                 value={settings.appearanceContrast}
               />
             </div>
-          }
-        />
-
-        <SettingsRow
-          {...searchableSetting("setting-glass-opacity", translate)}
-          description={translate("settings.appearance.glassDescription")}
-          resetAction={
-            settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? (
-              <SettingResetButton
-                label={translate("settings.appearance.glassOpacity")}
-                onClick={() =>
-                  updateSettings({ glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity })
-                }
-              />
-            ) : null
-          }
-          control={
-            <div className="flex w-full items-center gap-3 sm:w-52">
-              <output
-                className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
-                htmlFor="glass-opacity"
-              >
-                {settings.glassOpacity}%
-              </output>
-              <input
-                aria-label={translate("settings.appearance.glassOpacity")}
-                className="settings-slider min-w-0 flex-1"
-                id="glass-opacity"
-                max={MAX_GLASS_OPACITY}
-                min={MIN_GLASS_OPACITY}
-                onChange={(event) => {
-                  const glassOpacity = Number(event.currentTarget.value);
-                  if (
-                    Number.isInteger(glassOpacity) &&
-                    glassOpacity >= MIN_GLASS_OPACITY &&
-                    glassOpacity <= MAX_GLASS_OPACITY
-                  ) {
-                    updateSettings({ glassOpacity });
-                  }
-                }}
-                step={5}
-                style={glassOpacitySliderStyle}
-                type="range"
-                value={settings.glassOpacity}
-              />
-            </div>
-          }
-        />
-
-        <SettingsRow
-          {...searchableSetting("model-reasoning", translate)}
-          description={translate("settings.appearance.reasoningDescription")}
-          resetAction={
-            settings.showReasoning !== DEFAULT_UNIFIED_SETTINGS.showReasoning ? (
-              <SettingResetButton
-                label={translate("settings.appearance.modelReasoning")}
-                onClick={() =>
-                  updateSettings({ showReasoning: DEFAULT_UNIFIED_SETTINGS.showReasoning })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.showReasoning}
-              onCheckedChange={(checked) => updateSettings({ showReasoning: Boolean(checked) })}
-              aria-label={translate("settings.appearance.showReasoning")}
-            />
-          }
-        />
-
-        <ChatVisualModeSetting
-          mode={chatVisualMode}
-          onChange={setChatVisualMode}
-          status={chatVisualModeStatusText}
-        />
-
-        <ExpandedComposerControlsSetting
-          enabled={settings.showExpandedComposerControls}
-          onChange={(showExpandedComposerControls) =>
-            updateSettings({ showExpandedComposerControls })
           }
         />
 

@@ -1,7 +1,44 @@
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
-import { didInterfaceLocaleSelectionChange } from "./clientSettings.ts";
+import { didInterfaceLocaleSelectionChange, setClientSettings } from "./clientSettings.ts";
+import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
+import * as DesktopApplicationMenu from "../../window/DesktopApplicationMenu.ts";
+
+it.effect(
+  "persists transparency before updating the native window and skips unchanged preferences",
+  () =>
+    Effect.gen(function* () {
+      let settings = DEFAULT_CLIENT_SETTINGS;
+      const applied: boolean[] = [];
+      const layer = Layer.mergeAll(
+        Layer.mock(DesktopClientSettings.DesktopClientSettings)({
+          get: Effect.sync(() => Option.some(settings)),
+          set: (next) =>
+            Effect.sync(() => {
+              settings = next;
+            }),
+        }),
+        Layer.mock(DesktopWindow.DesktopWindow)({
+          syncAppearance: Effect.sync(() => {
+            applied.push(settings.macosWindowTransparency);
+          }),
+        }),
+        Layer.mock(DesktopApplicationMenu.DesktopApplicationMenu)({}),
+      );
+      yield* Effect.gen(function* () {
+        yield* setClientSettings.handler({ ...settings, macosWindowTransparency: true });
+        yield* setClientSettings.handler(settings);
+        yield* setClientSettings.handler({ ...settings, macosWindowTransparency: false });
+      }).pipe(Effect.provide(layer));
+      expect(applied).toEqual([true, false]);
+    }),
+);
 
 const germanLegacy = {
   preference: "de" as const,
