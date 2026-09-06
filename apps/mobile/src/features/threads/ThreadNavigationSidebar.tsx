@@ -349,33 +349,6 @@ function ThreadNavigationSidebarPane(
     });
   }, []);
   const hasSearchQuery = props.searchQuery.trim().length > 0;
-  const projectActivity = useHomeProjectActivity(groups, !hasSearchQuery);
-  const persistedOlderProjectsExpanded =
-    AsyncResult.isSuccess(preferencesResult) &&
-    preferencesResult.value.olderProjectsExpanded === true;
-  const selectedOlderProjectKey =
-    projectActivity.olderGroups.find(
-      (group) =>
-        (selectedProjectScope !== null && group.key === selectedProjectScope.key) ||
-        group.threads.some(
-          (thread) => scopedThreadKey(thread.environmentId, thread.id) === props.selectedThreadKey,
-        ),
-    )?.key ?? null;
-  const [dismissedAutoRevealProjectKey, setDismissedAutoRevealProjectKey] = useState<string | null>(
-    null,
-  );
-  const autoRevealOlderProjects =
-    selectedOlderProjectKey !== null && selectedOlderProjectKey !== dismissedAutoRevealProjectKey;
-  const olderProjectsExpanded = persistedOlderProjectsExpanded || autoRevealOlderProjects;
-  const toggleOlderProjects = useCallback(() => {
-    if (olderProjectsExpanded) {
-      savePreferences({ olderProjectsExpanded: false });
-      setDismissedAutoRevealProjectKey(selectedOlderProjectKey);
-      return;
-    }
-    setDismissedAutoRevealProjectKey(null);
-    savePreferences({ olderProjectsExpanded: true });
-  }, [olderProjectsExpanded, savePreferences, selectedOlderProjectKey]);
   const projectCwdByKey = useMemo(() => {
     const map = new Map<string, string>();
     for (const project of projects) {
@@ -525,6 +498,33 @@ function ThreadNavigationSidebarPane(
       snoozeEnvironmentIds,
     ],
   );
+  const projectActivity = useHomeProjectActivity(groups, !hasSearchQuery, groupedSettledThreadKeys);
+  const persistedOlderProjectsExpanded =
+    AsyncResult.isSuccess(preferencesResult) &&
+    preferencesResult.value.olderProjectsExpanded === true;
+  const selectedOlderProjectKey =
+    projectActivity.olderGroups.find(
+      (group) =>
+        (selectedProjectScope !== null && group.key === selectedProjectScope.key) ||
+        group.threads.some(
+          (thread) => scopedThreadKey(thread.environmentId, thread.id) === props.selectedThreadKey,
+        ),
+    )?.key ?? null;
+  const [dismissedAutoRevealProjectKey, setDismissedAutoRevealProjectKey] = useState<string | null>(
+    null,
+  );
+  const autoRevealOlderProjects =
+    selectedOlderProjectKey !== null && selectedOlderProjectKey !== dismissedAutoRevealProjectKey;
+  const olderProjectsExpanded = persistedOlderProjectsExpanded || autoRevealOlderProjects;
+  const toggleOlderProjects = useCallback(() => {
+    if (olderProjectsExpanded) {
+      savePreferences({ olderProjectsExpanded: false });
+      setDismissedAutoRevealProjectKey(selectedOlderProjectKey);
+      return;
+    }
+    setDismissedAutoRevealProjectKey(null);
+    savePreferences({ olderProjectsExpanded: true });
+  }, [olderProjectsExpanded, savePreferences, selectedOlderProjectKey]);
   const listLayout = useMemo(
     () =>
       buildHomeListLayout({

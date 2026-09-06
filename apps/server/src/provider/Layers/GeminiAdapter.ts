@@ -36,7 +36,6 @@ import { nativeHarnessWorkspaceInstructions } from "../nativeHarness/NativeHarne
 import {
   NATIVE_HARNESS_MAX_TOOL_DEFINITIONS,
   NATIVE_HARNESS_MAX_TOOL_OUTPUT_BYTES,
-  NATIVE_HARNESS_MAX_TOOL_ROUNDS,
 } from "../nativeHarness/NativeHarnessTools.ts";
 import {
   geminiToolApprovalDetail,
@@ -353,7 +352,6 @@ export function makeGeminiAdapter(settings: GeminiSettings, options: GeminiAdapt
     limits: {
       maxToolDefinitions: NATIVE_HARNESS_MAX_TOOL_DEFINITIONS,
       maxToolOutputBytes: NATIVE_HARNESS_MAX_TOOL_OUTPUT_BYTES,
-      maxToolRounds: NATIVE_HARNESS_MAX_TOOL_ROUNDS,
       maxParallelToolCalls: 1,
     },
     history,

@@ -200,6 +200,7 @@ function parseActivityTimestamp(nowMs: number, ...values: readonly unknown[]): n
 export function partitionHomeProjectGroupsByActivity(input: {
   readonly groups: ReadonlyArray<HomeThreadGroup>;
   readonly nowMs: number;
+  readonly isThreadSettled?: (thread: EnvironmentThreadShell) => boolean;
 }): HomeProjectActivityPartition {
   if (!Number.isFinite(input.nowMs)) {
     return { recentGroups: input.groups, olderGroups: [], nextTransitionAtMs: null };
@@ -211,13 +212,20 @@ export function partitionHomeProjectGroupsByActivity(input: {
 
   for (const group of input.groups) {
     const activeThreads = group.threads.filter((thread) => thread.archivedAt === null);
-    if (group.pendingTasks.length > 0 || activeThreads.some(homeThreadRequiresAttention)) {
+    if (
+      group.pendingTasks.length > 0 ||
+      activeThreads.some(
+        (thread) => homeThreadRequiresAttention(thread) && !input.isThreadSettled?.(thread),
+      )
+    ) {
       recentGroups.push(group);
       continue;
     }
     if (
       activeThreads.length > 0 &&
-      activeThreads.every((thread) => thread.settledOverride === "settled")
+      activeThreads.every(
+        (thread) => input.isThreadSettled?.(thread) ?? thread.settledOverride === "settled",
+      )
     ) {
       olderGroups.push(group);
       continue;

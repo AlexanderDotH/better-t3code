@@ -199,7 +199,6 @@ export interface NativeProviderAdapterDefinition<
     readonly maxIdleWorkingSets?: number;
     readonly maxToolDefinitions: number;
     readonly maxToolOutputBytes: number;
-    readonly maxToolRounds: number;
     readonly maxParallelToolCalls: number;
   };
   readonly history: NativeProviderHistoryStrategy<HistoryItem>;

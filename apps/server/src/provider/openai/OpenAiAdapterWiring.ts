@@ -10,7 +10,6 @@ import { makeNativeProviderAdapter } from "../nativeHarness/NativeProviderAdapte
 import {
   NATIVE_HARNESS_MAX_TOOL_DEFINITIONS,
   NATIVE_HARNESS_MAX_TOOL_OUTPUT_BYTES,
-  NATIVE_HARNESS_MAX_TOOL_ROUNDS,
 } from "../nativeHarness/NativeHarnessTools.ts";
 import { normalizeOpenAiAdapterRoundEvent } from "./OpenAiAdapterEventNormalization.ts";
 import { resolveOpenAiModel } from "./OpenAiAdapterModelPolicy.ts";
@@ -86,7 +85,6 @@ export const makeOpenAiAdapter = Effect.fn("makeOpenAiAdapter")(function* (
       maxIdleWorkingSets: OPENAI_MAX_IDLE_WORKING_SETS,
       maxToolDefinitions: NATIVE_HARNESS_MAX_TOOL_DEFINITIONS,
       maxToolOutputBytes: NATIVE_HARNESS_MAX_TOOL_OUTPUT_BYTES,
-      maxToolRounds: NATIVE_HARNESS_MAX_TOOL_ROUNDS,
       maxParallelToolCalls: OPENAI_MAX_PARALLEL_TOOL_CALLS,
     },
     history: openAiHistoryStrategy,

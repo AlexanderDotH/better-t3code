@@ -75,6 +75,74 @@ function fakeClient(input: {
 }
 
 describe("GeminiAdapter", () => {
+  it.effect("completes and resumes a turn with more than 64 tool rounds", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const requests: Array<GenerateContentParameters> = [];
+        let executed = 0;
+        const adapter = yield* makeGeminiAdapter(
+          { enabled: true, customModels: [] },
+          {
+            environment: { GOOGLE_API_KEY: "test-key" },
+            clientFactory: () =>
+              fakeClient({
+                requests,
+                rounds: [
+                  ...Array.from({ length: 65 }, (_, index) => [
+                    response({
+                      functionCall: {
+                        id: `call-${index}`,
+                        name: "workspace_context",
+                        args: { queries: [{ text: `symbol-${index}` }] },
+                      },
+                    }),
+                  ]),
+                  [response({ text: "Finished all 65 searches." })],
+                ],
+              }),
+            toolExecutor: {
+              execute: () =>
+                Effect.sync(() => {
+                  executed += 1;
+                  return {
+                    ok: true,
+                    itemType: "mcp_tool_call" as const,
+                    title: "Workspace search",
+                    detail: "Search completed",
+                    output: { matches: [] },
+                  };
+                }),
+            },
+          },
+        );
+        const threadId = ThreadId.make("gemini-long-tool-turn");
+        const startInput = {
+          threadId,
+          provider: ProviderDriverKind.make("gemini"),
+          cwd: process.cwd(),
+          runtimeMode: "full-access" as const,
+          sandboxMode: "read-only" as const,
+        };
+        const session = yield* adapter.startSession(startInput);
+        yield* adapter.sendTurn({ threadId, input: "Search all 65 symbols." });
+
+        expect(executed).toBe(65);
+        expect(requests).toHaveLength(66);
+        expect(JSON.stringify(requests.at(-1)?.contents)).toContain('"id":"call-64"');
+        const transcript = yield* adapter.readThread(threadId);
+        expect(transcript.turns).toHaveLength(1);
+        expect(transcript.turns[0]?.items).toHaveLength(66);
+        expect(transcript.turns[0]?.items.at(-1)).toMatchObject({
+          type: "assistant_message",
+          text: "Finished all 65 searches.",
+        });
+        yield* adapter.stopSession(threadId);
+        yield* adapter.startSession({ ...startInput, resumeCursor: session.resumeCursor });
+        expect((yield* adapter.readThread(threadId)).turns).toEqual(transcript.turns);
+      }),
+    ).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("uses shared Native admission for Gemini and releases the lease", () => {
     const requests: Array<InProcessWorkAdmissionRequest> = [];
     let releaseCount = 0;

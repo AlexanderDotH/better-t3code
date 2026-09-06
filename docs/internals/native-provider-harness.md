@@ -15,7 +15,7 @@ The harness owns:
 - session lifecycle, interruption, terminal-event consistency, and working-set eviction;
 - T3-owned history files, turn boundaries, rollback, and resume cursors;
 - approval waits;
-- bounded parallel tool rounds and transcript projection;
+- tool rounds with bounded parallel execution and transcript projection;
 - resource-admission leases and provider-independent runtime events.
 
 A driver-owned strategy bundle supplies:
@@ -34,9 +34,14 @@ clients never consume provider-native stream shapes.
 The implementation keeps these responsibilities separate. `NativeProviderAdapter` is the wiring
 facade. `NativeProviderSessionLifecycle` owns attachment reads, resume validation, session state,
 interruption, rollback, and cleanup. `NativeProviderTurnExecutor` owns one serialized turn and its
-bounded tool loop. `NativeProviderSessionStore`, `NativeProviderToolExecutor`, and
+interruptible tool loop. `NativeProviderSessionStore`, `NativeProviderToolExecutor`, and
 `NativeProviderRoundProjection` own persistence, tool execution, and runtime-event projection
 respectively. Drivers configure those boundaries instead of reimplementing them.
+
+Tool rounds continue until the model finishes, the user stops the turn, or an error occurs. There is
+no fixed round-count cutoff: reaching 64 tool rounds must not fail a productive turn and discard its
+provider history. Parallel execution, output-size limits, approval checks, and resource admission
+remain enforced throughout the turn.
 
 `NativeProviderHarness` supplies the provider-neutral direct-tool strategy, while
 `NativeProviderMcpToolBridge` attaches the authenticated T3 coordination endpoint and configured

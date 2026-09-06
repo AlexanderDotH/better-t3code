@@ -67,7 +67,6 @@ function makeTestAdapter(input: {
       maxIdleWorkingSets: input.maxIdleWorkingSets,
       maxToolDefinitions: 8,
       maxToolOutputBytes: 1024,
-      maxToolRounds: 4,
       maxParallelToolCalls: input.maxParallelToolCalls ?? 2,
     },
     history: {

@@ -32,7 +32,6 @@ import { nativeHarnessWorkspaceInstructions } from "../nativeHarness/NativeHarne
 import {
   NATIVE_HARNESS_MAX_TOOL_DEFINITIONS,
   NATIVE_HARNESS_MAX_TOOL_OUTPUT_BYTES,
-  NATIVE_HARNESS_MAX_TOOL_ROUNDS,
 } from "../nativeHarness/NativeHarnessTools.ts";
 import type { OpenRouterCatalogModel } from "./OpenRouterModelCatalog.ts";
 import {
@@ -417,7 +416,6 @@ export const makeOpenRouterAdapter = Effect.fn("makeOpenRouterAdapter")(function
       maxIdleWorkingSets: OPENROUTER_MAX_IDLE_WORKING_SETS,
       maxToolDefinitions: NATIVE_HARNESS_MAX_TOOL_DEFINITIONS,
       maxToolOutputBytes: NATIVE_HARNESS_MAX_TOOL_OUTPUT_BYTES,
-      maxToolRounds: NATIVE_HARNESS_MAX_TOOL_ROUNDS,
       maxParallelToolCalls: OPENROUTER_MAX_PARALLEL_TOOL_CALLS,
     },
     history,

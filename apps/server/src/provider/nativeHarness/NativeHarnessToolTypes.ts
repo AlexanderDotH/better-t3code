@@ -8,7 +8,6 @@ import * as Schema from "effect/Schema";
 
 export const NATIVE_HARNESS_MAX_TOOL_DEFINITIONS = 90;
 export const NATIVE_HARNESS_MAX_TOOL_OUTPUT_BYTES = 1024 * 1024;
-export const NATIVE_HARNESS_MAX_TOOL_ROUNDS = 64;
 
 export const NATIVE_HARNESS_WORKSPACE_FIND_TOOL = "workspace_find";
 export const NATIVE_HARNESS_WORKSPACE_READ_TOOL = "workspace_read";
