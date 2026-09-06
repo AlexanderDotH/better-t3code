@@ -55,7 +55,7 @@ import {
   resolveEnvironmentIdentificationPillLabel,
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
-import { isElectron } from "../../env";
+import { isElectron, isMacElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useCustomThemes } from "../../hooks/useCustomThemes";
 import {
@@ -1255,6 +1255,22 @@ export function AppearanceSettingsPanel() {
             </div>
           }
         />
+
+        {isMacElectron ? (
+          <SettingsRow
+            {...searchableSetting("macos-window-transparency", translate)}
+            description={translate("settings.appearance.macosTransparencyDescription")}
+            control={
+              <Switch
+                checked={settings.macosWindowTransparency}
+                onCheckedChange={(checked) =>
+                  updateSettings({ macosWindowTransparency: Boolean(checked) })
+                }
+                aria-label={translate("settings.application.title.macosTransparency")}
+              />
+            }
+          />
+        ) : null}
 
         <SettingsRow
           {...searchableSetting("model-reasoning", translate)}

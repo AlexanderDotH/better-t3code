@@ -1562,6 +1562,26 @@ body {
   --desktop-window-right-resize-inset: 6px;
 }
 
+/* Only the window's large surfaces reveal native vibrancy. Controls retain
+   their opaque theme colors, and nested panes do not accumulate tint. */
+@media (prefers-reduced-transparency: no-preference) {
+  html.macos-vibrancy,
+  .macos-vibrancy body,
+  .macos-vibrancy [data-slot="sidebar-wrapper"],
+  .macos-vibrancy [data-slot="sidebar-container"],
+  .macos-vibrancy .window-surface {
+    background-color: transparent;
+  }
+
+  .macos-vibrancy [data-slot="sidebar-inner"] {
+    background-color: color-mix(in srgb, var(--sidebar) 50%, transparent);
+  }
+
+  .macos-vibrancy [data-slot="sidebar-inset"] {
+    background-color: color-mix(in srgb, var(--background) 70%, transparent);
+  }
+}
+
 /* App-chrome grain. Baked into each surface's own background (behind
    content) rather than a fixed overlay on top: a full-viewport overlay
    forces the compositor to re-blend every frame any animation produces,

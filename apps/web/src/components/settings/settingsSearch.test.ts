@@ -95,6 +95,13 @@ describe("searchSettings", () => {
     expect(searchSettings("quit confirmation")).toEqual([]);
   });
 
+  it("hides macOS window transparency from browser search", () => {
+    expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "macos-window-transparency")).toBe(
+      true,
+    );
+    expect(searchSettings("Background transparency and blur")).toEqual([]);
+  });
+
   it("keeps catalog result ids unique", () => {
     const ids = SETTINGS_SEARCH_ITEMS.map((item) => item.id);
     expect(new Set(ids).size).toBe(ids.length);

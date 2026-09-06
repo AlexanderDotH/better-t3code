@@ -62,6 +62,11 @@ export const settingsApplicationInterfaceCatalog = defineLocalizedInterfaceCatal
   "settings.application.title.interfaceLanguage": ["Language", "Sprache", "Langue"],
   "settings.application.title.contrast": ["Contrast", "Kontrast", "Contraste"],
   "settings.application.title.glassOpacity": ["Glass opacity", "Glasdeckkraft", "Opacité du verre"],
+  "settings.application.title.macosTransparency": [
+    "Background transparency and blur",
+    "Hintergrundtransparenz und Unschärfe",
+    "Transparence et flou de l’arrière-plan",
+  ],
   "settings.application.title.modelReasoning": [
     "Model reasoning",
     "Modellüberlegungen",

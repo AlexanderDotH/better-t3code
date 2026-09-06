@@ -183,6 +183,17 @@ describe("ClientSettings glass opacity", () => {
 });
 
 describe("ClientSettings appearance contrast", () => {
+  it("defaults macOS transparency off and validates its persisted and patch values", () => {
+    expect(decodeClientSettings({}).macosWindowTransparency).toBe(false);
+    expect(decodeClientSettings({ macosWindowTransparency: true }).macosWindowTransparency).toBe(
+      true,
+    );
+    expect(
+      decodeClientSettingsPatch({ macosWindowTransparency: false }).macosWindowTransparency,
+    ).toBe(false);
+    expect(() => decodeClientSettings({ macosWindowTransparency: "true" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ macosWindowTransparency: 1 })).toThrow();
+  });
   it("defaults to the theme's original contrast", () => {
     expect(decodeClientSettings({}).appearanceContrast).toBe(100);
   });

@@ -1,4 +1,4 @@
-import { isElectron } from "~/env";
+import { isElectron, isMacElectron } from "~/env";
 import {
   translateInterfaceMessage,
   type InterfaceMessageKey,
@@ -29,6 +29,7 @@ export interface SettingsSearchItem {
   // Its row only renders in the desktop app, so a browser result would land on
   // an anchor that isn't there.
   readonly desktopOnly?: boolean;
+  readonly macosOnly?: boolean;
 }
 
 type Translate = InterfaceTranslator["message"];
@@ -139,6 +140,12 @@ const SETTINGS_SEARCH_ITEM_DEFINITIONS = [
     id: "model-reasoning",
     titleMessageId: "settings.application.title.modelReasoning",
     to: "/settings/appearance",
+  },
+  {
+    id: "macos-window-transparency",
+    titleMessageId: "settings.application.title.macosTransparency",
+    to: "/settings/appearance",
+    macosOnly: true,
   },
   {
     id: "chat-visuals",
@@ -424,6 +431,7 @@ export function searchSettings(
   return items.filter(
     (item) =>
       (isElectron || item.desktopOnly !== true) &&
+      (isMacElectron || item.macosOnly !== true) &&
       normalizeSearchText(item.title).includes(normalizedQuery),
   );
 }

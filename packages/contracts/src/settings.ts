@@ -226,6 +226,7 @@ export const DEFAULT_BROWSER_VIEWPORT: PreviewViewportSetting = FILL_PREVIEW_VIE
 export const DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW = true;
 
 export const ClientSettingsSchema = Schema.Struct({
+  macosWindowTransparency: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   betterT3Device: BetterT3SettingsV1.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1)),
   ),
@@ -1538,6 +1539,7 @@ export const ServerSettingsPatch = Schema.Struct({
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
+  macosWindowTransparency: Schema.optionalKey(Schema.Boolean),
   betterT3Device: Schema.optionalKey(BetterT3SettingsPatchV1),
   appearanceContrast: Schema.optionalKey(AppearanceContrast),
   browserDefaultViewport: Schema.optionalKey(PreviewViewportSetting),

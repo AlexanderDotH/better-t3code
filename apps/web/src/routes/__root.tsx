@@ -34,6 +34,7 @@ import {
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
 import { applyAppearanceContrast } from "~/appearanceContrast";
+import { isMacElectron } from "../env";
 import { useClientSettings } from "../hooks/useSettings";
 import { PlanAgentSelectionHeal } from "../planAgentSelectionHeal";
 import {
@@ -179,6 +180,15 @@ function ContrastAppearanceSync() {
 
 function GlassAppearanceSync() {
   const glassOpacity = useClientSettings((settings) => settings.glassOpacity);
+  const macosWindowTransparency = useClientSettings((settings) => settings.macosWindowTransparency);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle(
+      "macos-vibrancy",
+      isMacElectron && macosWindowTransparency,
+    );
+    return () => document.documentElement.classList.remove("macos-vibrancy");
+  }, [macosWindowTransparency]);
 
   useEffect(() => {
     document.documentElement.style.setProperty("--glass-opacity", `${glassOpacity}%`);

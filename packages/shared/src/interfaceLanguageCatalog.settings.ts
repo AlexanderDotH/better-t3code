@@ -982,6 +982,11 @@ export const settingsInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Contrôle la transparence des surfaces vitrées. Des valeurs plus élevées rendent les menus, dialogues et l’éditeur plus opaques.",
   ],
   "settings.appearance.glassOpacity": ["Glass opacity", "Glasdeckkraft", "Opacité du verre"],
+  "settings.appearance.macosTransparencyDescription": [
+    "Show a blurred desktop behind the macOS window. Applies immediately; turn off to restore solid backgrounds.",
+    "Zeigt den Desktop unscharf hinter dem macOS-Fenster. Wirkt sofort; ausschalten stellt deckende Hintergründe wieder her.",
+    "Affiche le bureau flouté derrière la fenêtre macOS. Effet immédiat ; désactivez pour rétablir les fonds opaques.",
+  ],
   "settings.appearance.reasoningDescription": [
     "Show provider-supplied reasoning updates directly in the chat. Availability depends on the selected provider and model.",
     "Zeigt vom Provider gelieferte Reasoning-Updates direkt im Chat. Die Verfügbarkeit hängt vom ausgewählten Provider und Modell ab.",
