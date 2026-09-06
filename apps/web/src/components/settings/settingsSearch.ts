@@ -134,28 +134,31 @@ const SETTINGS_SEARCH_ITEM_DEFINITIONS = [
     // Prefixed because the slider control already owns the `glass-opacity` id.
     id: "setting-glass-opacity",
     titleMessageId: "settings.application.title.glassOpacity",
-    to: "/settings/appearance",
+    to: "/settings/better-t3",
   },
   {
     id: "model-reasoning",
     titleMessageId: "settings.application.title.modelReasoning",
-    to: "/settings/appearance",
+    to: "/settings/better-t3",
+    targetId: "agent.reasoningVisibility",
   },
   {
     id: "macos-window-transparency",
     titleMessageId: "settings.application.title.macosTransparency",
-    to: "/settings/appearance",
+    to: "/settings/better-t3",
     macosOnly: true,
   },
   {
     id: "chat-visuals",
     titleMessageId: "settings.application.title.chatVisuals",
-    to: "/settings/appearance",
+    to: "/settings/better-t3",
+    targetId: "chat.presentation",
   },
   {
     id: "expanded-chat-controls",
     titleMessageId: "settings.application.title.expandedChatControls",
-    to: "/settings/appearance",
+    to: "/settings/better-t3",
+    targetId: "agent.expandedComposerControls",
   },
   {
     id: "environment-identification",

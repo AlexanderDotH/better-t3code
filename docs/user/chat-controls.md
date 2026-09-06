@@ -73,7 +73,7 @@ thread in Build mode.
 
 ## Model reasoning
 
-On web and desktop, enable **Model reasoning** in **Settings > Appearance** to show reasoning
+On web and desktop, enable **Model reasoning** in **Settings > Better T3 > Agents** to show reasoning
 updates supplied by the selected provider and model. Reasoning appears expanded beneath a small
 **Thinking** disclosure and can be collapsed per entry. The presentation is plain chat content,
 without a surrounding card, border, or background.
@@ -83,8 +83,8 @@ supply reasoning updates continue to show the normal conversation without an emp
 
 ## Chat visuals
 
-Open **Settings > Appearance > Chat visuals** to choose the transcript presentation on web,
-desktop, and mobile. **Current** is the default and groups live or completed tool activity into
+On web and desktop, open **Settings > Better T3 > Visual > Chat visuals**. On mobile, open
+**Settings > Appearance > Chat visuals**. **Current** is the default and groups live or completed tool activity into
 concise summary rows. **Classic** restores the compact transcript: smaller work and fold rows, a
 three-dot working indicator, time-only timestamps, individual tool entries, and expandable
 **+N previous** history.
@@ -100,7 +100,7 @@ failed, or need a newer T3 server before they can synchronize this preference.
 On web and desktop, provider settings such as reasoning, service tier, interaction mode, and access
 mode are grouped under the ellipsis menu by default. The model picker, voice controls, and send
 actions remain directly available in the composer. To show the provider settings as separate
-controls instead, enable **Expanded chat controls** in **Settings > Appearance**. Expanded controls
+controls instead, enable **Expanded chat controls** in **Settings > Better T3 > Agents**. Expanded controls
 remain separate at ordinary desktop widths, including when the context selector is available.
 Genuinely narrow composers, or temporary wide action states, automatically return them to the
 ellipsis menu so the primary actions remain usable.
