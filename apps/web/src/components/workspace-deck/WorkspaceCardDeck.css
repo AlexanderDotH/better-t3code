@@ -51,6 +51,7 @@
 .workspace-card-deck__viewport[data-height-ready="true"]:not([data-expanded="true"])
   .workspace-card-deck__intrinsic {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   height: 100%;
 }
 
