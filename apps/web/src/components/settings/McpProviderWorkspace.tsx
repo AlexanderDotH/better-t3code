@@ -308,7 +308,7 @@ function RuntimeServerRow(props: {
         setOpen(nextOpen);
         if (nextOpen && hasDetails && !props.server.tools) props.onLoadDetails();
       }}
-      className="border-b border-border/50 last:border-b-0"
+      className="mcp-runtime-server-row border-b border-border/50 last:border-b-0"
     >
       <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:px-5">
         <div className="min-w-0 flex-1 space-y-1">
@@ -323,9 +323,7 @@ function RuntimeServerRow(props: {
               {translate(`settings.mcp.runtime.state.${props.server.state}`)}
             </Badge>
             {countLabel ? (
-              <Badge size="sm" variant="secondary">
-                {countLabel}
-              </Badge>
+              <span className="text-xs tabular-nums text-muted-foreground">{countLabel}</span>
             ) : null}
             {props.server.transport ? (
               <Badge size="sm" variant="outline">
@@ -789,7 +787,7 @@ export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
             </div>
           ) : null}
 
-          <div>
+          <div data-mcp-server-group="managed">
             <div className="border-b border-border/60 px-4 py-2.5 sm:px-5">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {translate("settings.mcp.runtime.source.t3Managed")}
@@ -849,7 +847,7 @@ export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
           </div>
 
           {nativeServers.length > 0 ? (
-            <section>
+            <section data-mcp-server-group="native">
               <div className="border-y border-border/60 bg-muted/20 px-4 py-2.5 sm:px-5">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   {translate("settings.mcp.workspace.providerManaged")}
@@ -870,7 +868,7 @@ export function McpProviderWorkspace(props: McpProviderWorkspaceProps) {
           ) : null}
 
           {systemServers.length > 0 ? (
-            <section>
+            <section data-mcp-server-group="system">
               <div className="border-y border-border/60 bg-muted/20 px-4 py-2.5 sm:px-5">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   {translate("settings.mcp.workspace.systemServer")}

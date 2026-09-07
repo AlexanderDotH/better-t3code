@@ -51,7 +51,7 @@ describe("workspace card roles", () => {
     ]);
   });
 
-  it("shows one alternating peek when only two cards are registered", () => {
+  it("keeps the other card above either active card when only two are registered", () => {
     const cards = ["chat", "example"] as const;
 
     expect(resolveWorkspaceDeckRoles(cards, "chat")).toEqual([
@@ -59,7 +59,7 @@ describe("workspace card roles", () => {
       { id: "example", position: "previous" },
     ]);
     expect(resolveWorkspaceDeckRoles(cards, "example")).toEqual([
-      { id: "chat", position: "next" },
+      { id: "chat", position: "previous" },
       { id: "example", position: "active" },
     ]);
   });
@@ -102,11 +102,19 @@ describe("workspace card selection", () => {
     expect(resolveWorkspaceDeckDirection(repositoryCards, "chat", "chat")).toBeNull();
   });
 
-  it("keeps the two-card motion alternating between upper and lower peeks", () => {
+  it("switches both ways through the upper peek in a two-card deck", () => {
     const cards = ["chat", "example"] as const;
 
     expect(resolveWorkspaceDeckDirection(cards, "chat", "example")).toBe("backward");
-    expect(resolveWorkspaceDeckDirection(cards, "example", "chat")).toBe("forward");
+    expect(resolveWorkspaceDeckDirection(cards, "example", "chat")).toBe("backward");
+    expect(resolveWorkspaceDeckMorphRoles(cards, "chat", "example")).toEqual([
+      { id: "chat", from: "active", to: "previous", morph: "outgoing" },
+      { id: "example", from: "previous", to: "active", morph: "incoming" },
+    ]);
+    expect(resolveWorkspaceDeckMorphRoles(cards, "example", "chat")).toEqual([
+      { id: "chat", from: "previous", to: "active", morph: "incoming" },
+      { id: "example", from: "active", to: "previous", morph: "outgoing" },
+    ]);
   });
 
   it("selects the shorter circular route for a non-adjacent request", () => {

@@ -11,7 +11,7 @@ one to each account.
 ## Assignment and project scope
 
 Open the **MCP** workspace card from a web or desktop chat, or open **Settings > MCP Servers** for
-environment-wide management. Select a provider-account tab before changing assignments. A server
+environment-wide management. Select a provider account before changing assignments. A server
 can be:
 
 - enabled for every provider account in the environment;
@@ -55,8 +55,12 @@ back to Chat's compact height. The expanded panel has two sections:
   system servers, and offers the runtime-supported refresh, reconnect, and authorization actions.
   Tool, resource, template, version, and sanitized issue details load only when disclosed.
 
+The workbench keeps provider-account and runtime-session dropdowns above the scrolling content.
+They stack vertically in narrow panels. Server groups separate shared definitions, provider-managed
+connections, and the system server, with tool counts shown as secondary information.
+
 The workbench initially follows the chat's provider account and exact runtime. Selecting another
-provider tab is local to MCP and does not change the provider used by Chat. If a selected runtime
+provider is local to MCP and does not change the provider used by Chat. If a selected runtime
 ends or is replaced, it remains identified as ended until the user chooses another session; runtime
 actions are never silently redirected.
 

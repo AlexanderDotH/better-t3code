@@ -1852,6 +1852,7 @@ export function McpServersSettingsPanel(props: {
       {...(props.embedded ? { viewportClassName: "overflow-visible p-0 sm:p-0" } : {})}
     >
       <SettingsSection
+        className={props.embedded ? "mcp-workspace-settings" : undefined}
         title={translate("settings.mcp.page.title")}
         headerAction={
           <div className="flex items-center gap-1.5">

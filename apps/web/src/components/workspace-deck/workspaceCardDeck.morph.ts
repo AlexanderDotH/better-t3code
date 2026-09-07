@@ -3,7 +3,6 @@ import {
   captureSurfaceGeometry,
   type SurfaceGeometry,
   type SurfaceMorphDescriptor,
-  type SurfaceMorphDirection,
   type SurfaceMorphCoordinator,
   type SurfaceRect,
 } from "../chat/surfaceMorph";
@@ -16,7 +15,7 @@ const WORKSPACE_DECK_FRAME_DETACH_OFFSET = 0.12;
 const WORKSPACE_DECK_FRAME_ATTACH_OFFSET = 0.88;
 const WORKSPACE_DECK_CONTENT_HANDOFF_OFFSET = 0.22;
 const WORKSPACE_DECK_CONTENT_VISIBLE_THRESHOLD = 0.5;
-const WORKSPACE_DECK_CONTENT_CUT_EASING = "steps(1, end)";
+const WORKSPACE_DECK_CONTENT_FADE_END_OFFSET = 0.65;
 
 export type WorkspaceDeckMorphProxyRole = "incoming" | "outgoing";
 export type WorkspaceDeckContentHandoffRole = "incoming" | "outgoing" | "peek";
@@ -154,7 +153,12 @@ export function buildWorkspaceDeckFrameMorphDescriptor(input: {
   readonly to: SurfaceGeometry;
 }): WorkspaceDeckFrameMorphDescriptor {
   const base = buildSurfaceMorphDescriptor({
-    direction: resolveWorkspaceDeckFrameDirection(input.direction, input.role),
+    direction:
+      input.role === "outgoing"
+        ? "automatic"
+        : input.direction === "forward"
+          ? "from-bottom"
+          : "from-top",
     durationMs: input.durationMs,
     from: input.from,
     to: input.to,
@@ -261,13 +265,23 @@ function createWorkspaceDeckContentHandoffKeyframes(input: {
 }): Keyframe[] {
   const handoffOffset = normalizeOffset(input.handoffOffset);
   const finalOpacity = input.role === "outgoing" ? 0 : 1;
+  if (input.role !== "outgoing") {
+    return [
+      contentHandoffKeyframe(0, 0),
+      ...(handoffOffset > 0
+        ? [contentHandoffKeyframe(handoffOffset, 0, WORKSPACE_DECK_FRAME_EASING)]
+        : []),
+      contentHandoffKeyframe(Math.max(handoffOffset, WORKSPACE_DECK_CONTENT_FADE_END_OFFSET), 1),
+      contentHandoffKeyframe(1, 1),
+    ];
+  }
   if (handoffOffset === 0) {
     return [contentHandoffKeyframe(0, finalOpacity), contentHandoffKeyframe(1, finalOpacity)];
   }
 
   const initialOpacity = input.role === "outgoing" ? 1 : 0;
   return [
-    contentHandoffKeyframe(0, initialOpacity, WORKSPACE_DECK_CONTENT_CUT_EASING),
+    contentHandoffKeyframe(0, initialOpacity, WORKSPACE_DECK_FRAME_EASING),
     contentHandoffKeyframe(handoffOffset, finalOpacity),
     contentHandoffKeyframe(1, finalOpacity),
   ];
@@ -427,14 +441,6 @@ function timelineOnlyKeyframe(keyframe: Keyframe): Keyframe {
     ...(keyframe.offset === undefined ? {} : { offset: keyframe.offset }),
     ...(keyframe.easing === undefined ? {} : { easing: keyframe.easing }),
   };
-}
-
-function resolveWorkspaceDeckFrameDirection(
-  direction: WorkspaceDeckDirection,
-  role: WorkspaceDeckMorphProxyRole,
-): SurfaceMorphDirection {
-  if (direction === "forward") return role === "incoming" ? "from-bottom" : "to-top";
-  return role === "incoming" ? "from-top" : "to-bottom";
 }
 
 function formatPixel(value: number): string {

@@ -2,6 +2,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+import { ComposerFloatingBubble } from "./ComposerFloatingBubble";
 
 const bubbleCssPath = decodeURIComponent(
   new URL("./ComposerFloatingBubble.css", import.meta.url).pathname,
@@ -13,6 +17,15 @@ const readBubbleCss = Effect.gen(function* () {
 }).pipe(Effect.provide(NodeServices.layer));
 
 describe("ComposerFloatingBubble layout", () => {
+  it("makes the inactive bubble inaccessible without the native display-none attribute", () => {
+    const html = renderToStaticMarkup(
+      createElement(ComposerFloatingBubble, { active: false, hostRef: null }),
+    );
+    expect(html).toContain('aria-hidden="true"');
+    expect(html).toContain('inert=""');
+    expect(html).not.toContain(' hidden="');
+  });
+
   it.effect("uses one rounded body with internal separators above the three-card deck", () =>
     Effect.gen(function* () {
       const css = yield* readBubbleCss;
@@ -42,6 +55,9 @@ describe("ComposerFloatingBubble layout", () => {
       expect(css).toContain("@keyframes composer-floating-bubble-enter");
       expect(css).toMatch(
         /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.composer-floating-bubble-host:not\(:empty\)\s*\{[^}]*animation:\s*none;/s,
+      );
+      expect(css).toMatch(
+        /\.composer-floating-bubble-region\[aria-hidden="true"\]\s*\{[^}]*visibility:\s*hidden;[^}]*pointer-events:\s*none;/s,
       );
       expect(css).not.toContain("infinite");
       expect(css).not.toContain("will-change");

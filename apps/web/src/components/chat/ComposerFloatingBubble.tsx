@@ -11,7 +11,6 @@ export function ComposerFloatingBubble(props: {
       aria-hidden={props.active ? undefined : true}
       className="composer-floating-bubble-region"
       data-chat-composer-floating-bubble="true"
-      hidden={!props.active}
       inert={!props.active}
     >
       <div

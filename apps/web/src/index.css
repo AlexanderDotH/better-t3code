@@ -1566,7 +1566,11 @@ body {
    their opaque theme colors, and nested panes do not accumulate tint. */
 @media (prefers-reduced-transparency: no-preference) {
   html.macos-vibrancy,
-  .macos-vibrancy body,
+  .macos-vibrancy body {
+    /* Boot and theme sync set inline backgrounds on both document surfaces. */
+    background-color: transparent !important;
+  }
+
   .macos-vibrancy [data-slot="sidebar-wrapper"],
   .macos-vibrancy [data-slot="sidebar-container"],
   .macos-vibrancy .window-surface {
@@ -1574,11 +1578,19 @@ body {
   }
 
   .macos-vibrancy [data-slot="sidebar-inner"] {
-    background-color: color-mix(in srgb, var(--sidebar) 50%, transparent);
+    background-color: color-mix(in srgb, var(--sidebar) var(--glass-opacity), transparent);
+  }
+
+  html.macos-vibrancy [data-app-sidebar] {
+    border-color: color-mix(
+      in srgb,
+      var(--contrast-sidebar-border) 80%,
+      var(--contrast-sidebar-foreground)
+    );
   }
 
   .macos-vibrancy [data-slot="sidebar-inset"] {
-    background-color: color-mix(in srgb, var(--background) 70%, transparent);
+    background-color: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
   }
 }
 

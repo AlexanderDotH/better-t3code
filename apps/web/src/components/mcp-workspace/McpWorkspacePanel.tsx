@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import { useId, type CSSProperties, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
@@ -29,6 +29,10 @@ const SECTIONS: readonly McpWorkspaceSection[] = ["servers", "runtime"];
 
 export function McpWorkspacePanel(props: McpWorkspacePanelProps) {
   const translate = useInterfaceTranslator().message;
+  const sectionId = useId();
+  const selectedProvider = props.providers?.find(
+    (provider) => provider.id === props.selectedProviderId,
+  );
   const selectedContext = props.contexts?.find((context) => context.id === props.selectedContextId);
   const missingSelectedContext =
     props.selectedContextId !== null &&
@@ -53,29 +57,41 @@ export function McpWorkspacePanel(props: McpWorkspacePanelProps) {
       {showSelectors ? (
         <div className="mcp-workspace-panel__selectors" data-mcp-workspace-selectors="true">
           {props.providers && props.providers.length > 0 ? (
-            <div
-              className="mcp-workspace-panel__providers"
-              role="tablist"
-              aria-label={translate("settings.mcp.workspace.providers")}
-            >
-              {props.providers.map((provider) => (
-                <button
-                  key={provider.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={props.selectedProviderId === provider.id}
-                  data-active={props.selectedProviderId === provider.id ? "true" : undefined}
-                  style={
-                    provider.accentColor
-                      ? ({ "--mcp-provider-accent": provider.accentColor } as CSSProperties)
-                      : undefined
-                  }
-                  onClick={() => props.onProviderChange?.(provider.id)}
+            <label className="mcp-workspace-panel__provider-selector">
+              <span>{translate("settings.mcp.workspace.providers")}</span>
+              <Select
+                value={props.selectedProviderId ?? undefined}
+                onValueChange={(providerId) => {
+                  if (providerId) props.onProviderChange?.(providerId);
+                }}
+              >
+                <SelectTrigger
+                  className="mcp-workspace-panel__context-trigger"
+                  aria-label={translate("settings.mcp.workspace.providers")}
                 >
-                  {provider.label}
-                </button>
-              ))}
-            </div>
+                  <SelectValue>{selectedProvider?.label}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="start" alignItemWithTrigger={false}>
+                  {props.providers.map((provider) => (
+                    <SelectItem key={provider.id} value={provider.id}>
+                      <span className="flex items-center gap-2">
+                        <span
+                          aria-hidden="true"
+                          className="size-2 shrink-0 rounded-full bg-(--mcp-provider-accent)"
+                          style={
+                            {
+                              "--mcp-provider-accent":
+                                provider.accentColor ?? "var(--muted-foreground)",
+                            } as CSSProperties
+                          }
+                        />
+                        {provider.label}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </label>
           ) : null}
           {props.contexts ? (
             <label
@@ -90,7 +106,6 @@ export function McpWorkspacePanel(props: McpWorkspacePanelProps) {
               >
                 <SelectTrigger
                   className="mcp-workspace-panel__context-trigger"
-                  size="sm"
                   aria-label={translate("settings.mcp.workspace.runtimeSession")}
                 >
                   <SelectValue>{selectedContextLabel}</SelectValue>
@@ -117,6 +132,8 @@ export function McpWorkspacePanel(props: McpWorkspacePanelProps) {
             key={section}
             type="button"
             role="tab"
+            id={`${sectionId}-${section}`}
+            aria-controls={`${sectionId}-panel`}
             aria-selected={props.activeSection === section}
             data-active={props.activeSection === section ? "true" : undefined}
             onClick={() => props.onActiveSectionChange(section)}
@@ -129,7 +146,12 @@ export function McpWorkspacePanel(props: McpWorkspacePanelProps) {
           </button>
         ))}
       </nav>
-      <div className="mcp-workspace-panel__content" role="tabpanel">
+      <div
+        id={`${sectionId}-panel`}
+        className="mcp-workspace-panel__content"
+        role="tabpanel"
+        aria-labelledby={`${sectionId}-${props.activeSection}`}
+      >
         {props.activeSection === "servers" ? props.servers : props.runtime}
       </div>
     </div>

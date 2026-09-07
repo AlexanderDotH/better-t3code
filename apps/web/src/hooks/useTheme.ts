@@ -293,9 +293,12 @@ function resolveBrowserChromeSurface(): HTMLElement {
 export function syncBrowserChromeTheme() {
   if (typeof document === "undefined" || typeof getComputedStyle === "undefined") return;
   const rootStyles = getComputedStyle(document.documentElement);
-  const themeChromeColor = document.documentElement.dataset.themeId
-    ? normalizeThemeColor(rootStyles.getPropertyValue("--app-chrome-background"))
-    : null;
+  // Translucent panes are composited colors, not the underlying theme palette.
+  const themeChromeColor =
+    document.documentElement.dataset.themeId ||
+    document.documentElement.classList.contains("macos-vibrancy")
+      ? normalizeThemeColor(rootStyles.getPropertyValue("--app-chrome-background"))
+      : null;
   const surfaceColor = normalizeThemeColor(
     getComputedStyle(resolveBrowserChromeSurface()).backgroundColor,
   );

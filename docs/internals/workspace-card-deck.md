@@ -15,12 +15,14 @@ available, and MCP in that order. This local array is the extension point; there
 registry or mobile card abstraction.
 
 The active card, previous card, and next card are derived circularly from descriptor order. With two
-cards, only one destination peek is rendered and it alternates sides after each switch. Removing the
+cards, the other card always peeks above the active surface, keeping the return target under the
+pointer after each switch. Removing the
 active descriptor invalidates the remembered selection and promotes Chat immediately. A remembered
 prototype ID such as `example` is invalid and falls back to Chat without animation.
 
-Every registered body stays mounted. Only the active section is interactive and exposed to
-accessibility APIs; inactive sections are inert, `aria-hidden`, and pointer-disabled. Peeks are
+The compact-height reference body (Chat) stays mounted across card switches. Other bodies mount
+only while active. Only the active section is interactive and exposed to accessibility APIs; the
+inactive reference section is inert, `aria-hidden`, and pointer-disabled. Peeks are
 sibling controls outside those inert sections. This preserves Chat drafts, attachments, provider
 state, and focus without making hidden controls reachable.
 
@@ -64,7 +66,7 @@ layout phase. Geometry includes the border box, four independent corner radii, o
 color, border, and shadow. The coordinator produces short-lived WAAPI/FLIP motion; React does not
 rerender on animation frames.
 
-The real surface content translates and scales between those rectangles and remains clipped to the
+During expansion morphs, real surface content translates and scales between those rectangles and remains clipped to the
 moving contour. It stays visible throughout the morph, with only a subtle fade toward 84% while it
 is compressed into a peek and back to full opacity while it expands. A separate chrome proxy draws
 the glass, 1 px border, corners, and shadow, so non-uniform scaling cannot visibly thicken the border. Proxies
@@ -79,18 +81,23 @@ match the unscaled glass radius instead of flattening vertically. Proxies are tr
 finish or cancellation.
 
 For a card switch, the selected upper or lower peek expands to the 22 px foreground surface while
-the old active surface contracts to the opposite 16 px directional peek. Both motions use 560 ms,
+the old active surface contracts to its destination 16 px peek. With two cards, both selections
+use the upper edge; the outgoing frame also contracts upward. Both motions use 560 ms,
 a fast spring-like curve, and at most 3 px overshoot. The remaining shell moves behind the clipped
-foreground ordering and is already placed in the newly free peek position. It begins at 72% opacity,
-tucks at most 3 px underneath the foreground seam instead of moving outside the deck, and settles to
-full opacity over the complete morph. The destination edge therefore never becomes an empty gap and
-its hit target remains available throughout. The whole active card body participates, so controls
-and text keep the compressed morph while the small opacity change softens it.
+foreground ordering and is already placed in the newly free peek position at full opacity.
+The destination edge therefore never becomes an empty gap and its hit target remains available
+throughout. Compact content stays at natural scale while the lightweight glass frames morph.
 
 Compact-to-expanded Git and MCP changes use the same captured border boxes. When switching away
 from an expanded card, the existing height collapse finishes first and the compact destination is
 recaptured before the deck morph starts. This keeps persisted state and focus ownership separate
 from visual motion.
+
+Compact switching starts one animation set per transition token. New descriptor arrays, streaming
+content, and measurement updates leave that set running; only a new selection replaces it. The
+incoming body and destination peek label stay at natural scale and fade in between 22% and 65% of
+the frame animation. If interrupted content was already invisible, the fade starts immediately.
+Enabling reduced motion settles the current transition without starting another animation set.
 
 The outer composer group never participates in ordinary surface morphs. Attachments, context, and
 preview content use normal layout, so their updates cannot translate or scale the deck or chat.
@@ -115,7 +122,8 @@ from flashing when the next turn starts.
 
 Action-required promotion to Chat remains immediate. When Git or MCP is active, or a non-Chat card
 is expanded, the bubble remains mounted with its retained state but is hidden and inert until Chat
-is interactive again. In the draft hero it is positioned above the centered card stack so its
+is interactive again. Hiding uses visibility rather than removing its layout box, preserving the
+timeline inset and the completed entrance animation across ordinary card switches. In the draft hero it is positioned above the centered card stack so its
 height does not displace the composer.
 
 ## Cancellation, accessibility, and fallback

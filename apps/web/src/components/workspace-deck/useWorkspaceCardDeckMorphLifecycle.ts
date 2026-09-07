@@ -339,7 +339,8 @@ export function useWorkspaceCardDeckMorphLifecycle<CardId extends string>(input:
   ]);
 
   useIsomorphicLayoutEffect(() => {
-    if (input.selectionMode !== "immediate" || transition === null) return;
+    if ((input.selectionMode !== "immediate" && !input.prefersReducedMotion) || transition === null)
+      return;
     cleanupActiveMorph();
     input.focusDestination(input.activeCard);
     transitionRef.current = null;
@@ -349,6 +350,7 @@ export function useWorkspaceCardDeckMorphLifecycle<CardId extends string>(input:
     cleanupActiveMorph,
     input.activeCard,
     input.focusDestination,
+    input.prefersReducedMotion,
     input.selectionMode,
     setFrozenCompactHeight,
     setTransition,
@@ -367,6 +369,9 @@ export function useWorkspaceCardDeckMorphLifecycle<CardId extends string>(input:
 
   useIsomorphicLayoutEffect(() => {
     if (transition?.motion !== "morph") return;
+    if (transitionRef.current !== transition) return;
+    // Content and measurement updates must not replay an already running transition.
+    if (activeMorphRef.current?.token === transition.token) return;
     const capture = pendingMorphCaptureRef.current;
     if (
       capture === null ||
