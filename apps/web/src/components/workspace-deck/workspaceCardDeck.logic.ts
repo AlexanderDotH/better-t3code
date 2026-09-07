@@ -56,11 +56,9 @@ export function resolveWorkspaceDeckRoles<CardId extends string>(
   }
 
   if (cardIds.length === 2) {
-    const otherIndex = activeIndex === 0 ? 1 : 0;
-    const otherPosition = activeIndex === 0 ? "previous" : "next";
     return cardIds.map((id, index) => ({
       id,
-      position: index === activeIndex ? "active" : index === otherIndex ? otherPosition : "hidden",
+      position: index === activeIndex ? "active" : "previous",
     }));
   }
 

@@ -8,7 +8,11 @@
   pointer-events: auto;
 }
 
-.composer-floating-bubble-region[hidden],
+.composer-floating-bubble-region[aria-hidden="true"] {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .composer-floating-bubble-region:has(> .composer-floating-bubble-host:empty) {
   display: none;
 }

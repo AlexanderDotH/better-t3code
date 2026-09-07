@@ -6,7 +6,7 @@ import type {
 } from "./workspaceCardDeck.model";
 import type { WorkspaceDeckTransition } from "./workspaceCardDeck.logic";
 
-export function WorkspaceCardDeckActiveBody<CardId extends string>(props: {
+export function WorkspaceCardDeckBody<CardId extends string>(props: {
   readonly activeCard: CardId;
   readonly card: WorkspaceDeckCardDefinition<CardId>;
   readonly expandedCard: CardId | null;
@@ -17,14 +17,17 @@ export function WorkspaceCardDeckActiveBody<CardId extends string>(props: {
   readonly registerSection: (cardId: CardId, element: HTMLElement | null) => void;
 }) {
   const { card } = props;
+  const active = card.id === props.activeCard;
   return (
     <section
       key={card.id}
       ref={(element) => props.registerSection(card.id, element)}
       className="workspace-card-deck__card"
       data-workspace-card-body={card.id}
-      data-card-position="active"
+      data-card-position={active ? "active" : "hidden"}
       aria-label={card.label}
+      aria-hidden={active ? undefined : true}
+      inert={!active}
       tabIndex={-1}
       data-transition-role={props.transition?.toId === card.id ? "incoming" : undefined}
       onFocusCapture={(event: FocusEvent<HTMLElement>) => {
@@ -44,7 +47,7 @@ export function WorkspaceCardDeckActiveBody<CardId extends string>(props: {
         data-workspace-card-intrinsic={card.id}
       >
         {card.renderBody({
-          active: true,
+          active,
           expanded: props.expandedCard === card.id,
         })}
       </div>

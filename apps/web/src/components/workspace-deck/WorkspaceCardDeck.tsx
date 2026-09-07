@@ -13,10 +13,7 @@ import {
   prepareWorkspaceCardDeckView,
   type WorkspaceDeckCardDefinition,
 } from "./workspaceCardDeck.model";
-import {
-  WorkspaceCardDeckActiveBody,
-  WorkspaceCardDeckPeeks,
-} from "./WorkspaceCardDeckPresentation";
+import { WorkspaceCardDeckBody, WorkspaceCardDeckPeeks } from "./WorkspaceCardDeckPresentation";
 import { useWorkspaceCardDeckActivation } from "./useWorkspaceCardDeckActivation";
 import { useWorkspaceCardDeckMeasurements } from "./useWorkspaceCardDeckMeasurements";
 import { useWorkspaceCardDeckMorphLifecycle } from "./useWorkspaceCardDeckMorphLifecycle";
@@ -155,16 +152,23 @@ export function WorkspaceCardDeck<CardId extends string>(props: WorkspaceCardDec
         onTransitionEnd={lifecycle.onViewportTransitionEnd}
         style={style}
       >
-        <WorkspaceCardDeckActiveBody
-          activeCard={view.activeCard}
-          card={view.activeCardDefinition}
-          expandedCard={props.expandedCard}
-          transition={lifecycle.transition}
-          recordFocusedElement={navigation.recordFocusedElement}
-          registerIntrinsicElement={measurements.registerIntrinsicElement}
-          registerMorphHost={lifecycle.registerMorphHost}
-          registerSection={navigation.registerSection}
-        />
+        {props.cards
+          .filter(
+            (card) => card.id === view.activeCard || card.id === view.compactHeightReferenceCard,
+          )
+          .map((card) => (
+            <WorkspaceCardDeckBody
+              key={card.id}
+              activeCard={view.activeCard}
+              card={card}
+              expandedCard={props.expandedCard}
+              transition={lifecycle.transition}
+              recordFocusedElement={navigation.recordFocusedElement}
+              registerIntrinsicElement={measurements.registerIntrinsicElement}
+              registerMorphHost={lifecycle.registerMorphHost}
+              registerSection={navigation.registerSection}
+            />
+          ))}
       </div>
 
       <WorkspaceCardDeckPeeks

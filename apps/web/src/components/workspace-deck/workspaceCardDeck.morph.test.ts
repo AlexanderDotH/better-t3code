@@ -39,7 +39,7 @@ describe("workspace deck morph chrome", () => {
     expect(keyframes[0]?.some((frame) => "clipPath" in frame)).toBe(false);
   });
 
-  it("keeps outgoing content solid until the crisp 22% handoff", () => {
+  it("fades outgoing content through the handoff", () => {
     const outgoing = fakeAnimatedElement();
 
     animateWorkspaceDeckContentHandoff({
@@ -54,11 +54,11 @@ describe("workspace deck morph chrome", () => {
       { offset: 0.22, opacity: 0 },
       { offset: 1, opacity: 0 },
     ]);
-    expect(outgoing.keyframes[0]?.[0]?.easing).toBe("steps(1, end)");
+    expect(outgoing.keyframes[0]?.[0]?.easing).toBe("cubic-bezier(0.4, 0, 0.2, 1)");
     expect(outgoing.keyframes[0]?.every(isNaturalScaleContentFrame)).toBe(true);
   });
 
-  it("reveals incoming content at the same crisp 22% handoff", () => {
+  it("fades incoming content in after the frame starts expanding", () => {
     const incoming = fakeAnimatedElement();
 
     animateWorkspaceDeckContentHandoff({
@@ -70,14 +70,15 @@ describe("workspace deck morph chrome", () => {
 
     expect(contentTimeline(incoming.keyframes[0] ?? [])).toEqual([
       { offset: 0, opacity: 0 },
-      { offset: 0.22, opacity: 1 },
+      { offset: 0.22, opacity: 0 },
+      { offset: 0.65, opacity: 1 },
       { offset: 1, opacity: 1 },
     ]);
-    expect(incoming.keyframes[0]?.[0]?.easing).toBe("steps(1, end)");
+    expect(incoming.keyframes[0]?.[1]?.easing).toBe("cubic-bezier(0.4, 0, 0.2, 1)");
     expect(incoming.keyframes[0]?.every(isNaturalScaleContentFrame)).toBe(true);
   });
 
-  it("reveals the new target peek label at the crisp 22% handoff", () => {
+  it("fades the target peek label in with the incoming content", () => {
     const targetPeek = fakeAnimatedElement();
 
     animateWorkspaceDeckContentHandoff({
@@ -91,10 +92,11 @@ describe("workspace deck morph chrome", () => {
       (targetPeek.keyframes[0] ?? []).map(({ offset, opacity }) => ({ offset, opacity })),
     ).toEqual([
       { offset: 0, opacity: 0 },
-      { offset: 0.22, opacity: 1 },
+      { offset: 0.22, opacity: 0 },
+      { offset: 0.65, opacity: 1 },
       { offset: 1, opacity: 1 },
     ]);
-    expect(targetPeek.keyframes[0]?.[0]?.easing).toBe("steps(1, end)");
+    expect(targetPeek.keyframes[0]?.[1]?.easing).toBe("cubic-bezier(0.4, 0, 0.2, 1)");
     expect(targetPeek.keyframes[0]?.every(isNaturalScaleContentFrame)).toBe(true);
     expect(targetPeek.options[0]).toMatchObject({
       duration: WORKSPACE_DECK_MORPH_DURATION_MS,
@@ -102,7 +104,7 @@ describe("workspace deck morph chrome", () => {
     });
   });
 
-  it("cuts immediately to new content when a rapid follow-up interrupts an invisible card", () => {
+  it("starts fading immediately when a rapid follow-up interrupts an invisible card", () => {
     const outgoing = fakeAnimatedElement({
       opacity: "0.76",
       transform: "translate3d(0, 2px, 0)",
@@ -130,7 +132,8 @@ describe("workspace deck morph chrome", () => {
       role: "incoming",
     });
     expect(contentTimeline(incoming.keyframes[0] ?? [])).toEqual([
-      { offset: 0, opacity: 1 },
+      { offset: 0, opacity: 0 },
+      { offset: 0.65, opacity: 1 },
       { offset: 1, opacity: 1 },
     ]);
 
@@ -214,6 +217,14 @@ describe("workspace deck morph chrome", () => {
     expect(frameTops(forwardOutgoing.geometryKeyframes)).toEqual([100, 65, 68]);
     expect(frameTops(backwardIncoming.geometryKeyframes)).toEqual([68, 103, 100]);
     expect(frameTops(backwardOutgoing.geometryKeyframes)).toEqual([100, 303, 300]);
+    const twoCardOutgoing = buildWorkspaceDeckFrameMorphDescriptor({
+      direction: "backward",
+      durationMs: WORKSPACE_DECK_MORPH_DURATION_MS,
+      from: active,
+      role: "outgoing",
+      to: upperPeek,
+    });
+    expect(frameTops(twoCardOutgoing.geometryKeyframes)).toEqual([100, 65, 68]);
     for (const descriptor of [
       forwardIncoming,
       forwardOutgoing,

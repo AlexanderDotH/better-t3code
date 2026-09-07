@@ -24,23 +24,24 @@ rounded bubble above the upper card edge. Consecutive notices remain visible as 
 that shared body, with separators instead of overlapping cards. Plan-ready state uses the blue info
 treatment, while active work uses its own activity treatment. The bubble does not make the three
 cards taller or move their selection edges. It disappears while Git or MCP is in front and returns
-with its state preserved when Chat becomes active again. Reduced-motion preferences show it
+with its state preserved when Chat becomes active again. Its space remains reserved during card
+switches so the chat history stays still and the entrance animation does not replay. Reduced-motion preferences show it
 immediately without the short entrance motion. Active work fills the complete bubble width and
 shows separate Input and Output token counters on the right. A down-arrow marks tokens entering the
 model, and an up-arrow marks tokens produced by it. A new turn starts both counters at zero instead
 of briefly showing the previous turn's usage.
 
 In a non-repository project, or when the server does not advertise Git workbench support, the deck
-contains only Chat and MCP. It shows one destination edge at a time and alternates the edge after
-each switch. A server without MCP workspace support still exposes the MCP card using locally
+contains only Chat and MCP. The other card always stays above the active card, so you can switch
+back and forth without moving the pointer to the bottom edge. A server without MCP workspace support still exposes the MCP card using locally
 available configuration counts, but its expanded view explains that live runtime management
 requires a server upgrade and does not issue unsupported runtime requests.
 
 Chat remains mounted while another card is selected, preserving its draft, attachments, provider
 settings, and composer state. Returning to Chat restores the previous composer focus. The
-foreground content fades out briefly before the slower card shuffle and returns during the motion;
-the glass surface, blur, and border remain solid. Reduced-motion preferences switch cards
-immediately.
+new foreground content fades in as the glass frame expands from its exposed edge. Content updates
+do not restart a running transition, and another edge selection can replace it immediately.
+Reduced-motion preferences switch cards immediately, including when enabled during a transition.
 
 The Git edge keeps Local checkout, environment, worktree, branch, pull-request, repository-state,
 and changed-file controls in their familiar positions. Selecting free space or static status on

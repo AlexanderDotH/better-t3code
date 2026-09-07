@@ -977,15 +977,15 @@ export const settingsInterfaceCatalog = defineLocalizedInterfaceCatalog({
   ],
   "settings.appearance.contrast": ["Contrast", "Kontrast", "Contraste"],
   "settings.appearance.glassDescription": [
-    "Control how transparent glass surfaces are. Higher values make menus, dialogs, and the composer more solid.",
-    "Steuert die Transparenz von Glasflächen. Höhere Werte machen Menüs, Dialoge und den Composer deckender.",
-    "Contrôle la transparence des surfaces vitrées. Des valeurs plus élevées rendent les menus, dialogues et l’éditeur plus opaques.",
+    "Controls menus, dialogs, and the composer, plus the macOS window background when background transparency and blur is enabled. Lower values reveal more of the background; 100% is solid.",
+    "Steuert Menüs, Dialoge und den Composer sowie den macOS-Fensterhintergrund bei aktivierter Hintergrundtransparenz und Unschärfe. Niedrigere Werte zeigen mehr vom Hintergrund; 100 % ist deckend.",
+    "Règle les menus, dialogues et l’éditeur, ainsi que le fond de la fenêtre macOS lorsque la transparence et le flou sont activés. Des valeurs plus faibles révèlent davantage l’arrière-plan ; 100 % est opaque.",
   ],
   "settings.appearance.glassOpacity": ["Glass opacity", "Glasdeckkraft", "Opacité du verre"],
   "settings.appearance.macosTransparencyDescription": [
-    "Show a blurred desktop behind the macOS window. Applies immediately; turn off to restore solid backgrounds.",
-    "Zeigt den Desktop unscharf hinter dem macOS-Fenster. Wirkt sofort; ausschalten stellt deckende Hintergründe wieder her.",
-    "Affiche le bureau flouté derrière la fenêtre macOS. Effet immédiat ; désactivez pour rétablir les fonds opaques.",
+    "Show a blurred desktop behind the macOS window. Lower Glass opacity to make it more visible. Turn off to restore solid backgrounds.",
+    "Zeigt den Desktop unscharf hinter dem macOS-Fenster. Verringere die Glasdeckkraft, um ihn deutlicher zu sehen. Ausschalten stellt deckende Hintergründe wieder her.",
+    "Affiche le bureau flouté derrière la fenêtre macOS. Réduisez l’opacité du verre pour le rendre plus visible. Désactivez pour rétablir les fonds opaques.",
   ],
   "settings.appearance.reasoningDescription": [
     "Show provider-supplied reasoning updates directly in the chat. Availability depends on the selected provider and model.",

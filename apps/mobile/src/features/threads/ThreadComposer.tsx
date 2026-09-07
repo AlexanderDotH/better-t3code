@@ -899,26 +899,18 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           ) : null}
         </ComposerSurface>
 
-        {props.forkComposerBudget ? (
-          <Text
-            accessibilityLiveRegion="polite"
-            className={`pt-2 text-xs ${
-              props.forkComposerBudget.canSend ? "text-foreground-muted" : "text-danger"
-            }`}
-          >
-            {props.forkComposerBudget.promptExceededBy > 0 ||
-            props.forkComposerBudget.attachmentsExceededBy > 0
-              ? [
-                  props.forkComposerBudget.promptExceededBy > 0
-                    ? `Shorten the prompt by ${props.forkComposerBudget.promptExceededBy.toLocaleString()} characters`
-                    : null,
-                  props.forkComposerBudget.attachmentsExceededBy > 0
-                    ? `remove ${props.forkComposerBudget.attachmentsExceededBy} attachment${props.forkComposerBudget.attachmentsExceededBy === 1 ? "" : "s"}`
-                    : null,
-                ]
-                  .filter(Boolean)
-                  .join(" and ")
-              : translator.message("chat.fork.handoffBudget")}
+        {props.forkComposerBudget && !props.forkComposerBudget.canSend ? (
+          <Text accessibilityLiveRegion="polite" className="pt-2 text-xs text-danger">
+            {[
+              props.forkComposerBudget.promptExceededBy > 0
+                ? `Shorten the prompt by ${props.forkComposerBudget.promptExceededBy.toLocaleString()} characters`
+                : null,
+              props.forkComposerBudget.attachmentsExceededBy > 0
+                ? `remove ${props.forkComposerBudget.attachmentsExceededBy} attachment${props.forkComposerBudget.attachmentsExceededBy === 1 ? "" : "s"}`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" and ")}
           </Text>
         ) : null}
 

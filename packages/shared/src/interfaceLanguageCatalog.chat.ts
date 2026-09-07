@@ -1579,11 +1579,6 @@ export const chatInterfaceCatalog = defineLocalizedInterfaceCatalog({
     "Kontext komprimieren",
     "Compacter le contexte",
   ],
-  "chat.fork.handoffBudget": [
-    "The complete fork history and all attachments are carried over separately. Nothing inherited is removed; normal limits apply only to this new message.",
-    "Der vollständige Fork-Verlauf und alle Anhänge werden separat übernommen. Nichts Geerbtes wird entfernt; normale Grenzen gelten nur für diese neue Nachricht.",
-    "L’historique complet du fork et toutes les pièces jointes sont repris séparément. Aucun élément hérité n’est supprimé ; les limites habituelles ne s’appliquent qu’à ce nouveau message.",
-  ],
   "chat.model.noneFound": ["No models found", "Keine Modelle gefunden", "Aucun modèle trouvé"],
   "chat.plan.enterWorkspacePath": [
     "Enter a workspace path",

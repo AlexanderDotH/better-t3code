@@ -46,7 +46,7 @@ function createCard(id: TestCardId): WorkspaceDeckCardDefinition<TestCardId> {
 const cards = [createCard("chat"), createCard("git"), createCard("example")] as const;
 
 describe("WorkspaceCardDeck", () => {
-  it("mounts only the active heavy body while retaining lightweight adjacent peeks", () => {
+  it("keeps non-reference bodies lazy while Chat is active", () => {
     const html = renderToStaticMarkup(
       <WorkspaceCardDeck
         activeCard="chat"
@@ -95,10 +95,10 @@ describe("WorkspaceCardDeck", () => {
     );
   });
 
-  it("renders one exposed edge for a two-card deck", () => {
+  it.each(["chat", "example"] as const)("keeps the two-card return edge above %s", (activeCard) => {
     const html = renderToStaticMarkup(
       <WorkspaceCardDeck
-        activeCard="chat"
+        activeCard={activeCard}
         cards={[createCard("chat"), createCard("example")]}
         compactHeightReferenceCard="chat"
         expandedCard={null}
@@ -109,11 +109,14 @@ describe("WorkspaceCardDeck", () => {
     );
 
     expect(html.match(/data-workspace-card-peek=/g)).toHaveLength(1);
-    expect(html).toContain('data-workspace-card-peek="example"');
+    expect(html).toContain(
+      `data-workspace-card-peek="${activeCard === "chat" ? "example" : "chat"}"`,
+    );
     expect(html).toContain('data-peek-position="previous"');
+    expect(html).not.toContain('data-peek-position="next"');
   });
 
-  it("passes active and expanded state only to the mounted body", () => {
+  it("keeps the compact reference body inert while another card is expanded", () => {
     const html = renderToStaticMarkup(
       <WorkspaceCardDeck
         activeCard="git"
@@ -127,7 +130,12 @@ describe("WorkspaceCardDeck", () => {
     );
 
     expect(html).toContain('data-card-body-content="git" data-active="true" data-expanded="true"');
-    expect(html).not.toContain('data-card-body-content="chat"');
+    expect(html).toContain(
+      'data-card-body-content="chat" data-active="false" data-expanded="false"',
+    );
+    expect(html).toMatch(
+      /<section[^>]*data-workspace-card-body="chat"[^>]*data-card-position="hidden"[^>]*aria-hidden="true"[^>]*inert=""/,
+    );
     expect(html).toContain('data-expanded-card="git"');
   });
 
@@ -147,7 +155,7 @@ describe("WorkspaceCardDeck", () => {
     ).toThrow(/duplicate workspace card id/i);
   });
 
-  it("supports an expanded Example card without mounting its heavy neighbors", () => {
+  it("keeps the reference composer alongside an expanded card without mounting other neighbors", () => {
     const html = renderToStaticMarkup(
       <WorkspaceCardDeck
         activeCard="example"
@@ -161,7 +169,8 @@ describe("WorkspaceCardDeck", () => {
     );
 
     expect(html).toContain('data-expanded-card="example"');
-    expect(html.match(/data-workspace-card-body=/g)).toHaveLength(1);
+    expect(html.match(/data-workspace-card-body=/g)).toHaveLength(2);
+    expect(html).not.toContain('data-workspace-card-body="git"');
     expect(html.match(/data-workspace-card-peek=/g)).toHaveLength(2);
   });
 });

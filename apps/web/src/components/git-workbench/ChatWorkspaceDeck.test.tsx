@@ -162,7 +162,7 @@ describe("ChatWorkspaceDeck", () => {
     });
   });
 
-  it("unmounts the heavy Chat body while retaining its lightweight peek", () => {
+  it("retains the Chat composer and its portal state behind the active Git card", () => {
     const html = renderToStaticMarkup(
       <ChatWorkspaceDeck
         activeCard="git"
@@ -176,8 +176,10 @@ describe("ChatWorkspaceDeck", () => {
       />,
     );
 
-    expect(html).not.toContain("chat body remains mounted");
-    expect(html).not.toContain('data-workspace-card-body="chat"');
+    expect(html).toContain("chat body remains mounted");
+    expect(html).toMatch(
+      /<section[^>]*data-workspace-card-body="chat"[^>]*aria-hidden="true"[^>]*inert=""/,
+    );
     expect(html).toContain('data-workspace-card-peek="chat"');
     expect(html).toContain('data-workspace-card-body="git"');
   });

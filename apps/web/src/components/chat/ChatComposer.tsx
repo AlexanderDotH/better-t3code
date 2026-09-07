@@ -188,7 +188,6 @@ import {
   submitComposerDraft,
 } from "./composerSubmission";
 import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation";
-import { ForkHandoffBudgetNotice } from "./ForkHandoffBudgetNotice";
 import type { FirstTurnForkBudget } from "../../lib/threadFork";
 import {
   SURFACE_MORPH_EXIT_DURATION_MS,
@@ -4583,7 +4582,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             <ComposerPromptLengthValidation
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
-            <ForkHandoffBudgetNotice budget={firstTurnForkBudget} />
 
             {/* Bottom toolbar */}
             {isComposerCollapsedMobile || isComposerApprovalState ? null : (

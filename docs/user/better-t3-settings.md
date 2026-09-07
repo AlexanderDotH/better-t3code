@@ -23,6 +23,8 @@ Switches change optional behavior. Selectors choose a mode or model. Actions per
 
 Character streaming motion applies only to newly arriving assistant text in Classic presentation; reduced motion and Current presentation render it immediately.
 
+On macOS desktop, **Visual > Background transparency and blur** reveals the blurred desktop behind the window, including after theme changes. **Glass opacity** controls the window background as well as menus, dialogs, and the composer: lower values reveal more of the background, while 100% restores solid theme colors. macOS supplies the blur; the slider controls opacity, not the blur radius. Turning background transparency off restores solid window backgrounds. The macOS **Reduce transparency** accessibility preference keeps window backgrounds solid even when this setting is enabled.
+
 **Auto Reasoning evaluation model** chooses the structured text-generation model that analyzes the
 current prompt, attachment metadata, and exactly the three latest earlier user or assistant messages
 in chronological order. The current prompt does not count as one of those three messages.
