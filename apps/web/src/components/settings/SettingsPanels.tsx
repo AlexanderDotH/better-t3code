@@ -25,13 +25,11 @@ import {
   MAX_CODE_FONT_SIZE,
   MAX_INTERFACE_FONT_SIZE,
   MAX_PROMPT_FONT_SIZE,
-  MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MAX_TERMINAL_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
   MIN_APPEARANCE_CONTRAST,
   MIN_INTERFACE_FONT_SIZE,
   MIN_PROMPT_FONT_SIZE,
-  MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_TERMINAL_FONT_SIZE,
 } from "@t3tools/contracts/settings";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -69,7 +67,6 @@ import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
-  withoutPlanAgentSelection,
 } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -119,14 +116,7 @@ import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThemeLibrary } from "./ThemeSettings";
-import { SidebarLayoutSelector } from "./SidebarLayoutSetting";
-import { ProjectThreadPreviewCountSetting } from "./ProjectThreadPreviewCountSetting";
-import { InterfaceLanguageSetting } from "./InterfaceLanguageSetting";
-import {
-  projectThreadPreviewSyncStatusText,
-  useProjectThreadPreviewCount,
-  useProjectThreadPreviewSyncStatus,
-} from "../../projectThreadPreviewSync";
+import { useProjectThreadPreviewCount } from "../../projectThreadPreviewSync";
 import {
   backgroundActivityOverrideSettings,
   backgroundActivitySharedPolicySettings,
@@ -1098,14 +1088,6 @@ export function AppearanceSettingsPanel() {
   const [isImportThemeOpen, setIsImportThemeOpen] = useState(false);
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
-  const { count: projectThreadPreviewCount, setCount: setProjectThreadPreviewCount } =
-    useProjectThreadPreviewCount();
-  const projectThreadPreviewSyncStatus = useProjectThreadPreviewSyncStatus();
-  const projectThreadPreviewStatusText =
-    projectThreadPreviewSyncStatusText(projectThreadPreviewSyncStatus) ??
-    (projectThreadPreviewSyncStatus.isSyncing
-      ? translate("settings.interfaceLanguage.syncing")
-      : null);
   const environmentStageLabel = useEnvironmentStageLabel();
   const showEnvironmentIdentification =
     resolveEnvironmentIdentificationPillLabel(environmentStageLabel) !== null;
@@ -1135,10 +1117,6 @@ export function AppearanceSettingsPanel() {
             onImportOpenChange={setIsImportThemeOpen}
           />
         </div>
-
-        <InterfaceLanguageSetting
-          searchTargetId={searchableSetting("interface-language", translate).id}
-        />
 
         <SettingsRow
           {...searchableSetting("setting-appearance-contrast", translate)}
@@ -1238,24 +1216,6 @@ export function AppearanceSettingsPanel() {
             }
           />
         ) : null}
-      </SettingsSection>
-
-      <SettingsSection title={translate("settings.appearance.sidebar")}>
-        <SettingsRow
-          {...searchableSetting("sidebar-layout", translate)}
-          description={translate("settings.appearance.sidebarDescription")}
-          control={
-            <SidebarLayoutSelector
-              legacySidebarEnabled={settings.legacySidebarEnabled}
-              onChange={(legacySidebarEnabled) => updateSettings({ legacySidebarEnabled })}
-            />
-          }
-        />
-        <ProjectThreadPreviewCountSetting
-          count={projectThreadPreviewCount}
-          onChange={setProjectThreadPreviewCount}
-          status={projectThreadPreviewStatusText}
-        />
       </SettingsSection>
 
       <TypographySection />
@@ -1796,56 +1756,9 @@ function FontFamilySettingsRow({
   );
 }
 
-const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
-
-function AutoSettleDaysInput({
-  value,
-  onCommit,
-}: {
-  value: number;
-  onCommit: (days: number) => void;
-}) {
-  const translate = useInterfaceTranslator().message;
-  // Local draft so the field can be emptied mid-edit; the setting only moves
-  // on valid input and snaps back to the persisted value on blur.
-  const [draft, setDraft] = useState(String(value));
-  useEffect(() => {
-    setDraft(String(value));
-  }, [value]);
-
-  return (
-    <Input
-      type="number"
-      min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
-      max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
-      className="w-full sm:w-24"
-      value={draft}
-      onChange={(event) => {
-        setDraft(event.target.value);
-        // Number(), not parseInt: "3.5" must be rejected (not truncated to a
-        // committed 3 while the field shows 3.5) — commit only when the
-        // persisted value matches the displayed one.
-        const parsed = Number(event.target.value);
-        if (
-          Number.isInteger(parsed) &&
-          parsed >= MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS &&
-          parsed <= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS
-        ) {
-          onCommit(parsed);
-        }
-      }}
-      onBlur={() => setDraft(String(value))}
-      aria-label={translate("settings.general.inactivityDays")}
-    />
-  );
-}
-
 // The legacy rows sit behind the fold, so a settings-search jump has to
 // expand the section before its target can mount and scroll.
-const LEGACY_FEATURE_TARGET_IDS: ReadonlySet<string> = new Set([
-  "legacy-plan-mode",
-  "legacy-token-streaming",
-]);
+const LEGACY_FEATURE_TARGET_IDS: ReadonlySet<string> = new Set(["legacy-token-streaming"]);
 
 /**
  * Retired features kept only for users who still depend on them. Collapsed by
@@ -1885,41 +1798,6 @@ function LegacyFeaturesSection() {
         </CollapsibleTrigger>
         <CollapsiblePanel>
           <div className="relative space-y-1 overflow-visible pt-3 text-foreground">
-            <SettingsRow
-              {...searchableSetting("legacy-plan-mode", translate)}
-              description={translate("settings.experimental.planDescription")}
-              control={
-                <Switch
-                  checked={settings.planModeEnabled}
-                  onCheckedChange={(checked) => {
-                    const planModeEnabled = Boolean(checked);
-                    const textGenerationModelSelection = withoutPlanAgentSelection(
-                      settings.textGenerationModelSelection,
-                    );
-                    const sourceControlWriterModelSelection = withoutPlanAgentSelection(
-                      settings.sourceControlWriterModelSelection,
-                    );
-                    updateSettings({
-                      planModeEnabled,
-                      ...(planModeEnabled
-                        ? {}
-                        : {
-                            ...(textGenerationModelSelection &&
-                            textGenerationModelSelection !== settings.textGenerationModelSelection
-                              ? { textGenerationModelSelection }
-                              : {}),
-                            ...(sourceControlWriterModelSelection &&
-                            sourceControlWriterModelSelection !==
-                              settings.sourceControlWriterModelSelection
-                              ? { sourceControlWriterModelSelection }
-                              : {}),
-                          }),
-                    });
-                  }}
-                  aria-label={translate("settings.experimental.planAria")}
-                />
-              }
-            />
             <SettingsRow
               {...searchableSetting("legacy-token-streaming", translate)}
               description={translate("settings.experimental.tokenDescription")}
@@ -2060,74 +1938,6 @@ export function GeneralSettingsPanel() {
             />
           }
         />
-
-        <SettingsRow
-          {...searchableSetting("auto-settle-merged-threads", translate)}
-          description={translate("settings.general.autoSettleMergeDescription")}
-          resetAction={
-            settings.sidebarAutoSettleOnMerge !==
-            DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge ? (
-              <SettingResetButton
-                label={translate("settings.general.autoSettleMerge")}
-                onClick={() =>
-                  updateSettings({
-                    sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.sidebarAutoSettleOnMerge}
-              onCheckedChange={(checked) =>
-                updateSettings({ sidebarAutoSettleOnMerge: Boolean(checked) })
-              }
-              aria-label={translate("settings.general.autoSettleMergeAria")}
-            />
-          }
-        />
-
-        <SettingsRow
-          {...searchableSetting("auto-settle-inactive-threads", translate)}
-          description={translate("settings.general.autoSettleDescription")}
-          resetAction={
-            settings.sidebarAutoSettleAfterDays !==
-            DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ? (
-              <SettingResetButton
-                label={translate("settings.general.autoSettle")}
-                onClick={() =>
-                  updateSettings({
-                    sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.sidebarAutoSettleAfterDays !== null}
-              onCheckedChange={(checked) =>
-                updateSettings({
-                  sidebarAutoSettleAfterDays: checked ? AUTO_SETTLE_DEFAULT_DAYS : null,
-                })
-              }
-              aria-label={translate("settings.general.autoSettleAria")}
-            />
-          }
-        />
-        {settings.sidebarAutoSettleAfterDays !== null ? (
-          <SettingsRow
-            title={translate("settings.general.inactivityDays")}
-            description={translate("settings.general.unsettleDescription")}
-            control={
-              <AutoSettleDaysInput
-                value={settings.sidebarAutoSettleAfterDays}
-                onCommit={(days) => updateSettings({ sidebarAutoSettleAfterDays: days })}
-              />
-            }
-          />
-        ) : null}
 
         <SettingsRow
           {...searchableSetting("time-format", translate)}
@@ -2630,33 +2440,6 @@ export function GeneralSettingsPanel() {
                 }}
               />
             </div>
-          }
-        />
-
-        <SettingsRow
-          {...searchableSetting("prompt-improvement", translate)}
-          description={translate("settings.general.promptImprovementDescription")}
-          resetAction={
-            settings.improvePromptBeforeSend !==
-            DEFAULT_UNIFIED_SETTINGS.improvePromptBeforeSend ? (
-              <SettingResetButton
-                label={translate("settings.general.promptImprovement")}
-                onClick={() =>
-                  updateSettings({
-                    improvePromptBeforeSend: DEFAULT_UNIFIED_SETTINGS.improvePromptBeforeSend,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.improvePromptBeforeSend}
-              onCheckedChange={(checked) =>
-                updateSettings({ improvePromptBeforeSend: Boolean(checked) })
-              }
-              aria-label={translate("settings.general.promptImprovementAria")}
-            />
           }
         />
       </SettingsSection>

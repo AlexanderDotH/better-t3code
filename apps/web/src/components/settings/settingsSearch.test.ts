@@ -128,32 +128,23 @@ describe("searchSettings", () => {
     });
   });
 
-  it("routes Sidebar layout to its stable Appearance control", () => {
+  it("routes sidebar settings to Better T3", () => {
     expect(searchSettings("sidebar layout")).toEqual([
       {
         id: "sidebar-layout",
         title: "Sidebar layout",
-        to: "/settings/appearance",
+        to: "/settings/better-t3",
+        targetId: "chat.classicSidebar",
       },
     ]);
-    expect(searchableSetting("sidebar-layout")).toEqual({
-      id: "sidebar-layout",
-      title: "Sidebar layout",
-    });
-  });
-
-  it("routes chats-per-project searches to Appearance", () => {
     expect(searchSettings("chats per project")).toEqual([
       {
         id: "chats-per-project",
         title: "Chats per project",
-        to: "/settings/appearance",
+        to: "/settings/better-t3",
+        targetId: "chat.previewCount",
       },
     ]);
-    expect(searchableSetting("chats-per-project")).toEqual({
-      id: "chats-per-project",
-      title: "Chats per project",
-    });
   });
 
   it("routes checkpoint searches to project settings", () => {
@@ -191,6 +182,7 @@ describe("searchSettings", () => {
 
   it("routes Better T3 feature controls to their dedicated settings page", () => {
     expect(SETTINGS_SECTION_LABELS["/settings/better-t3"]).toBe("Better T3");
+    expect(Object.hasOwn(SETTINGS_SECTION_LABELS, "/settings/experimental")).toBe(false);
     expect(searchSettings("Better T3")).toContainEqual({
       id: "better-t3",
       title: "Better T3",
@@ -224,6 +216,36 @@ describe("searchSettings", () => {
       title: "Expanded chat controls",
       to: "/settings/better-t3",
       targetId: "agent.expandedComposerControls",
+    });
+    expect(searchSettings("Fetch")).toContainEqual({
+      id: "better-t3-fetch",
+      title: "Fetch",
+      to: "/settings/better-t3",
+      targetId: "agent.fetch",
+    });
+    expect(searchSettings("Parallel plan reviewer")).toContainEqual({
+      id: "better-t3-parallel-plan-reviewer",
+      title: "Parallel plan reviewer",
+      to: "/settings/better-t3",
+      targetId: "agent.parallelPlanReviewer",
+    });
+    expect(searchSettings("Prompt improvement")).toContainEqual({
+      id: "prompt-improvement",
+      title: "Prompt improvement",
+      to: "/settings/better-t3",
+      targetId: "agent.promptImprovement",
+    });
+    expect(searchSettings("Auto-settle inactive threads")).toContainEqual({
+      id: "auto-settle-inactive-threads",
+      title: "Auto-settle inactive threads",
+      to: "/settings/better-t3",
+      targetId: "chat.settling",
+    });
+    expect(searchSettings("Voice-output language")).toContainEqual({
+      id: "better-t3-voice-output-language",
+      title: "Voice-output language",
+      to: "/settings/better-t3",
+      targetId: "voice.outputLanguage",
     });
   });
 });

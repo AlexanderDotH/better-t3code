@@ -15,7 +15,7 @@ Each tab shows its basic settings first. Tabs that need deeper configuration als
 
 For example, **Knowledge Graph** is the basic setting that turns the feature on or off. Its model, indexing progress, rebuild, pause or resume, and clear controls are advanced settings. Agents exposes **Auto Reasoning evaluation model** directly, while Fetch model, the parallel-plan reviewer, and Caveman Mode remain under Advanced. Visual keeps card morphing, preview count, sorting, settling, and Shift-click Show Less there. Workspace uses it for checkpoints and portability, Voice for output language, transcript portability, and credentials, System for diagnostics, and Integrations for MCP and Skills links.
 
-Settings search selects the tab containing its result automatically. If the result is advanced, the Advanced settings section expands so the setting can be focused.
+Settings search selects the tab containing its result automatically. If the result is advanced, the Advanced settings section expands so the setting can be focused. On web and desktop, controls listed here appear only on the Better T3 page; the former Experimental route redirects to the Agents tab.
 
 Mobile keeps its native Better T3 settings routes and section layout instead of using the web tabs.
 

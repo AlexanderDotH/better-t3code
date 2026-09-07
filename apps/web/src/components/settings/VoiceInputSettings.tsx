@@ -17,11 +17,7 @@ import {
   indexProjectSpeechProfileForEnvironment,
   listProjectSpeechProfilesForEnvironment,
 } from "../../environmentApi";
-import {
-  usePrimarySettings,
-  useUpdateClientSettings,
-  useUpdatePrimarySettings,
-} from "../../hooks/useSettings";
+import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { cn } from "../../lib/utils";
 import {
@@ -41,7 +37,6 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { DraftInput } from "../ui/draft-input";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Spinner } from "../ui/spinner";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 
@@ -300,7 +295,6 @@ export function VoiceInputSettings() {
   const translate = translator.message;
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
-  const updateClientSettings = useUpdateClientSettings();
   const projects = useProjects();
   const { environments } = useEnvironments();
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
@@ -510,39 +504,6 @@ export function VoiceInputSettings() {
                 })
               }
             />
-          }
-        />
-        <SettingsRow
-          title={translate("settings.voice.output.title")}
-          description={translate("settings.voice.output.description")}
-          control={
-            <Select
-              value={settings.voiceInputOutputLanguage}
-              onValueChange={(value) => {
-                if (value === "native" || value === "english") {
-                  updateClientSettings({ voiceInputOutputLanguage: value });
-                }
-              }}
-            >
-              <SelectTrigger
-                className="w-full sm:w-44"
-                aria-label={translate("settings.voice.output.aria")}
-              >
-                <SelectValue>
-                  {translate(
-                    settings.voiceInputOutputLanguage === "native"
-                      ? "settings.voice.output.native"
-                      : "settings.voice.output.english",
-                  )}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end">
-                <SelectItem value="native">{translate("settings.voice.output.native")}</SelectItem>
-                <SelectItem value="english">
-                  {translate("settings.voice.output.english")}
-                </SelectItem>
-              </SelectPopup>
-            </Select>
           }
         />
         <SettingsRow

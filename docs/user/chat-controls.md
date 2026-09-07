@@ -160,8 +160,9 @@ the microphone stream is ready for speech, and return to gray while the final tr
 finished. On web and desktop, press **Escape** to cancel and restore the draft from before recording.
 Mobile exposes the same cancel behavior from its native composer control.
 
-In **Settings > Connections > Voice input**, **Output language** can keep the spoken language or
-translate the finished transcript to English. **Voice post-processing model** selects the agent model
+On web and desktop, **Settings > Better T3 > Voice > Advanced settings** contains **Voice-output
+language**, which can keep the spoken language or translate the finished transcript to English.
+**Voice post-processing model** under **Settings > Connections > Voice input** selects the agent model
 used only for that optional English translation; AssemblyAI still performs the live speech
 recognition. The selection inherits the global text generation model until a dedicated override is
 chosen. This setting belongs to the server environment, so configure it on the environment that owns
@@ -262,8 +263,9 @@ clients over local, LAN, relay, or tunnel connections.
 
 ## Exploring repositories with Fetch
 
-Enable **Fetch** in **Settings > Experimental** to explore a repository before the main provider
-starts its turn. The enable switch is device-local, defaults off, and is available in web, desktop,
+Enable **Fetch** in **Settings > Better T3 > Agents** to explore a repository before the main
+provider starts its turn. The enable switch is device-local, defaults off, and is available in web,
+desktop,
 and mobile. On mobile it appears in the composer settings and under **Settings > Agents & Servers**.
 The **Fetch model** selection is stored on the connected T3 environment, so
 every client using that environment sees the same provider, model, and traits. Turning Fetch off
@@ -345,7 +347,7 @@ reply. Broadcast messages remain limited to active peers and never wake every in
 
 ## Implementing a plan with subagents
 
-Enable **Parallel plan implementation** in **Settings > Experimental** to let supported providers
+Enable **Parallel plan implementation** in **Settings > Better T3 > Agents** to let supported providers
 split a completed plan across native subagents. When a plan settles, T3 Code briefly shows
 **Analyzing plan…** while the configured review model estimates how many independent workstreams can
 run safely in parallel. The review returns only an agent count; the implementation agent still owns
@@ -361,8 +363,9 @@ hover the implementation action to see that fallback. Successful reviews are cac
 current app session and are refreshed when the plan version, implementation provider capability, or
 review-model selection changes.
 
-Use **Agent count review model** in **Settings > Experimental** on web and desktop, or **Parallel
-plan review** under **Settings > Agents & Servers** on mobile, to select the provider, model, and
+Use **Parallel plan reviewer** in **Settings > Better T3 > Agents > Advanced settings** on web and
+desktop, or **Parallel plan review** under **Settings > Agents & Servers** on mobile, to select the
+provider, model, and
 model options used for this estimate. Codex defaults to `gpt-5.6-luna` with low reasoning and the
 priority service tier when the provider reports that option. The reviewer supports Codex, Claude,
 Cursor, Grok, and OpenCode instances. Mobile shows the same reviewed default and provider-native

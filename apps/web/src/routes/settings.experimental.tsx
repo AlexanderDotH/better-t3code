@@ -1,7 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
-
-import { ExperimentalSettingsPanel } from "../components/settings/ExperimentalSettingsPanel";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/settings/experimental")({
-  component: ExperimentalSettingsPanel,
+  beforeLoad: () => {
+    throw redirect({
+      to: "/settings/better-t3",
+      hash: "agent.fetch",
+      replace: true,
+    });
+  },
 });
