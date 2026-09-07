@@ -2,7 +2,7 @@
 
 T3 Code is available in English, German, and French across web, desktop, and mobile.
 
-On web and desktop, open **Settings > Appearance > Language** or **Settings > Better T3 > Interface**. On mobile, open **Settings > Appearance > Language**. Then choose:
+On web and desktop, open **Settings > Better T3 > General > Language**. On mobile, open **Settings > Appearance > Language**. Then choose:
 
 - **System** to follow the preferred language of each device.
 - **English** to always use the English interface.

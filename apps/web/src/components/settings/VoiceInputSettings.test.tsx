@@ -26,16 +26,13 @@ const testState = vi.hoisted(() => ({
       model: "gpt-5.6-luna",
     } satisfies ModelSelection,
     voiceTranslationModelSelection: null as ModelSelection | null,
-    voiceInputOutputLanguage: "native",
   },
   projects: [] as EnvironmentProject[],
   environments: [] as Array<{ environmentId: EnvironmentId; label: string }>,
   updateSettings: vi.fn(),
-  updateClientSettings: vi.fn(),
   listProfiles: vi.fn(),
   indexProfile: vi.fn(),
   createBasicProfile: vi.fn(),
-  selectOnValueChange: undefined as undefined | ((value: string | null) => void),
   modelPickerOnChange: undefined as
     | undefined
     | ((instanceId: ReturnType<typeof ProviderInstanceId.make>, model: string) => void),
@@ -144,7 +141,6 @@ vi.mock("../../environmentApi", () => ({
 vi.mock("../../hooks/useSettings", () => ({
   usePrimarySettings: () => testState.settings,
   useUpdatePrimarySettings: () => testState.updateSettings,
-  useUpdateClientSettings: () => testState.updateClientSettings,
 }));
 
 vi.mock("../../modelSelection", () => ({
@@ -231,29 +227,6 @@ vi.mock("../ui/draft-input", () => ({
     onCommit?: (value: string) => void;
     nativeInput?: boolean;
   }) => <input {...props} readOnly />,
-}));
-
-vi.mock("../ui/select", () => ({
-  Select: ({
-    children,
-    value,
-    onValueChange,
-  }: {
-    children?: ReactNode;
-    value?: string;
-    onValueChange?: (value: string | null) => void;
-  }) => {
-    testState.selectOnValueChange = onValueChange;
-    return <div data-value={value}>{children}</div>;
-  },
-  SelectTrigger: ({ children, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) => (
-    <button {...props}>{children}</button>
-  ),
-  SelectValue: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
-  SelectPopup: ({ children }: { children?: ReactNode; align?: string }) => <div>{children}</div>,
-  SelectItem: ({ children, value }: { children?: ReactNode; value?: string }) => (
-    <div data-option={value}>{children}</div>
-  ),
 }));
 
 vi.mock("../ui/spinner", () => ({
@@ -371,16 +344,13 @@ describe("VoiceInputSettings", () => {
         model: "gpt-5.6-luna",
       },
       voiceTranslationModelSelection: null,
-      voiceInputOutputLanguage: "native",
     };
     testState.projects = [];
     testState.environments = [];
-    testState.selectOnValueChange = undefined;
     testState.modelPickerOnChange = undefined;
     testState.buttonOnClickByLabel.clear();
     testState.resetOnClickByLabel.clear();
     testState.updateSettings.mockReset();
-    testState.updateClientSettings.mockReset();
     testState.listProfiles.mockReset();
     testState.listProfiles.mockResolvedValue({ profiles: [] });
     testState.indexProfile.mockReset();
@@ -429,22 +399,6 @@ describe("VoiceInputSettings", () => {
       expect(markup).toContain(exactValue);
     }
     expect(markup).toContain(`dateTime="${now}"`);
-  });
-
-  it("persists English output through the client settings hook", () => {
-    const markup = renderSettings();
-
-    expect(markup).toContain('data-value="native"');
-    expect(markup).toContain('data-option="native">Native');
-    expect(markup).toContain('data-option="english">English');
-
-    testState.selectOnValueChange?.("english");
-
-    expect(testState.updateClientSettings).toHaveBeenCalledOnce();
-    expect(testState.updateClientSettings).toHaveBeenCalledWith({
-      voiceInputOutputLanguage: "english",
-    });
-    expect(testState.updateSettings).not.toHaveBeenCalled();
   });
 
   it("configures a dedicated voice post-processing model without changing the global model", () => {

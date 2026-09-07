@@ -12,7 +12,6 @@ import {
   BlocksIcon,
   BotIcon,
   DownloadIcon,
-  FlaskConicalIcon,
   FolderIcon,
   GitBranchIcon,
   KeyboardIcon,
@@ -66,7 +65,6 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/integrations": BlocksIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/connections": Link2Icon,
-  "/settings/experimental": FlaskConicalIcon,
   "/settings/import-chats": DownloadIcon,
   "/settings/archived": ArchiveIcon,
 };

@@ -2,7 +2,7 @@
 
 ## Choose a sidebar layout
 
-On web and desktop, open **Settings → Appearance → Sidebar layout** and choose one of the
+On web and desktop, open **Settings → Better T3 → Visual → Sidebar layout** and choose one of the
 following layouts:
 
 - **Current** shows activity-oriented lists. Active work uses rich cards, while settled threads use
@@ -27,7 +27,7 @@ worktree until they are sent or discarded.
 ## Limit chats shown per project
 
 The **Classic** layout initially shows up to three chats in each project. Choose **Chats per
-project** in **Settings → Appearance** to set any value from 1 through 15. Web and desktop also
+project** in **Settings → Better T3 → Visual → Advanced settings** to set any value from 1 through 15. Web and desktop also
 offer the same control from the Classic sidebar menu. Use **Show more** to reveal the rest of a
 project's non-settled chats. After those chats are visible, use **Show settled chats** to append the
 settled chats or **Hide settled chats** to conceal them again. If all non-settled chats already fit,
@@ -78,7 +78,8 @@ To require confirmation before unpinning, enable **Settings → General → Unpi
 confirmation applies to the sidebar controls, thread menus, and the `mod+shift+p` shortcut.
 
 Pinned threads still move to **Settled** when they become inactive. They also move when their pull
-request merges if **Auto-settle merged threads** is enabled.
+request merges if **Auto-settle merged threads** is enabled under **Settings → Better T3 → Visual →
+Advanced settings**.
 
 When you un-settle a thread, it returns to the top of the active list so you can find it right
 away. Its timestamps do not change. Other threads keep their positions.

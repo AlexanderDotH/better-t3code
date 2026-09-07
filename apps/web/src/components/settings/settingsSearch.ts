@@ -17,7 +17,6 @@ export type SettingsPath =
   | "/settings/integrations"
   | "/settings/source-control"
   | "/settings/connections"
-  | "/settings/experimental"
   | "/settings/import-chats"
   | "/settings/archived";
 
@@ -56,7 +55,6 @@ const SETTINGS_SECTION_MESSAGE_IDS: Readonly<Record<SettingsPath, InterfaceMessa
   "/settings/integrations": "settings.application.section.integrations",
   "/settings/source-control": "settings.application.section.sourceControl",
   "/settings/connections": "settings.application.section.connections",
-  "/settings/experimental": "settings.application.section.experimental",
   "/settings/import-chats": "settings.application.section.importChats",
   "/settings/archived": "settings.application.section.archive",
 };
@@ -122,7 +120,8 @@ const SETTINGS_SEARCH_ITEM_DEFINITIONS = [
   {
     id: "interface-language",
     titleMessageId: "settings.application.title.interfaceLanguage",
-    to: "/settings/appearance",
+    to: "/settings/better-t3",
+    targetId: "better-t3-interface-language",
   },
   {
     // Prefixed because the slider control already owns the `appearance-contrast` id.
@@ -161,6 +160,36 @@ const SETTINGS_SEARCH_ITEM_DEFINITIONS = [
     targetId: "agent.expandedComposerControls",
   },
   {
+    id: "better-t3-fetch",
+    titleMessageId: "betterT3.agent.fetch.label",
+    to: "/settings/better-t3",
+    targetId: "agent.fetch",
+  },
+  {
+    id: "better-t3-fetch-model",
+    titleMessageId: "betterT3.agent.fetchModel.label",
+    to: "/settings/better-t3",
+    targetId: "agent.fetchModel",
+  },
+  {
+    id: "better-t3-parallel-plan-implementation",
+    titleMessageId: "betterT3.agent.parallelPlanImplementation.label",
+    to: "/settings/better-t3",
+    targetId: "agent.parallelPlanImplementation",
+  },
+  {
+    id: "better-t3-parallel-plan-reviewer",
+    titleMessageId: "betterT3.agent.parallelPlanReviewer.label",
+    to: "/settings/better-t3",
+    targetId: "agent.parallelPlanReviewer",
+  },
+  {
+    id: "better-t3-voice-output-language",
+    titleMessageId: "betterT3.voice.outputLanguage.label",
+    to: "/settings/better-t3",
+    targetId: "voice.outputLanguage",
+  },
+  {
     id: "environment-identification",
     titleMessageId: "settings.application.title.environmentIdentification",
     to: "/settings/appearance",
@@ -170,12 +199,14 @@ const SETTINGS_SEARCH_ITEM_DEFINITIONS = [
   {
     id: "sidebar-layout",
     titleMessageId: "settings.application.title.sidebarLayout",
-    to: "/settings/appearance",
+    to: "/settings/better-t3",
+    targetId: "chat.classicSidebar",
   },
   {
     id: "chats-per-project",
     titleMessageId: "settings.application.title.chatsPerProject",
-    to: "/settings/appearance",
+    to: "/settings/better-t3",
+    targetId: "chat.previewCount",
   },
   {
     id: "interface-font",
@@ -215,12 +246,14 @@ const SETTINGS_SEARCH_ITEM_DEFINITIONS = [
   {
     id: "auto-settle-inactive-threads",
     titleMessageId: "settings.application.title.autoSettleInactive",
-    to: "/settings/general",
+    to: "/settings/better-t3",
+    targetId: "chat.settling",
   },
   {
     id: "auto-settle-merged-threads",
     titleMessageId: "settings.application.title.autoSettleMerged",
-    to: "/settings/general",
+    to: "/settings/better-t3",
+    targetId: "chat.settling",
   },
   {
     id: "time-format",
@@ -287,7 +320,8 @@ const SETTINGS_SEARCH_ITEM_DEFINITIONS = [
   {
     id: "prompt-improvement",
     titleMessageId: "settings.application.title.promptImprovement",
-    to: "/settings/general",
+    to: "/settings/better-t3",
+    targetId: "agent.promptImprovement",
   },
   {
     id: "diagnostics",
@@ -297,7 +331,8 @@ const SETTINGS_SEARCH_ITEM_DEFINITIONS = [
   {
     id: "legacy-plan-mode",
     titleMessageId: "settings.application.title.legacyPlanMode",
-    to: "/settings/general",
+    to: "/settings/better-t3",
+    targetId: "agent.planMode",
   },
   {
     id: "legacy-token-streaming",
@@ -363,11 +398,6 @@ const SETTINGS_SEARCH_ITEM_DEFINITIONS = [
     id: "remote-environments",
     titleMessageId: "settings.application.title.remoteEnvironments",
     to: "/settings/connections",
-  },
-  {
-    id: "experimental",
-    titleMessageId: "settings.application.title.experimentalFeatures",
-    to: "/settings/experimental",
   },
   {
     id: "import-chats",
