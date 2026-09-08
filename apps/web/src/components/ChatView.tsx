@@ -1,3 +1,4 @@
+import { ThreadSubagents } from "./ThreadSubagents";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import {
@@ -8121,13 +8122,22 @@ export default function ChatView(props: ChatViewProps) {
         <div className="flex min-h-0 min-w-0 flex-1">
           {/* Chat column */}
           <div
-            className="relative flex min-h-0 min-w-0 flex-1 flex-col"
+            className="@container/chat-column relative flex min-h-0 min-w-0 flex-1 flex-col"
             data-chat-workspace-drop-target="true"
             onDragEnter={workspaceFileDropHandlers.onDragEnter}
             onDragOver={workspaceFileDropHandlers.onDragOver}
             onDragLeave={workspaceFileDropHandlers.onDragLeave}
             onDrop={workspaceFileDropHandlers.onDrop}
           >
+            {activeThreadRef && activeThread.subagents.length > 0 ? (
+              <ThreadSubagents
+                key={scopedThreadKey(activeThreadRef)}
+                threadRef={activeThreadRef}
+                subagents={activeThread.subagents}
+                timestampFormat={settings.timestampFormat}
+                {...(gitCwd ? { markdownCwd: gitCwd } : {})}
+              />
+            ) : null}
             {isWorkspaceFileDragActive ? (
               <div
                 className="pointer-events-none absolute inset-2 z-40 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary/60 bg-primary/[0.035]"
