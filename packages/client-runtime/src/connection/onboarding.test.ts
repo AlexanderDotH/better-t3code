@@ -6,12 +6,19 @@ import * as Option from "effect/Option";
 
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import { ClientPresentation, SshEnvironmentGateway } from "../platform/capabilities.ts";
-import { BearerConnectionCredential, BearerConnectionProfile } from "./catalog.ts";
+import {
+  BearerConnectionCredential,
+  BearerConnectionProfile,
+  type ConnectionRegistration,
+} from "./catalog.ts";
 import { BearerConnectionTarget } from "./model.ts";
+import * as EnvironmentRegistry from "./registry.ts";
 import {
   prepareBearerConnectionUpdate,
   preparePairingRegistration,
   prepareSshRegistration,
+  registerPairingConnection,
+  type PairingOnboardingStage,
 } from "./onboarding.ts";
 
 const CLIENT_PRESENTATION_LAYER = Layer.succeed(
@@ -75,6 +82,90 @@ function pairingHttpLayer(
 }
 
 describe("connection onboarding", () => {
+  it.effect("reports each safe pairing stage before the corresponding remote request", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const stages: PairingOnboardingStage[] = [];
+
+      yield* preparePairingRegistration(
+        {
+          host: "remote.example.test",
+          pairingCode: "pairing-token",
+        },
+        {
+          reportProgress: (stage) =>
+            Effect.sync(() => {
+              stages.push(stage);
+            }),
+        },
+      ).pipe(Effect.provide(Layer.mergeAll(CLIENT_PRESENTATION_LAYER, pairingHttpLayer(calls))));
+
+      expect(stages).toEqual(["validating", "checking-host", "validating-code"]);
+      expect(stages.join(" ")).not.toContain("pairing-token");
+    }),
+  );
+
+  it.effect("reports saving only when a prepared registration reaches persistence", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const stages: PairingOnboardingStage[] = [];
+      let registeredEnvironmentId = "";
+      const registry = EnvironmentRegistry.EnvironmentRegistry.of({
+        register: (registration: ConnectionRegistration) =>
+          Effect.sync(() => {
+            registeredEnvironmentId = registration.target.environmentId;
+          }),
+      } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+
+      yield* registerPairingConnection(
+        {
+          host: "remote.example.test",
+          pairingCode: "pairing-token",
+        },
+        {
+          reportProgress: (stage) =>
+            Effect.sync(() => {
+              stages.push(stage);
+            }),
+        },
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CLIENT_PRESENTATION_LAYER,
+            pairingHttpLayer(calls),
+            Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, registry),
+          ),
+        ),
+      );
+
+      expect(stages).toEqual(["validating", "checking-host", "validating-code", "saving"]);
+      expect(registeredEnvironmentId).toBe("environment-paired");
+    }),
+  );
+
+  it.effect("stops progress at validation when pairing details are invalid", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const stages: PairingOnboardingStage[] = [];
+
+      yield* preparePairingRegistration(
+        { host: "", pairingCode: "" },
+        {
+          reportProgress: (stage) =>
+            Effect.sync(() => {
+              stages.push(stage);
+            }),
+        },
+      ).pipe(
+        Effect.provide(Layer.mergeAll(CLIENT_PRESENTATION_LAYER, pairingHttpLayer(calls))),
+        Effect.flip,
+      );
+
+      expect(stages).toEqual(["validating"]);
+      expect(calls).toEqual([]);
+    }),
+  );
+
   it.effect("prepares a persisted bearer registration from pairing details", () =>
     Effect.gen(function* () {
       const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
