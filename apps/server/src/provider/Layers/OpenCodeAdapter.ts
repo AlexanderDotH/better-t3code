@@ -1,11 +1,16 @@
 import {
   EventId,
+  McpRuntimeServerKey,
+  McpServerId,
+  McpServerName,
+  type McpRuntimeServer,
   type OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderRuntimeEvent,
   type ProviderSendTurnInput,
   type ProviderSession,
+  RuntimeSessionId,
   RuntimeItemId,
   RuntimeRequestId,
   ThreadId,
@@ -29,12 +34,23 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import type { OpencodeClient, Part, PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2";
+import type {
+  McpStatus,
+  OpencodeClient,
+  Part,
+  PermissionRuleset,
+  PermissionRequest,
+  QuestionRequest,
+} from "@opencode-ai/sdk/v2";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import type { OpenCodeMcpServerConfig } from "../../mcp/McpConfigEngine.ts";
+import { sanitizeMcpRuntimeText } from "../../mcp/McpRuntimeSanitizer.ts";
+import * as ResourceProtection from "../../resourceProtection/SubagentResourceGovernor.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
   ProviderAdapterProcessError,
@@ -45,6 +61,7 @@ import {
 } from "../Errors.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { type OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
+import type { ProviderMcpRuntimeTarget } from "../Services/ProviderAdapter.ts";
 import {
   buildOpenCodePermissionRules,
   OpenCodeRuntime,
@@ -58,9 +75,19 @@ import {
   toOpenCodeQuestionAnswers,
   type OpenCodeServerConnection,
 } from "../opencodeRuntime.ts";
+import { bindProviderRuntimeEventOrigin } from "../runtimeEventOrigin.ts";
+
 import * as Option from "effect/Option";
 
 const PROVIDER = ProviderDriverKind.make("opencode");
+const OPENCODE_PROVIDER = ProviderDriverKind.make("opencode");
+const FETCH_WORKER_PERMISSION_RULES = [
+  { permission: "*", pattern: "*", action: "deny" },
+  { permission: "read", pattern: "*", action: "allow" },
+  { permission: "glob", pattern: "*", action: "allow" },
+  { permission: "grep", pattern: "*", action: "allow" },
+  { permission: "list", pattern: "*", action: "allow" },
+] satisfies PermissionRuleset;
 
 /**
  * Version tag stamped into the OpenCode resume cursor. Bump if the cursor
@@ -335,16 +362,20 @@ type OpenCodeStepUsage = Pick<Extract<Part, { readonly type: "step-finish" }>, "
 
 interface OpenCodeSessionContext {
   session: ProviderSession;
+  readonly emit: (event: ProviderRuntimeEvent) => Effect.Effect<void>;
   readonly client: OpencodeClient;
   readonly server: OpenCodeServerConnection;
   readonly directory: string;
   readonly openCodeSessionId: string;
+  managedMcpServers: Record<string, OpenCodeMcpServerConfig>;
+  readonly builtInMcpExpected: boolean;
   readonly relatedSessionIds: Set<string>;
   readonly resolvedRequestIds: Set<string>;
   readonly autoRepliedRequestIds: Set<string>;
   readonly emittedTerminalRequestIds: Set<string>;
   readonly requestRelationRetries: Map<string, OpenCodeRequestRelationRetry>;
   readonly pendingPermissions: Map<string, PermissionRequest>;
+  readonly resourceAutoPermissionIds: Set<string>;
   readonly pendingQuestions: Map<string, QuestionRequest>;
   readonly messageRoleById: Map<string, "user" | "assistant">;
   // OpenCode permits edits to completed parts. Keep text for snapshot comparison
@@ -454,13 +485,183 @@ function takeOpenCodeTurnTokenUsage(
 }
 
 export interface OpenCodeAdapterLiveOptions {
+  /** Provider identity exposed to T3 while OpenCode supplies the runtime. */
+  readonly provider?: ProviderDriverKind;
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly resolveMcpServers?: (input: {
+    readonly cwd: string;
+  }) => Effect.Effect<Record<string, OpenCodeMcpServerConfig>>;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
 }
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+const MCP_PROVIDER_KEY_MAX_LENGTH = 512;
+const MCP_SERVER_NAME_MAX_LENGTH = 128;
+const MCP_MANAGED_KEY_PREFIX = "t3-managed:";
+const OPENCODE_MODEL_SELECTION_FORMAT_ERROR =
+  "OpenCode model selection must use the 'provider/model' format (for example: google/gemini-2.5-flash).";
+
+function boundedMcpText(value: string, maximumLength: number, fallback: string): string {
+  const trimmed = value.trim();
+  return (trimmed.length > 0 ? trimmed : fallback).slice(0, maximumLength);
+}
+
+function managedMcpServerId(providerKey: string): McpServerId | undefined {
+  const candidate = providerKey.startsWith(MCP_MANAGED_KEY_PREFIX)
+    ? providerKey.slice(MCP_MANAGED_KEY_PREFIX.length)
+    : providerKey;
+  return /^[a-zA-Z][a-zA-Z0-9_-]{0,95}$/.test(candidate) ? McpServerId.make(candidate) : undefined;
+}
+
+function openCodeMcpTransport(
+  config: OpenCodeMcpServerConfig | undefined,
+): McpRuntimeServer["transport"] | undefined {
+  if (!config) return undefined;
+  return config.type === "local" ? "stdio" : "http";
+}
+
+function openCodeMcpState(status: McpStatus): McpRuntimeServer["state"] {
+  switch (status.status) {
+    case "connected":
+      return "connected";
+    case "disabled":
+      return "disabled";
+    case "failed":
+      return "failed";
+    case "needs_auth":
+      return "auth-required";
+    case "needs_client_registration":
+      return "setup-required";
+  }
+}
+
+function openCodeMcpIssue(status: McpStatus): McpRuntimeServer["issue"] | undefined {
+  switch (status.status) {
+    case "failed":
+      return {
+        code: "provider-error",
+        message: sanitizeMcpRuntimeText(status.error),
+      };
+    case "needs_auth":
+      return {
+        code: "needs-auth",
+        message: "Authorization required",
+      };
+    case "needs_client_registration":
+      return {
+        code: "needs-client-registration",
+        message: sanitizeMcpRuntimeText(status.error),
+      };
+    default:
+      return undefined;
+  }
+}
+
+function openCodeMcpActions(status: McpStatus): McpRuntimeServer["availableActions"] {
+  switch (status.status) {
+    case "needs_auth":
+    case "needs_client_registration":
+      return ["refresh", "reconnect", "authorize"];
+    default:
+      return ["refresh", "reconnect"];
+  }
+}
+
+function openCodeMcpAuthState(status: McpStatus): McpRuntimeServer["authState"] {
+  switch (status.status) {
+    case "connected":
+      return "authenticated";
+    case "needs_auth":
+      return "required";
+    case "disabled":
+      return "none";
+    default:
+      return "unknown";
+  }
+}
+
+interface OpenCodeMcpRuntimeMetadata {
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly threadId: ThreadId;
+  readonly runtimeSessionId: RuntimeSessionId;
+  readonly observedAt: string;
+  readonly managedMcpServers: Readonly<Record<string, OpenCodeMcpServerConfig>>;
+  readonly builtInMcpExpected: boolean;
+}
+
+function normalizeOpenCodeMcpServer(
+  providerKey: string,
+  status: McpStatus,
+  metadata: OpenCodeMcpRuntimeMetadata,
+): McpRuntimeServer {
+  const managedConfig = Object.hasOwn(metadata.managedMcpServers, providerKey)
+    ? metadata.managedMcpServers[providerKey]
+    : undefined;
+  const serverId = managedConfig ? managedMcpServerId(providerKey) : undefined;
+  const source =
+    providerKey === "t3-code" && metadata.builtInMcpExpected
+      ? "t3-built-in"
+      : managedConfig
+        ? "t3-managed"
+        : "provider-native";
+  const transport = openCodeMcpTransport(managedConfig);
+  const issue = openCodeMcpIssue(status);
+  return {
+    ...(serverId ? { serverId } : {}),
+    providerKey: McpRuntimeServerKey.make(
+      boundedMcpText(providerKey, MCP_PROVIDER_KEY_MAX_LENGTH, "unknown-server"),
+    ),
+    source,
+    providerInstanceId: metadata.providerInstanceId,
+    threadId: metadata.threadId,
+    runtimeSessionId: metadata.runtimeSessionId,
+    name: McpServerName.make(
+      boundedMcpText(providerKey, MCP_SERVER_NAME_MAX_LENGTH, "Unknown MCP server"),
+    ),
+    ...(transport ? { transport } : {}),
+    state: openCodeMcpState(status),
+    statusSource: "provider-query",
+    observedAt: metadata.observedAt,
+    authState: openCodeMcpAuthState(status),
+    availableActions: openCodeMcpActions(status),
+    reportsTools: false,
+    ...(issue ? { issue } : {}),
+    configDrift: "none",
+  };
+}
+
+function unreportedManagedOpenCodeMcpServer(
+  providerKey: string,
+  metadata: OpenCodeMcpRuntimeMetadata,
+): McpRuntimeServer {
+  const managedConfig = metadata.managedMcpServers[providerKey];
+  const serverId = managedMcpServerId(providerKey);
+  const transport = openCodeMcpTransport(managedConfig);
+  return {
+    ...(serverId ? { serverId } : {}),
+    providerKey: McpRuntimeServerKey.make(
+      boundedMcpText(providerKey, MCP_PROVIDER_KEY_MAX_LENGTH, "unknown-server"),
+    ),
+    source: "t3-managed",
+    providerInstanceId: metadata.providerInstanceId,
+    threadId: metadata.threadId,
+    runtimeSessionId: metadata.runtimeSessionId,
+    name: McpServerName.make(
+      boundedMcpText(providerKey, MCP_SERVER_NAME_MAX_LENGTH, "Unknown MCP server"),
+    ),
+    ...(transport ? { transport } : {}),
+    state: managedConfig?.enabled === false ? "disabled" : "unknown",
+    statusSource: "configuration",
+    observedAt: metadata.observedAt,
+    authState: "unknown",
+    availableActions: ["refresh", "reconnect"],
+    reportsTools: false,
+    configDrift: "none",
+  };
+}
 
 /**
  * Map a tagged OpenCodeRuntimeError produced by {@link runOpenCodeSdk} into
@@ -468,9 +669,12 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
  * sites pipe through this in `Effect.mapError` so they never build the error
  * shape by hand.
  */
-const toRequestError = (cause: OpenCodeRuntimeError): ProviderAdapterRequestError =>
+const toRequestError = (
+  provider: ProviderDriverKind,
+  cause: OpenCodeRuntimeError,
+): ProviderAdapterRequestError =>
   new ProviderAdapterRequestError({
-    provider: PROVIDER,
+    provider,
     method: cause.operation,
     detail: cause.detail,
     cause: cause.cause,
@@ -482,9 +686,13 @@ const toRequestError = (cause: OpenCodeRuntimeError): ProviderAdapterRequestErro
  * in which case we preserve its `detail`; otherwise we fall back to
  * {@link openCodeRuntimeErrorDetail} for unknown causes (defects, etc.).
  */
-const toProcessError = (threadId: ThreadId, cause: unknown): ProviderAdapterProcessError =>
+const toProcessError = (
+  provider: ProviderDriverKind,
+  threadId: ThreadId,
+  cause: unknown,
+): ProviderAdapterProcessError =>
   new ProviderAdapterProcessError({
-    provider: PROVIDER,
+    provider,
     threadId,
     detail: OpenCodeRuntimeError.is(cause) ? cause.detail : openCodeRuntimeErrorDetail(cause),
     cause,
@@ -561,19 +769,20 @@ function mapPermissionDecision(reply: "once" | "always" | "reject"): string {
 }
 
 const ensureSessionContext = Effect.fn("ensureSessionContext")(function* (
+  provider: ProviderDriverKind,
   sessions: ReadonlyMap<ThreadId, OpenCodeSessionContext>,
   threadId: ThreadId,
 ) {
   const session = sessions.get(threadId);
   if (!session) {
     return yield* new ProviderAdapterSessionNotFoundError({
-      provider: PROVIDER,
+      provider,
       threadId,
     });
   }
   if (yield* Ref.get(session.stopped)) {
     return yield* new ProviderAdapterSessionClosedError({
-      provider: PROVIDER,
+      provider,
       threadId,
     });
   }
@@ -901,6 +1110,7 @@ const closeStartingOpenCodeContext = Effect.fn("closeStartingOpenCodeContext")(f
 
 const stopOpenCodeContext = Effect.fn("stopOpenCodeContext")(function* (
   context: OpenCodeSessionContext,
+  resourceGovernor?: ResourceProtection.SubagentResourceGovernor["Service"],
 ) {
   // Race-safe one-shot: first caller flips the flag, everyone else no-ops.
   if (yield* Ref.getAndSet(context.stopped, true)) {
@@ -909,7 +1119,7 @@ const stopOpenCodeContext = Effect.fn("stopOpenCodeContext")(function* (
   yield* Deferred.fail(
     context.firstConnection,
     new ProviderAdapterRequestError({
-      provider: PROVIDER,
+      provider: context.session.provider,
       method: "event.subscribe",
       detail: "OpenCode session stopped before the event stream connected.",
     }),
@@ -921,6 +1131,10 @@ const stopOpenCodeContext = Effect.fn("stopOpenCodeContext")(function* (
     yield* Deferred.succeed(cancellation.completion, undefined).pipe(Effect.ignore);
   }
   context.promptAdmission = undefined;
+
+  if (resourceGovernor) {
+    yield* resourceGovernor.cancelThread(context.session.threadId);
+  }
 
   // Best-effort remote abort. The scope close below tears down the local
   // handles (event-pump fiber, server-exit fiber, event-subscribe fetch),
@@ -939,10 +1153,22 @@ export function makeOpenCodeAdapter(
   options?: OpenCodeAdapterLiveOptions,
 ) {
   return Effect.gen(function* () {
+    const provider = options?.provider ?? OPENCODE_PROVIDER;
+    const mapRequestError = (cause: OpenCodeRuntimeError) => toRequestError(provider, cause);
+    const mapMcpRequestError = (cause: OpenCodeRuntimeError) =>
+      new ProviderAdapterRequestError({
+        provider,
+        method: cause.operation,
+        detail: sanitizeMcpRuntimeText(cause.detail),
+      });
     const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("opencode");
     const serverConfig = yield* ServerConfig;
+    const hostPlatform = yield* HostProcessPlatform;
     const openCodeRuntime = yield* OpenCodeRuntime;
     const crypto = yield* Crypto.Crypto;
+    const resourceGovernor = Option.getOrUndefined(
+      yield* Effect.serviceOption(ResourceProtection.SubagentResourceGovernor),
+    );
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const sameDirectory = (left: string, right: string) =>
@@ -969,10 +1195,10 @@ export function makeOpenCodeAdapter(
       context: OpenCodeSessionContext,
     ) {
       yield* Deferred.await(context.firstConnection);
-      const current = yield* ensureSessionContext(sessions, context.session.threadId);
+      const current = yield* ensureSessionContext(provider, sessions, context.session.threadId);
       if (current !== context) {
         return yield* new ProviderAdapterSessionClosedError({
-          provider: PROVIDER,
+          provider,
           threadId: context.session.threadId,
         });
       }
@@ -982,13 +1208,209 @@ export function makeOpenCodeAdapter(
       Effect.mapError(
         (cause) =>
           new ProviderAdapterRequestError({
-            provider: PROVIDER,
+            provider,
             method: "crypto/randomUUIDv4",
             detail: "Failed to generate OpenCode runtime identifier.",
             cause,
           }),
       ),
     );
+    const registerExternalMcpServers = (input: {
+      readonly client: OpencodeClient;
+      readonly directory: string;
+      readonly servers: Record<string, OpenCodeMcpServerConfig>;
+    }) =>
+      Effect.forEach(
+        Object.entries(input.servers),
+        ([name, config]) =>
+          runOpenCodeSdk("mcp.add", () =>
+            input.client.mcp.add({
+              directory: input.directory,
+              name,
+              config,
+            }),
+          ).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Failed to register MCP server with external OpenCode runtime", {
+                name,
+                detail: sanitizeMcpRuntimeText(cause.detail),
+              }),
+            ),
+          ),
+        { concurrency: "unbounded", discard: true },
+      );
+
+    const ensureMcpRuntimeContext = Effect.fn("ensureOpenCodeMcpRuntimeContext")(function* (
+      input: ProviderMcpRuntimeTarget,
+    ) {
+      if (input.providerInstanceId !== boundInstanceId) {
+        return yield* new ProviderAdapterValidationError({
+          provider,
+          operation: "mcpRuntime",
+          issue: `MCP runtime target belongs to provider instance '${input.providerInstanceId}', not '${boundInstanceId}'.`,
+        });
+      }
+      const context = yield* ensureSessionContext(provider, sessions, input.threadId);
+      if (context.session.runtimeSessionId !== input.runtimeSessionId) {
+        return yield* new ProviderAdapterValidationError({
+          provider,
+          operation: "mcpRuntime",
+          issue: `MCP runtime session '${input.runtimeSessionId}' has been replaced.`,
+        });
+      }
+      return context;
+    });
+
+    const readMcpStatus = (context: OpenCodeSessionContext) =>
+      runOpenCodeSdk("mcp.status", () =>
+        context.client.mcp.status({ directory: context.directory }),
+      ).pipe(
+        Effect.map((response) => response.data ?? {}),
+        Effect.mapError(mapMcpRequestError),
+      );
+
+    const getMcpSnapshot: NonNullable<OpenCodeAdapterShape["mcpRuntime"]>["getSnapshot"] =
+      Effect.fn("getOpenCodeMcpSnapshot")(function* (input) {
+        const context = yield* ensureMcpRuntimeContext(input);
+        const statuses = yield* readMcpStatus(context);
+        const observedAt = yield* nowIso;
+        const metadata: OpenCodeMcpRuntimeMetadata = {
+          providerInstanceId: boundInstanceId,
+          threadId: context.session.threadId,
+          runtimeSessionId: input.runtimeSessionId,
+          observedAt,
+          managedMcpServers: context.managedMcpServers,
+          builtInMcpExpected: context.builtInMcpExpected,
+        };
+        const reported = Object.entries(statuses).map(([providerKey, status]) =>
+          normalizeOpenCodeMcpServer(providerKey, status, metadata),
+        );
+        const unreported = Object.keys(context.managedMcpServers).flatMap((providerKey) =>
+          Object.hasOwn(statuses, providerKey)
+            ? []
+            : [unreportedManagedOpenCodeMcpServer(providerKey, metadata)],
+        );
+        return [...reported, ...unreported];
+      });
+
+    const getMcpServerDetails: NonNullable<
+      NonNullable<OpenCodeAdapterShape["mcpRuntime"]>["getServerDetails"]
+    > = Effect.fn("getOpenCodeMcpServerDetails")(function* (input) {
+      const snapshot = yield* getMcpSnapshot(input);
+      const server = snapshot.find((candidate) => candidate.providerKey === input.providerKey);
+      if (!server) {
+        return yield* new ProviderAdapterValidationError({
+          provider,
+          operation: "mcpRuntime.getServerDetails",
+          issue: `OpenCode did not report MCP server '${input.providerKey}'.`,
+        });
+      }
+      return { server, tools: [], resources: [], templates: [] };
+    });
+
+    const runMcpAction: NonNullable<NonNullable<OpenCodeAdapterShape["mcpRuntime"]>["runAction"]> =
+      Effect.fn("runOpenCodeMcpAction")(function* (input) {
+        const context = yield* ensureMcpRuntimeContext(input);
+        let authorizationUrl: string | undefined;
+        switch (input.action) {
+          case "refresh":
+            break;
+          case "reconnect":
+            yield* runOpenCodeSdk("mcp.disconnect", () =>
+              context.client.mcp.disconnect({
+                directory: context.directory,
+                name: input.providerKey,
+              }),
+            ).pipe(Effect.mapError(mapMcpRequestError));
+            yield* runOpenCodeSdk("mcp.connect", () =>
+              context.client.mcp.connect({
+                directory: context.directory,
+                name: input.providerKey,
+              }),
+            ).pipe(Effect.mapError(mapMcpRequestError));
+            break;
+          case "authorize": {
+            const response = yield* runOpenCodeSdk("mcp.auth.start", () =>
+              context.client.mcp.auth.start({
+                directory: context.directory,
+                name: input.providerKey,
+              }),
+            ).pipe(Effect.mapError(mapMcpRequestError));
+            authorizationUrl = response.data?.authorizationUrl;
+            if (!authorizationUrl) {
+              return yield* new ProviderAdapterRequestError({
+                provider,
+                method: "mcp.auth.start",
+                detail: "OpenCode did not return an MCP authorization URL.",
+              });
+            }
+            break;
+          }
+        }
+        return {
+          accepted: true,
+          action: input.action,
+          providerKey: McpRuntimeServerKey.make(input.providerKey),
+          ...(authorizationUrl ? { authorizationUrl } : {}),
+        };
+      });
+
+    const applyMcpConfiguration: NonNullable<
+      NonNullable<OpenCodeAdapterShape["mcpRuntime"]>["applyConfiguration"]
+    > = Effect.fn("applyOpenCodeMcpConfiguration")(function* (input) {
+      const context = yield* ensureMcpRuntimeContext(input);
+      if (!options?.resolveMcpServers) return;
+
+      const nextServers = yield* options.resolveMcpServers({ cwd: context.directory });
+      const removedProviderKeys = Object.keys(context.managedMcpServers).filter(
+        (providerKey) => !Object.hasOwn(nextServers, providerKey),
+      );
+      yield* Effect.forEach(
+        removedProviderKeys,
+        (providerKey) =>
+          runOpenCodeSdk("mcp.disconnect", () =>
+            context.client.mcp.disconnect({
+              directory: context.directory,
+              name: providerKey,
+            }),
+          ).pipe(Effect.mapError(mapMcpRequestError)),
+        { discard: true },
+      );
+      yield* Effect.forEach(
+        Object.entries(nextServers),
+        ([providerKey, config]) =>
+          Effect.gen(function* () {
+            yield* runOpenCodeSdk("mcp.add", () =>
+              context.client.mcp.add({
+                directory: context.directory,
+                name: providerKey,
+                config,
+              }),
+            );
+            const operation = config.enabled === false ? "mcp.disconnect" : "mcp.connect";
+            yield* runOpenCodeSdk(operation, () =>
+              config.enabled === false
+                ? context.client.mcp.disconnect({
+                    directory: context.directory,
+                    name: providerKey,
+                  })
+                : context.client.mcp.connect({
+                    directory: context.directory,
+                    name: providerKey,
+                  }),
+            );
+          }).pipe(Effect.mapError(mapMcpRequestError)),
+        { discard: true },
+      );
+      context.managedMcpServers = nextServers;
+    });
+
+    const mcpRuntime: NonNullable<OpenCodeAdapterShape["mcpRuntime"]> = {
+      getSnapshot: getMcpSnapshot,
+      getServerDetails: getMcpServerDetails,
+      runAction: runMcpAction,
+      applyConfiguration: applyMcpConfiguration,
+    };
     let messageIdEpochMillis = -1;
     let messageIdCounter = 0;
     // T3 supplies the message ID to match prompt admission events. Keep OpenCode's sortable native shape so equal-time messages retain their upstream order.
@@ -1009,7 +1431,7 @@ export function makeOpenCodeAdapter(
         Effect.mapError(
           (cause) =>
             new ProviderAdapterRequestError({
-              provider: PROVIDER,
+              provider,
               method: "crypto/randomBytes",
               detail: "Failed to generate an OpenCode message identifier.",
               cause,
@@ -1027,7 +1449,7 @@ export function makeOpenCodeAdapter(
       }).pipe(
         Effect.map(({ eventId, createdAt }) => ({
           eventId,
-          provider: PROVIDER,
+          provider,
           threadId: input.threadId,
           createdAt,
           ...(input.turnId ? { turnId: input.turnId } : {}),
@@ -1059,7 +1481,7 @@ export function makeOpenCodeAdapter(
         // the remaining cleanups.
         yield* Effect.forEach(
           contexts,
-          (context) => Effect.ignoreCause(stopOpenCodeContext(context)),
+          (context) => Effect.ignoreCause(stopOpenCodeContext(context, resourceGovernor)),
           { concurrency: "unbounded", discard: true },
         );
         // Close the logger AFTER session teardown so any final lifecycle
@@ -1077,9 +1499,13 @@ export function makeOpenCodeAdapter(
     // Synchronous publish for callers that must not yield between a state
     // check and the enqueue, e.g. reopening an approval only if its terminal
     // event has not landed yet.
-    const emitUnsafe = (event: ProviderRuntimeEvent) => {
-      Queue.offerUnsafe(runtimeEvents, event);
+    const emitUnsafe = (context: OpenCodeSessionContext, event: ProviderRuntimeEvent) => {
+      Queue.offerUnsafe(runtimeEvents, {
+        ...event,
+        runtimeSessionId: context.session.runtimeSessionId,
+      });
     };
+    const publishRuntimeEvent = emit;
     const writeNativeEvent = (
       threadId: ThreadId,
       event: {
@@ -1149,7 +1575,7 @@ export function makeOpenCodeAdapter(
         yield* Fiber.interrupt(pendingIdleReconciliation.fiber);
       }
       yield* schedulePendingRequestRecovery(context);
-      yield* emit({
+      yield* context.emit({
         ...(yield* buildEventBase({
           threadId: context.session.threadId,
           turnId,
@@ -1241,7 +1667,7 @@ export function makeOpenCodeAdapter(
           }
           if (!pending.warned) {
             pending.warned = true;
-            yield* emit({
+            yield* context.emit({
               ...(yield* buildEventBase({ threadId: context.session.threadId, turnId })),
               type: "runtime.warning",
               payload: {
@@ -1308,7 +1734,7 @@ export function makeOpenCodeAdapter(
         { status: "error", lastError: detail },
         { clearActiveTurnId: true },
       );
-      yield* emit({
+      yield* context.emit({
         ...(yield* buildEventBase({
           threadId: context.session.threadId,
           turnId: promptAdmission.turnId,
@@ -1321,7 +1747,7 @@ export function makeOpenCodeAdapter(
           tokenUsage,
         },
       });
-      yield* emit({
+      yield* context.emit({
         ...(yield* buildEventBase({
           threadId: context.session.threadId,
           turnId: promptAdmission.turnId,
@@ -1514,7 +1940,7 @@ export function makeOpenCodeAdapter(
         );
       }
       yield* clearPendingOpenCodeRequests(context, { type: "session.abort" });
-      yield* emit({
+      yield* context.emit({
         ...(yield* buildEventBase({
           threadId: context.session.threadId,
           turnId,
@@ -1561,29 +1987,33 @@ export function makeOpenCodeAdapter(
       // run this inside a fiber forked via `Effect.forkIn(context.sessionScope)`;
       // closing that scope triggers the fiber-interrupt finalizer, so any
       // subsequent yield point would unwind and silently drop these emits.
-      yield* emit({
-        ...(yield* buildEventBase({
-          threadId: context.session.threadId,
-          turnId,
-        })),
-        type: "runtime.error",
-        payload: {
-          message,
-          class: "transport_error",
-        },
-      }).pipe(Effect.ignore);
-      yield* emit({
-        ...(yield* buildEventBase({
-          threadId: context.session.threadId,
-          turnId,
-        })),
-        type: "session.exited",
-        payload: {
-          reason: message,
-          recoverable: false,
-          exitKind: "error",
-        },
-      }).pipe(Effect.ignore);
+      yield* context
+        .emit({
+          ...(yield* buildEventBase({
+            threadId: context.session.threadId,
+            turnId,
+          })),
+          type: "runtime.error",
+          payload: {
+            message,
+            class: "transport_error",
+          },
+        })
+        .pipe(Effect.ignore);
+      yield* context
+        .emit({
+          ...(yield* buildEventBase({
+            threadId: context.session.threadId,
+            turnId,
+          })),
+          type: "session.exited",
+          payload: {
+            reason: message,
+            recoverable: false,
+            exitKind: "error",
+          },
+        })
+        .pipe(Effect.ignore);
       // Inline the teardown that `stopOpenCodeContext` would do; we can't
       // delegate to it because our `getAndSet` above already flipped the
       // one-shot guard, so the call would no-op.
@@ -1605,7 +2035,7 @@ export function makeOpenCodeAdapter(
       part.emittedText = latestText;
       part.text = latestText;
       if (deltaToEmit.length > 0) {
-        yield* emit({
+        yield* context.emit({
           ...(yield* buildEventBase({
             threadId: context.session.threadId,
             turnId,
@@ -1623,7 +2053,7 @@ export function makeOpenCodeAdapter(
 
       if (part.type === "text" && part.time?.end !== undefined && !part.completed) {
         part.completed = true;
-        yield* emit({
+        yield* context.emit({
           ...(yield* buildEventBase({
             threadId: context.session.threadId,
             turnId,
@@ -1732,7 +2162,7 @@ export function makeOpenCodeAdapter(
           : [request.permission.replaceAll("_", " "), ...patterns].join("\n");
       context.autoRepliedRequestIds.delete(request.id);
       context.pendingPermissions.set(request.id, request);
-      emitUnsafe({
+      emitUnsafe(context, {
         ...base,
         type: "request.opened",
         payload: {
@@ -1827,7 +2257,7 @@ export function makeOpenCodeAdapter(
         return;
       }
       context.pendingQuestions.set(request.id, request);
-      emitUnsafe({
+      emitUnsafe(context, {
         ...base,
         type: "user-input.requested",
         payload: { questions: normalizeQuestionRequest(request) },
@@ -1870,7 +2300,7 @@ export function makeOpenCodeAdapter(
       if (event.type === "permission.replied") {
         const request = context.pendingPermissions.get(requestId);
         context.pendingPermissions.delete(requestId);
-        emitUnsafe({
+        emitUnsafe(context, {
           ...base,
           type: "request.resolved",
           payload: {
@@ -1892,7 +2322,7 @@ export function makeOpenCodeAdapter(
               ]),
             )
           : {};
-      emitUnsafe({
+      emitUnsafe(context, {
         ...base,
         type: "user-input.resolved",
         payload: { answers },
@@ -1917,7 +2347,7 @@ export function makeOpenCodeAdapter(
         if (context.emittedTerminalRequestIds.has(request.id)) continue;
         context.pendingPermissions.delete(request.id);
         context.emittedTerminalRequestIds.add(request.id);
-        emitUnsafe({
+        emitUnsafe(context, {
           ...base,
           type: "request.resolved",
           payload: { requestType: mapPermissionToRequestType(request.permission) },
@@ -1935,7 +2365,7 @@ export function makeOpenCodeAdapter(
         if (context.emittedTerminalRequestIds.has(request.id)) continue;
         context.pendingQuestions.delete(request.id);
         context.emittedTerminalRequestIds.add(request.id);
-        emitUnsafe({ ...base, type: "user-input.resolved", payload: { answers: {} } });
+        emitUnsafe(context, { ...base, type: "user-input.resolved", payload: { answers: {} } });
       }
     });
 
@@ -2002,7 +2432,7 @@ export function makeOpenCodeAdapter(
           }
           if (!retry.warned) {
             retry.warned = true;
-            yield* emit({
+            yield* context.emit({
               ...(yield* buildEventBase({
                 threadId: context.session.threadId,
                 requestId,
@@ -2072,7 +2502,7 @@ export function makeOpenCodeAdapter(
           if (responses.type === "failure") {
             if (!recovery.warned) {
               recovery.warned = true;
-              yield* emit({
+              yield* context.emit({
                 ...(yield* buildEventBase({ threadId: context.session.threadId })),
                 type: "runtime.warning",
                 payload: {
@@ -2091,7 +2521,7 @@ export function makeOpenCodeAdapter(
           if (permissions === undefined || questions === undefined) {
             if (!recovery.warned) {
               recovery.warned = true;
-              yield* emit({
+              yield* context.emit({
                 ...(yield* buildEventBase({ threadId: context.session.threadId })),
                 type: "runtime.warning",
                 payload: {
@@ -2246,7 +2676,7 @@ export function makeOpenCodeAdapter(
       yield* writeNativeEventBestEffort(context.session.threadId, {
         observedAt: yield* nowIso,
         event: {
-          provider: PROVIDER,
+          provider,
           threadId: context.session.threadId,
           providerThreadId: context.openCodeSessionId,
           type: event.type,
@@ -2273,7 +2703,7 @@ export function makeOpenCodeAdapter(
         case "session.updated": {
           const title = openCodeEventSessionTitle(event);
           if (title) {
-            yield* emit({
+            yield* context.emit({
               ...(yield* buildEventBase({
                 threadId: context.session.threadId,
                 raw: event,
@@ -2290,7 +2720,7 @@ export function makeOpenCodeAdapter(
           break;
         }
         case "session.compacted": {
-          yield* emit({
+          yield* context.emit({
             ...(yield* buildEventBase({
               threadId: context.session.threadId,
               turnId,
@@ -2407,7 +2837,7 @@ export function makeOpenCodeAdapter(
           }
           existingPart.emittedText = nextText;
           existingPart.text = nextText;
-          yield* emit({
+          yield* context.emit({
             ...(yield* buildEventBase({
               threadId: context.session.threadId,
               turnId,
@@ -2504,13 +2934,56 @@ export function makeOpenCodeAdapter(
                     : "item.updated",
               payload,
             };
-            yield* emit(runtimeEvent);
+            yield* context.emit(runtimeEvent);
           }
           break;
         }
 
         case "permission.asked": {
-          yield* emitPendingOpenCodeRequest(context, event, event);
+          const openPermission = emitPendingOpenCodeRequest(context, event, event);
+          if (event.properties.permission !== "task") {
+            yield* openPermission;
+            break;
+          }
+          yield* Effect.gen(function* () {
+            if (resourceGovernor) {
+              const admitted = yield* resourceGovernor.awaitAdmission({
+                threadId: context.session.threadId,
+                provider,
+                providerInstanceId: boundInstanceId,
+                configurationKey: ResourceProtection.resourceConfigurationKey([
+                  provider,
+                  boundInstanceId,
+                  context.session.model ?? "",
+                  context.activeAgent ?? "",
+                  context.activeVariant ?? "",
+                  context.managedMcpServers,
+                  context.builtInMcpExpected,
+                ]),
+              });
+              if (!admitted) return;
+            }
+            if (yield* Ref.get(context.stopped)) return;
+            if (context.session.runtimeMode !== "full-access") {
+              yield* openPermission;
+              return;
+            }
+            context.resourceAutoPermissionIds.add(event.properties.id);
+            yield* runOpenCodeSdk("permission.reply", () =>
+              context.client.permission.reply({
+                requestID: event.properties.id,
+                reply: "once",
+              }),
+            ).pipe(Effect.mapError(mapRequestError));
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logError("OpenCode resource-gated task permission failed", {
+                threadId: context.session.threadId,
+                cause,
+              }),
+            ),
+            Effect.forkIn(context.sessionScope),
+          );
           break;
         }
 
@@ -2543,7 +3016,7 @@ export function makeOpenCodeAdapter(
           });
           // Session-wide task updates must not reopen progress after a turn ends.
           if (context.activeTurnId !== turnId) break;
-          emitUnsafe({
+          emitUnsafe(context, {
             ...base,
             type: "turn.plan.updated",
             payload: {
@@ -2581,7 +3054,7 @@ export function makeOpenCodeAdapter(
           }
 
           if (event.properties.status.type === "retry") {
-            yield* emit({
+            yield* context.emit({
               ...(yield* buildEventBase({
                 threadId: context.session.threadId,
                 turnId,
@@ -2663,7 +3136,7 @@ export function makeOpenCodeAdapter(
             { clearActiveTurnId: true },
           );
           if (activeTurnId) {
-            yield* emit({
+            yield* context.emit({
               ...(yield* buildEventBase({
                 threadId: context.session.threadId,
                 turnId: activeTurnId,
@@ -2677,7 +3150,7 @@ export function makeOpenCodeAdapter(
               },
             });
           }
-          yield* emit({
+          yield* context.emit({
             ...(yield* buildEventBase({
               threadId: context.session.threadId,
               raw: event,
@@ -2717,7 +3190,7 @@ export function makeOpenCodeAdapter(
           Effect.gen(function* () {
             if (warnedAboutDisconnect) return;
             warnedAboutDisconnect = true;
-            yield* emit({
+            yield* context.emit({
               ...(yield* buildEventBase({
                 threadId: context.session.threadId,
                 turnId: context.activeTurnId,
@@ -2806,19 +3279,32 @@ export function makeOpenCodeAdapter(
 
     const startSession: OpenCodeAdapterShape["startSession"] = Effect.fn("startSession")(
       function* (input) {
+        const fetchWorker = input.purpose === "fetch-worker";
+        const runtimeMode = fetchWorker ? "approval-required" : input.runtimeMode;
+        const permissionRules = fetchWorker
+          ? FETCH_WORKER_PERMISSION_RULES
+          : buildOpenCodePermissionRules(runtimeMode);
         const binaryPath = openCodeSettings.binaryPath;
         const serverUrl = openCodeSettings.serverUrl;
         const serverPassword = openCodeSettings.serverPassword;
         const directory = input.cwd ?? serverConfig.cwd;
-        const resumeSessionId = parseOpenCodeResume(input.resumeCursor)?.sessionId;
+        const resumeSessionId = fetchWorker
+          ? undefined
+          : parseOpenCodeResume(input.resumeCursor)?.sessionId;
+        const mcpServers =
+          !fetchWorker && options?.resolveMcpServers
+            ? yield* options.resolveMcpServers({ cwd: directory })
+            : {};
         const existing = sessions.get(input.threadId);
         if (existing) {
           if (existing.session.status === "connecting" && !(yield* Ref.get(existing.stopped))) {
             return (yield* awaitOpenCodeContextReady(existing)).session;
           }
-          yield* stopOpenCodeContext(existing);
+          yield* stopOpenCodeContext(existing, resourceGovernor);
           deleteContextIfCurrent(existing);
         }
+        const runtimeSessionId =
+          input.runtimeSessionId ?? RuntimeSessionId.make(yield* randomUUIDv4);
 
         const started = yield* Effect.gen(function* () {
           const sessionScope = yield* Scope.make();
@@ -2833,13 +3319,36 @@ export function makeOpenCodeAdapter(
                 serverUrl,
                 ...(serverPassword ? { serverPassword } : {}),
                 ...(options?.environment ? { environment: options.environment } : {}),
+                mcpServers,
               });
+              if (!server.external && server.pid !== undefined && resourceGovernor) {
+                const startTimeMs = ResourceProtection.providerProcessStartTimeMs(
+                  server.pid,
+                  hostPlatform,
+                );
+                yield* resourceGovernor.registerProviderProcess({
+                  threadId: input.threadId,
+                  provider,
+                  providerInstanceId: boundInstanceId,
+                  pid: server.pid,
+                  ...(startTimeMs === undefined ? {} : { startTimeMs }),
+                });
+                yield* Scope.addFinalizer(
+                  sessionScope,
+                  resourceGovernor.unregisterProviderProcess({
+                    pid: server.pid,
+                    ...(startTimeMs === undefined ? {} : { startTimeMs }),
+                  }),
+                );
+              }
               const client = openCodeRuntime.createOpenCodeSdkClient({
                 baseUrl: server.url,
                 directory,
                 ...(server.serverPassword ? { serverPassword: server.serverPassword } : {}),
               });
-              const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+              const mcpSession = fetchWorker
+                ? undefined
+                : McpProviderSession.readMcpProviderSession(input.threadId);
               if (mcpSession && !server.external) {
                 yield* runOpenCodeSdk("mcp.add", () =>
                   client.mcp.add({
@@ -2854,6 +3363,13 @@ export function makeOpenCodeAdapter(
                     },
                   }),
                 );
+              }
+              if (server.external) {
+                yield* registerExternalMcpServers({
+                  client,
+                  directory,
+                  servers: mcpServers,
+                });
               }
               // Resume: re-adopt the session named by the durable cursor —
               // OpenCode scopes history by session id. The probe recovers only
@@ -2887,7 +3403,7 @@ export function makeOpenCodeAdapter(
                   yield* runOpenCodeSdk("session.update", () =>
                     client.session.update({
                       sessionID: reusable.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                      permission: permissionRules,
                     }),
                   );
                   return { openCodeSession: reusable, created: false };
@@ -2914,7 +3430,7 @@ export function makeOpenCodeAdapter(
                   yield* runOpenCodeSdk("session.update", () =>
                     client.session.update({
                       sessionID: forked.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                      permission: permissionRules,
                     }),
                   );
                   return { openCodeSession: forked, created: true };
@@ -2928,7 +3444,7 @@ export function makeOpenCodeAdapter(
                 const createdSession = yield* runOpenCodeSdk("session.create", () =>
                   client.session.create({
                     ...(input.title ? { title: input.title } : {}),
-                    permission: buildOpenCodePermissionRules(input.runtimeMode),
+                    permission: permissionRules,
                   }),
                 );
                 if (!createdSession.data) {
@@ -2939,11 +3455,12 @@ export function makeOpenCodeAdapter(
                 }
                 return { openCodeSession: createdSession.data, created: true };
               });
-
               return {
                 sessionScope,
                 server,
                 client,
+                managedMcpServers: mcpServers,
+                builtInMcpExpected: Boolean(mcpSession && !server.external),
                 openCodeSession: resolved.openCodeSession,
                 created: resolved.created,
               };
@@ -2951,17 +3468,18 @@ export function makeOpenCodeAdapter(
           );
           if (Exit.isFailure(startedExit)) {
             yield* Scope.close(sessionScope, Exit.void).pipe(Effect.ignore);
-            return yield* toProcessError(input.threadId, Cause.squash(startedExit.cause));
+            return yield* toProcessError(provider, input.threadId, Cause.squash(startedExit.cause));
           }
           return startedExit.value;
         });
 
         const createdAt = yield* nowIso;
         const session: ProviderSession = {
-          provider: PROVIDER,
+          provider,
           providerInstanceId: boundInstanceId,
+          runtimeSessionId,
           status: "connecting",
-          runtimeMode: input.runtimeMode,
+          runtimeMode,
           cwd: directory,
           ...(input.modelSelection ? { model: input.modelSelection.model } : {}),
           threadId: input.threadId,
@@ -2978,9 +3496,12 @@ export function makeOpenCodeAdapter(
 
         const context: OpenCodeSessionContext = {
           session,
+          emit: bindProviderRuntimeEventOrigin(runtimeSessionId, publishRuntimeEvent),
           client: started.client,
           server: started.server,
           directory,
+          managedMcpServers: started.managedMcpServers,
+          builtInMcpExpected: started.builtInMcpExpected,
           openCodeSessionId: started.openCodeSession.id,
           relatedSessionIds: new Set([started.openCodeSession.id]),
           resolvedRequestIds: new Set(),
@@ -2988,6 +3509,7 @@ export function makeOpenCodeAdapter(
           emittedTerminalRequestIds: new Set(),
           requestRelationRetries: new Map(),
           pendingPermissions: new Map(),
+          resourceAutoPermissionIds: new Set(),
           pendingQuestions: new Map(),
           textPartsByMessageId: new Map(),
           messageRoleById: new Map(),
@@ -3046,14 +3568,14 @@ export function makeOpenCodeAdapter(
           yield* schedulePendingRequestRecovery(context);
         }
 
-        yield* emit({
+        yield* context.emit({
           ...(yield* buildEventBase({ threadId: input.threadId })),
           type: "session.started",
           payload: {
             message: "OpenCode session started",
           },
         });
-        yield* emit({
+        yield* context.emit({
           ...(yield* buildEventBase({ threadId: input.threadId })),
           type: "thread.started",
           payload: {
@@ -3066,7 +3588,7 @@ export function makeOpenCodeAdapter(
     );
 
     const sendTurn: OpenCodeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
-      const context = yield* ensureSessionContext(sessions, input.threadId);
+      const context = yield* ensureSessionContext(provider, sessions, input.threadId);
       yield* awaitOpenCodeContextReady(context);
       const modelSelection =
         input.modelSelection ??
@@ -3075,7 +3597,7 @@ export function makeOpenCodeAdapter(
           : undefined);
       if (modelSelection !== undefined && modelSelection.instanceId !== boundInstanceId) {
         return yield* new ProviderAdapterValidationError({
-          provider: PROVIDER,
+          provider,
           operation: "sendTurn",
           issue: `OpenCode model selection is bound to instance '${modelSelection?.instanceId}', expected '${boundInstanceId}'.`,
         });
@@ -3083,9 +3605,9 @@ export function makeOpenCodeAdapter(
       const parsedModel = parseOpenCodeModelSlug(modelSelection?.model);
       if (!parsedModel) {
         return yield* new ProviderAdapterValidationError({
-          provider: PROVIDER,
+          provider,
           operation: "sendTurn",
-          issue: "OpenCode model selection must use the 'provider/model' format.",
+          issue: OPENCODE_MODEL_SELECTION_FORMAT_ERROR,
         });
       }
 
@@ -3102,7 +3624,7 @@ export function makeOpenCodeAdapter(
       });
       if ((!text || text.length === 0) && fileParts.length === 0) {
         return yield* new ProviderAdapterValidationError({
-          provider: PROVIDER,
+          provider,
           operation: "sendTurn",
           issue: "OpenCode turns require text input or at least one attachment.",
         });
@@ -3187,11 +3709,12 @@ export function makeOpenCodeAdapter(
           );
 
           if (steeringTurnId === undefined) {
-            yield* emit({
+            yield* context.emit({
               ...(yield* buildEventBase({ threadId: input.threadId, turnId })),
               type: "turn.started",
               payload: {
                 model: modelSelection?.model ?? context.session.model,
+                ...(variant ? { effort: variant } : {}),
               },
             });
           }
@@ -3228,7 +3751,7 @@ export function makeOpenCodeAdapter(
           ).pipe(
             Effect.timeout("10 seconds"),
             Effect.catchTags({
-              OpenCodeRuntimeError: (cause) => Effect.fail(toRequestError(cause)),
+              OpenCodeRuntimeError: (cause) => Effect.fail(mapRequestError(cause)),
               TimeoutError: (cause) => {
                 promptTimedOut = true;
                 return Effect.fail(
@@ -3270,7 +3793,7 @@ export function makeOpenCodeAdapter(
                         },
                         { clearActiveTurnId: true },
                       );
-                      yield* emit({
+                      yield* context.emit({
                         ...(yield* buildEventBase({ threadId: input.threadId, turnId })),
                         type: "turn.aborted",
                         payload: {
@@ -3289,7 +3812,7 @@ export function makeOpenCodeAdapter(
                       ).pipe(Effect.timeout("1 second")),
                     );
                     if (Exit.isFailure(cleanupExit)) {
-                      yield* emit({
+                      yield* context.emit({
                         ...(yield* buildEventBase({ threadId: input.threadId, turnId })),
                         type: "runtime.warning",
                         payload: {
@@ -3320,7 +3843,7 @@ export function makeOpenCodeAdapter(
                       },
                       { clearActiveTurnId: true },
                     );
-                    yield* emit({
+                    yield* context.emit({
                       ...(yield* buildEventBase({
                         threadId: input.threadId,
                         turnId,
@@ -3431,7 +3954,7 @@ export function makeOpenCodeAdapter(
       threadId: ThreadId,
       requestedModelSelection?: ProviderSendTurnInput["modelSelection"],
     ) {
-      const context = yield* ensureSessionContext(sessions, threadId);
+      const context = yield* ensureSessionContext(provider, sessions, threadId);
       yield* awaitOpenCodeContextReady(context);
       const modelSelection =
         requestedModelSelection ??
@@ -3477,7 +4000,7 @@ export function makeOpenCodeAdapter(
           ).pipe(
             Effect.timeout("10 minutes"),
             Effect.catchTags({
-              OpenCodeRuntimeError: (cause) => Effect.fail(toRequestError(cause)),
+              OpenCodeRuntimeError: (cause) => Effect.fail(mapRequestError(cause)),
               TimeoutError: (cause) =>
                 Effect.fail(
                   new ProviderAdapterRequestError({
@@ -3494,8 +4017,14 @@ export function makeOpenCodeAdapter(
       );
     });
     const interruptTurn: OpenCodeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
-      function* (threadId, turnId) {
-        const context = yield* ensureSessionContext(sessions, threadId);
+      function* (threadId, turnId, expectedRuntimeSessionId) {
+        const current = sessions.get(threadId);
+        if (
+          expectedRuntimeSessionId !== undefined &&
+          current?.session.runtimeSessionId !== expectedRuntimeSessionId
+        )
+          return;
+        const context = yield* ensureSessionContext(provider, sessions, threadId);
         const activeTurnId = context.activeTurnId;
         if (turnId !== undefined && activeTurnId !== turnId) {
           return;
@@ -3531,7 +4060,7 @@ export function makeOpenCodeAdapter(
             Effect.asVoid,
             Effect.timeout("10 seconds"),
             Effect.catchTags({
-              OpenCodeRuntimeError: (cause) => Effect.fail(toRequestError(cause)),
+              OpenCodeRuntimeError: (cause) => Effect.fail(mapRequestError(cause)),
               TimeoutError: (cause) =>
                 Effect.fail(
                   new ProviderAdapterRequestError({
@@ -3567,7 +4096,7 @@ export function makeOpenCodeAdapter(
           abortOpenCodeDescendants(context).pipe(
             Effect.timeout("10 seconds"),
             Effect.catchTags({
-              OpenCodeRuntimeError: (cause) => Effect.fail(toRequestError(cause)),
+              OpenCodeRuntimeError: (cause) => Effect.fail(mapRequestError(cause)),
               TimeoutError: (cause) =>
                 Effect.fail(
                   new ProviderAdapterRequestError({
@@ -3632,15 +4161,53 @@ export function makeOpenCodeAdapter(
       },
     );
 
+    const forceStopSession: OpenCodeAdapterShape["forceStopSession"] = Effect.fn(
+      "OpenCodeAdapter.forceStopSession",
+    )(function* (threadId, expectedRuntimeSessionId) {
+      const context = sessions.get(threadId);
+      if (!context || context.session.runtimeSessionId !== expectedRuntimeSessionId) {
+        return {
+          outcome: "terminated",
+          mechanism: "already-stopped",
+        };
+      }
+      if (yield* Ref.getAndSet(context.stopped, true)) {
+        deleteContextIfCurrent(context);
+        return {
+          outcome: "terminated",
+          mechanism: "already-stopped",
+        };
+      }
+
+      deleteContextIfCurrent(context);
+      const closeExit = yield* Scope.close(context.sessionScope, Exit.void).pipe(Effect.exit);
+      if (Exit.isFailure(closeExit)) {
+        return yield* toProcessError(provider, threadId, Cause.squash(closeExit.cause));
+      }
+
+      if (context.server.external) {
+        return {
+          outcome: "detached",
+          mechanism: "local-detach",
+          detail:
+            "Detached local OpenCode session state; the externally managed server may continue remote work.",
+        };
+      }
+      return {
+        outcome: "terminated",
+        mechanism: "process-tree",
+      };
+    });
+
     const respondToRequest: OpenCodeAdapterShape["respondToRequest"] = Effect.fn(
       "respondToRequest",
     )(function* (threadId, requestId, decision) {
-      const context = yield* ensureSessionContext(sessions, threadId);
+      const context = yield* ensureSessionContext(provider, sessions, threadId);
       const request = context.pendingPermissions.get(requestId);
       if (!request) {
         if (context.emittedTerminalRequestIds.has(requestId)) return;
         return yield* new ProviderAdapterRequestError({
-          provider: PROVIDER,
+          provider,
           method: "permission.reply",
           detail:
             context.pendingRequestRecovery || context.requestRelationRetries.has(requestId)
@@ -3659,7 +4226,7 @@ export function makeOpenCodeAdapter(
           { signal },
         ),
       ).pipe(
-        Effect.mapError(toRequestError),
+        Effect.mapError(mapRequestError),
         Effect.timeoutOrElse({
           duration: "10 seconds",
           orElse: () =>
@@ -3687,12 +4254,12 @@ export function makeOpenCodeAdapter(
     const respondToUserInput: OpenCodeAdapterShape["respondToUserInput"] = Effect.fn(
       "respondToUserInput",
     )(function* (threadId, requestId, answers) {
-      const context = yield* ensureSessionContext(sessions, threadId);
+      const context = yield* ensureSessionContext(provider, sessions, threadId);
       const request = context.pendingQuestions.get(requestId);
       if (!request) {
         if (context.emittedTerminalRequestIds.has(requestId)) return;
         return yield* new ProviderAdapterRequestError({
-          provider: PROVIDER,
+          provider,
           method: "question.reply",
           detail:
             context.pendingRequestRecovery || context.requestRelationRetries.has(requestId)
@@ -3711,7 +4278,7 @@ export function makeOpenCodeAdapter(
           { signal },
         ),
       ).pipe(
-        Effect.mapError(toRequestError),
+        Effect.mapError(mapRequestError),
         Effect.timeoutOrElse({
           duration: "10 seconds",
           orElse: () =>
@@ -3745,16 +4312,16 @@ export function makeOpenCodeAdapter(
         const context = sessions.get(threadId);
         if (!context) {
           return yield* new ProviderAdapterSessionNotFoundError({
-            provider: PROVIDER,
+            provider,
             threadId,
           });
         }
-        const stopped = yield* stopOpenCodeContext(context);
+        const stopped = yield* stopOpenCodeContext(context, resourceGovernor);
         deleteContextIfCurrent(context);
         if (!stopped) {
           return;
         }
-        yield* emit({
+        yield* context.emit({
           ...(yield* buildEventBase({ threadId })),
           type: "session.exited",
           payload: {
@@ -3774,15 +4341,15 @@ export function makeOpenCodeAdapter(
 
     const readThread: OpenCodeAdapterShape["readThread"] = Effect.fn("readThread")(
       function* (threadId) {
-        const context = yield* ensureSessionContext(sessions, threadId);
+        const context = yield* ensureSessionContext(provider, sessions, threadId);
         const session = yield* runOpenCodeSdk("session.get", () =>
           context.client.session.get({ sessionID: context.openCodeSessionId }),
-        ).pipe(Effect.mapError(toRequestError));
+        ).pipe(Effect.mapError(mapRequestError));
         const messages = yield* runOpenCodeSdk("session.messages", () =>
           context.client.session.messages({
             sessionID: context.openCodeSessionId,
           }),
-        ).pipe(Effect.mapError(toRequestError));
+        ).pipe(Effect.mapError(mapRequestError));
 
         const turns: Array<OpenCodeTurnSnapshot> = [];
         for (const entry of messages.data ?? []) {
@@ -3804,7 +4371,7 @@ export function makeOpenCodeAdapter(
 
     const rollbackThread: OpenCodeAdapterShape["rollbackThread"] = Effect.fn("rollbackThread")(
       function* (threadId, numTurns) {
-        const context = yield* ensureSessionContext(sessions, threadId);
+        const context = yield* ensureSessionContext(provider, sessions, threadId);
         const snapshot = yield* readThread(threadId);
         const targetIndex = Math.max(0, snapshot.turns.length - numTurns);
         const target = snapshot.turns[targetIndex];
@@ -3814,7 +4381,7 @@ export function makeOpenCodeAdapter(
               sessionID: context.openCodeSessionId,
               messageID: target.id,
             }),
-          ).pipe(Effect.mapError(toRequestError));
+          ).pipe(Effect.mapError(mapRequestError));
           // Native revert can move the boundary to the preceding user message.
           return yield* readThread(threadId);
         }
@@ -3833,20 +4400,23 @@ export function makeOpenCodeAdapter(
         // interrupt the sibling fibers. Same pattern as the layer finalizer.
         yield* Effect.forEach(
           contexts,
-          (context) => Effect.ignoreCause(stopOpenCodeContext(context)),
+          (context) => Effect.ignoreCause(stopOpenCodeContext(context, resourceGovernor)),
           { concurrency: "unbounded", discard: true },
         );
       });
 
     return {
-      provider: PROVIDER,
+      provider,
       capabilities: {
         sessionModelSwitch: "in-session",
+        mcp: "sessionConfig",
       },
+      mcpRuntime,
       startSession,
       sendTurn,
       compaction: { type: "native", start: compactThread },
       interruptTurn,
+      forceStopSession,
       respondToRequest,
       respondToUserInput,
       stopSession,

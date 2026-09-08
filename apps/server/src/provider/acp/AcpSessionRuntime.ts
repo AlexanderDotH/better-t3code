@@ -9,7 +9,6 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -21,7 +20,20 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
+import {
+  forceTerminateOwnedChildProcessAndCleanup,
+  type OwnedChildProcessTerminationError,
+} from "../../process/OwnedChildProcess.ts";
+import * as ResourceProtection from "../../resourceProtection/SubagentResourceGovernor.ts";
+import {
+  type BoundedProviderEventQueue,
+  makeBoundedProviderEventQueue,
+  providerEventEncodedBytes,
+  PROVIDER_SESSION_EVENT_QUEUE_BYTE_CAPACITY,
+  PROVIDER_SESSION_EVENT_QUEUE_CAPACITY,
+} from "../boundedEventQueue.ts";
 import {
   collectSessionConfigOptionValues,
   decideToolCallUpdateEmission,
@@ -79,6 +91,10 @@ export interface AcpSpawnInput {
 
 export interface AcpSessionRuntimeOptions {
   readonly spawn: AcpSpawnInput;
+  readonly providerProcess?: Omit<
+    ResourceProtection.ProviderProcessRegistration,
+    "pid" | "startTimeMs"
+  >;
   readonly cwd: string;
   readonly resumeSessionId?: string;
   readonly resumeMethod?: "load" | "resume";
@@ -87,13 +103,13 @@ export interface AcpSessionRuntimeOptions {
   /** Native cancellation waits for the prompt response and the getEvents consumer to drain. */
   readonly cancelBehavior?: "interrupt" | "wait-for-prompt";
   readonly cancelTimeout?: Duration.Input;
+  readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly clientCapabilities?: EffectAcpSchema.InitializeRequest["clientCapabilities"];
   readonly clientInfo: {
     readonly name: string;
     readonly version: string;
   };
   readonly authMethodId: string;
-  readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   /** Extra workspace roots the agent may read and write besides `cwd`. */
   readonly additionalDirectories?: ReadonlyArray<string>;
   /** Transforms provider stdout before protocol parsing and protocol logging. */
@@ -246,6 +262,8 @@ export class AcpSessionRuntime extends Context.Service<
      * @see https://agentclientprotocol.com/protocol/schema#session/cancel
      */
     readonly cancel: Effect.Effect<void, EffectAcpErrors.AcpError>;
+    /** Immediately terminates the exact owned ACP process group and closes local resources. */
+    readonly forceClose: Effect.Effect<void, OwnedChildProcessTerminationError>;
     /**
      * Selects the active mode through the negotiated `mode` configuration option.
      * This is a no-op when the requested mode is already active.
@@ -328,9 +346,17 @@ export const make = (
 > =>
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
+    const hostPlatform = yield* HostProcessPlatform;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeScope = yield* Scope.Scope;
-    const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
+    const resourceGovernor = Option.getOrUndefined(
+      yield* Effect.serviceOption(ResourceProtection.SubagentResourceGovernor),
+    );
+    const eventQueue = yield* makeBoundedProviderEventQueue<AcpSessionRuntimeEvent>({
+      capacity: PROVIDER_SESSION_EVENT_QUEUE_CAPACITY,
+      byteCapacity: PROVIDER_SESSION_EVENT_QUEUE_BYTE_CAPACITY,
+      sizeOf: providerEventEncodedBytes,
+    });
     const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
     const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallTrackedState>());
     const assistantItemRuntimeId = yield* crypto.randomUUIDv4.pipe(
@@ -388,7 +414,7 @@ export const make = (
         return;
       }
       yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
-      yield* Queue.offer(eventQueue, { _tag: "ConnectionTerminated", error });
+      yield* eventQueue.offer({ _tag: "ConnectionTerminated", error });
     });
 
     const logRequest = (event: AcpSessionRequestLogEvent) =>
@@ -468,6 +494,26 @@ export const make = (
       Effect.ignore,
       Effect.forkIn(runtimeScope),
     );
+
+    if (options.providerProcess && resourceGovernor) {
+      const pid = Number(child.pid);
+      const startTimeMs = ResourceProtection.providerProcessStartTimeMs(pid, hostPlatform);
+      yield* resourceGovernor.registerProviderProcess({
+        ...options.providerProcess,
+        pid,
+        ...(startTimeMs === undefined ? {} : { startTimeMs }),
+      });
+      const unregister = resourceGovernor.unregisterProviderProcess({
+        pid,
+        ...(startTimeMs === undefined ? {} : { startTimeMs }),
+      });
+      yield* Scope.addFinalizer(runtimeScope, unregister);
+      yield* child.exitCode.pipe(
+        Effect.andThen(unregister),
+        Effect.ignore,
+        Effect.forkIn(runtimeScope),
+      );
+    }
 
     const acpContext = yield* Layer.build(
       EffectAcpClient.layerChildProcess(child, {
@@ -635,7 +681,7 @@ export const make = (
     ) {
       const configOptions = sessionConfigOptionsFromSetup(response);
       yield* Ref.set(configOptionsRef, configOptions);
-      yield* Queue.offer(eventQueue, {
+      yield* eventQueue.offer({
         _tag: "ConfigOptionsUpdated",
         configOptions,
         rawPayload: response,
@@ -710,6 +756,7 @@ export const make = (
       );
 
       let sessionId: string;
+      const mcpServers = options.mcpServers ?? [];
       let sessionSetupResult:
         | EffectAcpSchema.LoadSessionResponse
         | EffectAcpSchema.NewSessionResponse
@@ -821,13 +868,12 @@ export const make = (
               }),
             ),
           );
-
           return loaded;
         }).pipe(Effect.ensuring(Ref.set(sessionLoadGateRef, Option.none())));
       } else {
         const createPayload = {
           cwd: options.cwd,
-          mcpServers: options.mcpServers ?? [],
+          mcpServers,
           ...(options.additionalDirectories && options.additionalDirectories.length > 0
             ? { additionalDirectories: options.additionalDirectories }
             : {}),
@@ -905,7 +951,7 @@ export const make = (
         return;
       }
       const acknowledge = yield* Deferred.make<void>();
-      yield* Queue.offer(eventQueue, { _tag: "EventStreamBarrier", acknowledge });
+      yield* eventQueue.offer({ _tag: "EventStreamBarrier", acknowledge });
       yield* Effect.raceFirst(Deferred.await(acknowledge), Deferred.await(runtimeClosed));
     });
 
@@ -955,6 +1001,21 @@ export const make = (
       }
     });
 
+    const forceClose = Effect.gen(function* () {
+      const activePromptFiber = yield* Ref.getAndSet(activePromptRef, Option.none());
+      if (Option.isSome(activePromptFiber)) {
+        yield* Fiber.interrupt(activePromptFiber.value.fiber).pipe(
+          Effect.ignore,
+          Effect.forkChild,
+          Effect.asVoid,
+        );
+      }
+      yield* forceTerminateOwnedChildProcessAndCleanup(
+        { child },
+        Scope.close(runtimeScope, Exit.void).pipe(Effect.ensuring(eventQueue.shutdown)),
+      );
+    });
+
     return {
       handleRequestPermission: acp.handleRequestPermission,
       handleElicitation: acp.handleElicitation,
@@ -973,7 +1034,7 @@ export const make = (
       handleExtNotification: acp.handleExtNotification,
       initialize: () => ensureConnected.pipe(Effect.andThen(sendInitialize)),
       start: () => start,
-      getEvents: () => Stream.fromQueue(eventQueue),
+      getEvents: () => eventQueue.stream,
       drainEvents,
       getModeState: Ref.get(modeStateRef),
       getConfigOptions: Ref.get(configOptionsRef),
@@ -1040,6 +1101,7 @@ export const make = (
         options.cancelBehavior === "wait-for-prompt"
           ? promptDispatchSemaphore.withPermit(cancel)
           : cancel,
+      forceClose,
       setMode: (modeId) =>
         Ref.get(modeStateRef).pipe(
           Effect.flatMap((modeState) => {
@@ -1134,7 +1196,7 @@ const handleSessionUpdate = ({
   assistantItemRuntimeId,
   params,
 }: {
-  readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
+  readonly queue: BoundedProviderEventQueue<AcpSessionRuntimeEvent>;
   readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
   readonly configOptionsRef: Ref.Ref<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
   readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallTrackedState>>;
@@ -1185,7 +1247,7 @@ const handleSessionUpdate = ({
         if (!decision.emit) {
           continue;
         }
-        yield* Queue.offer(queue, {
+        yield* queue.offer({
           _tag: "ToolCallUpdated",
           toolCall: merged,
           rawPayload: event.rawPayload,
@@ -1205,13 +1267,13 @@ const handleSessionUpdate = ({
           sessionId: params.sessionId,
           assistantItemRuntimeId,
         });
-        yield* Queue.offer(queue, {
+        yield* queue.offer({
           ...event,
           itemId,
         });
         continue;
       }
-      yield* Queue.offer(queue, event);
+      yield* queue.offer(event);
     }
   });
 
@@ -1237,7 +1299,7 @@ const ensureActiveAssistantSegment = ({
   sessionId,
   assistantItemRuntimeId,
 }: {
-  readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
+  readonly queue: BoundedProviderEventQueue<AcpSessionRuntimeEvent>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
   readonly sessionId: string;
   readonly assistantItemRuntimeId: string;
@@ -1266,7 +1328,7 @@ const ensureActiveAssistantSegment = ({
   ).pipe(
     Effect.flatMap((result) =>
       result.startedEvent
-        ? Queue.offer(queue, result.startedEvent).pipe(Effect.as(result.itemId))
+        ? queue.offer(result.startedEvent).pipe(Effect.as(result.itemId))
         : Effect.succeed(result.itemId),
     ),
   );
@@ -1275,7 +1337,7 @@ const closeActiveAssistantSegment = ({
   queue,
   assistantSegmentRef,
 }: {
-  readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
+  readonly queue: BoundedProviderEventQueue<AcpSessionRuntimeEvent>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
 }) =>
   Ref.modify(assistantSegmentRef, (current) => {
@@ -1291,4 +1353,4 @@ const closeActiveAssistantSegment = ({
         nextSegmentIndex: current.nextSegmentIndex,
       } satisfies AcpAssistantSegmentState,
     ] as const;
-  }).pipe(Effect.flatMap((event) => (event ? Queue.offer(queue, event) : Effect.void)));
+  }).pipe(Effect.flatMap((event) => (event ? queue.offer(event) : Effect.void)));

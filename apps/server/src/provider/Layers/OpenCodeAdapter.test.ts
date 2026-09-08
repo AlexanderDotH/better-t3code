@@ -6232,7 +6232,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const started = yield* Fiber.join(startedFiber);
       NodeAssert.equal(started._tag, "Some");
       if (started._tag === "Some" && started.value.type === "turn.started") {
-        NodeAssert.equal(started.value.payload.effort, undefined);
+        NodeAssert.equal(started.value.payload.effort, "high");
       }
     }).pipe(Effect.provide(adapterLayer));
   });
