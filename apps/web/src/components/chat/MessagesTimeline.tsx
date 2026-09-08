@@ -1,3 +1,7 @@
+import { forkBoundaryKey } from "@t3tools/client-runtime/thread-fork";
+import { ForkChatButton } from "./ForkChatButton";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { RefreshCwIcon } from "lucide-react";
 import {
   type AssistantCitation,
   type EnvironmentId,
@@ -6,6 +10,8 @@ import {
   type ServerProviderSkill,
   type ToolActivityIcon,
   type TurnId,
+  type ThreadForkBoundary,
+  type OrchestrationProposedPlanId,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
@@ -198,7 +204,24 @@ import {
 // components (WorkingTimer, LiveElapsed) handle it.
 // ---------------------------------------------------------------------------
 
+export interface TimelineForkActions {
+  readonly available: boolean;
+  readonly pendingBoundary: ThreadForkBoundary | null;
+  readonly forkableMessageIds: ReadonlySet<MessageId>;
+  readonly forkableProposedPlanIds: ReadonlySet<OrchestrationProposedPlanId>;
+  readonly onFork: (boundary: ThreadForkBoundary) => void;
+}
+
+export interface TimelineRetryAction {
+  readonly available: boolean;
+  readonly messageId: MessageId;
+  readonly pending: boolean;
+  readonly onRetry: (messageId: MessageId) => void;
+}
+
 interface TimelineRowSharedState {
+  forkActions: TimelineForkActions | null;
+  retryAction: TimelineRetryAction | null;
   citationRequest: AssistantCitationTarget | null;
   listRef: React.RefObject<LegendListRef | null>;
   timestampFormat: TimestampFormat;
@@ -301,6 +324,8 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
 // ---------------------------------------------------------------------------
 
 interface MessagesTimelineProps {
+  forkActions?: TimelineForkActions | null;
+  retryAction?: TimelineRetryAction | null;
   citationRequest?: AssistantCitationRequest | null;
   citationHistoryLoading?: boolean;
   onCiteAssistantText?: (
@@ -362,6 +387,8 @@ interface MessagesTimelineProps {
 // ---------------------------------------------------------------------------
 
 export const MessagesTimeline = memo(function MessagesTimeline({
+  forkActions = null,
+  retryAction = null,
   citationRequest = null,
   citationHistoryLoading = false,
   onCiteAssistantText,
@@ -760,6 +787,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workGroupViewState,
       agentPanelModel,
       onOpenAgents,
+      forkActions,
+      retryAction,
     }),
     [
       readyCitationRequest,
@@ -784,6 +813,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workGroupViewState,
       agentPanelModel,
       onOpenAgents,
+      forkActions,
+      retryAction,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -1595,6 +1626,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             {typeof revertTurnCount === "number" && (
               <RevertUserMessageButton turnCount={revertTurnCount} />
             )}
+            <RetryUserMessageButton messageId={row.message.id} />
+            {!row.message.streaming && ctx.forkActions?.forkableMessageIds.has(row.message.id) ? (
+              <TimelineForkButton boundary={{ kind: "message", messageId: row.message.id }} />
+            ) : null}
             {displayedUserMessage.copyText && (
               <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
             )}
@@ -1602,6 +1637,63 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         </div>
       </div>
     </div>
+  );
+}
+
+function RetryUserMessageButton({ messageId }: { messageId: MessageId }) {
+  const translate = useInterfaceTranslator().message;
+  const ctx = use(TimelineRowCtx);
+  const activity = use(TimelineRowActivityCtx);
+  const action = ctx.retryAction;
+  if (action === null || action.messageId !== messageId) {
+    return null;
+  }
+
+  const label = action.pending
+    ? translate("chat.timeline.retrying")
+    : translate("chat.timeline.retry");
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            disabled={
+              !action.available ||
+              action.pending ||
+              activity.isRevertingCheckpoint ||
+              activity.isWorking
+            }
+            onClick={() => action.onRetry(messageId)}
+            aria-label={label}
+            aria-busy={action.pending || undefined}
+          />
+        }
+      >
+        <RefreshCwIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function TimelineForkButton({ boundary }: { boundary: ThreadForkBoundary }) {
+  const actions = use(TimelineRowCtx).forkActions;
+  if (!actions) return null;
+
+  const boundaryKey = forkBoundaryKey(boundary);
+  const pendingBoundaryKey = actions.pendingBoundary
+    ? forkBoundaryKey(actions.pendingBoundary)
+    : null;
+  return (
+    <ForkChatButton
+      available={actions.available}
+      busy={pendingBoundaryKey === boundaryKey}
+      dispatchPending={pendingBoundaryKey !== null}
+      onFork={() => actions.onFork(boundary)}
+    />
   );
 }
 
@@ -1737,6 +1829,9 @@ function AssistantMessageMeta({
         className,
       )}
     >
+      {!message.streaming && ctx.forkActions?.forkableMessageIds.has(message.id) ? (
+        <TimelineForkButton boundary={{ kind: "message", messageId: message.id }} />
+      ) : null}
       <AssistantCopyButton
         message={message}
         showCopyButton={showCopyButton}
@@ -1787,6 +1882,9 @@ function ProposedPlanTimelineRow({
 
   return (
     <div className="min-w-0 px-1 py-0.5">
+      {ctx.forkActions?.forkableProposedPlanIds.has(row.proposedPlan.id) ? (
+        <TimelineForkButton boundary={{ kind: "proposed-plan", planId: row.proposedPlan.id }} />
+      ) : null}
       <ProposedPlanCard
         planMarkdown={row.proposedPlan.planMarkdown}
         environmentId={ctx.activeThreadEnvironmentId}
