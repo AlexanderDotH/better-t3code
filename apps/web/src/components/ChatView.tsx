@@ -337,6 +337,7 @@ import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
 import { resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
+import { ChatTranscriptCopyButton } from "./chat/ChatTranscriptCopyButton";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { expandedImageKey, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -2364,6 +2365,8 @@ export default function ChatView(props: ChatViewProps) {
   });
   const pullRequestsCapabilityKnown = serverConfig !== null;
   const supportsPullRequests = serverConfig?.environment.capabilities.pullRequests === true;
+  const supportsAgentWorkflowExtensions =
+    (serverConfig?.environment.capabilities.agentWorkflowVersion ?? 0) >= 1;
   const supportsThreadForking = serverConfig?.environment.capabilities.threadForking === true;
   const supportsInterruptedTurnRetry =
     serverConfig?.environment.capabilities.interruptedTurnRetry === true;
@@ -8426,6 +8429,17 @@ export default function ChatView(props: ChatViewProps) {
             {...(routeKind === "draft" && draftId ? { draftId } : {})}
             activeThreadTitle={activeThread.title}
             isServerThread={isServerThread}
+            transcriptCopyButton={
+              isServerThread && supportsAgentWorkflowExtensions ? (
+                <ChatTranscriptCopyButton
+                  key={`${environmentId}:${activeThread.id}`}
+                  environmentId={environmentId}
+                  threadId={activeThread.id}
+                  activeTurnInProgress={isWorking || !latestTurnSettled}
+                  environmentUnavailable={activeEnvironmentUnavailable}
+                />
+              ) : null
+            }
             activeProjectName={activeProject?.title}
             activeProjectCwd={activeProject?.workspaceRoot ?? null}
             activeProjectFaviconPath={activeProject?.faviconPath ?? null}
