@@ -16,6 +16,15 @@ function environment(
   phase: EnvironmentPresentation["connection"]["phase"],
 ): EnvironmentPresentation {
   const connectionId = `bearer:${ENVIRONMENT_ID}`;
+  const failure =
+    phase === "error"
+      ? {
+          kind: "blocked" as const,
+          reason: "configuration" as const,
+          detail: "Connection failed.",
+          traceId: "trace-1",
+        }
+      : null;
   return {
     environmentId: ENVIRONMENT_ID,
     label: "Julius's MacBook Pro",
@@ -39,8 +48,18 @@ function environment(
     },
     connection: {
       phase,
-      error: phase === "error" ? "Connection failed." : null,
-      traceId: phase === "error" ? "trace-1" : null,
+      network: phase === "offline" ? "offline" : "online",
+      stage: null,
+      attempt: 1,
+      failure,
+      retry:
+        phase === "error"
+          ? { mode: "manual", at: null }
+          : phase === "reconnecting"
+            ? { mode: "automatic", at: null }
+            : { mode: "none", at: null },
+      error: failure?.detail ?? null,
+      traceId: failure?.traceId ?? null,
     },
     serverConfig: null,
   };

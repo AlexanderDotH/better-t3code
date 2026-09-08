@@ -5,8 +5,11 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 import { Alert } from "react-native";
 
+import { loadEnvironmentCacheFreshnesses } from "../connection/environment-cache-store";
+import * as Runtime from "../lib/runtime";
 import { useConnectionController } from "../features/connection/useConnectionController";
 import { environmentPresentations } from "./presentation";
+import { useEnvironments } from "../state/environments";
 import { useWorkspaceState } from "../state/workspace";
 import type { SavedRemoteConnection } from "../lib/connection";
 import { appAtomRegistry } from "./atom-registry";
@@ -25,6 +28,14 @@ const pendingConnectionErrorAtom = Atom.make<string | null>(null).pipe(
   Atom.keepAlive,
   Atom.withLabel("mobile:pending-connection-error"),
 );
+
+const cacheFreshnessRuntime = Atom.runtime(Runtime.runtimeContextLayer);
+
+function createEnvironmentCacheFreshnessAtom(environmentIds: ReadonlyArray<EnvironmentId>) {
+  return cacheFreshnessRuntime
+    .atom(loadEnvironmentCacheFreshnesses(environmentIds))
+    .pipe(Atom.withLabel(`mobile:environment-cache-freshness:${environmentIds.join(",")}`));
+}
 
 export function setPendingConnectionError(message: string | null): void {
   appAtomRegistry.set(pendingConnectionErrorAtom, message);
@@ -86,19 +97,33 @@ export function useRemoteEnvironmentRuntime(
 
 export function useRemoteConnectionStatus() {
   const workspace = useWorkspaceState();
+  const { environments } = useEnvironments();
   const pendingConnectionError = useAtomValue(pendingConnectionErrorAtom);
+  const cacheFreshnessAtom = useMemo(
+    () =>
+      createEnvironmentCacheFreshnessAtom(
+        environments.map((environment) => environment.environmentId),
+      ),
+    [environments],
+  );
+  const cacheFreshnessResult = useAtomValue(cacheFreshnessAtom);
+  const cacheFreshnessByEnvironmentId = AsyncResult.isSuccess(cacheFreshnessResult)
+    ? cacheFreshnessResult.value
+    : null;
   const connectedEnvironments = useMemo<ReadonlyArray<ConnectedEnvironmentSummary>>(
     () =>
-      workspace.environments.map((environment) => ({
+      environments.map((environment) => ({
         environmentId: environment.environmentId,
-        environmentLabel: environment.environmentLabel,
-        displayUrl: environment.displayUrl,
-        isRelayManaged: environment.isRelayManaged,
-        connectionState: environment.connectionState,
-        connectionError: environment.connectionError,
-        connectionErrorTraceId: environment.connectionErrorTraceId,
+        environmentLabel: environment.label,
+        displayUrl: environment.displayUrl ?? "",
+        isRelayManaged: environment.relayManaged,
+        connectionState: environment.connection.phase,
+        connectionError: environment.connection.error,
+        connectionErrorTraceId: environment.connection.traceId,
+        connection: environment.connection,
+        cacheUpdatedAt: cacheFreshnessByEnvironmentId?.get(environment.environmentId) ?? null,
       })),
-    [workspace.environments],
+    [cacheFreshnessByEnvironmentId, environments],
   );
 
   return {
