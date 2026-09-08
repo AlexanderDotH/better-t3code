@@ -3,6 +3,7 @@ import {
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
+  ORCHESTRATION_WS_METHODS,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -48,6 +49,106 @@ describe("RPC authorization scopes", () => {
       AuthOrchestrationReadScope,
     );
     expect(requiredScopeForRpcMethod(WS_METHODS.agentSessionsImport)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
+  it("separates Knowledge Graph observation from lifecycle mutations", () => {
+    for (const method of [
+      WS_METHODS.knowledgeGraphSubscribe,
+      WS_METHODS.knowledgeGraphQuery,
+      WS_METHODS.knowledgeGraphNodeContent,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+
+    for (const method of [
+      WS_METHODS.knowledgeGraphRebuild,
+      WS_METHODS.knowledgeGraphCancel,
+      WS_METHODS.knowledgeGraphPause,
+      WS_METHODS.knowledgeGraphClear,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+  });
+
+  it("classifies local feature reads without granting mutation access", () => {
+    const readMethods = [
+      ORCHESTRATION_WS_METHODS.exportThreadTranscript,
+      WS_METHODS.speechGetProjectProfile,
+      WS_METHODS.speechListProjectProfiles,
+      WS_METHODS.chatImportDiscover,
+      WS_METHODS.harnessChatSyncSources,
+      WS_METHODS.harnessChatSyncList,
+      WS_METHODS.harnessChatSyncStatus,
+      WS_METHODS.skillsList,
+      WS_METHODS.skillsDiscoverImportSources,
+      WS_METHODS.mcpList,
+      WS_METHODS.mcpDiscoverImportSources,
+      WS_METHODS.mcpExportCursorJson,
+      WS_METHODS.mcpProviderStatus,
+      WS_METHODS.mcpRuntimeContexts,
+      WS_METHODS.mcpRuntimeContextChanges,
+      WS_METHODS.mcpRuntimeSnapshot,
+      WS_METHODS.mcpRuntimeChanges,
+      WS_METHODS.mcpRuntimeServerDetails,
+      WS_METHODS.gitSubscribeWorkbench,
+      WS_METHODS.gitGetRepositoryInsights,
+      WS_METHODS.gitListHistory,
+      WS_METHODS.gitGetCommitDetail,
+      WS_METHODS.gitGetCommitFileDiff,
+      WS_METHODS.gitGetChangesDiff,
+      WS_METHODS.gitGetInteractiveRebasePlan,
+      WS_METHODS.gitListUndoSnapshots,
+    ];
+
+    for (const method of readMethods) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+  });
+
+  it("requires operate scope for local feature mutations", () => {
+    const operateMethods = [
+      WS_METHODS.serverCreateAssemblyAiStreamingToken,
+      WS_METHODS.serverProviderAuthConnect,
+      WS_METHODS.serverProviderAuthSetCredential,
+      WS_METHODS.serverProviderAuthDisconnect,
+      WS_METHODS.speechIndexProject,
+      WS_METHODS.speechCreateBasicProjectProfile,
+      WS_METHODS.speechTranslateTranscript,
+      WS_METHODS.promptImprove,
+      WS_METHODS.planReviewParallelism,
+      WS_METHODS.chatImportRun,
+      WS_METHODS.harnessChatSyncRun,
+      WS_METHODS.skillsImportSources,
+      WS_METHODS.skillsCreate,
+      WS_METHODS.skillsUpdate,
+      WS_METHODS.skillsRename,
+      WS_METHODS.skillsDelete,
+      WS_METHODS.skillsSetEnabled,
+      WS_METHODS.mcpCreate,
+      WS_METHODS.mcpUpdate,
+      WS_METHODS.mcpDelete,
+      WS_METHODS.mcpSetEnabled,
+      WS_METHODS.mcpSetProviderEnabled,
+      WS_METHODS.mcpRuntimeAction,
+      WS_METHODS.mcpImportCursorJson,
+      WS_METHODS.mcpImportSources,
+      WS_METHODS.gitApplyChangeSelection,
+      WS_METHODS.gitRunWorkbenchOperation,
+      WS_METHODS.gitCreateUndoSnapshot,
+      WS_METHODS.gitRestoreUndoSnapshot,
+      WS_METHODS.gitUpsertQueuedWorkflow,
+      WS_METHODS.gitCancelQueuedWorkflow,
+    ];
+
+    for (const method of operateMethods) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+  });
+
+  it("requires permission to operate on a thread before uploading feedback", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.providerUploadFeedback)).toBe(
       AuthOrchestrationOperateScope,
     );
   });
