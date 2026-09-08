@@ -40,6 +40,10 @@ class FakeLauncherProcess {
   emit(message: ServiceLauncherParentMessage) {
     for (const listener of this.#listeners.get("message") ?? []) listener(message);
   }
+
+  disconnect() {
+    for (const listener of this.#listeners.get("disconnect") ?? []) listener();
+  }
 }
 
 const makeClient = (host: FakeLauncherProcess, currentVersion: string) =>
@@ -95,6 +99,45 @@ it.effect("returns the launcher-generated ID only after update acceptance", () =
       updateId: "launcher-id",
     });
     expect(yield* Fiber.join(requested)).toBe("launcher-id");
+  }),
+);
+
+it.effect("exposes one typed shutdown request for root-scope interruption", () =>
+  Effect.gen(function* () {
+    const host = new FakeLauncherProcess({
+      protocol: SERVICE_LAUNCHER_PROTOCOL,
+      childVersion: "1.0.0",
+    });
+    const client = yield* makeClient(host, "1.0.0");
+    const requested = yield* Effect.forkChild(client.awaitShutdownRequest, {
+      startImmediately: true,
+    });
+    yield* Effect.yieldNow;
+
+    host.emit({ type: "shutdown", requestId: "stop-1" });
+
+    expect(yield* Fiber.join(requested)).toBe("stop-1");
+  }),
+);
+
+it.effect("fails the shutdown wait when a managed launcher disconnects", () =>
+  Effect.gen(function* () {
+    const host = new FakeLauncherProcess({
+      protocol: SERVICE_LAUNCHER_PROTOCOL,
+      childVersion: "1.0.0",
+    });
+    const client = yield* makeClient(host, "1.0.0");
+    const requested = yield* Effect.forkChild(client.awaitShutdownRequest, {
+      startImmediately: true,
+    });
+    yield* Effect.yieldNow;
+
+    host.disconnect();
+
+    expect(yield* Fiber.join(requested).pipe(Effect.flip)).toMatchObject({
+      _tag: "ServiceLauncherClientError",
+      operation: "disconnect",
+    });
   }),
 );
 

@@ -1,7 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import * as NodeFS from "node:fs";
 import {
   HostProcessArguments,
+  HostProcessEnvironment,
   HostProcessExecutablePath,
   HostProcessPlatform,
   HostProcessUserId,
@@ -20,6 +22,7 @@ import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
 import {
   parseServiceState,
   SERVICE_LAUNCHER_PROTOCOL,
+  SERVICE_STOP_PROTOCOL,
   serviceStateHasPendingUpdate,
 } from "./serviceProtocol.ts";
 
@@ -59,6 +62,89 @@ const macPlan = {
 const macInstallerPath =
   "/opt/homebrew/bin:/Users/theo/.npm-global/bin:/Users/theo/.nvm/versions/node/v22.16.0/bin:/usr/bin:/bin";
 const macRenderOptions = { homeDir: "/Users/theo", environmentPath: macInstallerPath };
+
+const windowsPlan = {
+  nodePath: "C:\\Program Files\\nodejs\\node.exe",
+  launcherPath: "C:\\Users\\Alex & Co\\.t3\\runtime\\service-launcher.mjs",
+  baseDir: "C:\\Users\\Alex & Co\\.t3",
+  logPath: "C:\\Users\\Alex & Co\\.t3\\userdata\\logs\\boot-service.log",
+  unitPath: "C:\\Users\\Alex & Co\\.t3\\runtime\\t3code-task.xml",
+};
+
+it("renders a per-user Windows task with no elevation or runtime limit", () => {
+  const task = BootService.renderBootServiceTaskXml(windowsPlan, {
+    homeDir: "C:\\Users\\Alex & Co",
+    userId: "WORKSTATION\\alex",
+  });
+
+  expect(task.startsWith(`<?xml version="1.0" encoding="UTF-16"?>`)).toBe(true);
+  expect(task).toContain("<LogonTrigger>\n      <Enabled>true</Enabled>");
+  expect(task.match(/<Repetition>\n        <Interval>PT1M<\/Interval>/g)).toHaveLength(2);
+  expect(task).toContain("<UserId>WORKSTATION\\alex</UserId>");
+  expect(task).toContain("<LogonType>InteractiveToken</LogonType>");
+  expect(task).toContain("<RunLevel>LeastPrivilege</RunLevel>");
+  expect(task).toContain("<Hidden>true</Hidden>");
+  expect(task).toContain("<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>");
+  expect(task).toContain("<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>");
+  expect(task).toContain("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>");
+  expect(task).toContain(
+    "<RestartOnFailure>\n      <Interval>PT1M</Interval>\n      <Count>255</Count>",
+  );
+  expect(task).toContain("<Command>C:\\Program Files\\nodejs\\node.exe</Command>");
+  expect(task).toContain(
+    '"C:\\Users\\Alex &amp; Co\\.t3\\runtime\\service-launcher.mjs" --base-dir "C:\\Users\\Alex &amp; Co\\.t3" --log-path "C:\\Users\\Alex &amp; Co\\.t3\\userdata\\logs\\boot-service.log"',
+  );
+});
+
+it("resolves the native Windows profile and domain user without HOME", () => {
+  expect(
+    BootService.resolveBootServiceHomeDirectory({
+      platform: "win32",
+      configuredHome: "",
+      environment: { USERPROFILE: "C:\\Users\\Alex" },
+    }),
+  ).toBe("C:\\Users\\Alex");
+  expect(
+    BootService.resolveBootServiceHomeDirectory({
+      platform: "win32",
+      configuredHome: "",
+      environment: { HOMEDRIVE: "D:", HOMEPATH: "\\Profiles\\Alex" },
+    }),
+  ).toBe("D:\\Profiles\\Alex");
+  expect(
+    BootService.resolveWindowsTaskUserId({ USERDOMAIN: "WORKSTATION", USERNAME: "alex" }),
+  ).toBe("WORKSTATION\\alex");
+  expect(
+    BootService.parseWhoamiUserSid(
+      '"WORKSTATION\\alex","S-1-5-21-111111111-222222222-333333333-1001"\r\n',
+    ),
+  ).toBe("S-1-5-21-111111111-222222222-333333333-1001");
+  expect(
+    BootService.renderBootServiceTaskXml(windowsPlan, {
+      homeDir: "C:\\Users\\Alex",
+      userId: "WORK&STATION\\alex",
+    }),
+  ).toContain("<UserId>WORK&amp;STATION\\alex</UserId>");
+});
+
+it("passes explicit launcher paths on every service manager", () => {
+  const unit = BootService.renderBootServiceUnit({
+    nodePath: "/usr/bin/node",
+    launcherPath: "/home/theo/.t3/runtime/service-launcher.mjs",
+    baseDir: "/home/theo/.t3",
+    logPath: "/home/theo/.t3/userdata/logs/boot-service.log",
+    unitPath: "/home/theo/.config/systemd/user/t3code.service",
+  });
+  const plist = BootService.renderBootServicePlist(macPlan, macRenderOptions);
+
+  expect(unit).toContain(
+    "--base-dir /home/theo/.t3 --log-path /home/theo/.t3/userdata/logs/boot-service.log",
+  );
+  expect(plist).toContain("<string>--base-dir</string>\n    <string>/Users/theo/.t3</string>");
+  expect(plist).toContain(
+    "<string>--log-path</string>\n    <string>/Users/theo/.t3/userdata/logs/boot-service.log</string>",
+  );
+});
 
 it("keeps launchd pinned to the stable launcher rather than a versioned server", () => {
   const plist = BootService.renderBootServicePlist(macPlan, macRenderOptions);
@@ -127,13 +213,18 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
 
   const commands: string[] = [];
   const timeouts = new Map<string, unknown>();
+  let windowsTaskRegistered = false;
   const control: {
+    acknowledgeStopRequest:
+      | ((input: { readonly requestId: string; readonly acknowledgementPath: string }) => void)
+      | undefined;
     failCommand: string | undefined;
     stateAfterStop?: string;
     linger: string;
     enabled: boolean;
     active: boolean;
   } = {
+    acknowledgeStopRequest: undefined,
     failCommand: undefined,
     linger: "yes",
     enabled: true,
@@ -146,7 +237,11 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       const command = `${input.command} ${input.args.join(" ")}`;
       commands.push(command);
       timeouts.set(command, input.timeout);
-      const failed = command === control.failCommand;
+      const failed =
+        command === control.failCommand ||
+        (command.startsWith("schtasks.exe /Query ") && !windowsTaskRegistered);
+      if (!failed && command.startsWith("schtasks.exe /Create ")) windowsTaskRegistered = true;
+      if (!failed && command.startsWith("schtasks.exe /Delete ")) windowsTaskRegistered = false;
       if (!failed && command === "loginctl enable-linger --no-ask-password 501")
         control.linger = "yes";
       if (!failed && command === "systemctl --user enable t3code.service") control.enabled = true;
@@ -160,15 +255,17 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       }
       return {
         stdout:
-          input.args[1] === "--version"
-            ? "t3 v1.2.3\n"
-            : input.command === "loginctl" && input.args[0] === "show-user"
-              ? `${control.linger}\n`
-              : input.args[1] === "is-enabled"
-                ? control.enabled
-                  ? "enabled\n"
-                  : "disabled\n"
-                : "",
+          input.command === "whoami.exe"
+            ? '"WORKSTATION\\alex","S-1-5-21-111-222-333-1001"\n'
+            : input.args[1] === "--version"
+              ? "t3 v1.2.3\n"
+              : input.command === "loginctl" && input.args[0] === "show-user"
+                ? `${control.linger}\n`
+                : input.args[1] === "is-enabled"
+                  ? control.enabled
+                    ? "enabled\n"
+                    : "disabled\n"
+                  : "",
         stderr: "",
         code: ChildProcessSpawner.ExitCode(
           failed || (input.args[1] === "is-active" && !control.active) ? 1 : 0,
@@ -188,6 +285,8 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       cliVersion: "1.2.3",
       host: {
         execPath: "/usr/bin/node",
+        stopAcknowledgementTimeout: Duration.zero,
+        onStopRequestWritten: (stopRequest) => control.acknowledgeStopRequest?.(stopRequest),
         ...(usePinnedLauncher ? {} : { launcherSourcePath: sourceLauncher }),
       },
     }).pipe(
@@ -195,19 +294,29 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       Effect.provide(
         Layer.mergeAll(
           Layer.succeed(HostProcessPlatform, platform),
+          Layer.succeed(HostProcessEnvironment, {
+            HOME: platform === "win32" ? "" : home,
+            USERPROFILE: home,
+            USERNAME: "alex",
+            USERDOMAIN: "WORKSTATION",
+            ...(environmentPath === "" ? {} : { PATH: environmentPath }),
+          }),
           Layer.succeed(HostProcessUserId, 501),
           Layer.succeed(HostProcessExecutablePath, "/usr/bin/node"),
           Layer.succeed(HostProcessArguments, ["/usr/bin/node", path.join(home, "bin.mjs")]),
           ConfigProvider.layer(
             ConfigProvider.fromEnv({
-              env: { HOME: home, ...(environmentPath === "" ? {} : { PATH: environmentPath }) },
+              env: {
+                HOME: platform === "win32" ? "" : home,
+                ...(environmentPath === "" ? {} : { PATH: environmentPath }),
+              },
             }),
           ),
         ),
       ),
     );
   const service = yield* makeService();
-  return { service, makeService, fs, statePath, commands, timeouts, control, runtime };
+  return { service, makeService, fs, home, statePath, commands, timeouts, control, runtime };
 });
 
 it.layer(NodeServices.layer)("boot service install", (it) => {
@@ -518,11 +627,68 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("fails closed on Windows", () =>
+  it.effect("installs, verifies, repairs, and uninstalls a per-user Windows task", () =>
     Effect.gen(function* () {
-      const { service } = yield* makeHarness("win32");
-      expect((yield* service.status).supported).toBe(false);
-      expect((yield* service.install().pipe(Effect.flip))._tag).toBe("BootServiceUnsupportedError");
+      const { service, home, commands, control } = yield* makeHarness("win32");
+      const plan = yield* service.install();
+
+      const taskFile = NodeFS.readFileSync(plan.unitPath);
+      expect([...taskFile.subarray(0, 2)]).toEqual([0xff, 0xfe]);
+      const taskXml = taskFile.toString("utf16le");
+      expect(plan.unitPath.endsWith("runtime/t3code-task.xml")).toBe(true);
+      expect(taskXml).toContain(`<WorkingDirectory>${home}</WorkingDirectory>`);
+      expect(taskXml).toContain("<UserId>S-1-5-21-111-222-333-1001</UserId>");
+      expect((yield* service.status).current).toBe(true);
+      expect(commands).toContain(
+        `schtasks.exe /Create /TN ${BootService.BOOT_SERVICE_WINDOWS_TASK_NAME} /XML ${plan.unitPath} /F`,
+      );
+      expect(commands).toContain(
+        `schtasks.exe /Run /TN ${BootService.BOOT_SERVICE_WINDOWS_TASK_NAME}`,
+      );
+      expect(commands.some((command) => command.includes("/RL HIGHEST"))).toBe(false);
+      expect(commands.some((command) => command.includes("/RU SYSTEM"))).toBe(false);
+
+      const query = `schtasks.exe /Query /TN ${BootService.BOOT_SERVICE_WINDOWS_TASK_NAME} /XML`;
+      control.failCommand = query;
+      expect((yield* service.status).installed).toBe(false);
+      control.failCommand = undefined;
+
+      yield* service.install();
+      expect(commands).toContain(
+        `schtasks.exe /End /TN ${BootService.BOOT_SERVICE_WINDOWS_TASK_NAME}`,
+      );
+      expect(yield* service.uninstall).toBe(true);
+      expect(commands).toContain(
+        `schtasks.exe /Delete /TN ${BootService.BOOT_SERVICE_WINDOWS_TASK_NAME} /F`,
+      );
+    }),
+  );
+
+  it.effect("force kills only the acknowledged launcher tree after the stop timeout", () =>
+    Effect.gen(function* () {
+      const { service, fs, commands, control } = yield* makeHarness("win32");
+      const plan = yield* service.install();
+      commands.length = 0;
+      control.acknowledgeStopRequest = ({ requestId, acknowledgementPath }) =>
+        NodeFS.writeFileSync(
+          acknowledgementPath,
+          JSON.stringify({
+            protocol: SERVICE_STOP_PROTOCOL,
+            id: requestId,
+            pid: 4242,
+            status: "received",
+          }),
+        );
+
+      yield* service.install();
+
+      expect(commands).toContain(
+        `schtasks.exe /End /TN ${BootService.BOOT_SERVICE_WINDOWS_TASK_NAME}`,
+      );
+      expect(commands).toContain("taskkill.exe /PID 4242 /T /F");
+      expect(yield* fs.readFileString(plan.logPath)).toContain(
+        "Graceful Windows service shutdown timed out",
+      );
     }),
   );
 
@@ -537,6 +703,9 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           path.join("Library", "LaunchAgents", "com.t3tools.t3code.service.plist"),
         ),
       ).toBe(true);
+      expect(yield* fs.readFileString(plan.unitPath)).toContain(
+        `    <key>PATH</key>\n    <string>${macInstallerPath}:/usr/local/bin:/usr/sbin:/sbin</string>`,
+      );
       expect(yield* fs.readFileString(plan.unitPath)).toContain(
         `    <key>PATH</key>\n    <string>${macInstallerPath}:/usr/local/bin:/usr/sbin:/sbin</string>`,
       );

@@ -4,14 +4,75 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { Launcher, readServiceState, writeServiceState } from "./serviceLauncher.ts";
+import {
+  Launcher,
+  parseServiceLauncherArguments,
+  readServiceState,
+  shouldSyncServiceDirectory,
+  writeServiceState,
+} from "./serviceLauncher.ts";
 import {
   compareExactServiceVersions,
+  decodeServiceStopAcknowledgement,
+  decodeServiceStopRequest,
   decodeServiceState,
   isExactServiceVersion,
   SERVICE_LAUNCHER_PROTOCOL,
+  SERVICE_STOP_ACK_FILE,
   SERVICE_STOP_MARKER_FILE,
+  SERVICE_STOP_PROTOCOL,
+  SERVICE_STOP_REQUEST_FILE,
 } from "./cloud/serviceProtocol.ts";
+
+it("requires explicit launcher paths while retaining the legacy home fallback", () => {
+  assert.deepEqual(
+    parseServiceLauncherArguments(
+      ["--base-dir", "C:\\Users\\Alex\\.t3", "--log-path", "C:\\logs\\boot.log"],
+      {},
+    ),
+    { baseDir: "C:\\Users\\Alex\\.t3", logPath: "C:\\logs\\boot.log" },
+  );
+  assert.deepEqual(parseServiceLauncherArguments([], { T3CODE_HOME: "/home/alex/.t3" }), {
+    baseDir: "/home/alex/.t3",
+  });
+  assert.throws(() => parseServiceLauncherArguments(["--base-dir"], {}));
+});
+
+it("keeps file fsync on Windows while skipping unsupported directory fsync", () => {
+  assert.isFalse(shouldSyncServiceDirectory("win32"));
+  assert.isTrue(shouldSyncServiceDirectory("linux"));
+  assert.isTrue(shouldSyncServiceDirectory("darwin"));
+});
+
+it("strictly decodes correlated stop requests and acknowledgements", () => {
+  assert.deepEqual(decodeServiceStopRequest({ protocol: SERVICE_STOP_PROTOCOL, id: "request-1" }), {
+    protocol: SERVICE_STOP_PROTOCOL,
+    id: "request-1",
+  });
+  assert.isUndefined(decodeServiceStopRequest({ protocol: SERVICE_STOP_PROTOCOL, id: "" }));
+  assert.deepEqual(
+    decodeServiceStopAcknowledgement({
+      protocol: SERVICE_STOP_PROTOCOL,
+      id: "request-1",
+      pid: 42,
+      status: "stopped",
+    }),
+    {
+      protocol: SERVICE_STOP_PROTOCOL,
+      id: "request-1",
+      pid: 42,
+      status: "stopped",
+    },
+  );
+  assert.isUndefined(
+    decodeServiceStopAcknowledgement({
+      protocol: SERVICE_STOP_PROTOCOL,
+      id: "request-1",
+      pid: 0,
+      status: "stopped",
+    }),
+  );
+});
 
 it("accepts only exact semantic versions", () => {
   for (const version of ["0.0.0", "1.2.3", "1.2.3-alpha.1", "1.2.3-0", "1.2.3+001"]) {
@@ -119,6 +180,82 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       assert.isTrue(yield* fs.exists(path.join(root, "runtime", SERVICE_STOP_MARKER_FILE)));
       yield* Effect.promise(() => stopping);
       yield* Effect.promise(() => running);
+    }),
+  );
+
+  it.effect("acknowledges a file stop request only after the child has stopped", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-stop-request-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const versionDir = path.join(root, "runtime", "versions", "1.0.0");
+      const entryPath = path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs");
+      yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fs.writeFileString(entryPath, "setInterval(() => {}, 1_000);\n");
+      yield* fs.writeFileString(path.join(versionDir, ".install-complete"), "1.0.0\n");
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+      yield* fs.writeFileString(
+        path.join(root, "runtime", SERVICE_STOP_REQUEST_FILE),
+        JSON.stringify({ protocol: SERVICE_STOP_PROTOCOL, id: "stop-1" }),
+      );
+
+      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      yield* Effect.promise(() => launcher.run());
+
+      const acknowledgement = decodeServiceStopAcknowledgement(
+        JSON.parse(yield* fs.readFileString(path.join(root, "runtime", SERVICE_STOP_ACK_FILE))),
+      );
+      assert.deepEqual(acknowledgement, {
+        protocol: SERVICE_STOP_PROTOCOL,
+        id: "stop-1",
+        pid: process.pid,
+        status: "stopped",
+      });
+      assert.isTrue(yield* fs.exists(path.join(root, "runtime", SERVICE_STOP_MARKER_FILE)));
+    }),
+  );
+
+  it.effect("appends child stdout and stderr directly to the configured service log", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-log-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const logPath = path.join(root, "logs", "boot-service.log");
+      const versionDir = path.join(root, "runtime", "versions", "1.0.0");
+      const entryPath = path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs");
+      yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fs.writeFileString(
+        entryPath,
+        'process.stdout.write(`server-out home=${process.env.T3CODE_HOME}\\n`); process.stderr.write("server-error\\n"); process.exit(1);\n',
+      );
+      yield* fs.writeFileString(path.join(versionDir, ".install-complete"), "1.0.0\n");
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        { logPath },
+      );
+      yield* Effect.promise(() => launcher.run().catch(() => undefined));
+
+      const log = yield* fs.readFileString(logPath);
+      assert.include(log, "[service-launcher] started");
+      assert.include(log, "started active t3@1.0.0");
+      assert.include(log, "server-out");
+      assert.include(log, `home=${root}`);
+      assert.include(log, "server-error");
     }),
   );
 
