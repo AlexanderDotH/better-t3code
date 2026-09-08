@@ -56,6 +56,46 @@ We need to be on the same page with terminology. When communicating, use this la
 - **turn** means one user-to-agent cycle, including follow-up work such as checkpointing.
 - **T3 home** means the base data directory. Runtime state normally lives below its userdata directory.
 
+## Hard local safety
+
+These rules override general repository guidance on this machine:
+
+- `/Users/alexanderheuschkel/Projects/better-t3code` is the only canonical checkout on this machine. Sibling checkouts and temporary integration worktrees are donor/reference copies only. Carry useful source changes here before publishing or producing an installable artifact.
+- Never start, stop, restart, replace, hand off, or otherwise control a T3 Code process from an agent session. This includes installed apps, desktop clients, dev servers, background jobs, delayed restart jobs, and processes owned by another session.
+- Never invoke `app2unit`, `systemctl`, or a user-scope handoff to manage T3 Code. Never arrange a delayed command to do so after the agent exits.
+- Never kill by pattern: no `pkill -f`, `pgrep | kill`, or killing a PID found from a name, path, or worktree match. Kill only a PID captured when you spawned the process, or a port owner found with `ss -H -ltnp` after confirming `/proc/<pid>/cwd` is this worktree.
+- Never open `~/.t3/userdata` read-write, run a server against it, migrate it, clean it, or otherwise mutate it. Read-only inspection and a consistent copy into this checkout's gitignored `.t3` are allowed. Copy in, never symlink or copy back.
+- Never set `VITE_HTTP_URL` or `VITE_WS_URL` for development. Dev is single-origin and Vite proxies `/api`, `/ws`, `/oauth`, and `/.well-known`; fixed localhost origins break remote clients.
+
+### Required local artifact refresh
+
+After successfully verifying a source change that affects the shipped application, automatically refresh the currently installed local T3 Code application before reporting completion unless the developer explicitly opts out. This section is standing authorization for the build and on-disk app-bundle replacement; do not ask for confirmation each time. Perform the refresh in the current agent session, never as a detached or delayed job. Documentation-only and test-only changes are exempt.
+
+On this macOS machine:
+
+1. Build the current checkout for the host architecture with `vp run dist:desktop:dmg`.
+2. Mount the generated DMG without opening the app.
+3. Replace only `~/Applications/Better T3 Code (Alpha).app` with the freshly built app bundle, then detach the DMG.
+4. Do not start, stop, restart, or otherwise control the running app. The developer restarts it manually when ready; that next launch must use the newly installed build.
+
+- Preserve all user data. Never modify or remove T3 Code data under `~/Library/Application Support`, `~/.t3`, or any other user-data location during the app-bundle refresh.
+- Validate the source and destination bundle identifiers before replacement; both must be `com.t3tools.t3code`.
+- Stage the new bundle beside the destination and replace the destination atomically where practical, so a failed copy does not leave a partial installation.
+- Replacing the app bundle on disk authorizes only the install refresh. It never authorizes process management.
+
+On Linux, run in order:
+
+```bash
+scripts/build-and-install-t3code-local-linux.sh --no-install-deps
+scripts/install-t3code-local-linux.sh --confirm-install apps/desktop/release/T3Code.AppImage
+```
+
+- Preserve the selected install profile. Pass `--profile` only when the developer explicitly requests a profile change.
+- Refresh only `~/.local/share/t3code-local`, `~/.local/bin/t3code-local`, and the corresponding user-local desktop entry and icon.
+- Never modify `/opt/t3code-git/t3code`, `/opt/t3code-bin/t3code`, package-managed installations, or immutable flags.
+- Replacing the AppImage on disk never authorizes process management. The running process keeps its mounted AppImage until the developer restarts it.
+- Despite its legacy name, `build-and-install-t3code-local-linux.sh` only builds and verifies. `install-t3code-local-linux.sh` performs the allowed on-disk refresh and must not manage a process.
+
 ## The three ways to hurt yourself
 
 1. **Killing by pattern.** Never `pkill -f`, `pgrep | kill`, or `kill` a PID you found by matching a name, path, or worktree string. Your own agent process has this worktree's path in its argv, and this machine runs several other dev servers at once. Kill only a PID you captured at spawn, or the owner of your port from `ss -H -ltnp` after confirming `/proc/<pid>/cwd` is your worktree.
