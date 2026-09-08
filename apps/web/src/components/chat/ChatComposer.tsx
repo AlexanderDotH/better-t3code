@@ -1,3 +1,7 @@
+import {
+  resolveThreadAbortPresentation,
+  type ThreadAbortPresentation,
+} from "@t3tools/client-runtime/state/thread-abort";
 import { useAtomValue } from "@effect/atom-react";
 import { resolveBetterT3FeatureFlag } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -1123,6 +1127,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
     isComplete: boolean;
   } | null;
   isRunning: boolean;
+  abortPresentation: ThreadAbortPresentation;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -1151,6 +1156,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         />
       ) : null}
       <ComposerPrimaryActions
+        abortPresentation={props.abortPresentation}
         compact={props.compact}
         pendingAction={props.pendingAction}
         isRunning={props.isRunning}
@@ -3003,6 +3009,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     showPlanFollowUpPrompt,
   ]);
 
+  const abortPresentation = resolveThreadAbortPresentation(activeThread?.session ?? null);
   const voiceServerConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const voiceApiKey = settings.speechTranscription.assemblyAi.apiKey;
   const voiceInputConfigured = resolveAssemblyAiVoiceInputAvailability({
@@ -4709,8 +4716,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return () => window.removeEventListener("dragend", onWindowDragEnd);
   }, [isDragOverComposer]);
   const handleInterruptPrimaryAction = useCallback(() => {
-    void onInterrupt();
-  }, [onInterrupt]);
+    if (!abortPresentation.disabled) void onInterrupt();
+  }, [abortPresentation.disabled, onInterrupt]);
   const handleImplementPlanInNewThreadPrimaryAction = useCallback(() => {
     void onImplementPlanInNewThread();
   }, [onImplementPlanInNewThread]);
@@ -5153,6 +5160,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           ) : null}
                           {activePendingProgress?.activeQuestion?.multiSelect ? (
                             <ComposerPrimaryActions
+                              abortPresentation={abortPresentation}
                               compact
                               pendingAction={pendingPrimaryAction}
                               isRunning={false}
@@ -5788,6 +5796,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     className="absolute bottom-0 right-0 flex items-center justify-end gap-1"
                   >
                     <ComposerPrimaryActions
+                      abortPresentation={abortPresentation}
                       compact
                       pendingAction={pendingPrimaryAction}
                       isRunning={false}
@@ -5904,6 +5913,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     />
                   ) : null}
                   <ComposerFooterPrimaryActions
+                    abortPresentation={abortPresentation}
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
                     activeContextWindow={
                       settings.contextWindowMeterEnabled ? activeContextWindow : null
