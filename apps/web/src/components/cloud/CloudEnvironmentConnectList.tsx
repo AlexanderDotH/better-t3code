@@ -1,3 +1,4 @@
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import {
   type EnvironmentConnectionPresentation,
@@ -76,6 +77,7 @@ export function CloudEnvironmentConnectRows({
     readonly onChange: (environmentId: EnvironmentId, selected: boolean) => void;
   };
 }) {
+  const translator = useInterfaceTranslator();
   const environmentsState = useRelayEnvironmentDiscovery();
   const registerEnvironment = useAtomCommand(environmentCatalog.register, {
     reportFailure: false,
@@ -129,8 +131,10 @@ export function CloudEnvironmentConnectRows({
     if (result._tag === "Success") {
       toastManager.add({
         type: "success",
-        title: "Environment added",
-        description: `Connecting to ${environment.label} through T3 Connect.`,
+        title: translator.message("cloud.environment.addedTitle"),
+        description: translator.message("cloud.environment.connectingDescription", {
+          environment: environment.label,
+        }),
       });
       return true;
     }
@@ -139,17 +143,19 @@ export function CloudEnvironmentConnectRows({
     }
     const cause = squashAtomCommandFailure(result);
     const message =
-      cause instanceof Error ? cause.message : "Could not connect the T3 Connect environment.";
+      cause instanceof Error
+        ? cause.message
+        : translator.message("cloud.environment.connectFailureFallback");
     const traceId = findErrorTraceId(cause);
     console.error("[t3-connect] Could not connect environment", { message, traceId, cause });
     toastManager.add({
       type: "error",
-      title: "Could not connect environment",
+      title: translator.message("cloud.environment.connectFailed"),
       description: message,
       data: traceId
         ? {
             secondaryActionProps: {
-              children: "Copy trace ID",
+              children: translator.message("cloud.action.copyTraceId"),
               onClick: () => void navigator.clipboard?.writeText(traceId),
             },
           }
@@ -242,13 +248,13 @@ export function CloudEnvironmentConnectRows({
     // A failed or offline discovery is not "no environments" — misreporting it
     // as empty would read as the user's devices having disappeared.
     const discoveryProblem = environmentsState.offline
-      ? "You appear to be offline."
+      ? translator.message("cloud.environment.offline")
       : (Option.getOrNull(environmentsState.error)?.message ?? null);
     if (discoveryProblem !== null && !environmentsState.refreshing) {
       return (
         <div className={ITEM_ROW_CLASSNAME}>
           <p className="text-sm font-medium text-destructive">
-            Could not load T3 Connect environments
+            {translator.message("cloud.environment.loadFailed")}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">{discoveryProblem}</p>
           <Button
@@ -257,7 +263,7 @@ export function CloudEnvironmentConnectRows({
             className="mt-3"
             onClick={() => void refreshRelayEnvironments()}
           >
-            Try again
+            {translator.message("cloud.action.tryAgain")}
           </Button>
         </div>
       );
@@ -268,7 +274,7 @@ export function CloudEnvironmentConnectRows({
   return visibleEnvironments.map(({ environment, availability, error }) => {
     const savedEnvironment = savedById.get(environment.environmentId);
     const savedConnection = savedEnvironment
-      ? presentSavedCloudEnvironmentConnection(savedEnvironment.connection)
+      ? presentSavedCloudEnvironmentConnection(savedEnvironment.connection, translator)
       : null;
     const dotClassName = savedConnection
       ? savedConnection.tone === "connected"
@@ -288,12 +294,13 @@ export function CloudEnvironmentConnectRows({
     const statusText = savedConnection
       ? savedConnection.statusText
       : availability === "online"
-        ? "Available · Relay online"
+        ? translator.message("cloud.environment.availableRelayOnline")
         : availability === "offline"
-          ? "Available · Relay offline"
+          ? translator.message("cloud.environment.availableRelayOffline")
           : availability === "checking"
-            ? "Available · Checking relay status…"
-            : (Option.getOrNull(error)?.message ?? "Available · Relay status unavailable");
+            ? translator.message("cloud.environment.availableRelayChecking")
+            : (Option.getOrNull(error)?.message ??
+              translator.message("cloud.environment.availableRelayUnavailable"));
     if (selection) {
       return (
         <label
@@ -321,7 +328,7 @@ export function CloudEnvironmentConnectRows({
               )}
             >
               {connectingEnvironmentIds.has(environment.environmentId)
-                ? "Connecting…"
+                ? translator.message("cloud.environment.connecting")
                 : (savedConnection?.buttonLabel ??
                   (availability === "online"
                     ? "Available"
@@ -353,12 +360,13 @@ export function CloudEnvironmentConnectRows({
                   savedConnection
                     ? savedConnection.statusText
                     : availability === "online"
-                      ? "Relay online"
+                      ? translator.message("cloud.environment.relayOnline")
                       : availability === "offline"
-                        ? "Relay offline"
+                        ? translator.message("cloud.environment.relayOffline")
                         : availability === "checking"
                           ? "Checking relay status"
-                          : (Option.getOrNull(error)?.message ?? "Relay status unavailable")
+                          : (Option.getOrNull(error)?.message ??
+                            translator.message("cloud.environment.relayUnavailable"))
                 }
               />
               <p className="truncate text-sm font-medium">{environment.label}</p>
@@ -386,7 +394,9 @@ export function CloudEnvironmentConnectRows({
               disabled={connectingEnvironmentIds.size > 0}
               onClick={() => void connectEnvironment(environment)}
             >
-              {connectingEnvironmentIds.has(environment.environmentId) ? "Connecting…" : "Connect"}
+              {connectingEnvironmentIds.has(environment.environmentId)
+                ? translator.message("cloud.environment.connecting")
+                : translator.message("cloud.environment.connect")}
             </Button>
           )}
         </div>

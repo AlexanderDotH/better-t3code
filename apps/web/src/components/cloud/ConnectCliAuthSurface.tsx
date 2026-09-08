@@ -11,6 +11,7 @@ import {
 } from "../../cloud/connectCliAuth";
 import { isElectron } from "../../env";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { AuthSurfaceShell } from "../auth/AuthSurfaceShell";
 import { resolveClerkSignInProps } from "../clerk/authRedirect";
 import { Button } from "../ui/button";
@@ -38,10 +39,9 @@ function ConnectCliAuthMessage({
 }
 
 const invalidLinkMessage = {
-  eyebrow: "Authorization request",
-  title: "This connect link is incomplete",
-  description:
-    "The link is missing its authorization request. Re-run `t3 connect` in your terminal and open the freshly printed URL.",
+  eyebrow: "connectCli.authorizationRequest",
+  title: "connectCli.incomplete.title",
+  description: "connectCli.incomplete.description",
 } as const;
 
 /**
@@ -51,6 +51,7 @@ const invalidLinkMessage = {
  * straight to the waiting CLI, and the hosted callback page otherwise.
  */
 export function ConnectCliAuthorizeSurface() {
+  const translator = useInterfaceTranslator();
   const [request] = useState(() => readConnectAuthorizeRequest(new URL(window.location.href)));
   const clerk = useClerk();
   const { isLoaded, isSignedIn } = useAuth();
@@ -95,7 +96,11 @@ export function ConnectCliAuthorizeSurface() {
   if (!request) {
     return (
       <AuthSurfaceShell>
-        <ConnectCliAuthMessage {...invalidLinkMessage} />
+        <ConnectCliAuthMessage
+          eyebrow={translator.message(invalidLinkMessage.eyebrow)}
+          title={translator.message(invalidLinkMessage.title)}
+          description={translator.message(invalidLinkMessage.description)}
+        />
       </AuthSurfaceShell>
     );
   }
@@ -105,20 +110,20 @@ export function ConnectCliAuthorizeSurface() {
       <ConnectCliAuthMessage
         eyebrow={
           request.loopbackPort === undefined
-            ? "Step 1 of 2 · Browser authorization"
-            : "Browser authorization"
+            ? translator.message("connectCli.browserStepNumbered")
+            : translator.message("connectCli.browserStep")
         }
-        title="Connecting your terminal"
+        title={translator.message("connectCli.connecting.title")}
         description={
           isSignedIn
-            ? "Redirecting to authorize T3 Connect for your CLI…"
-            : "Sign in to continue authorizing T3 Connect for your CLI."
+            ? translator.message("connectCli.connecting.redirecting")
+            : translator.message("connectCli.connecting.signIn")
         }
       />
       {isLoaded && !isSignedIn ? (
         <div className="mt-6">
           <Button type="button" onClick={openSignIn}>
-            Sign in
+            {translator.message("cloud.action.signIn")}
           </Button>
         </div>
       ) : null}
@@ -131,6 +136,7 @@ export function ConnectCliAuthorizeSurface() {
  * user enters in the waiting terminal.
  */
 export function ConnectCliCallbackSurface() {
+  const translator = useInterfaceTranslator();
   const [result] = useState(readConnectCliCallbackResult);
   const [expectedState] = useState(readConnectCliAuthState);
   const { user } = useUser();
@@ -140,9 +146,9 @@ export function ConnectCliCallbackSurface() {
     return (
       <AuthSurfaceShell>
         <ConnectCliAuthMessage
-          eyebrow="Step 2 of 2 · Terminal handoff"
-          title="Authorization did not complete"
-          description="No authorization code was returned. Re-run `t3 connect` in your terminal and try again."
+          eyebrow={translator.message("connectCli.terminalStep")}
+          title={translator.message("connectCli.callback.missingTitle")}
+          description={translator.message("connectCli.callback.missingDescription")}
         />
       </AuthSurfaceShell>
     );
@@ -156,9 +162,9 @@ export function ConnectCliCallbackSurface() {
     return (
       <AuthSurfaceShell>
         <ConnectCliAuthMessage
-          eyebrow="Step 2 of 2 · Terminal handoff"
-          title="This code belongs to a different request"
-          description="This authorization response does not match a connect request started in this browser. Re-run `t3 connect` in your terminal and open the freshly printed URL in this browser."
+          eyebrow={translator.message("connectCli.terminalStep")}
+          title={translator.message("connectCli.callback.mismatchTitle")}
+          description={translator.message("connectCli.callback.mismatchDescription")}
         />
       </AuthSurfaceShell>
     );
@@ -170,21 +176,25 @@ export function ConnectCliCallbackSurface() {
   return (
     <AuthSurfaceShell>
       <ConnectCliAuthMessage
-        eyebrow="Step 2 of 2 · Terminal handoff"
-        title="Almost connected"
+        eyebrow={translator.message("connectCli.terminalStep")}
+        title={translator.message("connectCli.callback.title")}
         description={
           accountLabel
-            ? `Enter this code in your waiting terminal to connect it as ${accountLabel}.`
-            : "Enter this code in your waiting terminal to finish connecting."
+            ? translator.message("connectCli.callback.accountDescription", {
+                account: accountLabel,
+              })
+            : translator.message("connectCli.callback.description")
         }
       />
 
       <div className="mt-6 overflow-hidden rounded-xl border border-border/80 bg-background/65">
         <div className="flex items-center justify-between border-b border-border/70 px-4 py-2.5">
           <span className="text-[10px] font-semibold tracking-[0.16em] text-muted-foreground uppercase">
-            One-time authorization code
+            {translator.message("connectCli.callback.codeLabel")}
           </span>
-          <span className="font-mono text-[10px] text-muted-foreground">expires shortly</span>
+          <span className="font-mono text-[10px] text-muted-foreground">
+            {translator.message("connectCli.callback.expiresSoon")}
+          </span>
         </div>
         <code
           className="block p-4 font-mono text-sm leading-relaxed break-all select-all"
@@ -196,13 +206,12 @@ export function ConnectCliCallbackSurface() {
 
       <div className="mt-4 flex items-center gap-3">
         <Button type="button" onClick={() => copyToClipboard(authCode)}>
-          {isCopied ? "Copied!" : "Copy authorization code"}
+          {translator.message(isCopied ? "connectCli.callback.copied" : "connectCli.callback.copy")}
         </Button>
       </div>
 
       <p className="mt-6 text-xs leading-relaxed text-muted-foreground">
-        Only enter this code in a terminal session you started yourself. Anyone holding it can link
-        their machine to your T3 Connect account while it is valid.
+        {translator.message("connectCli.callback.securityNotice")}
       </p>
     </AuthSurfaceShell>
   );

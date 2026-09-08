@@ -1,3 +1,4 @@
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 
 import type { ReactNode } from "react";
@@ -48,6 +49,7 @@ export function ClerkUserProfileRefreshButton({
   readonly isPending: boolean;
   readonly onClick: () => void;
 }) {
+  const translator = useInterfaceTranslator();
   return (
     <Button
       size="sm"
@@ -57,7 +59,7 @@ export function ClerkUserProfileRefreshButton({
       onClick={onClick}
     >
       <RefreshIcon aria-hidden="true" className="size-3.5" refreshing={isPending} />
-      Refresh
+      {translator.message("settings.common.refresh")}
     </Button>
   );
 }
