@@ -8,7 +8,17 @@ use sysinfo::{
     MINIMUM_CPU_UPDATE_INTERVAL, Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind,
 };
 
-const PROTOCOL_VERSION: u32 = 3;
+mod process_control;
+#[cfg(target_os = "windows")]
+mod windows_process_control;
+
+#[cfg(not(target_os = "windows"))]
+use process_control::UnsupportedProcessControlBackend as PlatformProcessControlBackend;
+use process_control::{ProcessControl, ProcessControlOutcome, ProcessIdentity};
+#[cfg(target_os = "windows")]
+use windows_process_control::WindowsProcessControlBackend as PlatformProcessControlBackend;
+
+const PROTOCOL_VERSION: u32 = 4;
 const MIN_SAMPLE_INTERVAL_MS: u64 = 250;
 const MAX_SAMPLE_INTERVAL_MS: u64 = 60_000;
 const PROCESS_START_TIME_PRECISION_MS: u64 = 1_000;
@@ -75,6 +85,18 @@ enum Command {
         request_id: String,
         window_ms: u64,
     },
+    SuspendProcessTree {
+        version: u32,
+        request_id: String,
+        lease_id: String,
+        processes: Vec<ProcessIdentity>,
+    },
+    ResumeProcessTree {
+        version: u32,
+        request_id: String,
+        lease_id: String,
+        processes: Vec<ProcessIdentity>,
+    },
     Shutdown {
         version: u32,
     },
@@ -90,6 +112,8 @@ impl Command {
             | Self::SampleNow { version, .. }
             | Self::ProcessTable { version, .. }
             | Self::ReadHistory { version, .. }
+            | Self::SuspendProcessTree { version, .. }
+            | Self::ResumeProcessTree { version, .. }
             | Self::Shutdown { version } => *version,
         }
     }
@@ -110,6 +134,7 @@ struct Capabilities {
     io_bytes: bool,
     process_start_time: bool,
     process_tree: bool,
+    process_suspend_resume: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -178,6 +203,15 @@ impl ProcessSample {
     }
 }
 
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HostMemorySample {
+    total_bytes: u64,
+    available_bytes: u64,
+    swap_total_bytes: u64,
+    swap_free_bytes: u64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SnapshotEvent {
@@ -190,6 +224,7 @@ struct SnapshotEvent {
     scanned_process_count: usize,
     retained_process_count: usize,
     inaccessible_process_count: usize,
+    memory: HostMemorySample,
     #[serde(skip_serializing_if = "Option::is_none")]
     request_id: Option<String>,
     external_processes: Vec<ExternalProcess>,
@@ -240,6 +275,28 @@ struct ErrorEvent {
     code: &'static str,
     message: String,
     recoverable: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum ProcessControlOperation {
+    Suspend,
+    Resume,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProcessControlResultEvent<'a> {
+    version: u32,
+    #[serde(rename = "type")]
+    event_type: &'static str,
+    request_id: &'a str,
+    lease_id: &'a str,
+    operation: ProcessControlOperation,
+    success: bool,
+    resume_required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -421,7 +478,15 @@ impl Collector {
             true,
             process_discovery_refresh_kind(),
         );
+        self.system.refresh_memory();
         self.cpu_baseline_refreshed_at = Some(Instant::now());
+
+        let memory = HostMemorySample {
+            total_bytes: self.system.total_memory(),
+            available_bytes: self.system.available_memory(),
+            swap_total_bytes: self.system.total_swap(),
+            swap_free_bytes: self.system.free_swap(),
+        };
 
         let rows = self
             .system
@@ -553,6 +618,7 @@ impl Collector {
                 tracked_process_count,
                 processes.len(),
             ),
+            memory,
             request_id,
             external_processes,
             processes,
@@ -785,6 +851,28 @@ fn write_history(
     Ok(())
 }
 
+fn write_process_control_result(
+    writer: &mut impl Write,
+    request_id: &str,
+    lease_id: &str,
+    operation: ProcessControlOperation,
+    outcome: ProcessControlOutcome,
+) -> io::Result<()> {
+    write_event(
+        writer,
+        &ProcessControlResultEvent {
+            version: PROTOCOL_VERSION,
+            event_type: "processControlResult",
+            request_id,
+            lease_id,
+            operation,
+            success: outcome.success,
+            resume_required: outcome.resume_required,
+            error: outcome.error,
+        },
+    )
+}
+
 fn main() -> io::Result<()> {
     let mut writer = BufWriter::new(io::stdout().lock());
     write_event(
@@ -804,6 +892,7 @@ fn main() -> io::Result<()> {
                 io_bytes: true,
                 process_start_time: true,
                 process_tree: true,
+                process_suspend_resume: cfg!(target_os = "windows"),
             },
         },
     )?;
@@ -814,6 +903,7 @@ fn main() -> io::Result<()> {
     let mut config: Option<CollectorConfig> = None;
     let mut next_sample_at: Option<Instant> = None;
     let mut streaming_enabled = false;
+    let mut process_control = ProcessControl::new(PlatformProcessControlBackend);
 
     loop {
         if next_sample_at.is_some_and(|deadline| deadline <= Instant::now()) {
@@ -955,6 +1045,36 @@ fn main() -> io::Result<()> {
                             )?;
                         }
                     }
+                    Command::SuspendProcessTree {
+                        request_id,
+                        lease_id,
+                        processes,
+                        ..
+                    } => {
+                        let outcome = process_control.suspend(&lease_id, processes);
+                        write_process_control_result(
+                            &mut writer,
+                            &request_id,
+                            &lease_id,
+                            ProcessControlOperation::Suspend,
+                            outcome,
+                        )?;
+                    }
+                    Command::ResumeProcessTree {
+                        request_id,
+                        lease_id,
+                        processes,
+                        ..
+                    } => {
+                        let outcome = process_control.resume(&lease_id, processes);
+                        write_process_control_result(
+                            &mut writer,
+                            &request_id,
+                            &lease_id,
+                            ProcessControlOperation::Resume,
+                            outcome,
+                        )?;
+                    }
                     Command::Shutdown { .. } => return Ok(()),
                 }
             }
@@ -1048,7 +1168,7 @@ mod tests {
     #[test]
     fn decodes_protocol_commands() {
         let configure = serde_json::from_str::<Command>(
-            r#"{"version":3,"type":"configure","rootPid":42,"sampleIntervalMs":1000,"externalProcesses":[{"pid":7}]}"#,
+            r#"{"version":4,"type":"configure","rootPid":42,"sampleIntervalMs":1000,"externalProcesses":[{"pid":7}]}"#,
         )
         .expect("configure command");
 
@@ -1068,7 +1188,7 @@ mod tests {
         }
 
         let read_history = serde_json::from_str::<Command>(
-            r#"{"version":3,"type":"readHistory","requestId":"history-1","windowMs":60000}"#,
+            r#"{"version":4,"type":"readHistory","requestId":"history-1","windowMs":60000}"#,
         )
         .expect("read history command");
         assert!(matches!(
@@ -1088,6 +1208,88 @@ mod tests {
             process_table,
             Command::ProcessTable { request_id, .. } if request_id == "processes-1"
         ));
+    }
+
+    #[test]
+    fn decodes_process_control_commands() {
+        let suspend = serde_json::from_str::<Command>(
+            r#"{"version":4,"type":"suspendProcessTree","requestId":"suspend-1","leaseId":"lease-1","processes":[{"pid":7,"startTimeMs":123000}]}"#,
+        )
+        .expect("suspend process tree command");
+
+        assert!(matches!(
+            suspend,
+            Command::SuspendProcessTree {
+                request_id,
+                lease_id,
+                processes,
+                ..
+            } if request_id == "suspend-1"
+                && lease_id == "lease-1"
+                && processes == vec![process_control::ProcessIdentity {
+                    pid: 7,
+                    start_time_ms: 123_000,
+                }]
+        ));
+
+        let resume = serde_json::from_str::<Command>(
+            r#"{"version":4,"type":"resumeProcessTree","requestId":"resume-1","leaseId":"lease-1","processes":[{"pid":7,"startTimeMs":123000}]}"#,
+        )
+        .expect("resume process tree command");
+
+        assert!(matches!(
+            resume,
+            Command::ResumeProcessTree {
+                request_id,
+                lease_id,
+                processes,
+                ..
+            } if request_id == "resume-1"
+                && lease_id == "lease-1"
+                && processes.len() == 1
+        ));
+    }
+
+    #[test]
+    fn serializes_process_control_results_with_an_optional_error() {
+        let success = serde_json::to_value(ProcessControlResultEvent {
+            version: PROTOCOL_VERSION,
+            event_type: "processControlResult",
+            request_id: "request-1",
+            lease_id: "lease-1",
+            operation: ProcessControlOperation::Suspend,
+            success: true,
+            resume_required: false,
+            error: None,
+        })
+        .expect("success result");
+        assert_eq!(
+            success,
+            serde_json::json!({
+                "version": 4,
+                "type": "processControlResult",
+                "requestId": "request-1",
+                "leaseId": "lease-1",
+                "operation": "suspend",
+                "success": true,
+                "resumeRequired": false,
+            })
+        );
+
+        let failure = serde_json::to_value(ProcessControlResultEvent {
+            version: PROTOCOL_VERSION,
+            event_type: "processControlResult",
+            request_id: "request-2",
+            lease_id: "lease-1",
+            operation: ProcessControlOperation::Resume,
+            success: false,
+            resume_required: true,
+            error: Some("unsupported".to_owned()),
+        })
+        .expect("failure result");
+        assert_eq!(failure["operation"], "resume");
+        assert_eq!(failure["resumeRequired"], true);
+        assert_eq!(failure["error"], "unsupported");
     }
 
     #[test]
@@ -1134,6 +1336,7 @@ mod tests {
                 scanned_process_count: 0,
                 retained_process_count: 0,
                 inaccessible_process_count: 0,
+                memory: HostMemorySample::default(),
                 request_id: Some("request".to_owned()),
                 external_processes: vec![ExternalProcess {
                     pid: 7,
@@ -1175,6 +1378,7 @@ mod tests {
             scanned_process_count: 0,
             retained_process_count: 0,
             inaccessible_process_count: 0,
+            memory: HostMemorySample::default(),
             request_id: None,
             external_processes: Vec::new(),
             processes: Vec::new(),
@@ -1228,6 +1432,7 @@ mod tests {
                     scanned_process_count: 1,
                     retained_process_count: 1,
                     inaccessible_process_count: 0,
+                    memory: HostMemorySample::default(),
                     request_id: None,
                     external_processes: Vec::new(),
                     processes: vec![ProcessSample {
@@ -1268,6 +1473,7 @@ mod tests {
             scanned_process_count: 0,
             retained_process_count: 0,
             inaccessible_process_count: 0,
+            memory: HostMemorySample::default(),
             request_id: None,
             external_processes,
             processes: Vec::new(),
