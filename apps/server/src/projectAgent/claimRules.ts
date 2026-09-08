@@ -72,10 +72,7 @@ function pathClaimsConflict(left: string, right: string): boolean {
   );
 }
 
-export function projectAgentClaimsConflict(
-  left: ProjectAgentClaim,
-  right: ProjectAgentClaim,
-): boolean {
+function projectAgentClaimsConflict(left: ProjectAgentClaim, right: ProjectAgentClaim): boolean {
   if (left.kind !== right.kind) return false;
   return left.kind === "path"
     ? pathClaimsConflict(left.path, (right as Extract<ProjectAgentClaim, { kind: "path" }>).path)

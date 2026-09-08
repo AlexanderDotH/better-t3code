@@ -167,7 +167,9 @@ interface HookInput {
 export interface CodexResourceGovernorHookOptions {
   readonly input?: NodeStream.Readable;
   readonly environment?: NodeJS.ProcessEnv;
-  readonly fetch?: typeof globalThis.fetch;
+  readonly fetch?: (
+    ...args: Parameters<typeof globalThis.fetch>
+  ) => ReturnType<typeof globalThis.fetch>;
   readonly write?: (value: string) => void;
   readonly wait?: (milliseconds: number) => Promise<void>;
 }

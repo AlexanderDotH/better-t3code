@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 
+import { ProviderProcessSignalError } from "./ProviderProcessInventory.ts";
 import {
   makeDelegatingProviderProcessTreeController,
   makePosixProviderProcessTreeController,
@@ -37,7 +38,13 @@ describe("ProviderProcessTreeController", () => {
       const controller = makePosixProviderProcessTreeController((identity, signal) => {
         signals.push(`${signal}:${identity.pid}`);
         if (signal === "SIGSTOP" && identity.pid === 102) {
-          return Effect.fail(new Error("PID identity changed before suspend"));
+          return Effect.fail(
+            new ProviderProcessSignalError({
+              pid: identity.pid,
+              signal,
+              cause: new Error("PID identity changed before suspend"),
+            }),
+          );
         }
         return Effect.void;
       });
@@ -54,10 +61,22 @@ describe("ProviderProcessTreeController", () => {
     Effect.gen(function* () {
       const controller = makePosixProviderProcessTreeController((identity, signal) => {
         if (signal === "SIGSTOP" && identity.pid === 102) {
-          return Effect.fail(new Error("suspend refused"));
+          return Effect.fail(
+            new ProviderProcessSignalError({
+              pid: identity.pid,
+              signal,
+              cause: new Error("suspend refused"),
+            }),
+          );
         }
         if (signal === "SIGCONT" && identity.pid === 101) {
-          return Effect.fail(new Error("rollback refused"));
+          return Effect.fail(
+            new ProviderProcessSignalError({
+              pid: identity.pid,
+              signal,
+              cause: new Error("rollback refused"),
+            }),
+          );
         }
         return Effect.void;
       });
@@ -74,7 +93,13 @@ describe("ProviderProcessTreeController", () => {
       const controller = makePosixProviderProcessTreeController((identity, signal) => {
         signals.push(`${signal}:${identity.pid}`);
         if (signal === "SIGCONT" && identity.pid === 102) {
-          return Effect.fail(new Error("resume refused"));
+          return Effect.fail(
+            new ProviderProcessSignalError({
+              pid: identity.pid,
+              signal,
+              cause: new Error("resume refused"),
+            }),
+          );
         }
         return Effect.void;
       });

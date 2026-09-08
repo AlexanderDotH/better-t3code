@@ -1,8 +1,8 @@
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { UserButton, useAuth } from "@clerk/react";
 import { LogInIcon, ServerIcon, SmartphoneIcon } from "lucide-react";
 
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
-import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { MobileClientsUserProfilePage } from "./MobileClientsUserProfilePage";
 import { T3ConnectUserProfilePage } from "./T3ConnectUserProfilePage";
@@ -55,8 +55,8 @@ function ConfiguredT3ConnectSidebarAvatar() {
 
 function ConfiguredT3ConnectSidebarSignIn() {
   const { isLoaded, isSignedIn } = useAuth();
-  const openAuthPrompt = useT3ConnectAuthPrompt();
   const translator = useInterfaceTranslator();
+  const openAuthPrompt = useT3ConnectAuthPrompt();
 
   if (!isLoaded || isSignedIn) return null;
 

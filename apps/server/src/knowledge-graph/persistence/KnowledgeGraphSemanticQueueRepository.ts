@@ -18,7 +18,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-export class KnowledgeGraphSemanticQueueRepositoryError extends Schema.TaggedErrorClass<KnowledgeGraphSemanticQueueRepositoryError>()(
+export class KnowledgeGraphSemanticQueueRepositoryError extends Schema.TaggedError<KnowledgeGraphSemanticQueueRepositoryError>()(
   "KnowledgeGraphSemanticQueueRepositoryError",
   {
     operation: Schema.String,
@@ -409,9 +409,8 @@ const make = Effect.gen(function* () {
 
   const completeClaimExpected = (input: KnowledgeGraphSemanticClaimCompletionV1) =>
     commitClaimExpected({ ...input, commit: Effect.void }).pipe(
-      Effect.map(
-        (result): KnowledgeGraphClaimCompletionStatus =>
-          result.status === "committed" ? "committed" : "stale",
+      Effect.map((result): KnowledgeGraphClaimCompletionStatus =>
+        result.status === "committed" ? "committed" : "stale",
       ),
     );
 

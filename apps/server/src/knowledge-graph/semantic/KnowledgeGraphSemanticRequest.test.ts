@@ -1,3 +1,4 @@
+import { KnowledgeGraphScopeId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import type { KnowledgeGraphSemanticClaimV1, KnowledgeGraphSnapshotV1 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -16,7 +17,7 @@ describe("Knowledge Graph semantic request", () => {
       } as unknown as KnowledgeGraphSemanticClaimV1;
       const snapshot = {
         scope: {
-          scopeId: "scope-empty",
+          scopeId: KnowledgeGraphScopeId.make("scope-empty"),
           environmentId: "environment-empty",
         },
         revision: 0,

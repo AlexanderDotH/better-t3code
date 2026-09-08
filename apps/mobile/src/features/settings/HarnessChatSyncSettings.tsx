@@ -13,21 +13,12 @@ import type {
   ProjectId,
 } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Modal,
-  Pressable,
-  ScrollView,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
-import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { agentSettingsEnvironment } from "../../state/agent-settings";
 import { useEnvironmentServerConfig } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -51,9 +42,11 @@ import {
   type HarnessChatSelectionState,
 } from "./harness-chat-sync-settings";
 
-function failureMessage(result: { readonly _tag: string }, fallback: string): string {
-  if (result._tag !== "Failure") return fallback;
-  const error = squashAtomCommandFailure(result as never);
+function failureMessage(
+  result: Parameters<typeof squashAtomCommandFailure>[0],
+  fallback: string,
+): string {
+  const error = squashAtomCommandFailure(result);
   return error instanceof Error ? error.message : fallback;
 }
 
@@ -114,7 +107,6 @@ function HarnessChatRow(props: {
   readonly projectsById: ReadonlyMap<ProjectId, EnvironmentProject>;
   readonly onToggle: () => void;
 }) {
-  const iconColor = useUniwindTheme()["--color-icon"];
   const status = harnessChatStatusState(props.chat);
   const detailParts = [
     `${props.chat.messageCount} messages`,
@@ -136,7 +128,7 @@ function HarnessChatRow(props: {
           <SymbolView
             name="checkmark"
             size={15}
-            tintColor={iconColor}
+            tintColorClassName="accent-icon"
             type="monochrome"
             weight="semibold"
           />
@@ -302,7 +294,6 @@ function SupportedHarnessChatSource(props: {
   );
   const [resolverSessionId, setResolverSessionId] = useState<HarnessChatSessionId | null>(null);
   const requestSequence = useRef(0);
-  const placeholderColor = useUniwindTheme()["--color-foreground-muted"];
   const projectsById = useMemo(
     () => new Map(props.projects.map((project) => [project.id, project])),
     [props.projects],
@@ -544,7 +535,7 @@ function SupportedHarnessChatSource(props: {
             onChangeText={setQueryDraft}
             onSubmitEditing={() => setQuery(queryDraft.trim())}
             placeholder={translator.message("mobile.settings.harness.searchChats")}
-            placeholderTextColor={placeholderColor}
+
             returnKeyType="search"
             value={queryDraft}
           />

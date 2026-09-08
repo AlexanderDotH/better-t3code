@@ -169,7 +169,7 @@ export const OpenAiDriver: ProviderDriver<OpenAiSettings, OpenAiDriverEnv> = {
       }).pipe(Effect.map(stampIdentity));
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OpenAiSettings>>({
-        maintenanceCapabilities: MAINTENANCE,
+        resolveMaintenance: () => Effect.succeed(MAINTENANCE),
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,

@@ -3,7 +3,6 @@
 import type { PreviewAnnotationPayload, ScopedThreadRef } from "@t3tools/contracts";
 
 import type { ComposerImageAttachment } from "~/composerDraftStore";
-import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./PreviewPanelShell";
@@ -29,13 +28,12 @@ export function PreviewPanel({
   visible,
   onSendAnnotation,
 }: Props) {
-  const translate = useInterfaceTranslator().message;
   if (!isPreviewSupportedInRuntime()) {
     return (
       <PreviewPanelShell mode={mode}>
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
           <p className="max-w-sm text-sm text-muted-foreground">
-            {translate("browser.preview.desktopOnly")}
+            Preview is only available in the T3 Code desktop app.
           </p>
         </div>
       </PreviewPanelShell>

@@ -2,10 +2,10 @@ import * as Schema from "effect/Schema";
 
 import { IsoDateTime, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-export const ASSEMBLY_AI_CONTEXT_PROMPT_MAX_CHARS = 1_750;
-export const ASSEMBLY_AI_KEYTERM_MAX_CHARS = 50;
-export const ASSEMBLY_AI_KEYTERM_MAX_COUNT = 100;
-export const PROJECT_TEXT_TRANSFORM_MAX_CHARS = 16_000;
+const ASSEMBLY_AI_CONTEXT_PROMPT_MAX_CHARS = 1_750;
+const ASSEMBLY_AI_KEYTERM_MAX_CHARS = 50;
+const ASSEMBLY_AI_KEYTERM_MAX_COUNT = 100;
+const PROJECT_TEXT_TRANSFORM_MAX_CHARS = 16_000;
 
 export const ProjectSpeechProfileSource = Schema.Literals(["indexed", "basic"]);
 export type ProjectSpeechProfileSource = typeof ProjectSpeechProfileSource.Type;
@@ -46,7 +46,7 @@ export const ProjectSpeechProfileListResult = Schema.Struct({
 });
 export type ProjectSpeechProfileListResult = typeof ProjectSpeechProfileListResult.Type;
 
-export class ProjectSpeechProfileError extends Schema.TaggedErrorClass<ProjectSpeechProfileError>()(
+export class ProjectSpeechProfileError extends Schema.TaggedError<ProjectSpeechProfileError>()(
   "ProjectSpeechProfileError",
   {
     operation: Schema.Literals(["get", "list", "index", "create-basic", "resolve-project"]),
@@ -76,7 +76,7 @@ export const ProjectTextTransformResult = Schema.Struct({
 });
 export type ProjectTextTransformResult = typeof ProjectTextTransformResult.Type;
 
-export class ProjectTextTransformError extends Schema.TaggedErrorClass<ProjectTextTransformError>()(
+export class ProjectTextTransformError extends Schema.TaggedError<ProjectTextTransformError>()(
   "ProjectTextTransformError",
   {
     operation: Schema.Literals(["translate-transcript", "improve-prompt"]),

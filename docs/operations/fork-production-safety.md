@@ -17,6 +17,7 @@ Production automation is disabled unless either condition is true:
 The guard is repeated on every production-capable job in:
 
 - `.github/workflows/release.yml`;
+- `.github/workflows/publish-aur.yml`;
 - `.github/workflows/mobile-eas-production.yml`; and
 - `.github/workflows/deploy-relay.yml`.
 

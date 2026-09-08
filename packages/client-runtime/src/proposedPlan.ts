@@ -43,38 +43,6 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
   return previewLines.join("\n");
 }
 
-function sanitizePlanFileSegment(input: string): string {
-  const sanitized = input
-    .toLowerCase()
-    .replace(/[`'".,!?()[\]{}]+/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return sanitized.length > 0 ? sanitized : "plan";
-}
-
-export function buildPlanImplementationPrompt(planMarkdown: string): string {
-  return `PLEASE IMPLEMENT THIS PLAN:\n${planMarkdown.trim()}`;
-}
-
-export function resolvePlanFollowUpSubmission(input: { draftText: string; planMarkdown: string }): {
-  text: string;
-  interactionMode: "default" | "plan";
-} {
-  const trimmedDraftText = input.draftText.trim();
-  return trimmedDraftText.length > 0
-    ? { text: trimmedDraftText, interactionMode: "plan" }
-    : { text: buildPlanImplementationPrompt(input.planMarkdown), interactionMode: "default" };
-}
-
-export function buildPlanImplementationThreadTitle(planMarkdown: string): string {
-  const title = proposedPlanTitle(planMarkdown);
-  return title ? `Implement ${title}` : "Implement plan";
-}
-
-export function buildProposedPlanMarkdownFilename(planMarkdown: string): string {
-  return `${sanitizePlanFileSegment(proposedPlanTitle(planMarkdown) ?? "plan")}.md`;
-}
-
 export function normalizePlanMarkdownForExport(planMarkdown: string): string {
   return `${planMarkdown.trimEnd()}\n`;
 }

@@ -23,18 +23,28 @@ export interface McpWorkspaceCardProps {
   readonly onExpand: () => void;
 }
 
-export function McpWorkspaceCard(props: McpWorkspaceCardProps) {
+export function McpWorkspaceCard({
+  expandButtonRef,
+  expanded,
+  expansionBlocked,
+  onExpand,
+  providerAccentColor,
+  providerDisplayName,
+  providerDriver,
+  summary,
+  workbench,
+}: McpWorkspaceCardProps) {
   const translate = useInterfaceTranslator().message;
-  const live = props.summary.state === "live";
+  const live = summary.state === "live";
   return (
     <article
-      className={cn("mcp-workspace-card", !props.expanded && "h-full")}
-      data-expanded={props.expanded ? "true" : undefined}
+      className={cn("mcp-workspace-card", !expanded && "h-full")}
+      data-expanded={expanded ? "true" : undefined}
       data-mcp-workspace-card="true"
-      data-mcp-workspace-state={props.summary.state}
+      data-mcp-workspace-state={summary.state}
       data-workspace-card-compact-surface="true"
       aria-label={
-        props.expanded
+        expanded
           ? translate("settings.mcp.workspace.title")
           : translate("settings.mcp.workspace.overview")
       }
@@ -42,15 +52,15 @@ export function McpWorkspaceCard(props: McpWorkspaceCardProps) {
       <div
         className="workspace-card-deck__card-content mcp-workspace-card__content"
         data-workspace-card-compact-content="true"
-        hidden={props.expanded}
+        hidden={expanded}
       >
         <header className="mcp-workspace-card__header">
           <div className="mcp-workspace-card__provider">
-            {props.providerDriver ? (
+            {providerDriver ? (
               <ProviderInstanceIcon
-                accentColor={props.providerAccentColor}
-                displayName={props.providerDisplayName}
-                driverKind={props.providerDriver}
+                accentColor={providerAccentColor}
+                displayName={providerDisplayName}
+                driverKind={providerDriver}
                 className="size-5"
                 iconClassName="size-4"
                 showBadge
@@ -59,11 +69,9 @@ export function McpWorkspaceCard(props: McpWorkspaceCardProps) {
               <ServerIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
             )}
             <div className="min-w-0">
-              <strong className="block truncate font-medium text-sm">
-                {props.providerDisplayName}
-              </strong>
+              <strong className="block truncate font-medium text-sm">{providerDisplayName}</strong>
               <span className="block truncate text-muted-foreground text-[11px]">
-                {props.summary.freshnessLabel}
+                {summary.freshnessLabel}
               </span>
             </div>
           </div>
@@ -71,12 +79,12 @@ export function McpWorkspaceCard(props: McpWorkspaceCardProps) {
             <TooltipTrigger
               render={
                 <button
-                  ref={props.expandButtonRef}
+                  ref={expandButtonRef}
                   type="button"
                   className="mcp-workspace-card__expand"
                   aria-label={translate("settings.mcp.workspace.expand")}
-                  disabled={props.expansionBlocked}
-                  onClick={props.onExpand}
+                  disabled={expansionBlocked}
+                  onClick={onExpand}
                 />
               }
             >
@@ -93,37 +101,37 @@ export function McpWorkspaceCard(props: McpWorkspaceCardProps) {
           <strong>
             {live
               ? translate("settings.mcp.workspace.connected", {
-                  connected: props.summary.connectedCount,
-                  expected: props.summary.expectedCount,
+                  connected: summary.connectedCount,
+                  expected: summary.expectedCount,
                 })
-              : props.summary.statusLabel}
+              : summary.statusLabel}
           </strong>
-          <span>{live ? props.summary.statusLabel : props.summary.freshnessLabel}</span>
+          <span>{live ? summary.statusLabel : summary.freshnessLabel}</span>
         </section>
 
         <footer className="mcp-workspace-card__metrics">
           <span>
             {translate("settings.mcp.workspace.configuredServerCount", {
-              count: props.summary.configuredCount,
+              count: summary.configuredCount,
             })}
           </span>
           <span>
-            {props.summary.attentionCount > 0
+            {summary.attentionCount > 0
               ? translate("settings.mcp.workspace.needsAttention", {
-                  count: props.summary.attentionCount,
+                  count: summary.attentionCount,
                 })
               : translate("settings.mcp.workspace.noIssues")}
           </span>
           <span>
-            {props.summary.toolCount === null
+            {summary.toolCount === null
               ? translate("settings.mcp.workspace.toolsUnknown")
               : translate("settings.mcp.workspace.knownToolCount", {
-                  count: props.summary.toolCount,
+                  count: summary.toolCount,
                 })}
           </span>
         </footer>
       </div>
-      {props.expanded ? props.workbench : null}
+      {expanded ? workbench : null}
     </article>
   );
 }

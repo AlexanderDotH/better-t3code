@@ -1,6 +1,4 @@
-import type { EnvironmentApi, EnvironmentId } from "@t3tools/contracts";
-
-import { ensureEnvironmentApi } from "../../environmentApi";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 interface SettingsEnvironmentSelection {
   readonly primaryEnvironmentId: EnvironmentId | null;
@@ -15,7 +13,6 @@ export function resolveSettingsEnvironmentId(
 
 export function requireSettingsEnvironment(selection: SettingsEnvironmentSelection): {
   readonly environmentId: EnvironmentId;
-  readonly api: EnvironmentApi;
 } {
   const environmentId = resolveSettingsEnvironmentId(selection);
   if (environmentId === null) {
@@ -23,6 +20,5 @@ export function requireSettingsEnvironment(selection: SettingsEnvironmentSelecti
   }
   return {
     environmentId,
-    api: ensureEnvironmentApi(environmentId),
   };
 }

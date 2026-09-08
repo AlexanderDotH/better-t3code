@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import {
@@ -54,7 +54,11 @@ export function ProjectMemorySettings(props: ProjectMemorySettingsProps) {
   const unavailable = viewModel.status === "unavailable";
   const editable = canEditProjectMemory(viewModel) && !props.busy;
 
-  useEffect(() => setContent(viewModel.content), [viewModel.content]);
+  const [savedContent, setSavedContent] = useState(viewModel.content);
+  if (savedContent !== viewModel.content) {
+    setSavedContent(viewModel.content);
+    setContent(viewModel.content);
+  }
 
   return (
     <>

@@ -1,6 +1,8 @@
 import type { T3ChatImportRunResult, T3ChatImportSource } from "@t3tools/contracts";
 import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useSettingsCommand, useSettingsMutation } from "./useSettingsMutation";
+import { agentSettingsEnvironment } from "../../state/agentSettings";
+import { useEnvironmentQuery } from "../../state/query";
 import { DatabaseIcon, DownloadIcon, RefreshCwIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -76,15 +78,19 @@ export function ChatImportSettingsPanel() {
   const environmentId = resolveSettingsEnvironmentId(environmentSelection);
   const [lastResult, setLastResult] = useState<T3ChatImportRunResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const sourcesQuery = useQuery({
-    queryKey: ["chatImport", environmentId, "sources"],
-    queryFn: () => requireSettingsEnvironment(environmentSelection).api.chatImport.discover(),
-    enabled: environmentId !== null,
-  });
-  const importMutation = useMutation({
+  const sourcesQuery = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : agentSettingsEnvironment.chatImport.discoverQuery({ environmentId, input: {} }),
+  );
+  const importChats = useSettingsCommand(agentSettingsEnvironment.chatImport.run);
+  const importMutation = useSettingsMutation({
     mutationFn: (source: T3ChatImportSource) =>
-      requireSettingsEnvironment(environmentSelection).api.chatImport.run({
-        sourceId: source.id,
+      importChats({
+        environmentId: requireSettingsEnvironment(environmentSelection).environmentId,
+        input: {
+          sourceId: source.id,
+        },
       }),
     onMutate: () => {
       setLastResult(null);
@@ -110,23 +116,23 @@ export function ChatImportSettingsPanel() {
             size="icon-xs"
             variant="ghost"
             aria-label={translator.message("settings.chatImport.scan")}
-            disabled={sourcesQuery.isFetching || importMutation.isPending}
-            onClick={() => void sourcesQuery.refetch()}
+            disabled={sourcesQuery.isPending || importMutation.isPending}
+            onClick={() => void sourcesQuery.refresh()}
           >
             <RefreshCwIcon
-              className={sourcesQuery.isFetching ? "size-3.5 animate-spin" : "size-3.5"}
+              className={sourcesQuery.isPending ? "size-3.5 animate-spin" : "size-3.5"}
             />
           </Button>
         }
       >
-        {sourcesQuery.isLoading ? (
+        {sourcesQuery.isPending ? (
           <div className="px-5 py-10 text-center text-sm text-muted-foreground">
             {translator.message("settings.chatImport.scanning")}
           </div>
-        ) : sourcesQuery.isError ? (
+        ) : sourcesQuery.error ? (
           <div className="px-5 py-10 text-center text-sm text-destructive">
-            {sourcesQuery.error instanceof Error
-              ? sourcesQuery.error.message
+            {sourcesQuery.error
+              ? sourcesQuery.error
               : translator.message("settings.chatImport.scanFailed")}
           </div>
         ) : sources.length === 0 ? (

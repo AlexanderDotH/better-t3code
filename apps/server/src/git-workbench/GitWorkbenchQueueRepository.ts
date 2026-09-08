@@ -17,7 +17,7 @@ import {
   type GitWorkbenchQueuedWorkflow as QueuedWorkflow,
 } from "./GitWorkbenchQueueModel.ts";
 
-export class GitWorkbenchQueueRepositoryError extends Schema.TaggedErrorClass<GitWorkbenchQueueRepositoryError>()(
+export class GitWorkbenchQueueRepositoryError extends Schema.TaggedError<GitWorkbenchQueueRepositoryError>()(
   "GitWorkbenchQueueRepositoryError",
   {
     operation: Schema.String,

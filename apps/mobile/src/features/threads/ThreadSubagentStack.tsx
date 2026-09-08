@@ -19,11 +19,11 @@ import {
   View,
   type ListRenderItemInfo,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView as NativeSafeAreaView } from "react-native-safe-area-context";
+import { withUniwind } from "uniwind";
 
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
-import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useEnvironmentSubagent } from "../../state/threads";
 import {
   CLOSED_MOBILE_SUBAGENT_HISTORY_STATE,
@@ -39,6 +39,8 @@ import {
 } from "./subagent-presentation";
 import { subagentSurfacePresentation } from "./subagent-surface";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+
+const SafeAreaView = withUniwind(NativeSafeAreaView);
 
 const SUBAGENT_LIST_INITIAL_RENDER_COUNT = 12;
 const SUBAGENT_LIST_RENDER_BATCH_SIZE = 12;
@@ -261,9 +263,6 @@ export const ThreadSubagentStack = memo(function ThreadSubagentStack(props: {
   readonly subagents: ReadonlyArray<OrchestrationSubagentSummary>;
 }) {
   const translator = useMobileInterfaceTranslator();
-  const theme = useUniwindTheme();
-  const iconColor = theme["--color-icon-subtle"];
-  const screenColor = theme["--color-screen"];
   const isDark = useColorScheme() === "dark";
   const routeIsFocused = useIsFocused();
   const surface = subagentSurfacePresentation(Platform.OS === "android" ? "android" : "ios");
@@ -355,7 +354,12 @@ export const ThreadSubagentStack = memo(function ThreadSubagentStack(props: {
           }}
         >
           <View className="h-8 w-8 items-center justify-center rounded-full bg-subtle">
-            <SymbolView name="person.2" size={16} tintColor={iconColor} type="monochrome" />
+            <SymbolView
+              name="person.2"
+              size={16}
+              tintColorClassName="accent-icon-subtle"
+              type="monochrome"
+            />
           </View>
           <View className="min-w-0 flex-1">
             <Text className="font-t3-bold text-sm text-foreground">
@@ -372,7 +376,12 @@ export const ThreadSubagentStack = memo(function ThreadSubagentStack(props: {
                   })}
             </Text>
           </View>
-          <SymbolView name="chevron.right" size={14} tintColor={iconColor} type="monochrome" />
+          <SymbolView
+            name="chevron.right"
+            size={14}
+            tintColorClassName="accent-icon-subtle"
+            type="monochrome"
+          />
         </Pressable>
       ) : (
         <View className="mb-3 flex-row items-center gap-2 px-4">
@@ -400,7 +409,12 @@ export const ThreadSubagentStack = memo(function ThreadSubagentStack(props: {
               });
             }}
           >
-            <SymbolView name="person.2" size={14} tintColor={iconColor} type="monochrome" />
+            <SymbolView
+              name="person.2"
+              size={14}
+              tintColorClassName="accent-icon-subtle"
+              type="monochrome"
+            />
             <Text className="font-t3-bold text-xs text-foreground">{props.subagents.length}</Text>
           </Pressable>
         </View>
@@ -414,14 +428,15 @@ export const ThreadSubagentStack = memo(function ThreadSubagentStack(props: {
           visible
           onRequestClose={closeHistory}
         >
-          <SafeAreaView
-            className="flex-1 bg-screen"
-            edges={surface.safeAreaEdges}
-            style={{ backgroundColor: screenColor }}
-          >
+          <SafeAreaView className="flex-1 bg-screen" edges={surface.safeAreaEdges}>
             <View className="min-h-16 flex-row items-center gap-3 border-b border-border px-4 py-2">
               <View className="h-10 w-10 items-center justify-center rounded-full bg-subtle">
-                <SymbolView name="person.2" size={18} tintColor={iconColor} type="monochrome" />
+                <SymbolView
+                  name="person.2"
+                  size={18}
+                  tintColorClassName="accent-icon-subtle"
+                  type="monochrome"
+                />
               </View>
               <View className="min-w-0 flex-1">
                 <Text className="font-t3-bold text-lg text-foreground">

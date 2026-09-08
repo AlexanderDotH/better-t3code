@@ -1,6 +1,7 @@
 import type {
   EnvironmentId,
   ModelSelection,
+  ProviderInstanceId,
   ProviderDriverKind,
   ProviderOptionDescriptor,
   ProviderOptionSelection,
@@ -91,6 +92,7 @@ import {
   MOBILE_MODEL_FILTER_MIN_TOUCH_TARGET,
   filterOpenRouterProviderCatalog,
   modelFavoriteActionMessageKey,
+  canCommitPendingModel,
   modelMatchesCatalogQuery,
   pendingModelAfterPress,
   performModelFavoriteToggle,
@@ -103,7 +105,11 @@ import {
  * and friends) starts folded so a 300-model catalog cannot bury the list. All
  * provider headers remain user-collapsible.
  */
-const PRIMARY_PROVIDER_DRIVERS: ReadonlySet<string> = new Set(["claudeAgent", "codex"]);
+const PRIMARY_PROVIDER_DRIVERS: ReadonlySet<string> = new Set([
+  "claudeAgent",
+  "codex",
+  "antigravity",
+]);
 /**
  * Keep measured row changes stable, but let catalog mutations use the list's
  * native bounds so a filtered catalog that underflows returns to the top.
@@ -148,8 +154,11 @@ function ModelRow(props: {
       accessibilityLabel={[props.option.label, props.option.subtitle].filter(Boolean).join(", ")}
       accessibilityHint={props.option.unavailableReason ?? undefined}
       accessibilityRole="radio"
-      accessibilityState={{ checked: props.selected, disabled: !props.option.isSelectable }}
-      onPress={props.option.isSelectable ? props.onPress : undefined}
+      accessibilityState={{
+        checked: props.selected,
+        disabled: !props.option.isSelectable || props.option.isUnavailable === true,
+      }}
+      onPress={props.option.isSelectable && !props.option.isUnavailable ? props.onPress : undefined}
       className={cn(
         "mx-4 min-h-11 flex-row items-center gap-2 bg-card px-4 py-2 active:bg-subtle",
         props.isFirst && "rounded-t-2xl",
@@ -373,6 +382,7 @@ type ThreadSettingsSubmenuPage =
 
 type ThreadSettingsSessionProps = {
   readonly environmentId: EnvironmentId | null;
+  readonly providerInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly selectedModel: ModelSelection | null;
   readonly onSelectModel: (option: ModelOption) => void;
@@ -431,6 +441,7 @@ export function useExistingThreadSettingsRoutePresentation() {
 
 type ThreadSettingsSessionValue = {
   readonly environmentId: EnvironmentId | null;
+  readonly providerInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly runtimeMode: RuntimeMode;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
@@ -451,7 +462,7 @@ type ThreadSettingsSessionValue = {
   readonly showLegacy: boolean;
   readonly openRouterFilters: ReadonlySet<OpenRouterModelFilter>;
   readonly applyOptionChange: (id: string, value: string | boolean) => void;
-  readonly commitPendingModel: () => void;
+  readonly commitPendingModel: () => boolean;
   readonly isApplied: (option: ModelOption) => boolean;
   readonly isDisplayed: (option: ModelOption) => boolean;
   readonly isFavorite: (option: ModelOption) => boolean;
@@ -541,10 +552,18 @@ function ThreadSettingsSessionProvider(
   );
   const commitPendingModel = useCallback(() => {
     if (pendingModel) {
+      if (!canCommitPendingModel(pendingModel, props.providerGroups)) {
+        Alert.alert(
+          "Model unavailable",
+          "Set up this provider on web or desktop, or select another model.",
+        );
+        return false;
+      }
       void Haptics.selectionAsync();
       props.onSelectModel(pendingModel);
     }
-  }, [pendingModel, props.onSelectModel]);
+    return true;
+  }, [pendingModel, props.onSelectModel, props.providerGroups]);
 
   const applyOptionChange = useCallback(
     (id: string, value: string | boolean) => {
@@ -626,6 +645,7 @@ function ThreadSettingsSessionProvider(
   const value = useMemo<ThreadSettingsSessionValue>(
     () => ({
       environmentId: props.environmentId,
+      providerInstanceId: props.providerInstanceId,
       providerGroups: props.providerGroups,
       runtimeMode: props.runtimeMode,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
@@ -672,6 +692,7 @@ function ThreadSettingsSessionProvider(
       isFavorite,
       openRouterFilters,
       props.environmentId,
+      props.providerInstanceId,
       pendingModel,
       pressModel,
       providerFilter,
@@ -803,7 +824,7 @@ function useThreadSettingsCatalogItems(
         if (session.providerFilter !== null && group.providerKey !== session.providerFilter) {
           return [];
         }
-        const driver = group.models[0]?.providerDriver;
+        const driver = group.models[0]?.providerDriver ?? group.providerKey;
         const catalogModels = session.showLegacy
           ? group.models
           : group.models.filter((model) => !model.isLegacy || session.isDisplayed(model));
@@ -1094,12 +1115,10 @@ function ThreadSettingsMainContent(props: {
   const usesTransparentNativeHeader = Platform.OS === "ios" && NATIVE_LIQUID_GLASS_SUPPORTED;
   const listItems = useMemo<ReadonlyArray<ThreadSettingsCatalogItem>>(
     () => [
-      ...(catalogItems.length === 0 && hasActiveCatalogFilter
-        ? ([{ kind: "empty", key: "empty" }] as const)
-        : catalogItems),
+      ...(catalogItems.length === 0 ? ([{ kind: "empty", key: "empty" }] as const) : catalogItems),
       { kind: "options", key: "options" },
     ],
-    [catalogItems, hasActiveCatalogFilter],
+    [catalogItems],
   );
   const renderCatalogItem = useCallback(
     (itemProps: LegendListRenderItemProps<ThreadSettingsCatalogItem>) => {
@@ -1148,7 +1167,13 @@ function ThreadSettingsMainContent(props: {
         </Animated.View>
       );
     },
-    [animationsReady, props.onOpenProviderCatalog, props.onOpenSubmenu, translator],
+    [
+      animationsReady,
+      hasActiveCatalogFilter,
+      props.onOpenProviderCatalog,
+      props.onOpenSubmenu,
+      translator,
+    ],
   );
 
   return (
@@ -1329,7 +1354,7 @@ function ThreadSettingsModelsScreen() {
     });
   }, [isRefreshingProviders, refreshProviderCatalog, session.environmentId]);
   const commitAndClose = useCallback(() => {
-    session.commitPendingModel();
+    if (!session.commitPendingModel()) return;
     presentation.onClose();
   }, [presentation, session]);
   const filterMenu = useMemo(

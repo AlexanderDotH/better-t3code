@@ -1,108 +1,150 @@
-# Organizing threads
+# Working with threads
 
-## Choose a sidebar layout
+Use a new thread for a separate task. Choose **New worktree** when its code changes
+need a separate branch and working directory.
 
-On web and desktop, open **Settings → Better T3 → Visual → Sidebar layout** and choose one of the
-following layouts:
+## Start a thread
 
-- **Current** shows activity-oriented lists. Active work uses rich cards, while settled threads use
-  compact rows.
-- **Classic** shows the original project-first tree, with threads nested below each project.
+On web and desktop, a new thread keeps the current project and carries your model
+and mode selections, unless the destination project has its own model default.
+Its branch and workspace mode come from your configured defaults. To continue in
+an existing worktree, use **New thread in this worktree** from the branch toolbar.
 
-Changing the layout only changes how your existing projects and threads are presented. T3 Code
-stores the choice in your settings and restores it after a reload or restart. **Current** remains the
-default when no choice has been saved.
+When you change a new thread's project, T3 Code stays in the current environment
+if that project exists there. Otherwise it selects an environment that has it.
 
-On mobile, the equivalent **Settings → Appearance → Thread list layout** choice is stored on that
-device, so its layout can differ from web and desktop.
+### Start in the background
 
-## Return to unsent drafts
+In a desktop browser or the desktop app, press `Cmd+Enter` on macOS or `Ctrl+Enter`
+on Windows and Linux to start a new thread and immediately open another draft. The
+next draft keeps the workspace mode and base branch you selected. With **New
+worktree**, each background submission creates its own worktree.
 
-Leaving a new-thread composer with a prompt or attachment keeps that draft available in the
-sidebar. **Current** shows draft cards above the activity lists, while **Classic** shows each draft
-with the chats under its matching project. Select the amber draft row to return to the composer, or
-use its discard button to remove it. Drafts keep their selected model, access mode, branch, and
-worktree until they are sent or discarded.
+## Pin and reorder threads
 
-## Limit chats shown per project
+Pin a thread from its menu to keep it above your active work.
 
-The **Classic** layout initially shows up to three chats in each project. Choose **Chats per
-project** in **Settings → Better T3 → Visual → Advanced settings** to set any value from 1 through 15. Web and desktop also
-offer the same control from the Classic sidebar menu. Use **Show more** to reveal the rest of a
-project's non-settled chats. After those chats are visible, use **Show settled chats** to append the
-settled chats or **Hide settled chats** to conceal them again. If all non-settled chats already fit,
-**Show settled chats** appears immediately. **Show less** returns to the configured limit and hides
-the settled section. Searching continues to show every matching chat, regardless of the limit.
-Any chat with a displayed status moves to the top while keeping the selected order within the
-status and ordinary groups. The configured count remains the target total, but never hides a status
-chat, so four status chats remain visible when the limit is three. An old or settled chat stays
-promoted until its status clears. In Classic, opening a **Completed** chat acknowledges that
-read-once status; the chat then returns to normal ordering and may move behind **Show more** or the
-settled disclosure. Other statuses remain until their underlying condition resolves. This changes
-only the compact preview: no chat is deleted or archived.
+On web and desktop, you can also drag files from your computer onto any thread row:
+the thread opens and the files are attached in its composer, ready for
+your next message. The same per-message file limits apply as when attaching
+files directly; see [Attach files](./composer.md#attach-files).
 
-The project-grouped Home list and tablet sidebar on mobile use the same priority ordering and
-controls for the statuses mobile presents. Settled chats without a displayed status do not count
-toward the per-project preview limit. The **Current** activity-based layout keeps its separate
-settled section and is not affected by these project controls.
+Pinning does not prevent automatic settlement. Settling a thread removes its pin.
 
-This preference is shared through every connected environment that supports synchronized
-appearance settings, while each device keeps an offline copy for immediate use. Changes made
-offline are retried when an environment reconnects. If Settings identifies an environment that
-needs an update, that environment is skipped until its T3 Code server is updated; the remaining
-compatible environments still synchronize normally.
+On web and desktop, drag a thread between sections to change its state. Drag a thread up into
+the pinned section to pin it at the spot you drop it; drag a pinned thread down into the active
+list to unpin it. Dragging a thread onto the **Settled** header settles it, and dragging a settled
+thread into the active list un-settles it. A snoozed thread can be dragged out of the snoozed
+shelf, which wakes it, but threads cannot be dragged into the shelf because snoozing needs a wake
+time. Dragging a pinned thread out of the pinned section does not ask for unpin confirmation.
+Pinned and active boundary labels appear only while dragging, without moving the rows. The
+other rows slide aside to show where the thread will land. When you cross into another section,
+the dragged thread shows the action the drop performs, with its icon: **Pin**, **Unpin**,
+**Settle**, **Un-settle**, or **Wake**. Its status and hover actions hide during the drag. A pinned
+thread keeps its pin only while it stays in the pinned section; once it leaves, the badge takes
+over. Reordering within the same section shows no badge. When there are no pins, drag to the top
+edge to pin a thread. Section labels stay readable for the whole drag, and the section the
+thread is over takes the accent color. Section labels also
+identify empty sections and a collapsed settled shelf.
 
-The first upgrade changes the former six-chat value to the new default of three when no
-synchronized choice exists. Other saved values are preserved, and choosing six afterward remains
-a normal preference.
+Drag within the pinned or active section to change its order. Other rows slide aside to show the
+spot where the thread will land. Drops into either section keep the position you choose. On
+mobile, open a pinned or active thread's menu and choose **Move up** or **Move down**. The server
+saves the order, so it survives a refresh and appears on your other connected devices.
 
-## Recent and older projects
+On web and desktop, the list also animates section changes made with thread actions such as
+**Pin**, **Settle**, and **Snooze**. These transitions respect your system's reduced-motion
+preference. While dragging, rows follow the insertion gap without replaying a second transition
+after the drop.
 
-Both sidebar layouts use the same activity rule for **Older projects**. A project remains in the
-recent area through exactly seven days without work and moves to **Older projects** only after that
-boundary. A project whose remaining chats are all shown as settled moves there immediately,
-including chats settled automatically by inactivity or pull-request state. An old proposed plan
-does not keep a project recent once its chat is settled. Starting work in
-the project or one of its threads moves it back to the recent area immediately. Work that still
-needs attention, such as a running session or a pending approval, also keeps the project recent.
-Mobile's project-grouped thread list uses the same rules and stores the Older projects disclosure
-state on that device.
+New threads appear above the active threads you have arranged. Settling clears a thread's active
+position, so using **Un-settle** returns it to the top. Pinning and snoozing preserve its active
+position until you move it again. Thread activity does not change the order. The settled shelf
+continues to use settlement time.
 
-## Pin and arrange threads
+If dragging is unavailable for one environment, update the T3 Code server running in that
+environment. Pinned and active reordering require server support. Threads from older servers keep
+their default order until the server is updated.
 
-Pin a thread from its context menu to keep it in the pinned section above your active work.
-`mod+shift+p` pins or unpins the thread you have open. Pinned threads are shown independently of
-their project, including when you connect to more than one environment.
+## Settle finished work
 
-To require confirmation before unpinning, enable **Settings → General → Unpin confirmation**. The
-confirmation applies to the sidebar controls, thread menus, and the `mod+shift+p` shortcut.
+Choose **Settle thread** from its menu to move finished work out of the active list
+without deleting the conversation. **Un-settle thread** restores it to active work
+and prevents automatic settlement until new activity resumes the usual rules.
+Manually settling an idle thread dismisses unanswered async questions without
+sending an answer or restarting the agent.
 
-Pinned threads still move to **Settled** when they become inactive. They also move when their pull
-request merges if **Auto-settle merged threads** is enabled under **Settings → Better T3 → Visual →
-Advanced settings**.
+By default, environments settle inactive threads after three days and settle
+threads whose pull request merged. A closed pull request can also settle an idle
+thread. Work in progress, pending questions or approvals, and live background work
+prevent automatic settlement. An open pull request does not prevent inactivity
+settlement, but an old closed or merged pull request does not settle work you
+resumed after it closed.
 
-When you un-settle a thread, it returns to the top of the active list so you can find it right
-away. Its timestamps do not change. Other threads keep their positions.
+Change these rules in **Settings → General**. They continue to run when your apps
+are closed. Changes apply to connected environments that support shared settings;
+offline environments and older servers keep their previous values. If connected
+environments disagree, **Apply to all** copies your current settings to those named
+in the warning. Changing a rule does not reopen already settled threads.
 
-Right-click a pull request link in a thread and choose **Link to thread** to show that pull request
-in the sidebar. The thread settles when the linked pull request merges if **Auto-settle merged
-threads** is enabled. Right-click the same link and choose **Unlink from thread** to remove it.
+## Link a pull request
 
-On web and desktop, drag a pinned thread to change its position. On mobile, open the thread's menu
-and choose **Move up** or **Move down**. The order is stored by the server and appears on your
-other connected devices.
+The server finds the PR for each unsettled thread's saved branch, even when your
+apps are closed. Settled threads keep their saved links. Update the server if
+automatic branch links do not appear.
 
-If reordering is unavailable for one environment, update the T3 Code server running in that
-environment. Older servers can still pin and unpin threads, but do not understand synced ordering;
-their pinned threads keep the default newest-first order below the ones you have arranged.
+On web and desktop, right-click a pull request link in a thread and choose
+**Link to thread** to select a different PR. Use **Unlink from thread** on the
+same link to return to the branch PR, if one exists.
+The linked pull request participates in automatic settlement.
 
-## Environment artwork
+## Find and reference work
 
-Dev and Nightly environments can identify themselves with artwork at the top of the sidebar and in
-the send button. Choose **Artwork**, **Version pill**, or **None** in Settings under environment
-identification. Artwork is recolored to match each built-in theme. Custom themes use the **Version
-pill** fallback because their colors are not controlled by T3 Code.
+On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads
+across connected environments. Message search starts after two characters and
+includes your messages and final agent responses.
 
-To generate a fresh title from the conversation, open a thread's context menu and choose
-**Regenerate title**. While T3 Code is generating it, the action reads **Regenerating…** and cannot
-be selected again. The option is hidden when the connected environment needs a server update.
+Use **Settings → Keybindings** to find or customize shortcuts for searching files
+and copying a thread reference. A copied reference uses the thread's pull request
+link when available, otherwise its thread ID. See [keybindings](./keybindings.md)
+for custom configuration.
+
+## Inspect agent work
+
+On web and desktop, use **Agents** to follow work delegated to subagents.
+
+Expand a tool call in the conversation to see its full command and output.
+Summaries shorten shell wrappers and can still describe the latest call after it
+finishes; the call's own result shows its status.
+
+## Continue from an earlier message
+
+On web and desktop, use the fork action on a user message, assistant response, or proposed plan to
+start a separate thread from that point. The source conversation remains available. Follow the
+source link in the fork to return to it; the history boundary shows where new work begins.
+
+When supported by the connected server, an interrupted turn offers a retry beside its eligible
+user message. Retry continues that request without requiring you to reconstruct its text. Wait for
+the current turn to stop before retrying. You can also edit a new prompt and send a different task.
+
+Use the thread's stop control to interrupt current work. The stopping state remains visible while
+the environment finishes cancellation and cleanup. See [subagents](./general-subagents.md) for how
+stopping a parent affects delegated work.
+
+## Workspace cards
+
+On web and desktop, the thread's workspace cards keep Chat, [Git](./git-workbench.md), and
+[MCP](./mcp-servers.md) together. Bring a card forward to use that workspace view, or expand it for
+more detail. The selected thread still determines its environment and worktree.
+
+Enable or disable the card deck in **Settings → Better T3 → Visual**. An older server may offer
+only the compact Git status and existing Git actions; update the environment for the full workbench.
+
+## Copy the full conversation
+
+On web or desktop, use **Copy transcript** in the chat header. On mobile, use **Copy transcript**
+in the thread settings. The environment must support transcript export and be connected; wait for
+the current turn to settle before copying.
+
+The clipboard receives the full saved Markdown transcript, including content outside the currently
+loaded part of the conversation. This export is unredacted.

@@ -234,6 +234,8 @@ describe("OpenRouterProvider", () => {
         },
       });
       expect(snapshot.message).toContain("OPENROUTER_API_KEY");
+      // A schema encoder could hide leaked properties by stripping unknown fields.
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.stringify(snapshot)).not.toContain("environment-secret");
     }),
   );

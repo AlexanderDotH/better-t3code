@@ -1,3 +1,5 @@
+import { HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
+
 import * as NodeCrypto from "node:crypto";
 
 import * as Context from "effect/Context";
@@ -72,14 +74,12 @@ export function makeRegisteredGitWorkspace(registeredCwd: string): RegisteredGit
   });
 }
 
-export class GitWorkbenchInvalidPathError extends Data.TaggedError("GitWorkbenchInvalidPathError")<{
+class GitWorkbenchInvalidPathError extends Data.TaggedError("GitWorkbenchInvalidPathError")<{
   readonly path: string;
   readonly reason: string;
 }> {}
 
-export class GitWorkbenchNotRepositoryError extends Data.TaggedError(
-  "GitWorkbenchNotRepositoryError",
-)<{
+class GitWorkbenchNotRepositoryError extends Data.TaggedError("GitWorkbenchNotRepositoryError")<{
   readonly cwd: string;
 }> {}
 
@@ -487,8 +487,10 @@ export class GitWorkbenchDriver extends Context.Service<
   GitWorkbenchDriverService
 >()("t3/git-workbench/GitWorkbenchDriver") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
+  const spawnCwd = yield* HostProcessWorkingDirectory;
   const fileSystem = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
   const worktreeLocks = new Map<string, Semaphore.Semaphore>();
@@ -627,7 +629,7 @@ export const make = Effect.gen(function* () {
       command: "git",
       args: ["-C", workspace.cwd, ...args],
       cwd: workspace.cwd,
-      spawnCwd: globalThis.process.cwd(),
+      spawnCwd,
       env: GIT_ENV,
       timeoutMs: 30_000,
       maxOutputBytes: options?.maxOutputBytes ?? DIFF_MAX_OUTPUT_BYTES,

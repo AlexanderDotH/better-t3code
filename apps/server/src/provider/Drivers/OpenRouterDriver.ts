@@ -225,7 +225,7 @@ export const OpenRouterDriver: ProviderDriver<OpenRouterSettings, OpenRouterDriv
       const snapshot = yield* makeManagedServerProvider<
         ProviderSnapshotSettings<OpenRouterSettings>
       >({
-        maintenanceCapabilities: MAINTENANCE,
+        resolveMaintenance: () => Effect.succeed(MAINTENANCE),
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,

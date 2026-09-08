@@ -53,7 +53,7 @@ export interface ChatGptSubscriptionModel {
   readonly serviceTiers: ReadonlyArray<{ readonly id: string; readonly label: string }>;
 }
 
-export class ChatGptModelCatalogError extends Schema.TaggedErrorClass<ChatGptModelCatalogError>()(
+export class ChatGptModelCatalogError extends Schema.TaggedError<ChatGptModelCatalogError>()(
   "ChatGptModelCatalogError",
   { message: Schema.String },
 ) {}

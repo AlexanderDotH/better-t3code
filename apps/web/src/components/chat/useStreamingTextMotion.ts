@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
   createStreamingTextMotionFrame,
@@ -157,56 +157,62 @@ export function useStreamingTextMotion({
   });
   const committedRef = useRef<StreamingTextMotionCommitState | null>(null);
   const cleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const publisherRef = useRef<StreamingTextMotionFramePublisher | null>(null);
+  const [publisher] = useState(() =>
+    typeof window === "undefined"
+      ? null
+      : createStreamingTextMotionFramePublisher({
+          cancelFrame: window.cancelAnimationFrame.bind(window),
+          publish: (nextSnapshot) =>
+            setSnapshot((current) =>
+              current.frames === nextSnapshot.frames ? current : nextSnapshot,
+            ),
+          requestFrame: window.requestAnimationFrame.bind(window),
+        }),
+  );
 
-  if (publisherRef.current === null && typeof window !== "undefined") {
-    publisherRef.current = createStreamingTextMotionFramePublisher({
-      cancelFrame: window.cancelAnimationFrame.bind(window),
-      publish: (nextSnapshot) => {
-        setSnapshot((current) => (current.frames === nextSnapshot.frames ? current : nextSnapshot));
-      },
-      requestFrame: window.requestAnimationFrame.bind(window),
-    });
-  }
-
-  const clearCleanupTimer = () => {
+  const clearCleanupTimer = useCallback(() => {
     if (cleanupTimerRef.current === null) return;
     clearTimeout(cleanupTimerRef.current);
     cleanupTimerRef.current = null;
-  };
+  }, []);
 
-  const publishFrames = (state: StreamingTextMotionCommitState, animationTimeMs: number) => {
-    const nextSnapshot = { frames: state.frames, animationTimeMs };
-    const publisher = publisherRef.current;
-    if (publisher !== null && state.isStreaming && state.frames.length > 0) {
-      publisher.enqueue(nextSnapshot);
-      return;
-    }
-    if (publisher !== null) {
-      publisher.flush(nextSnapshot);
-      return;
-    }
-    setSnapshot((current) => (current.frames === state.frames ? current : nextSnapshot));
-  };
+  const publishFrames = useCallback(
+    (state: StreamingTextMotionCommitState, animationTimeMs: number) => {
+      const nextSnapshot = { frames: state.frames, animationTimeMs };
+      if (publisher !== null && state.isStreaming && state.frames.length > 0) {
+        publisher.enqueue(nextSnapshot);
+        return;
+      }
+      if (publisher !== null) {
+        publisher.flush(nextSnapshot);
+        return;
+      }
+      setSnapshot((current) => (current.frames === state.frames ? current : nextSnapshot));
+    },
+    [publisher],
+  );
 
-  const scheduleCleanup = (state: StreamingTextMotionCommitState) => {
-    clearCleanupTimer();
-    const atMs = streamingTextMotionSequenceDeadline(state.frames);
-    if (atMs === null) return;
-    cleanupTimerRef.current = setTimeout(
-      () => {
-        const committed = committedRef.current;
-        if (committed === null) return;
-        const nowMs = readNowMs();
-        const next = clearCompletedStreamingTextMotionSequence(committed, nowMs);
-        committedRef.current = next;
-        cleanupTimerRef.current = null;
-        publishFrames(next, nowMs);
-        scheduleCleanup(next);
-      },
-      Math.max(1, atMs - readNowMs()),
-    );
-  };
+  const scheduleCleanup = useCallback(
+    function scheduleCleanup(state: StreamingTextMotionCommitState) {
+      clearCleanupTimer();
+      const atMs = streamingTextMotionSequenceDeadline(state.frames);
+      if (atMs === null) return;
+      cleanupTimerRef.current = setTimeout(
+        () => {
+          const committed = committedRef.current;
+          if (committed === null) return;
+          const nowMs = readNowMs();
+          const next = clearCompletedStreamingTextMotionSequence(committed, nowMs);
+          committedRef.current = next;
+          cleanupTimerRef.current = null;
+          publishFrames(next, nowMs);
+          scheduleCleanup(next);
+        },
+        Math.max(1, atMs - readNowMs()),
+      );
+    },
+    [clearCleanupTimer, publishFrames],
+  );
 
   useCommitEffect(() => {
     const nowMs = readNowMs();
@@ -215,7 +221,7 @@ export function useStreamingTextMotion({
       streamId,
       isStreaming,
       animateInitialStreamChunk,
-      isVisible: isDocumentVisible(),
+      isVisible: canAnimateStreamingMotion(),
       nowMs,
     });
     committedRef.current = next;
@@ -223,7 +229,15 @@ export function useStreamingTextMotion({
     scheduleCleanup(next);
 
     return clearCleanupTimer;
-  }, [animateInitialStreamChunk, isStreaming, streamId, text]);
+  }, [
+    animateInitialStreamChunk,
+    isStreaming,
+    streamId,
+    text,
+    publishFrames,
+    scheduleCleanup,
+    clearCleanupTimer,
+  ]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -237,7 +251,7 @@ export function useStreamingTextMotion({
         streamId: committed.streamId,
         isStreaming: committed.isStreaming,
         animateInitialStreamChunk: false,
-        isVisible: isDocumentVisible(),
+        isVisible: canAnimateStreamingMotion(),
         nowMs: readNowMs(),
       });
       committedRef.current = next;
@@ -245,16 +259,21 @@ export function useStreamingTextMotion({
       publishFrames(next, readNowMs());
     };
 
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, []);
+    reducedMotion?.addEventListener?.("change", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      reducedMotion?.removeEventListener?.("change", handleVisibilityChange);
+    };
+  }, [clearCleanupTimer, publishFrames]);
 
   useEffect(
     () => () => {
       clearCleanupTimer();
-      publisherRef.current?.dispose();
+      publisher?.dispose();
     },
-    [],
+    [clearCleanupTimer, publisher],
   );
 
   return snapshot;
@@ -352,6 +371,10 @@ function readNowMs(): number {
   return Date.now();
 }
 
-function isDocumentVisible(): boolean {
-  return typeof document === "undefined" || document.visibilityState !== "hidden";
+function canAnimateStreamingMotion(): boolean {
+  return (
+    (typeof document === "undefined" || document.visibilityState !== "hidden") &&
+    (typeof window === "undefined" ||
+      !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches)
+  );
 }

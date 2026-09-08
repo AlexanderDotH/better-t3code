@@ -6,7 +6,7 @@ import { resolveSubagentDisplayName } from "./subagents/subagentPresentation";
 import { SubagentTranscriptPanel } from "./SubagentTranscriptPanel";
 import { Dialog, DialogPopup, DialogTitle } from "./ui/dialog";
 
-export const SUBAGENT_TRANSCRIPT_DIALOG_CLASS_NAME =
+const SUBAGENT_TRANSCRIPT_DIALOG_CLASS_NAME =
   "h-[min(82dvh,52rem)] max-w-[min(64rem,calc(100dvw-2rem))] overflow-hidden bg-background p-0 shadow-2xl/20";
 
 export interface SubagentTranscriptDialogProps {
@@ -18,6 +18,7 @@ export interface SubagentTranscriptDialogProps {
   readonly markdownCwd?: string;
   readonly threadRef?: ScopedThreadRef;
   readonly timestampFormat?: TimestampFormat;
+  readonly streamingMotionEnabled?: boolean;
   readonly hasOlderActivities?: boolean;
   readonly isLoadingOlderActivities?: boolean;
   readonly onLoadOlderActivities?: () => void;
@@ -28,13 +29,14 @@ type SubagentTranscriptDialogContentProps = Omit<
   "open" | "onOpenChange"
 >;
 
-export const SubagentTranscriptDialogContent = memo(function SubagentTranscriptDialogContent({
+const SubagentTranscriptDialogContent = memo(function SubagentTranscriptDialogContent({
   subagent,
   isLoading = false,
   errorMessage = null,
   markdownCwd,
   threadRef,
   timestampFormat = "locale",
+  streamingMotionEnabled = false,
   hasOlderActivities = false,
   isLoadingOlderActivities = false,
   onLoadOlderActivities,
@@ -48,6 +50,7 @@ export const SubagentTranscriptDialogContent = memo(function SubagentTranscriptD
         {...(markdownCwd ? { markdownCwd } : {})}
         {...(threadRef ? { threadRef } : {})}
         timestampFormat={timestampFormat}
+        streamingMotionEnabled={streamingMotionEnabled}
         hasOlderActivities={hasOlderActivities}
         isLoadingOlderActivities={isLoadingOlderActivities}
         {...(onLoadOlderActivities ? { onLoadOlderActivities } : {})}
@@ -66,6 +69,7 @@ export const SubagentTranscriptDialog = memo(function SubagentTranscriptDialog({
   markdownCwd,
   threadRef,
   timestampFormat = "locale",
+  streamingMotionEnabled = false,
   hasOlderActivities = false,
   isLoadingOlderActivities = false,
   onLoadOlderActivities,
@@ -89,6 +93,7 @@ export const SubagentTranscriptDialog = memo(function SubagentTranscriptDialog({
           {...(markdownCwd ? { markdownCwd } : {})}
           {...(threadRef ? { threadRef } : {})}
           timestampFormat={timestampFormat}
+          streamingMotionEnabled={streamingMotionEnabled}
           hasOlderActivities={hasOlderActivities}
           isLoadingOlderActivities={isLoadingOlderActivities}
           {...(onLoadOlderActivities ? { onLoadOlderActivities } : {})}

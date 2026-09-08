@@ -1,17 +1,20 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  ANTIGRAVITY_DEFAULT_MODEL,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 import { createModelSelection } from "@t3tools/shared/model";
 import { deriveEffectiveComposerModelState } from "./composerDraftStore";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
-import { deriveProviderInstanceEntries } from "./providerInstances";
+import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "./providerInstances";
 import {
-  filterPlanParallelismReviewProviders,
   getCustomModelOptionsByInstance,
   getAppModelOptionsForInstance,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
-  resolveParallelPlanReviewModelSelectionState,
   resolvePlanAgentHealPatch,
   withoutPlanAgentSelection,
 } from "./modelSelection";
@@ -63,55 +66,6 @@ function settingsWithProviderInstances(): UnifiedSettings {
 }
 
 describe("instance-scoped model selection", () => {
-  it("keeps unsupported catalog entries visible but never resolves them as selections", () => {
-    const baseProvider = provider({
-      provider: ProviderDriverKind.make("openrouter"),
-      instanceId: "openrouter",
-      models: ["openai/no-tools", "openai/gpt-agent"],
-    });
-    const providers = [
-      {
-        ...baseProvider,
-        models: [
-          {
-            ...baseProvider.models[0]!,
-            isSelectable: false,
-            unavailableReason: "No tool support",
-            capabilities: {
-              outputModalities: ["text"],
-              toolSupport: { tools: false, parallelToolCalls: false, toolChoice: false },
-            },
-          },
-          {
-            ...baseProvider.models[1]!,
-            isDefault: true,
-            isSelectable: true,
-            capabilities: {
-              outputModalities: ["text"],
-              toolSupport: { tools: true, parallelToolCalls: true, toolChoice: true },
-            },
-          },
-        ],
-      },
-    ];
-    const entry = deriveProviderInstanceEntries(providers)[0]!;
-    const options = getAppModelOptionsForInstance(DEFAULT_UNIFIED_SETTINGS, entry);
-
-    expect(options[0]).toMatchObject({
-      slug: "openai/no-tools",
-      isSelectable: false,
-      unavailableReason: "No tool support",
-    });
-    expect(
-      resolveAppModelSelectionForInstance(
-        ProviderInstanceId.make("openrouter"),
-        DEFAULT_UNIFIED_SETTINGS,
-        providers,
-        "openai/no-tools",
-      ),
-    ).toBe("openai/gpt-agent");
-  });
-
   it("preserves server-provided legacy model metadata", () => {
     const baseProvider = provider({
       instanceId: "claudeAgent",
@@ -277,6 +231,29 @@ describe("instance-scoped model selection", () => {
     ]);
   });
 
+  it("drops server-reported custom rows that are no longer in settings", () => {
+    const baseProvider = provider({
+      instanceId: "claude_openrouter",
+      models: ["claude-sonnet-4-6"],
+    });
+    const providers = [
+      {
+        ...baseProvider,
+        models: [
+          ...baseProvider.models,
+          { slug: "removed/custom", name: "removed/custom", isCustom: true, capabilities: {} },
+        ],
+      },
+    ];
+    const openrouter = deriveProviderInstanceEntries(providers)[0]!;
+
+    expect(
+      getAppModelOptionsForInstance(settingsWithProviderInstances(), openrouter).map(
+        (option) => option.slug,
+      ),
+    ).toEqual(["claude-sonnet-4-6", "openai/gpt-5.5"]);
+  });
+
   it("applies persisted per-instance model ordering", () => {
     const providers = [
       provider({
@@ -362,134 +339,147 @@ describe("instance-scoped model selection", () => {
     ).toBe("claude-sonnet-4-6");
   });
 
-  it("preserves an existing OpenCode model when a catalog refresh no longer contains it", () => {
-    const providers = [
-      provider({
-        provider: ProviderDriverKind.make("opencode"),
-        instanceId: "opencode",
-        models: ["opencode/big-pickle"],
-      }),
-    ];
+  describe.each([
+    {
+      driverName: "opencode",
+      availableModel: "opencode/big-pickle",
+      missingModel: "opencode/kimi-k3",
+    },
+    {
+      driverName: "antigravity",
+      availableModel: "gemini-3.1-pro",
+      missingModel: "gemini-3.1-pro-high",
+    },
+  ])("$driverName catalog gaps", ({ driverName, availableModel, missingModel }) => {
+    it("preserves a selected model when a catalog refresh no longer contains it", () => {
+      const providers = [
+        provider({
+          provider: ProviderDriverKind.make(driverName),
+          instanceId: driverName,
+          models: [availableModel],
+        }),
+      ];
 
-    expect(
-      resolveAppModelSelectionForInstance(
-        ProviderInstanceId.make("opencode"),
+      expect(
+        resolveAppModelSelectionForInstance(
+          ProviderInstanceId.make(driverName),
+          settingsWithProviderInstances(),
+          providers,
+          missingModel,
+          { preserveUnavailableSelection: true },
+        ),
+      ).toBe(missingModel);
+      expect(
+        resolveAppModelSelectionForInstance(
+          ProviderInstanceId.make(driverName),
+          settingsWithProviderInstances(),
+          providers,
+          missingModel,
+        ),
+      ).toBe(availableModel);
+    });
+
+    it("adds the selected missing model as an unavailable option", () => {
+      const providers = [
+        provider({
+          provider: ProviderDriverKind.make(driverName),
+          instanceId: driverName,
+          models: [availableModel],
+        }),
+      ];
+      const entry = deriveProviderInstanceEntries(providers)[0]!;
+
+      expect(
+        getAppModelOptionsForInstance(settingsWithProviderInstances(), entry, missingModel),
+      ).toEqual([
+        expect.objectContaining({ slug: availableModel }),
+        expect.objectContaining({
+          slug: missingModel,
+          name: missingModel,
+          isUnavailable: true,
+        }),
+      ]);
+    });
+
+    it("keeps a missing option scoped to the selected instance", () => {
+      const selectedInstanceId = ProviderInstanceId.make(`${driverName}_work`);
+      const otherInstanceId = ProviderInstanceId.make(`${driverName}_personal`);
+      const driver = ProviderDriverKind.make(driverName);
+      const providers = [
+        provider({ provider: driver, instanceId: selectedInstanceId, models: [] }),
+        provider({ provider: driver, instanceId: otherInstanceId, models: [] }),
+      ];
+      const options = getCustomModelOptionsByInstance(
         settingsWithProviderInstances(),
         providers,
-        "opencode/kimi-k3",
-        { preserveUnavailableSelection: true },
-      ),
-    ).toBe("opencode/kimi-k3");
-    expect(
-      resolveAppModelSelectionForInstance(
-        ProviderInstanceId.make("opencode"),
-        settingsWithProviderInstances(),
-        providers,
-        "opencode/kimi-k3",
-      ),
-    ).toBe("opencode/big-pickle");
-  });
+        selectedInstanceId,
+        missingModel,
+      );
 
-  it("adds the selected missing OpenCode model as an unavailable option", () => {
-    const providers = [
-      provider({
-        provider: ProviderDriverKind.make("opencode"),
-        instanceId: "opencode",
-        models: ["opencode/big-pickle"],
-      }),
-    ];
-    const entry = deriveProviderInstanceEntries(providers)[0]!;
+      expect(options.get(selectedInstanceId)).toEqual([
+        expect.objectContaining({ slug: missingModel, isUnavailable: true }),
+      ]);
+      expect(options.get(otherInstanceId)).toEqual([]);
+    });
 
-    expect(
-      getAppModelOptionsForInstance(settingsWithProviderInstances(), entry, "opencode/kimi-k3"),
-    ).toEqual([
-      expect.objectContaining({ slug: "opencode/big-pickle" }),
-      expect.objectContaining({
-        slug: "opencode/kimi-k3",
-        name: "opencode/kimi-k3",
-        isUnavailable: true,
-      }),
-    ]);
-  });
+    it("replaces the unavailable marker with catalog metadata after recovery", () => {
+      const instanceId = ProviderInstanceId.make(driverName);
+      const driver = ProviderDriverKind.make(driverName);
+      const selectedModel = missingModel;
+      const pendingProviders = [
+        provider({ provider: driver, instanceId, models: [availableModel] }),
+      ];
+      const recoveredProviders = [
+        provider({ provider: driver, instanceId, models: [availableModel, selectedModel] }),
+      ];
 
-  it("keeps a missing OpenCode option scoped to the selected instance", () => {
-    const selectedInstanceId = ProviderInstanceId.make("opencode_work");
-    const otherInstanceId = ProviderInstanceId.make("opencode_personal");
-    const driver = ProviderDriverKind.make("opencode");
-    const providers = [
-      provider({ provider: driver, instanceId: selectedInstanceId, models: [] }),
-      provider({ provider: driver, instanceId: otherInstanceId, models: [] }),
-    ];
-    const options = getCustomModelOptionsByInstance(
-      settingsWithProviderInstances(),
-      providers,
-      selectedInstanceId,
-      "openrouter/kimi-k3",
-    );
+      expect(
+        getAppModelOptionsForInstance(
+          settingsWithProviderInstances(),
+          deriveProviderInstanceEntries(pendingProviders)[0]!,
+          selectedModel,
+        ).find((option) => option.slug === selectedModel)?.isUnavailable,
+      ).toBe(true);
+      expect(
+        getAppModelOptionsForInstance(
+          settingsWithProviderInstances(),
+          deriveProviderInstanceEntries(recoveredProviders)[0]!,
+          selectedModel,
+        ).find((option) => option.slug === selectedModel)?.isUnavailable,
+      ).toBeUndefined();
+      expect(
+        resolveAppModelSelectionForInstance(
+          instanceId,
+          settingsWithProviderInstances(),
+          recoveredProviders,
+          selectedModel,
+          { preserveUnavailableSelection: true },
+        ),
+      ).toBe(selectedModel);
+    });
 
-    expect(options.get(selectedInstanceId)).toEqual([
-      expect.objectContaining({ slug: "openrouter/kimi-k3", isUnavailable: true }),
-    ]);
-    expect(options.get(otherInstanceId)).toEqual([]);
-  });
-
-  it("replaces the unavailable marker with catalog metadata after recovery", () => {
-    const instanceId = ProviderInstanceId.make("opencode");
-    const driver = ProviderDriverKind.make("opencode");
-    const selectedModel = "opencode/kimi-k3";
-    const pendingProviders = [
-      provider({ provider: driver, instanceId, models: ["opencode/big-pickle"] }),
-    ];
-    const recoveredProviders = [
-      provider({ provider: driver, instanceId, models: ["opencode/big-pickle", selectedModel] }),
-    ];
-
-    expect(
-      getAppModelOptionsForInstance(
-        settingsWithProviderInstances(),
-        deriveProviderInstanceEntries(pendingProviders)[0]!,
-        selectedModel,
-      ).find((option) => option.slug === selectedModel)?.isUnavailable,
-    ).toBe(true);
-    expect(
-      getAppModelOptionsForInstance(
-        settingsWithProviderInstances(),
-        deriveProviderInstanceEntries(recoveredProviders)[0]!,
-        selectedModel,
-      ).find((option) => option.slug === selectedModel)?.isUnavailable,
-    ).toBeUndefined();
-    expect(
-      resolveAppModelSelectionForInstance(
-        instanceId,
-        settingsWithProviderInstances(),
-        recoveredProviders,
-        selectedModel,
-        { preserveUnavailableSelection: true },
-      ),
-    ).toBe(selectedModel);
-  });
-
-  it("does not resurrect a hidden OpenCode model when the raw catalog omits it", () => {
-    const instanceId = ProviderInstanceId.make("opencode");
-    const driver = ProviderDriverKind.make("opencode");
-    const settings: UnifiedSettings = {
-      ...settingsWithProviderInstances(),
-      providerModelPreferences: {
-        [instanceId]: {
-          hiddenModels: ["opencode/kimi-k3"],
-          modelOrder: [],
+    it("does not resurrect a hidden model when the raw catalog omits it", () => {
+      const instanceId = ProviderInstanceId.make(driverName);
+      const driver = ProviderDriverKind.make(driverName);
+      const settings: UnifiedSettings = {
+        ...settingsWithProviderInstances(),
+        providerModelPreferences: {
+          [instanceId]: {
+            hiddenModels: [missingModel],
+            modelOrder: [],
+          },
         },
-      },
-    };
-    const providers = [provider({ provider: driver, instanceId, models: [] })];
-    const entry = deriveProviderInstanceEntries(providers)[0]!;
+      };
+      const providers = [provider({ provider: driver, instanceId, models: [] })];
+      const entry = deriveProviderInstanceEntries(providers)[0]!;
 
-    expect(getAppModelOptionsForInstance(settings, entry, "opencode/kimi-k3")).toEqual([]);
-    expect(
-      resolveAppModelSelectionForInstance(instanceId, settings, providers, "opencode/kimi-k3", {
-        preserveUnavailableSelection: true,
-      }),
-    ).toBeNull();
+      expect(getAppModelOptionsForInstance(settings, entry, missingModel)).toEqual([]);
+      expect(
+        resolveAppModelSelectionForInstance(instanceId, settings, providers, missingModel, {
+          preserveUnavailableSelection: true,
+        }),
+      ).toBeNull();
+    });
   });
 
   it("does not add unavailable options for other providers", () => {
@@ -573,6 +563,159 @@ describe("instance-scoped model selection", () => {
 
     expect(state.selectedModel).toBe("openrouter/kimi-k3");
     expect(state.modelOptions?.[instanceId]).toEqual(draftSelection.options);
+  });
+
+  it("preserves the Antigravity model in drafts and existing threads after sign-out", () => {
+    const instanceId = ProviderInstanceId.make("antigravity_work");
+    const driver = ProviderDriverKind.make("antigravity");
+    const saved = createModelSelection(instanceId, "gemini-3.1-pro-high");
+    const providers = [
+      {
+        ...provider({ provider: driver, instanceId, models: [] }),
+        status: "error" as const,
+        auth: { status: "unauthenticated" as const },
+      },
+    ];
+    for (const draft of [
+      null,
+      { activeProvider: instanceId, modelSelectionByProvider: { [instanceId]: saved } },
+    ]) {
+      const state = deriveEffectiveComposerModelState({
+        draft,
+        providers,
+        selectedProvider: driver,
+        selectedInstanceId: instanceId,
+        threadModelSelection: saved,
+        projectModelSelection: null,
+        settings: settingsWithProviderInstances(),
+      });
+      expect(state.selectedModel).toBe(saved.model);
+    }
+  });
+
+  it("does not borrow a default model while a new Antigravity account has no catalog", () => {
+    const driver = ProviderDriverKind.make("antigravity");
+    const instanceId = ProviderInstanceId.make("antigravity_work");
+    const providers = [
+      provider({ instanceId: "codex", models: ["gpt-5.6-sol"] }),
+      provider({ provider: driver, instanceId: "antigravity", models: ["gemini-other-account"] }),
+      provider({ provider: driver, instanceId, models: [] }),
+    ];
+
+    const otherAccountId = ProviderInstanceId.make("antigravity");
+    for (const draft of [
+      null,
+      {
+        activeProvider: instanceId,
+        modelSelectionByProvider: {
+          [otherAccountId]: createModelSelection(otherAccountId, "gemini-other-account"),
+        },
+      },
+    ]) {
+      const state = deriveEffectiveComposerModelState({
+        draft,
+        providers,
+        selectedProvider: driver,
+        selectedInstanceId: instanceId,
+        threadModelSelection: null,
+        projectModelSelection: createModelSelection(
+          ProviderInstanceId.make("codex"),
+          "gpt-5.6-sol",
+        ),
+        settings: settingsWithProviderInstances(),
+      });
+      expect(state.selectedModel).toBe("");
+    }
+  });
+
+  it("offers only account catalog models for Antigravity despite custom model settings", () => {
+    const driver = ProviderDriverKind.make("antigravity");
+    const customId = ProviderInstanceId.make("antigravity_work");
+    const nativeModel = "gemini-3.1-pro";
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providers: {
+        ...DEFAULT_UNIFIED_SETTINGS.providers,
+        antigravity: {
+          ...DEFAULT_UNIFIED_SETTINGS.providers.antigravity,
+          customModels: ["api-only-model"],
+        },
+      },
+      providerInstances: {
+        [customId]: { driver, config: { customModels: ["unknown-model"] } },
+      },
+    };
+    const entries = deriveProviderInstanceEntries([
+      provider({ provider: driver, instanceId: "antigravity", models: [nativeModel] }),
+      provider({ provider: driver, instanceId: customId, models: [nativeModel] }),
+    ]);
+
+    for (const entry of entries) {
+      expect(getAppModelOptionsForInstance(settings, entry).map((model) => model.slug)).toEqual([
+        nativeModel,
+      ]);
+    }
+  });
+
+  it("resolves the Antigravity default marker without creating an unavailable model", () => {
+    const instanceId = ProviderInstanceId.make("antigravity_work");
+    const nativeModel = "gemini-3.1-pro";
+    const base = provider({
+      provider: ProviderDriverKind.make("antigravity"),
+      instanceId,
+      models: [nativeModel],
+    });
+    const liveProvider = {
+      ...base,
+      models: base.models.map((model) => ({
+        ...model,
+        isDefault: true,
+        aliases: [ANTIGRAVITY_DEFAULT_MODEL],
+      })),
+    };
+    const settings = settingsWithProviderInstances();
+
+    expect(
+      getAppModelOptionsForInstance(
+        settings,
+        deriveProviderInstanceEntries([liveProvider])[0]!,
+        ANTIGRAVITY_DEFAULT_MODEL,
+      ).map((model) => model.slug),
+    ).toEqual([nativeModel]);
+    expect(
+      resolveAppModelSelectionForInstance(
+        instanceId,
+        settings,
+        [liveProvider],
+        ANTIGRAVITY_DEFAULT_MODEL,
+        {
+          preserveUnavailableSelection: true,
+        },
+      ),
+    ).toBe(nativeModel);
+
+    const hiddenSettings: UnifiedSettings = {
+      ...settings,
+      providerModelPreferences: {
+        [instanceId]: { hiddenModels: [nativeModel], modelOrder: [] },
+      },
+    };
+    expect(
+      resolveAppModelSelectionForInstance(
+        instanceId,
+        hiddenSettings,
+        [liveProvider],
+        ANTIGRAVITY_DEFAULT_MODEL,
+        { preserveUnavailableSelection: true },
+      ),
+    ).toBeNull();
+    expect(
+      getAppModelOptionsForInstance(
+        settings,
+        deriveProviderInstanceEntries([{ ...base, models: [] }])[0]!,
+        ANTIGRAVITY_DEFAULT_MODEL,
+      ),
+    ).toEqual([]);
   });
 
   it("preserves saved options through dispatch when the model is absent from the catalog", () => {
@@ -667,105 +810,29 @@ describe("instance-scoped model selection", () => {
       model: "openai/gpt-5.5",
     });
   });
-});
 
-describe("plan parallelism review model selection", () => {
-  it("keeps supported custom instances while excluding unknown drivers", () => {
-    const providers = [
-      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex_personal" }),
-      provider({
-        provider: ProviderDriverKind.make("claudeAgent"),
-        instanceId: "claude_openrouter",
+  it("does not select a provider that cannot generate system text", () => {
+    const instanceId = ProviderInstanceId.make("antigravity");
+    const unsupported = {
+      ...provider({
+        provider: ProviderDriverKind.make("antigravity"),
+        instanceId,
+        models: ["gemini-3.1-pro"],
       }),
-      provider({ provider: ProviderDriverKind.make("cursor"), instanceId: "cursor" }),
-      provider({ provider: ProviderDriverKind.make("grok"), instanceId: "grok" }),
-      provider({ provider: ProviderDriverKind.make("opencode"), instanceId: "opencode" }),
-      provider({
-        provider: ProviderDriverKind.make("customDriver"),
-        instanceId: "custom_provider",
-      }),
-    ];
-
-    expect(
-      filterPlanParallelismReviewProviders(providers).map((candidate) => candidate.instanceId),
-    ).toEqual([
-      ProviderInstanceId.make("codex_personal"),
-      ProviderInstanceId.make("claude_openrouter"),
-      ProviderInstanceId.make("cursor"),
-      ProviderInstanceId.make("grok"),
-      ProviderInstanceId.make("opencode"),
-    ]);
-  });
-
-  it("preserves a selected custom instance and model", () => {
-    const providers = [
-      provider({
-        provider: ProviderDriverKind.make("claudeAgent"),
-        instanceId: "claude_openrouter",
-        models: ["openai/gpt-5.5"],
-      }),
-    ];
-    const settings: UnifiedSettings = {
+      supportsTextGeneration: false,
+    };
+    const supported = provider({ instanceId: "codex", models: ["gpt-5.6-sol"] });
+    const settings = {
       ...settingsWithProviderInstances(),
-      parallelPlanReviewModelSelection: {
-        instanceId: ProviderInstanceId.make("claude_openrouter"),
-        model: "openai/gpt-5.5",
-      },
+      textGenerationModelSelection: createModelSelection(instanceId, "gemini-3.1-pro"),
     };
 
-    expect(resolveParallelPlanReviewModelSelectionState(settings, providers)).toEqual({
-      instanceId: ProviderInstanceId.make("claude_openrouter"),
-      model: "openai/gpt-5.5",
-    });
-  });
-
-  it("does not let a stored unknown-driver selection escape the reviewer allowlist", () => {
-    const providers = [
-      provider({
-        provider: ProviderDriverKind.make("customDriver"),
-        instanceId: "custom_provider",
-        models: ["custom-model"],
-      }),
-      provider({
-        provider: ProviderDriverKind.make("codex"),
-        instanceId: "codex",
-        models: ["gpt-5.6-luna"],
-      }),
-    ];
-    const settings: UnifiedSettings = {
-      ...DEFAULT_UNIFIED_SETTINGS,
-      parallelPlanReviewModelSelection: {
-        instanceId: ProviderInstanceId.make("custom_provider"),
-        model: "custom-model",
-      },
-    };
-
-    expect(resolveParallelPlanReviewModelSelectionState(settings, providers)).toMatchObject({
-      instanceId: ProviderInstanceId.make("codex"),
-      model: "gpt-5.6-luna",
-    });
-  });
-
-  it("leaves the normal text-generation resolver unrestricted", () => {
-    const providers = [
-      provider({
-        provider: ProviderDriverKind.make("customDriver"),
-        instanceId: "custom_provider",
-        models: ["custom-model"],
-      }),
-    ];
-    const settings: UnifiedSettings = {
-      ...DEFAULT_UNIFIED_SETTINGS,
-      textGenerationModelSelection: {
-        instanceId: ProviderInstanceId.make("custom_provider"),
-        model: "custom-model",
-      },
-    };
-
-    expect(resolveAppModelSelectionState(settings, providers)).toMatchObject({
-      instanceId: ProviderInstanceId.make("custom_provider"),
-      model: "custom-model",
-    });
+    expect(resolveAppModelSelectionState(settings, [unsupported, supported])).toEqual(
+      createModelSelection(supported.instanceId, "gpt-5.6-sol"),
+    );
+    expect(resolveAppModelSelectionState(settings, [unsupported])).toEqual(
+      NO_PROVIDER_MODEL_SELECTION,
+    );
   });
 });
 
@@ -846,4 +913,15 @@ describe("resolvePlanAgentHealPatch", () => {
       }),
     ).toEqual({ sourceControlWriterModelSelection: healed });
   });
+});
+
+it("preserves provider catalog capabilities for client filtering", () => {
+  const snapshot = provider({
+    provider: ProviderDriverKind.make("openrouter"),
+    instanceId: "openrouter",
+    models: ["vendor/model"],
+  });
+  const entries = deriveProviderInstanceEntries([snapshot]);
+  const options = getAppModelOptionsForInstance(DEFAULT_UNIFIED_SETTINGS, entries[0]!);
+  expect(options[0]?.capabilities).toEqual(snapshot.models[0]?.capabilities);
 });

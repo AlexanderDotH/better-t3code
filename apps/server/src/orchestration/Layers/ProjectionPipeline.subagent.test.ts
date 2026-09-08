@@ -1,3 +1,4 @@
+import { ProviderDriverKind } from "@t3tools/contracts";
 import {
   EventId,
   MessageId,
@@ -51,7 +52,7 @@ function summary(): OrchestrationSubagentSummary {
     id: subagentId,
     origin: "t3-fetch",
     providerInstanceId: ProviderInstanceId.make("claude-work"),
-    providerDriver: "claudeAgent",
+    providerDriver: ProviderDriverKind.make("claudeAgent"),
     providerThreadId: "provider-agent-subagent-projection",
     parentId: null,
     path: "/root/projection",
@@ -258,6 +259,7 @@ it.layer(TestLayer)("OrchestrationProjectionPipeline subagent projections", (it)
         assert.equal(summaryRows[0]?.serviceTier, "priority");
         assert.equal(summaryRows[0]?.status, "completed");
         assert.equal(summaryRows[0]?.statusMessage, "Done");
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Assert the raw persisted representation without schema normalization.
         assert.deepEqual(JSON.parse(summaryRows[0]?.progressJson ?? "null"), {
           kind: "test",
           summary: "Running focused tests",

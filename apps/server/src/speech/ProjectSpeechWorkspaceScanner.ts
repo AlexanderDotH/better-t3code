@@ -17,7 +17,7 @@ export interface ProjectSpeechWorkspaceScanResult {
   readonly truncated: boolean;
 }
 
-export class ProjectSpeechWorkspaceScanError extends Schema.TaggedErrorClass<ProjectSpeechWorkspaceScanError>()(
+export class ProjectSpeechWorkspaceScanError extends Schema.TaggedError<ProjectSpeechWorkspaceScanError>()(
   "ProjectSpeechWorkspaceScanError",
   {
     workspaceRoot: Schema.String,

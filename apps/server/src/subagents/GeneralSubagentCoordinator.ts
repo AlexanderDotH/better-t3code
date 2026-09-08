@@ -71,16 +71,14 @@ import {
 
 export {
   assistantTextFromCompletedItem,
-  buildGeneralSubagentFollowUpPrompt,
   buildGeneralSubagentPrompt,
   generalSubagentApprovalAction,
   parseGeneralSubagentFinalResult,
 } from "./GeneralSubagentPolicy.ts";
 export type { GeneralSubagentApprovalAction } from "./GeneralSubagentPolicy.ts";
-export { GENERAL_SUBAGENT_ABORT_FORCE_DELAY } from "./GeneralSubagentTransport.ts";
 
 export const GENERAL_SUBAGENT_TIMEOUT = Duration.minutes(30);
-export const GENERAL_SUBAGENT_MAX_DIRECT_CHILDREN = 40;
+const GENERAL_SUBAGENT_MAX_DIRECT_CHILDREN = 40;
 const isGeneralSubagentError = Schema.is(GeneralSubagentError);
 
 export interface GeneralSubagentCaller {

@@ -9,18 +9,17 @@ import { ThreadTranscriptExportLive } from "./Layers/ThreadTranscriptExport.ts";
 import * as ThreadBackgroundLiveness from "./ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "./ThreadPlanProgress.ts";
 
-export const OrchestrationEventInfrastructureLayerLive = Layer.mergeAll(
+const OrchestrationEventInfrastructureLayerLive = Layer.mergeAll(
   OrchestrationEventStoreLive,
   OrchestrationCommandReceiptRepositoryLive,
 );
 
-export const OrchestrationProjectionPipelineLayerLive = OrchestrationProjectionPipelineLive.pipe(
+const OrchestrationProjectionPipelineLayerLive = OrchestrationProjectionPipelineLive.pipe(
   Layer.provide(OrchestrationEventStoreLive),
 );
 
-export const OrchestrationInfrastructureLayerLive = Layer.mergeAll(
+const OrchestrationInfrastructureLayerLive = Layer.mergeAll(
   OrchestrationProjectionSnapshotQueryLive,
-  ThreadTranscriptExportLive.pipe(Layer.provide(OrchestrationProjectionSnapshotQueryLive)),
   OrchestrationEventInfrastructureLayerLive,
   OrchestrationProjectionPipelineLayerLive,
   // Shared background-liveness and plan-progress registries: written by
@@ -35,4 +34,5 @@ export const OrchestrationInfrastructureLayerLive = Layer.mergeAll(
 export const OrchestrationLayerLive = Layer.mergeAll(
   OrchestrationInfrastructureLayerLive,
   OrchestrationEngineLive.pipe(Layer.provide(OrchestrationInfrastructureLayerLive)),
+  ThreadTranscriptExportLive.pipe(Layer.provide(OrchestrationInfrastructureLayerLive)),
 );

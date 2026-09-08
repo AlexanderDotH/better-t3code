@@ -10,11 +10,8 @@ import {
   DEFAULT_RESOLVED_KEYBINDINGS,
   parseKeybindingWhenExpression,
 } from "@t3tools/shared/keybindings";
-import {
-  translateInterfaceMessage,
-  type InterfaceTranslator,
-} from "@t3tools/shared/interfaceLanguage";
 
+import { shortcutKeyFromEvent } from "../../keybindings";
 import { isMacPlatform } from "../../lib/utils";
 
 export type KeybindingSource = "Default" | "Custom" | "Project";
@@ -72,6 +69,14 @@ export function whenAstToExpression(node: KeybindingWhenNode | undefined): strin
   }
 }
 
+export function whenNodeRemoveLabel(node: KeybindingWhenNode, depth: number): string {
+  if (depth === 0) return "Clear all conditions";
+  if (node.type === "identifier" || (node.type === "not" && node.node.type === "identifier")) {
+    return "Remove condition";
+  }
+  return "Remove group and its conditions";
+}
+
 function wrapWhenExpression(node: KeybindingWhenNode): string {
   if (node.type === "identifier" || node.type === "not") return whenAstToExpression(node);
   return `(${whenAstToExpression(node)})`;
@@ -79,8 +84,6 @@ function wrapWhenExpression(node: KeybindingWhenNode): string {
 
 export function parseWhenExpressionDraft(
   expression: string,
-  translate: InterfaceTranslator["message"] = (key, values) =>
-    translateInterfaceMessage("en", key, values),
 ): { ok: true; value: KeybindingWhenNode | undefined } | { ok: false; message: string } {
   const trimmed = expression.trim();
   if (trimmed.length === 0) return { ok: true, value: undefined };
@@ -89,7 +92,7 @@ export function parseWhenExpressionDraft(
   if (!ast) {
     return {
       ok: false,
-      message: translate("settings.application.keybindings.parseHint"),
+      message: "Use variables with !, &&, ||, and parentheses.",
     };
   }
 
@@ -145,8 +148,6 @@ function conflictsWithWhen(leftWhen: string, rightWhen: string): boolean {
 export function keybindingConflictLabels(
   rows: ReadonlyArray<KeybindingRow>,
   input: { readonly rowId: string; readonly key: string; readonly when: string },
-  translate: InterfaceTranslator["message"] = (key, values) =>
-    translateInterfaceMessage("en", key, values),
 ): ReadonlyArray<string> {
   if (input.key.trim().length === 0) return [];
   const conflicts: Array<string> = [];
@@ -156,7 +157,7 @@ export function keybindingConflictLabels(
       candidate.key === input.key &&
       conflictsWithWhen(candidate.when, input.when)
     ) {
-      conflicts.push(commandLabel(candidate.command, translate));
+      conflicts.push(commandLabel(candidate.command));
     }
   }
   return [...new Set(conflicts)].toSorted();
@@ -165,8 +166,6 @@ export function keybindingConflictLabels(
 export function buildKeybindingRows(
   keybindings: ResolvedKeybindingsConfig,
   query: string,
-  translate: InterfaceTranslator["message"] = (key, values) =>
-    translateInterfaceMessage("en", key, values),
 ): ReadonlyArray<KeybindingRow> {
   const normalizedQuery = query.trim().toLowerCase();
   const rows = keybindings.map((binding, index) => {
@@ -187,15 +186,11 @@ export function buildKeybindingRows(
   });
 
   const rowsWithConflicts = rows.map((row) => {
-    const conflicts = keybindingConflictLabels(
-      rows,
-      {
-        rowId: row.id,
-        key: row.key,
-        when: row.when,
-      },
-      translate,
-    );
+    const conflicts = keybindingConflictLabels(rows, {
+      rowId: row.id,
+      key: row.key,
+      when: row.when,
+    });
     return conflicts.length > 0
       ? Object.assign({}, row, { conflicts: [...new Set(conflicts)].toSorted() })
       : row;
@@ -216,15 +211,7 @@ export function buildKeybindingRows(
       row.command.toLowerCase().includes(normalizedQuery) ||
       row.key.toLowerCase().includes(normalizedQuery) ||
       row.when.toLowerCase().includes(normalizedQuery) ||
-      translate(
-        row.source === "Default"
-          ? "settings.application.keybindings.source.default"
-          : row.source === "Custom"
-            ? "settings.application.keybindings.source.custom"
-            : "settings.application.keybindings.source.project",
-      )
-        .toLowerCase()
-        .includes(normalizedQuery)
+      row.source.toLowerCase().includes(normalizedQuery)
     );
   });
 }
@@ -277,28 +264,20 @@ export function buildWhenVariableOptions(): ReadonlyArray<WhenVariableOption> {
 
 export function buildKeybindingCommandOptions(
   keybindings: ResolvedKeybindingsConfig,
-  translate: InterfaceTranslator["message"] = (key, values) =>
-    translateInterfaceMessage("en", key, values),
 ): ReadonlyArray<KeybindingCommandOption> {
   const commands = new Set<KeybindingCommand>(STATIC_KEYBINDING_COMMANDS);
   for (const binding of keybindings) {
     commands.add(binding.command);
   }
   return [...commands].toSorted((left, right) =>
-    commandLabel(left, translate).localeCompare(commandLabel(right, translate)),
+    commandLabel(left).localeCompare(commandLabel(right)),
   );
 }
 
-export function commandLabel(
-  command: KeybindingCommand,
-  translate: InterfaceTranslator["message"] = (key, values) =>
-    translateInterfaceMessage("en", key, values),
-): string {
+export function commandLabel(command: KeybindingCommand): string {
   const raw = String(command);
   if (raw.startsWith("script.") && raw.endsWith(".run")) {
-    return translate("settings.application.keybindings.runScript", {
-      name: titleCaseCommandSegment(raw.slice("script.".length, -".run".length)),
-    });
+    return `Run Script: ${titleCaseCommandSegment(raw.slice("script.".length, -".run".length))}`;
   }
   return raw.split(".").map(titleCaseCommandSegment).join(": ");
 }
@@ -313,7 +292,7 @@ function titleCaseCommandSegment(segment: string): string {
   return words.join(" ");
 }
 
-export function normalizeShortcutKeyToken(key: string): string | null {
+function normalizeShortcutKeyToken(key: string): string | null {
   const normalized = key.toLowerCase();
   if (
     normalized === "meta" ||
@@ -344,10 +323,10 @@ export function normalizeShortcutKeyToken(key: string): string | null {
 }
 
 export function keybindingFromKeyboardEvent(
-  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
+  event: Pick<KeyboardEvent, "key" | "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
   platform: string,
 ): string | null {
-  const keyToken = normalizeShortcutKeyToken(event.key);
+  const keyToken = normalizeShortcutKeyToken(shortcutKeyFromEvent(event));
   if (!keyToken) return null;
 
   const parts: string[] = [];

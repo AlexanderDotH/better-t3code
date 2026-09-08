@@ -79,6 +79,7 @@ describe("OpenAI transport", () => {
       const error = yield* Effect.flip(transport.listModels);
       expect(error._tag).toBe("OpenAiTransportSecurityError");
       expect(requests).toBe(1);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(error)).not.toContain("secret-key");
     }),
   );
@@ -123,7 +124,7 @@ describe("OpenAI transport", () => {
             request,
             new Response("secret upstream body", {
               status,
-              headers: status === 429 ? { "retry-after": "17" } : undefined,
+              ...(status === 429 ? { headers: { "retry-after": "17" } } : {}),
             }),
           ),
         );
@@ -137,7 +138,9 @@ describe("OpenAI transport", () => {
         if (status === 429) {
           expect(error).toMatchObject({ category: "rate-limit", retryAfterSeconds: 17 });
         }
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
         expect(JSON.stringify(error)).not.toContain("secret upstream body");
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
         expect(JSON.stringify(error)).not.toContain("secret-key");
       }
     }),

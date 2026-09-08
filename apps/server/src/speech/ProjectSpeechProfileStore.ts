@@ -46,6 +46,7 @@ function storageError(operation: ProjectSpeechProfileError["operation"], project
     });
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 

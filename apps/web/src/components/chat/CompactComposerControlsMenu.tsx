@@ -1,8 +1,6 @@
 import { ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
-import { Fragment, memo, type ReactNode, type SyntheticEvent } from "react";
+import { memo, type ReactNode } from "react";
 import { EllipsisIcon } from "lucide-react";
-import { Button } from "../ui/button";
-import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import {
   Menu,
   MenuPopup,
@@ -11,149 +9,90 @@ import {
   MenuSeparator as MenuDivider,
   MenuTrigger,
 } from "../ui/menu";
-
-const INLINE_CONTROL_NAVIGATION_KEYS = new Set([
-  "ArrowDown",
-  "ArrowLeft",
-  "ArrowRight",
-  "ArrowUp",
-  "End",
-  "Home",
-  "PageDown",
-  "PageUp",
-]);
-
-export type CompactComposerMenuSectionId =
-  | "traits"
-  | "context-window"
-  | "interaction-mode"
-  | "runtime-mode";
-
-export function compactComposerMenuSectionIds(input: {
-  readonly hasTraits: boolean;
-  readonly hasContextWindow: boolean;
-  readonly showInteractionMode: boolean;
-}): ReadonlyArray<CompactComposerMenuSectionId> {
-  return [
-    ...(input.hasTraits ? (["traits"] as const) : []),
-    ...(input.hasContextWindow ? (["context-window"] as const) : []),
-    ...(input.showInteractionMode ? (["interaction-mode"] as const) : []),
-    "runtime-mode",
-  ];
-}
-
-export function compactComposerPopupClassName(hasContextWindow: boolean): string | undefined {
-  return hasContextWindow ? "w-72 max-w-[calc(100vw-1.5rem)]" : undefined;
-}
-
-export function stopCompactComposerMenuInteractionPropagation(
-  event: Pick<SyntheticEvent, "stopPropagation">,
-): void {
-  event.stopPropagation();
-}
-
-export function stopCompactComposerMenuNavigationKeyPropagation(
-  event: Readonly<{ key: string; stopPropagation: () => void }>,
-): void {
-  if (!INLINE_CONTROL_NAVIGATION_KEYS.has(event.key)) return;
-  event.stopPropagation();
-}
+import { ComposerControl, ComposerControlIcon } from "./ComposerControl";
+import { composerFloatingLayerProps } from "./composerEventScope";
+import { useComposerMenuState } from "./useComposerMenuState";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 export const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
-  showInteractionModeSelect: boolean;
+  showInteractionModeToggle: boolean;
   traitsMenuContent?: ReactNode;
-  contextWindowMenuContent?: ReactNode;
-  onInteractionModeChange: (mode: ProviderInteractionMode) => void;
+  size?: "sm" | "xs";
+  /**
+   * The resting strip keeps this menu mounted out of flow while every block
+   * fits inline. Its portaled popup would outlive that transition, so an
+   * open menu closes when its trigger hides.
+   */
+  hidden?: boolean;
+  onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   const translate = useInterfaceTranslator().message;
-  const sectionIds = compactComposerMenuSectionIds({
-    hasTraits: Boolean(props.traitsMenuContent),
-    hasContextWindow: Boolean(props.contextWindowMenuContent),
-    showInteractionMode: props.showInteractionModeSelect,
-  });
+  const size = props.size ?? "sm";
+  const [open, setOpen] = useComposerMenuState(props.hidden);
 
   return (
-    <Menu>
+    <Menu open={open} onOpenChange={setOpen}>
       <MenuTrigger
         render={
-          <Button
-            size="sm"
+          <ComposerControl
+            size={size}
             variant="ghost"
-            className="shrink-0 px-2 text-muted-foreground/70 hover:text-foreground/80"
+            className={size === "xs" ? "shrink-0" : "shrink-0 px-2"}
             aria-label={translate("chat.composer.moreControls")}
           />
         }
       >
-        <EllipsisIcon aria-hidden="true" className="size-4" />
+        <ComposerControlIcon icon={EllipsisIcon} size={size} />
       </MenuTrigger>
-      <MenuPopup
-        align="start"
-        className={compactComposerPopupClassName(Boolean(props.contextWindowMenuContent))}
-      >
-        {sectionIds.map((sectionId, index) => (
-          <Fragment key={sectionId}>
-            {sectionId === "traits" ? props.traitsMenuContent : null}
-            {sectionId === "context-window" ? (
-              <div
-                onPointerDown={stopCompactComposerMenuInteractionPropagation}
-                onClick={stopCompactComposerMenuInteractionPropagation}
-                onKeyDown={stopCompactComposerMenuNavigationKeyPropagation}
-              >
-                {props.contextWindowMenuContent}
-              </div>
-            ) : null}
-            {sectionId === "interaction-mode" ? (
-              <>
-                <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
-                  {translate("chat.composer.mode")}
-                </div>
-                <MenuRadioGroup
-                  value={props.interactionMode}
-                  onValueChange={(value) => {
-                    if (!value || value === props.interactionMode) return;
-                    props.onInteractionModeChange(value as ProviderInteractionMode);
-                  }}
-                >
-                  <MenuRadioItem value="default">
-                    {translate("chat.composer.mode.chat")}
-                  </MenuRadioItem>
-                  <MenuRadioItem value="plan">{translate("chat.composer.mode.plan")}</MenuRadioItem>
-                </MenuRadioGroup>
-              </>
-            ) : null}
-            {sectionId === "runtime-mode" ? (
-              <>
-                <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
-                  {translate("chat.composer.access")}
-                </div>
-                <MenuRadioGroup
-                  value={props.runtimeMode}
-                  onValueChange={(value) => {
-                    if (!value || value === props.runtimeMode) return;
-                    props.onRuntimeModeChange(value as RuntimeMode);
-                  }}
-                >
-                  <MenuRadioItem value="approval-required">
-                    {translate("chat.composer.access.supervised")}
-                  </MenuRadioItem>
-                  <MenuRadioItem value="auto-accept-edits">
-                    {translate("chat.composer.access.autoAccept")}
-                  </MenuRadioItem>
-                  <MenuRadioItem value="auto">
-                    {translate("chat.composer.access.auto")}
-                  </MenuRadioItem>
-                  <MenuRadioItem value="full-access">
-                    {translate("chat.composer.access.full")}
-                  </MenuRadioItem>
-                </MenuRadioGroup>
-              </>
-            ) : null}
-            {index < sectionIds.length - 1 ? <MenuDivider /> : null}
-          </Fragment>
-        ))}
+      <MenuPopup align="start" {...composerFloatingLayerProps}>
+        {props.traitsMenuContent ? (
+          <>
+            {props.traitsMenuContent}
+            <MenuDivider />
+          </>
+        ) : null}
+        {props.showInteractionModeToggle ? (
+          <>
+            <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
+              {translate("chat.composer.mode")}
+            </div>
+            <MenuRadioGroup
+              value={props.interactionMode}
+              onValueChange={(value) => {
+                if (!value || value === props.interactionMode) return;
+                props.onToggleInteractionMode();
+              }}
+            >
+              <MenuRadioItem value="default">{translate("chat.composer.mode.chat")}</MenuRadioItem>
+              <MenuRadioItem value="plan">{translate("chat.composer.mode.plan")}</MenuRadioItem>
+            </MenuRadioGroup>
+            <MenuDivider />
+          </>
+        ) : null}
+        <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
+          {translate("chat.composer.access")}
+        </div>
+        <MenuRadioGroup
+          value={props.runtimeMode}
+          onValueChange={(value) => {
+            if (!value || value === props.runtimeMode) return;
+            props.onRuntimeModeChange(value as RuntimeMode);
+          }}
+        >
+          <MenuRadioItem value="approval-required">
+            {translate("chat.composer.access.supervised")}
+          </MenuRadioItem>
+          <MenuRadioItem value="auto-accept-edits">
+            {translate("chat.composer.access.autoAccept")}
+          </MenuRadioItem>
+          <MenuRadioItem value="auto">{translate("chat.composer.access.auto")}</MenuRadioItem>
+          <MenuRadioItem value="full-access">
+            {translate("chat.composer.access.full")}
+          </MenuRadioItem>
+        </MenuRadioGroup>
       </MenuPopup>
     </Menu>
   );

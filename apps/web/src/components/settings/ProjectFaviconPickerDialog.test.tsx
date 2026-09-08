@@ -32,13 +32,6 @@ vi.mock("~/hooks/useTheme", () => ({
   useTheme: () => ({ resolvedTheme: "dark" }),
 }));
 
-vi.mock("~/hooks/useInterfaceTranslator", async () => {
-  const { createInterfaceTranslator } = await import("@t3tools/shared/interfaceLanguage");
-  return {
-    useInterfaceTranslator: () => createInterfaceTranslator({ language: "en", locale: "en-US" }),
-  };
-});
-
 vi.mock("../files/projectFilesQueryState", () => ({
   useProjectFilePickerQuery: () => ({
     entries: [],

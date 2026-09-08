@@ -1,12 +1,3 @@
-export interface DeepThinkingMessagePart {
-  readonly text?: string | null | undefined;
-}
-
-export interface DeepThinkingMessage {
-  readonly role: string;
-  readonly parts?: ReadonlyArray<DeepThinkingMessagePart | string> | undefined;
-}
-
 export interface DeepThinkingAccumulatedData {
   readonly topics: ReadonlyArray<string>;
   readonly stepResults: ReadonlyArray<Record<string, unknown>>;
@@ -21,11 +12,7 @@ export interface DeepThinkingRequestPolicyOptions {
   readonly forceParallelForDurableProviders: boolean;
 }
 
-export const DEEP_THINKING_DECOMPOSE_SCHEMA_DESC = '{ "steps": ["topic 1", "topic 2", ...] }';
-export const DEEP_THINKING_STEP_SCHEMA_DESC =
-  '{ "thinking": "...", "considerations": ["..."], "openQuestions": ["..."] }';
-export const DEEP_THINKING_REFINE_SCHEMA_DESC =
-  '{ "sufficient": true|false, "gaps": ["..."], "adjustments": ["..."] }';
+const DEEP_THINKING_DECOMPOSE_SCHEMA_DESC = '{ "steps": ["topic 1", "topic 2", ...] }';
 
 export function buildDeepThinkingRequestAppendix(
   options: DeepThinkingRequestPolicyOptions,
@@ -48,55 +35,12 @@ ${parallelGuidance}
 - Do not start extra provider calls, tools, or agents solely to satisfy this mode.`;
 }
 
-function readPartText(part: DeepThinkingMessagePart | string): string {
-  if (typeof part === "string") return part.trim();
-  const value = Object.hasOwn(part, "text") ? part.text : undefined;
-  return typeof value === "string" ? value.trim() : "";
-}
-
-export function extractTaskTextFromMessages(messages: ReadonlyArray<DeepThinkingMessage>): string {
-  const userMessages = messages.filter((message) => message.role === "user");
-  const lastUserMessage = userMessages[userMessages.length - 1];
-  if (!lastUserMessage?.parts?.length) return "";
-
-  return lastUserMessage.parts.map(readPartText).filter(Boolean).join("\n");
-}
-
 export function buildDecomposeSystemPrompt(stepCount: number): string {
   return (
     "Before answering, list exactly the distinct things you need to think through for this task.\n" +
     "Return one JSON object only - no markdown fences, no prose outside JSON.\n" +
     `Schema: ${DEEP_THINKING_DECOMPOSE_SCHEMA_DESC}\n` +
     `The "steps" array must contain exactly ${stepCount} non-empty strings - each one concrete topic to think about.`
-  );
-}
-
-export function buildDecomposeUserPrompt(taskText: string): string {
-  return (
-    `Task:\n${taskText}\n\n` +
-    "What are the distinct things you need to think through before answering well? " +
-    "Return exactly the requested number of short topic strings."
-  );
-}
-
-export function buildDecomposeRepairUserPrompt(
-  taskText: string,
-  stepCount: number,
-  error: string,
-  raw: string,
-): string {
-  return (
-    `Task:\n${taskText}\n\nYour previous answer was invalid.\nError: ${error}\n\n` +
-    `Return valid JSON with exactly ${stepCount} topic strings in "steps".\nPrevious (truncated):\n${raw.slice(0, 8000)}`
-  );
-}
-
-export function buildStepWorkSystemPrompt(): string {
-  return (
-    "Work through one thinking topic for a task - explore it in depth before a final answer is written.\n" +
-    "Return one JSON object only - no markdown fences, no prose outside JSON.\n" +
-    `Schema: ${DEEP_THINKING_STEP_SCHEMA_DESC}\n` +
-    '"thinking" must be a non-empty string.'
   );
 }
 
@@ -117,36 +61,6 @@ export function buildStepWorkUserPrompt(
     `Think through step ${stepIndex + 1} of ${totalSteps}:\n${topic}\n` +
     `${priorBlock}\n` +
     "Focus only on this topic. Do not draft the final user-facing answer yet."
-  );
-}
-
-export function buildStepWorkRepairUserPrompt(
-  taskText: string,
-  topic: string,
-  error: string,
-  raw: string,
-): string {
-  return (
-    `Task:\n${taskText}\n\nTopic:\n${topic}\n\nPrevious answer invalid.\nError: ${error}\n\n` +
-    `Return valid JSON.\nPrevious (truncated):\n${raw.slice(0, 8000)}`
-  );
-}
-
-export function buildRefinementSystemPrompt(): string {
-  return (
-    "You judge whether accumulated thinking is sufficient to produce a high-quality final answer.\n" +
-    "Return one JSON object only - no markdown fences.\n" +
-    `Schema: ${DEEP_THINKING_REFINE_SCHEMA_DESC}`
-  );
-}
-
-export function buildRefinementUserPrompt(
-  taskText: string,
-  data: DeepThinkingAccumulatedData,
-): string {
-  return (
-    `Task:\n${taskText}\n\nAccumulated thinking:\n${JSON.stringify(data, null, 2)}\n\n` +
-    "Is this thinking sufficient? List gaps and adjustments if not."
   );
 }
 

@@ -1,3 +1,4 @@
+import { ProviderDriverKind } from "@t3tools/contracts";
 import {
   CommandId,
   EventId,
@@ -6,7 +7,6 @@ import {
   SubagentId,
   ThreadId,
   type OrchestrationEvent,
-  type OrchestrationReadModel,
   type OrchestrationSubagentSummary,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -42,7 +42,7 @@ function makeEvent(
   } as OrchestrationEvent;
 }
 
-function createThread(): Effect.Effect<OrchestrationReadModel, unknown> {
+function createThread() {
   return projectEvent(
     createEmptyReadModel(createdAt),
     makeEvent(1, "thread.created", createdAt, {
@@ -70,7 +70,7 @@ function makeSubagent(
     id: subagentId,
     origin: "t3-fetch",
     providerInstanceId: ProviderInstanceId.make("claude-work"),
-    providerDriver: "claudeAgent",
+    providerDriver: ProviderDriverKind.make("claudeAgent"),
     providerThreadId: "provider-thread-contracts",
     parentId: null,
     path: "/root/contracts",

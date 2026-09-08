@@ -21,6 +21,7 @@ const decodeModelCapabilities = Schema.decodeUnknownSync(ModelCapabilities);
 describe("multi-provider model contracts", () => {
   it("defines defaults for exactly the native provider drivers", () => {
     expect(DEFAULT_MODEL_BY_PROVIDER).toEqual({
+      antigravity: "antigravity-default",
       [CODEX_DRIVER_KIND]: "gpt-5.6-sol",
       [CLAUDE_DRIVER_KIND]: "claude-sonnet-5",
       [CURSOR_DRIVER_KIND]: "auto",
@@ -32,6 +33,7 @@ describe("multi-provider model contracts", () => {
 
   it("defines display names for exactly the native provider drivers", () => {
     expect(PROVIDER_DISPLAY_NAMES).toEqual({
+      antigravity: "Antigravity",
       [CODEX_DRIVER_KIND]: "Codex",
       [CLAUDE_DRIVER_KIND]: "Claude",
       [CURSOR_DRIVER_KIND]: "Cursor",

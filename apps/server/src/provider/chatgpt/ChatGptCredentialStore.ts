@@ -26,7 +26,7 @@ const ChatGptAuthFile = Schema.Struct({
 
 const decodeAuthFile = Schema.decodeUnknownEffect(Schema.fromJsonString(ChatGptAuthFile));
 
-export class ChatGptCredentialError extends Schema.TaggedErrorClass<ChatGptCredentialError>()(
+export class ChatGptCredentialError extends Schema.TaggedError<ChatGptCredentialError>()(
   "ChatGptCredentialError",
   {
     operation: Schema.Literals(["prepare", "read", "decode", "remove"]),

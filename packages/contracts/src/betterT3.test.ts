@@ -47,9 +47,11 @@ describe("Better T3 feature registry", () => {
     for (const featureId of [
       "agent.expandedComposerControls",
       "agent.reasoningVisibility",
+      "agent.nativeSubagentDisplay",
       "chat.workspaceCardDeck",
       "chat.cardMorphing",
       "chat.characterStreamingMotion",
+      "chat.contextWindowSelector",
       "chat.classicBubbleOnly",
       "chat.shiftClickShowLess",
       "chat.draftIndicators",
@@ -219,6 +221,21 @@ describe("BetterT3SettingsV1", () => {
 
     expect(resolveBetterT3FeatureFlag(decoded, "chat.workspaceCardDeck")).toBe(false);
     expect(resolveBetterT3FeatureFlag(decoded, "resource.processSuspension")).toBe(false);
+  });
+
+  it("keeps Better T3 subagent display by default and round-trips the native display switch", () => {
+    const settings = makeBetterT3SettingsV1("existing-install-migration");
+    expect(resolveBetterT3FeatureFlag(settings, "agent.nativeSubagentDisplay")).toBe(false);
+    for (const enabled of [true, false]) {
+      const stored = decodeSettings(
+        encodeSettings({
+          ...settings,
+          flags: { "agent.nativeSubagentDisplay": enabled },
+        }),
+      );
+      expect(resolveBetterT3FeatureFlag(stored, "agent.nativeSubagentDisplay")).toBe(enabled);
+      expect(resolveBetterT3FeatureFlag(stored, "agent.generalSubagents")).toBe(true);
+    }
   });
 
   it("round-trips unknown V1 flags so a mixed-version client does not erase them", () => {

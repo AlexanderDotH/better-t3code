@@ -1,3 +1,4 @@
+import { ProviderDriverKind } from "@t3tools/contracts";
 import {
   EventId,
   MessageId,
@@ -45,7 +46,7 @@ layer("ProjectionThreadSubagent repositories", (it) => {
         id: subagentId,
         origin: "t3-fetch",
         providerInstanceId: ProviderInstanceId.make("claude-work"),
-        providerDriver: "claudeAgent",
+        providerDriver: ProviderDriverKind.make("claudeAgent"),
         providerThreadId: "provider-agent-research",
         parentId: null,
         path: "/root/research",
@@ -82,7 +83,7 @@ layer("ProjectionThreadSubagent repositories", (it) => {
         id: subagentId,
         origin: "t3-fetch",
         providerInstanceId: ProviderInstanceId.make("claude-work"),
-        providerDriver: "claudeAgent",
+        providerDriver: ProviderDriverKind.make("claudeAgent"),
         providerThreadId: "provider-agent-research",
         parentId: null,
         path: "/root/research",
@@ -132,7 +133,7 @@ layer("ProjectionThreadSubagent repositories", (it) => {
         id: managedSubagentId,
         origin: "t3-managed",
         providerInstanceId: ProviderInstanceId.make("codex-security"),
-        providerDriver: "codex",
+        providerDriver: ProviderDriverKind.make("codex"),
         providerThreadId: "provider-agent-managed-security",
         parentId: null,
         path: "/root/managed-security",

@@ -37,12 +37,12 @@ const MAX_SAME_ORIGIN_REDIRECTS = 2;
 const decodeUnknownJson = HttpClientResponse.schemaBodyJson(Schema.Unknown);
 const isProtocolError = Schema.is(OpenRouterProtocolError);
 
-export class OpenRouterTransportSecurityError extends Schema.TaggedErrorClass<OpenRouterTransportSecurityError>()(
+export class OpenRouterTransportSecurityError extends Schema.TaggedError<OpenRouterTransportSecurityError>()(
   "OpenRouterTransportSecurityError",
   { message: Schema.String },
 ) {}
 
-export class OpenRouterAuthenticationError extends Schema.TaggedErrorClass<OpenRouterAuthenticationError>()(
+export class OpenRouterAuthenticationError extends Schema.TaggedError<OpenRouterAuthenticationError>()(
   "OpenRouterAuthenticationError",
   {
     status: Schema.optionalKey(Schema.Number),
@@ -50,7 +50,7 @@ export class OpenRouterAuthenticationError extends Schema.TaggedErrorClass<OpenR
   },
 ) {}
 
-export class OpenRouterHttpError extends Schema.TaggedErrorClass<OpenRouterHttpError>()(
+export class OpenRouterHttpError extends Schema.TaggedError<OpenRouterHttpError>()(
   "OpenRouterHttpError",
   {
     operation: Schema.Literals(["models", "chat-completions", "responses"]),
@@ -293,15 +293,14 @@ export const makeOpenRouterTransport = Effect.fn("makeOpenRouterTransport")(func
     }).pipe(
       Effect.flatMap((response) => requireSuccess("models", response)),
       Effect.flatMap(decodeUnknownJson),
-      Effect.mapError(
-        (error): OpenRouterTransportError =>
-          isTransportSecurityError(error) || isAuthenticationError(error) || isHttpError(error)
-            ? error
-            : new OpenRouterHttpError({
-                operation: "models",
-                category: "transport",
-                message: "OpenRouter model catalog response is not valid JSON",
-              }),
+      Effect.mapError((error): OpenRouterTransportError =>
+        isTransportSecurityError(error) || isAuthenticationError(error) || isHttpError(error)
+          ? error
+          : new OpenRouterHttpError({
+              operation: "models",
+              category: "transport",
+              message: "OpenRouter model catalog response is not valid JSON",
+            }),
       ),
       Effect.flatMap(decodeOpenRouterModelCatalog),
       Effect.map((models) => mergeOpenRouterCustomModels(models, customModels)),
@@ -330,15 +329,14 @@ export const makeOpenRouterTransport = Effect.fn("makeOpenRouterTransport")(func
             ? decodeOpenRouterChatCompletionSse(success.stream)
             : decodeOpenRouterResponsesSse(success.stream);
         return decoded.pipe(
-          Stream.mapError(
-            (error): OpenRouterTransportError =>
-              isProtocolError(error)
-                ? error
-                : new OpenRouterHttpError({
-                    operation,
-                    category: "transport",
-                    message: "OpenRouter response stream failed",
-                  }),
+          Stream.mapError((error): OpenRouterTransportError =>
+            isProtocolError(error)
+              ? error
+              : new OpenRouterHttpError({
+                  operation,
+                  category: "transport",
+                  message: "OpenRouter response stream failed",
+                }),
           ),
         );
       }),

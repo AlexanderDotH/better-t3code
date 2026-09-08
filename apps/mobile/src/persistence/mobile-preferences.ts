@@ -17,7 +17,7 @@ import {
   ProjectThreadPreviewSyncRecord,
   type ProjectThreadPreviewSyncRecord as ProjectThreadPreviewSyncRecordType,
   type BetterT3SettingsV1 as BetterT3SettingsV1Type,
-  DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  DEFAULT_SERVER_SETTINGS,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   type SidebarProjectGroupingMode,
@@ -96,6 +96,9 @@ export interface Preferences {
   readonly legacyThreadListEnabled?: boolean;
   /** Device-local counterpart of desktop's `planModeEnabled` legacy flag. */
   readonly planModeEnabled?: boolean;
+  /** Fresh keys reset both shelves to collapsed when users update. */
+  readonly threadListSettledShelfExpanded?: boolean;
+  readonly threadListSnoozedShelfExpanded?: boolean;
   readonly modelFavorites?: ReadonlyArray<{
     readonly provider: string;
     readonly model: string;
@@ -106,7 +109,7 @@ export interface Preferences {
   readonly threadListV2SnoozedShelfExpanded?: boolean;
 }
 
-export class MobilePreferencesLoadError extends Schema.TaggedErrorClass<MobilePreferencesLoadError>()(
+export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
   "MobilePreferencesLoadError",
   { cause: Schema.Defect() },
 ) {
@@ -115,7 +118,7 @@ export class MobilePreferencesLoadError extends Schema.TaggedErrorClass<MobilePr
   }
 }
 
-export class MobilePreferencesSaveError extends Schema.TaggedErrorClass<MobilePreferencesSaveError>()(
+export class MobilePreferencesSaveError extends Schema.TaggedError<MobilePreferencesSaveError>()(
   "MobilePreferencesSaveError",
   { cause: Schema.Defect() },
 ) {
@@ -170,13 +173,15 @@ export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
     projectThreadPreviewMigrationVersion?: 1;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
+    legacyThreadListEnabled?: boolean;
+    planModeEnabled?: boolean;
+    threadListSettledShelfExpanded?: boolean;
+    threadListSnoozedShelfExpanded?: boolean;
     sidebarProjectSortOrder?: Exclude<SidebarProjectSortOrder, "manual">;
     sidebarThreadSortOrder?: SidebarThreadSortOrder;
     sidebarAutoSettleAfterDays?: number | null;
     sidebarAutoSettleOnMerge?: boolean;
     autoSettleOnMerge?: boolean;
-    legacyThreadListEnabled?: boolean;
-    planModeEnabled?: boolean;
     modelFavorites?: ReadonlyArray<{ readonly provider: string; readonly model: string }>;
     threadListV2SettledShelfExpanded?: boolean;
     threadListV2SnoozedShelfExpanded?: boolean;
@@ -323,6 +328,12 @@ export function sanitizeMobilePreferences(parsed: Preferences): Preferences {
   if (typeof parsed.planModeEnabled === "boolean") {
     preferences.planModeEnabled = parsed.planModeEnabled;
   }
+  if (typeof parsed.threadListSettledShelfExpanded === "boolean") {
+    preferences.threadListSettledShelfExpanded = parsed.threadListSettledShelfExpanded;
+  }
+  if (typeof parsed.threadListSnoozedShelfExpanded === "boolean") {
+    preferences.threadListSnoozedShelfExpanded = parsed.threadListSnoozedShelfExpanded;
+  }
   if (Array.isArray(parsed.modelFavorites)) {
     const seen = new Set<string>();
     const modelFavorites: Array<{ provider: string; model: string }> = [];
@@ -364,7 +375,7 @@ export function resolveMobileSidebarSettlingPreferences(preferences: Preferences
       preferences?.sidebarAutoSettleAfterDays ??
       (preferences?.sidebarAutoSettleAfterDays === null
         ? null
-        : DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS),
+        : DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterDays),
     onMerge: preferences?.sidebarAutoSettleOnMerge ?? preferences?.autoSettleOnMerge ?? true,
   };
 }

@@ -10,7 +10,6 @@ import {
   formatUsd,
 } from "@t3tools/shared/usageFormat";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
-import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 const VIEW_WIDTH = 960;
 const VIEW_HEIGHT = 260;
@@ -55,7 +54,7 @@ function valueFor(
   return metric === "tokens" ? entry.totalTokens : entry.costUsd;
 }
 
-function buildPeriodColumns(
+export function buildPeriodColumns(
   periods: readonly string[],
   byPeriod: ReadonlyMap<string, DailyTotals | HourlyTotals>,
   metric: UsageChartMetric,
@@ -170,24 +169,6 @@ export function niceScale(peak: number, count: number): { max: number; ticks: re
   return { max, ticks };
 }
 
-/**
- * Turns the merged daily totals into one column per day.
- *
- * Values are absolute, not cumulative: each provider is drawn from the same
- * zero baseline so the chart never implies that one provider is always larger.
- *
- * The chart paths and the hover readout both consume this, so the number under
- * the cursor is by construction the number that was plotted rather than a
- * second derivation that can drift from it.
- */
-export function buildDayColumns(
-  days: readonly string[],
-  byDay: ReadonlyMap<string, DailyTotals>,
-  metric: UsageChartMetric,
-): readonly DayColumn[] {
-  return buildPeriodColumns(days, byDay, metric);
-}
-
 export function UsageProviderChart({
   providers,
   days,
@@ -199,7 +180,6 @@ export function UsageProviderChart({
   resolution,
   timeZone,
 }: UsageProviderChartProps) {
-  const translator = useInterfaceTranslator();
   const periods = resolution === "hour" ? hours : days;
   const byPeriod = useMemo(
     () =>
@@ -333,15 +313,6 @@ export function UsageProviderChart({
     resolution === "hour" && referenceTime !== undefined
       ? formatRelativeHourShort(period, referenceTime, timeZone)
       : formatPeriod(period);
-  const chartSummary = translator.message(
-    resolution === "hour"
-      ? metric === "tokens"
-        ? "usage.chart.hourlyTokens"
-        : "usage.chart.hourlyCost"
-      : metric === "tokens"
-        ? "usage.chart.dailyTokens"
-        : "usage.chart.dailyCost",
-  );
 
   return (
     <div className="flex flex-col gap-1">
@@ -373,7 +344,7 @@ export function UsageProviderChart({
             viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
             preserveAspectRatio="none"
             role="img"
-            aria-label={translator.message("usage.chart.aria", { summary: chartSummary })}
+            aria-label={`${resolution === "hour" ? "Hourly" : "Daily"} ${metric === "tokens" ? "processed tokens" : "cost"} by provider`}
           >
             {ticks.map((tick) => {
               const y = toY(tick);
@@ -453,7 +424,7 @@ export function UsageProviderChart({
                 );
               })}
               <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-1">
-                <span className="text-muted-foreground">{translator.message("usage.total")}</span>
+                <span className="text-muted-foreground">Total</span>
                 <span className="text-foreground tabular-nums">
                   {format(hoveredColumn?.total ?? 0)}
                 </span>

@@ -1,8 +1,10 @@
 import type { AgentImportSource, SkillDescriptor, SkillMutationScope } from "@t3tools/contracts";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSettingsCommand, useSettingsMutation } from "./useSettingsMutation";
+import { agentSettingsEnvironment } from "../../state/agentSettings";
+import { useEnvironmentQuery } from "../../state/query";
 import { Edit3Icon, PlusIcon, RefreshCwIcon, Trash2Icon, UploadIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
@@ -187,13 +189,6 @@ function projectKey(project: EnvironmentProject): string {
   return `${project.environmentId}:${project.id}`;
 }
 
-function queryKey(input: {
-  readonly environmentId: EnvironmentProject["environmentId"] | null;
-  readonly projectCwd: string | null;
-}) {
-  return ["skills", input.environmentId, "settings", input.projectCwd] as const;
-}
-
 function draftFromSkill(skill: SkillDescriptor | null): SkillDraft {
   if (!skill) {
     return {
@@ -312,7 +307,6 @@ function SkillEditorDialog(props: {
 
 export function SkillsSettingsPanel() {
   const translator = useInterfaceTranslator();
-  const queryClient = useQueryClient();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const [scope, setScope] = useState<SkillScopeSelection>("global");
@@ -322,7 +316,8 @@ export function SkillsSettingsPanel() {
   const [editingSkill, setEditingSkill] = useState<SkillDescriptor | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
-  const [selectedImportSourceIds, setSelectedImportSourceIds] = useState<ReadonlyArray<string>>([]);
+  const [importSourceSelection, setSelectedImportSourceIds] =
+    useState<ReadonlyArray<string> | null>(null);
   const [deduplicateOnImport, setDeduplicateOnImport] = useState(true);
   const [draft, setDraft] = useState<SkillDraft>(EMPTY_DRAFT);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -338,50 +333,46 @@ export function SkillsSettingsPanel() {
   };
   const environmentId = resolveSettingsEnvironmentId(environmentSelection);
 
-  const skillsQuery = useQuery({
-    queryKey: queryKey({
-      environmentId,
-      projectCwd: selectedProjectCwd,
-    }),
-    queryFn: () =>
-      requireSettingsEnvironment(environmentSelection).api.skills.list({
-        includeBody: true,
-        forceReload: true,
-        ...(selectedProjectId ? { projectId: selectedProjectId } : {}),
-        ...(selectedProjectCwd ? { projectCwd: selectedProjectCwd } : {}),
-      }),
-    enabled: environmentId !== null,
-  });
+  const skillsQuery = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : agentSettingsEnvironment.skills.listQuery({
+          environmentId,
+          input: {
+            includeBody: true,
+            forceReload: true,
+            ...(selectedProjectId ? { projectId: selectedProjectId } : {}),
+            ...(selectedProjectCwd ? { projectCwd: selectedProjectCwd } : {}),
+          },
+        }),
+  );
+  const importSourcesQuery = useEnvironmentQuery(
+    isImportOpen && environmentId !== null
+      ? agentSettingsEnvironment.skills.importSourcesQuery({ environmentId, input: {} })
+      : null,
+  );
 
-  const importSourcesQuery = useQuery({
-    queryKey: ["skills", environmentId, "importSources"],
-    queryFn: () =>
-      requireSettingsEnvironment(environmentSelection).api.skills.discoverImportSources(),
-    enabled: isImportOpen && environmentId !== null,
-  });
-
-  useEffect(() => {
-    if (!isImportOpen || selectedImportSourceIds.length > 0) return;
-    const sourceIds =
-      importSourcesQuery.data?.sources
-        .filter((source) => source.skillCount > 0)
-        .map((source) => source.id) ?? [];
-    if (sourceIds.length > 0) {
-      setSelectedImportSourceIds(sourceIds);
-    }
-  }, [importSourcesQuery.data?.sources, isImportOpen, selectedImportSourceIds.length]);
+  const selectedImportSourceIds =
+    importSourceSelection ??
+    importSourcesQuery.data?.sources
+      .filter((source) => source.skillCount > 0)
+      .map((source) => source.id) ??
+    [];
 
   const visibleSkills = useMemo(
     () => (skillsQuery.data?.skills ?? []).filter((skill) => skill.scope === scope),
     [scope, skillsQuery.data?.skills],
   );
 
-  const invalidateSkills = () =>
-    queryClient.invalidateQueries({
-      queryKey: ["skills", environmentId],
-    });
+  const invalidateSkills = skillsQuery.refresh;
+  const createSkill = useSettingsCommand(agentSettingsEnvironment.skills.create);
+  const renameSkill = useSettingsCommand(agentSettingsEnvironment.skills.rename);
+  const updateSkill = useSettingsCommand(agentSettingsEnvironment.skills.update);
+  const setSkillEnabled = useSettingsCommand(agentSettingsEnvironment.skills.setEnabled);
+  const importSkills = useSettingsCommand(agentSettingsEnvironment.skills.importSources);
+  const deleteSkill = useSettingsCommand(agentSettingsEnvironment.skills.delete);
 
-  const saveMutation = useMutation({
+  const saveMutation = useSettingsMutation({
     mutationFn: async () => {
       if (scope === "project" && (!selectedProjectId || !selectedProjectCwd)) {
         throw new Error(translator.message("settings.skills.selectProjectSave"));
@@ -389,35 +380,44 @@ export function SkillsSettingsPanel() {
       if (!draft.name.trim() || !draft.description.trim()) {
         throw new Error(translator.message("settings.skills.required"));
       }
-      const skillsApi = requireSettingsEnvironment(environmentSelection).api.skills;
+      const { environmentId } = requireSettingsEnvironment(environmentSelection);
 
       if (!editingSkill) {
-        return skillsApi.create({
-          scope,
-          name: draft.name,
-          description: draft.description,
-          displayName: draft.displayName,
-          shortDescription: draft.shortDescription,
-          body: draft.body,
-          ...(selectedProjectId ? { projectId: selectedProjectId } : {}),
-          ...(selectedProjectCwd ? { projectCwd: selectedProjectCwd } : {}),
+        return createSkill({
+          environmentId,
+          input: {
+            scope,
+            name: draft.name,
+            description: draft.description,
+            displayName: draft.displayName,
+            shortDescription: draft.shortDescription,
+            body: draft.body,
+            ...(selectedProjectId ? { projectId: selectedProjectId } : {}),
+            ...(selectedProjectCwd ? { projectCwd: selectedProjectCwd } : {}),
+          },
         });
       }
 
       let target = skillTarget(editingSkill);
       if (draft.name.trim() !== editingSkill.name) {
-        const renamed = await skillsApi.rename({
-          target,
-          newName: draft.name,
+        const renamed = await renameSkill({
+          environmentId,
+          input: {
+            target,
+            newName: draft.name,
+          },
         });
         target = skillTarget(renamed.skill);
       }
-      return skillsApi.update({
-        target,
-        description: draft.description,
-        displayName: draft.displayName,
-        shortDescription: draft.shortDescription,
-        body: draft.body,
+      return updateSkill({
+        environmentId,
+        input: {
+          target,
+          description: draft.description,
+          displayName: draft.displayName,
+          shortDescription: draft.shortDescription,
+          body: draft.body,
+        },
       });
     },
     onSuccess: () => {
@@ -434,33 +434,45 @@ export function SkillsSettingsPanel() {
     },
   });
 
-  const setEnabledMutation = useMutation({
+  const setEnabledMutation = useSettingsMutation({
     mutationFn: (input: { skill: SkillDescriptor; enabled: boolean }) =>
-      requireSettingsEnvironment(environmentSelection).api.skills.setEnabled({
-        target: skillTarget(input.skill),
-        enabled: input.enabled,
+      setSkillEnabled({
+        environmentId: requireSettingsEnvironment(environmentSelection).environmentId,
+        input: {
+          target: skillTarget(input.skill),
+          enabled: input.enabled,
+        },
       }),
     onSuccess: () => {
+      setErrorMessage(null);
       void invalidateSkills();
+    },
+    onError: (error) => {
+      setErrorMessage(
+        error instanceof Error ? error.message : translator.message("settings.skills.saveFailed"),
+      );
     },
   });
 
-  const importMutation = useMutation({
+  const importMutation = useSettingsMutation({
     mutationFn: () => {
       if (scope === "project" && (!selectedProjectId || !selectedProjectCwd)) {
         throw new Error(translator.message("settings.skills.selectProjectImport"));
       }
-      return requireSettingsEnvironment(environmentSelection).api.skills.importSources({
-        sourceIds: selectedImportSourceIds,
-        scope,
-        deduplicate: deduplicateOnImport,
-        ...(selectedProjectId ? { projectId: selectedProjectId } : {}),
-        ...(selectedProjectCwd ? { projectCwd: selectedProjectCwd } : {}),
+      return importSkills({
+        environmentId: requireSettingsEnvironment(environmentSelection).environmentId,
+        input: {
+          sourceIds: selectedImportSourceIds,
+          scope,
+          deduplicate: deduplicateOnImport,
+          ...(selectedProjectId ? { projectId: selectedProjectId } : {}),
+          ...(selectedProjectCwd ? { projectCwd: selectedProjectCwd } : {}),
+        },
       });
     },
     onSuccess: () => {
       setIsImportOpen(false);
-      setSelectedImportSourceIds([]);
+      setSelectedImportSourceIds(null);
       setImportErrorMessage(null);
       void invalidateSkills();
     },
@@ -471,18 +483,27 @@ export function SkillsSettingsPanel() {
     },
   });
 
-  const deleteMutation = useMutation({
+  const deleteMutation = useSettingsMutation({
     mutationFn: async (skill: SkillDescriptor) => {
       const confirmed = await ensureLocalApi().dialogs.confirm(
         translator.message("settings.skills.deleteConfirm", { skill: skill.name }),
       );
       if (!confirmed) return null;
-      return requireSettingsEnvironment(environmentSelection).api.skills.delete({
-        target: skillTarget(skill),
+      return deleteSkill({
+        environmentId: requireSettingsEnvironment(environmentSelection).environmentId,
+        input: {
+          target: skillTarget(skill),
+        },
       });
     },
     onSuccess: () => {
+      setErrorMessage(null);
       void invalidateSkills();
+    },
+    onError: (error) => {
+      setErrorMessage(
+        error instanceof Error ? error.message : translator.message("settings.skills.saveFailed"),
+      );
     },
   });
 
@@ -501,11 +522,11 @@ export function SkillsSettingsPanel() {
   };
 
   const openImportDialog = () => {
-    setSelectedImportSourceIds([]);
+    setSelectedImportSourceIds(null);
     setDeduplicateOnImport(true);
     setImportErrorMessage(null);
     setIsImportOpen(true);
-    void importSourcesQuery.refetch();
+    void importSourcesQuery.refresh();
   };
 
   return (
@@ -517,7 +538,7 @@ export function SkillsSettingsPanel() {
             <Button
               size="icon-xs"
               variant="ghost"
-              onClick={() => void skillsQuery.refetch()}
+              onClick={() => void skillsQuery.refresh()}
               aria-label={translator.message("settings.skills.refresh")}
             >
               <RefreshCwIcon className="size-3.5" />
@@ -583,13 +604,17 @@ export function SkillsSettingsPanel() {
               </SelectPopup>
             </Select>
           </div>
-          {errorMessage ? <p className="mt-3 text-destructive text-xs">{errorMessage}</p> : null}
+          {errorMessage || skillsQuery.error ? (
+            <p role="alert" className="mt-3 text-destructive text-xs">
+              {errorMessage ?? skillsQuery.error}
+            </p>
+          ) : null}
         </div>
         <div className="divide-y divide-border/60">
           {visibleSkills.length === 0 ? (
             <div className="p-5 text-muted-foreground text-sm">
               {translator.message(
-                skillsQuery.isLoading ? "settings.skills.loading" : "settings.skills.empty",
+                skillsQuery.isPending ? "settings.skills.loading" : "settings.skills.empty",
               )}
             </div>
           ) : (
@@ -664,7 +689,7 @@ export function SkillsSettingsPanel() {
         scope={scope}
         sources={importSourcesQuery.data?.sources ?? []}
         selectedSourceIds={selectedImportSourceIds}
-        isLoadingSources={importSourcesQuery.isLoading}
+        isLoadingSources={importSourcesQuery.isPending}
         isImporting={importMutation.isPending}
         deduplicate={deduplicateOnImport}
         error={importErrorMessage}

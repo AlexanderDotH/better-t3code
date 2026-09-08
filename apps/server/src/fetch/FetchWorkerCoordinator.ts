@@ -33,12 +33,7 @@ import {
 } from "./FetchWorkerState.ts";
 import { FETCH_ABORT_FORCE_DELAY, makeFetchWorkerTransport } from "./FetchWorkerTransport.ts";
 
-export {
-  buildFetchContext,
-  FETCH_CONTEXT_MAX_CHARS,
-  FETCH_WORKER_FINDINGS_MAX_CHARS,
-} from "./FetchContext.ts";
-export { buildFetchWorkerPrompt, fetchApprovalAction } from "./FetchWorkerPolicy.ts";
+export { FETCH_CONTEXT_MAX_CHARS } from "./FetchContext.ts";
 export type { FetchApprovalAction } from "./FetchWorkerPolicy.ts";
 export type {
   FetchHandoffInput,

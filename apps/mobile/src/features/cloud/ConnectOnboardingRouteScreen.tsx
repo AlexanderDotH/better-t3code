@@ -14,7 +14,6 @@ import { splitEnvironmentSections } from "../connection/environmentSections";
 import { useConnectionController } from "../connection/useConnectionController";
 import { optOutOfConnectOnboarding } from "./connectOnboardingOptOut";
 import { hasCloudPublicConfig } from "./publicConfig";
-import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 /**
  * Post-sign-in onboarding sheet for T3 Connect. Mobile never publishes
@@ -43,7 +42,6 @@ export function ConnectOnboardingRouteScreen() {
 }
 
 function ConfiguredConnectOnboardingRouteScreen() {
-  const translator = useMobileInterfaceTranslator();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
@@ -86,14 +84,8 @@ function ConfiguredConnectOnboardingRouteScreen() {
     <View collapsable={false} className="flex-1 bg-sheet">
       {Platform.OS === "android" ? (
         <AndroidSheetHeader
-          title={translator.message("mobile.connection.setupConnect")}
-          actions={[
-            {
-              accessibilityLabel: translator.message("common.close"),
-              icon: "xmark",
-              onPress: handleClose,
-            },
-          ]}
+          title="Set up T3 Connect"
+          actions={[{ accessibilityLabel: "Close", icon: "xmark", onPress: handleClose }]}
         />
       ) : (
         <NativeHeaderToolbar placement="right">
@@ -124,7 +116,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
         ) : (
           <View collapsable={false} className="rounded-[24px] bg-card p-5">
             <Text className="text-sm leading-normal text-foreground-muted">
-              {translator.message("mobile.connection.signInConnect")}
+              Sign in to your T3 account to set up T3 Connect.
             </Text>
           </View>
         )}
@@ -136,9 +128,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
             onPress={handleDontShowAgain}
             className="items-center py-1 active:opacity-70"
           >
-            <Text className="text-xs text-foreground-muted">
-              {translator.message("mobile.connection.doNotShowAgain")}
-            </Text>
+            <Text className="text-xs text-foreground-muted">{"Don't show this again"}</Text>
           </Pressable>
         ) : null}
       </ScrollView>

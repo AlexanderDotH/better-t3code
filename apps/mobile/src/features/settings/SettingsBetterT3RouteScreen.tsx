@@ -56,7 +56,7 @@ import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { ModelSelectionModal, modelSelectionLabel } from "./SettingsAgentEnvironmentsRouteScreen";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { resolveMobileSidebarSettlingPreferences } from "../../persistence/mobile-preferences";
+import { AutoSettleSettingsRows } from "./AutoSettleSettingsRows";
 import {
   buildMobileGitWorkbenchThreadOptions,
   mobileGitWorkbenchCanActivate,
@@ -349,7 +349,7 @@ export function SettingsBetterT3RouteScreen() {
   const [selectedProjectId, setSelectedProjectId] = useState<ProjectId | null>(null);
   const [selectedGitThreadId, setSelectedGitThreadId] = useState<ThreadId | null>(null);
   const [activeChoice, setActiveChoice] = useState<
-    "caveman" | "project-sort" | "thread-sort" | "settling-days" | null
+    "caveman" | "project-sort" | "thread-sort" | null
   >(null);
   const [knowledgeModelPickerOpen, setKnowledgeModelPickerOpen] = useState(false);
   const [autoReasoningModelPickerOpen, setAutoReasoningModelPickerOpen] = useState(false);
@@ -418,7 +418,6 @@ export function SettingsBetterT3RouteScreen() {
       : DEFAULT_SIDEBAR_PROJECT_SORT_ORDER);
   const threadSortOrder =
     devicePreferences?.sidebarThreadSortOrder ?? DEFAULT_SIDEBAR_THREAD_SORT_ORDER;
-  const settling = resolveMobileSidebarSettlingPreferences(devicePreferences);
   const cavemanMode = serverConfig?.settings.agentEnhancement.cavemanMode ?? "off";
   const knowledgeGraphModelSelection = serverConfig?.settings.knowledgeGraphModelSelection ?? null;
   const autoReasoningModelSelection = serverConfig?.settings.autoReasoningModelSelection ?? null;
@@ -934,38 +933,7 @@ export function SettingsBetterT3RouteScreen() {
                 );
               }
               if (control.id === "chat.settling") {
-                return (
-                  <View key={control.id}>
-                    <BetterT3ActionRow
-                      control={control}
-                      description={description}
-                      label={label}
-                      onPress={() => setActiveChoice("settling-days")}
-                      status={
-                        settling.afterDays === null
-                          ? translator.message("settings.betterT3.value.off")
-                          : translator.message("settings.betterT3.value.days", {
-                              count: settling.afterDays,
-                            })
-                      }
-                    />
-                    <SettingsSwitchRow
-                      disabled={!available}
-                      icon="arrow.triangle.branch"
-                      label={translator.message("settings.betterT3.value.settleOnMerge")}
-                      onValueChange={(enabled) =>
-                        savePreferences(
-                          createMobileBetterT3DeviceControlPatch({
-                            id: "chat.settling.onMerge",
-                            value: enabled,
-                          }),
-                        )
-                      }
-                      subtitle={description}
-                      value={settling.onMerge}
-                    />
-                  </View>
-                );
+                return <AutoSettleSettingsRows key={control.id} />;
               }
               if (control.id === "knowledge.model") {
                 return (
@@ -1077,27 +1045,6 @@ export function SettingsBetterT3RouteScreen() {
         }
         title={translator.message("settings.betterT3.value.threadSort")}
         visible={activeChoice === "thread-sort"}
-      />
-      <BetterT3ChoiceModal<number | null>
-        choices={([null, 1, 3, 7, 14, 30, 90] as const).map((value) => ({
-          value,
-          label:
-            value === null
-              ? translator.message("settings.betterT3.value.off")
-              : translator.message("settings.betterT3.value.days", { count: value }),
-        }))}
-        current={settling.afterDays}
-        onClose={() => setActiveChoice(null)}
-        onSelect={(value) =>
-          savePreferences(
-            createMobileBetterT3DeviceControlPatch({
-              id: "chat.settling.days",
-              value,
-            }),
-          )
-        }
-        title={translator.message("betterT3.chat.settling.label")}
-        visible={activeChoice === "settling-days"}
       />
       {serverConfig === null ? null : (
         <>

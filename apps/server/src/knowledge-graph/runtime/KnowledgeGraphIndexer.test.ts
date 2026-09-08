@@ -1,3 +1,8 @@
+import {
+  KnowledgeGraphScopeId,
+  ProjectId,
+  type KnowledgeGraphProgressV1,
+} from "@t3tools/contracts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -11,7 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import * as NodeSqliteClient from "../../persistence/NodeSqliteClient.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import Migration0059 from "../../persistence/Migrations/059_KnowledgeGraphDerivedData.ts";
 import {
   KnowledgeGraphRepository,
@@ -38,9 +43,9 @@ it.effect("persists only incremental changes across repeated external edits", ()
         );
         const scope = decodeScope({
           version: 1,
-          scopeId: "scope-indexer",
+          scopeId: KnowledgeGraphScopeId.make("scope-indexer"),
           environmentId: "environment-1",
-          projectId: "project-1",
+          projectId: ProjectId.make("project-1"),
           effectiveWorkspaceRoot: workspaceRoot,
           isWorktree: false,
         });
@@ -55,13 +60,7 @@ it.effect("persists only incremental changes across repeated external edits", ()
           errorMessage: "stale indexing failure",
           retryAt: 123,
         });
-        yield* Effect.promise(() =>
-          NodeFSP.utimes(
-            NodePath.join(workspaceRoot, "index.ts"),
-            new Date(1_000),
-            new Date(2_000),
-          ),
-        );
+        yield* Effect.promise(() => NodeFSP.utimes(NodePath.join(workspaceRoot, "index.ts"), 1, 2));
         const unchanged = yield* indexer.indexScope(scope);
         const recoveredStatus = Option.getOrThrow(yield* repository.getStatus(scope.scopeId));
         yield* Effect.promise(() =>
@@ -107,22 +106,15 @@ it.effect("publishes accurate persisting progress before committing", () =>
         );
         const scope = decodeScope({
           version: 1,
-          scopeId: "scope-indexer-progress",
+          scopeId: KnowledgeGraphScopeId.make("scope-indexer-progress"),
           environmentId: "environment-1",
-          projectId: "project-progress",
+          projectId: ProjectId.make("project-progress"),
           effectiveWorkspaceRoot: workspaceRoot,
           isWorktree: false,
         });
         const repository = yield* KnowledgeGraphRepository;
         const events: string[] = [];
-        let persistingProgress:
-          | {
-              readonly discoveredFileCount: number;
-              readonly processedFileCount: number;
-              readonly totalFileCount?: number;
-              readonly queuedSemanticNodeCount: number;
-            }
-          | undefined;
+        let persistingProgress: KnowledgeGraphProgressV1 | undefined;
         const observedRepository = KnowledgeGraphRepository.of({
           ...repository,
           updateStatus: (status) =>
@@ -163,9 +155,9 @@ it.effect("clears stale retry metadata before a recovered indexing attempt", () 
   Effect.gen(function* () {
     const scope = decodeScope({
       version: 1,
-      scopeId: "scope-indexer-retry",
+      scopeId: KnowledgeGraphScopeId.make("scope-indexer-retry"),
       environmentId: "environment-1",
-      projectId: "project-retry",
+      projectId: ProjectId.make("project-retry"),
       effectiveWorkspaceRoot: NodePath.join(NodeOS.tmpdir(), "t3-kg-missing-indexer-root"),
       isWorktree: false,
     });

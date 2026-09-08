@@ -11,7 +11,7 @@ import {
   type ProjectThreadPreviewSyncWrite,
 } from "@t3tools/client-runtime/project-thread-preview-sync";
 import * as Schema from "effect/Schema";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import {
@@ -25,7 +25,7 @@ import { useAtomCommand } from "./state/use-atom-command";
 import { toastManager } from "./components/ui/toast";
 import { randomUUID } from "./lib/utils";
 
-export const PROJECT_THREAD_PREVIEW_SYNC_STORAGE_KEY = "t3code:project-thread-preview-sync:v1";
+const PROJECT_THREAD_PREVIEW_SYNC_STORAGE_KEY = "t3code:project-thread-preview-sync:v1";
 
 const ProjectThreadPreviewSyncCache = Schema.NullOr(ProjectThreadPreviewSyncRecordSchema);
 const LEGACY_MIGRATION_UPDATE_ID_PREFIX = "legacy-client-settings-migration-v1";
@@ -98,45 +98,6 @@ export function projectThreadPreviewSyncStatusText(input: {
     );
   }
   return messages.length > 0 ? messages.join(" ") : null;
-}
-
-export interface ProjectThreadPreviewSyncStatus {
-  readonly deferredEnvironmentLabels: ReadonlyArray<string>;
-  readonly failedEnvironmentLabels: ReadonlyArray<string>;
-  readonly isSyncing: boolean;
-  readonly unsupportedEnvironmentLabels: ReadonlyArray<string>;
-}
-
-const EMPTY_SYNC_STATUS: ProjectThreadPreviewSyncStatus = Object.freeze({
-  deferredEnvironmentLabels: Object.freeze([]),
-  failedEnvironmentLabels: Object.freeze([]),
-  isSyncing: false,
-  unsupportedEnvironmentLabels: Object.freeze([]),
-});
-const syncStatusListeners = new Set<() => void>();
-let syncStatusSnapshot = EMPTY_SYNC_STATUS;
-
-function syncStatusKey(status: ProjectThreadPreviewSyncStatus): string {
-  return JSON.stringify(status);
-}
-
-function replaceSyncStatus(status: ProjectThreadPreviewSyncStatus): void {
-  if (syncStatusKey(syncStatusSnapshot) === syncStatusKey(status)) return;
-  syncStatusSnapshot = status;
-  for (const listener of syncStatusListeners) listener();
-}
-
-function subscribeSyncStatus(listener: () => void): () => void {
-  syncStatusListeners.add(listener);
-  return () => syncStatusListeners.delete(listener);
-}
-
-export function useProjectThreadPreviewSyncStatus(): ProjectThreadPreviewSyncStatus {
-  return useSyncExternalStore(
-    subscribeSyncStatus,
-    () => syncStatusSnapshot,
-    () => EMPTY_SYNC_STATUS,
-  );
 }
 
 function recordsMatch(
@@ -286,38 +247,10 @@ export function ProjectThreadPreviewSyncCoordinator() {
     }
   }, [plan.writes]);
 
-  const status = useMemo<ProjectThreadPreviewSyncStatus>(() => {
-    const labelsFor = (environmentIds: ReadonlyArray<EnvironmentId>) =>
-      environmentIds.map(
-        (environmentId) => labelByEnvironmentId.get(environmentId) ?? environmentId,
-      );
-    const failedEnvironmentIds = plan.pendingWrites
-      .filter((write) => failedWriteKeyByEnvironment.get(write.environmentId) === writeKey(write))
-      .map((write) => write.environmentId);
-    const isSyncing = plan.writes.some((write) => {
-      const key = writeKey(write);
-      return (
-        !confirmedWriteKeys.current.has(key) &&
-        failedWriteKeyByEnvironment.get(write.environmentId) !== key
-      );
-    });
-    return {
-      deferredEnvironmentLabels: labelsFor(plan.deferredEnvironmentIds),
-      failedEnvironmentLabels: labelsFor(failedEnvironmentIds),
-      isSyncing,
-      unsupportedEnvironmentLabels: labelsFor(plan.unsupportedEnvironmentIds),
-    };
-  }, [failedWriteKeyByEnvironment, labelByEnvironmentId, plan]);
-
-  useEffect(() => {
-    replaceSyncStatus(status);
-  }, [status]);
-
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
-      replaceSyncStatus(EMPTY_SYNC_STATUS);
     };
   }, []);
 

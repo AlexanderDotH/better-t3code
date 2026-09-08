@@ -1,3 +1,4 @@
+import { ThemedSwitch } from "../../components/ThemedSwitch";
 import {
   deriveProviderSettingsFields,
   nextProviderConfigWithFieldValue,
@@ -10,10 +11,9 @@ import {
 } from "@t3tools/client-runtime/providerSettingsForm";
 import type { ServerProvider } from "@t3tools/contracts";
 import { useEffect, useMemo, useState } from "react";
-import { Modal, Pressable, ScrollView, Switch, TextInput, View } from "react-native";
+import { Modal, Pressable, ScrollView, TextInput, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
-import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import {
   mobileProviderCatalogModels,
@@ -223,20 +223,17 @@ function MobileSwitchField(props: {
   readonly disabled: boolean;
   readonly onCommit: (value: boolean) => void;
 }) {
-  const theme = useUniwindTheme();
-  const activeTrack = theme["--color-switch-active"];
-  const track = theme["--color-secondary-border"];
   return (
     <View className="flex-row items-center gap-3">
       <View className="min-w-0 flex-1">
         <FieldLabel field={props.field} />
       </View>
-      <Switch
+      <ThemedSwitch
         accessibilityLabel={props.field.label}
         disabled={props.disabled}
-        ios_backgroundColor={track}
+
         onValueChange={props.onCommit}
-        trackColor={{ false: track, true: activeTrack }}
+
         value={readProviderConfigBoolean(
           props.value,
           props.field.key,

@@ -140,10 +140,7 @@ export const SkillSettings = Schema.Struct({
 });
 export type SkillSettings = typeof SkillSettings.Type;
 
-export class SkillEngineError extends Schema.TaggedErrorClass<SkillEngineError>()(
-  "SkillEngineError",
-  {
-    message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
+export class SkillEngineError extends Schema.TaggedError<SkillEngineError>()("SkillEngineError", {
+  message: TrimmedNonEmptyString,
+  cause: Schema.optional(Schema.Defect()),
+}) {}

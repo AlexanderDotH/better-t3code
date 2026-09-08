@@ -5,22 +5,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
 import { cn } from "../lib/cn";
-import { useMobileInterfaceTranslator } from "../localization/useMobileInterfaceTranslator";
 
 export interface AndroidHeaderAction {
   readonly accessibilityLabel: string;
   readonly icon: AppSymbolName;
   readonly onPress: () => void;
   readonly disabled?: boolean;
-}
-
-export interface AndroidScreenHeaderProps {
-  readonly title: string;
-  readonly subtitle?: string | null;
-  readonly actions?: ReadonlyArray<AndroidHeaderAction>;
-  readonly trailing?: ReactNode;
-  readonly onBack?: () => void;
-  readonly embedded?: boolean;
 }
 
 export function AndroidHeaderIconButton(props: {
@@ -51,9 +41,15 @@ export function AndroidHeaderIconButton(props: {
   );
 }
 
-export function AndroidScreenHeader(props: AndroidScreenHeaderProps) {
+export function AndroidScreenHeader(props: {
+  readonly title: string;
+  readonly subtitle?: string | null;
+  readonly actions?: ReadonlyArray<AndroidHeaderAction>;
+  readonly trailing?: ReactNode;
+  readonly onBack?: () => void;
+  readonly embedded?: boolean;
+}) {
   const insets = useSafeAreaInsets();
-  const translator = useMobileInterfaceTranslator();
 
   return (
     <View
@@ -65,7 +61,7 @@ export function AndroidScreenHeader(props: AndroidScreenHeaderProps) {
       <View className="min-h-12 flex-row items-center gap-2">
         {props.onBack ? (
           <Pressable
-            accessibilityLabel={translator.message("mobile.accessibility.navigateUp")}
+            accessibilityLabel="Navigate up"
             accessibilityRole="button"
             hitSlop={8}
             onPress={props.onBack}
@@ -109,6 +105,8 @@ export function AndroidScreenHeader(props: AndroidScreenHeaderProps) {
   );
 }
 
-export function AndroidSheetHeader(props: Omit<AndroidScreenHeaderProps, "embedded">) {
+export function AndroidSheetHeader(
+  props: Omit<Parameters<typeof AndroidScreenHeader>[0], "embedded">,
+) {
   return <AndroidScreenHeader {...props} embedded />;
 }

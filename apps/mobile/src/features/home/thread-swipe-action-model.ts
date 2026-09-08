@@ -17,7 +17,7 @@ export interface ThreadSwipeSecondaryActionModel<
   MenuAction,
   MenuEvent,
 > extends ThreadSwipeActionModel<Icon, MenuAction, MenuEvent> {
-  readonly backgroundColor: string;
+  readonly tone: "primary" | "secondary" | "danger";
 }
 
 export function resolveThreadSwipeSecondaryAction<Icon, MenuAction, MenuEvent>(input: {
@@ -32,7 +32,7 @@ export function resolveThreadSwipeSecondaryAction<Icon, MenuAction, MenuEvent>(i
   if (input.secondaryAction === undefined) {
     return {
       accessibilityLabel: input.deleteAccessibilityLabel,
-      backgroundColor: "#ff2d55",
+      tone: "danger",
       icon: input.deleteIcon,
       label: input.deleteLabel,
       onPress: () => {
@@ -44,7 +44,7 @@ export function resolveThreadSwipeSecondaryAction<Icon, MenuAction, MenuEvent>(i
   const action = input.secondaryAction;
   return {
     ...action,
-    backgroundColor: "#5856d6",
+    tone: "secondary",
     menu:
       action.menu === undefined
         ? undefined

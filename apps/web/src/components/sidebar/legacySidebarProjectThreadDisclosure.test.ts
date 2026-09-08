@@ -6,14 +6,12 @@ interface TestThread {
   readonly id: string;
 }
 
-const nonSettledThreads = Array.from(
-  { length: 150 },
-  (_, index): TestThread => ({ id: `active-${index + 1}` }),
-);
-const settledThreads = Array.from(
-  { length: 10 },
-  (_, index): TestThread => ({ id: `settled-${index + 1}` }),
-);
+const nonSettledThreads = Array.from({ length: 150 }, (_, index): TestThread => ({
+  id: `active-${index + 1}`,
+}));
+const settledThreads = Array.from({ length: 10 }, (_, index): TestThread => ({
+  id: `settled-${index + 1}`,
+}));
 const selectedSettledThread = settledThreads[9]!;
 
 const overflowingSections = {

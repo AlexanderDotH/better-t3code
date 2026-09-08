@@ -62,7 +62,7 @@ export interface NativeHarnessToolAvailabilityInput {
   readonly sandboxMode: ProviderSandboxMode | undefined;
 }
 
-export class NativeHarnessToolPolicyError extends Schema.TaggedErrorClass<NativeHarnessToolPolicyError>()(
+export class NativeHarnessToolPolicyError extends Schema.TaggedError<NativeHarnessToolPolicyError>()(
   "NativeHarnessToolPolicyError",
   { detail: Schema.String },
 ) {
@@ -71,7 +71,7 @@ export class NativeHarnessToolPolicyError extends Schema.TaggedErrorClass<Native
   }
 }
 
-export class NativeHarnessToolError extends Schema.TaggedErrorClass<NativeHarnessToolError>()(
+export class NativeHarnessToolError extends Schema.TaggedError<NativeHarnessToolError>()(
   "NativeHarnessToolError",
   { detail: Schema.String },
 ) {

@@ -3,7 +3,6 @@ import { Pressable, StyleSheet, View, type AccessibilityActionEvent } from "reac
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS } from "react-native-reanimated";
 import { cn } from "../../lib/cn";
-import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 const ACCESSIBILITY_RESIZE_STEP = 24;
 
@@ -19,7 +18,6 @@ interface WorkspacePaneDividerProps {
 
 /** A forgiving divider target for touch, pointer, and VoiceOver users. */
 export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
-  const translator = useMobileInterfaceTranslator();
   const latestProps = useRef(props);
   latestProps.current = props;
   const [hovered, setHovered] = useState(false);
@@ -67,16 +65,14 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
       <Pressable
         className="relative z-[100] -mx-[22px] w-11 self-stretch cursor-pointer justify-center"
         accessibilityActions={[
-          { name: "increment", label: translator.message("mobile.layout.paneWider") },
-          { name: "decrement", label: translator.message("mobile.layout.paneNarrower") },
+          { name: "increment", label: "Make pane wider" },
+          { name: "decrement", label: "Make pane narrower" },
         ]}
         accessibilityLabel={props.accessibilityLabel}
         accessibilityRole="adjustable"
         accessibilityValue={{
           now: Math.round(props.currentWidth),
-          text: translator.message("mobile.layout.paneWidth", {
-            width: Math.round(props.currentWidth),
-          }),
+          text: `${Math.round(props.currentWidth)} points wide`,
         }}
         onAccessibilityAction={handleAccessibilityAction}
         onHoverIn={() => setHovered(true)}

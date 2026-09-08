@@ -1,5 +1,3 @@
-import type { ProviderDriverKind } from "@t3tools/contracts";
-
 export type WizardNavigation =
   | { readonly kind: "navigate"; readonly step: number }
   | { readonly kind: "blocked"; readonly step: number; readonly error: string };
@@ -7,14 +5,6 @@ export type WizardNavigation =
 const IDENTITY_STEP = 1;
 
 export const ADD_PROVIDER_WIZARD_STEPS = ["Driver", "Identity", "Config"] as const;
-
-export function activeAndComingSoonDriverKindsAreDisjoint(
-  activeDrivers: ReadonlyArray<ProviderDriverKind>,
-  comingSoonDrivers: ReadonlyArray<ProviderDriverKind>,
-): boolean {
-  const active = new Set<ProviderDriverKind>(activeDrivers);
-  return comingSoonDrivers.every((driver) => !active.has(driver));
-}
 
 /**
  * Resolve navigation within the add-provider wizard.

@@ -202,6 +202,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       );
       yield* fs.writeFileString(
         path.join(root, "runtime", SERVICE_STOP_REQUEST_FILE),
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Write the raw stop-request wire format consumed by the launcher.
         JSON.stringify({ protocol: SERVICE_STOP_PROTOCOL, id: "stop-1" }),
       );
 
@@ -209,6 +210,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       yield* Effect.promise(() => launcher.run());
 
       const acknowledgement = decodeServiceStopAcknowledgement(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - The protocol decoder under test validates this raw JSON value.
         JSON.parse(yield* fs.readFileString(path.join(root, "runtime", SERVICE_STOP_ACK_FILE))),
       );
       assert.deepEqual(acknowledgement, {

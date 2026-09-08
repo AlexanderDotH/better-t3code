@@ -23,6 +23,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     interactionMode: "default",
     session: null,
     messages: [],
+    subagents: [],
     proposedPlans: [],
     createdAt: "2026-03-09T10:00:00.000Z",
     archivedAt: null,
@@ -35,7 +36,6 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     worktreePath: null,
     checkpoints: [],
     activities: [],
-    subagents: [],
     ...overrides,
   };
 }

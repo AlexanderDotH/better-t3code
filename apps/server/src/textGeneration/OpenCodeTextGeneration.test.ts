@@ -20,8 +20,8 @@ const runtimeMock = {
   state: {
     startCalls: [] as string[],
     promptUrls: [] as string[],
-    promptCalls: [] as Array<Record<string, unknown>>,
     promptParts: [] as ReadonlyArray<unknown>[],
+    promptCalls: [] as Array<{ readonly parts: ReadonlyArray<unknown> }>,
     authHeaders: [] as Array<string | null>,
     closeCalls: [] as string[],
     sessionCreateCalls: 0,
@@ -36,8 +36,8 @@ const runtimeMock = {
   reset() {
     this.state.startCalls.length = 0;
     this.state.promptUrls.length = 0;
-    this.state.promptCalls.length = 0;
     this.state.promptParts.length = 0;
+    this.state.promptCalls.length = 0;
     this.state.authHeaders.length = 0;
     this.state.closeCalls.length = 0;
     this.state.sessionCreateCalls = 0;
@@ -104,12 +104,10 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
           }
           return runtimeMock.state.sessionResult ?? { data: { id: `${baseUrl}/session` } };
         },
-        prompt: async (
-          request: Record<string, unknown> & { readonly parts: ReadonlyArray<unknown> },
-        ) => {
-          runtimeMock.state.promptCalls.push(request);
+        prompt: async (input: { readonly parts: ReadonlyArray<unknown> }) => {
           runtimeMock.state.promptUrls.push(baseUrl);
-          runtimeMock.state.promptParts.push(request.parts);
+          runtimeMock.state.promptParts.push(input.parts);
+          runtimeMock.state.promptCalls.push(input);
           runtimeMock.state.authHeaders.push(
             serverPassword ? `Basic ${btoa(`opencode:${serverPassword}`)}` : null,
           );
@@ -142,6 +140,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
         cause: null,
       }),
     ),
+  loadOpenCodeSkills: () => Effect.succeed([]),
   loadInventoryFromCli: () =>
     Effect.fail(
       new OpenCodeRuntime.OpenCodeRuntimeError({
@@ -150,6 +149,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
         cause: null,
       }),
     ),
+  loadSkillsFromCli: () => Effect.succeed([]),
 };
 
 const DEFAULT_TEST_MODEL_SELECTION = {
@@ -239,7 +239,7 @@ const advanceIdleClock = Effect.gen(function* () {
 });
 
 it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
-  it.effect("uses attachment metadata only for thread title generation", () =>
+  it.effect("excludes generic files from thread title generation", () =>
     withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
         runtimeMock.state.promptResult = {
@@ -271,14 +271,8 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
         });
 
         expect(runtimeMock.state.promptParts[0]).toEqual([
-          {
-            type: "text",
-            text: expect.stringContaining("screenshot.png (image/png, 3 bytes)"),
-          },
+          expect.objectContaining({ type: "text" }),
         ]);
-        expect(runtimeMock.state.promptParts[0]?.[0]).toMatchObject({
-          text: expect.stringContaining("report.pdf (application/pdf, 42 bytes)"),
-        });
       }),
     ),
   );
@@ -415,7 +409,7 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
 
         runtimeMock.state.promptResult = {
           data: {
-            parts: [{ type: "text", text: JSON.stringify({ branch: "fix/ui-regression" }) }],
+            parts: [{ type: "text", text: '{"branch":"fix/ui-regression"}' }],
           },
         };
         yield* textGeneration.generateBranchName({
@@ -434,7 +428,7 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
 
         runtimeMock.state.promptResult = {
           data: {
-            parts: [{ type: "text", text: JSON.stringify({ title: "Fix UI regression" }) }],
+            parts: [{ type: "text", text: '{"title":"Fix UI regression"}' }],
           },
         };
         yield* textGeneration.generateThreadTitle({
@@ -620,7 +614,7 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
             parts: [
               {
                 type: "text",
-                text: JSON.stringify({ recommendedSubagents: 6 }),
+                text: '{"recommendedSubagents":6}',
               },
             ],
           },
@@ -646,6 +640,8 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
             parts: [
               {
                 type: "text",
+                // Keep the external model fixture independent of the decoder under test.
+                // @effect-diagnostics-next-line preferSchemaOverJson:off
                 text: JSON.stringify({
                   decision: "run",
                   workers: [

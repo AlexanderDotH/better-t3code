@@ -57,7 +57,7 @@ export interface GeneralSubagentModelCatalogEntry {
   }>;
 }
 
-export function isGeneralSubagentProviderAvailable(provider: ServerProvider): boolean {
+function isGeneralSubagentProviderAvailable(provider: ServerProvider): boolean {
   return (
     provider.enabled &&
     provider.installed &&

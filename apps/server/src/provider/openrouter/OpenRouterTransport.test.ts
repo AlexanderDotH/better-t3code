@@ -107,6 +107,8 @@ describe("OpenRouter transport", () => {
       const error = yield* Effect.flip(transport.listModels([]));
       expect(error._tag).toBe("OpenRouterTransportSecurityError");
       expect(requests).toBe(1);
+      // A schema encoder could hide leaked properties by stripping unknown fields.
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.stringify(error)).not.toContain("secret-key");
     }),
   );
@@ -154,7 +156,7 @@ describe("OpenRouter transport", () => {
             request,
             new Response("secret response body", {
               status,
-              headers: status === 429 ? { "retry-after": "17" } : undefined,
+              ...(status === 429 ? { headers: { "retry-after": "17" } } : {}),
             }),
           ),
         );
@@ -166,8 +168,11 @@ describe("OpenRouter transport", () => {
         expect(error).toMatchObject({ status });
         if (status === 401) expect(error._tag).toBe("OpenRouterAuthenticationError");
         if (status === 429) expect(error).toMatchObject({ retryAfterSeconds: 17 });
-        expect(JSON.stringify(error)).not.toContain("secret response body");
-        expect(JSON.stringify(error)).not.toContain("secret-key");
+        // A schema encoder could hide leaked properties by stripping unknown fields.
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        const serializedError = JSON.stringify(error);
+        expect(serializedError).not.toContain("secret response body");
+        expect(serializedError).not.toContain("secret-key");
       }
     }),
   );
@@ -205,8 +210,11 @@ describe("OpenRouter transport", () => {
         message:
           "OpenRouter could not route the selected model with the required request capabilities",
       });
-      expect(JSON.stringify(error)).not.toContain("secret route");
-      expect(JSON.stringify(error)).not.toContain("secret-key");
+      // A schema encoder could hide leaked properties by stripping unknown fields.
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const serializedError = JSON.stringify(error);
+      expect(serializedError).not.toContain("secret route");
+      expect(serializedError).not.toContain("secret-key");
     }),
   );
 
@@ -240,8 +248,11 @@ describe("OpenRouter transport", () => {
       });
       expect(error.message).toContain("inference request");
       expect(error.message).toContain("Management API key");
-      expect(JSON.stringify(error)).not.toContain("management-secret");
-      expect(JSON.stringify(error)).not.toContain("User not found");
+      // A schema encoder could hide leaked properties by stripping unknown fields.
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const serializedError = JSON.stringify(error);
+      expect(serializedError).not.toContain("management-secret");
+      expect(serializedError).not.toContain("User not found");
     }),
   );
 

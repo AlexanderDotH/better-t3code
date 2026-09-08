@@ -6,6 +6,7 @@ import {
   ConnectionTargetStore,
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
   EnvironmentCacheStore,
+  putRemoteDpopTokenInCatalog,
   registerConnectionInCatalog,
   removeCatalogValue,
   removeConnectionFromCatalog,
@@ -32,12 +33,11 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import { projectFaviconCache } from "../assets/projectFaviconCache";
 
 const DATABASE_NAME = "t3code:connection-runtime";
-// Version 5 clears pre-pagination thread snapshots during the IndexedDB
-// upgrade. Some v2 records contain entire long-running threads and can exceed
-// tens of megabytes; reading and schema-decoding them merely to reject their
-// stale schema can exhaust the renderer heap during startup.
+// Keep the version already shipped by Better T3: IndexedDB rejects downgrades.
+// Version 5 clears oversized pre-pagination thread snapshots before decoding.
 const LEGACY_THREAD_CACHE_RESET_DATABASE_VERSION = 5;
 const DATABASE_VERSION = LEGACY_THREAD_CACHE_RESET_DATABASE_VERSION;
 const CATALOG_STORE_NAME = "catalog";
@@ -463,15 +463,7 @@ export const connectionStorageLayer = Layer.effectContext(
             ),
           ),
         ),
-      put: (token) =>
-        catalog.update((document) => ({
-          ...document,
-          remoteDpopTokens: replaceCatalogValue(
-            document.remoteDpopTokens,
-            (value) => value.environmentId,
-            token,
-          ),
-        })),
+      put: (token) => catalog.update((document) => putRemoteDpopTokenInCatalog(document, token)),
       remove: (environmentId) =>
         catalog.update((document) => ({
           ...document,
@@ -485,6 +477,7 @@ export const connectionStorageLayer = Layer.effectContext(
     const cacheStore = EnvironmentCacheStore.of({
       loadShell: (environmentId) =>
         readDatabaseValue(database, SHELL_STORE_NAME, environmentId).pipe(
+          Effect.tap(() => Effect.promise(() => projectFaviconCache.hydrate())),
           Effect.flatMap((raw) => {
             if (typeof raw !== "string") {
               return Effect.succeed(Option.none());
@@ -662,6 +655,7 @@ export const connectionStorageLayer = Layer.effectContext(
       clear: (environmentId) =>
         Effect.all(
           [
+            Effect.promise(() => projectFaviconCache.clearEnvironment(environmentId)),
             removeDatabaseValue(database, SHELL_STORE_NAME, environmentId),
             removeDatabaseValuesInRange(
               database,

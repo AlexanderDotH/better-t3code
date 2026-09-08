@@ -46,7 +46,7 @@ export function trimText(value: string | undefined | null): string | undefined {
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
-export const FATAL_CODEX_STDERR_SNIPPETS = ["failed to connect to websocket"];
+const FATAL_CODEX_STDERR_SNIPPETS = ["failed to connect to websocket"];
 
 export function isFatalCodexProcessStderrMessage(message: string): boolean {
   const normalized = message.toLowerCase();
@@ -103,7 +103,7 @@ export function toTurnStatus(
   }
 }
 
-export function normalizeItemType(raw: string | undefined | null): string {
+function normalizeItemType(raw: string | undefined | null): string {
   const type = trimText(raw);
   if (!type) return "item";
   return type
@@ -320,11 +320,11 @@ export function contentStreamKindFromMethod(
   }
 }
 
-export function asRuntimeItemId(itemId: ProviderEvent["itemId"] & string): RuntimeItemId {
+function asRuntimeItemId(itemId: ProviderEvent["itemId"] & string): RuntimeItemId {
   return RuntimeItemId.make(itemId);
 }
 
-export function asRuntimeRequestId(requestId: string): RuntimeRequestId {
+function asRuntimeRequestId(requestId: string): RuntimeRequestId {
   return RuntimeRequestId.make(requestId);
 }
 
@@ -402,13 +402,11 @@ export function lifecycleItemFromEvent(
   return unknownRecord(unknownRecord(event.payload)?.item);
 }
 
-export function eventRawSource(
-  event: ProviderEvent,
-): NonNullable<ProviderRuntimeEvent["raw"]>["source"] {
+function eventRawSource(event: ProviderEvent): NonNullable<ProviderRuntimeEvent["raw"]>["source"] {
   return event.kind === "request" ? "codex.app-server.request" : "codex.app-server.notification";
 }
 
-export function providerRefsFromEvent(
+function providerRefsFromEvent(
   event: ProviderEvent,
 ): ProviderRuntimeEvent["providerRefs"] | undefined {
   const refs: Record<string, string> = {};

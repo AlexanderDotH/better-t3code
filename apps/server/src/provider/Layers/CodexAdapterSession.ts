@@ -17,6 +17,30 @@ import type { CodexMcpStartupObservation } from "./CodexMcpRuntimeView.ts";
 import type { CodexSubagentRuntimeMetadata } from "./CodexRuntimeEventShared.ts";
 import type { CodexSessionRuntimeShape } from "./CodexSessionRuntime.ts";
 
+type CodexCumulativeTokenUsage = {
+  readonly inputTokens: number;
+  readonly cachedInputTokens: number;
+  readonly cacheCreationTokens?: number;
+  readonly outputTokens: number;
+  readonly reasoningTokens: number;
+};
+
+interface CodexTurnTokenUsageAccumulator {
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheCreationTokens: number | undefined;
+  outputTokens: number;
+  reasoningTokens: number;
+  observed: boolean;
+  hasSubagents: boolean;
+}
+
+export interface CodexTurnTokenUsageState {
+  baseline: CodexCumulativeTokenUsage | undefined;
+  activeTurnId: string | undefined;
+  readonly byTurnId: Map<string, CodexTurnTokenUsageAccumulator>;
+}
+
 const PROVIDER = ProviderDriverKind.make("codex");
 
 export interface CodexAdapterSessionContext {
@@ -30,6 +54,7 @@ export interface CodexAdapterSessionContext {
   readonly mcpStartupStatuses: Map<string, CodexMcpStartupObservation>;
   readonly builtInMcpExpected: boolean;
   readonly subagentMetadata: CodexSubagentRuntimeMetadata;
+  readonly turnTokenUsage: CodexTurnTokenUsageState;
   stopped: boolean;
 }
 

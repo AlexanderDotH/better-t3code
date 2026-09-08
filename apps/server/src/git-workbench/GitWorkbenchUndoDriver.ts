@@ -53,6 +53,7 @@ function toError(
   return new GitWorkbenchUndoError({ operation, cwd, detail, ...(cause ? { cause } : {}) });
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const commandRunner = yield* GitWorkbenchOperationsDriver;
   const fileSystem = yield* FileSystem.FileSystem;

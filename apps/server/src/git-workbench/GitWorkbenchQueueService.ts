@@ -26,7 +26,7 @@ import {
   type GitWorkbenchQueueRepositoryError,
 } from "./GitWorkbenchQueueRepository.ts";
 
-export class GitWorkbenchQueueRuntimeError extends Schema.TaggedErrorClass<GitWorkbenchQueueRuntimeError>()(
+export class GitWorkbenchQueueRuntimeError extends Schema.TaggedError<GitWorkbenchQueueRuntimeError>()(
   "GitWorkbenchQueueRuntimeError",
   {
     operation: Schema.String,
@@ -57,7 +57,7 @@ export class GitWorkbenchQueueRuntime extends Context.Service<
   GitWorkbenchQueueRuntimeShape
 >()("t3/git-workbench/GitWorkbenchQueueService/GitWorkbenchQueueRuntime") {}
 
-export class GitWorkbenchQueueNotFoundError extends Schema.TaggedErrorClass<GitWorkbenchQueueNotFoundError>()(
+export class GitWorkbenchQueueNotFoundError extends Schema.TaggedError<GitWorkbenchQueueNotFoundError>()(
   "GitWorkbenchQueueNotFoundError",
   { scope: GitWorkbenchQueueScope },
 ) {
@@ -66,7 +66,7 @@ export class GitWorkbenchQueueNotFoundError extends Schema.TaggedErrorClass<GitW
   }
 }
 
-export class GitWorkbenchQueueRevisionConflictError extends Schema.TaggedErrorClass<GitWorkbenchQueueRevisionConflictError>()(
+export class GitWorkbenchQueueRevisionConflictError extends Schema.TaggedError<GitWorkbenchQueueRevisionConflictError>()(
   "GitWorkbenchQueueRevisionConflictError",
   {
     scope: GitWorkbenchQueueScope,
@@ -79,7 +79,7 @@ export class GitWorkbenchQueueRevisionConflictError extends Schema.TaggedErrorCl
   }
 }
 
-export class GitWorkbenchQueueAlreadyExistsError extends Schema.TaggedErrorClass<GitWorkbenchQueueAlreadyExistsError>()(
+export class GitWorkbenchQueueAlreadyExistsError extends Schema.TaggedError<GitWorkbenchQueueAlreadyExistsError>()(
   "GitWorkbenchQueueAlreadyExistsError",
   {
     scope: GitWorkbenchQueueScope,
@@ -92,7 +92,7 @@ export class GitWorkbenchQueueAlreadyExistsError extends Schema.TaggedErrorClass
   }
 }
 
-export class GitWorkbenchQueueInvalidTransitionError extends Schema.TaggedErrorClass<GitWorkbenchQueueInvalidTransitionError>()(
+export class GitWorkbenchQueueInvalidTransitionError extends Schema.TaggedError<GitWorkbenchQueueInvalidTransitionError>()(
   "GitWorkbenchQueueInvalidTransitionError",
   {
     scope: GitWorkbenchQueueScope,

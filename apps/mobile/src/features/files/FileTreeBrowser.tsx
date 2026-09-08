@@ -7,7 +7,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/AppText";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { cn } from "../../lib/cn";
-import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import {
@@ -115,7 +114,6 @@ export function FileTreeBrowser(props: {
   readonly onRefresh: () => void;
   readonly onSelectFile: (path: string) => void;
 }) {
-  const translator = useMobileInterfaceTranslator();
   const [expandedPaths, setExpandedPaths] = useState<ReadonlySet<string>>(() => new Set());
   const [pendingSelection, setPendingSelection] = useState<{
     readonly path: string;
@@ -226,9 +224,7 @@ export function FileTreeBrowser(props: {
   if (props.error && props.entries.length === 0) {
     return (
       <View className="flex-1 bg-sheet px-4 py-5">
-        <Text className="text-sm font-t3-bold text-foreground">
-          {translator.message("mobile.files.unavailable")}
-        </Text>
+        <Text className="text-sm font-t3-bold text-foreground">Files unavailable</Text>
         <Text className="mt-1 text-xs leading-normal text-foreground-muted">{props.error}</Text>
       </View>
     );
@@ -265,13 +261,11 @@ export function FileTreeBrowser(props: {
             <ActivityIndicator size="small" />
           ) : (
             <>
-              <Text className="text-sm font-t3-bold text-foreground">
-                {translator.message("mobile.files.noneFound")}
-              </Text>
+              <Text className="text-sm font-t3-bold text-foreground">No files found</Text>
               <Text className="mt-1 text-xs leading-normal text-foreground-muted">
                 {props.searchQuery.trim().length > 0
-                  ? translator.message("mobile.files.tryDifferentSearch")
-                  : translator.message("mobile.files.indexEmpty")}
+                  ? "Try a different search."
+                  : "The workspace file index is empty."}
               </Text>
             </>
           )}

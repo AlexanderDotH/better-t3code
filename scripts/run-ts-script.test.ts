@@ -27,7 +27,7 @@ function runWithFakeRuntime(input: FakeRuntimeInput): NodeChildProcess.SpawnSync
 
   try {
     return NodeChildProcess.spawnSync(
-      "/usr/bin/bash",
+      "/bin/bash",
       [launcherPath, "fixture.ts", ...(input.args ?? [])],
       {
         encoding: "utf8",

@@ -4,9 +4,8 @@ import { SparklesIcon, StarIcon } from "lucide-react";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
-import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import {
-  isProviderInstancePickerBrowsable,
+  isProviderInstancePickerReady,
   shouldShowInstanceBadge,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
@@ -65,7 +64,6 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
    */
   newBadgeInstanceIds?: ReadonlySet<ProviderInstanceId>;
 }) {
-  const translate = useInterfaceTranslator().message;
   const handleSelect = (instanceId: ProviderInstanceId | "favorites") => {
     props.onSelectInstance(instanceId);
   };
@@ -115,8 +113,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                         )}
                         onClick={() => handleSelect("favorites")}
                         type="button"
-                        aria-label={translate("chat.composer.favorites")}
-                        aria-current={props.selectedInstanceId === "favorites" ? "page" : undefined}
+                        aria-label="Favorites"
                       >
                         <StarIcon className="size-5 fill-current shrink-0" aria-hidden />
                       </button>
@@ -128,7 +125,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                     align="center"
                     className={PICKER_TOOLTIP_CLASS}
                   >
-                    {translate("chat.composer.favorites")}
+                    Favorites
                   </TooltipPopup>
                 </Tooltip>
               </div>
@@ -138,7 +135,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
 
           {/* Instance buttons (one per configured instance — built-in + custom) */}
           {props.instanceEntries.map((entry) => {
-            const isUnavailable = !isProviderInstancePickerBrowsable(entry);
+            const isUnavailable = !isProviderInstancePickerReady(entry);
             const isContextDisabled = props.disabledInstanceIds?.has(entry.instanceId) ?? false;
             const unavailableSelectionIsReachable =
               props.selectableUnavailableInstanceIds?.has(entry.instanceId) ?? false;
@@ -175,7 +172,6 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                 }
                 disabled={isDisabled}
                 type="button"
-                aria-current={isSelected ? "page" : undefined}
                 aria-label={
                   isUnavailable || isContextDisabled
                     ? tooltip

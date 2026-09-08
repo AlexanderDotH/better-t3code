@@ -5,10 +5,9 @@ import {
   FETCH_CONTEXT_MAX_CHARS,
   FETCH_WORKER_FINDINGS_MAX_CHARS,
   buildFetchContext,
-  buildFetchWorkerPrompt,
-  fetchApprovalAction,
-  type FetchWorkerOutcome,
-} from "./FetchWorkerCoordinator.ts";
+} from "./FetchContext.ts";
+import { buildFetchWorkerPrompt, fetchApprovalAction } from "./FetchWorkerPolicy.ts";
+import type { FetchWorkerOutcome } from "./FetchWorkerState.ts";
 
 const modelSelection: ModelSelection = {
   instanceId: ProviderInstanceId.make("codex-work"),

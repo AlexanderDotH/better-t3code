@@ -3,9 +3,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
 import { terminalThemeFromApp } from "../ThreadTerminalDrawer";
 import { useTheme } from "../../hooks/useTheme";
-import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
 import { resolveDiffThemeName, type DiffThemeName } from "../../lib/diffRendering";
+import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import { GhosttyTerminalSurface } from "~/terminal/ghostty/surface";
 
 // The font previews are the real surfaces, not lookalikes: the composer's
@@ -80,7 +80,7 @@ function loadDiffPreviewHtml(theme: DiffThemeName): Promise<readonly string[]> {
   if (promise === undefined) {
     promise = preloadPatchFile({
       patch: DIFF_PREVIEW_PATCH,
-      options: { diffStyle: "unified", theme },
+      options: { diffStyle: "unified", theme, preferredHighlighter: PREFERRED_HIGHLIGHTER },
     }).then((results) => results.map((result) => result.prerenderedHTML));
     diffPreviewHtmlByTheme.set(theme, promise);
   }
@@ -180,7 +180,6 @@ function previewTerminalFont(family: string, size: number): { family?: string; s
  * terminal drawer uses.
  */
 export function TerminalFontPreview({ family, size }: { family: string; size: number }) {
-  const translate = useInterfaceTranslator().message;
   const mountRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<GhosttyTerminalSurface | null>(null);
   const fontRef = useRef({ family, size });
@@ -227,7 +226,7 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
       }
       // Arrow keys and other escape reports have no cursor to move here.
       if (data.startsWith("\x1b")) return;
-      const printable = Array.from(data)
+      const printable = [...data]
         .filter((character) => character >= " " && character !== "\x7f")
         .join("");
       if (printable.length === 0) return;
@@ -268,7 +267,7 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
     <div
       ref={mountRef}
       className="relative mt-1 mb-2 h-52 overflow-hidden rounded-lg border border-border"
-      aria-label={translate("settings.font.terminalPreview")}
+      aria-label="Terminal font preview"
     />
   );
 }

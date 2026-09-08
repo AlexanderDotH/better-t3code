@@ -3,45 +3,13 @@ import { CopyIcon, CheckIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
-import { anchoredToastManager } from "../ui/toast";
+import {
+  ANCHORED_COPY_TOAST_TIMEOUT_MS,
+  showAnchoredCopyErrorToast,
+  showAnchoredCopySuccessToast,
+} from "../ui/anchoredCopyToast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
-
-const ANCHORED_TOAST_TIMEOUT_MS = 1000;
-const onCopy = (ref: React.RefObject<HTMLButtonElement | null>, title: string) => {
-  if (ref.current) {
-    anchoredToastManager.add({
-      data: {
-        tooltipStyle: true,
-      },
-      positionerProps: {
-        anchor: ref.current,
-      },
-      timeout: ANCHORED_TOAST_TIMEOUT_MS,
-      title,
-    });
-  }
-};
-
-const onCopyError = (
-  ref: React.RefObject<HTMLButtonElement | null>,
-  error: Error,
-  title: string,
-) => {
-  if (ref.current) {
-    anchoredToastManager.add({
-      data: {
-        tooltipStyle: true,
-      },
-      positionerProps: {
-        anchor: ref.current,
-      },
-      timeout: ANCHORED_TOAST_TIMEOUT_MS,
-      title,
-      description: error.message,
-    });
-  }
-};
 
 export const MessageCopyButton = memo(function MessageCopyButton({
   text,
@@ -57,9 +25,10 @@ export const MessageCopyButton = memo(function MessageCopyButton({
   const translate = useInterfaceTranslator().message;
   const ref = useRef<HTMLButtonElement>(null);
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>({
-    onCopy: () => onCopy(ref, translate("chat.copy.copied")),
-    onError: (error: Error) => onCopyError(ref, error, translate("chat.copy.failed")),
-    timeout: ANCHORED_TOAST_TIMEOUT_MS,
+    onCopy: () => showAnchoredCopySuccessToast(ref, translate("chat.copy.copied")),
+    onError: (error: Error) =>
+      showAnchoredCopyErrorToast(ref, error, translate("chat.copy.failed")),
+    timeout: ANCHORED_COPY_TOAST_TIMEOUT_MS,
   });
 
   return (
@@ -67,7 +36,7 @@ export const MessageCopyButton = memo(function MessageCopyButton({
       <TooltipTrigger
         render={
           <Button
-            aria-label={translate("chat.composer.copyLink")}
+            aria-label={translate("chat.composer.copyClipboard")}
             disabled={isCopied}
             onClick={() => copyToClipboard(text)}
             ref={ref}

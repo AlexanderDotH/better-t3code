@@ -2,14 +2,13 @@ import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind } from "@t3tools/contracts";
 
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
-import { searchSlashCommandItems } from "./composerSlashCommandSearch";
+import {
+  searchSlashCommandItems,
+  slashCommandItemsForPromptPosition,
+} from "./composerSlashCommandSearch";
 
 describe("searchSlashCommandItems", () => {
   const claudeDriver = ProviderDriverKind.make("claudeAgent");
-  type SlashSearchItem = Extract<
-    ComposerCommandItem,
-    { type: "slash-command" | "provider-slash-command" | "skill" }
-  >;
 
   it("moves exact provider command matches ahead of broader description matches", () => {
     const items = [
@@ -36,7 +35,9 @@ describe("searchSlashCommandItems", () => {
         label: "/frontend-design",
         description: "Create distinctive, production-grade frontend interfaces",
       },
-    ] satisfies Array<SlashSearchItem>;
+    ] satisfies Array<
+      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" | "skill" }>
+    >;
 
     expect(searchSlashCommandItems(items, "ui").map((item) => item.id)).toEqual([
       "provider-slash-command:claudeAgent:ui",
@@ -62,7 +63,9 @@ describe("searchSlashCommandItems", () => {
         label: "/github",
         description: "General GitHub help",
       },
-    ] satisfies Array<SlashSearchItem>;
+    ] satisfies Array<
+      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" | "skill" }>
+    >;
 
     expect(searchSlashCommandItems(items, "gfc").map((item) => item.id)).toEqual([
       "provider-slash-command:claudeAgent:gh-fix-ci",
@@ -120,29 +123,6 @@ describe("searchSlashCommandItems", () => {
     ]);
   });
 
-  it("supports fuzzy skill display-name matches", () => {
-    const items = [
-      {
-        id: "skill:claudeAgent:review-follow-up",
-        type: "skill",
-        provider: claudeDriver,
-        skill: {
-          name: "review-follow-up",
-          displayName: "Review follow-up",
-          path: "/skills/review-follow-up/SKILL.md",
-          enabled: true,
-          shortDescription: "Review follow-up changes",
-        },
-        label: "skill:review-follow-up",
-        description: "Review follow-up changes",
-      },
-    ] satisfies Array<Extract<ComposerCommandItem, { type: "skill" }>>;
-
-    expect(searchSlashCommandItems(items, "rfu").map((item) => item.id)).toEqual([
-      "skill:claudeAgent:review-follow-up",
-    ]);
-  });
-
   it("matches skills by their rendered prefix", () => {
     const items = [
       {
@@ -193,6 +173,50 @@ describe("searchSlashCommandItems", () => {
 
     expect(searchSlashCommandItems(items, "").map((item) => item.id)).toEqual([
       "slash:model",
+      "skill:claudeAgent:unslop",
+    ]);
+  });
+
+  it("hides provider commands from slash completion after the first message line", () => {
+    const items = [
+      {
+        id: "slash:model",
+        type: "slash-command",
+        command: "model",
+        label: "/model",
+        description: "Switch model",
+      },
+      {
+        id: "provider-slash-command:claudeAgent:compact",
+        type: "provider-slash-command",
+        provider: claudeDriver,
+        command: { name: "compact" },
+        label: "/compact",
+        description: "Compact the conversation",
+      },
+      {
+        id: "skill:claudeAgent:unslop",
+        type: "skill",
+        provider: claudeDriver,
+        skill: {
+          name: "unslop",
+          path: "/skills/unslop/SKILL.md",
+          enabled: true,
+        },
+        label: "/skill:unslop",
+        description: "Cut AI tells from writing",
+      },
+    ] satisfies Array<
+      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" | "skill" }>
+    >;
+
+    expect(slashCommandItemsForPromptPosition(items, false).map((item) => item.id)).toEqual([
+      "slash:model",
+      "skill:claudeAgent:unslop",
+    ]);
+    expect(slashCommandItemsForPromptPosition(items, true).map((item) => item.id)).toEqual([
+      "slash:model",
+      "provider-slash-command:claudeAgent:compact",
       "skill:claudeAgent:unslop",
     ]);
   });

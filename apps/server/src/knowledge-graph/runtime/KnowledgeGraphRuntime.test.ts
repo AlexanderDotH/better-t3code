@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
@@ -423,7 +424,9 @@ it.effect("blocks every activating RPC while disabled but leaves destructive cle
       ] as const;
 
       for (const [operation, attempt] of attempts) {
-        const error = yield* attempt.pipe(Effect.flip);
+        const error = yield* Effect.asVoid<unknown, KnowledgeGraphOperationError, Scope.Scope>(
+          attempt,
+        ).pipe(Effect.flip);
         assert.instanceOf(error, KnowledgeGraphOperationError);
         assert.strictEqual(error.operation, operation);
         assert.strictEqual(error.code, "disabled");

@@ -18,7 +18,6 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { FileTreeBrowser } from "./FileTreeBrowser";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
-import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 export function ThreadFileNavigatorPane(props: {
   readonly cwd: string;
@@ -28,7 +27,6 @@ export function ThreadFileNavigatorPane(props: {
   readonly selectedPath: string | null;
   readonly onSelectFile: (path: string) => void;
 }) {
-  const translator = useMobileInterfaceTranslator();
   const [searchQuery, setSearchQuery] = useState("");
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
   const theme = useUniwindTheme();
@@ -57,7 +55,7 @@ export function ThreadFileNavigatorPane(props: {
     () =>
       [
         {
-          accessibilityLabel: translator.message("mobile.files.refresh"),
+          accessibilityLabel: "Refresh files",
           icon: { name: "arrow.clockwise", type: "sfSymbol" as const },
           identifier: "thread-file-navigator-refresh",
           onPress: entriesQuery.refresh,
@@ -104,7 +102,7 @@ export function ThreadFileNavigatorPane(props: {
               hideShadow={false}
               navigationItemStyle="editor"
               subtitle={props.projectName}
-              title={translator.message("mobile.files.title")}
+              title="Files"
               titleColor={foregroundColor}
               titleFontSize={17}
               titleFontWeight="700"
@@ -125,7 +123,7 @@ export function ThreadFileNavigatorPane(props: {
                     setSearchQuery(event.nativeEvent.text ?? "");
                   }}
                   placement="integratedButton"
-                  placeholder={translator.message("mobile.files.search")}
+                  placeholder="Search files"
                   textColor={foregroundColor}
                   tintColor={foregroundColor}
                 />
@@ -142,16 +140,14 @@ export function ThreadFileNavigatorPane(props: {
       <View className="border-b border-border" style={{ paddingTop: props.headerInset }}>
         <View className="h-12 flex-row items-center gap-2 px-3">
           <View className="min-w-0 flex-1">
-            <Text className="text-sm font-t3-bold text-foreground">
-              {translator.message("mobile.files.title")}
-            </Text>
+            <Text className="text-sm font-t3-bold text-foreground">Files</Text>
             <Text className="text-xs text-foreground-muted" numberOfLines={1}>
               {props.projectName}
             </Text>
           </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={translator.message("mobile.files.refresh")}
+            accessibilityLabel="Refresh files"
             hitSlop={8}
             className="h-8 w-8 items-center justify-center rounded-full active:bg-subtle"
             onPress={entriesQuery.refresh}
@@ -172,12 +168,12 @@ export function ThreadFileNavigatorPane(props: {
             type="monochrome"
           />
           <TextInput
-            accessibilityLabel={translator.message("mobile.files.search")}
+            accessibilityLabel="Search files"
             autoCapitalize="none"
             autoCorrect={false}
             clearButtonMode="while-editing"
             className="min-h-10 flex-1 rounded-xl py-2 text-sm"
-            placeholder={translator.message("mobile.files.search")}
+            placeholder="Search files"
             value={searchQuery}
             onChangeText={setSearchQuery}
           />

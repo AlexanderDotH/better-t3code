@@ -7,20 +7,26 @@
  * terminal surfaces point at terminal session ids, file surfaces point at
  * workspace paths, and diff/files remain singleton surfaces.
  */
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  EnvironmentId,
+  ThreadId,
+  type ChatFileAttachment,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 
-export const RIGHT_PANEL_KINDS = [
+const RIGHT_PANEL_KINDS = [
   "diff",
   "files",
   "file",
   "preview",
   "terminal",
   "pull-request",
+  "agents",
   "knowledge-graph",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
@@ -38,13 +44,16 @@ export type RightPanelSurface =
     }
   | { id: "diff"; kind: "diff" }
   | { id: "files"; kind: "files" }
-  | { id: "knowledge-graph"; kind: "knowledge-graph" }
   | {
-      id: `file:${string}`;
+      id: `file:${string}` | `attachment:${string}`;
       kind: "file";
+      /** Workspace-relative, or absolute for a host file outside the workspace. */
       relativePath: string;
       revealLine: number | null;
       revealRequestId: number;
+      /** Present when the file lives in the thread's attachment store rather
+          than at a workspace or host path. */
+      attachment?: ChatFileAttachment;
     }
   | {
       /**
@@ -62,17 +71,25 @@ export type RightPanelSurface =
       projectId: string;
       repository: string;
       number: number;
-    };
+      url?: string;
+    }
+  | { id: "agents"; kind: "agents" }
+  | { id: "knowledge-graph"; kind: "knowledge-graph" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
-// v12 removes the duplicate Agents surface in favor of the chat's animated pill stack.
-const RIGHT_PANEL_STORAGE_VERSION = 13;
+const RIGHT_PANEL_STORAGE_VERSION = 11;
+
+/** A fixed workspace-level ref: each PR surface carries its own real environment. */
+export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
+  EnvironmentId.make("pull-requests-panel"),
+  ThreadId.make("pull-requests-panel"),
+);
 
 /**
- * The pull-request list's shared panel (see PULL_REQUESTS_PANEL_ID in the route) is session
+ * The pull-request list's shared panel is session
  * state: reopening the app should show the list, not last session's tabs and detail fetches.
  */
 const isPullRequestsPanelKey = (threadKey: string) => threadKey.endsWith(":pull-requests-panel");
@@ -85,15 +102,34 @@ export interface ThreadRightPanelState {
 
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
+  /** Session-only count of user panel choices per thread. Automatic updates do not advance it. */
+  userActionRevisionByThreadKey: Record<string, number>;
+  getUserActionRevision: (ref: ScopedThreadRef) => number;
+  /**
+   * Open a surface on behalf of the app, not the user. Refused when the user
+   * made a panel choice after `expectedUserActionRevision` was read.
+   */
+  openProactive: (
+    ref: ScopedThreadRef,
+    surface: Extract<RightPanelSurface, { kind: "diff" | "pull-request" }>,
+    expectedUserActionRevision: number,
+  ) => boolean;
   open: (
     ref: ScopedThreadRef,
     kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
   ) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
+  openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
-    target: { environmentId?: string; projectId: string; repository: string; number: number },
+    target: {
+      environmentId?: string;
+      projectId: string;
+      repository: string;
+      number: number;
+      url?: string;
+    },
   ) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
@@ -135,6 +171,8 @@ const singletonSurface = (
       return { id: "diff", kind };
     case "files":
       return { id: "files", kind };
+    case "agents":
+      return { id: "agents", kind };
     case "knowledge-graph":
       return { id: "knowledge-graph", kind };
   }
@@ -155,6 +193,15 @@ const fileSurface = (
   relativePath,
   revealLine,
   revealRequestId,
+});
+
+const attachmentSurface = (attachment: ChatFileAttachment): RightPanelSurface => ({
+  id: `attachment:${attachment.id}`,
+  kind: "file",
+  relativePath: attachment.name,
+  revealLine: null,
+  revealRequestId: 0,
+  attachment,
 });
 
 const terminalSurface = (terminalId: string): RightPanelSurface => ({
@@ -185,6 +232,7 @@ export function pullRequestSurface(target: {
   projectId: string;
   repository: string;
   number: number;
+  url?: string;
 }): PullRequestSurface {
   return {
     id: pullRequestSurfaceId(target),
@@ -193,24 +241,8 @@ export function pullRequestSurface(target: {
     projectId: target.projectId,
     repository: target.repository,
     number: target.number,
+    ...(typeof target.url === "string" ? { url: target.url } : {}),
   };
-}
-
-/**
- * A pull-request tab's status map with one entry set. Keyed by the surface the panel is showing
- * rather than by a key rebuilt from the status, so the tab is found again whether or not that
- * surface was opened with an environment on it. Returns the same map when the tab's own fields
- * have not changed, so a caller can skip a re-render.
- */
-export function updatePullRequestTabStatus<Status extends { state: unknown; isDraft: boolean }>(
-  statuses: Readonly<Record<string, Status>>,
-  surfaceId: string,
-  status: Status,
-): Readonly<Record<string, Status>> {
-  return statuses[surfaceId]?.state === status.state &&
-    statuses[surfaceId]?.isDraft === status.isDraft
-    ? statuses
-    : { ...statuses, [surfaceId]: status };
 }
 
 const upsertSurface = (
@@ -241,6 +273,29 @@ const updateThread = (
   return { ...byThreadKey, [threadKey]: next };
 };
 
+// Every store action is a user choice unless it goes through `automaticUpdate`.
+// Only `openProactive` and resource reconciliation are automatic, so a new
+// action counts as a user choice by default.
+const automaticUpdate = (
+  state: RightPanelStoreState,
+  threadKey: string,
+  updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
+): Partial<RightPanelStoreState> => ({
+  byThreadKey: updateThread(state.byThreadKey, threadKey, updater),
+});
+
+const userAction = (
+  state: RightPanelStoreState,
+  threadKey: string,
+  updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
+): Partial<RightPanelStoreState> => ({
+  byThreadKey: updateThread(state.byThreadKey, threadKey, updater),
+  userActionRevisionByThreadKey: {
+    ...state.userActionRevisionByThreadKey,
+    [threadKey]: (state.userActionRevisionByThreadKey[threadKey] ?? 0) + 1,
+  },
+});
+
 function normalizeRevealLine(line: number | undefined): number | null {
   if (line === undefined || !Number.isFinite(line)) return null;
   return Math.max(1, Math.trunc(line));
@@ -264,7 +319,10 @@ function normalizePersistedRightPanelSurface(surface: unknown): RightPanelSurfac
     return id === kind ? { id: "files", kind: "files" } : null;
   }
   if (kind === "knowledge-graph") {
-    return id === kind ? { id: "knowledge-graph", kind: "knowledge-graph" } : null;
+    return id === kind ? { id: "knowledge-graph", kind } : null;
+  }
+  if (kind === "agents") {
+    return id === kind ? { id: "agents", kind: "agents" } : null;
   }
   if (kind === "preview") {
     if (id === "browser:new" && record.resourceId === null) {
@@ -309,6 +367,7 @@ function normalizePersistedRightPanelSurface(surface: unknown): RightPanelSurfac
       projectId: record.projectId,
       repository: record.repository,
       number: record.number,
+      ...(typeof record.url === "string" ? { url: record.url } : {}),
     });
   }
   if (
@@ -376,8 +435,10 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                 typeof validThreadState?.activeSurfaceId === "string"
                   ? validThreadState.activeSurfaceId
                   : null;
-              const preservedActiveSurface = surfaces.find(
-                (surface) => surface.id === requestedActiveSurfaceId,
+              const preservedActiveSurface = surfaces.find((surface) =>
+                requestedActiveSurfaceId === "pull-request"
+                  ? surface.kind === "pull-request"
+                  : surface.id === requestedActiveSurfaceId,
               );
               const removedActiveIndex = rawSurfaces.findIndex(
                 (surface) =>
@@ -413,37 +474,71 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
 
 export const useRightPanelStore = create<RightPanelStoreState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       byThreadKey: {},
+      userActionRevisionByThreadKey: {},
+      getUserActionRevision: (ref) =>
+        get().userActionRevisionByThreadKey[scopedThreadKey(ref)] ?? 0,
+      openProactive: (ref, surface, expectedUserActionRevision) => {
+        let opened = false;
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          if (
+            (state.userActionRevisionByThreadKey[threadKey] ?? 0) !== expectedUserActionRevision
+          ) {
+            return state;
+          }
+          // A linked PR takes priority over a completed-turn diff. Manual actions
+          // always apply, and later user choices reject both proactive requests.
+          if (
+            surface.kind === "diff" &&
+            selectActiveRightPanel(state.byThreadKey, ref) === "pull-request"
+          ) {
+            return state;
+          }
+          opened = true;
+          return automaticUpdate(state, threadKey, (current) => upsertSurface(current, surface));
+        });
+        return opened;
+      },
       open: (ref, kind) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
             if (kind === "preview") {
               const existing = current.surfaces.find((surface) => surface.kind === "preview");
               return upsertSurface(current, existing ?? browserSurface(null));
             }
             return upsertSurface(current, singletonSurface(kind));
           }),
-        })),
+        ),
       openBrowser: (ref, tabId) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
             const surface = browserSurface(tabId);
             const withoutPlaceholder = tabId
               ? current.surfaces.filter((entry) => entry.id !== "browser:new")
               : current.surfaces;
             return upsertSurface({ ...current, surfaces: withoutPlaceholder }, surface);
           }),
-        })),
+        ),
       openPullRequest: (ref, target) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
-            return upsertSurface(current, pullRequestSurface(target));
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const surface = pullRequestSurface(target);
+            const next = upsertSurface(current, surface);
+            return target.url
+              ? {
+                  ...next,
+                  surfaces: next.surfaces.map((entry) =>
+                    entry.id === surface.id ? surface : entry,
+                  ),
+                }
+              : next;
           }),
-        })),
+        ),
       openFile: (ref, relativePath, line) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
             const withoutStandaloneExplorer = current.surfaces.filter(
               (surface) => surface.kind !== "files",
             );
@@ -467,16 +562,28 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 : [...withoutStandaloneExplorer, surface],
             };
           }),
-        })),
+        ),
+      openAttachment: (ref, attachment) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const withoutStandaloneExplorer = current.surfaces.filter(
+              (surface) => surface.kind !== "files",
+            );
+            return upsertSurface(
+              { ...current, surfaces: withoutStandaloneExplorer },
+              attachmentSurface(attachment),
+            );
+          }),
+        ),
       openTerminal: (ref, terminalId) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) =>
             upsertSurface(current, terminalSurface(terminalId)),
           ),
-        })),
+        ),
       splitTerminal: (ref, surfaceId, terminalId, direction = "horizontal") =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => ({
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => ({
             ...current,
             isOpen: true,
             activeSurfaceId: surfaceId,
@@ -493,10 +600,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               };
             }),
           })),
-        })),
+        ),
       activateTerminal: (ref, surfaceId, terminalId) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => ({
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => ({
             ...current,
             activeSurfaceId: surfaceId,
             surfaces: current.surfaces.map((surface) =>
@@ -507,10 +614,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 : surface,
             ),
           })),
-        })),
+        ),
       closeTerminal: (ref, surfaceId, terminalId) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
             const surface = current.surfaces.find(
               (entry) => entry.id === surfaceId && entry.kind === "terminal",
             );
@@ -546,18 +653,18 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               ),
             };
           }),
-        })),
+        ),
       activateSurface: (ref, surfaceId) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) =>
             current.surfaces.some((surface) => surface.id === surfaceId)
               ? { ...current, isOpen: true, activeSurfaceId: surfaceId }
               : current,
           ),
-        })),
+        ),
       closeSurface: (ref, surfaceId) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
             const index = current.surfaces.findIndex((surface) => surface.id === surfaceId);
             if (index < 0) return current;
             const surfaces = current.surfaces.filter((surface) => surface.id !== surfaceId);
@@ -572,10 +679,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               activeSurfaceId: fallback?.id ?? null,
             };
           }),
-        })),
+        ),
       closeOtherSurfaces: (ref, surfaceId) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
             const surface = current.surfaces.find((entry) => entry.id === surfaceId);
             if (!surface || current.surfaces.length === 1) return current;
             return {
@@ -585,10 +692,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               activeSurfaceId: surface.id,
             };
           }),
-        })),
+        ),
       closeSurfacesToRight: (ref, surfaceId) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
             const index = current.surfaces.findIndex((surface) => surface.id === surfaceId);
             if (index < 0 || index === current.surfaces.length - 1) return current;
             const surfaces = current.surfaces.slice(0, index + 1);
@@ -601,18 +708,18 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               activeSurfaceId: activeStillExists ? current.activeSurfaceId : surfaceId,
             };
           }),
-        })),
+        ),
       closeAllSurfaces: (ref) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) =>
             current.surfaces.length === 0
               ? current
               : { ...current, isOpen: false, surfaces: [], activeSurfaceId: null },
           ),
-        })),
+        ),
       reconcileBrowserSurfaces: (ref, tabIds) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+        set((state) =>
+          automaticUpdate(state, scopedThreadKey(ref), (current) => {
             const validIds = new Set(tabIds.map((tabId) => `browser:${tabId}`));
             const nonBrowser = current.surfaces.filter((surface) => surface.kind !== "preview");
             const existingBrowser = current.surfaces.filter(
@@ -638,13 +745,15 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 : (fallbackBrowser?.id ?? surfaces[0]?.id ?? null),
             };
           }),
-        })),
+        ),
       reconcileFileSurfaces: (ref, workspaceAvailable) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+        set((state) =>
+          automaticUpdate(state, scopedThreadKey(ref), (current) => {
             if (workspaceAvailable) return current;
             const surfaces = current.surfaces.filter(
-              (surface) => surface.kind !== "files" && surface.kind !== "file",
+              (surface) =>
+                surface.kind !== "files" &&
+                (surface.kind !== "file" || surface.attachment !== undefined),
             );
             if (surfaces.length === current.surfaces.length) return current;
             const activeStillExists = surfaces.some(
@@ -659,29 +768,29 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 : (surfaces.at(-1)?.id ?? null),
             };
           }),
-        })),
+        ),
       show: (ref) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) =>
             current.isOpen ? current : { ...current, isOpen: true },
           ),
-        })),
+        ),
       close: (ref) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) =>
             current.isOpen ? { ...current, isOpen: false } : current,
           ),
-        })),
+        ),
       toggleVisibility: (ref) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => ({
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => ({
             ...current,
             isOpen: !current.isOpen,
           })),
-        })),
+        ),
       toggle: (ref, kind) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
             const active = current.surfaces.find(
               (surface) => surface.id === current.activeSurfaceId,
             );
@@ -694,13 +803,20 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             }
             return upsertSurface(current, singletonSurface(kind));
           }),
-        })),
+        ),
       removeThread: (ref) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
-          if (!(threadKey in state.byThreadKey)) return state;
+          if (
+            !(threadKey in state.byThreadKey) &&
+            !(threadKey in state.userActionRevisionByThreadKey)
+          ) {
+            return state;
+          }
           const { [threadKey]: _removed, ...rest } = state.byThreadKey;
-          return { byThreadKey: rest };
+          const { [threadKey]: _revision, ...userActionRevisionByThreadKey } =
+            state.userActionRevisionByThreadKey;
+          return { byThreadKey: rest, userActionRevisionByThreadKey };
         }),
     }),
     {

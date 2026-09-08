@@ -39,11 +39,12 @@ describe("ChatGptCredentialStore", () => {
       expect(store.home).toMatch(/\/secrets\/providers\/chatgpt\/chatgpt_personal\/codex-home$/u);
       expect(NodeFS.statSync(store.home).mode & 0o777).toBe(0o700);
 
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Model external credential files, including unknown fields, independently of the production schema.
       yield* fileSystem.writeFileString(store.authFilePath, JSON.stringify(validAuthFile));
       yield* fileSystem.chmod(store.authFilePath, 0o644);
       const credential = yield* store.read;
 
-      assert.isTrue(Option.isSome(credential));
+      assert.isOk(Option.isSome(credential));
       expect(Redacted.value(credential.value.accessToken)).toBe("access-secret");
       expect(Redacted.value(credential.value.refreshToken)).toBe("refresh-secret");
       expect(credential.value.accountId).toBe("account-123");
@@ -68,6 +69,7 @@ describe("ChatGptCredentialStore", () => {
       yield* store.prepare;
       yield* fileSystem.writeFileString(
         store.authFilePath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Model external credential files, including unknown fields, independently of the production schema.
         JSON.stringify({
           ...validAuthFile,
           auth_mode: "chatgpt",
@@ -77,7 +79,7 @@ describe("ChatGptCredentialStore", () => {
       );
 
       const decoded = yield* store.read;
-      assert.isTrue(Option.isSome(decoded));
+      assert.isOk(Option.isSome(decoded));
       expect(decoded.value.accountId).toBe("account-123");
       expect(Redacted.value(decoded.value.accessToken)).toBe("access-secret");
     }).pipe(Effect.provide(makeLayer())),
@@ -90,13 +92,16 @@ describe("ChatGptCredentialStore", () => {
       yield* store.prepare;
       yield* fileSystem.writeFileString(
         store.authFilePath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Model external credential files, including unknown fields, independently of the production schema.
         JSON.stringify({ ...validAuthFile, unexpected_token_copy: "never-log-this-secret" }),
       );
 
       const error = yield* Effect.flip(store.read);
       expect(error._tag).toBe("ChatGptCredentialError");
       expect(error.message).toContain("schema");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(error)).not.toContain("never-log-this-secret");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
       expect(JSON.stringify(error)).not.toContain("access-secret");
     }).pipe(Effect.provide(makeLayer())),
   );

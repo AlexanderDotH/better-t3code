@@ -1,23 +1,24 @@
-import { Fragment, memo, type PointerEventHandler } from "react";
-import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
-import type { OrchestrationTurnAbortPhase } from "@t3tools/contracts";
-import {
-  createInterfaceTranslator,
-  type InterfaceTranslator,
-} from "@t3tools/shared/interfaceLanguage";
 import type {
   PlanImplementationStrategy,
   PlanImplementationSuggestion,
   PlanParallelismReviewStatus,
-} from "../../planImplementation";
+} from "@t3tools/client-runtime/plan-implementation";
+import {
+  buildPlanImplementationActionPresentation,
+  resolvePlanImplementationReviewPresentation,
+} from "../../planImplementationActions";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
+import type { ThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
+import { memo, type PointerEventHandler } from "react";
+import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
 import { Button } from "../ui/button";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { composerFloatingLayerProps } from "./composerEventScope";
 
 interface PendingActionState {
   questionIndex: number;
@@ -28,10 +29,11 @@ interface PendingActionState {
 }
 
 interface ComposerPrimaryActionsProps {
+  formId?: string;
   compact: boolean;
   pendingAction: PendingActionState | null;
   isRunning: boolean;
-  abortPhase?: OrchestrationTurnAbortPhase | null;
+  abortPresentation?: ThreadAbortPresentation;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -48,136 +50,18 @@ interface ComposerPrimaryActionsProps {
   onInterrupt: () => void;
   planImplementationSuggestion?: PlanImplementationSuggestion | null;
   planParallelismReviewStatus?: PlanParallelismReviewStatus;
-  onImplementPlan: (strategy: PlanImplementationStrategy) => void;
+  onImplementPlan?: (strategy: PlanImplementationStrategy) => void;
   onImplementPlanInNewThread: (strategy: PlanImplementationStrategy) => void;
 }
 
-interface PlanImplementationMenuAction {
-  readonly id: string;
-  readonly label: string;
-  readonly target: "same-thread" | "new-thread";
-  readonly strategy: PlanImplementationStrategy;
-  readonly suggested: boolean;
-}
-
-interface PlanImplementationActionPresentation {
-  readonly primaryLabel: string;
-  readonly primaryAriaLabel: string | null;
-  readonly menuActions: ReadonlyArray<PlanImplementationMenuAction>;
-}
-
-const STANDARD_IMPLEMENTATION_STRATEGY = { kind: "standard" } as const;
-const englishTranslate = createInterfaceTranslator({ language: "en", locale: "en-US" }).message;
-type Translate = InterfaceTranslator["message"];
-
-interface PlanImplementationReviewPresentation {
-  readonly actionsDisabled: boolean;
-  readonly primaryLabel: string | null;
-  readonly tooltip: string | null;
-}
-
-export function resolvePlanImplementationReviewPresentation(
-  status: PlanParallelismReviewStatus,
-  translate: Translate = englishTranslate,
-): PlanImplementationReviewPresentation {
-  if (status === "reviewing") {
-    return {
-      actionsDisabled: true,
-      primaryLabel: translate("chat.composer.analyzingPlan"),
-      tooltip: null,
-    };
-  }
-  if (status === "fallback") {
-    return {
-      actionsDisabled: false,
-      primaryLabel: null,
-      tooltip: translate("chat.composer.planReviewFallback"),
-    };
-  }
-  return {
-    actionsDisabled: false,
-    primaryLabel: null,
-    tooltip: null,
-  };
-}
-
-export function buildPlanImplementationActionPresentation(input: {
-  readonly compact: boolean;
-  readonly suggestion: PlanImplementationSuggestion | null;
-  readonly translate?: Translate;
-}): PlanImplementationActionPresentation {
-  const translate = input.translate ?? englishTranslate;
-  const suggestion = input.suggestion;
-  if (!suggestion) {
-    return {
-      primaryLabel: translate("chat.composer.implement"),
-      primaryAriaLabel: null,
-      menuActions: [
-        {
-          id: "standard:new-thread",
-          label: translate("chat.composer.implementNewThread"),
-          target: "new-thread",
-          strategy: STANDARD_IMPLEMENTATION_STRATEGY,
-          suggested: false,
-        },
-      ],
-    };
-  }
-
-  const suggestedCount = suggestion.strategy.count;
-  const fullPrimaryLabel = translate("chat.composer.implementWithSubagents", {
-    count: suggestedCount,
-  });
-  return {
-    primaryLabel: input.compact
-      ? translate("chat.composer.subagentCount", { count: suggestedCount })
-      : fullPrimaryLabel,
-    primaryAriaLabel: fullPrimaryLabel,
-    menuActions: [
-      {
-        id: "standard:same-thread",
-        label: translate("chat.composer.implementNormally"),
-        target: "same-thread",
-        strategy: STANDARD_IMPLEMENTATION_STRATEGY,
-        suggested: false,
-      },
-      {
-        id: "standard:new-thread",
-        label: translate("chat.composer.implementNormallyNewThread"),
-        target: "new-thread",
-        strategy: STANDARD_IMPLEMENTATION_STRATEGY,
-        suggested: false,
-      },
-      {
-        id: `subagents:${suggestedCount}:new-thread`,
-        label: translate("chat.composer.implementWithSubagentsNewThread", {
-          count: suggestedCount,
-        }),
-        target: "new-thread",
-        strategy: suggestion.strategy,
-        suggested: true,
-      },
-      ...suggestion.supportedCounts.map(
-        (count): PlanImplementationMenuAction => ({
-          id: `subagents:${count}:same-thread`,
-          label: translate("chat.composer.implementWithSubagents", { count }),
-          target: "same-thread",
-          strategy: { kind: "subagents", count },
-          suggested: count === suggestedCount,
-        }),
-      ),
-    ],
-  };
-}
-
-export const formatPendingPrimaryActionLabel = (input: {
+const formatPendingPrimaryActionLabel = (input: {
   compact: boolean;
   isLastQuestion: boolean;
   isResponding: boolean;
   questionIndex: number;
-  translate?: Translate;
+  translate: InterfaceTranslator["message"];
 }) => {
-  const translate = input.translate ?? englishTranslate;
+  const translate = input.translate;
   if (input.isResponding) {
     return translate("chat.composer.submitting");
   }
@@ -194,28 +78,16 @@ export const formatPendingPrimaryActionLabel = (input: {
     : translate("chat.composer.submitAnswer");
 };
 
-export const formatStopGenerationLabel = (
-  abortPhase: OrchestrationTurnAbortPhase | null,
-  translate: Translate = englishTranslate,
-) => {
-  if (abortPhase === "force-stopping") {
-    return translate("chat.composer.forceStoppingGeneration");
-  }
-  if (abortPhase === "interrupting") {
-    return translate("chat.composer.forceStopGeneration");
-  }
-  return translate("chat.composer.stopGeneration");
-};
-
 const preventPointerFocus: PointerEventHandler<HTMLElement> = (event) => {
   event.preventDefault();
 };
 
 export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
+  formId,
   compact,
   pendingAction,
   isRunning,
-  abortPhase = null,
+  abortPresentation,
   showPlanFollowUpPrompt,
   promptHasText,
   isSendBusy,
@@ -234,6 +106,21 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onImplementPlanInNewThread,
 }: ComposerPrimaryActionsProps) {
   const translate = useInterfaceTranslator().message;
+  const planActions = buildPlanImplementationActionPresentation({
+    compact,
+    suggestion: planImplementationSuggestion,
+    translate,
+  });
+  const planReview = resolvePlanImplementationReviewPresentation(
+    planParallelismReviewStatus,
+    translate,
+  );
+  const planActionsDisabled =
+    isSendBusy ||
+    sendDisabledReason !== null ||
+    isConnecting ||
+    isEnvironmentUnavailable ||
+    planReview.actionsDisabled;
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
     : undefined;
@@ -243,40 +130,39 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     environmentIdentificationMode === "artwork",
   );
 
-  const renderStopGenerationButton = (insidePendingAction: boolean) => {
-    const forceStopPending = abortPhase === "force-stopping";
-    return (
-      <button
-        type="button"
-        className={cn(
-          "flex enabled:cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-[0_1px_--theme(--color-white/16%)] transition-all duration-150 enabled:hover:bg-destructive enabled:hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:cursor-wait disabled:opacity-80 disabled:hover:scale-100",
-          insidePendingAction
-            ? "size-8 sm:size-7"
-            : showSendWhileRunning && hasSendableContent
-              ? "size-9 sm:size-8"
-              : "size-8 sm:h-8 sm:w-8",
-        )}
-        {...pointerFocusProps}
-        onClick={onInterrupt}
-        disabled={forceStopPending}
-        aria-busy={forceStopPending || undefined}
-        aria-label={formatStopGenerationLabel(abortPhase, translate)}
-      >
-        {forceStopPending ? (
-          <Spinner className="size-3.5" aria-hidden="true" />
-        ) : (
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
-            <rect x="2" y="2" width="8" height="8" rx="1.5" />
-          </svg>
-        )}
-      </button>
-    );
-  };
+  const renderStopGenerationButton = (insidePendingAction: boolean) => (
+    <button
+      type="button"
+      className={cn(
+        "flex cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-[0_1px_--theme(--color-white/16%)] transition-all duration-150 hover:bg-destructive hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none",
+        insidePendingAction
+          ? "size-8 sm:size-7"
+          : showSendWhileRunning && hasSendableContent
+            ? "size-9 sm:size-8"
+            : "size-8 sm:h-8 sm:w-8",
+      )}
+      {...pointerFocusProps}
+      onClick={onInterrupt}
+      aria-label={
+        abortPresentation?.phase === "force-stopping"
+          ? translate("chat.composer.forceStoppingGeneration")
+          : abortPresentation?.phase === "interrupting"
+            ? translate("chat.composer.forceStopGeneration")
+            : translate("chat.composer.stopGeneration")
+      }
+      disabled={abortPresentation?.disabled === true}
+      aria-busy={abortPresentation?.phase === "force-stopping" || undefined}
+    >
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+        <rect x="2" y="2" width="8" height="8" rx="1.5" />
+      </svg>
+    </button>
+  );
 
   if (pendingAction) {
     return (
       <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
-        {isRunning ? renderStopGenerationButton(true) : null}
+        {isRunning || abortPresentation?.showStopAction ? renderStopGenerationButton(true) : null}
         {pendingAction.questionIndex > 0 ? (
           compact ? (
             <Button
@@ -305,6 +191,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         ) : null}
         <Button
           type="submit"
+          form={formId}
           size="sm"
           className={cn(
             "rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover",
@@ -334,6 +221,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       return (
         <Button
           type="submit"
+          form={formId}
           size="sm"
           className={cn(
             "rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover",
@@ -349,55 +237,28 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       );
     }
 
-    const implementationActions = buildPlanImplementationActionPresentation({
-      compact,
-      suggestion: planImplementationSuggestion,
-      translate,
-    });
-    const reviewPresentation = resolvePlanImplementationReviewPresentation(
-      planParallelismReviewStatus,
-      translate,
-    );
-    const hasSubagentSuggestion = planImplementationSuggestion !== null;
-    const actionsDisabled =
-      isSendBusy ||
-      isSendDisabled ||
-      isConnecting ||
-      isEnvironmentUnavailable ||
-      reviewPresentation.actionsDisabled;
-    const primaryLabel =
-      isConnecting || isSendBusy
-        ? translate("chat.composer.sendingProgress")
-        : (reviewPresentation.primaryLabel ?? implementationActions.primaryLabel);
-    const primaryButton = (
-      <Button
-        type="submit"
-        size="sm"
-        className="h-9 rounded-l-full rounded-r-none bg-message-action px-4 text-message-action-foreground hover:bg-message-action-hover sm:h-8"
-        {...pointerFocusProps}
-        disabled={actionsDisabled}
-        aria-busy={planParallelismReviewStatus === "reviewing" || undefined}
-        aria-label={
-          reviewPresentation.primaryLabel ?? implementationActions.primaryAriaLabel ?? undefined
-        }
-      >
-        {planParallelismReviewStatus === "reviewing" ? (
-          <Spinner className="size-3.5" aria-hidden="true" />
-        ) : null}
-        {primaryLabel}
-      </Button>
-    );
-
     return (
       <div data-chat-composer-implement-actions="true" className="flex items-center justify-end">
-        {reviewPresentation.tooltip ? (
-          <Tooltip>
-            <TooltipTrigger render={primaryButton} />
-            <TooltipPopup side="top">{reviewPresentation.tooltip}</TooltipPopup>
-          </Tooltip>
-        ) : (
-          primaryButton
-        )}
+        <Button
+          type={onImplementPlan ? "button" : "submit"}
+          form={formId}
+          size="sm"
+          className="h-9 rounded-l-full rounded-r-none bg-message-action px-4 text-message-action-foreground hover:bg-message-action-hover sm:h-8"
+          {...pointerFocusProps}
+          aria-label={planActions.primaryAriaLabel ?? undefined}
+          title={planReview.tooltip ?? undefined}
+          onClick={
+            onImplementPlan
+              ? () =>
+                  onImplementPlan(planImplementationSuggestion?.strategy ?? { kind: "standard" })
+              : undefined
+          }
+          disabled={planActionsDisabled}
+        >
+          {isConnecting || isSendBusy
+            ? translate("chat.composer.sendingProgress")
+            : (planReview.primaryLabel ?? planActions.primaryLabel)}
+        </Button>
         <Menu>
           <MenuTrigger
             render={
@@ -407,34 +268,24 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                 className="h-9 rounded-l-none rounded-r-full border-l-message-action-foreground/20 bg-message-action px-2 text-message-action-foreground hover:bg-message-action-hover sm:h-8"
                 aria-label={translate("chat.composer.implementationActions")}
                 {...pointerFocusProps}
-                disabled={actionsDisabled}
+                disabled={planActionsDisabled}
               />
             }
           >
             <ChevronDownIcon className="size-3.5" />
           </MenuTrigger>
-          <MenuPopup align="end" side="top">
-            {implementationActions.menuActions.map((action, index) => (
-              <Fragment key={action.id}>
-                {hasSubagentSuggestion && index === 3 ? <MenuSeparator /> : null}
-                <MenuItem
-                  disabled={actionsDisabled}
-                  onClick={() => {
-                    if (action.target === "new-thread") {
-                      void onImplementPlanInNewThread(action.strategy);
-                      return;
-                    }
-                    void onImplementPlan(action.strategy);
-                  }}
-                >
-                  <span>{action.label}</span>
-                  {action.suggested ? (
-                    <span className="ms-auto text-xs text-muted-foreground">
-                      {translate("chat.composer.suggested")}
-                    </span>
-                  ) : null}
-                </MenuItem>
-              </Fragment>
+          <MenuPopup align="end" side="top" {...composerFloatingLayerProps}>
+            {planActions.menuActions.map((action) => (
+              <MenuItem
+                key={action.id}
+                disabled={planActionsDisabled}
+                onClick={() => {
+                  if (action.target === "new-thread") onImplementPlanInNewThread(action.strategy);
+                  else onImplementPlan?.(action.strategy);
+                }}
+              >
+                {action.label}
+              </MenuItem>
             ))}
           </MenuPopup>
         </Menu>
@@ -445,6 +296,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const sendButton = (
     <button
       type="submit"
+      form={formId}
       className={cn(
         "relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8",
         stageBackdropVariant
@@ -494,7 +346,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     </button>
   );
 
-  if (!isRunning) {
+  if (!isRunning && !abortPresentation?.showStopAction) {
     return sendButton;
   }
 

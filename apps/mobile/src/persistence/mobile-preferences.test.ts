@@ -35,6 +35,7 @@ function makeMemoryPreferenceDependencies() {
   const secureValues = new Map<string, string>();
   const database = MobileDatabase.of({
     loadCache: () => Effect.succeed(Option.none()),
+    listCache: () => Effect.succeed([]),
     loadEnvironmentCacheUpdatedAt: () => Effect.succeed(Option.none()),
     saveCache: () => Effect.void,
     removeCache: () => Effect.void,

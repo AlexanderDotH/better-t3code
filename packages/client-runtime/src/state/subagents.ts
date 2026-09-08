@@ -40,8 +40,8 @@ import { SubagentSnapshotLoader, type SubagentSnapshotWindow } from "./subagentS
 // brief layout changes, but release large transcript snapshots promptly after
 // their last viewer unmounts.
 export const SUBAGENT_STATE_IDLE_TTL_MS = 30_000;
-export const INITIAL_SUBAGENT_ACTIVITY_LIMIT = 100;
-export const OLDER_SUBAGENT_ACTIVITY_LIMIT = 200;
+const INITIAL_SUBAGENT_ACTIVITY_LIMIT = 100;
+const OLDER_SUBAGENT_ACTIVITY_LIMIT = 200;
 
 function pageStateFromSnapshot(
   page: OrchestrationSubagentDetailPage | undefined,
@@ -80,7 +80,7 @@ function makeSubagentOlderActivityRequestRegistry(): SubagentOlderActivityReques
 
 const defaultOlderActivityRequestRegistry = makeSubagentOlderActivityRequestRegistry();
 
-export class SubagentOlderActivityRequests extends Context.Reference<SubagentOlderActivityRequestRegistry>(
+class SubagentOlderActivityRequests extends Context.Reference<SubagentOlderActivityRequestRegistry>(
   "@t3tools/client-runtime/state/subagents/SubagentOlderActivityRequests",
   { defaultValue: () => defaultOlderActivityRequestRegistry },
 ) {}
@@ -414,7 +414,7 @@ export const makeEnvironmentSubagentState = Effect.fn("EnvironmentSubagentState.
   return state;
 });
 
-export function subagentStateChanges(
+function subagentStateChanges(
   environmentId: EnvironmentIdType,
   threadId: ThreadIdType,
   subagentId: SubagentIdType,

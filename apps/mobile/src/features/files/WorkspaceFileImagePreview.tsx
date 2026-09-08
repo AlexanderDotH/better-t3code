@@ -1,98 +1,86 @@
-import { useAtomValue } from "@effect/atom-react";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { ActivityIndicator, Image, Pressable, View } from "react-native";
-import ImageViewing from "react-native-image-viewing";
-import { AsyncResult } from "effect/unstable/reactivity";
 
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
-import { workspaceFileImageAtom } from "./workspace-file-image-cache";
-import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { PresentationSource } from "../../components/NativePresentation";
+import { useMediaActions, type MediaActionsSource } from "../../lib/mediaActions";
+import { MediaActionsMenu } from "../../components/MediaActionsMenu";
 
 function ResolvedWorkspaceFileImagePreview(props: {
   readonly accessibilityLabel: string;
   readonly uri: string;
+  readonly actionsSource?: MediaActionsSource;
 }) {
-  const translator = useMobileInterfaceTranslator();
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [fullScreenVisible, setFullScreenVisible] = useState(false);
+  const [preview, setPreview] = useState<FilePreviewSource | null>(null);
+  const sourceIdentifier = useId();
+  const mediaActions = useMediaActions(props.actionsSource);
   const imageSource = useMemo(
     () => ({ uri: props.uri, cache: "force-cache" as const }),
     [props.uri],
   );
-  const fullScreenImages = useMemo(() => [imageSource], [imageSource]);
 
   return (
     <View className="relative flex-1 bg-subtle">
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={translator.message("mobile.files.openImageFullscreen", {
-          label: props.accessibilityLabel,
-        })}
-        disabled={loadError !== null}
-        className="flex-1 p-4 active:bg-subtle-strong"
-        onPress={() => setFullScreenVisible(true)}
-      >
-        <Image
-          accessible={false}
-          source={imageSource}
-          className="h-full w-full"
-          resizeMode="contain"
-          onLoadStart={() => setLoadError(null)}
-          onError={(event) => {
-            setLoadError(
-              event.nativeEvent.error || translator.message("mobile.files.imageRenderFailed"),
-            );
-          }}
-        />
-      </Pressable>
-
+      <MediaActionsMenu media={mediaActions} style={{ flex: 1 }}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Open full-screen preview of ${props.accessibilityLabel}`}
+          accessibilityHint={
+            mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
+          }
+          disabled={loadError !== null}
+          className="flex-1 p-4 active:bg-subtle-strong"
+          onPress={() =>
+            setPreview({
+              kind: "image",
+              uri: props.uri,
+              name: props.accessibilityLabel,
+              sourceIdentifier,
+              actionsSource: props.actionsSource,
+            })
+          }
+        >
+          <PresentationSource identifier={sourceIdentifier} style={{ flex: 1 }}>
+            <Image
+              accessible={false}
+              source={imageSource}
+              className="h-full w-full"
+              resizeMode="contain"
+              onLoadStart={() => setLoadError(null)}
+              onError={(event) => {
+                setLoadError(event.nativeEvent.error || "The image could not be rendered.");
+              }}
+            />
+          </PresentationSource>
+        </Pressable>
+      </MediaActionsMenu>
       {loadError !== null ? (
-        <View className="absolute inset-0 items-center justify-center bg-card px-6">
-          <EmptyState
-            title={translator.message("mobile.files.imageUnavailable")}
-            detail={loadError}
-          />
+        <View
+          pointerEvents="none"
+          className="absolute inset-0 items-center justify-center bg-card px-6"
+        >
+          <EmptyState title="Image unavailable" detail={loadError} />
         </View>
       ) : null}
-
-      <ImageViewing
-        images={fullScreenImages}
-        imageIndex={0}
-        visible={fullScreenVisible}
-        onRequestClose={() => setFullScreenVisible(false)}
-        swipeToCloseEnabled
-        doubleTapToZoomEnabled
-      />
+      <FilePreviewModal source={preview} onRequestClose={() => setPreview(null)} />
     </View>
   );
 }
 
-function CachedWorkspaceFileImagePreview(props: {
+export function WorkspaceFileImagePreview(props: {
   readonly accessibilityLabel: string;
-  readonly uri: string;
+  readonly uri: string | null;
+  readonly actionsSource?: MediaActionsSource;
 }) {
-  const translator = useMobileInterfaceTranslator();
-  const imageAtom = useMemo(() => workspaceFileImageAtom(props.uri), [props.uri]);
-  const imageResult = useAtomValue(imageAtom);
-
-  if (AsyncResult.isFailure(imageResult)) {
-    return (
-      <View className="flex-1 items-center justify-center bg-card px-6">
-        <EmptyState
-          title={translator.message("mobile.files.imageUnavailable")}
-          detail={translator.message("mobile.files.imageCacheFailed")}
-        />
-      </View>
-    );
-  }
-
-  if (!AsyncResult.isSuccess(imageResult)) {
+  if (props.uri === null) {
     return (
       <View className="flex-1 items-center justify-center gap-3 bg-card px-6">
         <ActivityIndicator />
         <Text className="text-center text-sm text-foreground-muted">
-          {translator.message("mobile.files.loadingImage")}
+          Preparing image preview...
         </Text>
       </View>
     );
@@ -101,31 +89,8 @@ function CachedWorkspaceFileImagePreview(props: {
   return (
     <ResolvedWorkspaceFileImagePreview
       accessibilityLabel={props.accessibilityLabel}
-      uri={imageResult.value}
-    />
-  );
-}
-
-export function WorkspaceFileImagePreview(props: {
-  readonly accessibilityLabel: string;
-  readonly uri: string | null;
-}) {
-  const translator = useMobileInterfaceTranslator();
-  if (props.uri === null) {
-    return (
-      <View className="flex-1 items-center justify-center gap-3 bg-card px-6">
-        <ActivityIndicator />
-        <Text className="text-center text-sm text-foreground-muted">
-          {translator.message("mobile.files.preparingImage")}
-        </Text>
-      </View>
-    );
-  }
-
-  return (
-    <CachedWorkspaceFileImagePreview
-      accessibilityLabel={props.accessibilityLabel}
       uri={props.uri}
+      actionsSource={props.actionsSource}
     />
   );
 }

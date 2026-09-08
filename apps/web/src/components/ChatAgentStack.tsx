@@ -1,3 +1,4 @@
+import "./subagents/subagents.css";
 import type { OrchestrationSubagentSummary, SubagentId } from "@t3tools/contracts";
 import { ArchiveIcon, BotIcon, ChevronRightIcon } from "lucide-react";
 import {
@@ -36,9 +37,9 @@ export interface ChatAgentStackProps {
   readonly className?: string;
 }
 
-export const ARCHIVED_AGENT_RENDER_PAGE_SIZE = 50;
+const ARCHIVED_AGENT_RENDER_PAGE_SIZE = 50;
 
-export function selectArchivedAgentsForRender(
+function selectArchivedAgentsForRender(
   agents: ReadonlyArray<OrchestrationSubagentSummary>,
   renderLimit: number,
   selectedSubagentId: SubagentId | null,

@@ -113,7 +113,7 @@ function changedPaths(result: NativeProviderToolResult): ReadonlyArray<string> {
   return Array.from(new Set(paths)).slice(0, 12);
 }
 
-export function modelFacingNativeProviderToolResult(
+function modelFacingNativeProviderToolResult(
   result: NativeProviderToolResult,
   input: {
     readonly itemId: RuntimeItemId;

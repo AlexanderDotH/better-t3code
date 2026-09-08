@@ -52,7 +52,7 @@ export const KnowledgeGraphRepositoryErrorReason = Schema.Literals([
 ]);
 export type KnowledgeGraphRepositoryErrorReason = typeof KnowledgeGraphRepositoryErrorReason.Type;
 
-export class KnowledgeGraphRepositoryError extends Schema.TaggedErrorClass<KnowledgeGraphRepositoryError>()(
+export class KnowledgeGraphRepositoryError extends Schema.TaggedError<KnowledgeGraphRepositoryError>()(
   "KnowledgeGraphRepositoryError",
   {
     operation: Schema.String,
@@ -191,7 +191,7 @@ const decodeTruncationJson = Schema.decodeUnknownEffect(
 );
 const isKnowledgeGraphRepositoryError = Schema.is(KnowledgeGraphRepositoryError);
 
-export const KNOWLEDGE_GRAPH_MAX_REPLAY_PATCHES = 256;
+const KNOWLEDGE_GRAPH_MAX_REPLAY_PATCHES = 256;
 
 const encodeStatusJson = Schema.encodeSync(Schema.fromJsonString(KnowledgeGraphStatusSchema));
 const encodeNodeJson = Schema.encodeSync(Schema.fromJsonString(KnowledgeGraphNodeSchema));

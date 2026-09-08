@@ -1,8 +1,4 @@
-import {
-  DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
-  DEFAULT_EXISTING_BETTER_T3_SETTINGS_V1,
-  EnvironmentId,
-} from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => {
@@ -119,6 +115,18 @@ const managedConnection = {
   relayManaged: true,
 } as const;
 
+const migratedBetterT3Settings = {
+  version: 1,
+  initialization: "existing-install-migration",
+  flags: {},
+} as const;
+
+const cleanBetterT3Settings = {
+  version: 1,
+  initialization: "clean-install",
+  flags: {},
+} as const;
+
 describe("mobile connection storage", () => {
   beforeEach(() => {
     mocks.clear();
@@ -180,7 +188,7 @@ describe("mobile connection storage", () => {
 
     await expect(loadPreferences()).resolves.toEqual({
       baseFontSize: 17,
-      betterT3Device: DEFAULT_EXISTING_BETTER_T3_SETTINGS_V1,
+      betterT3Device: migratedBetterT3Settings,
     });
   });
 
@@ -196,11 +204,11 @@ describe("mobile connection storage", () => {
     );
 
     await expect(loadPreferences()).resolves.toEqual({
+      betterT3Device: migratedBetterT3Settings,
       themeId: "grove",
       lightThemeId: "iris",
       darkThemeId: "ocean",
       themeMode: "system",
-      betterT3Device: DEFAULT_EXISTING_BETTER_T3_SETTINGS_V1,
     });
   });
 
@@ -208,64 +216,59 @@ describe("mobile connection storage", () => {
     mocks.setPreferencesJson(JSON.stringify({ themeTransition: "circle-bottom-left" }), 10);
 
     await expect(loadPreferences()).resolves.toEqual({
-      betterT3Device: DEFAULT_EXISTING_BETTER_T3_SETTINGS_V1,
+      betterT3Device: migratedBetterT3Settings,
     });
   });
 
   it("falls back to secure storage when SQLite cannot save preferences", async () => {
     mocks.setDatabaseFailures(true, true);
-    await expect(savePreferencesPatch({ baseFontSize: 19 })).resolves.toEqual({
+    const expectedPreferences = {
       baseFontSize: 19,
-      betterT3Device: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
-    });
+      betterT3Device: cleanBetterT3Settings,
+    };
+    await expect(savePreferencesPatch({ baseFontSize: 19 })).resolves.toEqual(expectedPreferences);
     const fallback = JSON.parse(mocks.getStoredValue("t3code.preferences.fallback") ?? "") as {
       readonly payload: string;
       readonly updatedAt: number;
     };
-    expect(JSON.parse(fallback.payload)).toEqual({
-      baseFontSize: 19,
-      betterT3Device: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
-    });
+    expect(JSON.parse(fallback.payload)).toEqual(expectedPreferences);
     expect(fallback.updatedAt).toEqual(expect.any(Number));
   });
 
-  it("persists Thread List v2 shelf expansion preferences", async () => {
+  it("persists thread list shelf expansion preferences", async () => {
+    const expectedPreferences = {
+      betterT3Device: cleanBetterT3Settings,
+      threadListSettledShelfExpanded: false,
+      threadListSnoozedShelfExpanded: true,
+    };
     await expect(
       savePreferencesPatch({
-        threadListV2SettledShelfExpanded: false,
-        threadListV2SnoozedShelfExpanded: true,
+        threadListSettledShelfExpanded: false,
+        threadListSnoozedShelfExpanded: true,
       }),
-    ).resolves.toEqual({
-      threadListV2SettledShelfExpanded: false,
-      threadListV2SnoozedShelfExpanded: true,
-      betterT3Device: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
-    });
+    ).resolves.toEqual(expectedPreferences);
 
-    await expect(loadPreferences()).resolves.toEqual({
-      threadListV2SettledShelfExpanded: false,
-      threadListV2SnoozedShelfExpanded: true,
-      betterT3Device: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
-    });
-    expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({
-      threadListV2SettledShelfExpanded: false,
-      threadListV2SnoozedShelfExpanded: true,
-      betterT3Device: DEFAULT_CLEAN_BETTER_T3_SETTINGS_V1,
-    });
+    await expect(loadPreferences()).resolves.toEqual(expectedPreferences);
+    expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual(expectedPreferences);
   });
 
-  it("ignores invalid Thread List v2 shelf expansion preference types", async () => {
+  it("preserves legacy shelf choices while dropping invalid current preferences", async () => {
     mocks.setPreferencesJson(
       JSON.stringify({
         baseFontSize: 17,
-        threadListV2SettledShelfExpanded: "false",
-        threadListV2SnoozedShelfExpanded: 1,
+        threadListV2SettledShelfExpanded: true,
+        threadListV2SnoozedShelfExpanded: true,
+        threadListSettledShelfExpanded: "false",
+        threadListSnoozedShelfExpanded: 1,
       }),
       10,
     );
 
     await expect(loadPreferences()).resolves.toEqual({
       baseFontSize: 17,
-      betterT3Device: DEFAULT_EXISTING_BETTER_T3_SETTINGS_V1,
+      betterT3Device: migratedBetterT3Settings,
+      threadListV2SettledShelfExpanded: true,
+      threadListV2SnoozedShelfExpanded: true,
     });
   });
 
@@ -281,7 +284,7 @@ describe("mobile connection storage", () => {
 
     await expect(loadPreferences()).resolves.toEqual({
       baseFontSize: 19,
-      betterT3Device: DEFAULT_EXISTING_BETTER_T3_SETTINGS_V1,
+      betterT3Device: migratedBetterT3Settings,
     });
     expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({ baseFontSize: 19 });
     expect(mocks.getStoredValue("t3code.preferences.fallback")).toBeNull();
@@ -299,7 +302,7 @@ describe("mobile connection storage", () => {
 
     await expect(loadPreferences()).resolves.toEqual({
       baseFontSize: 21,
-      betterT3Device: DEFAULT_EXISTING_BETTER_T3_SETTINGS_V1,
+      betterT3Device: migratedBetterT3Settings,
     });
     expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({ baseFontSize: 21 });
     expect(mocks.getStoredValue("t3code.preferences.fallback")).toBeNull();
@@ -315,7 +318,7 @@ describe("mobile connection storage", () => {
 
     await expect(loadPreferences()).resolves.toEqual({
       baseFontSize: 21,
-      betterT3Device: DEFAULT_EXISTING_BETTER_T3_SETTINGS_V1,
+      betterT3Device: migratedBetterT3Settings,
     });
     expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({ baseFontSize: 21 });
     expect(mocks.getStoredValue("t3code.preferences.fallback")).toBeNull();
@@ -329,7 +332,7 @@ describe("mobile connection storage", () => {
 
     await expect(loadPreferences()).resolves.toEqual({
       baseFontSize: 21,
-      betterT3Device: DEFAULT_EXISTING_BETTER_T3_SETTINGS_V1,
+      betterT3Device: migratedBetterT3Settings,
     });
     expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({ baseFontSize: 21 });
   });

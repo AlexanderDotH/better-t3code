@@ -164,7 +164,7 @@ export type ChatGptResponseEvent =
     }
   | { readonly type: "streamDone" };
 
-export class ChatGptProtocolDriftError extends Schema.TaggedErrorClass<ChatGptProtocolDriftError>()(
+export class ChatGptProtocolDriftError extends Schema.TaggedError<ChatGptProtocolDriftError>()(
   "ChatGptProtocolDriftError",
   { message: Schema.String },
 ) {}

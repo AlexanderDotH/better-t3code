@@ -1,3 +1,4 @@
+import { EventId, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
@@ -39,9 +40,9 @@ describe("general subagent policy", () => {
   it("recovers terminal assistant text from detail and structured provider data", () => {
     const eventBase = {
       type: "item.completed" as const,
-      eventId: "event-assistant-completed",
-      provider: "gemini",
-      threadId: "thread-worker",
+      eventId: EventId.make("event-assistant-completed"),
+      provider: ProviderDriverKind.make("gemini"),
+      threadId: ThreadId.make("thread-worker"),
       createdAt: "2026-08-22T12:00:00.000Z",
       payload: {
         itemType: "assistant_message" as const,

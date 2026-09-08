@@ -1,13 +1,10 @@
 import { RouterProvider } from "@tanstack/react-router";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { ElectronBrowserHost } from "./browser/ElectronBrowserHost";
 import { PreviewAutomationHosts } from "./components/preview/PreviewAutomationHosts";
 import { QuitHoldOverlay } from "./components/QuitHoldOverlay";
 import { AppAtomRegistryProvider } from "./rpc/atomRegistry";
 import type { AppRouter } from "./router";
-
-const appQueryClient = new QueryClient();
 
 /**
  * Owns renderer-wide providers. The Electron browser host intentionally sits
@@ -17,12 +14,10 @@ const appQueryClient = new QueryClient();
 export function AppRoot({ router }: { readonly router: AppRouter }) {
   return (
     <AppAtomRegistryProvider>
-      <QueryClientProvider client={appQueryClient}>
-        <RouterProvider router={router} />
-        <PreviewAutomationHosts />
-        <ElectronBrowserHost />
-        <QuitHoldOverlay />
-      </QueryClientProvider>
+      <RouterProvider router={router} />
+      <PreviewAutomationHosts />
+      <ElectronBrowserHost />
+      <QuitHoldOverlay />
     </AppAtomRegistryProvider>
   );
 }

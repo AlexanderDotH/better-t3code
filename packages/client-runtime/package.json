@@ -3,6 +3,18 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./load-balancing": {
+      "types": "./src/load-balancing.ts",
+      "default": "./src/load-balancing.ts"
+    },
+    "./project-favicon-cache": {
+      "types": "./src/projectFaviconCache.ts",
+      "default": "./src/projectFaviconCache.ts"
+    },
+    "./pending-requests": {
+      "types": "./src/pendingRequests.ts",
+      "default": "./src/pendingRequests.ts"
+    },
     "./connection": {
       "types": "./src/connection/index.ts",
       "default": "./src/connection/index.ts"
@@ -19,6 +31,34 @@
       "types": "./src/markdownImages.ts",
       "default": "./src/markdownImages.ts"
     },
+    "./markdown-links": {
+      "types": "./src/markdownLinks.ts",
+      "default": "./src/markdownLinks.ts"
+    },
+    "./media-reference": {
+      "types": "./src/mediaReference.ts",
+      "default": "./src/mediaReference.ts"
+    },
+    "./media-source": {
+      "types": "./src/mediaSource.ts",
+      "default": "./src/mediaSource.ts"
+    },
+    "./media-actions": {
+      "types": "./src/mediaActions.ts",
+      "default": "./src/mediaActions.ts"
+    },
+    "./codex-file-citations": {
+      "types": "./src/codexFileCitations.ts",
+      "default": "./src/codexFileCitations.ts"
+    },
+    "./codex-artifact-templates": {
+      "types": "./src/codexArtifactTemplates.ts",
+      "default": "./src/codexArtifactTemplates.ts"
+    },
+    "./codex-markdown-directives": {
+      "types": "./src/codexMarkdownDirectives.ts",
+      "default": "./src/codexMarkdownDirectives.ts"
+    },
     "./errors": {
       "types": "./src/errors/index.ts",
       "default": "./src/errors/index.ts"
@@ -26,10 +66,6 @@
     "./rpc": {
       "types": "./src/rpc/index.ts",
       "default": "./src/rpc/index.ts"
-    },
-    "./wsRpcClient": {
-      "types": "./src/wsRpcClient.ts",
-      "default": "./src/wsRpcClient.ts"
     },
     "./operations": {
       "types": "./src/operations/index.ts",
@@ -39,62 +75,6 @@
       "types": "./src/operations/projects.ts",
       "default": "./src/operations/projects.ts"
     },
-    "./model-options": {
-      "types": "./src/modelOptions.ts",
-      "default": "./src/modelOptions.ts"
-    },
-    "./openrouter-model-selection": {
-      "types": "./src/openRouterModelSelection.ts",
-      "default": "./src/openRouterModelSelection.ts"
-    },
-    "./project-thread-preview-sync": {
-      "types": "./src/projectThreadPreviewSync.ts",
-      "default": "./src/projectThreadPreviewSync.ts"
-    },
-    "./chat-visual-mode-sync": {
-      "types": "./src/chatVisualModeSync.ts",
-      "default": "./src/chatVisualModeSync.ts"
-    },
-    "./interface-language-sync": {
-      "types": "./src/interfaceLanguageSync.ts",
-      "default": "./src/interfaceLanguageSync.ts"
-    },
-    "./project-thread-preview": {
-      "types": "./src/projectThreadPreview.ts",
-      "default": "./src/projectThreadPreview.ts"
-    },
-    "./resource-protection": {
-      "types": "./src/resourceProtection.ts",
-      "default": "./src/resourceProtection.ts"
-    },
-    "./better-t3-status": {
-      "types": "./src/betterT3Status.ts",
-      "default": "./src/betterT3Status.ts"
-    },
-    "./knowledge-graph": {
-      "types": "./src/knowledgeGraphViewModel.ts",
-      "default": "./src/knowledgeGraphViewModel.ts"
-    },
-    "./plan-implementation": {
-      "types": "./src/planImplementation.ts",
-      "default": "./src/planImplementation.ts"
-    },
-    "./proposed-plan": {
-      "types": "./src/proposedPlan.ts",
-      "default": "./src/proposedPlan.ts"
-    },
-    "./assembly-ai": {
-      "types": "./src/assemblyAiStreaming.ts",
-      "default": "./src/assemblyAiStreaming.ts"
-    },
-    "./git-workbench": {
-      "types": "./src/git-workbench/index.ts",
-      "default": "./src/git-workbench/index.ts"
-    },
-    "./mcp": {
-      "types": "./src/mcp/index.ts",
-      "default": "./src/mcp/index.ts"
-    },
     "./platform": {
       "types": "./src/platform/index.ts",
       "default": "./src/platform/index.ts"
@@ -103,9 +83,9 @@
       "types": "./src/providerSkills.ts",
       "default": "./src/providerSkills.ts"
     },
-    "./providerSettingsForm": {
-      "types": "./src/providerSettingsForm.ts",
-      "default": "./src/providerSettingsForm.ts"
+    "./voice-input": {
+      "types": "./src/voice-input/index.ts",
+      "default": "./src/voice-input/index.ts"
     },
     "./relay": {
       "types": "./src/relay/index.ts",
@@ -118,10 +98,6 @@
     "./state/assets": {
       "types": "./src/state/assets.ts",
       "default": "./src/state/assets.ts"
-    },
-    "./state/agent-settings": {
-      "types": "./src/state/agentSettings.ts",
-      "default": "./src/state/agentSettings.ts"
     },
     "./state/attachments": {
       "types": "./src/state/attachments.ts",
@@ -143,10 +119,6 @@
       "types": "./src/state/git.ts",
       "default": "./src/state/git.ts"
     },
-    "./state/knowledge-graph": {
-      "types": "./src/state/knowledgeGraph.ts",
-      "default": "./src/state/knowledgeGraph.ts"
-    },
     "./state/models": {
       "types": "./src/state/models.ts",
       "default": "./src/state/models.ts"
@@ -166,6 +138,10 @@
     "./state/projects": {
       "types": "./src/state/projects.ts",
       "default": "./src/state/projects.ts"
+    },
+    "./state/provider-instance-display": {
+      "types": "./src/state/providerInstanceDisplay.ts",
+      "default": "./src/state/providerInstanceDisplay.ts"
     },
     "./state/pull-requests": {
       "types": "./src/state/pullRequests.ts",
@@ -187,6 +163,10 @@
       "types": "./src/state/runtime.ts",
       "default": "./src/state/runtime.ts"
     },
+    "./state/usage": {
+      "types": "./src/state/usage.ts",
+      "default": "./src/state/usage.ts"
+    },
     "./state/server": {
       "types": "./src/state/server.ts",
       "default": "./src/state/server.ts"
@@ -194,6 +174,10 @@
     "./state/session": {
       "types": "./src/state/session.ts",
       "default": "./src/state/session.ts"
+    },
+    "./state/shared-settings": {
+      "types": "./src/state/sharedSettings.ts",
+      "default": "./src/state/sharedSettings.ts"
     },
     "./state/shell": {
       "types": "./src/state/shell.ts",
@@ -227,6 +211,70 @@
       "types": "./src/state/threadSearch.ts",
       "default": "./src/state/threadSearch.ts"
     },
+    "./state/vcs": {
+      "types": "./src/state/vcs.ts",
+      "default": "./src/state/vcs.ts"
+    },
+    "./work-log/presentation": {
+      "types": "./src/work-log/presentation.ts",
+      "default": "./src/work-log/presentation.ts"
+    },
+    "./work-log/tool-presentation": {
+      "types": "./src/work-log/toolPresentation.ts",
+      "default": "./src/work-log/toolPresentation.ts"
+    },
+    "./work-log/command-label": {
+      "types": "./src/work-log/commandLabel.ts",
+      "default": "./src/work-log/commandLabel.ts"
+    },
+    "./work-log/scroll-anchor": {
+      "types": "./src/work-log/scrollAnchor.ts",
+      "default": "./src/work-log/scrollAnchor.ts"
+    },
+    "./assembly-ai": {
+      "types": "./src/assemblyAiStreaming.ts",
+      "default": "./src/assemblyAiStreaming.ts"
+    },
+    "./project-thread-preview": {
+      "types": "./src/projectThreadPreview.ts",
+      "default": "./src/projectThreadPreview.ts"
+    },
+    "./project-thread-preview-sync": {
+      "types": "./src/projectThreadPreviewSync.ts",
+      "default": "./src/projectThreadPreviewSync.ts"
+    },
+    "./chat-visual-mode-sync": {
+      "types": "./src/chatVisualModeSync.ts",
+      "default": "./src/chatVisualModeSync.ts"
+    },
+    "./interface-language-sync": {
+      "types": "./src/interfaceLanguageSync.ts",
+      "default": "./src/interfaceLanguageSync.ts"
+    },
+    "./model-options": {
+      "types": "./src/modelOptions.ts",
+      "default": "./src/modelOptions.ts"
+    },
+    "./openrouter-model-selection": {
+      "types": "./src/openRouterModelSelection.ts",
+      "default": "./src/openRouterModelSelection.ts"
+    },
+    "./mcp": {
+      "types": "./src/mcp/index.ts",
+      "default": "./src/mcp/index.ts"
+    },
+    "./git-workbench": {
+      "types": "./src/git-workbench/index.ts",
+      "default": "./src/git-workbench/index.ts"
+    },
+    "./knowledge-graph": {
+      "types": "./src/knowledgeGraphViewModel.ts",
+      "default": "./src/knowledgeGraphViewModel.ts"
+    },
+    "./state/knowledge-graph": {
+      "types": "./src/state/knowledgeGraph.ts",
+      "default": "./src/state/knowledgeGraph.ts"
+    },
     "./state/thread-abort": {
       "types": "./src/state/threadAbort.ts",
       "default": "./src/state/threadAbort.ts"
@@ -235,22 +283,68 @@
       "types": "./src/state/threadRetry.ts",
       "default": "./src/state/threadRetry.ts"
     },
-    "./state/vcs": {
-      "types": "./src/state/vcs.ts",
-      "default": "./src/state/vcs.ts"
+    "./plan-implementation": {
+      "types": "./src/planImplementation.ts",
+      "default": "./src/planImplementation.ts"
+    },
+    "./proposed-plan": {
+      "types": "./src/proposedPlan.ts",
+      "default": "./src/proposedPlan.ts"
+    },
+    "./providerSettingsForm": {
+      "types": "./src/providerSettingsForm.ts",
+      "default": "./src/providerSettingsForm.ts"
+    },
+    "./resource-protection": {
+      "types": "./src/resourceProtection.ts",
+      "default": "./src/resourceProtection.ts"
+    },
+    "./better-t3-status": {
+      "types": "./src/betterT3Status.ts",
+      "default": "./src/betterT3Status.ts"
+    },
+    "./state/agent-settings": {
+      "types": "./src/state/agentSettings.ts",
+      "default": "./src/state/agentSettings.ts"
+    },
+    "./prompt-improvement": {
+      "types": "./src/promptImprovement.ts",
+      "default": "./src/promptImprovement.ts"
+    },
+    "./provider-selection": {
+      "types": "./src/providerSelection.ts",
+      "default": "./src/providerSelection.ts"
+    },
+    "./thread-fork": {
+      "types": "./src/threadFork.ts",
+      "default": "./src/threadFork.ts"
+    },
+    "./client-settings": {
+      "types": "./src/clientSettings.ts",
+      "default": "./src/clientSettings.ts"
+    },
+    "./thread-transcript": {
+      "types": "./src/threadTranscript.ts",
+      "default": "./src/threadTranscript.ts"
     }
   },
   "scripts": {
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vp test run"
   },
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "mdast-util-directive": "^3.1.0",
+    "micromark-extension-directive": "^4.0.0",
+    "micromark-util-character": "^2.1.1",
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.5"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "micromark-util-types": "^2.0.2",
     "vite-plus": "catalog:"
   }
 }

@@ -2,19 +2,22 @@ import type { Ref } from "react";
 
 import "./ComposerFloatingBubble.css";
 
-export function ComposerFloatingBubble(props: {
+export function ComposerFloatingBubble({
+  active,
+  hostRef,
+}: {
   readonly active: boolean;
   readonly hostRef: Ref<HTMLDivElement>;
 }) {
   return (
     <div
-      aria-hidden={props.active ? undefined : true}
+      aria-hidden={active ? undefined : true}
       className="composer-floating-bubble-region"
       data-chat-composer-floating-bubble="true"
-      inert={!props.active}
+      inert={!active}
     >
       <div
-        ref={props.hostRef}
+        ref={hostRef}
         className="composer-floating-bubble-host"
         data-chat-composer-floating-bubble-host="true"
       />

@@ -35,7 +35,7 @@ import {
 const MAX_RETRY_DELAY_MS = 15 * 60 * 1_000;
 const DEFAULT_RATE_LIMIT_DELAY_MS = 60 * 1_000;
 
-export class KnowledgeGraphSemanticModelError extends Schema.TaggedErrorClass<KnowledgeGraphSemanticModelError>()(
+export class KnowledgeGraphSemanticModelError extends Schema.TaggedError<KnowledgeGraphSemanticModelError>()(
   "KnowledgeGraphSemanticModelError",
   {
     category: KnowledgeGraphSemanticFailureCategory,
@@ -46,7 +46,7 @@ export class KnowledgeGraphSemanticModelError extends Schema.TaggedErrorClass<Kn
   },
 ) {}
 
-export class KnowledgeGraphSemanticWorkerError extends Schema.TaggedErrorClass<KnowledgeGraphSemanticWorkerError>()(
+export class KnowledgeGraphSemanticWorkerError extends Schema.TaggedError<KnowledgeGraphSemanticWorkerError>()(
   "KnowledgeGraphSemanticWorkerError",
   {
     operation: Schema.String,

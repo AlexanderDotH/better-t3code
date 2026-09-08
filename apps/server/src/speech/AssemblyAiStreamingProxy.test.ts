@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { AssemblyAiStreamingTokenResult } from "@t3tools/contracts";
 
-import { createAssemblyAiStreamingProxy } from "./AssemblyAiStreamingProxy";
+import { createAssemblyAiStreamingProxy } from "./AssemblyAiStreamingProxy.ts";
 
 const CONFIG: AssemblyAiStreamingTokenResult = {
   token: "temporary-token",
@@ -11,7 +11,7 @@ const CONFIG: AssemblyAiStreamingTokenResult = {
   sampleRate: 16_000,
   encoding: "pcm_s16le",
   speechModel: "universal-3-5-pro",
-  context: { prompt: "T3 Code", keyterms: ["TypeScript"] },
+  context: { source: "basic", prompt: "T3 Code", keyterms: ["TypeScript"] },
 };
 
 class FakeSocket {

@@ -22,10 +22,3 @@ export const EMPTY_ENVIRONMENT_SUBAGENT_STATE: EnvironmentSubagentState = {
   error: Option.none(),
   page: Option.none(),
 };
-
-export function subagentHasOlderActivities(state: EnvironmentSubagentState): boolean {
-  return Option.match(state.page, {
-    onNone: () => false,
-    onSome: (page) => page.hasMore,
-  });
-}

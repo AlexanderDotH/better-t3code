@@ -14,7 +14,7 @@ export interface SidebarThreadActivityPartition<T> {
   readonly olderThreads: T[];
 }
 
-export function sidebarThreadRequiresAttention(thread: SidebarThreadSummary): boolean {
+function sidebarThreadRequiresAttention(thread: SidebarThreadSummary): boolean {
   return (
     thread.session?.status === "starting" ||
     thread.session?.status === "running" ||

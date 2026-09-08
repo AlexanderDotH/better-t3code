@@ -10,7 +10,7 @@ const OPENAI_API_KEY = "OPENAI_API_KEY";
 const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();
 
-export class OpenAiCredentialStoreError extends Schema.TaggedErrorClass<OpenAiCredentialStoreError>()(
+export class OpenAiCredentialStoreError extends Schema.TaggedError<OpenAiCredentialStoreError>()(
   "OpenAiCredentialStoreError",
   {
     operation: Schema.Literals(["read", "write", "remove", "resolve"]),

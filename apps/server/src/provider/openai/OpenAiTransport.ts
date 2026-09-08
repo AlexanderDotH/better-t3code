@@ -32,17 +32,17 @@ const MAX_SAME_ORIGIN_REDIRECTS = 2;
 const decodeUnknownJson = HttpClientResponse.schemaBodyJson(Schema.Unknown);
 const isProtocolError = Schema.is(OpenAiProtocolError);
 
-export class OpenAiTransportSecurityError extends Schema.TaggedErrorClass<OpenAiTransportSecurityError>()(
+export class OpenAiTransportSecurityError extends Schema.TaggedError<OpenAiTransportSecurityError>()(
   "OpenAiTransportSecurityError",
   { message: Schema.String },
 ) {}
 
-export class OpenAiAuthenticationError extends Schema.TaggedErrorClass<OpenAiAuthenticationError>()(
+export class OpenAiAuthenticationError extends Schema.TaggedError<OpenAiAuthenticationError>()(
   "OpenAiAuthenticationError",
   { status: Schema.optionalKey(Schema.Number), message: Schema.String },
 ) {}
 
-export class OpenAiHttpError extends Schema.TaggedErrorClass<OpenAiHttpError>()("OpenAiHttpError", {
+export class OpenAiHttpError extends Schema.TaggedError<OpenAiHttpError>()("OpenAiHttpError", {
   operation: Schema.Literals(["models", "responses"]),
   category: Schema.Literals([
     "forbidden",
@@ -265,15 +265,14 @@ export const makeOpenAiTransport = Effect.fn("makeOpenAiTransport")(function* (i
   }).pipe(
     Effect.flatMap((response) => requireSuccess("models", response)),
     Effect.flatMap(decodeUnknownJson),
-    Effect.mapError(
-      (error): OpenAiTransportError =>
-        isSecurityError(error) || isAuthenticationError(error) || isHttpError(error)
-          ? error
-          : new OpenAiHttpError({
-              operation: "models",
-              category: "transport",
-              message: "OpenAI model catalog response is not valid JSON",
-            }),
+    Effect.mapError((error): OpenAiTransportError =>
+      isSecurityError(error) || isAuthenticationError(error) || isHttpError(error)
+        ? error
+        : new OpenAiHttpError({
+            operation: "models",
+            category: "transport",
+            message: "OpenAI model catalog response is not valid JSON",
+          }),
     ),
     Effect.flatMap(decodeOpenAiModelCatalog),
   );
@@ -290,15 +289,14 @@ export const makeOpenAiTransport = Effect.fn("makeOpenAiTransport")(function* (i
         });
         const success = yield* requireSuccess("responses", response);
         return decodeOpenAiResponsesSse(success.stream).pipe(
-          Stream.mapError(
-            (error): OpenAiTransportError =>
-              isProtocolError(error)
-                ? error
-                : new OpenAiHttpError({
-                    operation: "responses",
-                    category: "transport",
-                    message: "OpenAI response stream failed",
-                  }),
+          Stream.mapError((error): OpenAiTransportError =>
+            isProtocolError(error)
+              ? error
+              : new OpenAiHttpError({
+                  operation: "responses",
+                  category: "transport",
+                  message: "OpenAI response stream failed",
+                }),
           ),
         );
       }),

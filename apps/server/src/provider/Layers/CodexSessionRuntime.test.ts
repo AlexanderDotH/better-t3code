@@ -1,40 +1,35 @@
+import { CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS } from "../CodexDeveloperInstructions.ts";
+import { CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS } from "../CodexDeveloperInstructions.ts";
+import { compactCodexThread } from "./CodexSessionRuntime.ts";
+import { codexNotificationProviderRoute } from "./CodexSessionRuntime.ts";
+import { configuredT3ToolAvailability } from "./CodexSessionRuntime.ts";
+import { forkCodexThread } from "./CodexSessionRuntime.ts";
+import { requestCodexMcpOauth } from "./CodexSessionRuntime.ts";
 import * as NodeAssert from "node:assert/strict";
 
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
-import { DEFAULT_MODEL, McpServerDefinition, SubagentId, ThreadId } from "@t3tools/contracts";
+import { DEFAULT_MODEL, SubagentId, ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
-import {
-  buildCodexDeveloperInstructions,
-  CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
-  CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
-  codexDefaultModeDeveloperInstructions,
-  codexPlanModeDeveloperInstructions,
-} from "../CodexDeveloperInstructions.ts";
+import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildTurnStartParams,
-  compactCodexThread,
-  codexNotificationProviderRoute,
-  configuredT3ToolAvailability,
   describeMcpElicitation,
-  forkCodexThread,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
   listCodexMcpServerStatuses,
   makeCodexSubagentId,
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
-  requestCodexMcpOauth,
   toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
-const decodeMcpServerDefinition = Schema.decodeSync(McpServerDefinition);
 
 describe("CodexSessionRuntimeIdentifierGenerationError", () => {
   it("retains identifier purpose and the random source failure", () => {
@@ -469,10 +464,23 @@ describe("buildCodexDeveloperInstructions", () => {
       reasoningEffort: "high",
     });
 
-    NodeAssert.ok(instructions.startsWith(codexDefaultModeDeveloperInstructions(true)));
+    NodeAssert.match(instructions, /^<collaboration_mode># Collaboration Mode: Default/);
     NodeAssert.match(instructions, /T3 Code/);
     NodeAssert.match(instructions, /Codex harness/);
     NodeAssert.match(instructions, /as gpt-5\.3-codex with high reasoning effort/);
+  });
+
+  it("describes Markdown media support in the runtime context in both modes", () => {
+    for (const mode of ["default", "plan"] as const) {
+      const instructions = buildCodexDeveloperInstructions(mode, {
+        model: "gpt-5.3-codex",
+        reasoningEffort: "high",
+      });
+      NodeAssert.match(
+        instructions,
+        /<runtime_info>.*embed images and videos.*Markdown.*<\/runtime_info>/,
+      );
+    }
   });
 
   it("includes runtime info alongside plan mode instructions", () => {
@@ -481,7 +489,7 @@ describe("buildCodexDeveloperInstructions", () => {
       reasoningEffort: "medium",
     });
 
-    NodeAssert.ok(instructions.startsWith(codexPlanModeDeveloperInstructions(true)));
+    NodeAssert.match(instructions, /^<collaboration_mode># Plan Mode/);
     NodeAssert.match(instructions, /as gpt-5\.3-codex with medium reasoning effort/);
   });
 
@@ -510,12 +518,12 @@ describe("buildCodexDeveloperInstructions", () => {
 });
 
 describe("T3 browser developer instructions", () => {
+  const runtime = { model: "gpt-5.3-codex", reasoningEffort: "high" };
+
   it("prefers the product-native preview tools in both collaboration modes", () => {
-    for (const instructions of [
-      codexDefaultModeDeveloperInstructions(true),
-      codexPlanModeDeveloperInstructions(true),
-    ]) {
-      NodeAssert.match(instructions, /T3 browser/);
+    for (const mode of ["default", "plan"] as const) {
+      const instructions = buildCodexDeveloperInstructions(mode, runtime, true);
+      NodeAssert.match(instructions, /T3 preview tools/);
       NodeAssert.match(instructions, /preview_status/);
       NodeAssert.match(instructions, /open a preview/i);
       NodeAssert.match(instructions, /before switching browser systems/i);
@@ -543,10 +551,8 @@ describe("T3 browser developer instructions", () => {
   });
 
   it("omits the browser block entirely when the preview tools are not attached", () => {
-    for (const instructions of [
-      codexDefaultModeDeveloperInstructions(false),
-      codexPlanModeDeveloperInstructions(false),
-    ]) {
+    for (const mode of ["default", "plan"] as const) {
+      const instructions = buildCodexDeveloperInstructions(mode, runtime, false);
       NodeAssert.doesNotMatch(instructions, /preview_status/);
       NodeAssert.doesNotMatch(instructions, /preview_open/);
       NodeAssert.doesNotMatch(instructions, /T3 Code collaborative browser/);
@@ -561,7 +567,6 @@ describe("T3 browser developer instructions", () => {
   });
 
   it("tracks the turn's MCP configuration rather than defaulting to on", () => {
-    const runtime = { model: "gpt-5.3-codex", reasoningEffort: "high" };
     NodeAssert.match(buildCodexDeveloperInstructions("default", runtime, true), /preview_status/);
     NodeAssert.doesNotMatch(
       buildCodexDeveloperInstructions("default", runtime, false),
@@ -958,17 +963,16 @@ describe("codexSessionAppServerArgs", () => {
       profile: "workspace-only" | "workspace-no-preview" | "workspace-only-no-memory",
     ) => `mcp_servers.t3-code.url=http://127.0.0.1/mcp/${profile}`;
 
-    NodeAssert.deepStrictEqual(codexSessionAppServerArgs(["-c", profileArg("workspace-only")]), [
-      "app-server",
-      "-c",
-      profileArg("workspace-only"),
-    ]);
     NodeAssert.deepStrictEqual(
-      codexSessionAppServerArgs(["-c", profileArg("workspace-no-preview")]),
+      codexSessionAppServerArgs(["-c", profileArg("workspace-only")], undefined),
+      ["app-server", "-c", profileArg("workspace-only")],
+    );
+    NodeAssert.deepStrictEqual(
+      codexSessionAppServerArgs(["-c", profileArg("workspace-no-preview")], undefined),
       ["app-server", "-c", profileArg("workspace-no-preview")],
     );
     NodeAssert.deepStrictEqual(
-      codexSessionAppServerArgs(["-c", profileArg("workspace-only-no-memory")]),
+      codexSessionAppServerArgs(["-c", profileArg("workspace-only-no-memory")], undefined),
       ["app-server", "-c", profileArg("workspace-only-no-memory")],
     );
   });
@@ -1088,103 +1092,96 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
-  it.effect("preserves reasoning and compacts body context before the window is exhausted", () =>
+  it.effect("resumes metadata when historical turns contain unknown error values", () =>
     Effect.gen(function* () {
-      const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
-      const client = {
-        request: <M extends "thread/start" | "thread/resume">(
-          method: M,
-          payload: CodexRpc.ClientRequestParamsByMethod[M],
-        ) => {
-          calls.push({ method, payload });
-          return Effect.succeed(
-            makeThreadOpenResponse("fresh-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
-          );
+      const response = makeThreadOpenResponse("saved-thread");
+      const calls: unknown[] = [];
+      const opened = yield* openCodexThread({
+        client: {
+          request: () => Effect.die("A valid resumed thread must not start fresh"),
+          raw: {
+            request: (method, payload) => {
+              calls.push({ method, payload });
+              return Effect.succeed({
+                ...response,
+                thread: {
+                  ...response.thread,
+                  turns: [
+                    {
+                      id: "old-turn",
+                      status: "failed",
+                      items: [],
+                      error: {
+                        message: "Historical provider error",
+                        codexErrorInfo: "misalignment_policy_violation",
+                      },
+                    },
+                  ],
+                },
+              });
+            },
+          },
         },
-      };
-
-      yield* openCodexThread({
-        client,
         threadId: ThreadId.make("thread-1"),
-        runtimeMode: "full-access",
+        runtimeMode: "auto",
         cwd: "/tmp/project",
-        requestedModel: "gpt-5.6-sol",
-        contextWindow: 262_144,
-        reasoningEffort: "high",
-        serviceTier: undefined,
-        resumeThreadId: undefined,
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: "fast",
+        resumeThreadId: "saved-thread",
       });
 
-      const request = calls[0];
-      NodeAssert.ok(request);
-      NodeAssert.deepStrictEqual(
-        (request.payload as { readonly config?: Readonly<Record<string, unknown>> }).config,
+      NodeAssert.deepStrictEqual(opened, {
+        cwd: response.cwd,
+        model: response.model,
+        thread: { id: "saved-thread" },
+      });
+      NodeAssert.deepStrictEqual(calls, [
         {
-          model_context_window: 262_144,
-          model_auto_compact_token_limit: 209_715,
-          model_auto_compact_token_limit_scope: "body_after_prefix",
-          model_reasoning_effort: "high",
+          method: "thread/resume",
+          payload: {
+            threadId: "saved-thread",
+            cwd: "/tmp/project",
+            model: "gpt-5.3-codex",
+            serviceTier: "fast",
+            approvalPolicy: "on-request",
+            sandbox: "workspace-write",
+            approvalsReviewer: "auto_review",
+            excludeTurns: true,
+            config: { model_auto_compact_token_limit_scope: "body_after_prefix" },
+          },
         },
-      );
+      ]);
     }),
   );
 
-  it.effect("keeps the built-in T3 server when configured MCP servers override thread config", () =>
+  it.effect("rejects malformed required resume metadata without starting a fresh thread", () =>
     Effect.gen(function* () {
-      const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
-      const client = {
-        request: <M extends "thread/start" | "thread/resume">(
-          method: M,
-          payload: CodexRpc.ClientRequestParamsByMethod[M],
-        ) => {
-          calls.push({ method, payload });
-          return Effect.succeed(
-            makeThreadOpenResponse("fresh-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
-          );
-        },
-      };
-      const userManagedT3Server = decodeMcpServerDefinition({
-        id: "t3-code",
-        name: "User T3 server",
-        transport: "http",
-        url: "https://user-mcp.example/mcp",
-        headers: {},
-      });
+      for (const invalidMetadata of [
+        { cwd: null },
+        { model: 42 },
+        { thread: { id: null } },
+        { thread: {} },
+      ]) {
+        const error = yield* openCodexThread({
+          client: {
+            request: () => Effect.die("Invalid resume metadata must not start a fresh thread"),
+            raw: {
+              request: () =>
+                Effect.succeed({ ...makeThreadOpenResponse("saved-thread"), ...invalidMetadata }),
+            },
+          },
+          threadId: ThreadId.make("thread-1"),
+          runtimeMode: "full-access",
+          cwd: "/tmp/project",
+          requestedModel: "gpt-5.3-codex",
+          serviceTier: undefined,
+          resumeThreadId: "saved-thread",
+        }).pipe(Effect.flip);
 
-      yield* openCodexThread({
-        client,
-        threadId: ThreadId.make("thread-1"),
-        runtimeMode: "full-access",
-        cwd: "/tmp/project",
-        requestedModel: "gpt-5.3-codex",
-        contextWindow: 262_144,
-        serviceTier: undefined,
-        resumeThreadId: undefined,
-        mcpServers: [userManagedT3Server],
-        internalMcpServer: {
-          url: "http://127.0.0.1:3000/mcp/workspace",
-          bearerTokenEnvVar: "T3_MCP_BEARER_TOKEN",
-        },
-      });
-
-      const firstCall = calls[0];
-      NodeAssert.ok(firstCall);
-      const config = (
-        firstCall.payload as {
-          readonly config?: {
-            readonly mcp_servers?: Readonly<Record<string, unknown>>;
-            readonly model_context_window?: number;
-          };
-        }
-      ).config;
-      NodeAssert.equal(config?.model_context_window, 262_144);
-      const mcpServers = config?.mcp_servers;
-      NodeAssert.ok(mcpServers);
-      NodeAssert.equal(Object.hasOwn(mcpServers, "t3-managed:t3-code"), true);
-      NodeAssert.deepStrictEqual(mcpServers["t3-code"], {
-        url: "http://127.0.0.1:3000/mcp/workspace",
-        bearer_token_env_var: "T3_MCP_BEARER_TOKEN",
-      });
+        NodeAssert.ok(isCodexAppServerRequestError(error));
+        NodeAssert.equal(error.operation, "decode-payload");
+        NodeAssert.equal(error.method, "thread/resume");
+      }
     }),
   );
 
@@ -1193,20 +1190,26 @@ describe("openCodexThread", () => {
       const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
       const started = makeThreadOpenResponse("fresh-thread");
       const client = {
-        request: <M extends "thread/start" | "thread/resume">(
-          method: M,
-          payload: CodexRpc.ClientRequestParamsByMethod[M],
-        ) => {
-          calls.push({ method, payload });
-          if (method === "thread/resume") {
+        raw: {
+          request: (
+            method: "thread/resume",
+            payload: CodexRpc.ClientRequestParamsByMethod["thread/resume"],
+          ) => {
+            calls.push({ method, payload });
             return Effect.fail(
               new CodexErrors.CodexAppServerRequestError({
                 code: -32603,
                 errorMessage: "thread not found",
               }),
             );
-          }
-          return Effect.succeed(started as CodexRpc.ClientRequestResponsesByMethod[M]);
+          },
+        },
+        request: (
+          method: "thread/start",
+          payload: CodexRpc.ClientRequestParamsByMethod["thread/start"],
+        ) => {
+          calls.push({ method, payload });
+          return Effect.succeed(started);
         },
       };
 
@@ -1239,21 +1242,15 @@ describe("openCodexThread", () => {
   it.effect("propagates non-recoverable resume failures", () =>
     Effect.gen(function* () {
       const client = {
-        request: <M extends "thread/start" | "thread/resume">(
-          method: M,
-          _payload: CodexRpc.ClientRequestParamsByMethod[M],
-        ) => {
-          if (method === "thread/resume") {
-            return Effect.fail(
+        request: () => Effect.die("Non-recoverable resume failures must not start a fresh thread"),
+        raw: {
+          request: () =>
+            Effect.fail(
               new CodexErrors.CodexAppServerRequestError({
                 code: -32603,
                 errorMessage: "timed out waiting for server",
               }),
-            );
-          }
-          return Effect.succeed(
-            makeThreadOpenResponse("fresh-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
-          );
+            ),
         },
       };
 

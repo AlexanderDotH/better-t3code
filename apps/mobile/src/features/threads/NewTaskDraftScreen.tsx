@@ -1,87 +1,120 @@
+import { useMemo } from "react";
+import { EnvironmentId, ProjectId, resolveBetterT3FeatureFlag } from "@t3tools/contracts";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { resolveMobileAgentWorkflowSettings } from "../../state/agent-workflow-settings";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { useAtomSet } from "@effect/atom-react";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { NativeVoiceDictationControl } from "./NativeVoiceDictationControl";
+import { useNativeAssemblyAiDictation } from "./use-native-assembly-ai-dictation";
+import { useAtomValue } from "@effect/atom-react";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import {
+  CommonActions,
   StackActions,
   useFocusEffect,
   useNavigation,
   usePreventRemove,
+  type NavigationAction,
 } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Platform, Pressable, ScrollView, View } from "react-native";
 import {
   KeyboardController,
   KeyboardStickyView,
   useKeyboardState,
 } from "react-native-keyboard-controller";
+import Animated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useFontFamily } from "../../lib/useFontFamily";
 
 import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import {
-  EnvironmentId,
-  ProjectId,
-  ProviderDriverKind,
-  resolveBetterT3FeatureFlag,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import {
+  ComposerActionButton,
   ComposerInlineControl,
-  ComposerToolbarButton,
   ComposerToolbarRow,
   ComposerToolbarScroller,
 } from "../../components/ComposerToolbar";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
+import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
+import {
+  composerAttachmentUploadBlockReason,
+  composerAttachmentsStillUploading,
+  composerAttachmentUploadsAtom,
+} from "../../state/composer-attachment-uploads";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
-import { ComposerSurface } from "./ThreadComposer";
+import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
+import { COMPOSER_LAYOUT_TRANSITION, ComposerSurface } from "./ThreadComposer";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
+import {
+  ComposerDictationCancelAction,
+  ComposerDictationPrimaryAction,
+  ComposerDictationStatus,
+  ComposerDictationToolbar,
+} from "../voice-input/ComposerDictationControl";
+import { useVoiceInputController } from "../voice-input/useVoiceInputController";
+import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
 import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
-import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
+import {
+  convertPastedImagesToAttachments,
+  pickComposerFiles,
+  pickComposerMedia,
+  type DraftComposerFileAttachment,
+} from "../../lib/composerImages";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import {
   clearComposerDraftContent,
-  clearNewTaskComposerDraftContent,
+  setComposerDraftText,
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
   restoreComposerDraftSnapshot,
+  updateComposerDraftSettings,
+  scheduleUnusedComposerAttachmentCleanup,
   type ComposerDraft,
+  waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
-import { resolveSelectableModelSelection } from "../../lib/modelOptions";
+import {
+  isModelSelectionUnavailable,
+  resolveSelectableModelSelection,
+} from "../../lib/modelOptions";
 import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
-import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../state/thread-outbox";
+import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
-import { useCreateProjectThread } from "./use-project-actions";
 import { resolveDraftProjectSelection } from "./new-task-project-selection";
 import {
   resolveNewTaskBranchLabel,
   resolveNewTaskWorkspaceLabel,
 } from "./new-task-context-presentation";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
-import { mobilePreferencesAtom } from "../../state/preferences";
-import { resolveMobileAgentWorkflowSettings } from "../../state/agent-workflow-settings";
+import { selectIncomingShareAttachmentsForServer } from "../sharing/incoming-share-model";
+import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
-import { useAtomCommand } from "../../state/use-atom-command";
-import { NativeVoiceDictationControl } from "./NativeVoiceDictationControl";
-import { useNativeAssemblyAiDictation } from "./use-native-assembly-ai-dictation";
-import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -122,15 +155,17 @@ export function NewTaskDraftScreen(props: {
   readonly initialProjectRef?: {
     readonly environmentId?: string;
     readonly projectId?: string;
+    readonly branch?: string | null;
+    readonly worktreePath?: string | null;
   };
   /** Queued outbox message id when editing an existing pending task. */
   readonly pendingTaskId?: string;
+  /** Existing new-task draft key to resume (a Draft row in the thread list). */
+  readonly draftId?: string;
   /** Durable native share inbox item to merge into this project draft. */
   readonly incomingShareId?: string;
 }) {
-  const translator = useMobileInterfaceTranslator();
   const projects = useProjects();
-  const createProjectThread = useCreateProjectThread();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
   const {
@@ -199,14 +234,66 @@ export function NewTaskDraftScreen(props: {
     onChangeDraftText: flow.setPrompt,
     onNotice: (title, error) => Alert.alert(title, error.message),
   });
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const environmentConnected =
     selectedProject !== null &&
     connectedEnvironments.find(
       (environment) => environment.environmentId === selectedProject.environmentId,
     )?.connectionState === "connected";
+  const modelUnavailable = environmentConnected && flow.selectedModelOption?.isUnavailable === true;
+  const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
+  const attachmentBlockReason = selectedProject
+    ? composerAttachmentUploadBlockReason({
+        environmentId: selectedProject.environmentId,
+        attachments: flow.attachments,
+        connected: environmentConnected,
+        serverConfig: selectedEnvironmentServerConfig,
+        states: uploadStates,
+      })
+    : null;
+  // A connected composer with uploads still in flight queues the task rather
+  // than making the user wait: the outbox drain finishes the upload and sends.
+  const attachmentsUploading =
+    environmentConnected &&
+    selectedProject !== null &&
+    composerAttachmentsStillUploading({
+      environmentId: selectedProject.environmentId,
+      attachments: flow.attachments,
+      serverConfig: selectedEnvironmentServerConfig,
+      states: uploadStates,
+    });
+  const queuesInsteadOfStarting = !environmentConnected || attachmentsUploading;
   const promptInputRef = useRef<ComposerEditorHandle>(null);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
+  const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
+  const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
+  const wasFocusedBeforePreviewRef = useRef(false);
+  const openVideoPreview = useCallback(
+    (attachment: DraftComposerFileAttachment, sourceIdentifier: string) => {
+      wasFocusedBeforePreviewRef.current = isComposerFocused;
+      setPreviewFile(null);
+      setPreviewVideo((current) => current ?? { type: "local", attachment, sourceIdentifier });
+    },
+    [isComposerFocused],
+  );
+  const openFilePreview = useCallback(
+    (source: FilePreviewSource) => {
+      wasFocusedBeforePreviewRef.current = isComposerFocused;
+      setPreviewVideo(null);
+      setPreviewFile((current) => current ?? source);
+    },
+    [isComposerFocused],
+  );
+  const closeMediaPreview = useCallback(() => {
+    setPreviewVideo(null);
+    setPreviewFile(null);
+    if (wasFocusedBeforePreviewRef.current) {
+      setTimeout(() => {
+        if (navigation.isFocused()) promptInputRef.current?.focus();
+      }, 100);
+    }
+  }, [navigation]);
   const settingsSheetPresentation = useThreadSettingsSheetPresentation({
     editorRef: promptInputRef,
     isEditorFocused: isComposerFocused,
@@ -258,6 +345,9 @@ export function NewTaskDraftScreen(props: {
   const [isCancellingShareImport, setIsCancellingShareImport] = useState(false);
   const [cancelledIncomingShareId, setCancelledIncomingShareId] = useState<string | null>(null);
   const [isReturningToProjectPicker, setIsReturningToProjectPicker] = useState(false);
+  const [submitNavigationAction, setSubmitNavigationAction] = useState<NavigationAction | null>(
+    null,
+  );
   const [shareImportAttempt, setShareImportAttempt] = useState(0);
   const startedShareImportKeyRef = useRef<string | null>(null);
   const cancellingShareImportKeyRef = useRef<string | null>(null);
@@ -282,11 +372,29 @@ export function NewTaskDraftScreen(props: {
   );
   const isProjectPickerReturnActive =
     isReturningToProjectPicker && !requestedInitialProjectAvailable;
-  const isIncomingShareTransferPending = Boolean(
-    incomingShare && cancelledIncomingShareId !== props.incomingShareId,
+  const isIncomingShareAwaitingServerConfig = Boolean(
+    incomingShare?.attachments.some((attachment) => attachment.type === "file") &&
+    selectedEnvironmentServerConfig === null,
   );
+  const isIncomingShareTransferPending = Boolean(
+    incomingShare &&
+    cancelledIncomingShareId !== props.incomingShareId &&
+    !isIncomingShareAwaitingServerConfig,
+  );
+  const isComposerInteractionLocked = isIncomingShareTransferPending || flow.submitting;
+  // Also guard while a submit is in flight: an Android back press or iOS
+  // Cancel would otherwise abandon the screen while the task still starts.
+  // T3 owns /usage-limits only where Limits has data for the selected provider.
+  const offersUsageLimits =
+    flow.selectedProviderStatus !== null &&
+    hasProviderUsageLimits(
+      flow.selectedProviderStatus.driver,
+      selectedEnvironmentServerConfig?.providers ?? [],
+      selectedEnvironmentServerConfig?.usageLimitSources ?? [],
+    );
   const composerMenu = useComposerCommandMenu({
     draftMessage: flow.prompt,
+    ownerKey: flow.draftKey,
     environmentId: selectedProject?.environmentId ?? null,
     projectCwd:
       (flow.workspaceMode === "worktree"
@@ -294,14 +402,42 @@ export function NewTaskDraftScreen(props: {
         : (flow.selectedWorktreePath ?? selectedProject?.workspaceRoot)) || null,
     selectedProviderStatus: flow.selectedProviderStatus,
     hasThread: false,
-    enabled: isComposerFocused && !isIncomingShareTransferPending,
+    hasCompactableConversation: false,
+    offersUsageLimits: offersUsageLimits,
+    enabled: isComposerFocused && !isComposerInteractionLocked,
     onChangeDraftMessage: flow.setPrompt,
     onUpdateInteractionMode: flow.planModeEnabled ? flow.setInteractionMode : undefined,
   });
-  usePreventRemove(
-    (isIncomingShareTransferPending && !isProjectPickerReturnActive) || isCancellingShareImport,
-    () => undefined,
+  const voiceInput = useVoiceInputController({
+    ownerKey: flow.draftKey,
+    draftMessage: flow.prompt,
+    selection: composerMenu.selection,
+    disabled: isIncomingShareTransferPending || isImportingShare || flow.submitting,
+    onChangeDraftMessage: flow.setPrompt,
+    onChangeSelection: composerMenu.onSelectionChange,
+  });
+  const voicePresentation = resolveVoiceComposerPresentation(
+    voiceInput.state,
+    voiceInput.elapsedSeconds,
   );
+  const isVoiceInputPresented = voicePresentation.statusLabel !== null;
+  const preventRemove =
+    (isIncomingShareTransferPending && !isProjectPickerReturnActive) ||
+    isCancellingShareImport ||
+    flow.submitting;
+  usePreventRemove(preventRemove, () => undefined);
+  useEffect(() => {
+    if (preventRemove || submitNavigationAction === null) {
+      return;
+    }
+    // Give the guard update a frame to reach the parent sheet before navigating,
+    // just like the project-picker fallback below.
+    const frame = requestAnimationFrame(() => {
+      setSubmitNavigationAction(null);
+      (navigation.getParent() ?? navigation).dispatch(submitNavigationAction);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [navigation, preventRemove, submitNavigationAction]);
   const hasImportedIncomingShare = Boolean(
     props.incomingShareId &&
     flow.draftKey &&
@@ -358,7 +494,44 @@ export function NewTaskDraftScreen(props: {
     };
   }, []);
 
-  const { beginEditingPendingTask, cancelEditingPendingTask, editingPendingTask } = flow;
+  const { beginEditingPendingTask, cancelEditingPendingTask, editingPendingTask, openDraft } = flow;
+  // A Draft row opens its own draft; a fresh New Task never reuses one.
+  // Drafts hydrate from disk and projects arrive with the shell snapshot, so
+  // on a cold launch the draft or its project can be missing for a moment;
+  // wait for hydration and retry while projects load. Attempt each id once
+  // after that so a draft discarded mid-session does not keep bouncing to
+  // the picker.
+  const attemptedDraftIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!props.draftId || props.pendingTaskId) {
+      return;
+    }
+    const draftId = props.draftId;
+    if (attemptedDraftIdRef.current === draftId) {
+      return;
+    }
+    let cancelled = false;
+    void waitForComposerDraftsLoaded().then(() => {
+      if (cancelled || attemptedDraftIdRef.current === draftId) {
+        return;
+      }
+      if (openDraft(draftId)) {
+        attemptedDraftIdRef.current = draftId;
+        return;
+      }
+      if (getComposerDraftSnapshot(draftId).project !== undefined && projects.length === 0) {
+        // The draft exists; its project has not arrived yet. Retry on the
+        // next projects change instead of giving up.
+        return;
+      }
+      attemptedDraftIdRef.current = draftId;
+      navigation.dispatch(StackActions.replace("NewTask"));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [navigation, openDraft, projects, props.draftId, props.pendingTaskId]);
+
   const attemptedPendingTaskIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!props.pendingTaskId || editingPendingTask?.messageId === props.pendingTaskId) {
@@ -385,7 +558,8 @@ export function NewTaskDraftScreen(props: {
     };
   }, [props.pendingTaskId, cancelEditingPendingTask]);
 
-  const foregroundColor = useUniwindTheme()["--color-foreground"];
+  const theme = useUniwindTheme();
+  const foregroundColor = theme["--color-foreground"];
   const regularFontFamily = useFontFamily("regular");
   const bodyText = useScaledTextRole("body");
 
@@ -394,9 +568,10 @@ export function NewTaskDraftScreen(props: {
   const lastInitialProjectRefRef = useRef(props.initialProjectRef);
 
   useEffect(() => {
-    // Pending-task editing owns project selection (and must not fall through
-    // to the replace("NewTask") fallback while its hydration is in flight).
-    if (props.pendingTaskId) {
+    // Pending-task editing and draft resumption own project selection (and
+    // must not fall through to the replace("NewTask") fallback while their
+    // hydration is in flight).
+    if (props.pendingTaskId || props.draftId) {
       return;
     }
     if (lastInitialProjectRefRef.current !== props.initialProjectRef) {
@@ -418,6 +593,26 @@ export function NewTaskDraftScreen(props: {
         const directProjectKey = `${directProject.environmentId}:${directProject.id}`;
         if (appliedInitialProjectKeyRef.current === directProjectKey) {
           return;
+        }
+        if (props.initialProjectRef?.branch) {
+          if (
+            selectedProject?.environmentId !== directProject.environmentId ||
+            selectedProject.id !== directProject.id
+          ) {
+            setProject(directProject);
+            return;
+          }
+          if (!flow.draftKey) return;
+          // The route completes checkout before mounting this composer. Local
+          // mode reuses an existing worktree; worktree mode would create another.
+          updateComposerDraftSettings(flow.draftKey, {
+            workspaceSelection: {
+              mode: "local",
+              branch: props.initialProjectRef.branch,
+              worktreePath: props.initialProjectRef.worktreePath ?? null,
+              startFromOrigin: false,
+            },
+          });
         }
         appliedInitialProjectKeyRef.current = directProjectKey;
         if (
@@ -452,9 +647,11 @@ export function NewTaskDraftScreen(props: {
   }, [
     projectScopes,
     projects,
+    flow.draftKey,
     props.initialProjectRef,
     props.incomingShareId,
     props.pendingTaskId,
+    props.draftId,
     navigation,
     selectedProject,
     selectedProjectKey,
@@ -513,6 +710,13 @@ export function NewTaskDraftScreen(props: {
       return;
     }
 
+    if (
+      incomingShare.attachments.some((attachment) => attachment.type === "file") &&
+      selectedEnvironmentServerConfig === null
+    ) {
+      return;
+    }
+
     if (alertedUnavailableIncomingShareIdRef.current === shareId) {
       alertedUnavailableIncomingShareIdRef.current = null;
     }
@@ -522,6 +726,7 @@ export function NewTaskDraftScreen(props: {
     shareImportDraftBackupRef.current.set(importKey, draftBackup);
     const importToken = Symbol(importKey);
     let didReserveShare = false;
+    let didConsumeShare = false;
     let needsDraftRestore = false;
     activeShareImportTokenRef.current = importToken;
     setImportingShareKey(importKey);
@@ -539,10 +744,19 @@ export function NewTaskDraftScreen(props: {
       ) {
         return;
       }
+      const selectedAttachments = selectIncomingShareAttachmentsForServer({
+        attachments: incomingShare.attachments,
+        serverConfig: appAtomRegistry.get(
+          serverEnvironment.configValueAtom(destinationProject.environmentId),
+        ),
+      });
+      if (selectedAttachments.status === "pending") {
+        throw new Error("Server attachment support is still loading.");
+      }
       needsDraftRestore = true;
       const { skippedAttachmentCount } = await mergeComposerDraftContent(draftKey, {
         text: incomingShare.text,
-        attachments: incomingShare.attachments,
+        attachments: selectedAttachments.attachments,
         sourceShareId: shareId,
       });
       if (
@@ -556,19 +770,29 @@ export function NewTaskDraftScreen(props: {
         return;
       }
       await consumeShare(shareId);
+      didConsumeShare = true;
+      // The consumed inbox draft was the last owner of files that never made
+      // it into the composer draft (unsupported server, oversize, limit
+      // skips). Release them before any early return: an unmount or a
+      // superseding import must not leak them, and the sweep re-checks
+      // ownership so it cannot delete a file another draft picked up.
+      const retainedAttachmentIds = new Set(
+        getComposerDraftSnapshot(draftKey).attachments.map((attachment) => attachment.id),
+      );
+      scheduleUnusedComposerAttachmentCleanup(
+        incomingShare.attachments.filter((attachment) => !retainedAttachmentIds.has(attachment.id)),
+      );
       if (!shareImportMountedRef.current || activeShareImportTokenRef.current !== importToken) {
         return;
       }
-      const warnings = [...incomingShare.warnings];
+      const warnings = [...incomingShare.warnings, ...selectedAttachments.warnings];
       if (skippedAttachmentCount > 0) {
         warnings.push(
-          translator.message("mobile.thread.importImageLimit", {
-            count: skippedAttachmentCount,
-          }),
+          `${skippedAttachmentCount} shared file${skippedAttachmentCount === 1 ? " was" : "s were"} skipped because this draft reached the attachment limit.`,
         );
       }
       if (warnings.length > 0) {
-        Alert.alert(translator.message("mobile.thread.importSkippedTitle"), warnings.join("\n"));
+        Alert.alert("Some shared content was skipped", warnings.join("\n"));
       }
       shareImportDraftBackupRef.current.delete(importKey);
     })()
@@ -577,13 +801,11 @@ export function NewTaskDraftScreen(props: {
           return;
         }
         Alert.alert(
-          translator.message("mobile.thread.importFailed"),
-          error instanceof Error
-            ? error.message
-            : translator.message("mobile.thread.importSaveFailed"),
+          "Could not import shared content",
+          error instanceof Error ? error.message : "The shared content could not be saved.",
           [
             {
-              text: translator.message("mobile.thread.cancelImport"),
+              text: "Cancel import",
               style: "cancel",
               onPress: () => {
                 const cancelImport = async (): Promise<void> => {
@@ -597,8 +819,16 @@ export function NewTaskDraftScreen(props: {
                   setIsCancellingShareImport(true);
                   try {
                     if (needsDraftRestore) {
+                      // The restore drops the share's merged-in attachments
+                      // from the draft. Sweep them only when the inbox entry
+                      // was consumed: before that, the inbox still references
+                      // these files and must keep them for a later import.
+                      const mergedAttachments = getComposerDraftSnapshot(draftKey).attachments;
                       await restoreComposerDraftSnapshot(draftKey, draftBackup);
                       needsDraftRestore = false;
+                      if (didConsumeShare) {
+                        scheduleUnusedComposerAttachmentCleanup(mergedAttachments);
+                      }
                     }
                     if (didReserveShare) {
                       await releaseShareReservation(shareId, {
@@ -616,13 +846,13 @@ export function NewTaskDraftScreen(props: {
                       return;
                     }
                     Alert.alert(
-                      translator.message("mobile.thread.importCancelFailed"),
+                      "Could not cancel import",
                       cancelError instanceof Error
                         ? cancelError.message
-                        : translator.message("mobile.thread.importRestoreFailed"),
+                        : "The shared content could not be restored safely.",
                       [
                         {
-                          text: translator.message("mobile.thread.retryImport"),
+                          text: "Retry import",
                           onPress: () => {
                             cancellingShareImportKeyRef.current = null;
                             setIsCancellingShareImport(false);
@@ -630,7 +860,7 @@ export function NewTaskDraftScreen(props: {
                           },
                         },
                         {
-                          text: translator.message("mobile.thread.retryCancel"),
+                          text: "Retry cancel",
                           onPress: () => void cancelImport(),
                         },
                       ],
@@ -642,7 +872,7 @@ export function NewTaskDraftScreen(props: {
               },
             },
             {
-              text: translator.message("common.retry"),
+              text: "Retry",
               onPress: () => setShareImportAttempt((attempt) => attempt + 1),
             },
           ],
@@ -673,6 +903,7 @@ export function NewTaskDraftScreen(props: {
     props.initialProjectRef?.projectId,
     releaseShareReservation,
     reserveShare,
+    selectedEnvironmentServerConfig,
     selectedProject,
     shareImportAttempt,
   ]);
@@ -703,13 +934,56 @@ export function NewTaskDraftScreen(props: {
   });
   const showBranchLoading = flow.branchesLoading && flow.availableBranches.length === 0;
 
-  async function handlePickImages(): Promise<void> {
-    if (isIncomingShareTransferPending) {
+  async function handlePickMedia(): Promise<void> {
+    if (isComposerInteractionLocked || voiceInput.isBusy) {
       return;
     }
-    const result = await pickComposerImages({ existingCount: flow.attachments.length });
-    if (result.images.length > 0) {
-      flow.appendAttachments(result.images);
+    const capabilities = selectedEnvironmentServerConfig?.environment.capabilities;
+    const result = await pickComposerMedia({
+      existingCount: flow.attachments.length,
+      maxVideoBytes:
+        capabilities?.attachmentUploads === true
+          ? capabilities.fileAttachments?.maxUploadBytes
+          : undefined,
+    });
+    const rejectedCount =
+      result.attachments.length > 0 ? flow.appendAttachments(result.attachments) : 0;
+    const problems = [
+      ...(result.error ? [result.error] : []),
+      ...(rejectedCount > 0
+        ? [`You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments per message.`]
+        : []),
+    ];
+    if (problems.length > 0) {
+      Alert.alert("Could not attach photo or video", problems.join("\n\n"));
+    }
+  }
+
+  async function handlePickFiles(): Promise<void> {
+    if (isComposerInteractionLocked || voiceInput.isBusy) {
+      return;
+    }
+    const maxBytes =
+      selectedEnvironmentServerConfig?.environment.capabilities.fileAttachments?.maxUploadBytes;
+    if (maxBytes === undefined) {
+      Alert.alert("File attachments are not available on this server.");
+      return;
+    }
+    const result = await pickComposerFiles({
+      existingCount: flow.attachments.length,
+      maxBytes,
+    });
+    const rejectedCount = result.files.length > 0 ? flow.appendAttachments(result.files) : 0;
+    // The picker error and the live-cap rejection can both happen in one
+    // pick; report both in a single alert.
+    const problems = [
+      ...(result.error ? [result.error] : []),
+      ...(rejectedCount > 0
+        ? [`You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`]
+        : []),
+    ];
+    if (problems.length > 0) {
+      Alert.alert("Could not attach file", problems.join("\n\n"));
     }
   }
 
@@ -742,7 +1016,7 @@ export function NewTaskDraftScreen(props: {
       return;
     }
     if (getComposerDraftSnapshot(draftKey).text === original) {
-      flow.setPrompt(result.value.text);
+      setComposerDraftText(draftKey, result.value.text);
     }
   }
 
@@ -764,15 +1038,15 @@ export function NewTaskDraftScreen(props: {
   );
 
   async function handleStart(): Promise<void> {
+    if (voiceInput.blocksSubmission || voiceDictation.active || isImprovingPrompt) return;
     const selectedProject = flow.selectedProject;
     const draftKey = flow.draftKey;
     if (!selectedProject || !draftKey) {
       return;
     }
     const draft = getComposerDraftSnapshot(draftKey);
-    // Snapshot read keeps just-typed selector state; the availability gate
-    // still applies so a stored selection on a disabled provider falls back
-    // to the flow's resolved model.
+    // Read the latest explicit pick. Antigravity selections stay unchanged
+    // when setup or a catalog change makes them unavailable.
     const modelSelection =
       resolveSelectableModelSelection(
         selectedEnvironmentServerConfig,
@@ -780,16 +1054,10 @@ export function NewTaskDraftScreen(props: {
       ) ?? flow.selectedModel;
     const workspaceMode = draft.workspaceSelection?.mode ?? flow.workspaceMode;
     const selectedBranchName = draft.workspaceSelection?.branch ?? flow.selectedBranchName;
-    const selectedWorktreePath =
-      draft.workspaceSelection?.worktreePath ?? flow.selectedWorktreePath;
-    const startFromOrigin = draft.workspaceSelection?.startFromOrigin ?? flow.startFromOrigin;
-    const runtimeMode = draft.runtimeMode ?? flow.runtimeMode;
-    const interactionMode = flow.planModeEnabled
-      ? (draft.interactionMode ?? flow.interactionMode)
-      : "default";
-    let initialMessageText = draft.text.trim();
+    const initialMessageText = draft.text.trim();
 
     if (
+      attachmentBlockReason !== null ||
       !modelSelection ||
       initialMessageText.length === 0 ||
       flow.submitting ||
@@ -797,160 +1065,119 @@ export function NewTaskDraftScreen(props: {
     ) {
       return;
     }
+    if (
+      environmentConnected &&
+      isModelSelectionUnavailable(selectedEnvironmentServerConfig, modelSelection)
+    ) {
+      Alert.alert(
+        "Antigravity model unavailable",
+        "Set up Antigravity on web or desktop, or choose another model.",
+      );
+      return;
+    }
+    // T3's own limits command is answered by the thread composer; a new task would
+    // send it to the agent. A provider's same-named command, or a prompt carrying
+    // attachments, goes through as usual.
+    if (
+      offersUsageLimits &&
+      isUsageLimitsCommand(initialMessageText) &&
+      draft.attachments.length === 0
+    ) {
+      Alert.alert(
+        "Usage limits",
+        "Send /usage-limits inside a thread, or open Settings → Usage → Limits.",
+      );
+      return;
+    }
+    // A failed-send restore can leave the draft over the cap on purpose (it
+    // never drops the user's files); starting anyway would upload everything
+    // and have the server reject the turn.
+    if (draft.attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+      Alert.alert(
+        "Too many attachments",
+        `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
+      );
+      return;
+    }
 
     const editingPendingTask = flow.editingPendingTask;
-    const clearSubmittedNewTaskDraft = () => {
-      const providerDriver = flow.selectedModelOption?.providerDriver;
-      if (providerDriver === undefined) {
-        clearComposerDraftContent(draftKey, { clearWorkspaceSelection: true });
-        return;
-      }
-      clearNewTaskComposerDraftContent(draftKey, ProviderDriverKind.make(providerDriver), {
-        clearWorkspaceSelection: true,
-      });
-    };
 
-    if (!environmentConnected) {
-      // Offline: park the task in the outbox; the drain sends it when the
-      // environment reconnects. Editing an existing pending task re-queues it
-      // under its original identifiers.
-      const metadata = editingPendingTask
-        ? {
-            threadId: editingPendingTask.threadId,
-            commandId: editingPendingTask.commandId,
-            messageId: editingPendingTask.messageId,
-            createdAt: editingPendingTask.createdAt,
-          }
-        : makeTurnCommandMetadata();
-      const message = flow.buildPendingTaskMessage(metadata);
-      if (!message) {
-        return;
-      }
-      const queuedMessage = {
-        ...message,
-        ...(workflowSettings.fetchMode === undefined
-          ? {}
-          : { fetchMode: workflowSettings.fetchMode }),
-        ...(shouldImprovePromptBeforeSend && initialMessageText.length > 0
-          ? { improvePromptBeforeSend: true }
-          : {}),
-      };
-      flow.setSubmitting(true);
-      try {
-        await enqueueThreadOutboxMessage(queuedMessage);
-      } catch (error) {
-        Alert.alert(
-          "Could not queue task",
-          error instanceof Error ? error.message : "The task could not be saved to the outbox.",
-        );
-        return;
-      } finally {
-        flow.setSubmitting(false);
-      }
-      if (editingPendingTask) {
-        flow.finishEditingPendingTask();
-      } else {
-        // Drop the workspace selection with the content: the next task should
-        // re-resolve mode/branch/origin from the server's configured defaults
-        // instead of resurrecting this task's picks.
-        clearSubmittedNewTaskDraft();
-      }
-      navigation.getParent()?.goBack();
-      return;
-    }
-
-    if (shouldImprovePromptBeforeSend) {
-      setIsImprovingPrompt(true);
-      const improved = await improvePrompt({
-        environmentId: selectedProject.environmentId,
-        input: { projectId: selectedProject.id, text: initialMessageText },
-      });
-      setIsImprovingPrompt(false);
-      if (improved._tag === "Failure") {
-        if (!isAtomCommandInterrupted(improved)) {
-          const error = squashAtomCommandFailure(improved);
-          Alert.alert(
-            "Could not improve prompt",
-            error instanceof Error ? error.message : "The prompt could not be improved.",
-          );
+    // Every submission goes through the outbox: the drain uploads the
+    // attachments and delivers the creation, retrying across reconnects.
+    // When it can send now the thread screen opens immediately with the
+    // queued prompt and reports setup progress there, like the web draft
+    // does. Offline, or with uploads still in flight, the task stays a
+    // pending task and the sheet closes. Editing an existing pending task
+    // re-queues it under its original identifiers.
+    const metadata = editingPendingTask
+      ? {
+          threadId: editingPendingTask.threadId,
+          commandId: editingPendingTask.commandId,
+          messageId: editingPendingTask.messageId,
+          createdAt: editingPendingTask.createdAt,
         }
-        return;
-      }
-      if (getComposerDraftSnapshot(draftKey).text !== draft.text) {
-        return;
-      }
-      initialMessageText = improved.value.text.trim();
-    }
-
-    flow.setSubmitting(true);
-    // Arm the lock-screen card before the async thread creation: backgrounding
-    // the app right after tapping submit would otherwise reject the foreground
-    // -only Activity start. If creation fails, the token registration's replay
-    // finds no work and ends the card within seconds.
-    armAgentAwarenessLiveActivityForLocalWork({
-      environmentId: selectedProject.environmentId,
-      threadTitle: deriveThreadTitleFromPrompt(initialMessageText),
-      projectTitle: selectedProject.title,
+      : makeTurnCommandMetadata();
+    const pendingMessage = flow.buildPendingTaskMessage(metadata, {
+      // A task that waits in the outbox cannot know the checkout it will
+      // drain against; one that sends now runs against the live one.
+      currentCheckoutBranch: queuesInsteadOfStarting ? null : flow.currentCheckoutBranchName,
     });
-    const creationBranch = resolveProjectThreadCreationBranch({
-      workspaceMode,
-      selectedBranch: selectedBranchName,
-      currentCheckoutBranch: flow.currentCheckoutBranchName,
-    });
-    const result = await createProjectThread({
-      project: selectedProject,
-      modelSelection,
-      envMode: workspaceMode,
-      branch: creationBranch,
-      worktreePath: workspaceMode === "worktree" ? null : selectedWorktreePath,
-      startFromOrigin,
-      runtimeMode,
-      interactionMode,
-      ...(workflowSettings.fetchMode === undefined
-        ? {}
-        : { fetchMode: workflowSettings.fetchMode }),
-      initialMessageText,
-      initialAttachments: draft.attachments,
-      ...(editingPendingTask
-        ? {
-            turnMetadata: {
-              threadId: editingPendingTask.threadId,
-              commandId: editingPendingTask.commandId,
-              messageId: editingPendingTask.messageId,
-              createdAt: editingPendingTask.createdAt,
-            },
-          }
-        : {}),
-    });
-    flow.setSubmitting(false);
-
-    if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        Alert.alert(
-          "Could not start task",
-          error instanceof Error ? error.message : "The task could not be started.",
-        );
-      }
+    if (!pendingMessage) {
       return;
     }
-
+    const message = {
+      ...pendingMessage,
+      fetchMode: workflowSettings.fetchMode,
+      improvePromptBeforeSend: shouldImprovePromptBeforeSend,
+    };
+    if (!queuesInsteadOfStarting) {
+      // Arm the lock-screen card before the async thread creation: backgrounding
+      // the app right after tapping submit would otherwise reject the foreground
+      // -only Activity start. If creation fails, the token registration's replay
+      // finds no work and ends the card within seconds.
+      armAgentAwarenessLiveActivityForLocalWork({
+        environmentId: selectedProject.environmentId,
+        threadTitle: deriveThreadTitleFromPrompt(initialMessageText),
+        projectTitle: selectedProject.title,
+      });
+    }
+    // Persist before clearing the draft or leaving its editor. This only waits
+    // for the local outbox write; server and worktree setup run on the thread.
+    flow.setSubmitting(true);
+    try {
+      await enqueueThreadOutboxMessage(message);
+    } catch (error) {
+      Alert.alert(
+        "Could not queue task",
+        error instanceof Error ? error.message : "The task could not be saved to the outbox.",
+      );
+      return;
+    } finally {
+      flow.setSubmitting(false);
+    }
+    const draftSnapshot = getComposerDraftSnapshot(draftKey);
     if (editingPendingTask) {
-      try {
-        await removeThreadOutboxMessage(editingPendingTask);
-      } catch (error) {
-        console.warn("[new-task] failed to remove delivered pending task", error);
-      }
       flow.finishEditingPendingTask();
     } else {
-      clearSubmittedNewTaskDraft();
+      // Drop draft-local model/workspace selections with the content. The
+      // next task re-resolves project defaults before sticky app defaults.
+      // The queued message owns the attachments now, so the sweep is deferred
+      // until the write confirms it.
+      clearComposerDraftContent(draftKey, {
+        clearModelSelection: true,
+        clearWorkspaceSelection: true,
+        deferAttachmentCleanup: true,
+      });
     }
-    navigation.dispatch(
-      StackActions.replace("Thread", {
-        environmentId: String(result.value.environmentId),
-        threadId: String(result.value.threadId),
-      }),
+    setSubmitNavigationAction(
+      queuesInsteadOfStarting
+        ? CommonActions.goBack()
+        : StackActions.replace("Thread", {
+            environmentId: String(message.environmentId),
+            threadId: String(message.threadId),
+          }),
     );
+    scheduleUnusedComposerAttachmentCleanup(draftSnapshot.attachments);
   }
 
   if (!selectedProject) {
@@ -959,15 +1186,10 @@ export function NewTaskDraftScreen(props: {
         {Platform.OS === "android" ? (
           <>
             <NativeStackScreenOptions options={{ headerShown: false }} />
-            <AndroidScreenHeader
-              title={translator.message("mobile.thread.newThread")}
-              onBack={() => navigation.goBack()}
-            />
+            <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
           </>
         ) : (
-          <NativeStackScreenOptions
-            options={{ title: translator.message("mobile.thread.loadingTask") }}
-          />
+          <NativeStackScreenOptions options={{ title: "Loading task" }} />
         )}
       </View>
     );
@@ -975,14 +1197,17 @@ export function NewTaskDraftScreen(props: {
 
   const isAndroid = Platform.OS === "android";
   const canStart =
+    attachmentBlockReason === null &&
+    !modelUnavailable &&
     Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
     flow.prompt.trim().length > 0 &&
     isIncomingShareReady &&
     !isImportingShare &&
     !flow.submitting &&
-    !isImprovingPrompt &&
+    !voiceInput.blocksSubmission &&
     !voiceDictation.active &&
+    !isImprovingPrompt &&
     !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
   const promptEditor = (
     <ComposerEditor
@@ -990,24 +1215,24 @@ export function NewTaskDraftScreen(props: {
       // The context-first screen intentionally opens with the keyboard closed.
       // Focusing is a user action, so presenting the form sheet has one motion.
       autoFocus={false}
-      editable={!isIncomingShareTransferPending && !voiceDictation.active}
+      editable={!isComposerInteractionLocked && !voiceDictation.active}
+      readOnly={voiceInput.freezesEditor}
       multiline
       scrollEnabled
       value={flow.prompt}
-      skills={flow.selectedProviderStatus?.skills ?? []}
+      skills={composerMenu.skills}
       selection={composerMenu.selection}
       onChangeText={flow.setPrompt}
       onSelectionChange={composerMenu.onSelectionChange}
       onFocus={() => setIsComposerFocused(true)}
       onBlur={() => setIsComposerFocused(false)}
       onPasteImages={(uris) => void handleNativePasteImages(uris)}
-      placeholder={translator.message("mobile.thread.askAnything")}
+      placeholder="Ask anything…"
       singleLineCentered={false}
       contentInsetVertical={0}
       style={{
         minHeight: 72,
         maxHeight: 160,
-        paddingHorizontal: 4,
         paddingVertical: 4,
       }}
       textStyle={{ ...bodyText, color: foregroundColor, fontFamily: regularFontFamily }}
@@ -1024,7 +1249,7 @@ export function NewTaskDraftScreen(props: {
     navigation.goBack();
   };
   const chooseProject = () => {
-    if (isIncomingShareTransferPending) {
+    if (isComposerInteractionLocked) {
       return;
     }
     promptInputRef.current?.blur();
@@ -1032,7 +1257,7 @@ export function NewTaskDraftScreen(props: {
     navigation.dispatch(StackActions.push("NewTask", { incomingShareId: props.incomingShareId }));
   };
   const openContextPicker = (routeName: "NewTaskBranch" | "NewTaskEnvironment") => {
-    if (isIncomingShareTransferPending) {
+    if (isComposerInteractionLocked) {
       return;
     }
     promptInputRef.current?.blur();
@@ -1044,19 +1269,15 @@ export function NewTaskDraftScreen(props: {
     <View className="items-center gap-6 px-6" testID="new-task-hero">
       <View className="w-full items-center gap-1.5">
         <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
-          {translator.message("mobile.thread.whatBuild")}
+          What should we build
         </Text>
         <View className="max-w-full flex-row items-center justify-center">
-          <Text className="text-2xl font-t3-medium tracking-tight text-foreground">
-            {translator.message("mobile.thread.inProject")}{" "}
-          </Text>
+          <Text className="text-2xl font-t3-medium tracking-tight text-foreground">in </Text>
           <Pressable
-            accessibilityHint={translator.message("mobile.thread.openProjectPicker")}
-            accessibilityLabel={translator.message("mobile.thread.changeProject", {
-              project: selectedProject.title,
-            })}
+            accessibilityHint="Opens the project picker"
+            accessibilityLabel={`Change project from ${selectedProject.title}`}
             accessibilityRole="button"
-            disabled={isIncomingShareTransferPending}
+            disabled={isComposerInteractionLocked}
             onPress={chooseProject}
             className="min-w-0 max-w-[250px] border-b border-foreground-muted active:opacity-65"
           >
@@ -1072,15 +1293,17 @@ export function NewTaskDraftScreen(props: {
       </View>
 
       <ComposerInlineControl
-        accessibilityLabel={translator.message("mobile.thread.environmentLabel", {
-          environment: selectedEnvironmentLabel,
-        })}
+        accessibilityLabel={`Environment: ${selectedEnvironmentLabel}`}
         chevronDirection="right"
-        disabled={isIncomingShareTransferPending}
-        icon="desktopcomputer"
-        label={translator.message("mobile.thread.onEnvironment", {
-          environment: selectedEnvironmentLabel,
-        })}
+        disabled={isComposerInteractionLocked || voiceInput.isBusy}
+        iconNode={
+          <EnvironmentMachineSymbol
+            kind={resolveEnvironmentMachineKind(selectedEnvironmentServerConfig)}
+            size={16}
+            tintColorClassName="accent-icon-muted"
+          />
+        }
+        label={`on ${selectedEnvironmentLabel}`}
         maxWidth={260}
         onPress={
           flow.environments.length > 1 ? () => openContextPicker("NewTaskEnvironment") : undefined
@@ -1111,13 +1334,9 @@ export function NewTaskDraftScreen(props: {
   const workspaceControls = (
     <View className="flex-row items-center gap-1 px-2">
       <ComposerInlineControl
-        accessibilityHint={translator.message(
-          flow.workspaceMode === "local"
-            ? "mobile.thread.switchWorktree"
-            : "mobile.thread.switchCheckout",
-        )}
+        accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`}
         accessibilityLabel={workspaceLabel}
-        disabled={isIncomingShareTransferPending}
+        disabled={isComposerInteractionLocked || voiceInput.isBusy}
         iconNode={
           <NewTaskWorkspaceIcon
             workspaceMode={flow.workspaceMode}
@@ -1131,17 +1350,11 @@ export function NewTaskDraftScreen(props: {
       />
 
       <ComposerInlineControl
-        accessibilityLabel={`${translator.message(
-          flow.workspaceMode === "worktree" ? "mobile.thread.baseBranch" : "mobile.thread.branch",
-        )}: ${selectedBranchLabel}`}
+        accessibilityLabel={`${flow.workspaceMode === "worktree" ? "Base branch" : "Branch"}: ${selectedBranchLabel}`}
         chevronDirection="right"
-        disabled={isIncomingShareTransferPending}
+        disabled={isComposerInteractionLocked}
         icon="arrow.triangle.branch"
-        label={
-          showBranchLoading
-            ? translator.message("mobile.thread.loadingBranches")
-            : selectedBranchLabel
-        }
+        label={showBranchLoading ? "Loading branches…" : selectedBranchLabel}
         maxWidth={190}
         onPress={() => openContextPicker("NewTaskBranch")}
       />
@@ -1149,8 +1362,8 @@ export function NewTaskDraftScreen(props: {
   );
 
   const composerDock = (
-    <View className="bg-sheet px-4 pt-1" style={{ paddingBottom: controlsBottomPadding }}>
-      {composerMenu.trigger && composerMenu.items.length > 0 ? (
+    <View className="bg-sheet px-[12px] pt-1" style={{ paddingBottom: controlsBottomPadding }}>
+      {!voiceInput.isBusy && composerMenu.trigger && composerMenu.items.length > 0 ? (
         <View className="mb-2">
           <ComposerCommandPopover
             items={composerMenu.items}
@@ -1162,120 +1375,199 @@ export function NewTaskDraftScreen(props: {
       ) : null}
       <View className="pb-1">{workspaceControls}</View>
 
+      {modelUnavailable ? (
+        <Pressable
+          accessibilityRole="button"
+          className="px-3 py-2"
+          disabled={isComposerInteractionLocked}
+          onPress={settingsSheetPresentation.open}
+        >
+          <Text className="text-xs text-foreground">Model unavailable. Open model settings.</Text>
+        </Pressable>
+      ) : null}
+
       <ComposerSurface
-        animateLayout={false}
         style={{
           borderRadius: 26,
           minHeight: 140,
           overflow: "hidden",
           paddingBottom: 6,
-          paddingHorizontal: 14,
           paddingTop: 14,
         }}
       >
         {flow.attachments.length > 0 ? (
-          <View className="pb-2.5">
+          <View className="px-[14px] pb-2.5">
             <ComposerAttachmentStrip
+              environmentId={selectedProject.environmentId}
               attachments={flow.attachments}
               imageBorderRadius={16}
               imageSize={72}
-              onRemove={isIncomingShareTransferPending ? () => undefined : flow.removeAttachment}
+              onRemove={
+                isComposerInteractionLocked || voiceInput.isBusy
+                  ? () => undefined
+                  : flow.removeAttachment
+              }
+              onPressPreview={
+                isComposerInteractionLocked || voiceInput.isBusy ? undefined : openFilePreview
+              }
+              onPressVideo={
+                isComposerInteractionLocked || voiceInput.isBusy ? undefined : openVideoPreview
+              }
             />
           </View>
         ) : null}
 
-        {promptEditor}
+        <View className="px-[14px]">{promptEditor}</View>
+        <View className="h-1" />
 
-        <ComposerToolbarRow paddingBottom={0} paddingHorizontal={0} paddingTop={4}>
-          <ComposerToolbarScroller contentPaddingRight={8} fadeSurface="sheet">
-            <ComposerToolbarButton
-              accessibilityLabel={translator.message("mobile.thread.addAttachment")}
-              disabled={isIncomingShareTransferPending}
-              icon="plus"
-              onPress={() => void handlePickImages()}
-              showChevron={false}
-            />
-            <NativeVoiceDictationControl
-              state={voiceDictation.state}
-              audioWaveform={voiceDictation.audioWaveform}
-              disabled={
-                selectedProject === null ||
-                !environmentConnected ||
-                isIncomingShareTransferPending ||
-                isImprovingPrompt
-              }
-              onStart={voiceDictation.start}
-              onStop={voiceDictation.stop}
-              onCancel={voiceDictation.cancel}
-            />
-            {workflowSettings.supported && flow.prompt.trim().length > 0 ? (
-              <ComposerToolbarButton
-                accessibilityLabel={translator.message("mobile.thread.improvePrompt")}
-                icon={isImprovingPrompt ? undefined : { ios: "sparkles", android: "auto_awesome" }}
-                disabled={isImprovingPrompt || voiceDictation.active}
-                onPress={() => void handleImprovePrompt()}
-                showChevron={false}
+        <Animated.View layout={COMPOSER_LAYOUT_TRANSITION} collapsable={false}>
+          <ComposerDictationToolbar showsDictation={isVoiceInputPresented}>
+            <ComposerToolbarRow
+              paddingBottom={0}
+              paddingHorizontal={0}
+              paddingTop={0}
+              style={{ gap: 0 }}
+            >
+              <ComposerDictationCancelAction
+                presentation={voicePresentation}
+                onCancel={voiceInput.cancel}
               />
-            ) : null}
-            <ComposerInlineControl
-              accessibilityLabel={translator.message("mobile.thread.modelReasoning")}
-              disabled={isIncomingShareTransferPending}
-              emphasized
-              iconNode={
-                <ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />
-              }
-              label={
-                flow.selectedModelOption?.label ??
-                translator.message("mobile.settings.agents.chooseModel")
-              }
-              maxWidth={152}
-              onPress={settingsSheetPresentation.open}
-            />
-            {flow.planModeEnabled ? (
-              <ComposerInlineControl
-                accessibilityHint={translator.message("mobile.thread.switchMode", {
-                  mode: translator.message(
-                    flow.interactionMode === "plan" ? "mobile.thread.build" : "mobile.thread.plan",
-                  ),
-                })}
-                accessibilityLabel={translator.message("mobile.thread.interactionMode", {
-                  mode: translator.message(
-                    flow.interactionMode === "plan" ? "mobile.thread.plan" : "mobile.thread.build",
-                  ),
-                })}
-                disabled={isIncomingShareTransferPending}
-                emphasized
-                icon={
-                  flow.interactionMode === "plan"
-                    ? { ios: "list.bullet.clipboard", android: "auto_awesome" }
-                    : { ios: "hammer", android: "construction" }
-                }
-                label={translator.message(
-                  flow.interactionMode === "plan" ? "mobile.thread.plan" : "mobile.thread.build",
-                )}
-                onPress={() =>
-                  flow.setInteractionMode(flow.interactionMode === "plan" ? "default" : "plan")
-                }
-                showChevron={false}
-              />
-            ) : null}
-          </ComposerToolbarScroller>
-          <ComposerToolbarButton
-            accessibilityLabel={
-              flow.submitting
-                ? translator.message("mobile.thread.startingTask")
-                : environmentConnected
-                  ? translator.message("mobile.thread.startTask")
-                  : translator.message("mobile.thread.queueTask")
-            }
-            disabled={!canStart}
-            icon={environmentConnected ? "arrow.up" : "tray.and.arrow.up"}
-            onPress={() => void handleStart()}
-            showChevron={false}
-            variant="primary"
-          />
-        </ComposerToolbarRow>
+              {isVoiceInputPresented ? (
+                <ComposerDictationStatus
+                  audioLevels={voiceInput.audioLevels}
+                  elapsedSeconds={voiceInput.elapsedSeconds}
+                  phase={voiceInput.state.phase}
+                  presentation={voicePresentation}
+                  onDismissError={voiceInput.cancel}
+                />
+              ) : (
+                <>
+                  <ComposerAttachmentButton
+                    disabled={isComposerInteractionLocked}
+                    supportsFiles={Boolean(
+                      selectedEnvironmentServerConfig?.environment.capabilities.fileAttachments,
+                    )}
+                    onPickMedia={handlePickMedia}
+                    onPickFiles={handlePickFiles}
+                  />
+                  {workflowSettings.supported ? (
+                    <Pressable
+                      accessibilityRole="switch"
+                      accessibilityState={{ checked: workflowSettings.fetchEnabled }}
+                      disabled={isComposerInteractionLocked}
+                      onPress={() => {
+                        if (flow.editingPendingTask)
+                          flow.setFetchMode(
+                            workflowSettings.fetchEnabled ? undefined : "repository-exploration",
+                          );
+                        else savePreferences({ experimentalFetch: !workflowSettings.fetchEnabled });
+                      }}
+                      className="p-2"
+                    >
+                      <Text className="text-foreground">
+                        Fetch {workflowSettings.fetchEnabled ? "on" : "off"}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                  {workflowSettings.supported ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={
+                        isImprovingPrompt ||
+                        isComposerInteractionLocked ||
+                        voiceDictation.active ||
+                        !flow.prompt.trim()
+                      }
+                      onPress={() => void handleImprovePrompt()}
+                      className="p-2"
+                    >
+                      <Text className="text-foreground">
+                        {isImprovingPrompt ? "Improving…" : "Improve"}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                  <ComposerToolbarScroller align="end" contentPaddingRight={0} fadeSurface="sheet">
+                    <ComposerInlineControl
+                      accessibilityLabel="Model and reasoning settings"
+                      disabled={isComposerInteractionLocked}
+                      emphasized
+                      iconNode={
+                        <ProviderIcon
+                          provider={flow.selectedModelOption?.providerDriver}
+                          size={16}
+                        />
+                      }
+                      label={flow.selectedModelOption?.label ?? "Choose model"}
+                      maxWidth={152}
+                      onPress={settingsSheetPresentation.open}
+                    />
+                    {flow.planModeEnabled ? (
+                      <ComposerInlineControl
+                        accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}
+                        accessibilityLabel={`Interaction mode: ${flow.interactionMode === "plan" ? "Plan" : "Build"}`}
+                        disabled={isComposerInteractionLocked}
+                        emphasized
+                        icon={
+                          flow.interactionMode === "plan"
+                            ? { ios: "list.bullet.clipboard", android: "auto_awesome" }
+                            : { ios: "hammer", android: "construction" }
+                        }
+                        label={flow.interactionMode === "plan" ? "Plan" : "Build"}
+                        onPress={() =>
+                          flow.setInteractionMode(
+                            flow.interactionMode === "plan" ? "default" : "plan",
+                          )
+                        }
+                        showChevron={false}
+                      />
+                    ) : null}
+                  </ComposerToolbarScroller>
+                </>
+              )}
+              {voiceConfigured ? (
+                <NativeVoiceDictationControl
+                  state={voiceDictation.state}
+                  audioWaveform={voiceDictation.audioWaveform}
+                  disabled={isComposerInteractionLocked || voiceInput.isBusy}
+                  onStart={voiceDictation.start}
+                  onStop={voiceDictation.stop}
+                  onCancel={voiceDictation.cancel}
+                />
+              ) : (
+                <ComposerDictationPrimaryAction
+                  state={voiceInput.state}
+                  presentation={voicePresentation}
+                  isAvailable={voiceInput.isAvailable}
+                  disabled={isIncomingShareTransferPending || isImportingShare || flow.submitting}
+                  onStart={voiceInput.start}
+                  onConfirm={voiceInput.stop}
+                  onCancel={voiceInput.cancel}
+                />
+              )}
+              {voicePresentation.showsSend ? (
+                <ComposerActionButton
+                  accessibilityLabel={
+                    attachmentBlockReason ??
+                    (flow.submitting
+                      ? "Starting task"
+                      : attachmentsUploading
+                        ? "Queue task, sends when uploads finish"
+                        : environmentConnected
+                          ? "Start task"
+                          : "Queue task")
+                  }
+                  disabled={!canStart}
+                  icon={queuesInsteadOfStarting ? "tray.and.arrow.up" : "arrow.up"}
+                  onPress={() => void handleStart()}
+                  variant="primary"
+                />
+              ) : null}
+            </ComposerToolbarRow>
+          </ComposerDictationToolbar>
+        </Animated.View>
       </ComposerSurface>
+      <VideoPreviewModal source={previewVideo} onRequestClose={closeMediaPreview} />
+      <FilePreviewModal source={previewFile} onRequestClose={closeMediaPreview} />
     </View>
   );
 
@@ -1283,10 +1575,7 @@ export function NewTaskDraftScreen(props: {
     return (
       <View className="flex-1 bg-sheet" collapsable={false}>
         <NativeStackScreenOptions options={{ headerShown: false }} />
-        <AndroidScreenHeader
-          title={translator.message("mobile.navigation.newTask")}
-          onBack={closeNewTask}
-        />
+        <AndroidScreenHeader title="New task" onBack={closeNewTask} />
         {heroViewport}
 
         <KeyboardStickyView
@@ -1310,18 +1599,25 @@ export function NewTaskDraftScreen(props: {
       />
       <NativeHeaderToolbar placement="left">
         <NativeHeaderToolbar.Button
-          accessibilityLabel={translator.message("mobile.thread.cancelNewTask")}
-          label={translator.message("common.cancel")}
+          accessibilityLabel="Cancel new task"
+          label="Cancel"
           onPress={closeNewTask}
         />
       </NativeHeaderToolbar>
 
       {heroViewport}
       <KeyboardStickyView
-        style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
+        pointerEvents="box-none"
+        style={{ position: "absolute", top: 0, bottom: 0, left: 0, right: 0 }}
         offset={{ closed: 0, opened: keyboardOpenedOffset }}
       >
-        {composerDock}
+        <Animated.View
+          layout={COMPOSER_LAYOUT_TRANSITION}
+          pointerEvents="box-none"
+          style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
+        >
+          {composerDock}
+        </Animated.View>
       </KeyboardStickyView>
     </View>
   );

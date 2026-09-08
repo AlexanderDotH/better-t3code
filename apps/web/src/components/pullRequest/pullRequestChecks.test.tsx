@@ -1,13 +1,21 @@
 import type { EnvironmentId, ProjectId, PullRequestCheck } from "@t3tools/contracts";
-import { renderToStaticMarkup } from "react-dom/server";
+import { Children, isValidElement, type ReactNode } from "react";
 import { describe, expect, it } from "vite-plus/test";
 
+import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
 import type { EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 import { PullRequestRow } from "./PullRequestRow";
-import { keyedPullRequestChecks, pullRequestChecksState } from "./pullRequestPresentation";
+import {
+  pullRequestChecksState,
+  pullRequestCheckStatusLabel,
+  summarizePullRequestChecks,
+} from "./pullRequestPresentation";
 
-function check(status: PullRequestCheck["status"]): PullRequestCheck {
-  return { name: `check-${status}`, status, description: null, url: null };
+function check(
+  status: PullRequestCheck["status"],
+  overrides: Partial<PullRequestCheck> = {},
+): PullRequestCheck {
+  return { name: `check-${status}`, status, description: null, url: null, ...overrides };
 }
 
 describe("pullRequestChecksState", () => {
@@ -17,23 +25,43 @@ describe("pullRequestChecksState", () => {
     );
     expect(pullRequestChecksState([check("success"), check("cancelled")])).toBe("failing");
     expect(pullRequestChecksState([check("success"), check("pending")])).toBe("pending");
+    expect(pullRequestChecksState([check("success"), check("action-required")])).toBe("pending");
     expect(pullRequestChecksState([check("success")])).toBe("passing");
     // Skipped and neutral are neither a pass nor a failure, so they are no verdict at all.
     expect(pullRequestChecksState([check("skipped"), check("neutral")])).toBe(null);
     expect(pullRequestChecksState([])).toBe(null);
   });
 
-  it("assigns stable unique keys when the host repeats a check name", () => {
-    const passing = check("success");
-    const failing = check("failure");
-    const repeated = keyedPullRequestChecks([passing, passing, failing]);
-    const reordered = keyedPullRequestChecks([failing, passing]);
-
-    expect(new Set(repeated.map((entry) => entry.key)).size).toBe(3);
-    expect(repeated[0]?.key).toBe(reordered[1]?.key);
-    expect(repeated[2]?.key).toBe(reordered[0]?.key);
+  it("names workflow approval instead of claiming every check passed", () => {
+    const workflow = check("action-required", {
+      url: "https://github.com/acme/web/actions/runs/42/job/7",
+    });
+    const manualGate = check("action-required", { url: "https://example.com/manual-gate" });
+    expect(pullRequestCheckStatusLabel(workflow)).toBe("Awaiting approval");
+    expect(pullRequestCheckStatusLabel(manualGate)).toBe("Awaiting action");
+    expect(summarizePullRequestChecks([check("success"), workflow])).toBe(
+      "1 workflow awaiting approval",
+    );
+    expect(summarizePullRequestChecks([check("failure"), workflow])).toBe("1 of 2 failing");
+    expect(summarizePullRequestChecks([check("success"), manualGate])).toBe(
+      "1 check awaiting action",
+    );
+    expect(summarizePullRequestChecks([workflow, manualGate])).toBe(
+      "1 workflow and 1 check awaiting action",
+    );
   });
 });
+
+/** Every element of the tree the row returned, so a nested indicator can be looked for. */
+function flatten(node: ReactNode): ReadonlyArray<ReturnType<typeof Object>> {
+  const found: unknown[] = [];
+  for (const child of Children.toArray(node)) {
+    if (!isValidElement(child)) continue;
+    found.push(child);
+    found.push(...flatten((child.props as { readonly children?: ReactNode }).children));
+  }
+  return found as ReadonlyArray<ReturnType<typeof Object>>;
+}
 
 function entry(overrides: Partial<EnvironmentPullRequestEntry>): EnvironmentPullRequestEntry {
   return {
@@ -60,21 +88,21 @@ function entry(overrides: Partial<EnvironmentPullRequestEntry>): EnvironmentPull
   } as EnvironmentPullRequestEntry;
 }
 
-function row(overrides: Partial<EnvironmentPullRequestEntry>): string {
-  return renderToStaticMarkup(
-    <PullRequestRow
-      entry={entry(overrides)}
-      selected={false}
-      showProjectTitle={false}
-      showProvider={false}
-      onSelect={() => {}}
-    />,
-  );
+function row(overrides: Partial<EnvironmentPullRequestEntry>): ReactNode {
+  return PullRequestRow.type({
+    entry: entry(overrides),
+    selected: false,
+    showProjectTitle: false,
+    showProvider: false,
+    onSelect: () => {},
+  });
 }
 
 describe("PullRequestRow checks indicator", () => {
-  function indicators(markup: string): number {
-    return markup.match(/aria-label="Checks:/g)?.length ?? 0;
+  function indicators(node: ReactNode): number {
+    return flatten(node).filter(
+      (element) => (element as { type?: unknown }).type === PullRequestChecksPopover,
+    ).length;
   }
 
   it("shows the indicator only for a row the host reported a rollup for", () => {

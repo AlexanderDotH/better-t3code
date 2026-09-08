@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 
 export const isHarnessChatSyncError = Schema.is(HarnessChatSyncError);
 
-export class SessionSyncFailure extends Schema.TaggedErrorClass<SessionSyncFailure>()(
+export class SessionSyncFailure extends Schema.TaggedError<SessionSyncFailure>()(
   "SessionSyncFailure",
   {
     failure: HarnessChatSyncFailure,

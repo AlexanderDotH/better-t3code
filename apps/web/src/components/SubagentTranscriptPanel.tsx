@@ -13,7 +13,7 @@ import {
   MessageSquareIcon,
   WrenchIcon,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { memo, useCallback, useMemo, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
@@ -33,11 +33,9 @@ import { Badge } from "./ui/badge";
 import { ScrollArea } from "./ui/scroll-area";
 import { Spinner } from "./ui/spinner";
 
-const EMPTY_COMMITTED_MESSAGE_IDS: ReadonlySet<string> = new Set();
+const SUBAGENT_TRANSCRIPT_VIRTUALIZATION_THRESHOLD = 80;
 
-export const SUBAGENT_TRANSCRIPT_VIRTUALIZATION_THRESHOLD = 80;
-
-export function shouldVirtualizeSubagentTranscript(entryCount: number): boolean {
+function shouldVirtualizeSubagentTranscript(entryCount: number): boolean {
   return entryCount > SUBAGENT_TRANSCRIPT_VIRTUALIZATION_THRESHOLD;
 }
 
@@ -48,35 +46,11 @@ export interface SubagentTranscriptPanelProps {
   readonly markdownCwd?: string;
   readonly threadRef?: ScopedThreadRef;
   readonly timestampFormat?: TimestampFormat;
+  readonly streamingMotionEnabled?: boolean;
   readonly className?: string;
   readonly hasOlderActivities?: boolean;
   readonly isLoadingOlderActivities?: boolean;
   readonly onLoadOlderActivities?: () => void;
-}
-
-interface SubagentInitialStreamAnimationInput {
-  readonly committedScopeId: string | null;
-  readonly committedMessageIds: ReadonlySet<string>;
-  readonly currentScopeId: string;
-  readonly messageId: string;
-  readonly isAssistant: boolean;
-  readonly isStreaming: boolean;
-}
-
-export function resolveSubagentInitialStreamAnimation({
-  committedScopeId,
-  committedMessageIds,
-  currentScopeId,
-  messageId,
-  isAssistant,
-  isStreaming,
-}: SubagentInitialStreamAnimationInput): boolean {
-  return (
-    isAssistant &&
-    isStreaming &&
-    committedScopeId === currentScopeId &&
-    !committedMessageIds.has(messageId)
-  );
 }
 
 export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
@@ -86,6 +60,7 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
   markdownCwd,
   threadRef,
   timestampFormat = "locale",
+  streamingMotionEnabled = false,
   className,
   hasOlderActivities = false,
   isLoadingOlderActivities = false,
@@ -96,11 +71,6 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
     () => (subagent ? deriveSubagentTranscriptEntries(subagent) : []),
     [subagent],
   );
-  const streamScopeId = subagent ? String(subagent.id) : "";
-  const shouldAnimateInitialStreamChunk = useSubagentInitialStreamAnimationRegistry(
-    streamScopeId,
-    entries,
-  );
   const name = subagent ? resolveSubagentDisplayName(subagent) : "";
   const renderEntry = useCallback(
     (entry: SubagentTranscriptEntry) => (
@@ -110,18 +80,10 @@ export const SubagentTranscriptPanel = memo(function SubagentTranscriptPanel({
         markdownCwd={markdownCwd}
         threadRef={threadRef}
         timestampFormat={timestampFormat}
-        streamScopeId={streamScopeId}
-        animateInitialStreamChunk={
-          entry.kind === "message" &&
-          shouldAnimateInitialStreamChunk(
-            entry.message.id,
-            entry.message.role === "assistant",
-            entry.message.streaming,
-          )
-        }
+        streamingMotionEnabled={streamingMotionEnabled}
       />
     ),
-    [markdownCwd, name, shouldAnimateInitialStreamChunk, streamScopeId, threadRef, timestampFormat],
+    [markdownCwd, name, threadRef, timestampFormat, streamingMotionEnabled],
   );
   const renderVirtualizedEntry = useCallback(
     ({ item }: { readonly item: SubagentTranscriptEntry }) => (
@@ -310,16 +272,14 @@ function SubagentTranscriptEntryView({
   markdownCwd,
   threadRef,
   timestampFormat,
-  streamScopeId,
-  animateInitialStreamChunk,
+  streamingMotionEnabled,
 }: {
+  readonly streamingMotionEnabled: boolean;
   readonly entry: SubagentTranscriptEntry;
   readonly agentName: string;
   readonly markdownCwd: string | undefined;
   readonly threadRef: ScopedThreadRef | undefined;
   readonly timestampFormat: TimestampFormat;
-  readonly streamScopeId: string;
-  readonly animateInitialStreamChunk: boolean;
 }) {
   const translate = useInterfaceTranslator().message;
   if (entry.kind === "message") {
@@ -330,8 +290,7 @@ function SubagentTranscriptEntryView({
         markdownCwd={markdownCwd}
         threadRef={threadRef}
         timestampFormat={timestampFormat}
-        streamId={`${streamScopeId}:${String(entry.message.id)}`}
-        animateInitialStreamChunk={animateInitialStreamChunk}
+        streamingMotionEnabled={streamingMotionEnabled}
       />
     );
   }
@@ -365,16 +324,14 @@ function TranscriptMessage({
   markdownCwd,
   threadRef,
   timestampFormat,
-  streamId,
-  animateInitialStreamChunk,
+  streamingMotionEnabled,
 }: {
+  readonly streamingMotionEnabled: boolean;
   readonly message: OrchestrationMessage;
   readonly agentName: string;
   readonly markdownCwd: string | undefined;
   readonly threadRef: ScopedThreadRef | undefined;
   readonly timestampFormat: TimestampFormat;
-  readonly streamId: string;
-  readonly animateInitialStreamChunk: boolean;
 }) {
   const translate = useInterfaceTranslator().message;
   const roleLabel =
@@ -410,55 +367,12 @@ function TranscriptMessage({
         cwd={markdownCwd}
         threadRef={threadRef}
         isStreaming={message.streaming}
-        streamId={message.role === "assistant" ? streamId : undefined}
-        animateInitialStreamChunk={message.role === "assistant" ? animateInitialStreamChunk : false}
+        streamId={`${threadRef?.environmentId ?? ""}:${threadRef?.threadId ?? ""}:${message.id}`}
+        streamingMotionEnabled={message.role === "assistant" && streamingMotionEnabled}
         lineBreaks={message.role === "user"}
       />
     </article>
   );
-}
-
-function useSubagentInitialStreamAnimationRegistry(
-  scopeId: string,
-  entries: ReadonlyArray<SubagentTranscriptEntry>,
-) {
-  const committedRef = useRef<{
-    readonly scopeId: string;
-    readonly messageIds: ReadonlySet<string>;
-  } | null>(null);
-  const currentMessageIds = useMemo(
-    () => collectSubagentStreamingAssistantMessageIds(entries),
-    [entries],
-  );
-
-  useEffect(() => {
-    committedRef.current = { scopeId, messageIds: currentMessageIds };
-  }, [currentMessageIds, scopeId]);
-
-  return useCallback(
-    (messageId: OrchestrationMessage["id"], isAssistant: boolean, isStreaming: boolean) =>
-      resolveSubagentInitialStreamAnimation({
-        committedScopeId: committedRef.current?.scopeId ?? null,
-        committedMessageIds: committedRef.current?.messageIds ?? EMPTY_COMMITTED_MESSAGE_IDS,
-        currentScopeId: scopeId,
-        messageId: String(messageId),
-        isAssistant,
-        isStreaming,
-      }),
-    [scopeId],
-  );
-}
-
-export function collectSubagentStreamingAssistantMessageIds(
-  entries: ReadonlyArray<SubagentTranscriptEntry>,
-): ReadonlySet<string> {
-  const messageIds = new Set<string>();
-  for (const entry of entries) {
-    if (entry.kind === "message" && entry.message.role === "assistant" && entry.message.streaming) {
-      messageIds.add(String(entry.message.id));
-    }
-  }
-  return messageIds;
 }
 
 function subagentTranscriptEntryKey(entry: SubagentTranscriptEntry): string {

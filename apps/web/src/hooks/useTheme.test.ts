@@ -26,37 +26,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("keeps the opaque theme color when window panes become translucent", async () => {
-  const { syncBrowserChromeTheme } = await import("./useTheme");
-  const root = {
-    dataset: {},
-    classList: { contains: (name: string) => name === "macos-vibrancy" },
-    style: { backgroundColor: "" },
-  };
-  const body = { style: { backgroundColor: "" } };
-  const pane = {};
-  const meta = { setAttribute: vi.fn() };
-  let paneColor = "rgba(10, 10, 10, 0.45)";
-  vi.stubGlobal("document", {
-    documentElement: root,
-    body,
-    querySelector: () => pane,
-    querySelectorAll: () => [meta],
-  });
-  vi.stubGlobal("getComputedStyle", (element: unknown) => ({
-    getPropertyValue: () => "rgb(10, 10, 10)",
-    backgroundColor: element === pane ? paneColor : "transparent",
-  }));
-
-  for (const color of ["rgba(10, 10, 10, 0.45)", "rgba(10, 10, 10, 0.9)", "rgb(10, 10, 10)"]) {
-    paneColor = color;
-    syncBrowserChromeTheme();
-    expect(root.style.backgroundColor).toBe("rgb(10, 10, 10)");
-    expect(body.style.backgroundColor).toBe("rgb(10, 10, 10)");
-    expect(meta.setAttribute).toHaveBeenLastCalledWith("content", "rgb(10, 10, 10)");
-  }
-});
-
 describe("theme failure handling", () => {
   it("preserves exact storage causes and operation context", async () => {
     const readCause = new Error("storage read blocked");

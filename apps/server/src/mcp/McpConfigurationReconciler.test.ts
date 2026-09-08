@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
+  CODEX_DRIVER_KIND,
   McpServerId,
   ProviderInstanceId,
   RuntimeSessionId,
@@ -51,8 +52,8 @@ function settings(servers: ReadonlyArray<McpServerDefinition>): ServerSettings {
   return {
     ...DEFAULT_SERVER_SETTINGS,
     providerInstances: {
-      [providerA]: { driver: "codex", enabled: true, config: {} },
-      [providerB]: { driver: "codex", enabled: true, config: {} },
+      [providerA]: { driver: CODEX_DRIVER_KIND, enabled: true, config: {} },
+      [providerB]: { driver: CODEX_DRIVER_KIND, enabled: true, config: {} },
     },
     mcp: { servers },
   };

@@ -1,8 +1,8 @@
 export type WorkspaceDeckCard = "chat" | "git";
 export type WorkspaceDeckShuffleDirection = "to-chat" | "to-git";
 
-export const GIT_COMPACT_PULL_THRESHOLD = 36;
-export const GIT_COMPACT_PULL_VERTICAL_DOMINANCE = 1.25;
+const GIT_COMPACT_PULL_THRESHOLD = 36;
+const GIT_COMPACT_PULL_VERTICAL_DOMINANCE = 1.25;
 
 export interface DeckCardRequest {
   readonly activeCard: WorkspaceDeckCard;

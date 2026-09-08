@@ -1,10 +1,9 @@
 import type { ProviderPromptPayload, ProviderPromptTarget } from "./PromptEnhancementTypes.ts";
 import { appendPromptAppendix } from "./PromptEnhancementTypes.ts";
 import { sectionEntryPrintLayoutSkill } from "./SectionEntryPrintLayoutSkill.ts";
-import type { AgentSkillContext, AgentSkillDefinition, AgentSkillId } from "./SkillPromptTypes.ts";
-import { isAgentSkillId } from "./SkillPromptTypes.ts";
+import type { AgentSkillContext, AgentSkillDefinition } from "./SkillPromptTypes.ts";
 
-export const BUILT_IN_AGENT_SKILLS = [
+const BUILT_IN_AGENT_SKILLS = [
   sectionEntryPrintLayoutSkill,
 ] as const satisfies ReadonlyArray<AgentSkillDefinition>;
 
@@ -23,10 +22,6 @@ function normalizeEnabledSkillIds(
 ): ReadonlySet<string> {
   if (!value) return new Set();
   return value instanceof Set ? value : new Set(value);
-}
-
-export function getBuiltInAgentSkillById(id: AgentSkillId): AgentSkillDefinition | undefined {
-  return BUILT_IN_AGENT_SKILLS.find((skill) => skill.id === id);
 }
 
 export function buildEnabledSkillPromptAppendix(
@@ -65,5 +60,3 @@ export function injectBundledSkillPrompts(
   const appendix = buildEnabledSkillPromptAppendix(ctx, options);
   return appendPromptAppendix(payload, appendix, options.target ?? "system");
 }
-
-export { isAgentSkillId };

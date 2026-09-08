@@ -26,6 +26,9 @@ const makeTextGeneration = (
   plan: TextGeneration.TextGeneration["Service"]["planFetchExploration"],
 ): TextGeneration.TextGeneration["Service"] =>
   TextGeneration.TextGeneration.of({
+    decideAutoReasoning: () => Effect.die("unused"),
+    generateThreadMetadata: () => Effect.die("unused"),
+    enrichKnowledgeGraph: () => Effect.die("unused"),
     generateCommitMessage: () => Effect.die("unused"),
     generatePrContent: () => Effect.die("unused"),
     generateBranchName: () => Effect.die("unused"),

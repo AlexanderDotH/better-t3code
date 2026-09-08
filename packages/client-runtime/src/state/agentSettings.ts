@@ -3,7 +3,7 @@ import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createMcpEnvironmentAtoms } from "../mcp/state.ts";
-import { createEnvironmentRpcCommand } from "./runtime.ts";
+import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 
 export function createAgentSettingsEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
@@ -11,6 +11,10 @@ export function createAgentSettingsEnvironmentAtoms<R, E>(
   const mcp = createMcpEnvironmentAtoms(runtime);
   return {
     chatImport: {
+      discoverQuery: createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: "environment-data:chat-import:discover-query",
+        tag: WS_METHODS.chatImportDiscover,
+      }),
       discover: createEnvironmentRpcCommand(runtime, {
         label: "environment-data:chat-import:discover",
         tag: WS_METHODS.chatImportDiscover,
@@ -21,6 +25,14 @@ export function createAgentSettingsEnvironmentAtoms<R, E>(
       }),
     },
     harnessChatSync: {
+      sourcesQuery: createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: "environment-data:harness-chat-sync:sources-query",
+        tag: WS_METHODS.harnessChatSyncSources,
+      }),
+      listQuery: createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: "environment-data:harness-chat-sync:list-query",
+        tag: WS_METHODS.harnessChatSyncList,
+      }),
       sources: createEnvironmentRpcCommand(runtime, {
         label: "environment-data:harness-chat-sync:sources",
         tag: WS_METHODS.harnessChatSyncSources,
@@ -39,6 +51,14 @@ export function createAgentSettingsEnvironmentAtoms<R, E>(
       }),
     },
     skills: {
+      listQuery: createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: "environment-data:skills:list-query",
+        tag: WS_METHODS.skillsList,
+      }),
+      importSourcesQuery: createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: "environment-data:skills:import-sources-query",
+        tag: WS_METHODS.skillsDiscoverImportSources,
+      }),
       list: createEnvironmentRpcCommand(runtime, {
         label: "environment-data:skills:list",
         tag: WS_METHODS.skillsList,

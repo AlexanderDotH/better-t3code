@@ -4,11 +4,9 @@ import type {
 } from "./PromptEnhancementTypes.ts";
 import { appendPromptAppendix } from "./PromptEnhancementTypes.ts";
 
-export const CAVEMAN_REPO_URL = "https://github.com/JuliusBrussee/caveman";
+const CAVEMAN_REPO_URL = "https://github.com/JuliusBrussee/caveman";
 
-export const CAVEMAN_PROMPT_MODES = ["off", "lite", "full", "ultra"] as const;
-
-export type CavemanPromptMode = (typeof CAVEMAN_PROMPT_MODES)[number];
+export type CavemanPromptMode = "off" | "lite" | "full" | "ultra";
 
 export interface CavemanPromptStyleOptions {
   readonly mode: CavemanPromptMode;

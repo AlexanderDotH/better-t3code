@@ -1,48 +1,38 @@
+import { Spinner } from "~/components/ui/spinner";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
-import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
+import { CircleAlertIcon, DownloadIcon } from "lucide-react";
 import { useId, useState } from "react";
 
-import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
-import { serverUpdateStageMessageId } from "../ServerUpdateAction";
+import { serverUpdateStageLabel } from "../ServerUpdateAction";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerBanner } from "./ComposerBanner";
 
-export function prepareComposerServerUpdateCopy({
-  state,
-  serverLabel,
-  translate,
+export function ComposerServerUpdateIcon({
+  status,
 }: {
-  readonly state: Exclude<ServerUpdateState, { status: "idle" }>;
-  readonly serverLabel: string;
-  readonly translate: InterfaceTranslator["message"];
-}): Readonly<{ title: string; detail: string }> {
-  return {
-    title: translate(state.status === "failed" ? "chat.update.failed" : "chat.update.updating", {
-      server: serverLabel,
-    }),
-    detail:
-      state.status === "failed"
-        ? state.message
-        : translate(serverUpdateStageMessageId(state.stage)),
-  };
+  readonly status: ServerUpdateState["status"];
+}) {
+  if (status === "running") {
+    return <Spinner aria-hidden />;
+  }
+  if (status === "failed") {
+    return <CircleAlertIcon aria-hidden className="text-error" />;
+  }
+  return <DownloadIcon aria-hidden />;
 }
 
 /** One text line, clipped at the end so the error detail never squeezes its title. */
 export function ComposerServerUpdateStatus({
   state,
-  serverLabel,
+  serverLabel = "server",
 }: {
   readonly state: Exclude<ServerUpdateState, { status: "idle" }>;
-  readonly serverLabel: string;
+  readonly serverLabel?: string;
 }) {
-  const translator = useInterfaceTranslator();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const triggerId = useId();
-  const { title, detail } = prepareComposerServerUpdateCopy({
-    state,
-    serverLabel,
-    translate: translator.message,
-  });
+  const title = `${state.status === "failed" ? "Could not update" : "Updating"} ${serverLabel}`;
+  const detail = state.status === "failed" ? state.message : serverUpdateStageLabel(state.stage);
   return (
     <span
       role={state.status === "failed" ? "alert" : "status"}

@@ -116,6 +116,14 @@ function makePendingTask(projectId: ProjectId): PendingNewTask {
     worktreePath: null,
   };
   return {
+    kind: "pending",
+    projectTitle: "Project",
+    projectCwd: "/workspace",
+    key: "pending-task:pending-message",
+    environmentId,
+    projectId,
+    createdAt: "2026-06-01T00:00:00.000Z",
+    branch: null,
     creation,
     message: {
       environmentId,
@@ -818,4 +826,21 @@ describe("resolveGroupedProjectSettledThreadKeys", () => {
       new Set(),
     );
   });
+});
+
+it("keeps queued work visible when a grouped thread would auto-settle", () => {
+  const thread = makeGroup("queued", 1).threads[0]!;
+  const key = `${environmentId}:${thread.id}`;
+  expect(
+    resolveGroupedProjectSettledThreadKeys({
+      threads: [thread],
+      settlementEnvironmentIds: new Set([environmentId]),
+      snoozeEnvironmentIds: new Set([environmentId]),
+      changeRequestByKey: new Map([[key, { state: "merged" }]]),
+      queuedThreadKeys: new Set([key]),
+      now: "2026-06-03T00:00:00.000Z",
+      autoSettleAfterDays: null,
+      autoSettleOnMerge: true,
+    }),
+  ).toEqual(new Set());
 });

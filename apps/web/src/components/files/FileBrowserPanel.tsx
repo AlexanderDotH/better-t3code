@@ -1,11 +1,12 @@
+import { RefreshIcon } from "~/components/ui/refresh-icon";
 import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
 } from "@pierre/trees";
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
-import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
+import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { RotateCw } from "lucide-react";
+import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -14,13 +15,15 @@ import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { useTheme } from "~/hooks/useTheme";
-import { cn } from "~/lib/utils";
+import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
+import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
+import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
+import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
 
 interface FileBrowserPanelProps {
@@ -33,26 +36,14 @@ interface FileBrowserPanelProps {
   selectedPathRevealId: number;
   onOpenFile: (relativePath: string) => void;
   onRefreshSelectedFile?: () => void;
+  workspaceMutationId: string | null;
 }
-
-const TREE_UNSAFE_CSS = `
-  :host {
-    --trees-bg-override: transparent;
-    --trees-selected-bg-override: color-mix(in srgb, currentColor 12%, transparent);
-    --trees-hover-bg-override: color-mix(in srgb, currentColor 7%, transparent);
-    --trees-border-color-override: color-mix(in srgb, currentColor 14%, transparent);
-    --trees-font-family-override: var(--font-sans);
-    --trees-font-size-override: 12px;
-  }
-  button[data-type='item'] { border-radius: 5px; }
-`;
 
 function treePath(entry: ProjectEntry): string {
   return entry.kind === "directory" ? `${entry.path}/` : entry.path;
 }
 
 function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
-  const translate = useInterfaceTranslator().message;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -61,18 +52,14 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
             type="button"
             variant="ghost"
             size="icon-xs"
-            aria-label={translate("browser.files.refreshWorkspace")}
+            aria-label="Refresh workspace files"
             onClick={props.onRefresh}
           />
         }
       >
-        <RotateCw className={cn(props.isPending && "animate-spin")} />
+        <RefreshIcon refreshing={props.isPending} />
       </TooltipTrigger>
-      <TooltipPopup>
-        {props.isPending
-          ? translate("browser.files.refreshing")
-          : translate("browser.files.refresh")}
-      </TooltipPopup>
+      <TooltipPopup>{props.isPending ? "Refreshing…" : "Refresh files"}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -84,7 +71,6 @@ function FileSearchField(props: {
   onValueChange: (value: string) => void;
   value: string;
 }) {
-  const translate = useInterfaceTranslator().message;
   return (
     <InputGroup variant="ghost" className="h-7 min-w-0 flex-1">
       <InputGroupInput
@@ -93,7 +79,7 @@ function FileSearchField(props: {
         size="sm"
         value={props.value}
         aria-label={props.ariaLabel}
-        placeholder={translate("browser.files.search")}
+        placeholder="Search files"
         spellCheck={false}
         onChange={(event) => props.onValueChange(event.target.value)}
         onKeyDown={(event) => {
@@ -114,8 +100,8 @@ export default function FileBrowserPanel({
   selectedPathRevealId,
   onOpenFile,
   onRefreshSelectedFile,
+  workspaceMutationId,
 }: FileBrowserPanelProps) {
-  const translate = useInterfaceTranslator().message;
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
   const entriesQuery = useProjectEntriesQuery(environmentId, cwd);
@@ -126,7 +112,11 @@ export default function FileBrowserPanel({
   );
   const entryKindsRef = useRef<ReadonlyMap<string, ProjectEntry["kind"]>>(entryKinds);
   const treePaths = useMemo(() => entries.map(treePath), [entries]);
-  const previousTreePathsRef = useRef<readonly string[]>([]);
+  const directoryPaths = useMemo(
+    () => entries.filter((entry) => entry.kind === "directory").map(treePath),
+    [entries],
+  );
+  const previousTreePathsRef = useRef<readonly string[] | null>(null);
   const syncingSelectionRef = useRef(false);
   const treeSelectionPathRef = useRef<string | null>(null);
   const handledRevealRef = useRef<{ path: string; revealId: number } | null>(null);
@@ -163,25 +153,20 @@ export default function FileBrowserPanel({
     try {
       const clicked = await api.contextMenu.show(
         [
-          { id: "copy-mention", label: translate("browser.files.copyMention") },
-          { id: "add-to-chat", label: translate("browser.files.addToChat") },
+          { id: "copy-mention", label: "Copy mention" },
+          { id: "add-to-chat", label: "Add to chat" },
         ],
         position,
       );
       if (clicked === "copy-mention") {
         try {
           await writeTextToClipboard(mention);
-          toastManager.add({
-            type: "success",
-            title: translate("browser.files.mentionCopied"),
-            description: relativePath,
-          });
+          toastManager.add({ type: "success", title: "Mention copied", description: relativePath });
         } catch (error) {
           toastManager.add({
             type: "error",
-            title: translate("browser.files.copyMentionFailed"),
-            description:
-              error instanceof Error ? error.message : translate("browser.files.errorOccurred"),
+            title: "Failed to copy mention",
+            description: error instanceof Error ? error.message : "An error occurred.",
           });
         }
         return;
@@ -191,8 +176,8 @@ export default function FileBrowserPanel({
         if (!composer) {
           toastManager.add({
             type: "error",
-            title: translate("browser.files.unableToAddToChat"),
-            description: translate("browser.files.openChatFirst"),
+            title: "Unable to add to chat",
+            description: "Open a chat for this project and try again.",
           });
           return;
         }
@@ -200,8 +185,8 @@ export default function FileBrowserPanel({
         if (!inserted) {
           toastManager.add({
             type: "error",
-            title: translate("browser.files.unableToAddToChat"),
-            description: translate("browser.files.chatNotReady"),
+            title: "Unable to add to chat",
+            description: "The chat isn't ready to accept input right now.",
           });
         }
       }
@@ -259,9 +244,15 @@ export default function FileBrowserPanel({
     },
     paths: [],
     search: false,
-    unsafeCSS: TREE_UNSAFE_CSS,
+    unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
   });
   const search = useFileTreeSearch(model);
+  const allDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
+    areAllDirectoriesExpanded(currentModel, directoryPaths),
+  );
+  const toggleAllDirectories = () => {
+    setAllDirectoriesExpanded(model, directoryPaths, !allDirectoriesExpanded);
+  };
   const handleSearchValueChange = (value: string) => {
     if (value.trim().length === 0) {
       search.close();
@@ -273,13 +264,25 @@ export default function FileBrowserPanel({
     entriesQuery.refresh();
     onRefreshSelectedFile?.();
   };
+  useWorkspaceMutationRefresh({
+    mutationId: workspaceMutationId,
+    refresh: entriesQuery.refresh,
+    resourceKey: `files:${environmentId}:${cwd}`,
+  });
 
   useEffect(() => {
+    if (entriesQuery.data === null) return;
     if (previousTreePathsRef.current === treePaths) return;
     entryKindsRef.current = entryKinds;
+    const previousTreePaths = previousTreePathsRef.current;
     previousTreePathsRef.current = treePaths;
-    model.resetPaths(treePaths);
-  }, [entryKinds, model, treePaths]);
+    if (previousTreePaths === null) {
+      model.resetPaths(treePaths);
+      return;
+    }
+    const updates = buildFileTreePathUpdates(previousTreePaths, treePaths);
+    if (updates.length > 0) model.batch(updates);
+  }, [entriesQuery.data, entryKinds, model, treePaths]);
 
   useEffect(() => {
     if (!selectedPath) {
@@ -370,29 +373,52 @@ export default function FileBrowserPanel({
       data-file-browser-panel={`${environmentId}:${cwd}`}
     >
       <div
-        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
+        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-1 in-data-[preview-panel-mode=inline]:h-9 in-data-[preview-panel-mode=inline]:min-h-9 in-data-[preview-panel-mode=inline]:border-b-transparent"
         data-surface-subheader
       >
         <RefreshFilesButton isPending={entriesQuery.isPending} onRefresh={handleRefresh} />
         <FileSearchField
           name="project-files-search"
-          ariaLabel={translate("browser.files.searchProject", { project: projectName })}
+          ariaLabel={`Search ${projectName} files`}
           value={search.value}
           onValueChange={handleSearchValueChange}
           onClose={search.close}
         />
+        {directoryPaths.length > 0 ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-label={
+                    allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"
+                  }
+                  onClick={toggleAllDirectories}
+                />
+              }
+            >
+              {allDirectoriesExpanded ? (
+                <ChevronsDownUpIcon className="size-3.5" />
+              ) : (
+                <ChevronsUpDownIcon className="size-3.5" />
+              )}
+            </TooltipTrigger>
+            <TooltipPopup>
+              {allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
       </div>
       {entriesQuery.error && entriesQuery.data === null ? (
         <div className="p-4 text-xs leading-relaxed text-destructive">{entriesQuery.error}</div>
       ) : (
         <FileTree
           model={model}
-          aria-label={translate("browser.files.projectFiles", { project: projectName })}
+          aria-label={`${projectName} files`}
           className="min-h-0 flex-1 overflow-hidden"
-          style={{
-            colorScheme: resolvedTheme,
-            ["--trees-fg-override" as string]: "var(--contrast-foreground)",
-          }}
+          style={pierreTreeStyle(resolvedTheme)}
         />
       )}
     </div>

@@ -23,13 +23,13 @@ const invoke = Effect.fn("CoordinationToolkit.invoke")(function* <A>(
 export const invokeProjectAgentList = () =>
   invoke((coordinator, threadId) => coordinator.list(threadId));
 
-export const invokeProjectAgentClaim = (input: ProjectAgentClaimSetInput) =>
+const invokeProjectAgentClaim = (input: ProjectAgentClaimSetInput) =>
   invoke((coordinator, threadId) => coordinator.claim(threadId, input));
 
-export const invokeProjectAgentSend = (input: ProjectAgentMessageSendInput) =>
+const invokeProjectAgentSend = (input: ProjectAgentMessageSendInput) =>
   invoke((coordinator, threadId) => coordinator.send(threadId, input));
 
-export const invokeProjectAgentInbox = (input: ProjectAgentInboxInput) =>
+const invokeProjectAgentInbox = (input: ProjectAgentInboxInput) =>
   invoke((coordinator, threadId) => coordinator.inbox(threadId, input));
 
 export const CoordinationToolkitHandlersLive = CoordinationToolkit.toLayer({

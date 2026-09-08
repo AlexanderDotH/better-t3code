@@ -1,34 +1,19 @@
 import { useEffect, useRef } from "react";
 
 import { type SlowRpcAckRequest, useSlowRpcAckRequests } from "../rpc/requestLatencyState";
-import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
-import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 import { toastManager } from "./ui/toast";
 
-function describeSlowRequests(
-  requests: ReadonlyArray<SlowRpcAckRequest>,
-  translator: InterfaceTranslator,
-): string {
+function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): string {
   const count = requests.length;
   // Thresholds vary per method, so report the smallest one the batch has passed.
   const thresholdSeconds = Math.round(
     Math.min(...requests.map((request) => request.thresholdMs)) / 1000,
   );
 
-  return translator.message("ui.slowRequests.description", {
-    count,
-    formattedCount: translator.number(count),
-    seconds: translator.number(thresholdSeconds),
-  });
+  return `${count} request${count === 1 ? "" : "s"} waiting longer than ${thresholdSeconds}s.`;
 }
 
-function SlowRequestDetails({
-  requests,
-  translator,
-}: {
-  requests: ReadonlyArray<SlowRpcAckRequest>;
-  translator: InterfaceTranslator;
-}) {
+function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRequest> }) {
   return (
     <ul className="space-y-2.5 text-xs text-muted-foreground">
       {requests.map((request) => (
@@ -38,9 +23,7 @@ function SlowRequestDetails({
         >
           <div className="wrap-break-word font-medium text-foreground">{request.tag}</div>
           <div className="mt-0.5 text-[10px] opacity-75">
-            {translator.message("ui.slowRequests.started", {
-              time: translator.date(new Date(request.startedAt), { timeStyle: "short" }),
-            })}
+            Started {new Date(request.startedAt).toLocaleTimeString()}
           </div>
         </li>
       ))}
@@ -49,7 +32,6 @@ function SlowRequestDetails({
 }
 
 export function SlowRpcRequestToastCoordinator() {
-  const translator = useInterfaceTranslator();
   const slowRequests = useSlowRpcAckRequests();
   const toastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
 
@@ -64,16 +46,13 @@ export function SlowRpcRequestToastCoordinator() {
 
     const nextToast = {
       data: {
-        expandableContent: <SlowRequestDetails requests={slowRequests} translator={translator} />,
+        expandableContent: <SlowRequestDetails requests={slowRequests} />,
         expandableDescriptionTrigger: true,
-        expandableLabels: {
-          collapse: translator.message("ui.slowRequests.hide"),
-          expand: translator.message("ui.slowRequests.show"),
-        },
+        expandableLabels: { collapse: "Hide requests", expand: "Show requests" },
       },
-      description: describeSlowRequests(slowRequests, translator),
+      description: describeSlowRequests(slowRequests),
       timeout: 0,
-      title: translator.message("ui.slowRequests.title"),
+      title: "Some requests are slow",
       type: "warning" as const,
     };
 
@@ -82,7 +61,7 @@ export function SlowRpcRequestToastCoordinator() {
     } else {
       toastManager.update(toastIdRef.current, nextToast);
     }
-  }, [slowRequests, translator]);
+  }, [slowRequests]);
 
   useEffect(
     () => () => {

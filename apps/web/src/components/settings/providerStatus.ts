@@ -1,7 +1,4 @@
 import type { ServerProvider, ServerProviderVersionAdvisory } from "@t3tools/contracts";
-import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
-
-type TranslateMessage = InterfaceTranslator["message"];
 
 /**
  * Visual treatment for each server-reported provider status. Centralized so
@@ -29,60 +26,58 @@ export type ProviderStatusKey = keyof typeof PROVIDER_STATUS_STYLES;
  * settings page. Prefers `provider.message` for server-supplied detail and
  * falls back to generic phrasing when the server has not yet reported any
  * state — which happens before the first probe or when an instance names a
- * driver this build does not ship.
+ * driver this build does not ship. A ready provider without account metadata
+ * remains available and does not imply an authentication failure.
  */
-export function getProviderSummary(
-  provider: ServerProvider | undefined,
-  translate: TranslateMessage,
-) {
+export function getProviderSummary(provider: ServerProvider | undefined) {
   if (!provider) {
     return {
-      headline: translate("settings.providers.status.checking"),
-      detail: translate("settings.providers.status.waiting"),
+      headline: "Checking provider status",
+      detail: "Waiting for the server to report installation and authentication details.",
     };
   }
-  if (!provider.enabled) {
+  if (!provider.enabled || provider.status === "disabled") {
     return {
-      headline: translate("settings.providers.status.disabled"),
-      detail: provider.message ?? translate("settings.providers.status.disabledDetail"),
+      headline: "Disabled",
+      detail:
+        provider.message ?? "This provider is installed but disabled for new sessions in T3 Code.",
     };
   }
   if (!provider.installed) {
     return {
-      headline: translate("settings.providers.status.notFound"),
-      detail: provider.message ?? translate("settings.providers.status.cliMissing"),
-    };
-  }
-  if (provider.auth.status === "authenticated") {
-    const authLabel = provider.auth.label ?? provider.auth.type;
-    return {
-      headline: authLabel
-        ? translate("settings.providers.status.authenticatedWith", { label: authLabel })
-        : translate("settings.providers.status.authenticated"),
-      detail: provider.message ?? null,
+      headline: "Not found",
+      detail: provider.message ?? "CLI not detected on PATH.",
     };
   }
   if (provider.auth.status === "unauthenticated") {
     return {
-      headline: translate("settings.providers.status.notAuthenticated"),
+      headline: "Not authenticated",
       detail: provider.message ?? null,
     };
   }
   if (provider.status === "warning") {
     return {
-      headline: translate("settings.providers.status.needsAttention"),
-      detail: provider.message ?? translate("settings.providers.status.verificationFailed"),
+      headline: "Needs attention",
+      detail:
+        provider.message ?? "The provider is installed, but the server could not fully verify it.",
     };
   }
   if (provider.status === "error") {
     return {
-      headline: translate("settings.providers.status.unavailable"),
-      detail: provider.message ?? translate("settings.providers.status.startupFailed"),
+      headline: "Unavailable",
+      detail: provider.message ?? "The provider failed its startup checks.",
+    };
+  }
+  if (provider.auth.status === "authenticated") {
+    const authLabel = provider.auth.label ?? provider.auth.type;
+    return {
+      headline: authLabel ? `Authenticated · ${authLabel}` : "Authenticated",
+      detail: provider.message ?? null,
     };
   }
   return {
-    headline: translate("settings.providers.status.available"),
-    detail: provider.message ?? translate("settings.providers.status.authUnknown"),
+    headline: "Available",
+    detail: provider.message ?? null,
   };
 }
 
@@ -93,12 +88,19 @@ export function getProviderSummary(
  */
 export function getProviderVersionLabel(version: string | null | undefined) {
   if (!version) return null;
-  return version.startsWith("v") ? version : `v${version}`;
+  // Antigravity reports a release tag such as `agy_acp_server_20260818_01_RC01`.
+  // Show the date and candidate so the row title keeps room for the name.
+  const antigravity = /^agy_acp_server_(\d{4})(\d{2})(\d{2})_\d+(?:_(\w+))?$/.exec(version);
+  if (antigravity) {
+    const [, year, month, day, candidate] = antigravity;
+    return `${year}-${month}-${day}${candidate ? ` ${candidate}` : ""}`;
+  }
+  // Only bare semver-like versions get a `v` prefix. Other tags are shown as-is.
+  return /^\d/.test(version) ? `v${version}` : version;
 }
 
 export function getProviderVersionAdvisoryPresentation(
   advisory: ServerProviderVersionAdvisory | undefined,
-  translate: TranslateMessage,
 ): {
   readonly detail: string;
   readonly updateCommand: string | null;
@@ -108,6 +110,7 @@ export function getProviderVersionAdvisoryPresentation(
     return null;
   }
 
+  const label = "Update available";
   const version = advisory.latestVersion;
   const versionLabel = getProviderVersionLabel(version);
 
@@ -115,8 +118,8 @@ export function getProviderVersionAdvisoryPresentation(
     detail:
       advisory.message ??
       (versionLabel
-        ? translate("settings.providers.update.installVersion", { version: versionLabel })
-        : translate("settings.providers.update.installLatest")),
+        ? `${label}: install ${versionLabel}.`
+        : `${label}: install the latest provider version.`),
     updateCommand: advisory.updateCommand,
     emphasis: "normal" as const,
   };

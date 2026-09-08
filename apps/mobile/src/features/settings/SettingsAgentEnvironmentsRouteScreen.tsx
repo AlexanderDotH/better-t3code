@@ -1,3 +1,4 @@
+import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import { type EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -16,25 +17,14 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Alert,
-  Linking,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  Switch,
-  TextInput,
-  View,
-} from "react-native";
+import { Alert, Linking, Modal, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { cn } from "../../lib/cn";
 import { buildModelOptions, type ModelOption } from "../../lib/modelOptions";
-import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { agentSettingsEnvironment } from "../../state/agent-settings";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
@@ -64,9 +54,11 @@ import {
   EnvironmentSpeechProfileSettings,
 } from "./SettingsEnvironmentDataSections";
 
-function failureMessage(result: { readonly _tag: string }, fallback: string): string {
-  if (result._tag !== "Failure") return fallback;
-  const error = squashAtomCommandFailure(result as never);
+function failureMessage(
+  result: Parameters<typeof squashAtomCommandFailure>[0],
+  fallback: string,
+): string {
+  const error = squashAtomCommandFailure(result);
   return error instanceof Error ? error.message : fallback;
 }
 
@@ -94,7 +86,6 @@ export function ModelSelectionModal(props: {
 }) {
   const translator = useMobileInterfaceTranslator();
   const insets = useSafeAreaInsets();
-  const checkmarkColor = useUniwindTheme()["--color-icon"];
   const options = useMemo(() => {
     const available = buildModelOptions(props.config, props.current);
     return props.optionPredicate ? available.filter(props.optionPredicate) : available;
@@ -140,7 +131,7 @@ export function ModelSelectionModal(props: {
           <SymbolView
             name="checkmark"
             size={17}
-            tintColor={checkmarkColor}
+            tintColorClassName="accent-icon"
             type="monochrome"
             weight="semibold"
           />
@@ -217,16 +208,13 @@ function InlineSettingsSwitch(props: {
   readonly value: boolean;
   readonly onValueChange: (value: boolean) => void;
 }) {
-  const theme = useUniwindTheme();
-  const activeTrack = theme["--color-switch-active"];
-  const track = theme["--color-secondary-border"];
   return (
-    <Switch
+    <ThemedSwitch
       accessibilityLabel={props.label}
       disabled={props.disabled}
-      ios_backgroundColor={track}
+
       onValueChange={props.onValueChange}
-      trackColor={{ false: track, true: activeTrack }}
+
       value={props.value}
     />
   );
@@ -410,7 +398,6 @@ function MobileProviderAuthentication(props: {
     ? mobileProviderAuthEventPresentation(event, presentation.providerLabel)
     : null;
   const rateLimit = providerRateLimitLabel(props.provider.rateLimit);
-  const placeholderTextColor = useUniwindTheme()["--color-foreground-muted"];
 
   const refresh = useCallback(async () => {
     await refreshProviders({ environmentId: props.environmentId, input: {} });
@@ -517,7 +504,7 @@ function MobileProviderAuthentication(props: {
               presentation.credentialPlaceholder ??
               translator.message("mobile.settings.agents.apiKey")
             }
-            placeholderTextColor={placeholderTextColor}
+
             secureTextEntry
             value={credentialDraft}
             className="rounded-2xl bg-subtle px-4 py-3 text-base text-foreground"
@@ -849,7 +836,6 @@ function EnvironmentAgentSettings(props: {
   });
   const authSession = useAtomValue(environmentSession.sessionStateValueAtom(props.environmentId));
   const [assemblyAiKey, setAssemblyAiKey] = useState("");
-  const placeholderTextColor = useUniwindTheme()["--color-foreground-muted"];
 
   const updateSettings = useCallback(
     async (patch: ServerSettingsPatch, label: string): Promise<boolean> => {
@@ -1004,7 +990,7 @@ function EnvironmentAgentSettings(props: {
             placeholder={
               keyConfigured ? translator.message("mobile.settings.agents.savedApiKey") : "aai_..."
             }
-            placeholderTextColor={placeholderTextColor}
+
             secureTextEntry
             value={assemblyAiKey}
             className="rounded-2xl bg-subtle px-4 py-3 text-base text-foreground"

@@ -19,7 +19,7 @@ const dependencies = [
   ProjectAgentCoordinator.ProjectAgentCoordinator,
 ];
 
-export const ProjectAgentListTool = Tool.make("project_agent_list", {
+const ProjectAgentListTool = Tool.make("project_agent_list", {
   description:
     "List this authenticated thread plus active and recent offline peer chats in the same T3 project, including their current work claims and this project's inbox counts. Use before starting overlapping work and at safe checkpoints.",
   parameters: ProjectAgentListInput,
@@ -33,7 +33,7 @@ export const ProjectAgentListTool = Tool.make("project_agent_list", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
-export const ProjectAgentClaimTool = Tool.make("project_agent_claim", {
+const ProjectAgentClaimTool = Tool.make("project_agent_claim", {
   description:
     "Set or release this authenticated thread's turn-scoped cooperative work claims. Set replaces the complete claim set atomically and reports overlaps without changing the previous lease.",
   parameters: ProjectAgentClaimSetInput,
@@ -47,7 +47,7 @@ export const ProjectAgentClaimTool = Tool.make("project_agent_claim", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
-export const ProjectAgentSendTool = Tool.make("project_agent_send", {
+const ProjectAgentSendTool = Tool.make("project_agent_send", {
   description:
     "Send a durable coordination message in this authenticated thread's project. Broadcast reaches active peers only; a direct message may target an offline peer and atomically wakes that peer's existing chat with a new turn.",
   parameters: ProjectAgentMessageSendInput,
@@ -61,7 +61,7 @@ export const ProjectAgentSendTool = Tool.make("project_agent_send", {
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, false);
 
-export const ProjectAgentInboxTool = Tool.make("project_agent_inbox", {
+const ProjectAgentInboxTool = Tool.make("project_agent_inbox", {
   description:
     "Read this authenticated thread's durable project-agent inbox and optionally acknowledge the cursor returned by an earlier call. Check at safe work checkpoints; messages never steer a running turn automatically.",
   parameters: ProjectAgentInboxInput,

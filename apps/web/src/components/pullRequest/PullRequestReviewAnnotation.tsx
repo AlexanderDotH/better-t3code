@@ -21,7 +21,6 @@ import { useRef, useState } from "react";
 
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { cn } from "~/lib/utils";
-import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
@@ -66,7 +65,6 @@ export function PendingReviewCommentCard({
   comment: PendingReviewComment;
   onRemove: () => void;
 }) {
-  const translate = useInterfaceTranslator().message;
   return (
     <div
       className={cn(CARD_CLASS, "border-dashed")}
@@ -75,12 +73,12 @@ export function PendingReviewCommentCard({
     >
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <MessageSquareIcon className="size-3.5" />
-        <span>{translate("pullRequest.thread.pendingReview")}</span>
+        <span>Pending — sent when you submit the review</span>
         <Button
           size="icon-xs"
           variant="ghost"
           className="ml-auto"
-          aria-label={translate("pullRequest.discardComment")}
+          aria-label="Discard this comment"
           onClick={onRemove}
         >
           <Trash2Icon className="size-3.5" />
@@ -102,7 +100,7 @@ export function ReviewThreadCard({
   reference,
   pending,
   fixPending,
-  fixLabel,
+  fixLabel = "Fix in a thread",
   onFix,
   onReply,
   onLoadMore,
@@ -135,8 +133,6 @@ export function ReviewThreadCard({
   onToggleResolved: () => void;
   onReacted: () => void;
 }) {
-  const translate = useInterfaceTranslator().message;
-  const resolvedFixLabel = fixLabel ?? translate("pullRequest.thread.fix");
   // A resolved thread is finished work, so it opens collapsed and stays one line until asked for.
   const [expanded, setExpanded] = useState(!thread.isResolved);
   const [replying, setReplying] = useState(false);
@@ -234,13 +230,10 @@ export function ReviewThreadCard({
           aria-expanded={expanded}
           onClick={() => setExpanded((current) => !current)}
         >
-          {thread.isResolved
-            ? translate("pullRequest.thread.resolved")
-            : translate("pullRequest.thread.open")}{" "}
-          {" · "}
-          {translate("pullRequest.thread.commentCount", { count: commentCount })}
+          {thread.isResolved ? "Resolved" : "Open"} · {commentCount}{" "}
+          {commentCount === 1 ? "comment" : "comments"}
         </button>
-        {thread.isOutdated ? <span>{translate("pullRequest.outdated")}</span> : null}
+        {thread.isOutdated ? <span>outdated</span> : null}
         {onFix ? (
           <Button
             size="xs"
@@ -250,7 +243,7 @@ export function ReviewThreadCard({
             onClick={onFix}
           >
             <HammerIcon className="size-3" />
-            {fixPending ? translate("pullRequest.thread.preparing") : resolvedFixLabel}
+            {fixPending ? "Preparing..." : fixLabel}
           </Button>
         ) : null}
         {canResolve ? (
@@ -261,9 +254,7 @@ export function ReviewThreadCard({
             disabled={pending}
             onClick={onToggleResolved}
           >
-            {thread.isResolved
-              ? translate("pullRequest.thread.unresolve")
-              : translate("pullRequest.thread.resolve")}
+            {thread.isResolved ? "Unresolve" : "Resolve"}
           </Button>
         ) : null}
       </div>
@@ -283,7 +274,7 @@ export function ReviewThreadCard({
                     value={comment.body}
                     cwd={workspaceRoot}
                     environmentId={environmentId}
-                    label={translate("pullRequest.editComment")}
+                    label="Edit comment"
                     saving={savingEdit}
                     onSave={(body) => void saveEdit(comment.id, body)}
                     onCancel={() => setEditingId(null)}
@@ -301,7 +292,7 @@ export function ReviewThreadCard({
                         size="icon-xs"
                         variant="ghost"
                         className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
-                        aria-label={translate("pullRequest.editComment")}
+                        aria-label="Edit comment"
                         onClick={() => setEditingId(comment.id)}
                       >
                         <PencilIcon className="size-3" />
@@ -330,9 +321,7 @@ export function ReviewThreadCard({
                 disabled={loadingMore}
                 onClick={() => void loadMore()}
               >
-                {loadingMore
-                  ? translate("git.common.loading")
-                  : translate("pullRequest.thread.loadMore")}
+                {loadingMore ? "Loading..." : "Load more comments"}
               </Button>
             </div>
           ) : null}
@@ -344,8 +333,8 @@ export function ReviewThreadCard({
                   autoFocus
                   size="sm"
                   value={reply}
-                  placeholder={translate("pullRequest.reply")}
-                  aria-label={translate("pullRequest.replyAria")}
+                  placeholder="Reply"
+                  aria-label="Reply to this conversation"
                   onChange={(event) => setReply(event.target.value)}
                   onKeyDown={submitKeys({
                     value: reply,
@@ -356,14 +345,14 @@ export function ReviewThreadCard({
                 />
                 <div className="mt-2 flex justify-end gap-2">
                   <Button size="xs" variant="ghost" onClick={() => setReplying(false)}>
-                    {translate("git.common.cancel")}
+                    Cancel
                   </Button>
                   <Button
                     size="xs"
                     disabled={pending || reply.trim().length === 0}
                     onClick={() => void send()}
                   >
-                    {translate("pullRequest.reply")}
+                    Reply
                   </Button>
                 </div>
               </div>
@@ -374,7 +363,7 @@ export function ReviewThreadCard({
                 className="mt-2 px-1"
                 onClick={() => setReplying(true)}
               >
-                {translate("pullRequest.reply")}
+                Reply
               </Button>
             )
           ) : null}

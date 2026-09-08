@@ -36,7 +36,7 @@ export const T3ChatImportRunResult = Schema.Struct({
 });
 export type T3ChatImportRunResult = typeof T3ChatImportRunResult.Type;
 
-export class T3ChatImportError extends Schema.TaggedErrorClass<T3ChatImportError>()(
+export class T3ChatImportError extends Schema.TaggedError<T3ChatImportError>()(
   "T3ChatImportError",
   {
     message: TrimmedNonEmptyString,

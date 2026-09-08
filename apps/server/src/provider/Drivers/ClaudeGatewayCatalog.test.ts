@@ -72,7 +72,10 @@ describe("ClaudeGatewayCatalog", () => {
       it.effect("builds exact effort and Fast capabilities", () =>
         Effect.gen(function* () {
           const bothStarted = yield* Deferred.make<void>();
-          const requests: Array<{ readonly url: string; readonly authorization?: string }> = [];
+          const requests: Array<{
+            readonly url: string;
+            readonly authorization?: string | undefined;
+          }> = [];
           const client = HttpClient.make((request) => {
             requests.push({
               url: request.url,
@@ -171,7 +174,9 @@ describe("ClaudeGatewayCatalog", () => {
             },
             { id: "fastMode", label: "Fast Mode", type: "boolean", currentValue: true },
           ]);
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
           expect(JSON.stringify(catalog)).not.toContain("instance-token");
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect the complete serialized value so encoding cannot hide leaked fields.
           expect(JSON.stringify(catalog)).not.toContain("settings-token");
         }),
       );
@@ -181,7 +186,7 @@ describe("ClaudeGatewayCatalog", () => {
   it.layer(NodeServices.layer)("configuration fallback", (it) => {
     it.effect("reads missing gateway values from the selected HOME settings", () =>
       Effect.gen(function* () {
-        const requests: Array<{ readonly url: string; readonly apiKey?: string }> = [];
+        const requests: Array<{ readonly url: string; readonly apiKey?: string | undefined }> = [];
         const client = HttpClient.make((request) => {
           requests.push({ url: request.url, apiKey: request.headers["x-api-key"] });
           return Effect.succeed(

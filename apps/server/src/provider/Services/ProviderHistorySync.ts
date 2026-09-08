@@ -117,7 +117,7 @@ export interface ProviderHistoryResumeBinding {
   readonly adapterKey?: string | undefined;
 }
 
-export class ProviderHistorySyncError extends Schema.TaggedErrorClass<ProviderHistorySyncError>()(
+export class ProviderHistorySyncError extends Schema.TaggedError<ProviderHistorySyncError>()(
   "ProviderHistorySyncError",
   {
     sourceId: Schema.String,
@@ -188,7 +188,7 @@ export function makeAlreadyLocalProviderHistorySync(input: {
   return { availability: "already-local", source: input.source, reason: input.reason };
 }
 
-export function makeProviderHistorySyncSource(input: {
+function makeProviderHistorySyncSource(input: {
   readonly sourceId: string;
   readonly continuationKey: string;
   readonly displayName: string;

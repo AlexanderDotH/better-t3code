@@ -1,5 +1,7 @@
-import { ProviderDriverKind, type ServerProviderModel } from "@t3tools/contracts";
-import { createModelCapabilities, normalizeModelSlug } from "@t3tools/shared/model";
+import { type ServerProviderModel } from "@t3tools/contracts";
+import { createModelCapabilities } from "@t3tools/shared/model";
+
+import { BUNDLED_CLAUDE_MODEL_CATALOG, resolveClaudeModelSlug } from "../ClaudeModelCatalog.ts";
 
 import {
   type ClaudeGatewayCatalog,
@@ -7,7 +9,6 @@ import {
   resolveClaudeGatewayDiscoveredModelProfile,
 } from "./ClaudeGatewayCatalog.ts";
 
-const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 const DEFAULT_DISCOVERED_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const OPAQUE_DISCOVERED_MODEL_IDS = new Set(["default"]);
 
@@ -52,7 +53,9 @@ export function resolveClaudeDiscoveredModels(
     if (!rawModelId) continue;
 
     const gatewayProfile = resolveGatewayProfile(gatewayCatalog, discovered);
-    const slug = gatewayProfile ? rawModelId : normalizeModelSlug(rawModelId, CLAUDE_PROVIDER);
+    const slug = gatewayProfile
+      ? rawModelId
+      : resolveClaudeModelSlug(BUNDLED_CLAUDE_MODEL_CATALOG, rawModelId);
     if (!slug || seen.has(slug)) continue;
 
     seen.add(slug);

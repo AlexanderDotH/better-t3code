@@ -8,11 +8,7 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 
-import {
-  deriveProviderModelsForDisplay,
-  ProviderInstanceCard,
-  shouldRenderProviderModelsSection,
-} from "./ProviderInstanceCard";
+import { deriveProviderModelsForDisplay, ProviderInstanceCard } from "./ProviderInstanceCard";
 
 describe("deriveProviderModelsForDisplay", () => {
   it("uses current config custom models instead of stale live custom rows", () => {
@@ -40,9 +36,50 @@ describe("deriveProviderModelsForDisplay", () => {
     expect(
       deriveProviderModelsForDisplay({
         liveModels,
-        customModels: ["kept-custom"],
+        customModels: [{ slug: "kept-custom", name: "kept-custom", capabilities: null }],
       }).map((model) => model.slug),
     ).toEqual(["server-model", "kept-custom"]);
+  });
+
+  it("prefers the entry's name and capabilities over the stale live custom row", () => {
+    const liveCapabilities = { optionDescriptors: [] };
+    const customCapabilities = {
+      optionDescriptors: [
+        {
+          id: "reasoningEffort",
+          label: "Reasoning",
+          type: "select" as const,
+          options: [{ id: "high", label: "High", isDefault: true }],
+          currentValue: "high",
+        },
+      ],
+    };
+    const liveModels: ReadonlyArray<ServerProviderModel> = [
+      { slug: "bare", name: "bare", isCustom: true, capabilities: liveCapabilities },
+      { slug: "named", name: "named", isCustom: true, capabilities: liveCapabilities },
+    ];
+
+    const display = deriveProviderModelsForDisplay({
+      liveModels,
+      customModels: [
+        { slug: "bare", name: "bare", capabilities: null },
+        { slug: "named", name: "My Model", capabilities: customCapabilities },
+      ],
+    });
+
+    // A bare entry keeps the driver default the server filled in.
+    expect(display[0]).toEqual({
+      slug: "bare",
+      name: "bare",
+      isCustom: true,
+      capabilities: liveCapabilities,
+    });
+    expect(display[1]).toEqual({
+      slug: "named",
+      name: "My Model",
+      isCustom: true,
+      capabilities: customCapabilities,
+    });
   });
 
   it("shows a redacted provider email in the editor header status line", () => {
@@ -122,15 +159,5 @@ describe("deriveProviderModelsForDisplay", () => {
       expect(markup).toContain("Unavailable");
       expect(markup).toContain("is not a symlink");
     }
-  });
-});
-
-describe("shouldRenderProviderModelsSection", () => {
-  it("keeps the catalog manager out of OpenRouter settings", () => {
-    expect(shouldRenderProviderModelsSection(ProviderDriverKind.make("openrouter"))).toBe(false);
-  });
-
-  it.each(["codex", "gemini"] as const)("preserves the catalog manager for %s", (driver) => {
-    expect(shouldRenderProviderModelsSection(ProviderDriverKind.make(driver))).toBe(true);
   });
 });

@@ -6,7 +6,7 @@ The graph is optional and starts disabled on new installations.
 
 ## Enable and open the graph
 
-Open **Settings > Better T3 > Knowledge and automation**, then enable **Knowledge Graph**. T3 Code begins indexing every project registered in the connected environment, including known worktrees. Each worktree has its own graph. A project whose root is your entire home directory or a filesystem root remains usable for chats, but is not recursively indexed or watched; add a narrower project folder to use its graph.
+Open **Settings → Better T3 → Knowledge**, then enable **Knowledge Graph**. T3 Code begins indexing every project registered in the connected environment, including known worktrees. Each worktree has its own graph. A project whose root is your entire home directory or a filesystem root remains usable for chats, but is not recursively indexed or watched; add a narrower project folder to use its graph.
 
 Open the graph from a project or thread. On web and desktop it appears in the right panel. On phone and tablet it opens as a full-screen view.
 
@@ -29,7 +29,7 @@ Before the first nodes are available, the web and desktop panel shows what the s
 
 ## Deterministic and model-assisted indexing
 
-T3 Code always builds the deterministic part first from repository structure and source relationships. If you select a compatible model, it may add schema-validated semantic relationships. Model enrichment is queued and processed conservatively in the background. Rate limits pause that queue and resume it later without discarding pending work.
+T3 Code always builds the deterministic part first from repository structure and source relationships. If you select a compatible OpenAI model, it may add semantic relationships. Model enrichment is queued and processed conservatively in the background. Rate limits pause that queue and resume it later without discarding pending work.
 
 A graph may report that it is truncated when the repository exceeds a safety bound. This means T3 Code kept indexing and rendering within its documented limits, not that the repository was changed.
 
@@ -37,7 +37,8 @@ A graph may report that it is truncated when the repository exceeds a safety bou
 
 T3 Code watches eligible project files after the initial index. External edits that arrive while an update is running are coalesced into one follow-up update instead of repeatedly restarting the active work. Restarting the server recovers interrupted indexing state and background enrichment work.
 
-Use the controls in **Settings > Better T3 > Knowledge and automation** when needed:
+Use **Settings → Better T3 → Knowledge** to select a project, inspect progress, rebuild, or pause
+indexing. Open a thread's graph for its full controls, including Cancel and Clear:
 
 - **Pause** stops watching and background processing while retaining the graph and queue.
 - **Resume** reconciles the project again and continues queued work.

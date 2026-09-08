@@ -1,3 +1,4 @@
+import { ThreadId, TurnId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
@@ -12,8 +13,8 @@ it.layer(TurnQuiescenceNotifierLive)("TurnQuiescenceNotifier", (it) => {
       const second = yield* notifier.subscribe;
       const event = {
         type: "turn.processing.quiesced",
-        threadId: "thread-1",
-        turnId: "turn-1",
+        threadId: ThreadId.make("thread-1"),
+        turnId: TurnId.make("turn-1"),
         checkpointTurnCount: 3,
         createdAt: "2026-08-02T10:00:00.000Z",
       } as const;

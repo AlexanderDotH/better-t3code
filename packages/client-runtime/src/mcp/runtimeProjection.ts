@@ -1,6 +1,5 @@
 import type {
   McpRuntimeChange,
-  McpRuntimeServer,
   McpRuntimeSnapshot,
   McpRuntimeSnapshotInput,
 } from "@t3tools/contracts";
@@ -10,7 +9,7 @@ type RuntimeIdentity = Pick<
   "providerInstanceId" | "threadId" | "runtimeSessionId"
 >;
 
-export function matchesMcpRuntimeSelector(
+function matchesMcpRuntimeSelector(
   selector: McpRuntimeSnapshotInput,
   candidate: RuntimeIdentity,
 ): boolean {
@@ -86,10 +85,4 @@ export function applyMcpRuntimeChange(
       : current;
   }
   return applyServerRemoval(current, change);
-}
-
-export function mcpRuntimeServersByKey(
-  snapshot: McpRuntimeSnapshot,
-): ReadonlyMap<McpRuntimeServer["providerKey"], McpRuntimeServer> {
-  return new Map(snapshot.servers.map((server) => [server.providerKey, server]));
 }

@@ -36,7 +36,7 @@ import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { runtime } from "../../lib/runtime";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
-import { resolveMobileSidebarSettlingPreferences } from "../../persistence/mobile-preferences";
+import { AutoSettleSettingsRows } from "./AutoSettleSettingsRows";
 import {
   type AppUpdateCheckState,
   isAppUpdateCheckAvailable,
@@ -567,12 +567,6 @@ function ConfiguredSettingsRouteScreen() {
 
 function GeneralSettingsSection() {
   const translator = useMobileInterfaceTranslator();
-  const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
-  const { onMerge: autoSettleOnMerge } = resolveMobileSidebarSettlingPreferences(
-    AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : undefined,
-  );
-
   return (
     <SettingsSection title={translator.message("mobile.settings.section.general")}>
       <SettingsRow
@@ -585,17 +579,7 @@ function GeneralSettingsSection() {
         label={translator.message("mobile.settings.projectGrouping")}
         target="SettingsProjectGrouping"
       />
-      <SettingsSwitchRow
-        icon="arrow.triangle.branch"
-        label={translator.message("mobile.settings.autoSettleMergedThreads")}
-        value={autoSettleOnMerge}
-        onValueChange={(value) =>
-          savePreferences({
-            sidebarAutoSettleOnMerge: value,
-            autoSettleOnMerge: value,
-          })
-        }
-      />
+      <AutoSettleSettingsRows />
       <SettingsRow
         icon="chart.bar.xaxis"
         label={translator.message("mobile.settings.usage")}

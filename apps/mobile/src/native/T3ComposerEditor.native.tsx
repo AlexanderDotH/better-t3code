@@ -16,9 +16,9 @@ import { Image, StyleSheet } from "react-native";
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import { resolveMarkdownFileIcon } from "@t3tools/mobile-markdown-text/links";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
+import { resolveComposerEditorMetrics } from "./composerEditorMetrics";
 import { useNativePaste } from "../lib/useNativePaste";
 import { useFontFamily } from "../lib/useFontFamily";
-import { resolveComposerEditorMetrics } from "./composerEditorMetrics";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
 import {
   acknowledgeComposerNativeEvent,
@@ -75,7 +75,6 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly onComposerPasteImages?: (event: NativePasteImagesEvent) => void;
   readonly onComposerFocus?: () => void;
   readonly onComposerBlur?: () => void;
-  readonly onComposerSubmit?: () => void;
 }
 
 const NativeView = requireNativeView<NativeComposerEditorProps>(NATIVE_MODULE_NAME);
@@ -100,7 +99,6 @@ export function ComposerEditor({
   onPasteImages,
   onFocus,
   onBlur,
-  onSubmit,
   contentInsetVertical = 0,
   ...props
 }: ComposerEditorProps) {
@@ -116,7 +114,6 @@ export function ComposerEditor({
   const confirmedTokensRef = useRef(initialConfirmedTokens);
   const theme = useUniwindTheme();
   const handlePaste = useNativePaste((uris) => onPasteImages?.(uris));
-  const bodyText = useScaledTextRole("body");
 
   useImperativeHandle(
     ref,
@@ -227,6 +224,7 @@ export function ComposerEditor({
     fileTint: theme["--color-icon-muted"],
   });
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};
+  const bodyText = useScaledTextRole("body");
   const resolvedMetrics = resolveComposerEditorMetrics(resolvedTextStyle, bodyText);
   const regularFontFamily = useFontFamily("regular");
   return (
@@ -245,7 +243,7 @@ export function ComposerEditor({
         lineHeight={resolvedMetrics.lineHeight}
         contentInsetVertical={contentInsetVertical}
         singleLineCentered={props.singleLineCentered ?? false}
-        editable={props.editable ?? true}
+        editable={(props.editable ?? true) && !(props.readOnly ?? false)}
         scrollEnabled={props.scrollEnabled ?? true}
         autoFocus={props.autoFocus ?? false}
         autoCorrect={props.autoCorrect ?? true}
@@ -285,7 +283,6 @@ export function ComposerEditor({
         onComposerPasteImages={(event) => onPasteImages?.(event.nativeEvent.uris)}
         onComposerFocus={onFocus}
         onComposerBlur={onBlur}
-        onComposerSubmit={onSubmit}
       />
     </TextInputWrapper>
   );

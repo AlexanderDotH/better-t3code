@@ -114,7 +114,7 @@ function sameProcessStartTime(left: number, right: number): boolean {
   return Math.floor(left / 1_000) === Math.floor(right / 1_000);
 }
 
-export function collectProviderProcessTree(
+function collectProviderProcessTree(
   registration: { readonly pid: number; readonly startTimeMs: number | undefined },
   processes: ReadonlyArray<ResourceGovernorProcessSample>,
 ): ProviderProcessTreeSample {
@@ -207,7 +207,7 @@ export function providerProcessStartTimeMs(
   }
 }
 
-export class ProviderProcessSignalError extends Schema.TaggedErrorClass<ProviderProcessSignalError>()(
+export class ProviderProcessSignalError extends Schema.TaggedError<ProviderProcessSignalError>()(
   "ProviderProcessSignalError",
   {
     pid: Schema.Number,

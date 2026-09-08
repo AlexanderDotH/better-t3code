@@ -22,7 +22,7 @@ const ICON_TONE_CLASS_NAMES: Record<SubagentIndicatorTone, string> = {
   archived: "text-muted-foreground/50",
 };
 
-export function subagentIndicatorToneFromPresentation(
+function subagentIndicatorToneFromPresentation(
   presentation: SubagentStatusPresentation,
 ): SubagentIndicatorTone {
   if (presentation.tone === "progress") {

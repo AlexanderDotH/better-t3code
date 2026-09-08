@@ -17,7 +17,7 @@ const MAX_SAME_ORIGIN_REDIRECTS = 2;
 
 const decodeCurrentKeyResponse = HttpClientResponse.schemaBodyJson(Generated.GetCurrentKey200);
 
-export class OpenRouterKeyValidationError extends Schema.TaggedErrorClass<OpenRouterKeyValidationError>()(
+export class OpenRouterKeyValidationError extends Schema.TaggedError<OpenRouterKeyValidationError>()(
   "OpenRouterKeyValidationError",
   {
     code: Schema.Literals([

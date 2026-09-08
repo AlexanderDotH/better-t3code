@@ -1,30 +1,17 @@
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
-import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vite-plus/test";
-
-vi.mock("../../hooks/useInterfaceTranslator", () => ({
-  useInterfaceTranslator: () =>
-    createInterfaceTranslator({
-      language: "en",
-      locale: "en-US",
-    }),
-}));
+import { describe, expect, it } from "vite-plus/test";
 
 import {
-  ComposerActivityBanner,
-  ComposerActivityLabel,
-  ComposerActivityRow,
   composerActivityMessageId,
   composerActivityVariant,
+  formatWorkingTimer,
   resolveComposerActivityTokenUsage,
 } from "./ComposerActivityStatus";
-import { ComposerBanner } from "./ComposerBanner";
 
-describe("ComposerActivityStatus", () => {
-  it("maps every activity state to typed localized copy", () => {
+describe("composer activity status", () => {
+  it("distinguishes synchronization from active work in the selected interface language", () => {
     const german = createInterfaceTranslator({ language: "de", locale: "de-DE" }).message;
     const french = createInterfaceTranslator({ language: "fr", locale: "fr-FR" }).message;
-
     expect(german(composerActivityMessageId({ kind: "sync", phase: "loading" }))).toBe(
       "Nachrichten werden geladen...",
     );
@@ -37,85 +24,72 @@ describe("ComposerActivityStatus", () => {
     expect(french(composerActivityMessageId({ kind: "working", startedAt: "2026-08-30" }))).toBe(
       "Travaille depuis",
     );
-  });
-
-  it("renders the localized application label without changing activity data", () => {
-    const markup = renderToStaticMarkup(
-      <ComposerActivityLabel status={{ kind: "sync", phase: "loading" }} />,
-    );
-
-    expect(markup).toContain('data-composer-sync-status="loading"');
-    expect(markup).toContain("Loading messages...");
-  });
-
-  it("keeps sync blue while active work uses its own activity treatment", () => {
     expect(composerActivityVariant({ kind: "sync", phase: "loading" })).toBe("info");
     expect(composerActivityVariant({ kind: "working", startedAt: null })).toBe("activity");
   });
 
-  it("uses only a token snapshot emitted during the active turn", () => {
+  it("ignores stale token usage from the previous turn", () => {
     const snapshot = {
-      updatedAt: "2026-08-30T12:00:04.000Z",
-      inputTokens: 1_200,
-      lastInputTokens: 1_100,
+      updatedAt: "2026-08-30T12:00:04Z",
+      inputTokens: 1200,
+      lastInputTokens: 1100,
       outputTokens: 80,
       lastOutputTokens: 75,
     };
-
     expect(
-      resolveComposerActivityTokenUsage({
-        activeWorkStartedAt: "2026-08-30T12:00:00.000Z",
-        snapshot,
-      }),
-    ).toEqual({ inputTokens: 1_100, outputTokens: 75 });
+      resolveComposerActivityTokenUsage({ activeWorkStartedAt: "2026-08-30T12:00:00Z", snapshot }),
+    ).toEqual({ inputTokens: 1100, outputTokens: 75 });
     expect(
-      resolveComposerActivityTokenUsage({
-        activeWorkStartedAt: "2026-08-30T12:00:05.000Z",
-        snapshot,
-      }),
+      resolveComposerActivityTokenUsage({ activeWorkStartedAt: "2026-08-30T12:00:05Z", snapshot }),
     ).toEqual({ inputTokens: 0, outputTokens: 0 });
   });
 
-  it("uses prompt and agent icons for input and output tokens", () => {
-    const status = {
-      kind: "working" as const,
-      startedAt: null,
-      inputTokens: 1_200,
-      outputTokens: 75,
-    };
-    const markup = renderToStaticMarkup(
-      <ComposerBanner.FloatingGroup>
-        <ComposerBanner.Dock>
-          <ComposerActivityBanner status={status} />
-        </ComposerBanner.Dock>
-      </ComposerBanner.FloatingGroup>,
-    );
-
-    expect(markup).toContain('data-chat-composer-activity-strip="true"');
-    expect(markup).toContain('data-composer-banner-width="fill"');
-    expect(markup).toContain('data-variant="activity"');
-    expect(markup).toContain('data-composer-token-direction="input"');
-    expect(markup).toContain('data-composer-token-direction="output"');
-    expect(markup).toContain("lucide-message-square");
-    expect(markup).toContain("lucide-bot");
-    expect(markup).toContain("1.2k");
-    expect(markup).toContain("75");
-    expect(markup).toContain("Input");
-    expect(markup).toContain("Output");
+  it("falls back to cumulative token fields when the provider has no last-turn usage", () => {
+    expect(
+      resolveComposerActivityTokenUsage({
+        activeWorkStartedAt: "2026-08-30T12:00:00Z",
+        snapshot: {
+          updatedAt: "2026-08-30T12:00:00Z",
+          inputTokens: 200,
+          outputTokens: 45,
+          lastInputTokens: null,
+          lastOutputTokens: null,
+        },
+      }),
+    ).toEqual({ inputTokens: 200, outputTokens: 45 });
   });
 
-  it("keeps token metrics inside the normal activity row", () => {
-    const markup = renderToStaticMarkup(
-      <ComposerActivityRow
-        status={{
-          kind: "working",
-          startedAt: null,
-          inputTokens: 500,
-          outputTokens: 25,
-        }}
-      />,
-    );
+  it.each([null, "invalid timestamp"])(
+    "avoids misleading token counts when work start is %s",
+    (activeWorkStartedAt) => {
+      expect(
+        resolveComposerActivityTokenUsage({
+          activeWorkStartedAt,
+          snapshot: {
+            updatedAt: "2026-08-30T12:00:00Z",
+            inputTokens: 200,
+            outputTokens: 45,
+            lastInputTokens: 100,
+            lastOutputTokens: 25,
+          },
+        }),
+      ).toEqual({ inputTokens: 0, outputTokens: 0 });
+    },
+  );
 
-    expect(markup.match(/data-composer-token-direction=/g)).toHaveLength(2);
+  it.each([
+    ["2026-08-30T12:00:08Z", "8s"],
+    ["2026-08-30T12:01:00Z", "1m"],
+    ["2026-08-30T12:01:15Z", "1m 15s"],
+    ["2026-08-30T13:00:00Z", "1h"],
+    ["2026-08-30T13:02:00Z", "1h 2m"],
+    ["2026-08-30T11:59:00Z", "0s"],
+  ])("formats elapsed work at %s without negative durations", (end, expected) => {
+    expect(formatWorkingTimer("2026-08-30T12:00:00Z", end)).toBe(expected);
+  });
+
+  it("rejects invalid timer timestamps", () => {
+    expect(formatWorkingTimer("broken", "2026-08-30T12:00:00Z")).toBeNull();
+    expect(formatWorkingTimer("2026-08-30T12:00:00Z", "broken")).toBeNull();
   });
 });

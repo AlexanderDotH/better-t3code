@@ -2,11 +2,11 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   createEnvironmentThreadDetailAtoms,
   createEnvironmentSubagentStateAtoms,
+  EMPTY_ENVIRONMENT_SUBAGENT_STATE,
+  type EnvironmentSubagentState,
   createEnvironmentThreadShellAtoms,
   createEnvironmentThreadStateAtoms,
-  EMPTY_ENVIRONMENT_SUBAGENT_STATE,
   EMPTY_ENVIRONMENT_THREAD_STATE,
-  type EnvironmentSubagentState,
   type EnvironmentThreadState,
   createThreadEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/threads";
@@ -19,8 +19,8 @@ import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentSnapshotAtom } from "./shell";
 
 export const threadEnvironment = createThreadEnvironmentAtoms(connectionAtomRuntime);
-export const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime);
-export const environmentSubagents = createEnvironmentSubagentStateAtoms(connectionAtomRuntime);
+const environmentSubagents = createEnvironmentSubagentStateAtoms(connectionAtomRuntime);
+const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime);
 export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
   environmentThreads.stateAtom,
 );
@@ -32,9 +32,6 @@ export const environmentThreadShells = createEnvironmentThreadShellAtoms({
 const EMPTY_THREAD_STATE_ATOM = Atom.make(AsyncResult.success(EMPTY_ENVIRONMENT_THREAD_STATE)).pipe(
   Atom.withLabel("web-environment-thread:empty"),
 );
-const EMPTY_SUBAGENT_STATE_ATOM = Atom.make(
-  AsyncResult.success(EMPTY_ENVIRONMENT_SUBAGENT_STATE),
-).pipe(Atom.withLabel("web-environment-subagent:empty"));
 
 export function useEnvironmentThread(
   environmentId: EnvironmentId | null,
@@ -51,6 +48,8 @@ export function useEnvironmentThread(
   ) as EnvironmentThreadState;
 }
 
+const EMPTY_SUBAGENT_STATE_ATOM = Atom.make(AsyncResult.success(EMPTY_ENVIRONMENT_SUBAGENT_STATE));
+
 export function useEnvironmentSubagent(
   environmentId: EnvironmentId | null,
   threadId: ThreadId | null,
@@ -61,8 +60,5 @@ export function useEnvironmentSubagent(
       ? environmentSubagents.stateAtom(environmentId, threadId, subagentId)
       : EMPTY_SUBAGENT_STATE_ATOM,
   );
-  return Option.getOrElse(
-    AsyncResult.value(result),
-    () => EMPTY_ENVIRONMENT_SUBAGENT_STATE,
-  ) as EnvironmentSubagentState;
+  return Option.getOrElse(AsyncResult.value(result), () => EMPTY_ENVIRONMENT_SUBAGENT_STATE);
 }

@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import {
   ApprovalRequestId,
   ChatAttachment,
@@ -26,6 +26,7 @@ import {
   type ChatGptHarness,
   type ChatGptAdapterResponseRequest,
   type ChatGptAdapterTransport,
+  type ChatGptAdapterStreamEvent,
 } from "./ChatGptAdapter.ts";
 
 const testLayer = ServerConfig.layerTest(process.cwd(), {
@@ -33,6 +34,7 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
 }).pipe(Layer.provideMerge(NodeServices.layer));
 const decodeChatAttachment = Schema.decodeSync(ChatAttachment);
 const decodeMcpServer = Schema.decodeSync(McpServerDefinition);
+const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const noToolsHarness: ChatGptHarness = {
   declarations: () => Effect.succeed([]),
@@ -144,7 +146,7 @@ describe("ChatGptAdapter", () => {
 
         const beforeResume = yield* adapter.readThread(threadId);
         expect(beforeResume.turns).toHaveLength(1);
-        expect(JSON.stringify(beforeResume.turns)).toContain("Hello from ChatGPT.");
+        expect(encodeUnknownJson(beforeResume.turns)).toContain("Hello from ChatGPT.");
         yield* adapter.stopSession(threadId);
         yield* adapter.startSession({
           threadId,
@@ -251,7 +253,7 @@ describe("ChatGptAdapter", () => {
           ]),
           streamResponse: (request) => {
             requests.push(request);
-            return Stream.fromIterable(rounds.shift() ?? []);
+            return Stream.fromIterable<ChatGptAdapterStreamEvent>(rounds.shift() ?? []);
           },
           compact: () => Effect.die("Compaction is not expected in this test."),
         };
@@ -303,10 +305,10 @@ describe("ChatGptAdapter", () => {
           },
         ]);
         expect(requests).toHaveLength(2);
-        expect(JSON.stringify(requests[1]?.input)).toContain("function_call_output");
-        expect(JSON.stringify(requests[1]?.input)).toContain("notes.txt");
+        expect(encodeUnknownJson(requests[1]?.input)).toContain("function_call_output");
+        expect(encodeUnknownJson(requests[1]?.input)).toContain("notes.txt");
         const beforeResume = yield* adapter.readThread(threadId);
-        expect(JSON.stringify(beforeResume)).toContain("Done.");
+        expect(encodeUnknownJson(beforeResume)).toContain("Done.");
 
         yield* adapter.stopSession(threadId);
         yield* adapter.startSession({
@@ -371,7 +373,7 @@ describe("ChatGptAdapter", () => {
               ...fakeTransport({ requests }),
               streamResponse: (request) => {
                 requests.push(request);
-                return Stream.fromIterable(rounds.shift() ?? []);
+                return Stream.fromIterable<ChatGptAdapterStreamEvent>(rounds.shift() ?? []);
               },
             },
             harness: {
@@ -418,8 +420,8 @@ describe("ChatGptAdapter", () => {
         expect(executed.toSorted()).toEqual(["tool_a", "tool_b"]);
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(turnFiber);
-        expect(JSON.stringify(requests[1]?.input)).toContain("call-0");
-        expect(JSON.stringify(requests[1]?.input)).toContain("call-1");
+        expect(encodeUnknownJson(requests[1]?.input)).toContain("call-0");
+        expect(encodeUnknownJson(requests[1]?.input)).toContain("call-1");
       }),
     ).pipe(Effect.provide(testLayer)),
   );
@@ -474,7 +476,8 @@ describe("ChatGptAdapter", () => {
                   reasoningEfforts: ["medium"],
                 },
               ]),
-              streamResponse: () => Stream.fromIterable(rounds.shift() ?? []),
+              streamResponse: () =>
+                Stream.fromIterable<ChatGptAdapterStreamEvent>(rounds.shift() ?? []),
               compact: () => Effect.die("Compaction is not expected in this test."),
             },
             harness: {
@@ -522,7 +525,8 @@ describe("ChatGptAdapter", () => {
           .pipe(Effect.forkChild);
         const opened = yield* Fiber.join(requestFiber);
         expect(Option.isSome(opened)).toBe(true);
-        if (Option.isNone(opened) || opened.value.type !== "request.opened") return;
+        assert.isOk(Option.isSome(opened) && opened.value.type === "request.opened");
+        assert.isDefined(opened.value.requestId);
         expect(executed).toEqual([]);
 
         yield* adapter.respondToRequest(
@@ -577,6 +581,8 @@ describe("ChatGptAdapter", () => {
           _tag: "ProviderAdapterRequestError",
           method: "session/start",
         });
+        if (failure._tag !== "ProviderAdapterRequestError")
+          throw new Error(`Unexpected error: ${failure._tag}`);
         expect(failure.detail).toContain("at most 40 managed sessions");
       }),
     ).pipe(Effect.provide(testLayer)),
@@ -630,6 +636,8 @@ describe("ChatGptAdapter", () => {
           _tag: "ProviderAdapterRequestError",
           method: "session/prompt",
         });
+        if (failure._tag !== "ProviderAdapterRequestError")
+          throw new Error(`Unexpected error: ${failure._tag}`);
         expect(failure.detail).toContain("91 tools");
         expect(failure.detail).toContain("90-definition limit");
       }),
@@ -700,7 +708,7 @@ describe("ChatGptAdapter", () => {
         yield* adapter.sendTurn({ threadId, input: "x".repeat(800) });
 
         expect(compactedInputs).toHaveLength(1);
-        expect(JSON.stringify(requests.at(-1)?.input)).toContain("Compacted conversation.");
+        expect(encodeUnknownJson(requests.at(-1)?.input)).toContain("Compacted conversation.");
 
         const failingTransport: ChatGptAdapterTransport = {
           ...transport,
@@ -732,6 +740,8 @@ describe("ChatGptAdapter", () => {
           _tag: "ProviderAdapterRequestError",
           method: "responses/compact",
         });
+        if (failure._tag !== "ProviderAdapterRequestError")
+          throw new Error(`Unexpected error: ${failure._tag}`);
         expect(failure.detail).toContain("protocol drift");
       }),
     ).pipe(Effect.provide(testLayer)),
@@ -751,8 +761,10 @@ describe("ChatGptAdapter", () => {
           sizeBytes: 4,
         });
         yield* fileSystem.makeDirectory(config.attachmentsDir, { recursive: true });
+        const relativePath = attachmentRelativePath(attachment);
+        assert.isNotNull(relativePath);
         yield* fileSystem.writeFile(
-          path.join(config.attachmentsDir, attachmentRelativePath(attachment)),
+          path.join(config.attachmentsDir, relativePath),
           new Uint8Array([1, 2, 3, 4]),
         );
 
@@ -780,11 +792,11 @@ describe("ChatGptAdapter", () => {
           sandboxMode: "danger-full-access",
         });
         yield* adapter.sendTurn({ threadId, attachments: [attachment] });
-        expect(JSON.stringify(requests[0]?.input)).toContain("data:image/png;base64,AQIDBA==");
+        expect(encodeUnknownJson(requests[0]?.input)).toContain("data:image/png;base64,AQIDBA==");
         expect(reservations[0]?.attachmentBytes).toBe(4);
 
         yield* adapter.sendTurn({ threadId, input: "What was attached?" });
-        const continuedInput = JSON.stringify(requests[1]?.input);
+        const continuedInput = encodeUnknownJson(requests[1]?.input);
         expect(continuedInput).toContain("[Attached image: image.png");
         expect(continuedInput).not.toContain("data:image/png;base64");
       }),
@@ -908,6 +920,7 @@ describe("ChatGptAdapter", () => {
         const runtime = adapter.mcpRuntime;
         expect(runtime).toBeDefined();
         if (!runtime) return;
+        assert.isDefined(session.runtimeSessionId);
         const servers = yield* runtime.getSnapshot({
           providerInstanceId: instanceId,
           threadId,

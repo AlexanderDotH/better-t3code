@@ -325,6 +325,7 @@ export function createMobileBetterT3EnvironmentControlPatch(
 
 const MOBILE_AUTO_REASONING_EVALUATION_DRIVER_KINDS: ReadonlySet<string> = new Set([
   "codex",
+  "antigravity",
   "claudeAgent",
   "cursor",
   "grok",

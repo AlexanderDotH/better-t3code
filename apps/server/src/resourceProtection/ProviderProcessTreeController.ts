@@ -17,7 +17,7 @@ export interface ProviderProcessTreeLease {
   readonly processIdentities: ProviderProcessTreeIdentities;
 }
 
-export class ProviderProcessTreeControlError extends Schema.TaggedErrorClass<ProviderProcessTreeControlError>()(
+export class ProviderProcessTreeControlError extends Schema.TaggedError<ProviderProcessTreeControlError>()(
   "ProviderProcessTreeControlError",
   {
     operation: Schema.Literals(["suspend", "resume"]),

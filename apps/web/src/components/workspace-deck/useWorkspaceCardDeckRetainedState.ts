@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 import type {
   ActiveWorkspaceDeckMorph,
@@ -41,11 +41,19 @@ export function useWorkspaceCardDeckRetainedState<CardId extends string>(input: 
   const [collapsingCard, setCollapsingCard] = useState<CardId | null>(null);
   const [transition, setTransition] = useState<WorkspaceDeckTransition<CardId> | null>(null);
 
-  expandedCardRef.current = input.expandedCard;
-  activeCardRef.current = input.activeCard;
-  cardIdsRef.current = input.cardIds;
-  collapseCompleteCallbackRef.current = input.onExpandedCardCollapseComplete;
-  transitionRef.current = transition;
+  useLayoutEffect(() => {
+    expandedCardRef.current = input.expandedCard;
+    activeCardRef.current = input.activeCard;
+    cardIdsRef.current = input.cardIds;
+    collapseCompleteCallbackRef.current = input.onExpandedCardCollapseComplete;
+    transitionRef.current = transition;
+  }, [
+    input.activeCard,
+    input.cardIds,
+    input.expandedCard,
+    input.onExpandedCardCollapseComplete,
+    transition,
+  ]);
 
   return {
     activeCardRef,

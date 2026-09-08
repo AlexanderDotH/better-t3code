@@ -14,6 +14,7 @@ import * as Path from "effect/Path";
 
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
+import { resolveLinuxDesktopEntryName } from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
 import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
 
@@ -90,34 +91,21 @@ const DEVELOPMENT_APP_BASE_NAME = "T3 Code";
 const PACKAGED_APP_BASE_NAME = "Better T3 Code";
 const DESKTOP_SERVER_ENTRY = "apps/server/dist/bin.mjs";
 
-function unique<T>(values: Iterable<T>): T[] {
-  const seen = new Set<T>();
-  const next: T[] = [];
-  for (const value of values) {
-    if (seen.has(value)) {
-      continue;
-    }
-
-    seen.add(value);
-    next.push(value);
-  }
-
-  return next;
-}
-
 function resolvePackedAppRootCandidates(input: {
   readonly appPath: string;
   readonly resourcesPath: string;
   readonly path: Path.Path;
 }) {
-  return unique([
-    input.appPath,
-    input.path.join(input.appPath, "..", "app"),
-    input.path.join(input.resourcesPath, "app"),
-    input.path.join(input.resourcesPath, "app.asar"),
-    input.path.join(input.resourcesPath, "app.asar.unpacked"),
-    input.path.join(input.resourcesPath, "app.asar.unpacked", "app"),
-  ]);
+  return [
+    ...new Set([
+      input.appPath,
+      input.path.join(input.appPath, "..", "app"),
+      input.path.join(input.resourcesPath, "app"),
+      input.path.join(input.resourcesPath, "app.asar"),
+      input.path.join(input.resourcesPath, "app.asar.unpacked"),
+      input.path.join(input.resourcesPath, "app.asar.unpacked", "app"),
+    ]),
+  ];
 }
 
 const resolveDesktopAppRoot = Effect.fn("desktop.environment.resolveDesktopAppRoot")(
@@ -159,7 +147,7 @@ function resolveDesktopAppStageLabel(input: {
   return isNightlyDesktopVersion(input.appVersion) ? "Nightly" : "Alpha";
 }
 
-function resolveDesktopAppBranding(input: {
+export function resolveDesktopAppBranding(input: {
   readonly isDevelopment: boolean;
   readonly appVersion: string;
 }): DesktopAppBranding {
@@ -268,7 +256,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)",
   );
   const linuxDesktopEntryName = Option.getOrElse(config.desktopLinuxEntryNameOverride, () =>
-    isDevelopment ? "t3code-dev.desktop" : "t3code.desktop",
+    resolveLinuxDesktopEntryName(isDevelopment),
   );
   const linuxWmClass = Option.getOrElse(config.desktopLinuxWmClassOverride, () =>
     isDevelopment ? "t3code-dev" : "t3code",

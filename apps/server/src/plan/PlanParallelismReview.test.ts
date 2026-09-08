@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect } from "vite-plus/test";
 
@@ -44,6 +45,7 @@ const planTurnId = TurnId.make("turn-plan");
 const planUpdatedAt = "2026-07-31T12:00:00.000Z";
 const reviewerId = ProviderInstanceId.make("claude_reviewer");
 const implementationProviderId = ProviderInstanceId.make("codex_implementation");
+const isPlanParallelismReviewError = Schema.is(PlanParallelismReviewError);
 
 function makeThread(overrides: Partial<OrchestrationThread> = {}): OrchestrationThread {
   return {
@@ -107,6 +109,7 @@ function makeProject(): OrchestrationProjectShell {
     title: "Project",
     workspaceRoot: "/repo",
     defaultModelSelection: null,
+    checkpointsEnabled: true,
     scripts: [],
     createdAt: planUpdatedAt,
     updatedAt: planUpdatedAt,
@@ -148,7 +151,8 @@ function makeProviderInstance(input: {
     displayName: undefined,
     enabled: true,
     snapshot: {
-      maintenanceCapabilities: {},
+      resolveMaintenance: () => Effect.die("unused"),
+      applyUsageLimits: () => Effect.void,
       getSnapshot: Effect.succeed(snapshot),
       refresh: Effect.succeed(snapshot),
       streamChanges: Effect.die("unused") as never,
@@ -396,6 +400,7 @@ describe("PlanParallelismReview", () => {
       const error = yield* Fiber.join(fiber).pipe(Effect.flip);
       yield* Deferred.await(interrupted);
 
+      if (!isPlanParallelismReviewError(error)) throw error;
       expect(error.reason).toBe("timeout");
     }).pipe(Effect.provide(TestClock.layer())),
   );

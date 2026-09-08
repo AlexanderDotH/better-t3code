@@ -3,7 +3,6 @@ import type {
   ResourceMonitorProcessControlResultEvent,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
-import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -17,12 +16,12 @@ import {
   NativeTelemetryRequestTimedOut,
   NativeTelemetryStreamClosed,
   type PendingProcessControlRequest,
+  type NativeTelemetryClientError,
   canCommandNativeTelemetrySidecar,
   completePendingProcessControlRequest,
   canRequestNativeTelemetryRetry,
   commitCollectionControlUpdate,
   failPendingProcessControlRequests,
-  nativeTelemetrySupervisorFailureMessage,
   retainRecentNativeTelemetryFailures,
   resolveNativeSampleIntervalMs,
   synchronizeCollectionControlOnStart,
@@ -62,7 +61,7 @@ describe("resolveNativeSampleIntervalMs", () => {
     expect(resolveNativeSampleIntervalMs({ ...basePower, onBattery: "true" }, 0, 1)).toBe(1_000);
   });
 
-  it("keeps unknown background telemetry cheap but serves live diagnostics at 1Hz", () => {
+  it("slows background telemetry and serves live diagnostics at 1Hz", () => {
     const unknown: HostPowerSnapshot = {
       ...basePower,
       source: "unknown",
@@ -77,7 +76,9 @@ describe("resolveNativeSampleIntervalMs", () => {
         0,
       ),
     ).toBe(5_000);
-    expect(resolveNativeSampleIntervalMs(basePower, 0, 0)).toBe(1_000);
+    expect(resolveNativeSampleIntervalMs(basePower, 0, 0)).toBe(5_000);
+    expect(resolveNativeSampleIntervalMs(basePower, 1, 0)).toBe(1_000);
+    expect(resolveNativeSampleIntervalMs(basePower, 0, 0)).toBe(5_000);
   });
 });
 
@@ -125,7 +126,7 @@ describe("NativeTelemetryRequestTimedOut", () => {
 describe("process-control request correlation", () => {
   it.effect("completes only the request with the matching request and lease identity", () =>
     Effect.gen(function* () {
-      const deferred = yield* Deferred.make<void, NativeTelemetryProcessControlFailed>();
+      const deferred = yield* Deferred.make<void, NativeTelemetryClientError>();
       const pending = yield* Ref.make(
         new Map<string, PendingProcessControlRequest>([
           [
@@ -163,7 +164,7 @@ describe("process-control request correlation", () => {
 
   it.effect("fails a correlated request when the sidecar rejects the process identity", () =>
     Effect.gen(function* () {
-      const deferred = yield* Deferred.make<void, NativeTelemetryProcessControlFailed>();
+      const deferred = yield* Deferred.make<void, NativeTelemetryClientError>();
       const pending = yield* Ref.make(
         new Map<string, PendingProcessControlRequest>([
           [
@@ -190,7 +191,7 @@ describe("process-control request correlation", () => {
       const failure = yield* Deferred.await(deferred).pipe(Effect.flip);
 
       expect(failure).toBeInstanceOf(NativeTelemetryProcessControlFailed);
-      expect(failure.resumeRequired).toBe(true);
+      expect(failure).toMatchObject({ resumeRequired: true });
       expect(failure.message).toContain("process identity changed");
       expect((yield* Ref.get(pending)).size).toBe(0);
     }),
@@ -198,8 +199,8 @@ describe("process-control request correlation", () => {
 
   it.effect("fails and clears every pending request when the sidecar exits", () =>
     Effect.gen(function* () {
-      const suspend = yield* Deferred.make<void, NativeTelemetryExited>();
-      const resume = yield* Deferred.make<void, NativeTelemetryExited>();
+      const suspend = yield* Deferred.make<void, NativeTelemetryClientError>();
+      const resume = yield* Deferred.make<void, NativeTelemetryClientError>();
       const pending = yield* Ref.make(
         new Map<string, PendingProcessControlRequest>([
           ["request-4", { operation: "suspend", leaseId: "lease-3", deferred: suspend }],
@@ -222,14 +223,6 @@ describe("native telemetry supervisor failures", () => {
     expect(new NativeTelemetryStreamClosed().message).toBe(
       "Resource monitor event stream closed unexpectedly.",
     );
-  });
-
-  it("keeps defect details out of the caller-visible health message", () => {
-    const secret = "credential=do-not-expose";
-    const message = nativeTelemetrySupervisorFailureMessage(Cause.die(new Error(secret)));
-
-    expect(message).toBe("Resource monitor supervisor stopped unexpectedly.");
-    expect(message).not.toContain(secret);
   });
 });
 

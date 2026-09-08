@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderDriverKind } from "@t3tools/contracts";
 
-import {
-  activeAndComingSoonDriverKindsAreDisjoint,
-  resolveWizardNavigation,
-} from "./AddProviderInstanceDialog.logic";
-import { DRIVER_OPTIONS } from "./providerDriverMeta";
+import { resolveWizardNavigation } from "./AddProviderInstanceDialog.logic";
 
 describe("resolveWizardNavigation", () => {
   const invalidId = { instanceIdError: "Instance ID is required." };
@@ -45,43 +40,5 @@ describe("resolveWizardNavigation", () => {
   it("clamps requested steps to the wizard bounds", () => {
     expect(resolveWizardNavigation(2, 8, 3, validId)).toEqual({ kind: "navigate", step: 2 });
     expect(resolveWizardNavigation(0, -1, 3, invalidId)).toEqual({ kind: "navigate", step: 0 });
-  });
-});
-
-describe("provider driver groups", () => {
-  it("offers subscription and API providers alongside the existing native provider drivers", () => {
-    expect(DRIVER_OPTIONS.map((option) => option.value)).toEqual([
-      ProviderDriverKind.make("codex"),
-      ProviderDriverKind.make("claudeAgent"),
-      ProviderDriverKind.make("cursor"),
-      ProviderDriverKind.make("grok"),
-      ProviderDriverKind.make("opencode"),
-      ProviderDriverKind.make("gemini"),
-      ProviderDriverKind.make("chatgpt"),
-      ProviderDriverKind.make("openrouter"),
-      ProviderDriverKind.make("openai"),
-    ]);
-  });
-
-  it("keeps active and coming-soon driver groups disjoint", () => {
-    expect(
-      activeAndComingSoonDriverKindsAreDisjoint(
-        DRIVER_OPTIONS.map((option) => option.value),
-        [
-          ProviderDriverKind.make("githubCopilot"),
-          ProviderDriverKind.make("acpRegistry"),
-          ProviderDriverKind.make("piAgent"),
-        ],
-      ),
-    ).toBe(true);
-  });
-
-  it("rejects a duplicated driver kind", () => {
-    expect(
-      activeAndComingSoonDriverKindsAreDisjoint(
-        [ProviderDriverKind.make("customDriver")],
-        [ProviderDriverKind.make("customDriver")],
-      ),
-    ).toBe(false);
   });
 });

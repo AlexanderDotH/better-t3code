@@ -1,32 +1,10 @@
 import { ApprovalRequestId } from "@t3tools/contracts";
-import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  ComposerPendingApprovalPanel,
-  composerApprovalMessageIds,
-} from "./ComposerPendingApprovalPanel";
+import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 
 describe("ComposerPendingApprovalPanel", () => {
-  it("maps every request kind to typed localized labels", () => {
-    const german = createInterfaceTranslator({ language: "de", locale: "de-DE" }).message;
-    const french = createInterfaceTranslator({ language: "fr", locale: "fr-FR" }).message;
-
-    expect(german(composerApprovalMessageIds("mcp-elicitation").labelMessageId)).toBe(
-      "App-Zugriff genehmigen",
-    );
-    expect(french(composerApprovalMessageIds("command").labelMessageId)).toBe(
-      "Approbation de commande",
-    );
-    expect(german(composerApprovalMessageIds("file-read").detailMessageId)).toBe(
-      "Zu lesende Datei",
-    );
-    expect(french(composerApprovalMessageIds("file-change").detailMessageId)).toBe(
-      "Modification de fichier",
-    );
-  });
-
   it("keeps the complete command readable in the compact row", () => {
     const detail = `bun run release -- ${"x".repeat(500)}\nsecond line`;
     const markup = renderToStaticMarkup(

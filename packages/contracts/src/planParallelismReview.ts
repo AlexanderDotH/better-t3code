@@ -60,7 +60,7 @@ export const PlanParallelismReviewErrorReason = Schema.Literals([
 ]);
 export type PlanParallelismReviewErrorReason = typeof PlanParallelismReviewErrorReason.Type;
 
-export class PlanParallelismReviewError extends Schema.TaggedErrorClass<PlanParallelismReviewError>()(
+export class PlanParallelismReviewError extends Schema.TaggedError<PlanParallelismReviewError>()(
   "PlanParallelismReviewError",
   {
     reason: PlanParallelismReviewErrorReason,

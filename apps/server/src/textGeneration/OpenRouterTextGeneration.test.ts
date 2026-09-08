@@ -135,12 +135,14 @@ describe("OpenRouterTextGeneration", () => {
       );
 
       expect(error.detail).toBe("OpenRouter text generation request failed.");
+      // A schema encoder could hide leaked properties by stripping unknown fields.
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.stringify(error)).not.toContain(secret);
     }),
   );
 });
 
-class TextCompletionTestError extends Schema.TaggedErrorClass<TextCompletionTestError>()(
+class TextCompletionTestError extends Schema.TaggedError<TextCompletionTestError>()(
   "TextCompletionTestError",
   { message: Schema.String },
 ) {}

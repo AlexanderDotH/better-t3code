@@ -128,7 +128,7 @@ export function parseServiceStopAcknowledgement(
   }
 }
 
-export function decodeServiceUpdate(value: unknown): ServiceUpdateRecord | undefined {
+function decodeServiceUpdate(value: unknown): ServiceUpdateRecord | undefined {
   if (!isRecord(value)) return undefined;
   const { id, fromVersion, targetVersion, status } = value;
   if (
@@ -238,6 +238,20 @@ export function serviceStateHasPendingUpdate(value: string): boolean {
     return isRecord(parsed) && isRecord(parsed.update) && parsed.update.status === "pending";
   } catch {
     return false;
+  }
+}
+
+/** Reads the active version across launcher protocol revisions for downgrade protection. */
+export function serviceStateActiveVersion(value: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return isRecord(parsed) &&
+      typeof parsed.activeVersion === "string" &&
+      isExactServiceVersion(parsed.activeVersion)
+      ? parsed.activeVersion
+      : undefined;
+  } catch {
+    return undefined;
   }
 }
 

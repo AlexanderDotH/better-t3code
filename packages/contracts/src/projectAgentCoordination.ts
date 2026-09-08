@@ -11,15 +11,15 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 
-export const PROJECT_AGENT_MAX_SUMMARY_CHARS = 300;
-export const PROJECT_AGENT_MAX_PATH_CHARS = 512;
-export const PROJECT_AGENT_MAX_TOPIC_CHARS = 160;
+const PROJECT_AGENT_MAX_SUMMARY_CHARS = 300;
+const PROJECT_AGENT_MAX_PATH_CHARS = 512;
+const PROJECT_AGENT_MAX_TOPIC_CHARS = 160;
 export const PROJECT_AGENT_MAX_CLAIMS = 16;
 export const PROJECT_AGENT_MAX_MESSAGE_CHARS = 2_000;
 export const PROJECT_AGENT_MAX_ACTIVITY_PREVIEW_CHARS = 240;
 export const PROJECT_AGENT_MAX_PEERS = 32;
-export const PROJECT_AGENT_MAX_INBOX_MESSAGES = 50;
-export const PROJECT_AGENT_DEFAULT_INBOX_MESSAGES = 20;
+const PROJECT_AGENT_MAX_INBOX_MESSAGES = 50;
+const PROJECT_AGENT_DEFAULT_INBOX_MESSAGES = 20;
 export const PROJECT_AGENT_MESSAGE_HISTORY_LIMIT = 2_000;
 
 export const ProjectAgentSummary = TrimmedNonEmptyString.check(
@@ -196,7 +196,7 @@ export const ProjectAgentCoordinationUnavailableReason = Schema.Literals([
 export type ProjectAgentCoordinationUnavailableReason =
   typeof ProjectAgentCoordinationUnavailableReason.Type;
 
-export class ProjectAgentCoordinationUnavailableError extends Schema.TaggedErrorClass<ProjectAgentCoordinationUnavailableError>()(
+export class ProjectAgentCoordinationUnavailableError extends Schema.TaggedError<ProjectAgentCoordinationUnavailableError>()(
   "ProjectAgentCoordinationUnavailableError",
   {
     reason: ProjectAgentCoordinationUnavailableReason,
@@ -208,7 +208,7 @@ export class ProjectAgentCoordinationUnavailableError extends Schema.TaggedError
   }
 }
 
-export class ProjectAgentCoordinationOperationError extends Schema.TaggedErrorClass<ProjectAgentCoordinationOperationError>()(
+export class ProjectAgentCoordinationOperationError extends Schema.TaggedError<ProjectAgentCoordinationOperationError>()(
   "ProjectAgentCoordinationOperationError",
   {
     operation: Schema.Literals(["list", "claim", "send", "inbox"]),

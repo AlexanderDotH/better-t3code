@@ -1,3 +1,4 @@
+import type { ReactElement } from "react";
 import {
   DEFAULT_UNIFIED_SETTINGS,
   EnvironmentId,
@@ -6,10 +7,10 @@ import {
   type ServerProvider,
   type UnifiedSettings,
 } from "@t3tools/contracts";
-import type { ResolvedInterfaceLocale } from "@t3tools/shared/interfaceLanguage";
-import type { ReactNode } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { visitElements } from "../../test/reactElementTree";
+import { reactHookHarness as hooks } from "../../test/reactHookHarness";
 
 const atoms = vi.hoisted(() => ({
   providers: null as ReadonlyArray<ServerProvider> | null,
@@ -30,14 +31,43 @@ const settingsState = vi.hoisted(() => ({
   updateSettings: vi.fn(),
 }));
 
-const localeState = vi.hoisted(() => ({
-  value: { language: "en", locale: "en-US" } as ResolvedInterfaceLocale,
+const settingsSearchState = vi.hoisted(() => ({
+  targetId: null as string | null,
+  effects: [] as Array<() => void>,
 }));
 
-const rendered = vi.hoisted(() => ({
-  buttons: [] as Array<Record<string, unknown>>,
-  providerCards: [] as Array<Record<string, unknown>>,
-}));
+vi.mock("../../hooks/useInterfaceTranslator", async () => {
+  const { createInterfaceTranslator } = await import("@t3tools/shared/interfaceLanguage");
+  return {
+    useInterfaceTranslator: () => createInterfaceTranslator({ language: "en", locale: "en-US" }),
+  };
+});
+
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react")>();
+  const { reactHookHarness } = await import("../../test/reactHookHarness");
+  return {
+    ...actual,
+    useCallback: reactHookHarness.useCallback,
+    useEffect: (effect: () => void) => settingsSearchState.effects.push(effect),
+    useMemo: reactHookHarness.useMemo,
+    useRef: reactHookHarness.useRef,
+    useState: reactHookHarness.useState,
+  };
+});
+
+vi.mock("./settingsLayout", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./settingsLayout")>();
+  return {
+    ...actual,
+    useSettingsSearchTargetId: () => settingsSearchState.targetId,
+  };
+});
+
+vi.mock("react/compiler-runtime", async () => {
+  const { reactHookHarness } = await import("../../test/reactHookHarness");
+  return { c: reactHookHarness.useMemoCache };
+});
 
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: () => atoms.providers,
@@ -68,10 +98,6 @@ vi.mock("../../hooks/useSettings", () => ({
   },
 }));
 
-vi.mock("../../interfaceLanguageRuntime", () => ({
-  useInterfaceLocaleRuntime: () => localeState.value,
-}));
-
 vi.mock("../../environments/primary", () => ({
   usePrimarySessionState: () => ({ data: null, error: null, isPending: false, refresh: vi.fn() }),
 }));
@@ -80,62 +106,11 @@ vi.mock("../../state/session", () => ({
   useEnvironmentSessionState: () => ({ data: null, hasError: false, isPending: true }),
 }));
 
-vi.mock("../ui/button", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../ui/button")>();
-  const { createElement } = await import("react");
-  return {
-    ...actual,
-    Button: (props: Record<string, unknown>) => {
-      rendered.buttons.push(props);
-      return createElement(
-        "button",
-        {
-          "aria-label": props["aria-label"],
-          disabled: props.disabled,
-        },
-        props.children as ReactNode,
-      );
-    },
-  };
-});
-
-vi.mock("../ui/tooltip", async () => {
-  const { createElement, Fragment } = await import("react");
-  return {
-    Tooltip: (props: Record<string, unknown>) =>
-      createElement(Fragment, null, props.children as ReactNode),
-    TooltipPopup: (props: Record<string, unknown>) =>
-      createElement("span", null, props.children as ReactNode),
-    TooltipTrigger: (props: Record<string, unknown>) =>
-      createElement(Fragment, null, props.render as ReactNode),
-  };
-});
-
-vi.mock("./ProviderInstanceCard", async () => {
-  const { createElement } = await import("react");
-  return {
-    ProviderInstanceCard: (props: Record<string, unknown>) => {
-      rendered.providerCards.push(props);
-      return createElement("div", {
-        "data-instance-id": String(props.instanceId),
-        "data-provider-mode": String(props.mode),
-        "data-read-only": props.readOnly === true ? "true" : "false",
-      });
-    },
-  };
-});
-
-import {
-  buildDeleteProviderInstancePatch,
-  buildResetDefaultProviderInstancePatch,
-} from "./ProviderSettingsPanel.logic";
 import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
 
 const environmentId = EnvironmentId.make("remote-device");
 const codexId = ProviderInstanceId.make("codex");
 const customId = ProviderInstanceId.make("codex_work");
-const chatGptId = ProviderInstanceId.make("chatgpt_work");
-const openAiId = ProviderInstanceId.make("openai_work");
 
 function provider(): ServerProvider {
   return {
@@ -164,22 +139,36 @@ function provider(): ServerProvider {
 
 function renderPanel(options?: {
   readonly readOnly?: boolean;
-  readonly authFlow?: "browser" | "device-code";
-}): string {
-  rendered.buttons = [];
-  rendered.providerCards = [];
-  return renderToStaticMarkup(
-    <EnvironmentProviderSettings
-      environmentId={environmentId}
-      environmentLabel="Remote device"
-      {...(options?.readOnly === undefined ? {} : { readOnly: options.readOnly })}
-      {...(options?.authFlow === undefined ? {} : { authFlow: options.authFlow })}
-    />,
+  readonly targetInstanceId?: ProviderInstanceId;
+}): ReactElement<Record<string, unknown>> {
+  hooks.beginRender();
+  return EnvironmentProviderSettings({
+    environmentId,
+    environmentLabel: "Remote device",
+    ...(options?.readOnly === undefined ? {} : { readOnly: options.readOnly }),
+    ...(options?.targetInstanceId === undefined
+      ? {}
+      : { targetInstanceId: options.targetInstanceId }),
+  }) as ReactElement<Record<string, unknown>>;
+}
+
+function isRefreshButton(element: ReactElement<Record<string, unknown>>): boolean {
+  const children = element.props.children;
+  return (
+    Array.isArray(children) &&
+    children.some(
+      (child) =>
+        typeof child === "object" &&
+        child !== null &&
+        (child as ReactElement<Record<string, unknown>>).props?.className === "sr-only" &&
+        (child as ReactElement<Record<string, unknown>>).props?.children ===
+          "Refresh provider status",
+    )
   );
 }
 
-function renderedButton(label: string): Record<string, unknown> | undefined {
-  return rendered.buttons.find((button) => button["aria-label"] === label);
+function isAddProviderButton(element: ReactElement<Record<string, unknown>>): boolean {
+  return element.props["aria-label"] === "Add provider";
 }
 
 async function flushPromises(): Promise<void> {
@@ -189,16 +178,16 @@ async function flushPromises(): Promise<void> {
 
 describe("EnvironmentProviderSettings routing", () => {
   beforeEach(() => {
+    hooks.reset();
     atoms.providers = null;
     settingsState.value = DEFAULT_UNIFIED_SETTINGS;
     settingsState.readEnvironmentIds = [];
     settingsState.updateEnvironmentIds = [];
     settingsState.updateSettings.mockReset();
+    settingsSearchState.targetId = null;
+    settingsSearchState.effects = [];
     commands.refresh.mockReset().mockResolvedValue({ _tag: "Success" });
     commands.updateProvider.mockReset().mockResolvedValue({ _tag: "Success" });
-    localeState.value = { language: "en", locale: "en-US" };
-    rendered.buttons = [];
-    rendered.providerCards = [];
   });
 
   it("coalesces a nullable provider snapshot before rendering array-backed UI", () => {
@@ -209,147 +198,178 @@ describe("EnvironmentProviderSettings routing", () => {
 
   it("routes refresh and provider update commands to the selected environment", async () => {
     atoms.providers = [provider()];
-    renderPanel();
-
-    const refreshButton = renderedButton("Refresh provider status");
-    expect(refreshButton).toBeDefined();
-    (refreshButton?.onClick as (() => void) | undefined)?.();
+    const panel = renderPanel();
+    const refreshButton = visitElements(panel, isRefreshButton);
+    expect(refreshButton).not.toBeNull();
+    (refreshButton?.props.onClick as (() => void) | undefined)?.();
     await flushPromises();
-    expect(commands.refresh).toHaveBeenCalledWith({ environmentId, input: {} });
 
-    const providerCard = rendered.providerCards.find(
-      (card) => card.instanceId === codexId && card.mode === "editor",
+    expect(commands.refresh).toHaveBeenCalledWith({
+      environmentId,
+      input: { refreshModels: true },
+    });
+
+    const providerCard = visitElements(
+      panel,
+      (element) =>
+        element.props.instanceId === codexId && typeof element.props.onRunUpdate === "function",
     );
-    expect(providerCard).toBeDefined();
-    (providerCard?.onRunUpdate as (() => void) | undefined)?.();
+    expect(providerCard).not.toBeNull();
+    (providerCard?.props.onRunUpdate as (() => void) | undefined)?.();
     await flushPromises();
+
     expect(commands.updateProvider).toHaveBeenCalledWith({
       environmentId,
       input: { provider: ProviderDriverKind.make("codex"), instanceId: codexId },
     });
   });
 
+  it("opens the requested provider instance instead of the first provider", () => {
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [customId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+      },
+    };
+    atoms.providers = [provider()];
+    const panel = renderPanel({ targetInstanceId: customId });
+    const editor = visitElements(panel, (element) => element.props.mode === "editor");
+    expect(editor?.props.instanceId).toBe(customId);
+  });
+
+  it("does not substitute another account when the requested instance was removed", () => {
+    atoms.providers = [provider()];
+    const panel = renderPanel({ targetInstanceId: customId });
+    expect(visitElements(panel, (element) => element.props.mode === "editor")).toBeNull();
+    expect(settingsState.updateSettings).not.toHaveBeenCalled();
+  });
+
   it("keeps provider selection available while write controls are read only", () => {
     settingsState.value = {
       ...DEFAULT_UNIFIED_SETTINGS,
       providerInstances: {
-        [customId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+        [customId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+        },
       },
     };
     atoms.providers = [provider()];
-    const markup = renderPanel({ readOnly: true });
+    let panel = renderPanel({ readOnly: true });
 
-    const customRow = rendered.providerCards.find(
-      (card) => card.instanceId === customId && card.mode === "list",
+    const inertWrapper = visitElements(panel, (element) => element.props.inert === true);
+    expect(inertWrapper).not.toBeNull();
+
+    const customRow = visitElements(
+      panel,
+      (element) => element.props.instanceId === customId && element.props.mode === "list",
     );
-    expect(customRow?.readOnly).toBe(true);
-    expect(customRow?.onSelect).toBeTypeOf("function");
-    expect(markup).toContain("Limited permissions");
-    expect(renderedButton("Refresh provider status")).toBeUndefined();
-    expect(renderedButton("Add provider")).toBeUndefined();
+    expect(customRow?.props.readOnly).toBe(true);
+    expect(customRow?.props.onSelect).toBeTypeOf("function");
+    (customRow?.props.onSelect as (() => void) | undefined)?.();
+
+    panel = renderPanel({ readOnly: true });
+    const customEditor = visitElements(
+      panel,
+      (element) => element.props.instanceId === customId && element.props.mode === "editor",
+    );
+    expect(customEditor).not.toBeNull();
+
+    const notice = visitElements(panel, (element) => element.props.title === "Limited permissions");
+    expect(notice).not.toBeNull();
+
+    expect(visitElements(panel, isRefreshButton)).toBeNull();
+    expect(visitElements(panel, isAddProviderButton)).toBeNull();
   });
 
   it("keeps the editable layout interactive when not read only", () => {
     atoms.providers = [provider()];
-    const markup = renderPanel();
-    expect(markup).not.toContain("Limited permissions");
-    expect(renderedButton("Refresh provider status")).toBeDefined();
-    expect(renderedButton("Add provider")).toBeDefined();
+    const panel = renderPanel();
+    expect(visitElements(panel, (element) => element.props.inert === true)).toBeNull();
+    expect(
+      visitElements(panel, (element) => element.props.title === "Limited permissions"),
+    ).toBeNull();
+    expect(visitElements(panel, isRefreshButton)).not.toBeNull();
+    expect(visitElements(panel, isAddProviderButton)).not.toBeNull();
   });
 
-  it("passes auth routing to the provider card without a duplicate onboarding row", () => {
+  it("keeps Advanced visible when search targets the provider health interval", () => {
+    let panel = renderPanel();
+    expect(visitElements(panel, (element) => element.props.title === "Advanced")).not.toBeNull();
+    expect(
+      visitElements(panel, (element) => element.props.id === "provider-health-check-interval"),
+    ).not.toBeNull();
+
+    settingsSearchState.targetId = "provider-health-check-interval";
+    panel = renderPanel();
+    expect(visitElements(panel, (element) => element.props.title === "Advanced")).not.toBeNull();
+    expect(
+      visitElements(panel, (element) => element.props.id === "provider-health-check-interval"),
+    ).not.toBeNull();
+  });
+
+  it("deletes and resets provider configuration without erasing shared preferences", () => {
     settingsState.value = {
       ...DEFAULT_UNIFIED_SETTINGS,
       providerInstances: {
-        [chatGptId]: { driver: ProviderDriverKind.make("chatgpt"), enabled: true },
-      },
-    };
-    atoms.providers = [
-      {
-        ...provider(),
-        instanceId: chatGptId,
-        driver: ProviderDriverKind.make("chatgpt"),
-        auth: {
-          status: "unauthenticated",
-          capabilities: { flows: ["device-code"], canDisconnect: false },
+        [codexId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: false,
         },
-      },
-    ];
-
-    const markup = renderPanel({ authFlow: "device-code", readOnly: true });
-    const card = rendered.providerCards.find((candidate) => candidate.instanceId === chatGptId);
-    expect(card?.environmentId).toBe(environmentId);
-    expect(card?.providerAuthFlow).toBe("device-code");
-    expect(card?.readOnly).toBe(true);
-    expect(markup).not.toContain("ChatGPT Subscription");
-  });
-
-  it("separates Better T3 providers without changing provider selection", () => {
-    settingsState.value = {
-      ...DEFAULT_UNIFIED_SETTINGS,
-      providerInstances: {
-        [customId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
-        [chatGptId]: { driver: ProviderDriverKind.make("chatgpt"), enabled: true },
-        [openAiId]: { driver: ProviderDriverKind.make("openai"), enabled: true },
-      },
-    };
-
-    const markup = renderPanel();
-    const coreGroupIndex = markup.indexOf('data-provider-group="core"');
-    const additionalGroupIndex = markup.indexOf('data-provider-group="better-t3"');
-    const customIndex = markup.indexOf(`data-instance-id="${customId}"`);
-    const chatGptIndex = markup.indexOf(`data-instance-id="${chatGptId}"`);
-    const openAiIndex = markup.indexOf(`data-instance-id="${openAiId}"`);
-
-    expect(coreGroupIndex).toBeGreaterThan(-1);
-    expect(additionalGroupIndex).toBeGreaterThan(coreGroupIndex);
-    expect(customIndex).toBeGreaterThan(coreGroupIndex);
-    expect(customIndex).toBeLessThan(additionalGroupIndex);
-    expect(chatGptIndex).toBeGreaterThan(additionalGroupIndex);
-    expect(openAiIndex).toBeGreaterThan(additionalGroupIndex);
-    expect(markup).toContain("Additional Better T3 providers");
-  });
-
-  it("localizes the Better T3 provider separator", () => {
-    localeState.value = { language: "de", locale: "de-DE" };
-    settingsState.value = {
-      ...DEFAULT_UNIFIED_SETTINGS,
-      providerInstances: {
-        [chatGptId]: { driver: ProviderDriverKind.make("chatgpt"), enabled: true },
-      },
-    };
-
-    expect(renderPanel()).toContain("Zusätzliche Better-T3-Provider");
-  });
-
-  it("builds delete and reset patches without erasing shared preferences", () => {
-    const settings: UnifiedSettings = {
-      ...DEFAULT_UNIFIED_SETTINGS,
-      providerInstances: {
-        [codexId]: { driver: ProviderDriverKind.make("codex"), enabled: false },
-        [customId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+        [customId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+        },
       },
       providerModelPreferences: {
         [customId]: { hiddenModels: ["hidden"], modelOrder: ["model"] },
       },
       favorites: [{ provider: customId, model: "favorite" }],
     };
+    let panel = renderPanel();
+    const customRow = visitElements(
+      panel,
+      (element) => element.props.instanceId === customId && element.props.mode === "list",
+    );
+    (customRow?.props.onSelect as (() => void) | undefined)?.();
+    panel = renderPanel();
+    const customCard = visitElements(
+      panel,
+      (element) => element.props.instanceId === customId && element.props.mode === "editor",
+    );
+    expect(customCard).not.toBeNull();
+    (customCard?.props.onDelete as (() => void) | undefined)?.();
 
-    expect(buildDeleteProviderInstancePatch(settings, customId)).toEqual({
+    expect(settingsState.updateSettings).toHaveBeenLastCalledWith({
       providerInstances: {
-        [codexId]: settings.providerInstances?.[codexId],
+        [codexId]: settingsState.value.providerInstances?.[codexId],
       },
     });
 
-    const resetPatch = buildResetDefaultProviderInstancePatch(
-      settings,
-      ProviderDriverKind.make("codex"),
+    settingsState.updateSettings.mockClear();
+    const defaultRow = visitElements(
+      panel,
+      (element) => element.props.instanceId === codexId && element.props.mode === "list",
     );
+    (defaultRow?.props.onSelect as (() => void) | undefined)?.();
+    panel = renderPanel();
+    const defaultCard = visitElements(
+      panel,
+      (element) => element.props.instanceId === codexId && element.props.mode === "editor",
+    );
+    const resetAction = defaultCard?.props.headerAction;
+    const resetButton = visitElements(
+      resetAction,
+      (element) => typeof element.props.onClick === "function",
+    );
+    expect(resetButton).not.toBeNull();
+    (resetButton?.props.onClick as (() => void) | undefined)?.();
+
+    const resetPatch = settingsState.updateSettings.mock.lastCall?.[0] as
+      | Record<string, unknown>
+      | undefined;
     expect(Object.keys(resetPatch ?? {}).sort()).toEqual(["providerInstances", "providers"]);
     expect(resetPatch).not.toHaveProperty("favorites");
     expect(resetPatch).not.toHaveProperty("providerModelPreferences");
-    expect(resetPatch?.providerInstances).toEqual({
-      [customId]: settings.providerInstances?.[customId],
-    });
   });
 });

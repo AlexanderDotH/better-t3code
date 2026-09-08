@@ -1,7 +1,6 @@
-import type { InterfaceMessageKey } from "@t3tools/shared/interfaceLanguage";
 import { memo } from "react";
-import { type PendingApproval } from "../../session-logic";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { type PendingApproval } from "../../session-logic";
 import { cn } from "~/lib/utils";
 
 interface ComposerPendingApprovalPanelProps {
@@ -10,44 +9,28 @@ interface ComposerPendingApprovalPanelProps {
   className?: string;
 }
 
-const APPROVAL_MESSAGE_IDS = {
-  "mcp-elicitation": {
-    labelMessageId: "chat.composer.approval.label.mcpElicitation",
-    detailMessageId: "chat.composer.approval.detail.mcpElicitation",
-  },
-  command: {
-    labelMessageId: "chat.composer.approval.label.command",
-    detailMessageId: "chat.composer.approval.detail.command",
-  },
-  "file-read": {
-    labelMessageId: "chat.composer.approval.label.fileRead",
-    detailMessageId: "chat.composer.approval.detail.fileRead",
-  },
-  "file-change": {
-    labelMessageId: "chat.composer.approval.label.fileChange",
-    detailMessageId: "chat.composer.approval.detail.fileChange",
-  },
-} as const satisfies Record<
-  PendingApproval["requestKind"],
-  Readonly<{
-    labelMessageId: InterfaceMessageKey;
-    detailMessageId: InterfaceMessageKey;
-  }>
->;
-
-export function composerApprovalMessageIds(requestKind: PendingApproval["requestKind"]) {
-  return APPROVAL_MESSAGE_IDS[requestKind];
-}
-
 export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprovalPanel({
   approval,
   pendingCount,
   className,
 }: ComposerPendingApprovalPanelProps) {
-  const translator = useInterfaceTranslator();
-  const messageIds = composerApprovalMessageIds(approval.requestKind);
-  const fallbackLabel = translator.message(messageIds.labelMessageId);
-  const detailAriaLabel = translator.message(messageIds.detailMessageId);
+  const translate = useInterfaceTranslator().message;
+  const fallbackLabel =
+    approval.requestKind === "mcp-elicitation"
+      ? translate("chat.composer.approval.label.mcpElicitation")
+      : approval.requestKind === "command"
+        ? translate("chat.composer.approval.label.command")
+        : approval.requestKind === "file-read"
+          ? translate("chat.composer.approval.label.fileRead")
+          : translate("chat.composer.approval.label.fileChange");
+  const detailAriaLabel =
+    approval.requestKind === "mcp-elicitation"
+      ? translate("chat.composer.approval.detail.mcpElicitation")
+      : approval.requestKind === "command"
+        ? translate("chat.composer.approval.detail.command")
+        : approval.requestKind === "file-read"
+          ? translate("chat.composer.approval.detail.fileRead")
+          : translate("chat.composer.approval.detail.fileChange");
 
   return (
     <span

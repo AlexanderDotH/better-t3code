@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import {
   ApprovalRequestId,
   ProviderDriverKind,
@@ -64,7 +64,9 @@ function makeTestAdapter(input: {
       turnSettled: "Native test turn settled",
     },
     limits: {
-      maxIdleWorkingSets: input.maxIdleWorkingSets,
+      ...(input.maxIdleWorkingSets !== undefined
+        ? { maxIdleWorkingSets: input.maxIdleWorkingSets }
+        : {}),
       maxToolDefinitions: 8,
       maxToolOutputBytes: 1024,
       maxParallelToolCalls: input.maxParallelToolCalls ?? 2,
@@ -487,7 +489,8 @@ describe("NativeProviderAdapter", () => {
           .pipe(Effect.forkChild);
         const opened = yield* Fiber.join(openedFiber);
         expect(Option.isSome(opened)).toBe(true);
-        if (Option.isNone(opened) || opened.value.type !== "request.opened") return;
+        assert.isOk(Option.isSome(opened) && opened.value.type === "request.opened");
+        assert.isDefined(opened.value.requestId);
         expect(executed).toEqual([]);
         yield* adapter.respondToRequest(
           threadId,
@@ -614,8 +617,11 @@ describe("NativeProviderAdapter", () => {
           errorLines: ["fatal error"],
           detailRef: "tool-result:large-tool-item",
         });
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Measure exact wire bytes independently of schema encoders.
         expect(Buffer.byteLength(JSON.stringify(toolItem.output))).toBeLessThanOrEqual(16 * 1024);
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Measure exact wire bytes independently of schema encoders.
         expect(Buffer.byteLength(JSON.stringify(toolItem.output))).toBeLessThan(
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - Measure exact wire bytes independently of schema encoders.
           Buffer.byteLength(JSON.stringify(completion)) / 10,
         );
         yield* Fiber.interrupt(eventFiber);
@@ -669,6 +675,7 @@ describe("NativeProviderAdapter", () => {
         const toolItem = (yield* adapter.readThread(threadId)).turns[0]?.items[0] as {
           readonly output: Readonly<Record<string, unknown>>;
         };
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Measure exact wire bytes independently of schema encoders.
         expect(Buffer.byteLength(JSON.stringify(output))).toBe(32 * 1024);
         expect(toolItem.output).toEqual(output);
       }),
@@ -726,7 +733,8 @@ describe("NativeProviderAdapter", () => {
           .pipe(Effect.forkChild);
         const opened = yield* Fiber.join(openedFiber);
         expect(Option.isSome(opened)).toBe(true);
-        if (Option.isNone(opened) || opened.value.type !== "request.opened") return;
+        assert.isOk(Option.isSome(opened) && opened.value.type === "request.opened");
+        assert.isDefined(opened.value.requestId);
         yield* adapter.respondToRequest(
           threadId,
           ApprovalRequestId.make(opened.value.requestId),

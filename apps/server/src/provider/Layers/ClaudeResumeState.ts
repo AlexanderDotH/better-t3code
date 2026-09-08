@@ -1,5 +1,5 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { ProviderItemId, type ProviderRuntimeEvent, ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 
 export interface ClaudeResumeState {
   readonly threadId?: ThreadId;
@@ -57,12 +57,4 @@ export function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState 
       ? { turnCount: turnCountValue }
       : {}),
   };
-}
-
-export function nativeProviderRefs(options?: {
-  readonly providerItemId?: string | undefined;
-}): NonNullable<ProviderRuntimeEvent["providerRefs"]> {
-  return options?.providerItemId
-    ? { providerItemId: ProviderItemId.make(options.providerItemId) }
-    : {};
 }

@@ -10,7 +10,6 @@ import {
   DIALOG_POPUP_CLASS,
 } from "~/components/ui/dialog-styles";
 import { ScrollArea } from "~/components/ui/scroll-area";
-import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 
 const DialogCreateHandle = DialogPrimitive.createHandle;
 
@@ -60,7 +59,6 @@ function DialogPopup({
   showCloseButton?: boolean;
   bottomStickOnMobile?: boolean;
 }) {
-  const translator = useInterfaceTranslator();
   return (
     <DialogPortal>
       <DialogBackdrop />
@@ -80,7 +78,7 @@ function DialogPopup({
           {children}
           {showCloseButton && (
             <DialogPrimitive.Close
-              aria-label={translator.message("ui.close")}
+              aria-label="Close"
               className="absolute end-2 top-2"
               render={<Button size="icon" variant="ghost" />}
             >

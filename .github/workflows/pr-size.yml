@@ -138,6 +138,8 @@ jobs:
         with:
           script: |
             const { execFileSync } = require("node:child_process");
+            // ponytail: cap numstat capture at 16 MiB; stream output if imports exceed it.
+            const MAX_NUMSTAT_OUTPUT_BYTES = 16 * 1024 * 1024;
 
             const issueNumber = context.payload.pull_request.number;
             const baseSha = context.payload.pull_request.base.sha;
@@ -233,12 +235,13 @@ jobs:
               execFileSync(
                 "git",
                 diffArgs,
-                { encoding: "utf8" },
+                { encoding: "utf8", maxBuffer: MAX_NUMSTAT_OUTPUT_BYTES },
               ),
             );
             const nonTestChangedLines = sumNumstat(
               execFileSync("git", [...diffArgs, "--", ".", ...testExcludePathspecs], {
                 encoding: "utf8",
+                maxBuffer: MAX_NUMSTAT_OUTPUT_BYTES,
               }),
             );
             const testChangedLines = Math.max(0, totalChangedLines - nonTestChangedLines);

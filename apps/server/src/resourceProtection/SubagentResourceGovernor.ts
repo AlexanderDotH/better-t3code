@@ -79,12 +79,9 @@ export {
   reservationBytesForGrowthSamples,
 } from "./ResourceGovernorAdmissionState.ts";
 export {
-  createRegisteredProviderProcess,
   makeExactProcessSignaler,
-  providerProcessRegistrationKey,
   ProviderProcessSignalError,
   providerProcessStartTimeMs,
-  refreshRegisteredProviderProcesses,
   type ProviderProcessRegistration,
   type ResourceGovernorProcessSample,
 } from "./ProviderProcessInventory.ts";

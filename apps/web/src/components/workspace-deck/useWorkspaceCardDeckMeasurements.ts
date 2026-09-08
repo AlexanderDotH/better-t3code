@@ -30,7 +30,7 @@ export function findWorkspaceDeckCompactSurface(
   const markedSurface = intrinsic.querySelector<HTMLElement>(COMPACT_SURFACE_SELECTOR);
   if (markedSurface) return markedSurface;
   let surface = compactContent;
-  for (let parent = compactContent.parentElement; parent && parent !== intrinsic; ) {
+  for (let parent = compactContent.parentElement; parent && parent !== intrinsic;) {
     if (window.getComputedStyle(parent).display !== "contents") surface = parent;
     parent = parent.parentElement;
   }

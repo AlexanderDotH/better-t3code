@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactElement } from "react";
 import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme";
-import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { readThemeHalvesRaw } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
 import {
@@ -42,6 +41,7 @@ import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { ThemeImportDialog } from "./ThemeImportDialog";
+import { searchableSetting } from "./settingsSearch";
 import { useThemeEditorStore } from "./themeEditorStore";
 import {
   STANDARD_THEME_CARDS,
@@ -129,7 +129,6 @@ function ThemeLibraryCard({
     onSelectAndUse: (themeIndex: number, mode: ThemeAppearance) => void;
   };
 }) {
-  const translate = useInterfaceTranslator().message;
   // A one-appearance theme can only take its own side of the mix, so the card
   // tooltip promises exactly what clicking it does.
   const cardModes = theme.previews.map((preview) => preview.mode);
@@ -165,7 +164,7 @@ function ThemeLibraryCard({
             <div className="relative">
               {variantNavigation ? (
                 <div
-                  aria-label={translate("settings.theme.settings.variantsAria")}
+                  aria-label="Light and dark theme variants"
                   className="relative h-20"
                   role="group"
                   onBlurCapture={(event) => {
@@ -334,7 +333,7 @@ function ThemeLibraryCard({
                           </Button>
                         }
                       />
-                      <TooltipPopup>{translate("settings.theme.settings.duplicate")}</TooltipPopup>
+                      <TooltipPopup>Duplicate theme</TooltipPopup>
                     </Tooltip>
                   ) : null}
                   {onEdit ? (
@@ -354,7 +353,7 @@ function ThemeLibraryCard({
                           </Button>
                         }
                       />
-                      <TooltipPopup>{translate("settings.theme.settings.edit")}</TooltipPopup>
+                      <TooltipPopup>Edit theme</TooltipPopup>
                     </Tooltip>
                   ) : null}
                   {onDownload ? (
@@ -374,7 +373,7 @@ function ThemeLibraryCard({
                           </Button>
                         }
                       />
-                      <TooltipPopup>{translate("settings.theme.settings.export")}</TooltipPopup>
+                      <TooltipPopup>Export theme file</TooltipPopup>
                     </Tooltip>
                   ) : null}
                   {onRemove ? (
@@ -527,7 +526,6 @@ export function ThemeLibrary({
   themeHalves: ThemeHalves | null;
   setThemeHalf: (appearance: ThemeAppearance, themeId: string | null) => boolean;
 }) {
-  const translate = useInterfaceTranslator().message;
   const openThemeEditor = useThemeEditorStore((store) => store.openThemeEditor);
   const environmentThemes = useEnvironmentThemeDefinitions();
   const [themeRemovalTarget, setThemeRemovalTarget] = useState<{
@@ -549,21 +547,21 @@ export function ThemeLibrary({
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: translate("settings.theme.settings.saveFailed"),
-        description: translate("settings.theme.settings.tryAgain"),
+        title: "Couldn’t save theme selection",
+        description: "Try again.",
       }),
     );
-  }, [translate]);
+  }, []);
 
   const notifyThemeRemovalFailure = useCallback(() => {
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: translate("settings.theme.settings.removeFailed"),
-        description: translate("settings.theme.settings.tryAgain"),
+        title: "Couldn’t remove theme",
+        description: "Try again.",
       }),
     );
-  }, [translate]);
+  }, []);
 
   const persistTheme = useCallback(
     (nextTheme: string) => {
@@ -721,11 +719,7 @@ export function ThemeLibrary({
   );
 
   const renderModeTiles = () => (
-    <div
-      aria-label={translate("settings.theme.settings.modeAria")}
-      className="mx-auto grid w-full max-w-[56rem] grid-cols-3 gap-3 px-3 sm:px-4"
-      role="group"
-    >
+    <div aria-label="Appearance mode" className="grid w-full grid-cols-3 gap-3" role="group">
       {(["system", "light", "dark"] as const).map((mode) => {
         const isActive = appearanceMode === mode;
         return (
@@ -779,7 +773,7 @@ export function ThemeLibrary({
     // accepted — scoping the group tighter makes the handoffs feel sluggish.
     <TooltipProvider>
       <div
-        className="mx-auto grid w-full max-w-[56rem] gap-2 px-3 sm:px-4"
+        className="grid w-full gap-2"
         style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 16rem), 1fr))" }}
       >
         {STANDARD_THEME_CARDS.map((standardTheme) => (
@@ -891,16 +885,13 @@ export function ThemeLibrary({
 
   return (
     <div className="space-y-3">
-      <p className="px-3 text-[13px] leading-[1.45] text-muted-foreground/80 sm:px-4">
-        {translate("settings.theme.settings.description")}
-      </p>
-      <h3 className="px-3 text-sm font-medium tracking-[-0.005em] text-foreground sm:px-4">
-        {translate("settings.theme.settings.colorScheme")}
+      <h3 className="px-3 text-sm font-normal tracking-[-0.005em] text-foreground/70 sm:px-4">
+        {searchableSetting("color-scheme").title}
       </h3>
       {renderModeTiles()}
       <div className="flex min-h-8 flex-wrap items-center justify-between gap-3 px-3 pt-2 sm:px-4">
-        <h3 className="text-sm font-medium tracking-[-0.005em] text-foreground">
-          {translate("settings.theme.settings.themes")}
+        <h3 className="text-sm font-normal tracking-[-0.005em] text-foreground/70">
+          {searchableSetting("theme").title}
         </h3>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button
@@ -916,11 +907,11 @@ export function ThemeLibrary({
             }
           >
             <PaintbrushIcon />
-            {translate("settings.theme.settings.create")}
+            Create theme
           </Button>
           <Button size="xs" variant="outline" onClick={() => onImportOpenChange(true)}>
             <PlusIcon />
-            {translate("settings.theme.settings.add")}
+            Add theme
           </Button>
         </div>
       </div>
@@ -962,7 +953,7 @@ export function ThemeLibrary({
             stackedThreadToast({
               type: "success",
               title: `${importedTheme.label} added`,
-              description: translate("settings.theme.toast.nowActive"),
+              description: "It’s now active.",
             }),
           );
           return true;
@@ -1035,9 +1026,7 @@ export function ThemeLibrary({
             </div>
           ) : null}
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>
-              {translate("settings.common.cancel")}
-            </AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
             <Button
               disabled={themeIdsToRemove.length === 0}
               variant="destructive"

@@ -13,7 +13,7 @@ export type OwnedChildProcessTerminationFailureReason =
   | "still-running"
   | "verification-timeout";
 
-export class OwnedChildProcessTerminationError extends Schema.TaggedErrorClass<OwnedChildProcessTerminationError>()(
+export class OwnedChildProcessTerminationError extends Schema.TaggedError<OwnedChildProcessTerminationError>()(
   "OwnedChildProcessTerminationError",
   {
     pid: Schema.Number,

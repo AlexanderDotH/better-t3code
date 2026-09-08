@@ -1,22 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { EnvironmentId } from "@t3tools/contracts";
-import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ComposerStashMenu, formatStashRelativeTimeLabel } from "./ComposerStashMenu";
+import { ComposerStashMenu } from "./ComposerStashMenu";
 
 describe("ComposerStashMenu", () => {
-  it("localizes relative stash timestamps through typed application copy", () => {
-    const createdAt = "2026-08-30T10:00:00.000Z";
-    const nowMs = Date.parse("2026-08-30T13:00:00.000Z");
-    const german = createInterfaceTranslator({ language: "de", locale: "de-DE" }).message;
-    const french = createInterfaceTranslator({ language: "fr", locale: "fr-FR" }).message;
-
-    expect(formatStashRelativeTimeLabel(createdAt, german, nowMs)).toBe("vor 3 Std.");
-    expect(formatStashRelativeTimeLabel(createdAt, french, nowMs)).toBe("il y a 3 h");
-    expect(formatStashRelativeTimeLabel("invalid", german, nowMs)).toBe("");
-  });
-
   it("shows saved image thumbnails and incomplete image states", () => {
     const markup = renderToStaticMarkup(
       <ComposerStashMenu

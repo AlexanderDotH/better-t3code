@@ -3,7 +3,7 @@ import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/con
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { formatContextWindowCompactionMessage } from "./ContextWindowMeter.logic";
 import { Minimize2Icon } from "lucide-react";
-import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { composerFloatingLayerProps } from "./composerEventScope";
 
 function formatPercentage(value: number | null): string | null {
   if (value === null || !Number.isFinite(value)) {
@@ -22,7 +22,6 @@ export function ContextWindowMeter(props: {
   compactDisabled?: boolean | undefined;
   compactDisabledReason?: string | null | undefined;
 }) {
-  const translate = useInterfaceTranslator().message;
   const { usage, modelDisplayName, onCompact, compactDisabled, compactDisabledReason } = props;
   const usedPercentage = formatPercentage(usage.usedPercentage);
   const normalizedPercentage = Math.max(0, Math.min(100, usage.usedPercentage ?? 0));
@@ -49,10 +48,8 @@ export function ContextWindowMeter(props: {
             className="size-7 rounded-full hover:text-muted-foreground data-pressed:text-muted-foreground"
             aria-label={
               usage.maxTokens !== null && usedPercentage
-                ? translate("chat.contextWindow.usedPercent", { percent: usedPercentage })
-                : translate("chat.contextWindow.tokensUsed", {
-                    tokens: formatContextWindowTokens(usage.usedTokens),
-                  })
+                ? `Context window ${usedPercentage} used`
+                : `Context window ${formatContextWindowTokens(usage.usedTokens)} tokens used`
             }
           >
             <span className="relative flex size-5 items-center justify-center">
@@ -87,6 +84,7 @@ export function ContextWindowMeter(props: {
         }
       />
       <PopoverPopup
+        {...composerFloatingLayerProps}
         tooltipStyle
         side="top"
         align="end"
@@ -95,9 +93,7 @@ export function ContextWindowMeter(props: {
       >
         <div className="flex flex-col gap-2 p-[var(--floating-content-inset)]">
           <div className="flex items-center justify-between gap-3">
-            <div className="font-medium text-muted-foreground text-xs">
-              {translate("chat.contextWindow.title")}
-            </div>
+            <div className="font-medium text-muted-foreground text-xs">Context Window</div>
             {usage.maxTokens !== null && usedPercentage ? (
               <div className="text-secondary-label text-[11px] tabular-nums">
                 <span>{usedPercentage}</span>
@@ -120,7 +116,7 @@ export function ContextWindowMeter(props: {
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={Math.round(normalizedPercentage)}
-              aria-label={translate("chat.contextWindow.usage")}
+              aria-label="Context window usage"
             >
               <div
                 className="h-full rounded-full transition-[width,background-color] duration-500 ease-out motion-reduce:transition-none"
@@ -130,9 +126,7 @@ export function ContextWindowMeter(props: {
           ) : null}
           {showTotalProcessed ? (
             <div className="flex items-center justify-between gap-3 text-[11px] leading-4">
-              <span className="text-secondary-label">
-                {translate("chat.contextWindow.totalProcessed")}
-              </span>
+              <span className="text-secondary-label">Total processed</span>
               <span className="font-medium tabular-nums text-secondary-label">
                 {formatContextWindowTokens(totalProcessedTokens)}
               </span>
@@ -153,7 +147,7 @@ export function ContextWindowMeter(props: {
                 onClick={onCompact}
               >
                 <Minimize2Icon aria-hidden="true" />
-                {translate("chat.contextWindow.compact")}
+                Compact context
               </Button>
               {compactDisabled && compactDisabledReason ? (
                 <div className="text-pretty text-secondary-label text-[11px]">

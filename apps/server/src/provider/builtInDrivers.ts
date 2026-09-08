@@ -28,6 +28,7 @@ import { GrokDriver, type GrokDriverEnv } from "./Drivers/GrokDriver.ts";
 import { GeminiDriver, type GeminiDriverEnv } from "./Drivers/GeminiDriver.ts";
 import { OpenAiDriver, type OpenAiDriverEnv } from "./Drivers/OpenAiDriver.ts";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "./Drivers/OpenCodeDriver.ts";
+import { AntigravityDriver, type AntigravityDriverEnv } from "./Drivers/AntigravityDriver.ts";
 import { OpenRouterDriver, type OpenRouterDriverEnv } from "./Drivers/OpenRouterDriver.ts";
 import type { AnyProviderDriver } from "./ProviderDriver.ts";
 
@@ -45,7 +46,8 @@ export type BuiltInDriversEnv =
   | GrokDriverEnv
   | OpenAiDriverEnv
   | OpenCodeDriverEnv
-  | OpenRouterDriverEnv;
+  | OpenRouterDriverEnv
+  | AntigravityDriverEnv;
 
 /**
  * Ordered list of built-in drivers. Order matters only for tie-breaking in
@@ -61,5 +63,6 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   CursorDriver,
   GrokDriver,
   OpenCodeDriver,
+  AntigravityDriver,
   GeminiDriver,
 ];

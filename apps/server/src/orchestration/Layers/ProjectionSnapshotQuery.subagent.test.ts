@@ -1,3 +1,7 @@
+import { EventId } from "@t3tools/contracts";
+import { TurnId } from "@t3tools/contracts";
+import { MessageId } from "@t3tools/contracts";
+import { ProviderDriverKind } from "@t3tools/contracts";
 import {
   ProviderInstanceId,
   SubagentId,
@@ -8,6 +12,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -21,12 +26,13 @@ const threadId = ThreadId.make("thread-subagent-query");
 const subagentId = SubagentId.make("agent-subagent-query");
 const createdAt = "2026-07-30T11:00:00.000Z";
 const updatedAt = "2026-07-30T11:00:01.000Z";
+const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 const expectedSummary: OrchestrationSubagentSummary = {
   id: subagentId,
   origin: "t3-fetch",
   providerInstanceId: ProviderInstanceId.make("claude-work"),
-  providerDriver: "claudeAgent",
+  providerDriver: ProviderDriverKind.make("claudeAgent"),
   providerThreadId: "provider-agent-subagent-query",
   parentId: null,
   path: "/root/query",
@@ -151,7 +157,7 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
           ${expectedSummary.depth},
           ${expectedSummary.status},
           ${expectedSummary.statusMessage},
-          ${JSON.stringify(expectedSummary.latestProgress)},
+          ${encodeJson(expectedSummary.latestProgress)},
           NULL,
           ${createdAt},
           ${updatedAt},
@@ -251,8 +257,8 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
           ...expectedSummary,
           messages: [
             {
-              id: "message-subagent-query",
-              turnId: "turn-subagent-query",
+              id: MessageId.make("message-subagent-query"),
+              turnId: TurnId.make("turn-subagent-query"),
               role: "assistant",
               text: "lazy child output",
               streaming: false,
@@ -263,7 +269,7 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
           proposedPlans: [
             {
               id: "plan-subagent-query",
-              turnId: "turn-subagent-query",
+              turnId: TurnId.make("turn-subagent-query"),
               planMarkdown: "# Lazy plan",
               implementedAt: null,
               implementationThreadId: null,
@@ -273,8 +279,8 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
           ],
           activities: [
             {
-              id: "activity-subagent-query",
-              turnId: "turn-subagent-query",
+              id: EventId.make("activity-subagent-query"),
+              turnId: TurnId.make("turn-subagent-query"),
               tone: "info",
               kind: "command.completed",
               summary: "Focused query completed",
@@ -337,7 +343,9 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
 
         const olderPage = yield* query.getSubagentDetailSnapshot(threadId, subagentId, {
           activityLimit: 2,
-          beforeCursor: recentPage.value.page?.beforeCursor ?? undefined,
+          ...(recentPage.value.page?.beforeCursor
+            ? { beforeCursor: recentPage.value.page.beforeCursor }
+            : {}),
         });
         assert.equal(olderPage._tag, "Some");
         if (olderPage._tag === "Some") {
@@ -349,7 +357,7 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
         }
       }
 
-      const largePayload = JSON.stringify({ output: "x".repeat(2_500_000) });
+      const largePayload = encodeJson({ output: "x".repeat(2_500_000) });
       for (const sequence of [8, 9, 10]) {
         yield* sql`
           INSERT INTO projection_thread_subagent_activities (
@@ -549,7 +557,7 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
             'running',
             'Running',
             '{"kind":"state.running","summary":"Running","detail":null,"createdAt":"2026-07-30T12:04:00.000Z"}',
-            ${JSON.stringify({
+            ${encodeJson({
               turnId: "child-turn",
               state: "completed",
               requestedAt: createdAt,
@@ -577,7 +585,7 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
             'running',
             'Running',
             '{"kind":"state.running","summary":"Running","detail":null,"createdAt":"2026-07-30T12:04:00.000Z"}',
-            ${JSON.stringify({
+            ${encodeJson({
               turnId: "active-turn",
               state: "running",
               requestedAt: createdAt,
@@ -624,7 +632,7 @@ it.layer(TestLayer)("ProjectionSnapshotQuery subagent details", (it) => {
               createdAt: completedAt,
             },
             latestTurn: {
-              turnId: "child-turn",
+              turnId: TurnId.make("child-turn"),
               state: "completed",
               requestedAt: createdAt,
               startedAt: createdAt,

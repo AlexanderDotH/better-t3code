@@ -539,7 +539,7 @@ export const McpRuntimeErrorCode = Schema.Literals([
 ]);
 export type McpRuntimeErrorCode = typeof McpRuntimeErrorCode.Type;
 
-export class McpRuntimeError extends Schema.TaggedErrorClass<McpRuntimeError>()("McpRuntimeError", {
+export class McpRuntimeError extends Schema.TaggedError<McpRuntimeError>()("McpRuntimeError", {
   code: McpRuntimeErrorCode,
   detail: TrimmedNonEmptyString,
   cause: Schema.optional(Schema.Defect()),
@@ -549,7 +549,7 @@ export class McpRuntimeError extends Schema.TaggedErrorClass<McpRuntimeError>()(
   }
 }
 
-export class McpConfigError extends Schema.TaggedErrorClass<McpConfigError>()("McpConfigError", {
+export class McpConfigError extends Schema.TaggedError<McpConfigError>()("McpConfigError", {
   detail: TrimmedNonEmptyString,
   cause: Schema.optional(Schema.Defect()),
 }) {

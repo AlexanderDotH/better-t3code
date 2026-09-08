@@ -18,7 +18,7 @@ import {
 import * as NetService from "@t3tools/shared/Net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { deriveServerPaths } from "../config.ts";
-import { resolveServerConfig } from "./config.ts";
+import { resolveCliAuthConfig, resolveServerConfig } from "./config.ts";
 
 const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
   deriveServerPaths(baseDir, devUrl, { baseDirIsExplicit: true });
@@ -60,7 +60,16 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     yield* fs.writeFileString(filePath, `${encoded}\n`);
     return yield* Effect.acquireRelease(
       Effect.sync(() => NodeFS.openSync(filePath, "r")),
-      (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
+      // Without a /proc or /dev/fd path to reopen, the reader consumes the fd
+      // itself (autoClose), so on Windows it is already closed here.
+      (fd) =>
+        Effect.sync(() => {
+          try {
+            NodeFS.closeSync(fd);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "EBADF") throw error;
+          }
+        }),
     );
   });
 
@@ -178,6 +187,29 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
+  it.effect("rejects advertised URLs that cannot serve HTTP pairing links", () =>
+    Effect.gen(function* () {
+      for (const advertisedUrl of [
+        "ftp://code.example.com",
+        "file:///tmp/server",
+        "javascript:void(0)",
+      ]) {
+        const result = yield* resolveCliAuthConfig({ baseDir: Option.none() }, Option.none()).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({ env: { T3CODE_ADVERTISED_URL: advertisedUrl } }),
+              ),
+              NetService.layer,
+            ),
+          ),
+          Effect.result,
+        );
+        expect(result._tag).toBe("Failure");
+      }
+    }),
+  );
+
   it.effect("uses CLI flags when provided", () =>
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
@@ -200,6 +232,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.some(true),
           tailscaleServeEnabled: Option.some(true),
           tailscaleServePort: Option.some(8443),
+          advertisedUrl: Option.some(new URL("https://code.example.com/ignored?key=value#state")),
         },
         Option.some("Debug"),
       ).pipe(
@@ -209,6 +242,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
               ConfigProvider.fromEnv({
                 env: {
                   T3CODE_LOG_LEVEL: "Warn",
+                  T3CODE_ADVERTISED_URL: "https://ignored.example.com",
                   T3CODE_MODE: "desktop",
                   T3CODE_PORT: "4001",
                   T3CODE_HOST: "0.0.0.0",
@@ -243,6 +277,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: true,
         tailscaleServeEnabled: true,
         tailscaleServePort: 8443,
+        advertisedUrl: new URL("https://code.example.com/"),
       });
       assert.equal(resolved.dbPath, join(baseDir, "userdata", "state.sqlite"));
     }),
@@ -322,13 +357,15 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
 
   it.effect("uses bootstrap envelope values as fallbacks when flags and env are absent", () =>
     Effect.gen(function* () {
-      const { join } = yield* Path.Path;
-      const baseDir = "/tmp/t3-bootstrap-home";
+      const { join, resolve } = yield* Path.Path;
+      // The resolver absolutises the configured home, so the expectation must
+      // carry the host's drive on Windows.
+      const baseDir = resolve("/tmp/t3-bootstrap-home");
       const fd = yield* openBootstrapFd(
         makeDesktopBootstrap({
           port: 4888,
           host: "127.0.0.2",
-          t3Home: baseDir,
+          t3Home: "/tmp/t3-bootstrap-home",
           noBrowser: true,
           desktopBootstrapToken: "desktop-token",
           desktopTelemetryFd: 4,

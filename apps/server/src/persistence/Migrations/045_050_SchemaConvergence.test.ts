@@ -2,8 +2,8 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { migrationEntries, migrationManifest, runMigrations } from "../Migrations.ts";
-import * as NodeSqliteClient from "../NodeSqliteClient.ts";
+import { migrationEntries, migrationManifest, runMigrations } from "./LegacyForkMigrations.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import ForkMigration036 from "./036_ProjectSpeechProfilesCompatibility.ts";
 import ForkMigration037 from "./037_ProjectionThreadSubagents.ts";
 import Migration045 from "./045_ForkSchemaConvergence.ts";
@@ -87,7 +87,7 @@ interface ScenarioSnapshot {
   readonly integrity: ReadonlyArray<string>;
 }
 
-const captureScenario = (setup: Effect.Effect<void, unknown, SqlClient.SqlClient>) =>
+const captureScenario = <E>(setup: Effect.Effect<void, E, SqlClient.SqlClient>) =>
   Effect.gen(function* () {
     yield* setup;
     const sql = yield* SqlClient.SqlClient;

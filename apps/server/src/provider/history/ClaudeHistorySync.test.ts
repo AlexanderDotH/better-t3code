@@ -104,6 +104,7 @@ describe("ClaudeHistorySync", () => {
             uuid: "user-1",
             session_id: "session-1",
             parent_tool_use_id: null,
+            parent_agent_id: null,
             message: {
               role: "user",
               content: [
@@ -120,6 +121,7 @@ describe("ClaudeHistorySync", () => {
             uuid: "assistant-1",
             session_id: "session-1",
             parent_tool_use_id: null,
+            parent_agent_id: null,
             message: {
               role: "assistant",
               content: [
@@ -138,6 +140,7 @@ describe("ClaudeHistorySync", () => {
             uuid: "tool-result-1",
             session_id: "session-1",
             parent_tool_use_id: "tool-1",
+            parent_agent_id: null,
             message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tool-1" }] },
           },
         ],

@@ -8,7 +8,6 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import { cn } from "~/lib/utils";
-import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useLocalEnvironmentUpdateGroups } from "./ProviderUpdateLaunchNotification.environments";
@@ -47,7 +46,6 @@ function toProviderUpdateOutcome(input: {
     readonly instanceId: ServerProvider["instanceId"];
   };
   readonly result: ProviderUpdateCommandResult;
-  readonly fallbackErrorMessage: string;
 }): PromiseSettledResult<LocalProviderUpdateOutcome> {
   if (input.result._tag === "Failure") {
     if (isAtomCommandInterrupted(input.result)) {
@@ -67,7 +65,7 @@ function toProviderUpdateOutcome(input: {
     const error = squashAtomCommandFailure(input.result);
     return {
       status: "rejected",
-      reason: error instanceof Error ? error : new Error(input.fallbackErrorMessage),
+      reason: error instanceof Error ? error : new Error("Provider update failed."),
     };
   }
 
@@ -117,7 +115,6 @@ function EnvironmentUpdateRow({
   readonly status: ProviderUpdateRowStatus;
   readonly onUpdate: () => void;
 }) {
-  const translator = useInterfaceTranslator();
   let trailing: ReactNode;
   switch (status.kind) {
     case "loading":
@@ -130,14 +127,14 @@ function EnvironmentUpdateRow({
     case "unchanged":
       trailing = (
         <Button size="xs" variant="outline" onClick={onUpdate}>
-          {translator.message("common.retry")}
+          Retry
         </Button>
       );
       break;
     default:
       trailing = (
-        <Button size="xs" onClick={onUpdate}>
-          {translator.message("serverUpdate.action.update")}
+        <Button size="xs" variant="outline" onClick={onUpdate}>
+          Update
         </Button>
       );
       break;
@@ -165,7 +162,6 @@ export function ProviderUpdateEnvironmentRows({
   /** Called the first time the user triggers an update, so the host can stop refreshing the prompt. */
   readonly onInteract?: () => void;
 }) {
-  const translator = useInterfaceTranslator();
   const { groups } = useLocalEnvironmentUpdateGroups();
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
     reportFailure: false,
@@ -265,7 +261,7 @@ export function ProviderUpdateEnvironmentRows({
         inFlightEnvironmentsRef.current.delete(environmentId);
         clearPending(environmentId);
         setErrorByEnvironment((previous) =>
-          new Map(previous).set(environmentId, translator.message("providerUpdate.timeout")),
+          new Map(previous).set(environmentId, "Update timed out — try again."),
         );
       }, PENDING_EXPIRY_MS);
       try {
@@ -283,15 +279,11 @@ export function ProviderUpdateEnvironmentRows({
                 isPrimary: group.isPrimary,
                 target,
                 result,
-                fallbackErrorMessage: translator.message("providerUpdate.failureFallback"),
               });
             } catch (error) {
               return {
                 status: "rejected",
-                reason:
-                  error instanceof Error
-                    ? error
-                    : new Error(translator.message("providerUpdate.failureFallback")),
+                reason: error instanceof Error ? error : new Error("Provider update failed."),
               };
             }
           }),
@@ -314,7 +306,10 @@ export function ProviderUpdateEnvironmentRows({
         });
         if (results.length === 0) {
           setErrorByEnvironment((previous) =>
-            new Map(previous).set(environmentId, translator.message("providerUpdate.disconnected")),
+            new Map(previous).set(
+              environmentId,
+              "This environment isn’t connected — try again once it reconnects.",
+            ),
           );
           return;
         }
@@ -346,9 +341,7 @@ export function ProviderUpdateEnvironmentRows({
           setErrorByEnvironment((previous) =>
             new Map(previous).set(
               environmentId,
-              error instanceof Error
-                ? error.message
-                : translator.message("providerUpdate.failureFallback"),
+              error instanceof Error ? error.message : "Provider update failed.",
             ),
           );
         }
@@ -362,7 +355,7 @@ export function ProviderUpdateEnvironmentRows({
         }
       }
     },
-    [clearPending, groupByEnvironment, onInteract, translator, updateProvider],
+    [clearPending, groupByEnvironment, onInteract, updateProvider],
   );
 
   const rows = groups

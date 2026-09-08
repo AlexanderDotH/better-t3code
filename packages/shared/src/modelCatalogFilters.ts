@@ -1,16 +1,8 @@
 import type { ModelCapabilities } from "@t3tools/contracts";
 
-export const OPENROUTER_MODEL_FILTERS = [
-  "agent-ready",
-  "free",
-  "reasoning",
-  "vision",
-  "128k",
-] as const;
+const OPENROUTER_MODEL_FILTERS = ["agent-ready", "free", "reasoning", "vision", "128k"] as const;
 
 export type OpenRouterModelFilter = (typeof OPENROUTER_MODEL_FILTERS)[number];
-
-export const OPENROUTER_MODEL_FEATURE_FILTERS = OPENROUTER_MODEL_FILTERS;
 
 export interface OpenRouterModelFilterDefinition {
   readonly id: OpenRouterModelFilter;
@@ -57,7 +49,7 @@ export type OpenRouterModelContextThreshold =
   (typeof OPENROUTER_MODEL_CONTEXT_THRESHOLDS)[number]["id"];
 export type OpenRouterModelContextThresholdSelection = OpenRouterModelContextThreshold | "any";
 
-export const OPENROUTER_MODEL_CATALOG_SORTS = [
+const OPENROUTER_MODEL_CATALOG_SORTS = [
   "catalog",
   "name",
   "context-window",
@@ -255,7 +247,7 @@ export function matchesOpenRouterModelFilters(
   return true;
 }
 
-export function matchesOpenRouterModelContextThreshold(
+function matchesOpenRouterModelContextThreshold(
   candidate: ModelCatalogFilterCandidate,
   threshold: OpenRouterModelContextThresholdSelection,
 ): boolean {

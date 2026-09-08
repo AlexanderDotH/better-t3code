@@ -94,7 +94,7 @@ function tagged(error: unknown, tag: string): boolean {
   return typeof error === "object" && error !== null && "_tag" in error && error._tag === tag;
 }
 
-export function toGitWorkbenchServiceError(
+function toGitWorkbenchServiceError(
   cwd: string,
   operation: string,
   error: unknown,
@@ -281,6 +281,7 @@ export class GitWorkbenchService extends Context.Service<
   }
 >()("t3/git-workbench/GitWorkbenchService") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const driver = yield* GitWorkbenchDriver;
   const query = yield* GitRepositoryQueryService;
@@ -392,19 +393,18 @@ export const make = Effect.gen(function* () {
 
         const directRepositoryChanges = Stream.fromSubscription(repositorySubscription).pipe(
           Stream.filter((event) => event.cwd === workspace.cwd),
-          Stream.map(
-            (event): GitWorkbenchStreamEvent => ({
-              _tag: "repositoryUpdated",
-              snapshot: event.snapshot,
-            }),
-          ),
+          Stream.map((event): GitWorkbenchStreamEvent => ({
+            _tag: "repositoryUpdated",
+            snapshot: event.snapshot,
+          })),
         );
         const externalRepositoryChanges = vcsStatus.streamStatus({ cwd: workspace.cwd }).pipe(
           Stream.drop(1),
           Stream.mapEffect(() => loadSnapshot(workspace, "subscribe-workbench")),
-          Stream.map(
-            (next): GitWorkbenchStreamEvent => ({ _tag: "repositoryUpdated", snapshot: next }),
-          ),
+          Stream.map((next): GitWorkbenchStreamEvent => ({
+            _tag: "repositoryUpdated",
+            snapshot: next,
+          })),
           Stream.mapError((error) =>
             toGitWorkbenchServiceError(workspace.cwd, "subscribe-workbench", error),
           ),
@@ -412,12 +412,10 @@ export const make = Effect.gen(function* () {
         const queueChanges = queueSubscription.changes.pipe(Stream.map(toContractQueueEvent));
         const undoChanges = Stream.fromSubscription(undoSubscription).pipe(
           Stream.filter((event) => event.cwd === workspace.cwd),
-          Stream.map(
-            (event): GitWorkbenchStreamEvent => ({
-              _tag: "undoUpdated",
-              undoSnapshots: event.snapshots,
-            }),
-          ),
+          Stream.map((event): GitWorkbenchStreamEvent => ({
+            _tag: "undoUpdated",
+            undoSnapshots: event.snapshots,
+          })),
         );
 
         return Stream.concat(

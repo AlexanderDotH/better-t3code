@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 
 import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-export const BETTER_T3_SETTINGS_VERSION = 1 as const;
+const BETTER_T3_SETTINGS_VERSION = 1 as const;
 
 export const BetterT3FeatureSection = Schema.Literals([
   "agent-workflows",
@@ -45,11 +45,13 @@ const featureIds = [
   "agent.expandedComposerControls",
   "agent.reasoningVisibility",
   "agent.generalSubagents",
+  "agent.nativeSubagentDisplay",
   "agent.projectCoordination",
   "chat.workspaceCardDeck",
   "chat.cardMorphing",
   "chat.characterStreamingMotion",
   "chat.presentation",
+  "chat.contextWindowSelector",
   "chat.classicBubbleOnly",
   "chat.classicSidebar",
   "chat.previewCount",
@@ -94,6 +96,7 @@ const switchFeatureIds = [
   "agent.expandedComposerControls",
   "agent.reasoningVisibility",
   "agent.generalSubagents",
+  "agent.nativeSubagentDisplay",
   "agent.projectCoordination",
   "chat.workspaceCardDeck",
   "chat.cardMorphing",
@@ -307,6 +310,13 @@ export const BETTER_T3_FEATURE_REGISTRY = [
     capabilities: [capability("agentWorkflowVersion", 1)],
   }),
   descriptor({
+    id: "agent.nativeSubagentDisplay",
+    section: "agent-workflows",
+    scope: "device",
+    controlKind: "switch",
+    surfaces: ["web", "desktop"],
+  }),
+  descriptor({
     id: "agent.projectCoordination",
     section: "agent-workflows",
     scope: "environment",
@@ -345,6 +355,14 @@ export const BETTER_T3_FEATURE_REGISTRY = [
     scope: "synchronized",
     controlKind: "selector",
     mirrors: [serverMirror("chatVisualModeSyncRecord.mode")],
+  }),
+  descriptor({
+    id: "chat.contextWindowSelector",
+    section: "chat-layout",
+    scope: "device",
+    controlKind: "selector",
+    surfaces: ["web", "desktop"],
+    mirrors: [clientMirror("contextWindowSelector")],
   }),
   descriptor({
     id: "chat.classicBubbleOnly",

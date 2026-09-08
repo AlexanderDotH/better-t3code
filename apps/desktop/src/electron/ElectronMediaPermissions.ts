@@ -50,6 +50,7 @@ export class ElectronMediaPermissions extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronMediaPermissions") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = ElectronMediaPermissions.of({
   configure: (input) =>
     Effect.acquireRelease(

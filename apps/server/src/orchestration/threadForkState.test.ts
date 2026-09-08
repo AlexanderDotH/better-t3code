@@ -54,6 +54,7 @@ const seedForkReadModel = Effect.gen(function* () {
     correlationId: CommandId.make("command-fork-state-project"),
     metadata: {},
     payload: {
+      checkpointsEnabled: true,
       projectId,
       title: "Fork state project",
       workspaceRoot: "/tmp/fork-state",
@@ -199,8 +200,8 @@ it.layer(NodeServices.layer)("thread fork state", (it) => {
           createdAt: "2026-08-24T11:01:00.000Z",
         },
       });
-      expect(Array.isArray(decided)).toBe(false);
-      if (Array.isArray(decided)) return;
+      expect(!("type" in decided)).toBe(false);
+      if (!("type" in decided)) return;
       expect(decided.type).toBe("thread.fork-workspace-updated");
       const ready = yield* projectEvent(readModel, { ...decided, sequence: 4 });
       const staleError: OrchestrationEvent = {
@@ -239,7 +240,7 @@ it.layer(NodeServices.layer)("thread fork state", (it) => {
           completedAt: "2026-08-24T11:03:00.000Z",
         },
       });
-      if (Array.isArray(decided)) return;
+      if (!("type" in decided)) return;
       const completed = yield* projectEvent(readModel, { ...decided, sequence: 4 });
       const duplicate: OrchestrationEvent = {
         ...baseEvent({

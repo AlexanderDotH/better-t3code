@@ -2,7 +2,7 @@ export const SURFACE_MORPH_PRIMARY_DURATION_MS = 480;
 export const SURFACE_MORPH_SECONDARY_DURATION_MS = 420;
 export const SURFACE_MORPH_EXIT_DURATION_MS = 360;
 export const SURFACE_MORPH_ANIMATION_ID = "t3-surface-morph";
-export const SURFACE_MORPH_EASING = "linear";
+const SURFACE_MORPH_EASING = "linear";
 export const SURFACE_MORPH_PHASE_OFFSETS = Object.freeze({
   start: 0,
   neck: 0.22,

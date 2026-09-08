@@ -5,15 +5,18 @@ import {
   type ProviderOptionSelection,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import { getProviderOptionDescriptors } from "@t3tools/shared/model";
+import { getProviderModelCapabilities } from "../../providerModels";
+import { DraftId } from "../../composerDraftStore";
 import {
   getComposerPromptInjectionState,
   getComposerProviderState,
-  renderProviderContextWindowMenuContent,
-  renderProviderContextWindowPicker,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
+  renderProviderContextWindowPicker,
+  renderProviderContextWindowMenuContent,
+  withImplicitFastModeDefault,
 } from "./composerProviderState";
-import { DraftId } from "../../composerDraftStore";
 
 // Everything in composerProviderState is now data-driven by the model's
 // optionDescriptors, so these tests use a single synthetic provider/model and
@@ -40,8 +43,16 @@ function selectDescriptor(
   };
 }
 
-function booleanDescriptor(id: string): Extract<ProviderOptionDescriptor, { type: "boolean" }> {
-  return { id, label: id, type: "boolean" };
+function booleanDescriptor(
+  id: string,
+  currentValue?: boolean,
+): Extract<ProviderOptionDescriptor, { type: "boolean" }> {
+  return {
+    id,
+    label: id,
+    type: "boolean",
+    ...(typeof currentValue === "boolean" ? { currentValue } : {}),
+  };
 }
 
 function modelWith(
@@ -58,41 +69,6 @@ function selections(
   return entries.map(([id, value]) => ({ id, value }));
 }
 
-const GPT_56_SOL_DESCRIPTORS: ReadonlyArray<ProviderOptionDescriptor> = [
-  {
-    id: "effort",
-    label: "Reasoning",
-    type: "select",
-    options: [
-      { id: "low", label: "Low", isDefault: true },
-      { id: "medium", label: "Medium" },
-      { id: "high", label: "High" },
-      { id: "xhigh", label: "Extra High" },
-      { id: "max", label: "Max" },
-    ],
-  },
-  { id: "fastMode", label: "Fast Mode", type: "boolean", currentValue: false },
-];
-
-const GPT_54_DESCRIPTORS: ReadonlyArray<ProviderOptionDescriptor> = [
-  {
-    id: "effort",
-    label: "Reasoning",
-    type: "select",
-    options: [
-      { id: "low", label: "Low" },
-      { id: "medium", label: "Medium", isDefault: true },
-      { id: "high", label: "High" },
-      { id: "xhigh", label: "Extra High" },
-    ],
-  },
-  { id: "fastMode", label: "Fast Mode", type: "boolean", currentValue: false },
-];
-
-const GPT_54_MINI_DESCRIPTORS = GPT_54_DESCRIPTORS.filter(
-  (descriptor) => descriptor.id !== "fastMode",
-);
-
 const ULTRATHINK_FRAME_CLASSES = {
   composerFrameClassName: "ultrathink-frame",
   composerSurfaceClassName: "shadow-[0_0_0_1px_rgba(255,255,255,0.07)_inset]",
@@ -100,61 +76,6 @@ const ULTRATHINK_FRAME_CLASSES = {
 } as const;
 
 describe("getComposerProviderState", () => {
-  it("upgrades legacy Codex fast mode to the canonical service tier", () => {
-    const models = modelWith([
-      selectDescriptor("serviceTier", [
-        { id: "default", label: "Standard", isDefault: true },
-        { id: "priority", label: "Fast" },
-      ]),
-    ]);
-
-    expect(
-      getComposerProviderState({
-        provider: PROVIDER,
-        model: MODEL,
-        models,
-        modelOptions: selections(["fastMode", true]),
-        planModeEnabled: true,
-      }).modelOptionsForDispatch,
-    ).toEqual(selections(["serviceTier", "priority"]));
-  });
-
-  it("dispatches Standard explicitly for a fast-capable Codex model", () => {
-    const models = modelWith([
-      selectDescriptor("serviceTier", [
-        { id: "default", label: "Standard", isDefault: true },
-        { id: "priority", label: "Fast" },
-      ]),
-    ]);
-
-    expect(
-      getComposerProviderState({
-        provider: PROVIDER,
-        model: MODEL,
-        models,
-        modelOptions: undefined,
-        planModeEnabled: true,
-      }).modelOptionsForDispatch,
-    ).toEqual(selections(["serviceTier", "default"]));
-  });
-
-  it("preserves Auto Reasoning in dispatched Codex options", () => {
-    expect(
-      getComposerProviderState({
-        provider: PROVIDER,
-        model: MODEL,
-        models: modelWith([
-          selectDescriptor("reasoningEffort", [
-            { id: "low", label: "Low", isDefault: true },
-            { id: "high", label: "High" },
-          ]),
-        ]),
-        modelOptions: selections(["reasoningEffort", "low"], ["t3AutoReasoning", true]),
-        planModeEnabled: true,
-      }).modelOptionsForDispatch,
-    ).toEqual(selections(["reasoningEffort", "low"], ["t3AutoReasoning", true]));
-  });
-
   it("derives a stable prompt injection state for ordinary prompt edits", () => {
     expect(getComposerPromptInjectionState("Investigate this failure")).toBe("none");
     expect(getComposerPromptInjectionState("Ultrathink:\nInvestigate this failure")).toBe(
@@ -162,7 +83,7 @@ describe("getComposerProviderState", () => {
     );
   });
 
-  it("returns descriptor defaults when no selections are provided", () => {
+  it("uses descriptor defaults for display without dispatching them as overrides", () => {
     const state = getComposerProviderState({
       provider: PROVIDER,
       model: MODEL,
@@ -179,68 +100,7 @@ describe("getComposerProviderState", () => {
     expect(state).toEqual({
       provider: PROVIDER,
       promptEffort: "high",
-      modelOptionsForDispatch: selections(["effort", "high"]),
-    });
-  });
-
-  it("uses gateway GPT reasoning and Normal inference defaults and preserves explicit choices", () => {
-    const defaults = getComposerProviderState({
-      provider: PROVIDER,
-      model: MODEL,
-      models: modelWith(GPT_56_SOL_DESCRIPTORS),
-      modelOptions: undefined,
-      planModeEnabled: true,
-    });
-    const persisted = getComposerProviderState({
-      provider: PROVIDER,
-      model: MODEL,
-      models: modelWith(GPT_56_SOL_DESCRIPTORS),
-      modelOptions: selections(["effort", "high"], ["fastMode", true]),
-      planModeEnabled: true,
-    });
-
-    expect(defaults).toMatchObject({
-      promptEffort: "low",
-      modelOptionsForDispatch: selections(["effort", "low"], ["fastMode", false]),
-    });
-    expect(persisted).toMatchObject({
-      promptEffort: "high",
-      modelOptionsForDispatch: selections(["effort", "high"], ["fastMode", true]),
-    });
-  });
-
-  it("drops stale GPT options when the next model does not advertise them", () => {
-    const miniState = getComposerProviderState({
-      provider: PROVIDER,
-      model: MODEL,
-      models: modelWith(GPT_54_MINI_DESCRIPTORS),
-      modelOptions: selections(["effort", "high"], ["fastMode", true]),
-      planModeEnabled: true,
-    });
-    const nonReasoningState = getComposerProviderState({
-      provider: PROVIDER,
-      model: MODEL,
-      models: modelWith([]),
-      modelOptions: selections(["effort", "high"], ["fastMode", true]),
-      planModeEnabled: true,
-    });
-
-    expect(miniState.modelOptionsForDispatch).toEqual(selections(["effort", "high"]));
-    expect(nonReasoningState.modelOptionsForDispatch).toBeUndefined();
-  });
-
-  it("uses the next GPT model default when its reasoning ladder no longer supports max", () => {
-    const state = getComposerProviderState({
-      provider: PROVIDER,
-      model: MODEL,
-      models: modelWith(GPT_54_DESCRIPTORS),
-      modelOptions: selections(["effort", "max"], ["fastMode", true]),
-      planModeEnabled: true,
-    });
-
-    expect(state).toMatchObject({
-      promptEffort: "medium",
-      modelOptionsForDispatch: selections(["effort", "medium"], ["fastMode", true]),
+      modelOptionsForDispatch: undefined,
     });
   });
 
@@ -299,6 +159,45 @@ describe("getComposerProviderState", () => {
     });
   });
 
+  it("dispatches reserved Auto reasoning alongside explicit provider choices", () => {
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("reasoningEffort", [{ id: "high", label: "High", isDefault: true }]),
+        selectDescriptor("contextWindow", [
+          { id: "200k", label: "200k", isDefault: true },
+          { id: "1m", label: "1M" },
+        ]),
+      ]),
+      modelOptions: selections(["t3AutoReasoning", true], ["contextWindow", "1m"]),
+      planModeEnabled: true,
+    });
+
+    expect(state.modelOptionsForDispatch).toEqual(
+      selections(["reasoningEffort", "high"], ["contextWindow", "1m"], ["t3AutoReasoning", true]),
+    );
+  });
+
+  it.each([true, false])("adds only a reasoning fallback when Auto is %s", (enabled) => {
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("reasoningEffort", [{ id: "high", label: "High", isDefault: true }]),
+        selectDescriptor("contextWindow", [{ id: "200k", label: "200k", isDefault: true }]),
+      ]),
+      modelOptions: selections(["t3AutoReasoning", enabled]),
+      planModeEnabled: true,
+    });
+
+    expect(state.modelOptionsForDispatch).toEqual(
+      enabled
+        ? selections(["reasoningEffort", "high"], ["t3AutoReasoning", true])
+        : selections(["t3AutoReasoning", false]),
+    );
+  });
+
   it("derives promptEffort from the first select descriptor and preserves all others for dispatch", () => {
     const state = getComposerProviderState({
       provider: PROVIDER,
@@ -319,27 +218,7 @@ describe("getComposerProviderState", () => {
     });
 
     expect(state.promptEffort).toBe("high");
-    expect(state.modelOptionsForDispatch).toEqual(
-      selections(["effort", "high"], ["contextWindow", "200k"], ["agent", "plan"]),
-    );
-  });
-
-  it("does not treat a Codex context-only selection as reasoning effort", () => {
-    const state = getComposerProviderState({
-      provider: PROVIDER,
-      model: MODEL,
-      models: modelWith([
-        selectDescriptor("contextWindow", [
-          { id: "default", label: "Model default", isDefault: true },
-          { id: "262144", label: "256K" },
-        ]),
-      ]),
-      modelOptions: selections(["contextWindow", "262144"]),
-      planModeEnabled: true,
-    });
-
-    expect(state.promptEffort).toBeNull();
-    expect(state.modelOptionsForDispatch).toEqual(selections(["contextWindow", "262144"]));
+    expect(state.modelOptionsForDispatch).toEqual(selections(["agent", "plan"]));
   });
 
   it("drops the plan agent from dispatch when legacy plan mode is disabled", () => {
@@ -391,7 +270,7 @@ describe("getComposerProviderState", () => {
       planModeEnabled: false,
     });
 
-    expect(state.modelOptionsForDispatch).toEqual(selections(["agent", "research"]));
+    expect(state.modelOptionsForDispatch).toBeUndefined();
   });
 
   it("returns undefined dispatch options when the model declares no descriptors", () => {
@@ -463,11 +342,12 @@ describe("getComposerProviderState", () => {
   it("validates options for a known model selected through a legacy alias", () => {
     const state = getComposerProviderState({
       provider: ProviderDriverKind.make("claudeAgent"),
-      model: "opus",
+      model: "legacy-test-model",
       models: [
         {
-          slug: "claude-opus-5",
-          name: "Claude Opus 5",
+          slug: "test-model",
+          name: "Test Model",
+          aliases: ["legacy-test-model"],
           isCustom: false,
           capabilities: {
             optionDescriptors: [
@@ -546,6 +426,91 @@ describe("getComposerProviderState", () => {
     expect(state).not.toHaveProperty("composerSurfaceClassName");
     expect(state).not.toHaveProperty("modelPickerIconClassName");
   });
+
+  it("defaults fastMode to false when the provider reports true but the user has not selected it", () => {
+    const state = getComposerProviderState({
+      provider: ProviderDriverKind.make("cursor"),
+      model: MODEL,
+      models: modelWith([booleanDescriptor("fastMode", true)]),
+      modelOptions: undefined,
+      planModeEnabled: true,
+    });
+
+    expect(state.modelOptionsForDispatch).toEqual(selections(["fastMode", false]));
+  });
+
+  it("keeps explicit fastMode true when the user selected Fast", () => {
+    const state = getComposerProviderState({
+      provider: ProviderDriverKind.make("cursor"),
+      model: MODEL,
+      models: modelWith([booleanDescriptor("fastMode", true)]),
+      modelOptions: selections(["fastMode", true]),
+      planModeEnabled: true,
+    });
+
+    expect(state.modelOptionsForDispatch).toEqual(selections(["fastMode", true]));
+  });
+
+  it("keeps explicit fastMode false when the user selected Normal", () => {
+    const state = getComposerProviderState({
+      provider: ProviderDriverKind.make("cursor"),
+      model: MODEL,
+      models: modelWith([booleanDescriptor("fastMode", true)]),
+      modelOptions: selections(["fastMode", false]),
+      planModeEnabled: true,
+    });
+
+    expect(state.modelOptionsForDispatch).toEqual(selections(["fastMode", false]));
+  });
+});
+
+describe("withImplicitFastModeDefault", () => {
+  it("injects fastMode false only when the model exposes fastMode and no selection exists", () => {
+    expect(
+      withImplicitFastModeDefault(
+        {
+          optionDescriptors: [booleanDescriptor("fastMode", true)],
+        },
+        undefined,
+      ),
+    ).toEqual(selections(["fastMode", false]));
+
+    expect(
+      withImplicitFastModeDefault(
+        {
+          optionDescriptors: [booleanDescriptor("fastMode", true)],
+        },
+        selections(["fastMode", true]),
+      ),
+    ).toEqual(selections(["fastMode", true]));
+  });
+
+  it("does not add fastMode when the model does not expose it", () => {
+    expect(
+      withImplicitFastModeDefault(
+        {
+          optionDescriptors: [booleanDescriptor("thinking", true)],
+        },
+        undefined,
+      ),
+    ).toBeUndefined();
+  });
+});
+
+describe("trait controls fastMode display", () => {
+  it("resolves traits fastMode to Normal when the provider defaults to true without a user selection", () => {
+    const models = modelWith([booleanDescriptor("fastMode", true)]);
+    const provider = ProviderDriverKind.make("cursor");
+    const caps = getProviderModelCapabilities(models, MODEL, provider);
+    const resolved = withImplicitFastModeDefault(caps, undefined);
+    const descriptors = getProviderOptionDescriptors({ caps, selections: resolved });
+    const fastMode = descriptors.find((descriptor) => descriptor.id === "fastMode");
+
+    expect(fastMode?.type).toBe("boolean");
+    if (fastMode?.type === "boolean") {
+      expect(fastMode.currentValue).toBe(false);
+    }
+  });
 });
 
 describe("provider traits render guards", () => {
@@ -554,6 +519,7 @@ describe("provider traits render guards", () => {
       selectDescriptor("effort", [{ id: "high", label: "High", isDefault: true }]),
     ]);
     const args = {
+      contextWindowSelector: "better-t3" as const,
       provider: PROVIDER,
       model: MODEL,
       models,
@@ -565,47 +531,49 @@ describe("provider traits render guards", () => {
 
     expect(renderProviderTraitsPicker(args)).toBeNull();
     expect(renderProviderTraitsMenuContent(args)).toBeNull();
-  });
-
-  it("renders Codex context as its own composer control", () => {
-    const args = {
-      provider: PROVIDER,
-      draftId: DraftId.make("draft-context-window"),
-      model: MODEL,
-      models: modelWith([
-        selectDescriptor("contextWindow", [
-          { id: "default", label: "Model default", isDefault: true },
-          { id: "262144", label: "256K" },
-        ]),
-      ]),
-      modelOptions: selections(["contextWindow", "262144"]),
-      prompt: "",
-      onPromptChange: () => {},
-      planModeEnabled: true,
-    };
-
-    expect(renderProviderContextWindowPicker(args)).not.toBeNull();
-    expect(renderProviderContextWindowMenuContent(args)).not.toBeNull();
-    expect(renderProviderTraitsPicker(args)).toBeNull();
-  });
-
-  it("applies the same target guard to both context-window presentations", () => {
-    const args = {
-      provider: PROVIDER,
-      model: MODEL,
-      models: modelWith([
-        selectDescriptor("contextWindow", [
-          { id: "default", label: "Model default", isDefault: true },
-          { id: "262144", label: "256K" },
-        ]),
-      ]),
-      modelOptions: undefined,
-      prompt: "",
-      onPromptChange: () => {},
-      planModeEnabled: true,
-    };
-
     expect(renderProviderContextWindowPicker(args)).toBeNull();
     expect(renderProviderContextWindowMenuContent(args)).toBeNull();
   });
+
+  it.each(["native", "better-t3"] as const)(
+    "shows only the %s context selector in the composer and overflow menu",
+    (contextWindowSelector) => {
+      const args = {
+        contextWindowSelector,
+        provider: PROVIDER,
+        draftId: DraftId.make("context-selector-test"),
+        model: MODEL,
+        models: modelWith([
+          selectDescriptor("contextWindow", [
+            { id: "200k", label: "200K", isDefault: true },
+            { id: "1m", label: "1M" },
+          ]),
+        ]),
+        modelOptions: selections(["contextWindow", "1m"]),
+        prompt: "",
+        onPromptChange: () => {},
+        planModeEnabled: true,
+      };
+
+      for (const size of ["sm", "xs"] as const) {
+        const input = { ...args, size };
+        expect(renderProviderTraitsPicker(input) !== null).toBe(contextWindowSelector === "native");
+        expect(renderProviderTraitsMenuContent(input) !== null).toBe(
+          contextWindowSelector === "native",
+        );
+        expect(renderProviderContextWindowPicker(input) !== null).toBe(
+          contextWindowSelector === "better-t3",
+        );
+        expect(renderProviderContextWindowMenuContent(input) !== null).toBe(
+          contextWindowSelector === "better-t3",
+        );
+      }
+
+      const claudeInput = { ...args, provider: ProviderDriverKind.make("claudeAgent") };
+      expect(renderProviderTraitsPicker(claudeInput)).not.toBeNull();
+      expect(renderProviderTraitsMenuContent(claudeInput)).not.toBeNull();
+      expect(renderProviderContextWindowPicker(claudeInput)).toBeNull();
+      expect(renderProviderContextWindowMenuContent(claudeInput)).toBeNull();
+    },
+  );
 });

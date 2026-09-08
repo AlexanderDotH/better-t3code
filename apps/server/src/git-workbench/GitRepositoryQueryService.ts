@@ -353,7 +353,7 @@ function parseCommitFileStatuses(
 ): ReadonlyArray<CommitFileStatusEntry> {
   const fields = nullSeparatedFields(stdout, truncated);
   const entries: Array<CommitFileStatusEntry> = [];
-  for (let index = 0; index < fields.length; ) {
+  for (let index = 0; index < fields.length;) {
     const code = fields[index++] ?? "";
     const status = statusName(code);
     if (status === "renamed" || status === "copied") {
@@ -382,7 +382,7 @@ function parseCommitFileStats(
 ): ReadonlyMap<string, CommitFileStats> {
   const fields = nullSeparatedFields(stdout, truncated);
   const stats = new Map<string, CommitFileStats>();
-  for (let index = 0; index < fields.length; ) {
+  for (let index = 0; index < fields.length;) {
     const header = fields[index++] ?? "";
     const additionsEnd = header.indexOf("\t");
     const deletionsEnd = header.indexOf("\t", additionsEnd + 1);

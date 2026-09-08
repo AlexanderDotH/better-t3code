@@ -17,6 +17,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -25,6 +26,7 @@ import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts"
 import { invokeWorkspaceContext, invokeWorkspaceEdit } from "./handlers.ts";
 
 const threadId = ThreadId.make("thread-workspace-context");
+const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const invocation = (capabilities: ReadonlySet<McpInvocationContext.McpCapability>) => ({
   environmentId: EnvironmentId.make("environment-workspace-context"),
   threadId,
@@ -57,7 +59,7 @@ const makeLayer = (options?: {
   readonly worktreePath?: string | null;
 }) => {
   const roots: Array<string> = [];
-  const projection = Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+  const projection = Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
     getThreadCheckpointContext: (requestedThreadId) => {
       expect(requestedThreadId).toBe(threadId);
       return Effect.succeed(
@@ -76,7 +78,7 @@ const makeLayer = (options?: {
             }),
       );
     },
-  } as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape);
+  });
   const workspace = Layer.succeed(WorkspaceContext.WorkspaceContext, {
     execute: ({ workspaceRoot }) => {
       roots.push(workspaceRoot);
@@ -210,7 +212,7 @@ const makeEditLayer = (options?: {
 }) => {
   const requests: Array<{ readonly workspaceRoot: string; readonly input: WorkspaceEditInput }> =
     [];
-  const projection = Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+  const projection = Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
     getThreadCheckpointContext: () =>
       Effect.succeed(
         options?.contextMissing === true
@@ -228,13 +230,13 @@ const makeEditLayer = (options?: {
       Effect.succeed(
         Option.fromNullishOr(options?.shell === undefined ? activeShell() : options.shell),
       ),
-  } as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape);
-  const fileSystem = Layer.succeed(WorkspaceFileSystem.WorkspaceFileSystem, {
+  });
+  const fileSystem = Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({
     editFiles: (request) => {
       requests.push(request);
       return options?.editError ? Effect.fail(options.editError) : Effect.succeed(editResult);
     },
-  } as WorkspaceFileSystem.WorkspaceFileSystem["Service"]);
+  });
   return { requests, layer: Layer.mergeAll(projection, fileSystem) };
 };
 
@@ -245,8 +247,9 @@ it.effect("edits only the authenticated thread worktree during its active writab
   return Effect.gen(function* () {
     const result = yield* invokeWorkspaceEdit(editInput);
     expect(result).toEqual(editResult);
-    expect(JSON.stringify(result)).not.toContain("export {};");
-    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(4_096);
+    const encoded = encodeJsonText(result);
+    expect(encoded).not.toContain("export {};");
+    expect(Buffer.byteLength(encoded)).toBeLessThan(4_096);
     expect(test.requests).toEqual([
       { workspaceRoot: "/workspace/project/.t3/worktrees/feature", input: editInput },
     ]);
@@ -271,7 +274,7 @@ it.effect("returns a bounded structural failure without submitted file contents"
   });
   return Effect.gen(function* () {
     const error = yield* invokeWorkspaceEdit(input).pipe(Effect.flip);
-    const encoded = JSON.stringify(error);
+    const encoded = encodeJsonText(error);
     expect(error.reason).toBe("ambiguous_match");
     expect(encoded).not.toContain(secret);
     expect(Buffer.byteLength(encoded)).toBeLessThan(4_096);

@@ -1,12 +1,9 @@
-import { describe, expect, it } from "vite-plus/test";
-import { translateInterfaceMessage } from "@t3tools/shared/interfaceLanguage";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  filterAvailableSettingsSearchItems,
   searchableSetting,
-  localizeSettingsSearchItems,
-  resolveSettingsSectionLabels,
   searchSettings,
-  SETTINGS_SECTION_LABELS,
   SETTINGS_SEARCH_ITEMS,
   type SettingsSearchItem,
 } from "./settingsSearch";
@@ -16,16 +13,19 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
     id: "word-wrap",
     title: "Word wrap",
     to: "/settings/general",
+    searchTerms: ["long lines in code previews"],
   },
   {
     id: "network-access",
     title: "Network access",
     to: "/settings/connections",
+    searchTerms: ["remote pairing backend"],
   },
   {
     id: "providers",
     title: "Providers",
     to: "/settings/providers",
+    searchTerms: ["claude codex agents"],
   },
   {
     id: "provider-updates",
@@ -40,34 +40,26 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
-  it("localizes built-in navigation, anchors, and searchable titles from typed message ids", () => {
-    const german = (key: Parameters<typeof translateInterfaceMessage>[1]) =>
-      translateInterfaceMessage("de", key);
-    const french = (key: Parameters<typeof translateInterfaceMessage>[1]) =>
-      translateInterfaceMessage("fr", key);
-
-    expect(resolveSettingsSectionLabels(german)["/settings/general"]).toBe("Allgemein");
-    expect(searchableSetting("word-wrap", german)).toEqual({
-      id: "word-wrap",
-      title: "Zeilenumbruch",
-    });
-    expect(
-      searchSettings("graphe de connaissances", localizeSettingsSearchItems(french)).map(
-        (item) => item.id,
-      ),
-    ).toEqual(["better-t3-knowledge-graph"]);
-  });
-
-  it("matches only setting titles", () => {
+  it("matches titles, sections, and remembered setting details", () => {
     expect(searchSettings("word", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
     expect(searchSettings("network", ITEMS).map((item) => item.id)).toEqual(["network-access"]);
-    expect(searchSettings("connections", ITEMS)).toEqual([]);
-    expect(searchSettings("claude", ITEMS)).toEqual([]);
+    expect(searchSettings("connections", ITEMS).map((item) => item.id)).toEqual(["network-access"]);
+    expect(searchSettings("claude", ITEMS).map((item) => item.id)).toEqual(["providers"]);
+    expect(searchSettings("long lines", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
   });
 
   it("matches normalized title substrings", () => {
     expect(searchSettings("  WORD   WRAP  ", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
     expect(searchSettings("glass").map((item) => item.id)).toEqual(["setting-glass-opacity"]);
+    expect(searchSettings("panel animations").map((item) => item.id)).toEqual(["panel-animations"]);
+    expect(searchSettings("thè\u{1ab0}mes")[0]?.id).toBe("theme");
+    const localeLowerCase = vi.spyOn(String.prototype, "toLocaleLowerCase").mockReturnValue("gıt");
+    try {
+      expect(searchSettings("GIT")[0]?.id).toBe("git-fetch-interval");
+      expect(localeLowerCase).not.toHaveBeenCalled();
+    } finally {
+      localeLowerCase.mockRestore();
+    }
     expect(searchSettings("xyzzy")).toEqual([]);
   });
 
@@ -78,6 +70,29 @@ describe("searchSettings", () => {
     ]);
   });
 
+  it("matches query words across fields and ranks the strongest result first", () => {
+    expect(searchSettings("pairing remote", ITEMS).map((item) => item.id)).toEqual([
+      "network-access",
+    ]);
+    expect(
+      searchSettings("remote pairing")
+        .slice(0, 2)
+        .map((item) => item.id),
+    ).toEqual(["network-access", "connections-environment"]);
+  });
+
+  it("finds settings that used to be reachable only through their section", () => {
+    expect(searchSettings("pull request template")[0]?.id).toBe("follow-change-request-templates");
+    expect(searchSettings("git security keys")[0]?.id).toBe("git-fetch-interval");
+    expect(searchSettings("push notifications")[0]?.id).toBe("publish-agent-activity");
+    expect(searchSettings("battery saver")[0]?.id).toBe("background-activity");
+    expect(searchSettings("binary path")[0]?.id).toBe("providers");
+    expect(searchSettings("Antigravity")[0]?.id).toBe("providers");
+    expect(searchSettings("Google sign in")[0]?.id).toBe("providers");
+    expect(searchSettings("authorized clients")[0]?.id).toBe("connections-environment");
+    expect(searchSettings("administrative access")[0]?.id).toBe("connections-environment");
+  });
+
   it("lists thread confirmations in panel order", () => {
     expect(searchSettings("confirmation").map((item) => item.id)).toEqual([
       "unpin-confirmation",
@@ -86,20 +101,88 @@ describe("searchSettings", () => {
     ]);
   });
 
+  it.each(["usage providers", "CLIProxyAPI", "CLI proxy hub", "management key"])(
+    "finds usage-provider management by %s",
+    (query) => {
+      expect(searchSettings(query)[0]).toMatchObject({
+        id: "usage-providers",
+        to: "/settings/providers",
+      });
+    },
+  );
+
   it("returns no results for an empty query", () => {
     expect(searchSettings("   ", ITEMS)).toEqual([]);
   });
 
   it("hides desktop-only settings from browser search", () => {
     expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "quit-confirmation")).toBe(true);
-    expect(searchSettings("quit confirmation")).toEqual([]);
+    expect(searchSettings("hold to quit")).toEqual([]);
+    expect(searchSettings("wsl")).toEqual([]);
   });
 
-  it("hides macOS window transparency from browser search", () => {
-    expect(
-      SETTINGS_SEARCH_ITEMS.find((item) => item.id === "macos-window-transparency"),
-    ).toMatchObject({ to: "/settings/better-t3" });
-    expect(searchSettings("Background transparency and blur")).toEqual([]);
+  it("hides macOS-only settings on other platforms", () => {
+    vi.stubGlobal("navigator", { platform: "Win32" });
+    try {
+      expect(searchSettings("font smoothing")).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("registers the WSL backend as a desktop-only setting", () => {
+    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "wsl-backend")).toMatchObject({
+      id: "wsl-backend",
+      title: "WSL backend",
+      to: "/settings/connections",
+      desktopOnly: true,
+      windowsOnly: true,
+    });
+  });
+
+  it("hides settings whose controls are unavailable", () => {
+    const available = filterAvailableSettingsSearchItems({
+      hasCloudPublicConfig: false,
+      hasPrimaryEnvironment: false,
+      hasProviderSettingsEnvironment: false,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    });
+
+    const gatedIds = new Set<string>([
+      "follow-change-request-templates",
+      "git-fetch-interval",
+      "network-access",
+      "publish-agent-activity",
+      "provider-health-check-interval",
+      "source-control-writer-model",
+      "source-control-writing-style",
+      "t3-connect",
+      "tailscale-https",
+      "wsl-backend",
+      "auto-settle-inactive-threads",
+      "auto-settle-merged-threads",
+      "days-before-auto-settle",
+    ]);
+    expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
+  });
+
+  it("shows automatic settlement settings when the server supports them", () => {
+    const available = filterAvailableSettingsSearchItems({
+      hasCloudPublicConfig: false,
+      hasPrimaryEnvironment: false,
+      hasProviderSettingsEnvironment: false,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: true,
+    });
+
+    expect(searchSettings("auto-settle", available).map((item) => item.id)).toEqual([
+      "auto-settle-inactive-threads",
+      "auto-settle-merged-threads",
+      "days-before-auto-settle",
+    ]);
   });
 
   it("keeps catalog result ids unique", () => {
@@ -124,128 +207,53 @@ describe("searchSettings", () => {
     expect(searchSettings("environment identification")[0]).toMatchObject({
       id: "environment-identification",
       to: "/settings/appearance",
-      targetId: "appearance",
+      targetId: "appearance-interface",
     });
   });
 
-  it("routes sidebar settings to Better T3", () => {
-    expect(searchSettings("sidebar layout")).toEqual([
-      {
-        id: "sidebar-layout",
-        title: "Sidebar layout",
-        to: "/settings/better-t3",
-        targetId: "chat.classicSidebar",
-      },
-    ]);
-    expect(searchSettings("chats per project")).toEqual([
-      {
-        id: "chats-per-project",
-        title: "Chats per project",
-        to: "/settings/better-t3",
-        targetId: "chat.previewCount",
-      },
-    ]);
-  });
+  it("routes conditional window capture settings to the stable toggle row", () => {
+    const targets = [
+      "capture accessibility data",
+      "capture shortcut",
+      "capture sound",
+      "capture flash",
+      "capture animations",
+    ].map((query) => {
+      const match = searchSettings(query)[0];
+      return [match?.id, match?.targetId];
+    });
 
-  it("routes checkpoint searches to project settings", () => {
-    expect(searchSettings("checkpoints")).toEqual([
-      {
-        id: "checkpoints",
-        title: "Checkpoints",
-        to: "/settings/projects",
-      },
+    expect(targets).toEqual([
+      ["snap-shot-accessibility", "snap-shot-enabled"],
+      ["snap-shot-shortcut", "snap-shot-enabled"],
+      ["snap-shot-sound", "snap-shot-enabled"],
+      ["snap-shot-flash", "snap-shot-enabled"],
+      ["snap-shot-animations", "snap-shot-enabled"],
     ]);
   });
 
-  it("routes harness chat sync searches to project settings", () => {
-    expect(searchSettings("harness chat sync")).toEqual([
-      {
-        id: "harness-chat-sync",
-        title: "Harness chat sync",
-        to: "/settings/projects",
-      },
-    ]);
-  });
-
-  it("keeps Skills, MCP, and browser integrations as separate destinations", () => {
-    expect(SETTINGS_SECTION_LABELS["/settings/skills"]).toBe("Skills");
-    expect(SETTINGS_SECTION_LABELS["/settings/mcp"]).toBe("MCP Servers");
-    expect(SETTINGS_SECTION_LABELS["/settings/integrations"]).toBe("Integrations");
-
-    expect(searchSettings("skills")[0]).toMatchObject({ to: "/settings/skills" });
-    expect(searchSettings("MCP servers")[0]).toMatchObject({ to: "/settings/mcp" });
-    expect(searchSettings("agent browser access")[0]).toMatchObject({
+  it("routes browser recording quality to integrations", () => {
+    const result = searchSettings("recording frame rate")[0];
+    expect(result).toMatchObject({
+      id: "browser-recording-frame-rate",
       to: "/settings/integrations",
-      targetId: "browser",
     });
+    expect(result).not.toHaveProperty("targetId");
   });
 
-  it("routes Better T3 feature controls to their dedicated settings page", () => {
-    expect(SETTINGS_SECTION_LABELS["/settings/better-t3"]).toBe("Better T3");
-    expect(Object.hasOwn(SETTINGS_SECTION_LABELS, "/settings/experimental")).toBe(false);
-    expect(searchSettings("Better T3")).toContainEqual({
-      id: "better-t3",
-      title: "Better T3",
-      to: "/settings/better-t3",
+  it("routes where links open to integrations", () => {
+    expect(searchSettings("open links in")[0]).toMatchObject({
+      id: "browser-link-target",
+      to: "/settings/integrations",
     });
-    expect(searchSettings("Knowledge Graph")).toContainEqual({
-      id: "better-t3-knowledge-graph",
-      title: "Knowledge Graph",
-      to: "/settings/better-t3",
-      targetId: "knowledge.graph",
-    });
-    expect(searchSettings("Glass opacity")).toContainEqual({
-      id: "setting-glass-opacity",
-      title: "Glass opacity",
-      to: "/settings/better-t3",
-    });
-    expect(searchSettings("Model reasoning")).toContainEqual({
-      id: "model-reasoning",
-      title: "Model reasoning",
-      to: "/settings/better-t3",
-      targetId: "agent.reasoningVisibility",
-    });
-    expect(searchSettings("Chat visuals")).toContainEqual({
-      id: "chat-visuals",
-      title: "Chat visuals",
-      to: "/settings/better-t3",
-      targetId: "chat.presentation",
-    });
-    expect(searchSettings("Expanded chat controls")).toContainEqual({
-      id: "expanded-chat-controls",
-      title: "Expanded chat controls",
-      to: "/settings/better-t3",
-      targetId: "agent.expandedComposerControls",
-    });
-    expect(searchSettings("Fetch")).toContainEqual({
-      id: "better-t3-fetch",
-      title: "Fetch",
-      to: "/settings/better-t3",
-      targetId: "agent.fetch",
-    });
-    expect(searchSettings("Parallel plan reviewer")).toContainEqual({
-      id: "better-t3-parallel-plan-reviewer",
-      title: "Parallel plan reviewer",
-      to: "/settings/better-t3",
-      targetId: "agent.parallelPlanReviewer",
-    });
-    expect(searchSettings("Prompt improvement")).toContainEqual({
-      id: "prompt-improvement",
-      title: "Prompt improvement",
-      to: "/settings/better-t3",
-      targetId: "agent.promptImprovement",
-    });
-    expect(searchSettings("Auto-settle inactive threads")).toContainEqual({
-      id: "auto-settle-inactive-threads",
-      title: "Auto-settle inactive threads",
-      to: "/settings/better-t3",
-      targetId: "chat.settling",
-    });
-    expect(searchSettings("Voice-output language")).toContainEqual({
-      id: "better-t3-voice-output-language",
-      title: "Voice-output language",
-      to: "/settings/better-t3",
-      targetId: "voice.outputLanguage",
+    expect(searchSettings("external links")[0]).toMatchObject({ id: "browser-link-target" });
+  });
+
+  it("finds the default browser profile action in the profiles list", () => {
+    expect(searchSettings("default profile")[0]).toMatchObject({
+      id: "browser-default-profile",
+      to: "/settings/integrations",
+      targetId: "browser-profiles",
     });
   });
 });

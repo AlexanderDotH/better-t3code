@@ -48,7 +48,7 @@ export function coreReserveBytes(totalBytes: number): number {
   );
 }
 
-export function inProcessEmergencyReserveBytes(totalBytes: number): number {
+function inProcessEmergencyReserveBytes(totalBytes: number): number {
   return Math.min(
     MAX_IN_PROCESS_EMERGENCY_RESERVE_BYTES,
     Math.max(

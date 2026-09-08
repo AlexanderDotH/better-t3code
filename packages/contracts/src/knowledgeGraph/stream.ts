@@ -300,7 +300,7 @@ export const KnowledgeGraphOperationErrorCode = Schema.Literals([
 ]);
 export type KnowledgeGraphOperationErrorCode = typeof KnowledgeGraphOperationErrorCode.Type;
 
-export class KnowledgeGraphOperationError extends Schema.TaggedErrorClass<KnowledgeGraphOperationError>()(
+export class KnowledgeGraphOperationError extends Schema.TaggedError<KnowledgeGraphOperationError>()(
   "KnowledgeGraphOperationError",
   {
     operation: TrimmedNonEmptyString,

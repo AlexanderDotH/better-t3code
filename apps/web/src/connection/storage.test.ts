@@ -1,11 +1,16 @@
 import { ConnectionTransientError } from "@t3tools/client-runtime/connection";
-import { ConnectionCatalogDocument } from "@t3tools/client-runtime/platform";
+import { ConnectionCatalogDocument, ConnectionTargetStore } from "@t3tools/client-runtime/platform";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { afterEach, vi } from "vite-plus/test";
 
-import { makeCatalogBackend, makeCatalogStore, upgradeConnectionStorageDatabase } from "./storage";
+import {
+  connectionStorageLayer,
+  makeCatalogBackend,
+  makeCatalogStore,
+  upgradeConnectionStorageDatabase,
+} from "./storage";
 
 const emptyCatalog = {
   schemaVersion: 1,
@@ -19,6 +24,84 @@ const decodeCatalog = Schema.decodeUnknownSync(Schema.fromJsonString(ConnectionC
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+it.effect("reopens the version-5 cache shipped by Better T3", () =>
+  Effect.gen(function* () {
+    const database = { close: vi.fn() };
+    vi.stubGlobal("indexedDB", {
+      open: (_name: string, version: number) => {
+        const request = Object.assign(new EventTarget(), {
+          result: database,
+          error:
+            version < 5
+              ? new DOMException("The existing database is version 5.", "VersionError")
+              : null,
+        });
+        queueMicrotask(() =>
+          request.dispatchEvent(new Event(request.error === null ? "success" : "error")),
+        );
+        return request;
+      },
+    });
+    vi.stubGlobal("window", {
+      desktopBridge: {
+        getConnectionCatalog: async () => JSON.stringify(emptyCatalog),
+        setConnectionCatalog: vi.fn(),
+      },
+    });
+
+    const targets = yield* ConnectionTargetStore.use((store) => store.list).pipe(
+      Effect.provide(connectionStorageLayer),
+    );
+
+    expect(targets).toEqual([]);
+    expect(database.close).toHaveBeenCalledOnce();
+  }),
+);
+
+describe("upgradeConnectionStorageDatabase", () => {
+  it("clears only pre-pagination thread snapshots when upgrading from version 4", () => {
+    const clear = vi.fn();
+    const objectStore = vi.fn(() => ({ clear }));
+    const createObjectStore = vi.fn();
+    const request = {
+      result: {
+        objectStoreNames: { contains: () => true },
+        createObjectStore,
+      },
+      transaction: { objectStore },
+    } as unknown as IDBOpenDBRequest;
+
+    upgradeConnectionStorageDatabase(request, 4);
+
+    expect(objectStore.mock.calls).toEqual([["thread"]]);
+    expect(clear).toHaveBeenCalledOnce();
+    expect(createObjectStore).not.toHaveBeenCalled();
+  });
+
+  it("preserves current snapshots and initializes all stores on a fresh install", () => {
+    const createObjectStore = vi.fn();
+    const objectStore = vi.fn();
+    const request = {
+      result: {
+        objectStoreNames: { contains: () => false },
+        createObjectStore,
+      },
+      transaction: { objectStore },
+    } as unknown as IDBOpenDBRequest;
+
+    upgradeConnectionStorageDatabase(request, 0);
+    expect(createObjectStore.mock.calls).toEqual([
+      ["catalog"],
+      ["shell"],
+      ["thread"],
+      ["server-config"],
+      ["vcs-refs"],
+    ]);
+    upgradeConnectionStorageDatabase(request, 5);
+    expect(objectStore).not.toHaveBeenCalled();
+  });
 });
 
 describe("makeCatalogStore", () => {
@@ -74,46 +157,4 @@ describe("makeCatalogBackend", () => {
       expect(setConnectionCatalog).toHaveBeenCalledWith("{}");
     }),
   );
-});
-
-describe("upgradeConnectionStorageDatabase", () => {
-  it("clears legacy thread snapshots when upgrading an existing database", () => {
-    const clear = vi.fn();
-    const objectStore = vi.fn(() => ({ clear }));
-    const createObjectStore = vi.fn();
-    const request = {
-      result: {
-        objectStoreNames: {
-          contains: () => true,
-        },
-        createObjectStore,
-      },
-      transaction: { objectStore },
-    } as unknown as IDBOpenDBRequest;
-
-    upgradeConnectionStorageDatabase(request, 4);
-
-    expect(objectStore).toHaveBeenCalledWith("thread");
-    expect(clear).toHaveBeenCalledOnce();
-    expect(createObjectStore).not.toHaveBeenCalled();
-  });
-
-  it("does not clear the thread store for a newly created database", () => {
-    const clear = vi.fn();
-    const objectStore = vi.fn(() => ({ clear }));
-    const request = {
-      result: {
-        objectStoreNames: {
-          contains: () => true,
-        },
-        createObjectStore: vi.fn(),
-      },
-      transaction: { objectStore },
-    } as unknown as IDBOpenDBRequest;
-
-    upgradeConnectionStorageDatabase(request, 0);
-
-    expect(objectStore).not.toHaveBeenCalled();
-    expect(clear).not.toHaveBeenCalled();
-  });
 });

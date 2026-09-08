@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 
 import { didInterfaceLocaleSelectionChange, setClientSettings } from "./clientSettings.ts";
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
+import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
 import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as DesktopApplicationMenu from "../../window/DesktopApplicationMenu.ts";
 
@@ -17,6 +18,7 @@ it.effect(
       let settings = DEFAULT_CLIENT_SETTINGS;
       const applied: boolean[] = [];
       const layer = Layer.mergeAll(
+        Layer.mock(DesktopSnapShot.DesktopSnapShot)({ configure: () => Effect.void }),
         Layer.mock(DesktopClientSettings.DesktopClientSettings)({
           get: Effect.sync(() => Option.some(settings)),
           set: (next) =>

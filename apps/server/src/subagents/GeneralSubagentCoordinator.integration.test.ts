@@ -148,7 +148,7 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
       transcriptRef: `subagent:${threadId}`,
     });
 
-  const providerService = {
+  const providerService: Partial<ProviderServiceShape> = {
     startTransientSession: (threadId, input, options) =>
       Effect.gen(function* () {
         yield* Ref.update(starts, (values) => [...values, { input, options }]);
@@ -242,9 +242,10 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
         Effect.andThen(Deferred.succeed(stoppedSignal, undefined).pipe(Effect.ignore)),
       ),
     streamEvents: Stream.fromPubSub(events),
-  } as unknown as ProviderServiceShape;
+  };
 
   const providerRegistry = ProviderRegistry.of({
+    refreshWorkspaceSnapshot: () => Effect.succeed([]),
     getProviders: Effect.succeed([
       provider({
         instanceId: codexInstance,
@@ -302,12 +303,12 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
         }),
       ),
   } as unknown as ProjectionSnapshotQueryShape;
-  const engine: OrchestrationEngineShape = {
+  const engine: Partial<OrchestrationEngineShape> = {
     dispatch: (command) =>
       Ref.update(commands, (values) => [...values, command]).pipe(
         Effect.andThen(
           options?.failMessageImport && command.type === "thread.message.import"
-            ? Effect.fail(new Error("synthetic import failure"))
+            ? Effect.die(new Error("synthetic import failure"))
             : Effect.succeed({ sequence: ++commandSequence }),
         ),
       ),
@@ -317,9 +318,9 @@ const makeHarness = Effect.fn("GeneralSubagentCoordinator.test.makeHarness")(fun
   };
   const backgroundLiveness = ThreadBackgroundLiveness.make();
   const coordinatorLayer = GeneralSubagentCoordinatorLive.pipe(
-    Layer.provideMerge(Layer.succeed(ProviderService, providerService)),
+    Layer.provideMerge(Layer.mock(ProviderService, providerService)),
     Layer.provideMerge(Layer.succeed(ProviderRegistry, providerRegistry)),
-    Layer.provideMerge(Layer.succeed(OrchestrationEngineService, engine)),
+    Layer.provideMerge(Layer.mock(OrchestrationEngineService, engine)),
     Layer.provideMerge(Layer.succeed(ProjectionSnapshotQuery, query)),
     Layer.provideMerge(
       Layer.succeed(ThreadBackgroundLiveness.ThreadBackgroundLivenessService, backgroundLiveness),
@@ -590,6 +591,7 @@ describe("GeneralSubagentCoordinator", () => {
         });
         expect(waited.agents[0]).not.toHaveProperty("task");
         expect(waited.agents[0]).not.toHaveProperty("output");
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Inspect every returned field without a schema dropping unexpected commentary.
         expect(JSON.stringify(waited)).not.toContain("Streaming implementation commentary");
         const start = (yield* Ref.get(harness.starts))[0]!;
         expect(start.input).toMatchObject({

@@ -47,12 +47,10 @@ const BUILT_IN_GEMINI_MODELS = [
   { slug: "gemini-3.5-flash-lite", name: "Gemini 3.5 Flash-Lite", isCustom: false },
   { slug: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro Preview", isCustom: false },
   { slug: "gemini-3.1-flash-lite", name: "Gemini 3.1 Flash-Lite", isCustom: false },
-].map(
-  (model): ServerProviderModel => ({
-    ...model,
-    capabilities: GEMINI_MODEL_CAPABILITIES,
-  }),
-);
+].map((model): ServerProviderModel => ({
+  ...model,
+  capabilities: GEMINI_MODEL_CAPABILITIES,
+}));
 
 function normalizedModelSlug(name: string | undefined): string | undefined {
   const slug = name?.replace(/^models\//u, "").trim();

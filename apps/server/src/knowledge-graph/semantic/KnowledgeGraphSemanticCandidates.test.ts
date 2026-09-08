@@ -1,9 +1,9 @@
+import { KnowledgeGraphNodeId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   KnowledgeGraphEdgeV1,
   KnowledgeGraphEvidenceV1,
   KnowledgeGraphNodeV1,
-  type KnowledgeGraphNodeId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
@@ -48,7 +48,7 @@ const evidence = (evidenceId: string, path: string) =>
 describe("Knowledge Graph semantic candidates", () => {
   it("caps each changed node at twelve candidates with stable ordering", () => {
     const source = node({
-      nodeId: "node-source",
+      nodeId: KnowledgeGraphNodeId.make("node-source"),
       label: "source.ts",
       path: "src/source.ts",
       evidenceIds: ["evidence-source"],
@@ -56,7 +56,7 @@ describe("Knowledge Graph semantic candidates", () => {
     const candidates = Array.from({ length: 20 }, (_, index) => {
       const suffix = index.toString().padStart(2, "0");
       return node({
-        nodeId: `node-${suffix}`,
+        nodeId: KnowledgeGraphNodeId.make(`node-${suffix}`),
         label: `candidate-${suffix}.ts`,
         path: `src/candidate-${suffix}.ts`,
         evidenceIds: [`evidence-${suffix}`],
@@ -93,25 +93,25 @@ describe("Knowledge Graph semantic candidates", () => {
 
   it("prefers structural evidence, excludes self and unknown nodes, and cites only known evidence", () => {
     const source = node({
-      nodeId: "node-source",
+      nodeId: KnowledgeGraphNodeId.make("node-source"),
       label: "SourceService",
       path: "src/source.ts",
       evidenceIds: ["evidence-source"],
     });
     const direct = node({
-      nodeId: "node-direct",
+      nodeId: KnowledgeGraphNodeId.make("node-direct"),
       label: "DirectService",
       path: "other/direct.ts",
       evidenceIds: ["evidence-direct"],
     });
     const nearby = node({
-      nodeId: "node-nearby",
+      nodeId: KnowledgeGraphNodeId.make("node-nearby"),
       label: "NearbyService",
       path: "src/nearby.ts",
       evidenceIds: ["evidence-nearby"],
     });
     const unrelated = node({
-      nodeId: "node-unrelated",
+      nodeId: KnowledgeGraphNodeId.make("node-unrelated"),
       label: "Readme",
       path: "docs/readme.md",
       evidenceIds: ["evidence-unrelated"],

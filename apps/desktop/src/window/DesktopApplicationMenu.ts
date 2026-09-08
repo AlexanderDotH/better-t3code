@@ -23,7 +23,7 @@ import * as DesktopWindow from "./DesktopWindow.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import { setDesktopInterfaceLanguage } from "../settings/DesktopInterfaceLanguage.ts";
 
-export class DesktopApplicationMenuActionError extends Schema.TaggedErrorClass<DesktopApplicationMenuActionError>()(
+export class DesktopApplicationMenuActionError extends Schema.TaggedError<DesktopApplicationMenuActionError>()(
   "DesktopApplicationMenuActionError",
   {
     action: Schema.String,
@@ -50,21 +50,6 @@ type DesktopApplicationMenuRuntimeServices =
 const { logInfo: logUpdaterInfo } = makeComponentLogger("desktop-updater");
 
 const { logError: logMenuError } = makeComponentLogger("desktop-menu");
-
-const updateDisabledReasonMessageId = (
-  reason: DesktopUpdates.DesktopUpdateDisabledReason,
-): Parameters<typeof translateInterfaceMessage>[1] => {
-  switch (reason) {
-    case "no-update-feed":
-      return "desktop.update.disabled.noFeed";
-    case "development-build":
-      return "desktop.update.disabled.development";
-    case "disabled-by-environment":
-      return "desktop.update.disabled.environment";
-    case "linux-package-required":
-      return "desktop.update.disabled.linuxPackage";
-  }
-};
 
 const dispatchMenuAction = Effect.fn("desktop.menu.dispatchMenuAction")(function* (
   action: string,
@@ -123,7 +108,7 @@ const handleCheckForUpdatesMenuClick = (language: ResolvedInterfaceLanguage) =>
         message: translateInterfaceMessage(language, "desktop.update.unavailableMessage"),
         detail: translateInterfaceMessage(
           language,
-          updateDisabledReasonMessageId(disabledReason.value),
+          DesktopUpdates.updateDisabledReasonMessageId(disabledReason.value),
         ),
         buttons: [translateInterfaceMessage(language, "common.ok")],
       });
@@ -135,6 +120,7 @@ const handleCheckForUpdatesMenuClick = (language: ResolvedInterfaceLanguage) =>
     yield* checkForUpdatesFromMenu(language);
   }).pipe(Effect.withSpan("desktop.menu.handleCheckForUpdatesClick"));
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
@@ -161,7 +147,9 @@ export const make = Effect.gen(function* () {
   };
 
   const configure = Effect.gen(function* () {
-    const storedSettings = yield* clientSettings.get;
+    const storedSettings = yield* clientSettings.get.pipe(
+      Effect.orElseSucceed(() => Option.none()),
+    );
     const preference = Option.match(storedSettings, {
       onNone: () => DEFAULT_INTERFACE_LOCALE_PREFERENCE_V1,
       onSome: (settings) =>

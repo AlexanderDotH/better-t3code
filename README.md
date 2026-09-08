@@ -1,185 +1,121 @@
-<div align="center">
+# T3 Code
 
-# Better T3 Code
+T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
 
-**T3 Code, plus the power-user buttons someone was inevitably going to add.**
+Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCode, and Google Antigravity. If they're set up on your computer, T3 Code can control them.
 
-An independent, batteries-included fork of [T3 Code](https://github.com/pingdotgg/t3code)
-for people who looked at one coding agent and thought, “Great. Can it have coworkers?”
+## "Wait, what are you selling me?"
 
-[What is better?](#yeah-but-what-does-this-thing-actually-do-better-than-t3-code) ·
-[Run the fork](#run-the-fork) · [Documentation](#documentation) ·
-[Sync audit](./docs/operations/upstream-sync.md) ·
-[Upstream](https://github.com/pingdotgg/t3code)
+Nothing. We built T3 Code because we wanted the best possible development experience with agents. We were inspired by existing solutions like the Codex desktop app, Conductor, Claude Desktop and Cursor Glass, but none met our bar.
 
-</div>
+We wanted something performant, remote-ready, and truly open. If we ever go the wrong direction, we want you to have everything you need to fork and build the editor that you want.
 
-Better T3 Code keeps the fast, open, remote-ready T3 Code core: bring your own Codex, Claude Code,
-Cursor, Grok Build, OpenCode, or Gemini access and control it from the web, desktop, or mobile clients.
-This fork adds the opinionated workflows around that core—the things that usually begin with,
-“Okay, but could it also…?”
-
-> [!IMPORTANT]
-> `npx t3@latest`, [app.t3.codes](https://app.t3.codes), the official mobile apps, and the
-> [upstream releases](https://github.com/pingdotgg/t3code/releases) are stock T3 Code. Run or build
-> this repository to use the fork-only features below.
+## Installation
 
 > [!WARNING]
-> Install and authenticate at least one supported provider before use:
+> T3 Code currently supports Codex, Claude, Cursor, Grok Build, OpenCode, and Antigravity. Install and authenticate at least one provider before use:
 >
 > - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
 > - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
 > - Cursor: install [Cursor CLI](https://cursor.com/cli) and run `agent login`
 > - Grok Build: install [Grok Build CLI](https://x.ai/cli) and run `grok login`
 > - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
-> - Gemini: add `GOOGLE_API_KEY` or `GEMINI_API_KEY` to a Gemini provider instance
+> - Antigravity: enable it in Settings, then use **Install Antigravity** and **Sign in with Google**. No CLI is required.
 
-## “Yeah, but what does this thing actually do better than T3 Code?”
+### Try it out (install-free)
 
-Excellent question, suspiciously direct stranger. The short version: Better T3 Code gives agents
-coworkers, makes those coworkers visible, adds safer escape hatches, and includes substantially more
-power-user plumbing around the chat.
-
-| Workflow                   | T3 Code                                                     | Better T3 Code                                                                                                                                   |
-| -------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Repository exploration** | A normal provider turn explores the project                 | **Fetch** can use an independently selected provider and model for a dynamically sized batch of transient, read-only exploration workers         |
-| **Plan implementation**    | Implement a proposed plan normally                          | Review a plan with a fast model, choose a useful agent count, and implement it with provider-native subagents in parallel                        |
-| **Project coordination**   | Agents work within their current thread                     | Authenticated project agents can claim work, exchange durable messages, inspect peers, and wake work in another thread                           |
-| **Subagent visibility**    | Provider activity stays in the main conversation            | Live lifecycle pills, persistent agent history, and readable per-agent transcript dialogs                                                        |
-| **Stopping runaway work**  | Standard cooperative stop                                   | Cooperative stop, second-click force stop, and automatic exact-runtime termination after roughly five seconds—without throwing away chat history |
-| **Switching providers**    | A started thread remains bound to compatible provider state | Switch provider or model mid-thread with a complete transcript handoff when native resume is not compatible                                      |
-| **Voice input**            | No built-in streaming dictation workflow                    | AssemblyAI dictation with a live waveform, project terminology indexing, and optional English output                                             |
-| **Chat portability**       | Normal in-app thread history                                | Copy the complete unredacted transcript and import chats from sibling local T3 Code installations                                                |
-| **Agent tooling**          | Provider-managed configuration                              | Visual MCP server management plus global/project skill discovery, import, enablement, and prompt integration                                     |
-| **Prompt ergonomics**      | Standard prompt and reasoning controls                      | Optional prompt improvement plus Auto reasoning that chooses effort for each Codex prompt                                                        |
-| **Repository context**     | Providers use their regular filesystem tools                | Bounded `workspace_context` reads and one `workspace_edit` text tool batch common discovery and single- or multi-file changes                    |
-| **Version control**        | Core source-control actions                                 | A queued Git workbench adds typed operations, recovery refs, undo flows, and workspace-aware change views                                        |
-| **Project organization**   | Standard project grouping                                   | Quiet projects move into **Older projects** at the exact seven-day inactivity boundary while attention states stay visible                       |
-| **Product analytics**      | Anonymous PostHog product analytics                         | Outbound anonymous product analytics removed; local resource diagnostics stay local and useful                                                   |
-
-> [!NOTE]
-> **Fetch** and **Parallel plan implementation** are experimental, off by default, and currently
-> available in the web, desktop, and mobile clients. Fetch is independent of the main chat provider: its
-> server-side planner leaves simple and focused requests with the main agent, and launches the
-> smallest useful number of workers only when parallel exploration materially helps. The built-in
-> providers currently advertise eight-worker budgets, with no application-wide fixed ceiling; three
-> is not a default. Each transient worker can consume additional provider quota. Experimental means
-> “useful enough to keep” and “spicy enough to deserve a switch.”
-
-Fetch model selection defaults to **Auto**: eligible Codex Spark, then Codex Luna with low
-reasoning, then the environment's text-generation model or first Fetch-capable model. The environment
-that owns the project resolves that selection and runs the transient read-only workers even when the
-controlling client is remote. Successful findings survive partial worker failures; if every worker
-fails, the unchanged main-provider turn still continues with a visible warning.
-
-For the precise behavior of Fetch, parallel implementation, force stop, and temporary reasoning
-overrides, see [Chat controls](./docs/user/chat-controls.md). The complete non-negotiable fork
-contract and legacy-branch audit live in the [upstream synchronization record](./docs/operations/upstream-sync.md).
-
-## The upstream good stuff is still here
-
-- Use existing subscriptions for Codex, Claude Code, Cursor, Grok Build, and OpenCode, or a Gemini API key.
-- Work from the web, the Electron desktop client, or the iOS and Android mobile clients.
-- Connect locally, across a LAN or tailnet, or through T3 Connect.
-- Keep durable threads, project state, provider sessions, and git checkpoints.
-- Stay open source. If this fork becomes unbearably sensible, you can fork the fork. Nature heals.
-
-## Run the fork
-
-### Prerequisites
-
-- Node.js `24.13.1` or a newer compatible Node 24 release
-- [Vite+ (`vp`)](https://viteplus.dev/guide/)
-- At least one installed and authenticated provider:
-  [Codex](https://developers.openai.com/codex/cli),
-  [Claude Code](https://claude.com/product/claude-code),
-  [Cursor](https://cursor.com/cli),
-  [Grok Build](https://x.ai/cli), or
-  [OpenCode](https://opencode.ai), or a [Gemini API key](https://aistudio.google.com/app/apikey)
-
-Install Vite+ on macOS or Linux:
-
-```bash
-curl -fsSL https://vite.plus | bash
-```
-
-On Windows PowerShell:
-
-```powershell
-irm https://vite.plus/ps1 | iex
-```
-
-### Start the web app and server
-
-```bash
-git clone https://github.com/AlexanderDotH/better-t3code.git
-cd better-t3code
-vp i
-vp run dev
-```
-
-The dev runner prints the real local URL and a one-time pairing URL. Open the pairing URL—the bare
-origin is just a very pretty locked door.
-
-Read [CONTRIBUTING.md](./CONTRIBUTING.md) before reporting a bug or opening a PR.
-
-### Build a desktop artifact
-
-```bash
-# Linux AppImage
-vp run dist:desktop:linux
-
-# macOS DMG
-vp run dist:desktop:dmg
-
-# Windows installer
-vp run dist:desktop:win
-```
-
-Want stock T3 Code instead? This is the intentionally boring command:
+The easiest way to test T3 Code is to run the server in your terminal (requires Node.js 22.16+, 23.11+, or 24.10+):
 
 ```bash
 npx t3@latest
 ```
 
-Stock T3 Code is also available on Arch Linux as `t3code-bin` (stable) and
-`t3code-nightly-bin` (nightly). Those AUR packages follow `pingdotgg/t3code` releases and do not
-include this fork's extra features; their packaging sources remain in [`packaging/aur`](./packaging/aur).
+This will launch T3 Code's backend on your machine as well as the local web app to control your agents.
 
-### Run the native server with Docker
+Tip: Use `npx t3@latest --help` for the full CLI reference.
+
+### Desktop app
+
+Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
+
+#### Windows (`winget`)
 
 ```bash
-T3CODE_ADVERTISED_URL=http://localhost:3773 docker compose up --build
+winget install T3Tools.T3Code
 ```
 
-The image runs the same headless server and includes every Better T3 Code provider CLI. Provider
-credentials and projects stay outside the image in explicit volumes. See the
-[container server guide](./docs/user/container-server.md).
+#### macOS (Homebrew)
+
+```bash
+brew install --cask t3-code
+```
+
+#### Arch Linux (AUR)
+
+Stable:
+
+```bash
+yay -S t3code-bin
+```
+
+Nightly:
+
+```bash
+yay -S t3code-nightly-bin
+```
+
+The AUR packaging is maintained in this repository under [`packaging/aur`](./packaging/aur).
+
+## Some notes
+
+We are very very early in this project. Expect bugs.
+
+We are (mostly) not accepting contributions yet. Small fixes may be considered. Big features will not be.
 
 ## Documentation
 
-- [Documentation map](./docs/README.md)
+Full docs live in [docs/](./docs). There's no docs site yet.
+
 - [Install and first run](./docs/user/install.md)
 - [Permission modes](./docs/user/permission-modes.md)
-- [Chat controls and experimental workflows](./docs/user/chat-controls.md)
-- [Source control and Git workbench](./docs/user/source-control.md)
-- [MCP servers and provider-specific status](./docs/user/mcp-servers.md)
-- [Remote access](./docs/user/remote-access.md)
-- [Keeping clients and servers in sync](./docs/user/updating.md)
-- [Keybindings](./docs/user/keybindings.md)
-- [Multiple Codex accounts](./docs/user/providers-codex.md)
-- [Multiple Claude accounts](./docs/user/providers-claude.md)
-- [Gemini API provider](./docs/user/providers-gemini.md)
-- [OpenAI Responses API provider](./docs/user/providers-openai.md)
-- [Internal architecture](./docs/internals/overview.md)
-- [Internal glossary](./docs/internals/glossary.md)
-- [Upstream synchronization and fork contract](./docs/operations/upstream-sync.md)
+- [Keyboard shortcuts](./docs/user/keybindings.md)
+- [Project settings](./docs/user/project-settings.md)
+- [Remote access from a phone or another machine](./docs/user/remote-access.md)
+- [Keeping app and server in sync](./docs/user/updating.md)
+- [Source control integrations](./docs/user/source-control.md)
+- Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)
+- [Run T3 Code as a background service](./docs/user/background-service.md)
 
-## Contributing
+Building from source? Start at [docs/internals/overview.md](./docs/internals/overview.md).
 
-Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or pull request. The project is MIT
-licensed and remains deeply indebted to the excellent work in
-[upstream T3 Code](https://github.com/pingdotgg/t3code).
+## If you REALLY want to contribute still.... read this first
 
-Small fixes are welcome. Big ideas are welcome too, but may be asked to explain themselves to the
-performance budget.
+### Install `vp`
+
+T3 Code uses Vite+ so you'll need to install the global `vp` command-line tool.
+
+#### macOS / Linux
+
+```bash
+curl -fsSL https://vite.plus | bash
+```
+
+#### Windows
+
+```bash
+irm https://vite.plus/ps1 | iex
+```
+
+Checkout their getting started guide for more information: https://viteplus.dev/guide/
+
+### Install dependencies
+
+```bash
+vp i
+```
+
+Read [CONTRIBUTING.md](./CONTRIBUTING.md) before reporting a bug or opening a PR.
+
+Have a feature request? Start an [Ideas discussion](https://github.com/pingdotgg/t3code/discussions/categories/ideas).
+
+Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).

@@ -1,3 +1,4 @@
+import { HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import {
@@ -104,6 +105,9 @@ function makeTextGeneration(
   planFetchExploration: TextGeneration.TextGeneration["Service"]["planFetchExploration"],
 ): TextGeneration.TextGeneration["Service"] {
   return TextGeneration.TextGeneration.of({
+    decideAutoReasoning: () => Effect.die("unused"),
+    generateThreadMetadata: () => Effect.die("unused"),
+    enrichKnowledgeGraph: () => Effect.die("unused"),
     generateCommitMessage: () => Effect.die("unused"),
     generatePrContent: () => Effect.die("unused"),
     generateBranchName: () => Effect.die("unused"),
@@ -416,12 +420,12 @@ const makeHarness = (options: HarnessOptions = {}) =>
             turnId: TurnId.make(`fetch-turn-${workerIndex(input.threadId)}`),
           };
         }),
-      respondToRequest: (input) =>
+      respondToRequest: (input: Parameters<ProviderServiceShape["respondToRequest"]>[0]) =>
         Ref.update(responses, (values) => [
           ...values,
           { requestId: input.requestId, decision: input.decision },
         ]),
-      interruptAbortTarget: (target) =>
+      interruptAbortTarget: (target: Parameters<ProviderServiceShape["interruptAbortTarget"]>[0]) =>
         Ref.updateAndGet(interrupts, (values) => [...values, target.threadId]).pipe(
           Effect.tap((values) =>
             Effect.all(
@@ -437,11 +441,11 @@ const makeHarness = (options: HarnessOptions = {}) =>
             ),
           ),
         ),
-      forceStopAbortTarget: (target) =>
+      forceStopAbortTarget: (target: Parameters<ProviderServiceShape["forceStopAbortTarget"]>[0]) =>
         Ref.update(forces, (values) => [...values, target.threadId]).pipe(
           Effect.as({ outcome: "terminated" as const, mechanism: "adapter-stop" as const }),
         ),
-      stopTransientSession: (target) =>
+      stopTransientSession: (target: Parameters<ProviderServiceShape["stopTransientSession"]>[0]) =>
         Ref.update(stops, (values) => [
           ...values,
           { threadId: target.threadId, runtimeSessionId: target.runtimeSessionId },
@@ -495,6 +499,9 @@ const makeHarness = (options: HarnessOptions = {}) =>
           return { sequence: dispatchSequence };
         }),
       readEvents: () => Stream.empty,
+      readThreadEvents: () => Stream.empty,
+      getThreadReplayStats: () => Effect.die("unused"),
+      subscribeDomainEvents: Effect.succeed(Stream.empty),
       streamDomainEvents: Stream.empty,
       latestSequence: Effect.succeed(0),
     };
@@ -568,7 +575,7 @@ const makeHarness = (options: HarnessOptions = {}) =>
 function runInput(overrides: Partial<FetchRunInput> = {}): FetchRunInput {
   return {
     threadId: parentThreadId,
-    cwd: process.cwd(),
+    cwd: HostProcessWorkingDirectory.defaultValue(),
     userRequest: "Inspect the repository for Fetch integration.",
     modelSelection: selection,
     providerDriver: codexDriver,

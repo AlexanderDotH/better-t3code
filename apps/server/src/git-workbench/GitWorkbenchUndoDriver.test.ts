@@ -1,5 +1,7 @@
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - The fixture supplies an independent real Git process driver to verify undo behavior.
 import * as NodeChildProcess from "node:child_process";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -18,7 +20,7 @@ const runRealGit = (input: GitWorkbenchOperationCommandInput) =>
       cwd: input.cwd,
       encoding: "utf8",
       env: {
-        ...process.env,
+        ...HostProcessEnvironment.defaultValue(),
         ...input.env,
         GIT_CONFIG_COUNT: "1",
         GIT_CONFIG_KEY_0: "commit.gpgsign",
@@ -52,7 +54,7 @@ const git = (cwd: string, args: readonly string[]) =>
     Effect.flatMap((result) =>
       result.exitCode === 0
         ? Effect.succeed(result.stdout.trim())
-        : Effect.dieMessage(result.stderr || `git ${args.join(" ")} failed`),
+        : Effect.die(new Error(result.stderr || `git ${args.join(" ")} failed`)),
     ),
   );
 

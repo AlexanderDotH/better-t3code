@@ -1,3 +1,10 @@
+import {
+  KnowledgeGraphEvidenceId,
+  KnowledgeGraphModelGeneration,
+  KnowledgeGraphNodeId,
+  KnowledgeGraphScopeId,
+  ProjectId,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { KnowledgeGraphDeterministicPatchV1, KnowledgeGraphScopeV1 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -6,7 +13,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import * as NodeSqliteClient from "../../persistence/NodeSqliteClient.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import Migration0059 from "../../persistence/Migrations/059_KnowledgeGraphDerivedData.ts";
 import {
   KnowledgeGraphRepository,
@@ -22,9 +29,9 @@ const decodeDeterministicPatch = Schema.decodeUnknownSync(KnowledgeGraphDetermin
 
 const scope = Schema.decodeUnknownSync(KnowledgeGraphScopeV1)({
   version: 1,
-  scopeId: "scope-main",
+  scopeId: KnowledgeGraphScopeId.make("scope-main"),
   environmentId: "environment-1",
-  projectId: "project-1",
+  projectId: ProjectId.make("project-1"),
   effectiveWorkspaceRoot: "/workspace/project",
   isWorktree: false,
 });
@@ -36,7 +43,7 @@ const patch = decodeDeterministicPatch({
   nodes: [
     {
       version: 1,
-      nodeId: "node-file",
+      nodeId: KnowledgeGraphNodeId.make("node-file"),
       scopeId: scope.scopeId,
       kind: "file",
       label: "src/index.ts",
@@ -106,7 +113,7 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
       const repository = yield* KnowledgeGraphRepository;
       const staleScope = {
         ...scope,
-        scopeId: "scope-stale",
+        scopeId: KnowledgeGraphScopeId.make("scope-stale"),
         effectiveWorkspaceRoot: "/workspace/stale",
       };
       const stalePatch = {
@@ -133,7 +140,7 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
       const sql = yield* SqlClient.SqlClient;
       const batchScope = {
         ...scope,
-        scopeId: "scope-bind-batches",
+        scopeId: KnowledgeGraphScopeId.make("scope-bind-batches"),
         effectiveWorkspaceRoot: "/workspace/bind-batches",
       };
       const itemCount = 1_802;
@@ -153,7 +160,7 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
       }));
       const nodes = suffixes.map((suffix) => ({
         version: 1 as const,
-        nodeId: `batch-node-${suffix}`,
+        nodeId: KnowledgeGraphNodeId.make(`batch-node-${suffix}`),
         scopeId: batchScope.scopeId,
         kind: "file" as const,
         label: `src/batch-${suffix}.ts`,
@@ -168,8 +175,8 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
         edgeId: `batch-edge-${suffix}`,
         scopeId: batchScope.scopeId,
         kind: "documents" as const,
-        sourceNodeId: `batch-node-${suffix}`,
-        targetNodeId: `batch-node-${suffix}`,
+        sourceNodeId: KnowledgeGraphNodeId.make(`batch-node-${suffix}`),
+        targetNodeId: KnowledgeGraphNodeId.make(`batch-node-${suffix}`),
         provenance: "deterministic" as const,
         confidence: 1,
         evidenceIds: [`batch-evidence-${suffix}`],
@@ -289,10 +296,14 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
   it.effect("clears one canonical scope without touching another worktree", () =>
     Effect.gen(function* () {
       const repository = yield* KnowledgeGraphRepository;
-      const main = { ...scope, scopeId: "scope-clear", effectiveWorkspaceRoot: "/workspace/clear" };
+      const main = {
+        ...scope,
+        scopeId: KnowledgeGraphScopeId.make("scope-clear"),
+        effectiveWorkspaceRoot: "/workspace/clear",
+      };
       const worktree = {
         ...scope,
-        scopeId: "scope-worktree",
+        scopeId: KnowledgeGraphScopeId.make("scope-worktree"),
         effectiveWorkspaceRoot: "/workspace/.worktrees/feature",
         isWorktree: true,
       };
@@ -310,12 +321,12 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
       const repository = yield* KnowledgeGraphRepository;
       const largeScope = {
         ...scope,
-        scopeId: "scope-large",
+        scopeId: KnowledgeGraphScopeId.make("scope-large"),
         effectiveWorkspaceRoot: "/workspace/large",
       };
       const nodes = Array.from({ length: 301 }, (_, index) => ({
         version: 1 as const,
-        nodeId: `node-${String(index).padStart(3, "0")}`,
+        nodeId: KnowledgeGraphNodeId.make(`node-${String(index).padStart(3, "0")}`),
         scopeId: largeScope.scopeId,
         kind: "file" as const,
         label: index === 300 ? "zzzz-target.ts" : `src/${String(index).padStart(3, "0")}.ts`,
@@ -336,7 +347,7 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
         scopeId: largeScope.scopeId,
         query: {
           queries: [
-            { id: "target", type: "node", nodeId: "node-300" },
+            { id: "target", type: "node", nodeId: KnowledgeGraphNodeId.make("node-300") },
             { id: "search", type: "search", text: "zzzz-target", limit: 10 },
           ],
         },
@@ -365,12 +376,12 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
       const repository = yield* KnowledgeGraphRepository;
       const traversalScope = {
         ...scope,
-        scopeId: "scope-traversal",
+        scopeId: KnowledgeGraphScopeId.make("scope-traversal"),
         effectiveWorkspaceRoot: "/workspace/traversal",
       };
       const fillerNodes = Array.from({ length: 300 }, (_, index) => ({
         version: 1,
-        nodeId: `filler-${String(index).padStart(3, "0")}`,
+        nodeId: KnowledgeGraphNodeId.make(`filler-${String(index).padStart(3, "0")}`),
         scopeId: traversalScope.scopeId,
         kind: "file",
         label: `aaa/${String(index).padStart(3, "0")}.ts`,
@@ -431,7 +442,7 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
             {
               id: "neighbors",
               type: "neighbors",
-              nodeId: "node-source",
+              nodeId: KnowledgeGraphNodeId.make("node-source"),
               direction: "outgoing",
               depth: 2,
               kinds: ["imports", "depends-on"],
@@ -440,14 +451,14 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
             {
               id: "short-path",
               type: "path",
-              sourceNodeId: "node-source",
-              targetNodeId: "node-target",
+              sourceNodeId: KnowledgeGraphNodeId.make("node-source"),
+              targetNodeId: KnowledgeGraphNodeId.make("node-target"),
               maxDepth: 2,
             },
             {
               id: "parallel-neighbor-relationships",
               type: "neighbors",
-              nodeId: "node-source",
+              nodeId: KnowledgeGraphNodeId.make("node-source"),
               direction: "outgoing",
               depth: 1,
               limit: 10,
@@ -455,8 +466,8 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
             {
               id: "full-path",
               type: "path",
-              sourceNodeId: "node-source",
-              targetNodeId: "node-target",
+              sourceNodeId: KnowledgeGraphNodeId.make("node-source"),
+              targetNodeId: KnowledgeGraphNodeId.make("node-target"),
               maxDepth: 3,
             },
           ],
@@ -493,12 +504,12 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
       const repository = yield* KnowledgeGraphRepository;
       const overviewScope = {
         ...scope,
-        scopeId: "scope-overview-bounds",
+        scopeId: KnowledgeGraphScopeId.make("scope-overview-bounds"),
         effectiveWorkspaceRoot: "/workspace/overview-bounds",
       };
       const nodes = Array.from({ length: 26 }, (_, index) => ({
         version: 1,
-        nodeId: `overview-node-${String(index).padStart(2, "0")}`,
+        nodeId: KnowledgeGraphNodeId.make(`overview-node-${String(index).padStart(2, "0")}`),
         scopeId: overviewScope.scopeId,
         kind: "file",
         label: `src/${String(index).padStart(2, "0")}.ts`,
@@ -551,12 +562,12 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
       const repository = yield* KnowledgeGraphRepository;
       const overviewScope = {
         ...scope,
-        scopeId: "scope-balanced-overview",
+        scopeId: KnowledgeGraphScopeId.make("scope-balanced-overview"),
         effectiveWorkspaceRoot: "/workspace/balanced-overview",
       };
       const dependencies = Array.from({ length: 120 }, (_, index) => ({
         version: 1 as const,
-        nodeId: `dependency-${String(index).padStart(3, "0")}`,
+        nodeId: KnowledgeGraphNodeId.make(`dependency-${String(index).padStart(3, "0")}`),
         scopeId: overviewScope.scopeId,
         kind: "dependency" as const,
         label: `dependency-${String(index).padStart(3, "0")}`,
@@ -566,11 +577,23 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
         nodeRevision: 1,
       }));
       const structuralNodes = [
-        { nodeId: "repository", kind: "repository" as const, label: "project" },
-        { nodeId: "package", kind: "package" as const, label: "web" },
-        { nodeId: "directory", kind: "directory" as const, label: "src" },
-        { nodeId: "file", kind: "file" as const, label: "App.tsx" },
-        { nodeId: "technology", kind: "technology" as const, label: "TypeScript" },
+        {
+          nodeId: KnowledgeGraphNodeId.make("repository"),
+          kind: "repository" as const,
+          label: "project",
+        },
+        { nodeId: KnowledgeGraphNodeId.make("package"), kind: "package" as const, label: "web" },
+        {
+          nodeId: KnowledgeGraphNodeId.make("directory"),
+          kind: "directory" as const,
+          label: "src",
+        },
+        { nodeId: KnowledgeGraphNodeId.make("file"), kind: "file" as const, label: "App.tsx" },
+        {
+          nodeId: KnowledgeGraphNodeId.make("technology"),
+          kind: "technology" as const,
+          label: "TypeScript",
+        },
       ].map((node) => ({
         version: 1 as const,
         ...node,
@@ -639,7 +662,7 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
       const repository = yield* KnowledgeGraphRepository;
       const replayScope = {
         ...scope,
-        scopeId: "scope-patch-replay-window",
+        scopeId: KnowledgeGraphScopeId.make("scope-patch-replay-window"),
         effectiveWorkspaceRoot: "/workspace/patch-replay-window",
       };
 
@@ -677,7 +700,7 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
       const repository = yield* KnowledgeGraphRepository;
       const managedScope = {
         ...scope,
-        scopeId: "scope-managed",
+        scopeId: KnowledgeGraphScopeId.make("scope-managed"),
         effectiveWorkspaceRoot: "/workspace/managed",
       };
       const managedPatch = {
@@ -686,12 +709,12 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
         nodes: patch.nodes.map((node) => ({
           ...node,
           scopeId: managedScope.scopeId,
-          evidenceIds: ["evidence-file"],
+          evidenceIds: [KnowledgeGraphEvidenceId.make("evidence-file")],
         })),
         evidence: [
           {
             version: 1 as const,
-            evidenceId: "evidence-file",
+            evidenceId: KnowledgeGraphEvidenceId.make("evidence-file"),
             scopeId: managedScope.scopeId,
             kind: "source" as const,
             source: { path: "src/index.ts", startLine: 1, endLine: 3 },
@@ -751,10 +774,22 @@ it.layer(layer)("KnowledgeGraphRepository", (it) => {
         modelKey: "openai:gpt-5.7",
       });
 
-      assert.deepStrictEqual(initial, { modelGeneration: 0, changed: false });
-      assert.deepStrictEqual(selected, { modelGeneration: 1, changed: true });
-      assert.deepStrictEqual(restarted, { modelGeneration: 1, changed: false });
-      assert.deepStrictEqual(changed, { modelGeneration: 2, changed: true });
+      assert.deepStrictEqual(initial, {
+        modelGeneration: KnowledgeGraphModelGeneration.make(0),
+        changed: false,
+      });
+      assert.deepStrictEqual(selected, {
+        modelGeneration: KnowledgeGraphModelGeneration.make(1),
+        changed: true,
+      });
+      assert.deepStrictEqual(restarted, {
+        modelGeneration: KnowledgeGraphModelGeneration.make(1),
+        changed: false,
+      });
+      assert.deepStrictEqual(changed, {
+        modelGeneration: KnowledgeGraphModelGeneration.make(2),
+        changed: true,
+      });
     }),
   );
 });

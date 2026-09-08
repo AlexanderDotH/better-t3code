@@ -20,7 +20,7 @@ const WORKSPACE_READ_TOOL_NAMES = [
 ] as const;
 
 const unusedProcessRunner: ProcessRunner["Service"] = {
-  run: () => Effect.dieMessage("process runner is not used while listing tools"),
+  run: () => Effect.die("process runner is not used while listing tools"),
 };
 
 const unusedWorkspaceContext = WorkspaceContext.WorkspaceContext.of({
@@ -34,9 +34,9 @@ const unusedWorkspaceContext = WorkspaceContext.WorkspaceContext.of({
 });
 
 const unusedWorkspaceFileSystem = WorkspaceFileSystem.WorkspaceFileSystem.of({
-  readFile: () => Effect.dieMessage("workspace files are not read while listing tools"),
-  writeFile: () => Effect.dieMessage("workspace files are not written while listing tools"),
-  editFiles: () => Effect.dieMessage("workspace files are not edited while listing tools"),
+  readFile: () => Effect.die("workspace files are not read while listing tools"),
+  writeFile: () => Effect.die("workspace files are not written while listing tools"),
+  editFiles: () => Effect.die("workspace files are not edited while listing tools"),
 });
 
 describe("NativeProviderHarness", () => {

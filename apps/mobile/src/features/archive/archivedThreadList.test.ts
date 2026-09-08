@@ -13,12 +13,12 @@ function makeProject(
   return {
     workspaceRoot: `/workspaces/${input.id}`,
     repositoryIdentity: null,
+    checkpointsEnabled: true,
     defaultModelSelection: null,
     scripts: [],
     createdAt: "2026-06-01T00:00:00.000Z",
     updatedAt: "2026-06-01T00:00:00.000Z",
     ...input,
-    checkpointsEnabled: input.checkpointsEnabled ?? true,
   };
 }
 

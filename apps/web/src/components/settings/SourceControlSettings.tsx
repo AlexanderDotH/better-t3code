@@ -1,8 +1,8 @@
-import { ChevronDownIcon, GitPullRequestIcon, RefreshCwIcon } from "lucide-react";
+import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { ChevronDownIcon, GitPullRequestIcon } from "lucide-react";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
-import { useState, type ReactNode } from "react";
-import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
+import { useEffect, useState, type ReactNode } from "react";
 import type {
   BackgroundActivitySettings,
   SourceControlProviderKind,
@@ -19,7 +19,7 @@ import {
 } from "@t3tools/shared/backgroundActivitySettings";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
-import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { SharedSettingsMismatchAlert } from "./SharedSettingsMismatchAlert";
 import { cn } from "../../lib/utils";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
@@ -61,7 +61,9 @@ import {
   PolicyTooltip,
   SettingResetButton,
   SettingsPageContainer,
+  SettingsSearchTarget,
   SettingsSection,
+  useSettingsSearchTargetId,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -138,33 +140,26 @@ function isVcsNotReady(item: VcsDiscoveryItem | SourceControlProviderDiscoveryIt
   return !isProviderDiscoveryItem(item) && !item.implemented;
 }
 
-function authPresentation(
-  auth: SourceControlProviderAuth,
-  translator: InterfaceTranslator,
-): {
+function authPresentation(auth: SourceControlProviderAuth): {
   readonly label: string;
   readonly badge: "warning" | null;
 } {
   if (auth.status === "authenticated") {
-    return { label: translator.message("settings.sourceControl.authenticated"), badge: null };
+    return { label: "Authenticated", badge: null };
   }
   if (auth.status === "unauthenticated") {
-    return {
-      label: translator.message("settings.sourceControl.notAuthenticated"),
-      badge: "warning",
-    };
+    return { label: "Not authenticated", badge: "warning" };
   }
-  return { label: translator.message("settings.sourceControl.statusUnknown"), badge: null };
+  return { label: "Status unknown", badge: null };
 }
 
 function RedactedAccount(props: { readonly account: string | null }) {
-  const translator = useInterfaceTranslator();
   return (
     <RedactedSensitiveText
       value={props.account}
-      ariaLabel={translator.message("settings.sourceControl.accountVisibility")}
-      revealTooltip={translator.message("settings.sourceControl.revealAccount")}
-      hideTooltip={translator.message("settings.sourceControl.hideAccount")}
+      ariaLabel="Toggle source control account visibility"
+      revealTooltip="Click to reveal account"
+      hideTooltip="Click to hide account"
     />
   );
 }
@@ -208,41 +203,27 @@ function itemSummary({
   item,
   auth,
   authAccount,
-  translator,
 }: {
   readonly item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem;
   readonly auth: SourceControlProviderAuth | null;
   readonly authAccount: string | null;
-  readonly translator: InterfaceTranslator;
 }) {
   if (isVcsNotReady(item)) {
-    return (
-      <span>
-        {translator.message("settings.sourceControl.comingSoonDescription", {
-          provider: item.label,
-        })}
-      </span>
-    );
+    return <span>Support for {item.label} is coming soon.</span>;
   }
 
   if (item.status !== "available") {
-    return (
-      <span>
-        {translator.message("settings.sourceControl.notAvailable", { hint: item.installHint })}
-      </span>
-    );
+    return <span>Not available on this server: {item.installHint}</span>;
   }
 
   if (auth) {
     if (auth.status === "authenticated") {
       return (
         <>
-          <span>{translator.message("settings.sourceControl.authenticated")}</span>
+          <span>Authenticated</span>
           {authAccount ? (
             <>
-              <span aria-hidden>
-                {translator.message("settings.sourceControl.authenticatedAs")}
-              </span>
+              <span aria-hidden>as</span>
               <RedactedAccount account={authAccount} />
             </>
           ) : null}
@@ -251,37 +232,27 @@ function itemSummary({
     }
 
     if (!item.executable) {
-      return (
-        <span>
-          {translator.message("settings.sourceControl.availableWithHint", {
-            hint: item.installHint,
-          })}
-        </span>
-      );
+      return <span>Available. {item.installHint}</span>;
     }
 
     if (auth.status === "unauthenticated") {
       return (
         <span>
-          {translator.message("settings.sourceControl.unauthenticatedDescription", {
-            provider: item.label,
-            tool: item.executable,
-          })}
+          {item.label} is not authenticated on this server. Sign in or configure credentials using
+          the <code className="rounded bg-muted px-1 py-px text-[11px]">{item.executable}</code>{" "}
+          tool on the server host to enable change request features.
         </span>
       );
     }
     const authDetail = optionLabel(auth.detail);
     return (
       <span>
-        {translator.message("settings.sourceControl.verifyFailed", {
-          provider: item.label,
-          detail: authDetail ?? item.installHint,
-        })}
+        Could not verify {item.label}. {authDetail ?? item.installHint}
       </span>
     );
   }
 
-  return <span>{translator.message("settings.sourceControl.available")}</span>;
+  return <span>Available</span>;
 }
 
 function DiscoveryItemRow({
@@ -291,21 +262,27 @@ function DiscoveryItemRow({
   readonly item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem;
   readonly children?: ReactNode;
 }) {
-  const translator = useInterfaceTranslator();
   const version = optionLabel(item.version);
   const enabled = isProviderDiscoveryItem(item)
     ? item.status === "available" && item.auth.status === "authenticated"
     : item.status === "available" && item.implemented;
   const auth = isProviderDiscoveryItem(item) ? item.auth : null;
-  const authStatus = auth ? authPresentation(auth, translator) : null;
+  const authStatus = auth ? authPresentation(auth) : null;
   const authAccount = auth ? optionLabel(auth.account) : null;
   const [isExpanded, setIsExpanded] = useState(false);
   const hasDetails = children !== undefined;
+  const searchTargetId = useSettingsSearchTargetId();
+
+  useEffect(() => {
+    if (item.kind === "git" && searchTargetId === searchableSetting("git-fetch-interval").id) {
+      setIsExpanded(true);
+    }
+  }, [item.kind, searchTargetId]);
 
   return (
     <div
       className={cn(
-        "rounded-xl transition-colors hover:bg-muted/20",
+        "first:rounded-t-xl last:rounded-b-xl transition-colors hover:bg-muted/20",
         isVcsNotReady(item) && "opacity-80",
       )}
     >
@@ -320,7 +297,7 @@ function DiscoveryItemRow({
               {version ? <code className="text-xs text-muted-foreground">{version}</code> : null}
               {isVcsNotReady(item) ? (
                 <Badge variant="warning" size="sm">
-                  {translator.message("settings.sourceControl.comingSoon")}
+                  Coming Soon
                 </Badge>
               ) : null}
               {authStatus?.badge ? (
@@ -330,19 +307,17 @@ function DiscoveryItemRow({
               ) : null}
             </div>
             <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-[13px] leading-[1.45] text-muted-foreground/80">
-              {itemSummary({ item, auth, authAccount, translator })}
+              {itemSummary({ item, auth, authAccount })}
             </p>
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
             {hasDetails ? (
               <Button
-                size="compact"
+                size="icon-xs"
                 variant="ghost-muted"
                 onClick={() => setIsExpanded((open) => !open)}
                 aria-expanded={isExpanded}
-                aria-label={translator.message("settings.sourceControl.toggleDetails", {
-                  provider: item.label,
-                })}
+                aria-label={`Toggle ${item.label} details`}
               >
                 <ChevronDownIcon
                   className={cn("size-3.5 transition-transform", isExpanded && "rotate-180")}
@@ -350,13 +325,7 @@ function DiscoveryItemRow({
               </Button>
             ) : null}
             {!isVcsNotReady(item) ? (
-              <Switch
-                checked={enabled}
-                disabled
-                aria-label={translator.message("settings.sourceControl.availability", {
-                  provider: item.label,
-                })}
-              />
+              <Switch checked={enabled} disabled aria-label={`${item.label} availability`} />
             ) : null}
           </div>
         </div>
@@ -374,7 +343,6 @@ function DiscoveryItemRow({
 }
 
 function GitFetchIntervalSettings() {
-  const translator = useInterfaceTranslator();
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
@@ -388,17 +356,18 @@ function GitFetchIntervalSettings() {
   );
   const canResetFetchInterval =
     automaticGitFetchIntervalSeconds !== defaultAutomaticGitFetchIntervalSeconds;
+  const setting = searchableSetting("git-fetch-interval");
 
   return (
-    <div className="grid gap-3">
+    <SettingsSearchTarget id={setting.id} className="grid gap-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 space-y-1">
           <div className="flex min-w-0 items-center gap-1">
-            <span className="text-xs font-medium text-foreground">
-              {translator.message("settings.sourceControl.fetchInterval")}
-            </span>
+            <span className="text-xs font-medium text-foreground">{setting.title}</span>
             <PolicyTooltip>
-              {translator.message("settings.sourceControl.fetchPolicy")}
+              This interval is configured for Git only. The shared Background activity policy still
+              decides whether Git refreshes may run when the timer fires. Custom intervals appear as
+              Advanced in General settings.
             </PolicyTooltip>
             <span
               className={cn(
@@ -409,7 +378,7 @@ function GitFetchIntervalSettings() {
             >
               {canResetFetchInterval ? (
                 <SettingResetButton
-                  label={translator.message("settings.sourceControl.fetchInterval")}
+                  label="fetch interval"
                   onClick={() =>
                     updateSettings(
                       backgroundActivityOverrideSettings(settings.backgroundActivity, {
@@ -422,7 +391,7 @@ function GitFetchIntervalSettings() {
             </span>
           </div>
           <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-            {translator.message("settings.sourceControl.fetchDescription")}
+            Refresh remote branches in the background. Set to 0 to avoid automatic Git prompts.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -441,23 +410,15 @@ function GitFetchIntervalSettings() {
             }
           >
             <NumberFieldGroup>
-              <NumberFieldDecrement
-                aria-label={translator.message("settings.sourceControl.decreaseFetch")}
-              />
-              <NumberFieldInput
-                aria-label={translator.message("settings.sourceControl.fetchSeconds")}
-              />
-              <NumberFieldIncrement
-                aria-label={translator.message("settings.sourceControl.increaseFetch")}
-              />
+              <NumberFieldDecrement aria-label="Decrease fetch interval" />
+              <NumberFieldInput aria-label="Automatic Git fetch interval in seconds" />
+              <NumberFieldIncrement aria-label="Increase fetch interval" />
             </NumberFieldGroup>
           </NumberField>
-          <span className="text-xs text-muted-foreground">
-            {translator.message("settings.sourceControl.seconds")}
-          </span>
+          <span className="text-xs text-muted-foreground">seconds</span>
         </div>
       </div>
-    </div>
+    </SettingsSearchTarget>
   );
 }
 
@@ -471,7 +432,7 @@ function SourceControlSectionSkeleton({
   return (
     <SettingsSection title={title} headerAction={headerAction}>
       {SOURCE_CONTROL_SKELETON_ROWS.map((row) => (
-        <div key={row} className="rounded-xl px-3 py-3 sm:px-4">
+        <div key={row} className="first:rounded-t-xl last:rounded-b-xl px-3 py-3 sm:px-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 flex-1 space-y-2">
               <div className="flex items-center gap-2">
@@ -507,40 +468,28 @@ function EmptySourceControlDiscovery({
   readonly isPending: boolean;
   readonly onScan: () => void;
 }) {
-  const translator = useInterfaceTranslator();
   const hasError = error !== null;
 
   return (
-    <SettingsSection
-      id={searchableSetting("source-control").id}
-      title={translator.message("settings.sourceControl.serverEnvironment")}
-    >
+    <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
       <Empty className="min-h-88">
         <EmptyMedia variant="icon">
           <GitPullRequestIcon />
         </EmptyMedia>
         <EmptyHeader>
           <EmptyTitle>
-            {translator.message(
-              hasError
-                ? "settings.sourceControl.scanFailed"
-                : "settings.sourceControl.nothingDetected",
-            )}
+            {hasError ? "Could not scan the server environment" : "Nothing detected yet"}
           </EmptyTitle>
           <EmptyDescription>
-            {hasError ? error : translator.message("settings.sourceControl.emptyDescription")}
+            {hasError
+              ? error
+              : "Install Git on the server, add optional hosting integrations or credentials your workspace needs, then rescan."}
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5 px-3 text-xs"
-            onClick={onScan}
-            disabled={isPending}
-          >
-            <RefreshCwIcon className={cn("size-3.5", isPending && "animate-spin")} />
-            {translator.message("settings.sourceControl.scan")}
+          <Button size="sm" variant="outline" onClick={onScan} disabled={isPending}>
+            <RefreshIcon className="size-3.5" refreshing={isPending} />
+            Scan
           </Button>
         </EmptyContent>
       </Empty>
@@ -549,7 +498,6 @@ function EmptySourceControlDiscovery({
 }
 
 export function SourceControlSettingsPanel() {
-  const translator = useInterfaceTranslator();
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const fallbackEnvironment =
@@ -579,40 +527,34 @@ export function SourceControlSettingsPanel() {
       <TooltipTrigger
         render={
           <Button
-            size="icon-micro"
+            size="icon-xs"
             variant="ghost-muted"
             onClick={handleScan}
             disabled={discovery.isPending}
-            aria-label={translator.message("settings.sourceControl.rescan")}
+            aria-label="Rescan server environment"
           >
-            <RefreshCwIcon className={cn("size-3", discovery.isPending && "animate-spin")} />
+            <RefreshIcon refreshing={discovery.isPending} />
           </Button>
         }
       />
-      <TooltipPopup side="top">
-        {translator.message("settings.sourceControl.rescanTooltip")}
-      </TooltipPopup>
+      <TooltipPopup side="top">Rescan Git and hosting integrations</TooltipPopup>
     </Tooltip>
   );
 
   return (
     <SettingsPageContainer>
+      <SharedSettingsMismatchAlert />
       {isInitialScanPending ? (
         <>
-          <SourceControlSectionSkeleton
-            title={translator.message("settings.sourceControl.versionControl")}
-            headerAction={scanButton}
-          />
-          <SourceControlSectionSkeleton
-            title={translator.message("settings.sourceControl.providers")}
-          />
+          <SourceControlSectionSkeleton title="Version Control" headerAction={scanButton} />
+          <SourceControlSectionSkeleton title="Source Control Providers" />
         </>
       ) : hasDiscoveryItems ? (
         <>
           {hasVersionControlSystems ? (
             <SettingsSection
               id={searchableSetting("source-control").id}
-              title={translator.message("settings.sourceControl.versionControl")}
+              title="Version Control"
               headerAction={scanButton}
             >
               {result.versionControlSystems.map((item) => (
@@ -628,7 +570,7 @@ export function SourceControlSettingsPanel() {
           {result.sourceControlProviders.length > 0 ? (
             <SettingsSection
               id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
-              title={translator.message("settings.sourceControl.providers")}
+              title="Source Control Providers"
               headerAction={hasVersionControlSystems ? null : scanButton}
             >
               {result.sourceControlProviders.map((item) => (
@@ -645,7 +587,9 @@ export function SourceControlSettingsPanel() {
         />
       )}
 
-      {isPrimaryEnvironment ? <SourceControlWritingSettingsSection /> : null}
+      {/* Its rows are serverScoped: without a primary they render inert with
+          an explanation, which beats disappearing. */}
+      <SourceControlWritingSettingsSection />
     </SettingsPageContainer>
   );
 }

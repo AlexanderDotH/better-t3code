@@ -1,89 +1,71 @@
+import type { ContextWindowSelector } from "@t3tools/contracts";
 import { createInterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
-import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { act, useState } from "react";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import {
-  BETTER_T3_VISUAL_FEATURE_IDS,
-  BetterT3FeatureChoice,
-  BetterT3FeatureVisual,
-} from "./BetterT3SettingsPreview";
-import type {
-  BetterT3AgentPreviewModel,
-  BetterT3ChatPreviewModel,
-} from "./BetterT3SettingsPreview.logic";
+import { BetterT3FeatureChoice } from "./BetterT3SettingsPreview";
+import { buildBetterT3SettingsPreviewModel } from "./BetterT3SettingsPreview.logic";
 
-const translate = createInterfaceTranslator({ language: "en", locale: "en-US" }).message;
+const translate = createInterfaceTranslator({ language: "de", locale: "de-DE" }).message;
 
-const agentModel: BetterT3AgentPreviewModel = {
-  animationKey: "agent-preview",
-  deepThinking: true,
-  generalSubagents: true,
-  planMode: true,
-  projectCoordination: true,
-  promptImprovement: true,
-  reasoningVisibility: true,
-};
+function ContextWindowChoiceHarness({ disabled = false }: { disabled?: boolean }) {
+  const [value, setValue] = useState<ContextWindowSelector>("better-t3");
+  return (
+    <BetterT3FeatureChoice
+      featureId="chat.contextWindowSelector"
+      disabled={disabled}
+      model={buildBetterT3SettingsPreviewModel({
+        features: [],
+        chatVisualMode: "current",
+        sidebarPosition: "left",
+        contextWindowSelector: value,
+      })}
+      translate={translate}
+      value={value}
+      onChange={(nextValue) => {
+        if (nextValue !== "native" && nextValue !== "better-t3") {
+          throw new Error("Unexpected context window selector value");
+        }
+        setValue(nextValue);
+      }}
+    />
+  );
+}
 
-const chatModel: BetterT3ChatPreviewModel = {
-  animationKey: "chat-preview",
-  cardMorphing: true,
-  characterStreamingMotion: true,
-  classicSidebar: false,
-  draftIndicators: true,
-  presentation: "current",
-  sidebarPosition: "left",
-  workspaceCardDeck: true,
-};
+describe("context window visual choice", () => {
+  it("switches between two translated cards and preserves the selection while disabled", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(<ContextWindowChoiceHarness />);
+      });
+      const radios = () => renderer!.root.findAllByProps({ role: "radio" });
+      const selection = () => radios().map((radio) => radio.props["aria-checked"]);
 
-describe("Better T3 settings previews", () => {
-  it("provides one non-interactive visual for every represented setting", () => {
-    for (const featureId of BETTER_T3_VISUAL_FEATURE_IDS) {
-      const markup = renderToStaticMarkup(
-        <BetterT3FeatureVisual
-          featureId={featureId}
-          model={{ agent: agentModel, chat: chatModel }}
-          translate={translate}
-        />,
-      );
+      expect(radios()).toHaveLength(2);
+      expect(renderer!.root.findAllByType("button")).toHaveLength(2);
+      expect(JSON.stringify(renderer!.toJSON())).toContain("Natives T3 Code");
+      expect(JSON.stringify(renderer!.toJSON())).toContain("Better T3");
+      expect(selection()).toEqual([false, true]);
 
-      expect(markup).toContain(`data-better-t3-feature-visual="${featureId}"`);
-      expect(markup.match(/data-better-t3-feature-visual=/g)).toHaveLength(1);
-      expect(markup).not.toContain("<button");
+      await act(() => radios()[0]!.props.onClick());
+      expect(selection()).toEqual([true, false]);
+      await act(() => radios()[1]!.props.onClick());
+      expect(selection()).toEqual([false, true]);
+
+      await act(() => renderer!.update(<ContextWindowChoiceHarness disabled />));
+      expect(radios().every((radio) => radio.props.disabled === true)).toBe(true);
+      expect(selection()).toEqual([false, true]);
+
+      await act(() => renderer!.update(<ContextWindowChoiceHarness />));
+      expect(radios().every((radio) => radio.props.disabled === false)).toBe(true);
+      await act(() => radios()[0]!.props.onClick());
+      expect(selection()).toEqual([true, false]);
+    } finally {
+      await act(() => renderer?.unmount());
+      vi.unstubAllGlobals();
     }
-  });
-
-  it("shows the current setting state in the visual without becoming a second control", () => {
-    const markup = renderToStaticMarkup(
-      <BetterT3FeatureVisual
-        featureId="agent.reasoningVisibility"
-        model={{ agent: { ...agentModel, reasoningVisibility: false }, chat: chatModel }}
-        translate={translate}
-      />,
-    );
-
-    expect(markup).toContain("Disabled");
-    expect(markup).toContain("opacity-40");
-    expect(markup).not.toContain("aria-pressed");
-  });
-
-  it("offers both visual states as accessible side-by-side choices", () => {
-    const markup = renderToStaticMarkup(
-      <BetterT3FeatureChoice
-        disabled={false}
-        featureId="agent.planMode"
-        model={{ agent: agentModel, chat: chatModel }}
-        onChange={() => undefined}
-        translate={translate}
-        value={true}
-      />,
-    );
-
-    expect(markup).toContain('role="radiogroup"');
-    expect(markup.match(/role="radio"/g)).toHaveLength(2);
-    expect(markup.match(/data-better-t3-feature-visual="agent\.planMode"/g)).toHaveLength(2);
-    expect(markup.match(/aria-checked="true"/g)).toHaveLength(1);
-    expect(markup).toContain("Build");
-    expect(markup).toContain("Plan");
-    expect(markup).not.toContain('role="switch"');
   });
 });

@@ -17,16 +17,16 @@ import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 
-export const modeFlag = Flag.choice("mode", ServerConfig.RuntimeMode.literals).pipe(
+const modeFlag = Flag.choice("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
   Flag.optional,
 );
-export const portFlag = Flag.integer("port").pipe(
+const portFlag = Flag.integer("port").pipe(
   Flag.withSchema(PortSchema),
   Flag.withDescription("Port for the HTTP/WebSocket server."),
   Flag.optional,
 );
-export const hostFlag = Flag.string("host").pipe(
+const hostFlag = Flag.string("host").pipe(
   Flag.withDescription("Host/interface to bind (for example 127.0.0.1, 0.0.0.0, or a Tailnet IP)."),
   Flag.optional,
 );
@@ -36,46 +36,52 @@ export const baseDirFlag = Flag.string("base-dir").pipe(
   ),
   Flag.optional,
 );
-export const devUrlFlag = Flag.string("dev-url").pipe(
+const devUrlFlag = Flag.string("dev-url").pipe(
   Flag.withSchema(Schema.URLFromString),
   Flag.withDescription("Dev web URL to proxy/redirect to (equivalent to VITE_DEV_SERVER_URL)."),
   Flag.optional,
 );
-export const noBrowserFlag = Flag.boolean("no-browser").pipe(
+const noBrowserFlag = Flag.boolean("no-browser").pipe(
   Flag.withDescription("Disable automatic browser opening."),
   Flag.optional,
 );
-export const bootstrapFdFlag = Flag.integer("bootstrap-fd").pipe(
+const bootstrapFdFlag = Flag.integer("bootstrap-fd").pipe(
   Flag.withSchema(Schema.Int),
   Flag.withDescription("Read one-time bootstrap secrets from the given file descriptor."),
   Flag.optional,
 );
-export const autoBootstrapProjectFromCwdFlag = Flag.boolean("auto-bootstrap-project-from-cwd").pipe(
+const autoBootstrapProjectFromCwdFlag = Flag.boolean("auto-bootstrap-project-from-cwd").pipe(
   Flag.withDescription(
     "Create a project for the current working directory on startup when missing.",
   ),
   Flag.optional,
 );
-export const logWebSocketEventsFlag = Flag.boolean("log-websocket-events").pipe(
+const logWebSocketEventsFlag = Flag.boolean("log-websocket-events").pipe(
   Flag.withDescription(
     "Emit server-side logs for outbound WebSocket push traffic (equivalent to T3CODE_LOG_WS_EVENTS).",
   ),
   Flag.withAlias("log-ws-events"),
   Flag.optional,
 );
-export const tailscaleServeFlag = Flag.boolean("tailscale-serve").pipe(
+const tailscaleServeFlag = Flag.boolean("tailscale-serve").pipe(
   Flag.withDescription(
     "Configure Tailscale Serve to expose this backend over HTTPS on the Tailnet.",
   ),
   Flag.optional,
 );
-export const tailscaleServePortFlag = Flag.integer("tailscale-serve-port").pipe(
+const tailscaleServePortFlag = Flag.integer("tailscale-serve-port").pipe(
   Flag.withSchema(PortSchema),
   Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale-serve is enabled."),
   Flag.optional,
 );
-export const advertisedUrlFlag = Flag.string("advertised-url").pipe(
-  Flag.withSchema(Schema.URLFromString),
+const AdvertisedHttpUrl = Schema.URLFromString.check(
+  Schema.makeFilter(
+    (url) => url.protocol === "http:" || url.protocol === "https:" || "Expected an HTTP(S) URL.",
+  ),
+);
+
+const advertisedUrlFlag = Flag.string("advertised-url").pipe(
+  Flag.withSchema(AdvertisedHttpUrl),
   Flag.withDescription(
     "External HTTP(S) origin advertised in pairing links (for example an HTTPS reverse proxy).",
   ),
@@ -150,7 +156,7 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
-  advertisedUrl: Config.url("T3CODE_ADVERTISED_URL").pipe(
+  advertisedUrl: Config.schema(AdvertisedHttpUrl, "T3CODE_ADVERTISED_URL").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
@@ -177,7 +183,7 @@ export interface CliAuthLocationFlags {
   readonly devUrl?: Option.Option<URL>;
 }
 
-export const sharedServerLocationFlags = {
+export const authLocationFlags = {
   baseDir: baseDirFlag,
   devUrl: devUrlFlag,
 } as const;
@@ -206,8 +212,6 @@ export const sharedServerCommandFlags = {
   tailscaleServePort: tailscaleServePortFlag,
   advertisedUrl: advertisedUrlFlag,
 } as const;
-
-export const authLocationFlags = sharedServerLocationFlags;
 
 const resolveOptionPrecedence = <Value>(
   ...values: ReadonlyArray<Option.Option<Value>>
@@ -363,9 +367,7 @@ export const resolveServerConfig = (
         Option.fromUndefinedOr(env.advertisedUrl),
       ),
     );
-    const advertisedUrl = rawAdvertisedUrl
-      ? new URL(`${rawAdvertisedUrl.protocol}//${rawAdvertisedUrl.host}/`)
-      : undefined;
+    const advertisedUrl = rawAdvertisedUrl ? new URL(rawAdvertisedUrl.origin) : undefined;
     const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(

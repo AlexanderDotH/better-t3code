@@ -2,32 +2,44 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useMemo, useState } from "react";
 
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
-import { useServerConfigs, useThreadShells } from "../../state/entities";
+import { useThreadShells } from "../../state/entities";
+import { useEnvironments } from "../../state/environments";
 import { ChatTranscriptCopyButton } from "../chat/ChatTranscriptCopyButton";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { buildTranscriptPortabilityOptions } from "./TranscriptPortabilitySettings.logic";
+import {
+  buildTranscriptPortabilityOptions,
+  isTranscriptExportPending,
+} from "./TranscriptPortabilitySettings.logic";
 
 function optionKey(environmentId: EnvironmentId, threadId: ThreadId): string {
   return JSON.stringify([environmentId, threadId]);
 }
 
-export function TranscriptPortabilitySettings() {
+export function TranscriptPortabilitySettings({
+  environmentId,
+}: {
+  environmentId: EnvironmentId | null;
+}) {
   const translate = useInterfaceTranslator().message;
   const threads = useThreadShells();
-  const serverConfigs = useServerConfigs();
+  const { environments } = useEnvironments();
   const supportedEnvironmentIds = useMemo(
     () =>
       new Set(
-        [...serverConfigs]
-          .filter(([, config]) => (config.environment.capabilities.agentWorkflowVersion ?? 0) >= 1)
-          .map(([environmentId]) => environmentId),
+        environments
+          .filter(
+            (environment) =>
+              environment.connection.phase === "connected" &&
+              (environment.serverConfig?.environment.capabilities.agentWorkflowVersion ?? 0) >= 1,
+          )
+          .map((environment) => environment.environmentId),
       ),
-    [serverConfigs],
+    [environments],
   );
   const options = useMemo(
-    () => buildTranscriptPortabilityOptions(threads, supportedEnvironmentIds),
-    [supportedEnvironmentIds, threads],
+    () => buildTranscriptPortabilityOptions(threads, supportedEnvironmentIds, environmentId),
+    [environmentId, supportedEnvironmentIds, threads],
   );
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const selected =
@@ -45,7 +57,7 @@ export function TranscriptPortabilitySettings() {
         control={
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
             <Select
-              value={selectedKey}
+              value={selected ? selectedKey : null}
               onValueChange={setSelectedKey}
               disabled={options.length === 0}
             >
@@ -70,11 +82,10 @@ export function TranscriptPortabilitySettings() {
             </Select>
             {selected ? (
               <ChatTranscriptCopyButton
-                activeTurnInProgress={
-                  selected.session?.status === "starting" || selected.session?.status === "running"
-                }
+                key={optionKey(selected.environmentId, selected.id)}
+                activeTurnInProgress={isTranscriptExportPending(selected)}
                 environmentId={selected.environmentId}
-                environmentUnavailable={!serverConfigs.has(selected.environmentId)}
+                environmentUnavailable={!supportedEnvironmentIds.has(selected.environmentId)}
                 threadId={selected.id}
               />
             ) : null}

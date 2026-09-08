@@ -1,6 +1,10 @@
-import type { GenerateContentParameters, GenerateContentResponse } from "@google/genai";
+import {
+  FinishReason,
+  GenerateContentResponse,
+  type GenerateContentParameters,
+} from "@google/genai";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import {
   ApprovalRequestId,
   ProviderDriverKind,
@@ -11,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { ServerConfig } from "../../config.ts";
@@ -19,6 +24,8 @@ import * as ResourceProtection from "../../resourceProtection/SubagentResourceGo
 import type { GeminiClient } from "../GeminiClient.ts";
 import type { GeminiHarnessToolExecutor } from "./GeminiHarness.ts";
 import { makeGeminiAdapter } from "./GeminiAdapter.ts";
+
+const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const testLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-gemini-adapter-test-",
@@ -32,7 +39,7 @@ function response(input: {
     readonly args: Record<string, unknown>;
   };
 }): GenerateContentResponse {
-  return {
+  return Object.assign(new GenerateContentResponse(), {
     candidates: [
       {
         content: {
@@ -42,7 +49,7 @@ function response(input: {
             ...(input.functionCall ? [{ functionCall: input.functionCall }] : []),
           ],
         },
-        finishReason: input.functionCall ? "STOP" : "STOP",
+        finishReason: FinishReason.STOP,
       },
     ],
     usageMetadata: {
@@ -50,7 +57,7 @@ function response(input: {
       candidatesTokenCount: 4,
       totalTokenCount: 14,
     },
-  } as GenerateContentResponse;
+  });
 }
 
 function fakeClient(input: {
@@ -128,7 +135,7 @@ describe("GeminiAdapter", () => {
 
         expect(executed).toBe(65);
         expect(requests).toHaveLength(66);
-        expect(JSON.stringify(requests.at(-1)?.contents)).toContain('"id":"call-64"');
+        expect(encodeUnknownJson(requests.at(-1)?.contents)).toContain('"id":"call-64"');
         const transcript = yield* adapter.readThread(threadId);
         expect(transcript.turns).toHaveLength(1);
         expect(transcript.turns[0]?.items).toHaveLength(66);
@@ -270,8 +277,8 @@ describe("GeminiAdapter", () => {
         ]);
         expect(requests).toHaveLength(2);
         const secondContents = requests[1]?.contents;
-        expect(JSON.stringify(secondContents)).toContain("functionResponse");
-        expect(JSON.stringify(secondContents)).toContain("notes.txt");
+        expect(encodeUnknownJson(secondContents)).toContain("functionResponse");
+        expect(encodeUnknownJson(secondContents)).toContain("notes.txt");
         expect(requests[0]?.config?.systemInstruction).toContain("T3 Code is the harness");
         expect(requests[0]?.config?.systemInstruction).toContain("workspace_context");
         expect(requests[0]?.config?.systemInstruction).toContain("workspace_edit");
@@ -351,7 +358,8 @@ describe("GeminiAdapter", () => {
           .pipe(Effect.forkChild);
         const opened = yield* Fiber.join(requestFiber);
         expect(Option.isSome(opened)).toBe(true);
-        if (Option.isNone(opened) || opened.value.type !== "request.opened") return;
+        assert.isOk(Option.isSome(opened) && opened.value.type === "request.opened");
+        assert.isDefined(opened.value.requestId);
         expect(executed).toEqual([]);
         yield* adapter.respondToRequest(
           threadId,
@@ -408,14 +416,19 @@ describe("GeminiAdapter", () => {
         yield* adapter.sendTurn({ threadId, input: "Try an unavailable command." });
 
         expect(executed).toEqual([]);
-        expect(
-          requests[0]?.config?.tools?.[0]?.functionDeclarations?.map(({ name }) => name),
-        ).toEqual(["workspace_find", "workspace_read", "workspace_context"]);
+        const tool = requests[0]?.config?.tools?.[0];
+        assert.isDefined(tool);
+        assert.isOk("functionDeclarations" in tool);
+        expect(tool.functionDeclarations?.map(({ name }) => name)).toEqual([
+          "workspace_find",
+          "workspace_read",
+          "workspace_context",
+        ]);
         expect(requests[0]?.config?.systemInstruction).toContain("workspace_find");
         expect(requests[0]?.config?.systemInstruction).toContain("workspace_read");
         expect(requests[0]?.config?.systemInstruction).toContain("workspace_context");
         expect(requests[0]?.config?.systemInstruction).not.toContain("workspace_edit");
-        expect(JSON.stringify(requests[1]?.contents)).toContain(
+        expect(encodeUnknownJson(requests[1]?.contents)).toContain(
           "Tool 'exec_command' is not available in this session mode.",
         );
       }),
@@ -453,6 +466,8 @@ describe("GeminiAdapter", () => {
           _tag: "ProviderAdapterRequestError",
           method: "session/resume",
         });
+        if (failure._tag !== "ProviderAdapterRequestError")
+          throw new Error(`Unexpected error: ${failure._tag}`);
         expect(failure.detail).toContain("no longer available");
       }),
     ).pipe(Effect.provide(testLayer)),

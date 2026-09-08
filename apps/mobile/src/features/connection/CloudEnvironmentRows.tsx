@@ -4,7 +4,12 @@ import {
   connectionStatusText,
   type EnvironmentConnectionPhase,
 } from "@t3tools/client-runtime/connection";
-import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type EnvironmentMachineKind,
+  resolveEnvironmentMachineKind,
+} from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
@@ -15,10 +20,12 @@ import {
 } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
+import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
+import { serverEnvironment } from "../../state/server";
 import { availableCloudEnvironmentPresentation } from "../cloud/cloudEnvironmentPresentation";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
@@ -54,7 +61,11 @@ export function CloudEnvironmentRows(props: CloudEnvironmentRowsProps) {
   // is never mounted and any `useAuth` call throws — the fixture states whether
   // the rows are signed in instead of asking Clerk.
   if (props.showcaseSignedIn !== undefined) {
-    return props.showcaseSignedIn ? <CloudEnvironmentRowsContent {...props} /> : null;
+    return props.showcaseSignedIn ? (
+      <CloudEnvironmentRowsContent {...props} />
+    ) : (
+      <ConnectedOnlyCloudEnvironmentRows {...props} />
+    );
   }
   // No cloud config means no `ClerkProvider` either, so `useAuth` would throw.
   if (!hasCloudPublicConfig()) {
@@ -211,6 +222,9 @@ function ConnectedCloudEnvironmentRow(props: {
   readonly onDisconnect: () => void;
   readonly onToggleError: () => void;
 }) {
+  const serverConfig = useAtomValue(
+    serverEnvironment.configValueAtom(props.environment.environmentId),
+  );
   return (
     <CloudEnvironmentRowShell
       borderTop={props.borderTop}
@@ -220,6 +234,7 @@ function ConnectedCloudEnvironmentRow(props: {
       errorExpanded={props.errorExpanded}
       label={props.environment.environmentLabel}
       savedOnDevice
+      machine={resolveEnvironmentMachineKind(serverConfig)}
       onValueChange={(enabled) => {
         if (enabled) {
           props.onConnect();
@@ -276,6 +291,8 @@ function CloudEnvironmentRowShell(props: {
   readonly disabled?: boolean;
   readonly errorExpanded: boolean;
   readonly label: string;
+  /** Absent for environments the relay lists but this device has not connected to. */
+  readonly machine?: EnvironmentMachineKind;
   readonly savedOnDevice: boolean;
   readonly onToggleError: () => void;
   readonly onValueChange: (enabled: boolean) => void;
@@ -293,7 +310,7 @@ function CloudEnvironmentRowShell(props: {
       error: props.connectionError,
     });
   const statusClassName = props.connectionError
-    ? "text-adaptive-rose-500-400"
+    ? "text-danger-foreground"
     : "text-foreground-muted";
   const [errorMeasurement, setErrorMeasurement] = useState<{
     readonly text: string;
@@ -332,6 +349,13 @@ function CloudEnvironmentRowShell(props: {
       <View className="min-w-0 flex-1 gap-0.5">
         <View className="min-w-0 flex-row items-center gap-2">
           <ConnectionStatusDot state={props.connectionState} pulse={shouldPulse} size={7} />
+          {props.machine ? (
+            <EnvironmentMachineSymbol
+              kind={props.machine}
+              size={14}
+              tintColorClassName="accent-foreground-muted"
+            />
+          ) : null}
           <Text
             className="min-w-0 flex-shrink text-base font-t3-bold leading-snug text-foreground"
             numberOfLines={1}

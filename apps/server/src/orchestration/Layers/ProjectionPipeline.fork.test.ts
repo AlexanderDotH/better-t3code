@@ -65,6 +65,7 @@ it.layer(TestLayer)("OrchestrationProjectionPipeline fork history", (it) => {
         correlationId: CommandId.make("command-project"),
         metadata: {},
         payload: {
+          checkpointsEnabled: true,
           projectId,
           title: "Fork project",
           workspaceRoot: "/tmp/project-fork",
@@ -351,6 +352,7 @@ it.layer(TestLayer)("OrchestrationProjectionPipeline fork history", (it) => {
       assert.equal(projectedThread[0]?.latestUserMessageAt, null);
       assert.equal(projectedThread[0]?.pendingUserInputCount, 0);
       assert.equal(projectedThread[0]?.hasActionableProposedPlan, 0);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Assert the raw persisted representation without schema normalization.
       assert.deepEqual(JSON.parse(projectedThread[0]?.forkJson ?? "null"), {
         provenance: {
           sourceThreadId: "thread-source",
@@ -514,8 +516,19 @@ it.layer(TestLayer)("OrchestrationProjectionPipeline fork history", (it) => {
         FROM projection_threads
         WHERE thread_id = ${threadId}
       `;
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Assert the raw persisted representation without schema normalization.
       const parsedFork = JSON.parse(updatedFork[0]?.forkJson ?? "null") as {
-        readonly workspace: { readonly status: string; readonly preparedAt: string | null };
+        readonly workspace: {
+          readonly status: string;
+          readonly preparedAt: string | null;
+          readonly spec: {
+            mode: string;
+            baseBranch: string;
+            startFromOrigin: boolean;
+            runSetupScript: boolean;
+          };
+          readonly lastError: string | null;
+        };
         readonly handoff: { readonly status: string; readonly completedAt: string | null };
       };
       assert.deepEqual(parsedFork.workspace, {

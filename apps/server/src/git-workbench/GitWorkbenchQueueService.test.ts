@@ -1,10 +1,11 @@
+import { ThreadId, TurnId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
-import * as NodeSqliteClient from "../persistence/NodeSqliteClient.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import Migration0042 from "../persistence/Migrations/042_GitWorkbenchState.ts";
 import type {
   GitWorkbenchObservedState,
@@ -118,7 +119,7 @@ function createInput(
 ) {
   return {
     scope: overrides.scope ?? scope,
-    threadId: "thread-1",
+    threadId: ThreadId.make("thread-1"),
     turnId: overrides.turnId === undefined ? "turn-1" : overrides.turnId,
     workflow: overrides.workflow ?? selectionDelivery,
     preconditions: overrides.preconditions ?? preconditions,
@@ -243,8 +244,8 @@ it.effect("revalidates after quiescence, executes once, and removes a successful
 
     yield* queue.handleQuiescence({
       type: "turn.processing.quiesced",
-      threadId: "thread-1",
-      turnId: "turn-1",
+      threadId: ThreadId.make("thread-1"),
+      turnId: TurnId.make("turn-1"),
       checkpointTurnCount: 2,
       createdAt: "2026-08-02T10:05:00.000Z",
     });
@@ -262,8 +263,8 @@ it.effect("moves stale work to needs-review without silently executing a new tar
     yield* queue.createOrReplace(createInput());
     yield* queue.handleQuiescence({
       type: "turn.processing.quiesced",
-      threadId: "thread-1",
-      turnId: "turn-1",
+      threadId: ThreadId.make("thread-1"),
+      turnId: TurnId.make("turn-1"),
       checkpointTurnCount: 2,
       createdAt: "2026-08-02T10:05:00.000Z",
     });

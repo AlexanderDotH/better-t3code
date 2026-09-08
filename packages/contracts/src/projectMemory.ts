@@ -209,7 +209,7 @@ export const ProjectMemoryFailureReason = Schema.Literals([
 ]);
 export type ProjectMemoryFailureReason = typeof ProjectMemoryFailureReason.Type;
 
-export class ProjectMemoryError extends Schema.TaggedErrorClass<ProjectMemoryError>()(
+export class ProjectMemoryError extends Schema.TaggedError<ProjectMemoryError>()(
   "ProjectMemoryError",
   {
     operation: ProjectMemoryOperation,

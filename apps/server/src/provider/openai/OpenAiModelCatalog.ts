@@ -15,7 +15,7 @@ const LiveModelList = Schema.Struct({
 });
 const decodeLiveModelList = Schema.decodeUnknownEffect(LiveModelList);
 
-export class OpenAiModelCatalogError extends Schema.TaggedErrorClass<OpenAiModelCatalogError>()(
+export class OpenAiModelCatalogError extends Schema.TaggedError<OpenAiModelCatalogError>()(
   "OpenAiModelCatalogError",
   { message: Schema.String },
 ) {}

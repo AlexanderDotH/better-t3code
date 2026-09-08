@@ -22,11 +22,7 @@ function formatRemainingSeconds(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-export function sshPasswordPromptErrorMessage(
-  error: unknown,
-  fallback: string,
-  expired: string,
-): string {
+function sshPasswordPromptErrorMessage(error: unknown, fallback: string, expired: string): string {
   const message = error instanceof Error ? error.message : fallback;
   return message.includes("expired") || message.includes("no longer pending") ? expired : message;
 }

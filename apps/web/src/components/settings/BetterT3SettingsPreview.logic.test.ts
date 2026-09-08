@@ -39,6 +39,7 @@ describe("buildBetterT3SettingsPreviewModel", () => {
         feature("chat.draftIndicators", true),
       ],
       chatVisualMode: "classic",
+      contextWindowSelector: "native",
       sidebarPosition: "right",
     });
 
@@ -57,6 +58,7 @@ describe("buildBetterT3SettingsPreviewModel", () => {
       classicSidebar: true,
       draftIndicators: true,
       presentation: "classic",
+      contextWindowSelector: "native",
       sidebarPosition: "right",
     });
   });
@@ -69,6 +71,7 @@ describe("buildBetterT3SettingsPreviewModel", () => {
         feature("chat.characterStreamingMotion", true),
       ],
       chatVisualMode: "current",
+      contextWindowSelector: "better-t3",
       sidebarPosition: "left",
     });
 
@@ -80,6 +83,7 @@ describe("buildBetterT3SettingsPreviewModel", () => {
   it("changes only the relevant animation key when a previewed setting changes", () => {
     const base = {
       chatVisualMode: "current" as const,
+      contextWindowSelector: "better-t3" as const,
       sidebarPosition: "left" as const,
     };
     const before = buildBetterT3SettingsPreviewModel({

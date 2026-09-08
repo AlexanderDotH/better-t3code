@@ -1,5 +1,11 @@
 import { expect, it, vi } from "@effect/vitest";
-import { EnvironmentId, ProviderInstanceId, SubagentId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  SubagentId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -15,7 +21,7 @@ it.effect("binds subagent creation to the authenticated parent thread and provid
       agentId: SubagentId.make("general:parent:agent-1"),
       status: "starting",
       providerInstanceId: input.providerInstanceId ?? input.callerProviderInstanceId,
-      providerDriver: "codex",
+      providerDriver: ProviderDriverKind.make("codex"),
       model: input.model ?? "gpt-5.6-sol",
       reasoningEffort: input.reasoningEffort ?? null,
     }),
@@ -74,7 +80,7 @@ it.effect(
           agentId: input.agentId,
           status: "running",
           providerInstanceId: ProviderInstanceId.make("codex-work"),
-          providerDriver: "codex",
+          providerDriver: ProviderDriverKind.make("codex"),
           model: "gpt-5.6-sol",
           reasoningEffort: null,
           task: input.task,

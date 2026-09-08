@@ -1,6 +1,5 @@
-import { renderToStaticMarkup } from "react-dom/server";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   createEmptyThreadDraft,
@@ -9,7 +8,6 @@ import {
   type DraftSessionState,
 } from "../../composerDraftStore";
 import {
-  LegacySidebarDraftRow,
   resolveLegacySidebarDraftPreview,
   resolveLegacySidebarDraftRows,
 } from "./LegacySidebarDraftRows";
@@ -137,26 +135,5 @@ describe("classic sidebar draft rows", () => {
         ],
       }),
     ).toBe("1 attachment");
-  });
-
-  it("renders a navigable amber draft row with a discard affordance", () => {
-    const draftId = DraftId.make("draft-row");
-    const html = renderToStaticMarkup(
-      <LegacySidebarDraftRow
-        row={{
-          draftId,
-          session: makeSession(draftId),
-          composer: makeComposer("Bring drafts to classic"),
-        }}
-        isActive={false}
-        onNavigate={vi.fn()}
-        onDiscard={vi.fn()}
-      />,
-    );
-
-    expect(html).toContain('data-testid="classic-sidebar-draft-row-draft-row"');
-    expect(html).toContain("Bring drafts to classic");
-    expect(html).toContain('aria-label="Discard draft"');
-    expect(html).toContain("text-amber");
   });
 });

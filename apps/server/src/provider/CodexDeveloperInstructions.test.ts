@@ -124,7 +124,7 @@ describe("buildCodexDeveloperInstructions delegation history policy", () => {
     expect(plan).toContain("workspace_context");
     expect(plan).toContain(workspaceBatchGuidance);
     expect(plan).not.toContain("workspace_edit");
-    expect(plan).not.toContain("formatters");
+    expect(plan).not.toContain("Prefer `workspace_edit`");
   });
 
   it("never recommends workspace edits for read-only workspace profiles", () => {

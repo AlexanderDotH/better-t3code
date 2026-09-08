@@ -13,10 +13,9 @@
  *      Auth sessions, pairing links, command receipts, and provider
  *      runtime rows are dropped — pair a fresh browser against dev.
  *   3. Runs migrations on the result. Because the clone carries the real
- *      `effect_sql_migrations` table, this proves a new migration applies
- *      on top of the real applied set, and the slot check below catches
- *      the silent failure where two branches claim the same
- *      `Migrations/NNN_` id (the second one's CREATE TABLE is skipped).
+ *      legacy and independent migration ledgers, this proves convergence
+ *      and new migrations on the real applied set. Slot checks below compare
+ *      upstream and fork registries against their separate ledgers.
  *
  * The event log (`orchestration_events`) is pruned per stream while
  * `sqlite_sequence` and `projection_state` carry over untouched, so new
@@ -24,7 +23,6 @@
  * cursors never rewind.
  */
 
-// @effect-diagnostics nodeBuiltinImport:off - node:os resolves the shared T3 home guard.
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
@@ -38,10 +36,16 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { Command, Flag } from "effect/unstable/cli";
 
-import { migrationManifest, runMigrations } from "../src/persistence/Migrations.ts";
-import * as NodeSqliteClient from "../src/persistence/NodeSqliteClient.ts";
+import {
+  forkMigrationManifest,
+  forkMigrationTable,
+  migrationManifest,
+  runMigrations,
+  upstreamMigrationTable,
+} from "../src/persistence/Migrations.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
-export class MigrateDevDbNotInWorktreeError extends Schema.TaggedErrorClass<MigrateDevDbNotInWorktreeError>()(
+export class MigrateDevDbNotInWorktreeError extends Schema.TaggedError<MigrateDevDbNotInWorktreeError>()(
   "MigrateDevDbNotInWorktreeError",
   {},
 ) {
@@ -50,7 +54,7 @@ export class MigrateDevDbNotInWorktreeError extends Schema.TaggedErrorClass<Migr
   }
 }
 
-export class MigrateDevDbSharedHomeError extends Schema.TaggedErrorClass<MigrateDevDbSharedHomeError>()(
+export class MigrateDevDbSharedHomeError extends Schema.TaggedError<MigrateDevDbSharedHomeError>()(
   "MigrateDevDbSharedHomeError",
   {},
 ) {
@@ -59,7 +63,7 @@ export class MigrateDevDbSharedHomeError extends Schema.TaggedErrorClass<Migrate
   }
 }
 
-export class MigrateDevDbSourceMissingError extends Schema.TaggedErrorClass<MigrateDevDbSourceMissingError>()(
+export class MigrateDevDbSourceMissingError extends Schema.TaggedError<MigrateDevDbSourceMissingError>()(
   "MigrateDevDbSourceMissingError",
   {
     sourcePath: Schema.String,
@@ -70,7 +74,7 @@ export class MigrateDevDbSourceMissingError extends Schema.TaggedErrorClass<Migr
   }
 }
 
-export class MigrateDevDbSourceIsDestinationError extends Schema.TaggedErrorClass<MigrateDevDbSourceIsDestinationError>()(
+export class MigrateDevDbSourceIsDestinationError extends Schema.TaggedError<MigrateDevDbSourceIsDestinationError>()(
   "MigrateDevDbSourceIsDestinationError",
   {
     sourcePath: Schema.String,
@@ -81,7 +85,7 @@ export class MigrateDevDbSourceIsDestinationError extends Schema.TaggedErrorClas
   }
 }
 
-export class MigrateDevDbServerRunningError extends Schema.TaggedErrorClass<MigrateDevDbServerRunningError>()(
+export class MigrateDevDbServerRunningError extends Schema.TaggedError<MigrateDevDbServerRunningError>()(
   "MigrateDevDbServerRunningError",
   {
     databasePath: Schema.String,
@@ -93,7 +97,7 @@ export class MigrateDevDbServerRunningError extends Schema.TaggedErrorClass<Migr
   }
 }
 
-export class MigrateDevDbDestinationBusyError extends Schema.TaggedErrorClass<MigrateDevDbDestinationBusyError>()(
+export class MigrateDevDbDestinationBusyError extends Schema.TaggedError<MigrateDevDbDestinationBusyError>()(
   "MigrateDevDbDestinationBusyError",
   {
     databasePath: Schema.String,
@@ -115,20 +119,21 @@ export class MigrateDevDbDestinationBusyError extends Schema.TaggedErrorClass<Mi
  * recorded under a different name, so this checkout's migration was
  * silently skipped and its schema changes never applied.
  */
-export class MigrateDevDbSlotCollisionError extends Schema.TaggedErrorClass<MigrateDevDbSlotCollisionError>()(
+export class MigrateDevDbSlotCollisionError extends Schema.TaggedError<MigrateDevDbSlotCollisionError>()(
   "MigrateDevDbSlotCollisionError",
   {
+    table: Schema.String,
     slot: Schema.Number,
     codeName: Schema.String,
     appliedName: Schema.String,
   },
 ) {
   override get message(): string {
-    return `Migration slot collision at ${this.slot}: this checkout registers '${this.codeName}' but the database already applied '${this.appliedName}' in that slot. Renumber the new migration to a free slot.`;
+    return `Migration slot collision in ${this.table} at ${this.slot}: this checkout registers '${this.codeName}' but the database already applied '${this.appliedName}' in that slot. Renumber the new migration to a free slot.`;
   }
 }
 
-export class MigrateDevDbPhaseError extends Schema.TaggedErrorClass<MigrateDevDbPhaseError>()(
+export class MigrateDevDbPhaseError extends Schema.TaggedError<MigrateDevDbPhaseError>()(
   "MigrateDevDbPhaseError",
   {
     phase: Schema.Literals(["snapshot", "prune", "compact", "migrate", "verify"]),
@@ -235,7 +240,7 @@ const ensureNotInUse = Effect.fn("ensureDevDbNotInUse")(function* (databasePath:
 
 const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigrateDevDbInput) {
   const sql = yield* SqlClient.SqlClient;
-  yield* sql.unsafe("PRAGMA foreign_keys = ON").unprepared;
+  yield* sql`PRAGMA foreign_keys = ON`;
 
   // The shared db can carry monitor_json from a branch build even though no
   // migration in this checkout creates it, so filter it only when present.
@@ -302,25 +307,60 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
         "projection_pending_approvals",
         "projection_thread_proposed_plans",
         "checkpoint_diff_blobs",
+        "projection_thread_subagents",
+        "projection_thread_subagent_messages",
+        "projection_thread_subagent_proposed_plans",
+        "projection_thread_subagent_activities",
+        "projection_harness_chat_sync_links",
+        "projection_harness_chat_sync_message_links",
+        "projection_thread_fork_checkpoints",
+        "projection_attachment_references",
       ]) {
         yield* sql.unsafe(
           `DELETE FROM ${table} WHERE thread_id NOT IN (SELECT thread_id FROM kept_threads)`,
         ).unprepared;
+      }
+      // Remove graph children in batches before their parents. Cascading each
+      // evidence deletion scans its scope's unindexed evidence references.
+      for (const table of [
+        "knowledge_graph_node_evidence",
+        "knowledge_graph_edge_evidence",
+        "knowledge_graph_edges",
+        "knowledge_graph_nodes",
+        "knowledge_graph_evidence",
+        "knowledge_graph_file_fingerprints",
+        "knowledge_graph_patch_log",
+      ]) {
+        yield* sql.unsafe(
+          `DELETE FROM ${table} WHERE scope_id IN (
+            SELECT scope_id FROM knowledge_graph_scopes
+            WHERE project_id NOT IN (SELECT project_id FROM kept_projects)
+          )`,
+        ).unprepared;
+      }
+      for (const table of ["project_speech_profiles", "knowledge_graph_scopes"]) {
+        yield* sql.unsafe(
+          `DELETE FROM ${table} WHERE project_id NOT IN (SELECT project_id FROM kept_projects)`,
+        ).unprepared;
+      }
+      // Clones must not resume queued git operations, semantic jobs, or project
+      // coordination from the environment that owns the original work.
+      for (const table of [
+        "git_workbench_queue",
+        "git_workbench_undo_snapshots",
+        "knowledge_graph_semantic_queue",
+        "projection_project_agent_claims",
+        "projection_project_agent_messages",
+        "projection_project_agent_message_recipients",
+        "projection_project_agent_inbox_cursors",
+      ]) {
+        yield* sql.unsafe(`DELETE FROM ${table}`).unprepared;
       }
       yield* sql`DELETE FROM orchestration_events
         WHERE (aggregate_kind = 'thread'
             AND stream_id NOT IN (SELECT thread_id FROM kept_threads))
            OR (aggregate_kind = 'project'
             AND stream_id NOT IN (SELECT project_id FROM kept_projects))`;
-      // Knowledge Graph data is rebuildable but can contain bounded source
-      // excerpts. Keep it only for the projects selected into this disposable
-      // snapshot; the schema's cascade removes every derived child row.
-      yield* sql`DELETE FROM knowledge_graph_scopes
-        WHERE project_id NOT IN (SELECT project_id FROM kept_projects)`;
-      yield* sql`DELETE FROM knowledge_graph_semantic_environments
-        WHERE environment_id NOT IN (
-          SELECT DISTINCT environment_id FROM knowledge_graph_scopes
-        )`;
       yield* sql`DELETE FROM orchestration_command_receipts`;
       yield* sql`DELETE FROM provider_session_runtime`;
       yield* sql`DELETE FROM auth_sessions`;
@@ -343,47 +383,23 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
   };
 });
 
-const compatibleMigrationSlotAliases = new Map<number, ReadonlySet<string>>([
-  [33, new Set(["ProjectSpeechProfiles"])],
-  [34, new Set(["ProjectionThreadSubagents"])],
-  [36, new Set(["ProjectionThreadsPinned"])],
-  [37, new Set(["ProjectionTurnsKeysetIndex"])],
-  [38, new Set(["ProjectionThreadsPinOrderKey"])],
-  [39, new Set(["ProjectionProjectsDefaultThreadEnvMode"])],
-  [40, new Set(["ProjectionProjectFaviconPath"])],
-  [42, new Set(["ProjectionThreadLinkedPullRequest"])],
-  [43, new Set(["ProjectionThreadsUnsettledAt"])],
-]);
-
-const convergenceTail = new Map<number, string>([
-  [45, "ForkSchemaConvergence"],
-  [46, "ProjectionThreadsPinnedCompatibility"],
-  [47, "ProjectionTurnsKeysetIndexCompatibility"],
-  [48, "ProjectionThreadsPinOrderKeyCompatibility"],
-  [49, "ProjectionProjectsDefaultThreadEnvModeCompatibility"],
-  [50, "ProjectionProjectFaviconPathCompatibility"],
-  [58, "Upstream42And43SchemaConvergence"],
-]);
-
 /** Compare this checkout's migration registry against what the cloned
- * database recorded. Known fork/upstream collisions are safe only after the
- * complete convergence tail has been recorded; every other name mismatch is
- * still treated as a skipped migration. */
+ * database recorded: same slot under a different name means the migration
+ * was skipped, not applied. */
 const verifyMigrationSlots = Effect.fn("verifyMigrationSlots")(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const applied = yield* sql<{ migration_id: number; name: string }>`
-    SELECT migration_id, name FROM effect_sql_migrations`;
-  const appliedById = new Map(applied.map((row) => [Number(row.migration_id), row.name]));
-  const hasConvergenceTail = Array.from(convergenceTail).every(
-    ([slot, name]) => appliedById.get(slot) === name,
-  );
-  for (const [slot, codeName] of migrationManifest) {
-    const appliedName = appliedById.get(slot);
-    if (appliedName !== undefined && appliedName !== codeName) {
-      if (hasConvergenceTail && compatibleMigrationSlotAliases.get(slot)?.has(appliedName)) {
-        continue;
+  for (const [table, manifest] of [
+    [upstreamMigrationTable, migrationManifest],
+    [forkMigrationTable, forkMigrationManifest],
+  ] as const) {
+    const applied = yield* sql<{ migration_id: number; name: string }>`
+      SELECT migration_id, name FROM ${sql(table)}`;
+    const appliedById = new Map(applied.map((row) => [Number(row.migration_id), row.name]));
+    for (const [slot, codeName] of manifest) {
+      const appliedName = appliedById.get(slot) ?? "<missing>";
+      if (appliedName !== codeName) {
+        return yield* new MigrateDevDbSlotCollisionError({ table, slot, codeName, appliedName });
       }
-      return yield* new MigrateDevDbSlotCollisionError({ slot, codeName, appliedName });
     }
   }
 });

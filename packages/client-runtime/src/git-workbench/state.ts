@@ -9,7 +9,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { runStream, subscribe, type EnvironmentRpcInput } from "../rpc/client.ts";
@@ -62,15 +62,8 @@ const operationProgressAtoms = Atom.family((key: string) =>
   ),
 );
 
-export function gitWorkbenchOperationProgressAtom(scope: GitWorkbenchRepositoryScope) {
+function gitWorkbenchOperationProgressAtom(scope: GitWorkbenchRepositoryScope) {
   return operationProgressAtoms(gitWorkbenchRepositoryKey(scope));
-}
-
-export function resetGitWorkbenchOperationProgress(
-  registry: AtomRegistry.AtomRegistry,
-  scope: GitWorkbenchRepositoryScope,
-): void {
-  registry.set(gitWorkbenchOperationProgressAtom(scope), idleGitWorkbenchOperationProgress());
 }
 
 function normalizeRpcInput<Input>(input: Input): Input {

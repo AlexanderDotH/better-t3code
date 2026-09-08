@@ -38,4 +38,3 @@ node_modules/
 *.log
 .env*
 !.env.example
-.cursor/hooks/state/

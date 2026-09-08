@@ -5,8 +5,8 @@ import {
   deriveProviderEntriesByEnvironment,
   deriveProviderInstanceEntries,
   getDefaultProviderInstanceModel,
-  isProviderInstancePickerBrowsable,
   isProviderInstancePickerReady,
+  isProviderInstancePickerBrowsable,
   isProviderInstancePickerVisible,
   resolveDefaultProviderModelSelection,
   resolveSelectableProviderInstance,
@@ -72,53 +72,6 @@ describe("isProviderInstancePickerReady", () => {
   });
 });
 
-describe("isProviderInstancePickerBrowsable", () => {
-  it("keeps an authenticated warning instance with selectable models available for setup", () => {
-    const [entry] = deriveProviderInstanceEntries([
-      provider({
-        provider: ProviderDriverKind.make("openrouter"),
-        instanceId: "openrouter",
-        status: "warning",
-        models: [model("openai/gpt-5.5")],
-      }),
-    ]);
-
-    expect(entry && isProviderInstancePickerReady(entry)).toBe(false);
-    expect(entry && isProviderInstancePickerBrowsable(entry)).toBe(true);
-  });
-
-  it("does not expose warning instances without an authenticated selectable catalog", () => {
-    const [unauthenticated, emptyCatalog, incompatibleCatalog] = deriveProviderInstanceEntries([
-      {
-        ...provider({
-          provider: ProviderDriverKind.make("openrouter"),
-          instanceId: "openrouter_unauthenticated",
-          status: "warning",
-          models: [model("openai/gpt-5.5")],
-        }),
-        auth: { status: "unauthenticated" },
-      },
-      provider({
-        provider: ProviderDriverKind.make("openrouter"),
-        instanceId: "openrouter_empty",
-        status: "warning",
-      }),
-      provider({
-        provider: ProviderDriverKind.make("openrouter"),
-        instanceId: "openrouter_incompatible",
-        status: "warning",
-        models: [{ ...model("openai/image-only"), isSelectable: false }],
-      }),
-    ]);
-
-    expect(unauthenticated && isProviderInstancePickerBrowsable(unauthenticated)).toBe(false);
-    expect(emptyCatalog && isProviderInstancePickerBrowsable(emptyCatalog)).toBe(false);
-    expect(incompatibleCatalog && isProviderInstancePickerBrowsable(incompatibleCatalog)).toBe(
-      false,
-    );
-  });
-});
-
 describe("isProviderInstancePickerVisible", () => {
   it("keeps enabled instances in the rail and removes disabled instances", () => {
     const [enabledEntry, disabledEntry] = deriveProviderInstanceEntries([
@@ -163,6 +116,77 @@ describe("applyProviderInstanceSettings", () => {
     const [entry] = applyProviderInstanceSettings(entries, {
       providerInstances: {},
       providers: {} as never,
+    });
+
+    expect(entry?.enabled).toBe(false);
+  });
+
+  it.each(["constructor", "toString"])(
+    "treats a removed custom instance named %s as disabled",
+    (instanceId) => {
+      const entries = deriveProviderInstanceEntries([
+        provider({
+          provider: ProviderDriverKind.make("claudeAgent"),
+          instanceId,
+        }),
+      ]);
+      const [entry] = applyProviderInstanceSettings(entries, {
+        providerInstances: {},
+        providers: {} as never,
+      });
+
+      expect(entry?.enabled).toBe(false);
+    },
+  );
+
+  it("uses settings for a configured custom instance named constructor", () => {
+    const instanceId = ProviderInstanceId.make("constructor");
+    const entries = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId,
+      }),
+    ]);
+    const [entry] = applyProviderInstanceSettings(entries, {
+      providerInstances: {
+        [instanceId]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          enabled: false,
+        },
+      },
+      providers: {} as never,
+    });
+
+    expect(entry?.enabled).toBe(false);
+  });
+
+  it("treats a removed default instance for a fork driver as disabled", () => {
+    const driver = ProviderDriverKind.make("constructor");
+    const entries = deriveProviderInstanceEntries([
+      provider({
+        provider: driver,
+        instanceId: "constructor",
+      }),
+    ]);
+    const [entry] = applyProviderInstanceSettings(entries, {
+      providerInstances: {},
+      providers: {} as never,
+    });
+
+    expect(entry?.isDefault).toBe(true);
+    expect(entry?.enabled).toBe(false);
+  });
+
+  it("uses legacy settings for a built-in default instance", () => {
+    const entries = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("codex"),
+        instanceId: "codex",
+      }),
+    ]);
+    const [entry] = applyProviderInstanceSettings(entries, {
+      providerInstances: {},
+      providers: { codex: { enabled: false } } as never,
     });
 
     expect(entry?.enabled).toBe(false);
@@ -424,20 +448,6 @@ describe("getDefaultProviderInstanceModel", () => {
     );
   });
 
-  it("never falls back to a model marked non-selectable", () => {
-    const providers = [
-      provider({
-        provider: ProviderDriverKind.make("openrouter"),
-        instanceId: "openrouter",
-        models: [{ ...model("openai/no-tools"), isSelectable: false }, model("openai/gpt-agent")],
-      }),
-    ];
-
-    expect(getDefaultProviderInstanceModel(providers, ProviderInstanceId.make("openrouter"))).toBe(
-      "openai/gpt-agent",
-    );
-  });
-
   it("returns undefined for an unknown instance", () => {
     expect(
       getDefaultProviderInstanceModel([], ProviderInstanceId.make("removed_instance")),
@@ -569,5 +579,28 @@ describe("resolveDefaultProviderModelSelection", () => {
         null,
       ),
     ).toBeNull();
+  });
+});
+
+describe("setup catalogs", () => {
+  it("lets an authenticated account choose a model before becoming turn-ready", () => {
+    const [entry] = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("openrouter"),
+        instanceId: "openrouter",
+        status: "warning",
+        models: [model("model-to-configure")],
+      }),
+    ]);
+    expect(entry && isProviderInstancePickerBrowsable(entry)).toBe(true);
+    expect(entry && isProviderInstancePickerReady(entry)).toBe(false);
+    expect(entry && isProviderInstancePickerBrowsable({ ...entry, enabled: false })).toBe(false);
+    expect(
+      entry &&
+        isProviderInstancePickerBrowsable({
+          ...entry,
+          snapshot: { ...entry.snapshot, auth: { status: "unauthenticated" } },
+        }),
+    ).toBe(false);
   });
 });

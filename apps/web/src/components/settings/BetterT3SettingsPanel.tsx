@@ -23,18 +23,11 @@ import {
   type InterfaceTranslator,
 } from "@t3tools/shared/interfaceLanguage";
 import { Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { agentSettingsEnvironment } from "../../state/agentSettings";
 import { ChevronRightIcon } from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type CSSProperties,
-  type ReactNode,
-} from "react";
+import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 
-import { isElectron, isMacElectron } from "../../env";
+import { isElectron } from "../../env";
 import { useChatVisualMode, useSetChatVisualMode } from "../../chatVisualModeSync";
 import {
   useEnvironments,
@@ -66,18 +59,14 @@ import {
   resolveBetterT3DescriptorMessageKeys,
   resolveSelectedBetterT3EnvironmentId,
 } from "./BetterT3SettingsPanel.logic";
-import {
-  useBetterT3PreparedControls,
-  WEB_BETTER_T3_PREPARED_CONTROL_IDS,
-} from "./BetterT3SettingsPanel.controls";
+import { useBetterT3PreparedControls } from "./BetterT3SettingsPanel.controls";
 import {
   BETTER_T3_VISUAL_FEATURE_IDS,
   BetterT3FeatureChoice,
   type BetterT3VisualChoiceValue,
 } from "./BetterT3SettingsPreview";
 import { buildBetterT3SettingsPreviewModel } from "./BetterT3SettingsPreview.logic";
-import { InterfaceLanguageSetting } from "./InterfaceLanguageSetting";
-import { requireSettingsEnvironment } from "./settingsEnvironment";
+import { InterfaceLanguageSettings } from "./InterfaceLanguageSettings";
 import { searchableSetting } from "./settingsSearch";
 
 type Translate = InterfaceTranslator["message"];
@@ -102,7 +91,7 @@ export type BetterT3SettingsTabId =
   | "system"
   | "integrations";
 
-export const BETTER_T3_SETTINGS_TABS = [
+const BETTER_T3_SETTINGS_TABS = [
   { id: "general", section: null, labelMessageId: "settings.betterT3.tab.general" },
   { id: "agents", section: "agent-workflows", labelMessageId: "settings.betterT3.tab.agents" },
   { id: "visual", section: "chat-layout", labelMessageId: "settings.betterT3.tab.visual" },
@@ -137,7 +126,7 @@ export const BETTER_T3_SETTINGS_TABS = [
   readonly labelMessageId: InterfaceMessageKey;
 }>;
 
-export const BETTER_T3_ADVANCED_FEATURE_IDS: ReadonlySet<BetterT3FeatureId> = new Set([
+const BETTER_T3_ADVANCED_FEATURE_IDS: ReadonlySet<BetterT3FeatureId> = new Set([
   "agent.fetchModel",
   "agent.parallelPlanReviewer",
   "agent.cavemanMode",
@@ -161,7 +150,7 @@ export const BETTER_T3_ADVANCED_FEATURE_IDS: ReadonlySet<BetterT3FeatureId> = ne
   "integration.skills",
 ]);
 
-export function resolveBetterT3SettingsSearchTarget(
+function resolveBetterT3SettingsSearchTarget(
   targetId: string | null,
 ): { readonly tabId: BetterT3SettingsTabId; readonly advanced: boolean } | null {
   if (targetId === "better-t3-interface" || targetId === "better-t3-interface-language") {
@@ -260,7 +249,7 @@ function BetterT3AppearanceSettings(props: {
   return (
     <>
       <SettingsRow
-        {...searchableSetting("setting-glass-opacity", props.translate)}
+        {...searchableSetting("setting-glass-opacity")}
         description={props.translate("settings.appearance.glassDescription")}
         resetAction={
           props.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? (
@@ -303,9 +292,10 @@ function BetterT3AppearanceSettings(props: {
         }
       />
 
-      {isMacElectron ? (
+      {isElectron && window.desktopBridge?.getClientPlatform?.() === "darwin" ? (
         <SettingsRow
-          {...searchableSetting("macos-window-transparency", props.translate)}
+          id="macos-window-transparency"
+          title={props.translate("settings.application.title.macosTransparency")}
           description={props.translate("settings.appearance.macosTransparencyDescription")}
           control={
             <Switch
@@ -328,12 +318,15 @@ function BetterT3SettingsTabs(props: BetterT3SettingsPanelViewProps) {
   );
   const [advancedOpen, setAdvancedOpen] = useState(initialSearchTarget?.advanced ?? false);
 
-  useEffect(() => {
+  const [previousSearchTargetId, setPreviousSearchTargetId] = useState(searchTargetId);
+  if (previousSearchTargetId !== searchTargetId) {
+    setPreviousSearchTargetId(searchTargetId);
     const searchTarget = resolveBetterT3SettingsSearchTarget(searchTargetId);
-    if (!searchTarget) return;
-    setActiveTab(searchTarget.tabId);
-    if (searchTarget.advanced) setAdvancedOpen(true);
-  }, [searchTargetId]);
+    if (searchTarget) {
+      setActiveTab(searchTarget.tabId);
+      if (searchTarget.advanced) setAdvancedOpen(true);
+    }
+  }
 
   const activeTabDefinition =
     BETTER_T3_SETTINGS_TABS.find((tab) => tab.id === activeTab) ?? BETTER_T3_SETTINGS_TABS[0];
@@ -361,7 +354,6 @@ function BetterT3SettingsTabs(props: BetterT3SettingsPanelViewProps) {
           title={props.translate(messageIds.labelMessageId)}
           description={props.translate(messageIds.descriptionMessageId)}
           status={availabilityStatus(feature, props.translate)}
-          visual={featureChoice ? null : props.featureVisuals?.[feature.descriptor.id]}
           control={
             featureChoice ? null : (
               <FeatureControl
@@ -373,7 +365,7 @@ function BetterT3SettingsTabs(props: BetterT3SettingsPanelViewProps) {
             )
           }
         >
-          {featureChoice}
+          {featureChoice ?? props.featureVisuals?.[feature.descriptor.id]}
         </SettingsRow>
       );
     });
@@ -446,7 +438,7 @@ function BetterT3SettingsTabs(props: BetterT3SettingsPanelViewProps) {
   );
 }
 
-export function BetterT3SettingsPanelView(props: BetterT3SettingsPanelViewProps) {
+function BetterT3SettingsPanelView(props: BetterT3SettingsPanelViewProps) {
   return (
     <SettingsPageContainer>
       {props.introduction}
@@ -467,7 +459,7 @@ type BetterT3Destination =
   | "/settings/connections"
   | "/settings/diagnostics";
 
-export function resolveBetterT3ControlDestination(
+function resolveBetterT3ControlDestination(
   featureId: BetterT3FeatureId,
 ): BetterT3Destination | null {
   if (featureId === "workspace.checkpoints") return "/settings/projects";
@@ -483,27 +475,6 @@ export function resolveBetterT3ControlDestination(
   if (featureId.startsWith("integration.")) return "/settings/integrations";
   if (featureId.startsWith("agent.")) return "/settings/general";
   return null;
-}
-
-export type WebBetterT3ControlRenderingPath =
-  | "switch"
-  | "prepared-control"
-  | "sidebar-position"
-  | "status"
-  | "deep-link"
-  | "missing";
-
-const WEB_PREPARED_CONTROL_IDS = new Set<BetterT3FeatureId>(WEB_BETTER_T3_PREPARED_CONTROL_IDS);
-
-export function resolveWebBetterT3ControlRenderingPath(
-  feature: Pick<BetterT3FeatureControlStateV1["descriptor"], "id" | "controlKind">,
-): WebBetterT3ControlRenderingPath {
-  if (feature.controlKind === "switch") return "switch";
-  if (WEB_PREPARED_CONTROL_IDS.has(feature.id)) return "prepared-control";
-  if (feature.id === "chat.sidebarPosition") return "sidebar-position";
-  if (feature.controlKind === "status-only") return "status";
-  if (resolveBetterT3ControlDestination(feature.id) !== null) return "deep-link";
-  return "missing";
 }
 
 function CapabilityControl(props: {
@@ -539,7 +510,7 @@ type BetterT3PreparedStatusFeatureId =
   | "integration.skills"
   | "integration.compatibility";
 
-export function resolveBetterT3PreparedStatusMessageId(input: {
+function resolveBetterT3PreparedStatusMessageId(input: {
   readonly featureId: BetterT3PreparedStatusFeatureId;
   readonly state: BetterT3PreparedStatusState;
   readonly connectionPhase?: EnvironmentPresentation["connection"]["phase"];
@@ -574,7 +545,7 @@ export function resolveBetterT3PreparedStatusMessageId(input: {
   return "settings.betterT3.status.unknown";
 }
 
-export function resolveBetterT3PreparedStatusText(input: {
+function resolveBetterT3PreparedStatusText(input: {
   readonly featureId: BetterT3PreparedStatusFeatureId;
   readonly statuses: BetterT3PreparedStatusModel;
   readonly connectionPhase: EnvironmentPresentation["connection"]["phase"];
@@ -691,7 +662,7 @@ function initializationMessageId(
     : "settings.betterT3.initialization.existing";
 }
 
-export function BetterT3SettingsIntroduction(props: {
+function BetterT3SettingsIntroduction(props: {
   readonly environmentOptions: ReadonlyArray<BetterT3EnvironmentOption>;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly deviceInitialization: BetterT3SettingsInitialization;
@@ -802,20 +773,16 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
         })
       : null,
   );
-  const loadedSkillsQuery = useQuery({
-    queryKey: ["better-t3", props.environment.environmentId, "loaded-skills"],
-    queryFn: () =>
-      requireSettingsEnvironment({
-        primaryEnvironmentId: null,
-        selectedEnvironmentId: props.environment.environmentId,
-      }).api.skills.list({ includeBody: false, forceReload: false }),
-    enabled:
-      environmentAvailable &&
+  const loadedSkillsQuery = useEnvironmentQuery(
+    environmentAvailable &&
       (props.environment.serverConfig?.environment.capabilities.environmentSettingsVersion ?? 0) >=
-        1,
-    staleTime: 30_000,
-    retry: false,
-  });
+        1
+      ? agentSettingsEnvironment.skills.listQuery({
+          environmentId: props.environment.environmentId,
+          input: { includeBody: false, forceReload: false },
+        })
+      : null,
+  );
   const features = useMemo(
     () =>
       buildBetterT3ControlStates({
@@ -835,9 +802,10 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
       buildBetterT3SettingsPreviewModel({
         features,
         chatVisualMode,
+        contextWindowSelector: settings.contextWindowSelector,
         sidebarPosition: settings.sidebarPosition,
       }),
-    [chatVisualMode, features, settings.sidebarPosition],
+    [chatVisualMode, features, settings.contextWindowSelector, settings.sidebarPosition],
   );
   const sectionTitles = useMemo(
     () =>
@@ -870,6 +838,12 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
         if (value === "current" || value === "classic") setChatVisualMode(value);
         return;
       }
+      if (featureId === "chat.contextWindowSelector") {
+        if (value === "native" || value === "better-t3") {
+          updateSettings({ contextWindowSelector: value });
+        }
+        return;
+      }
       if (typeof value === "boolean") onSwitchChange(featureId, value);
     },
     [onSwitchChange, setChatVisualMode, updateSettings],
@@ -884,7 +858,9 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
           ? settings.sidebarPosition
           : featureId === "chat.presentation"
             ? chatVisualMode
-            : feature.value === true;
+            : featureId === "chat.contextWindowSelector"
+              ? settings.contextWindowSelector
+              : feature.value === true;
       choices[featureId] = (
         <BetterT3FeatureChoice
           disabled={feature.availability.state !== "available"}
@@ -903,6 +879,7 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
     features,
     onVisualChoiceChange,
     previewModel,
+    settings.contextWindowSelector,
     settings.sidebarPosition,
     translate,
   ]);
@@ -1022,7 +999,11 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
       translate={translate}
       controls={controls}
       featureChoices={featureChoices}
-      languageControl={<InterfaceLanguageSetting searchTargetId="better-t3-interface-language" />}
+      languageControl={
+        <div id="better-t3-interface-language">
+          <InterfaceLanguageSettings />
+        </div>
+      }
       visualSettings={
         <BetterT3AppearanceSettings
           glassOpacity={settings.glassOpacity}
@@ -1087,7 +1068,11 @@ export function BetterT3SettingsPanel() {
           onEnvironmentChange={setRequestedEnvironmentId}
         />
         <BetterT3InterfaceSection
-          control={<InterfaceLanguageSetting searchTargetId="better-t3-interface-language" />}
+          control={
+            <div id="better-t3-interface-language">
+              <InterfaceLanguageSettings />
+            </div>
+          }
           translate={translator.message}
         />
       </SettingsPageContainer>

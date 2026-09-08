@@ -72,57 +72,52 @@ describe("general subagent state", () => {
     }),
   );
 
-  it("projects public state and treats queued follow-up work as busy", () => {
-    const worker = {
-      subagentId: SubagentId.make("agent-state"),
-      selection: { instanceId: ProviderInstanceId.make("codex-work"), model: "gpt-5.6-sol" },
-      providerDriver: ProviderDriverKind.make("codex"),
-      task: "Inspect state",
-      finalAssistantMessage: JSON.stringify({
+  it.effect("projects public state and treats queued follow-up work as busy", () =>
+    Effect.gen(function* () {
+      const { worker } = yield* makeActiveGeneralSubagent({
+        uuid: "agent-state",
+        parentThreadId: ThreadId.make("parent"),
+        parentTurnId: null,
+        parentRuntimeSessionId: null,
+        parentProviderInstanceId: null,
+        selection: { instanceId: ProviderInstanceId.make("codex-work"), model: "gpt-5.6-sol" },
+        providerDriver: ProviderDriverKind.make("codex"),
+        cwd: "/workspace",
+        runtimeMode: "full-access",
+        retainSession: true,
+        task: "Inspect state",
+        startedAt: IsoDateTime.make("2026-08-29T12:00:00.000Z"),
+      });
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Keep the provider's raw JSON fixture independent of the production decoder.
+      worker.finalAssistantMessage = JSON.stringify({
         outcome: "Finished the state inspection.",
         changesOrFindings: [],
         verification: [],
         risksOrBlockers: [],
-        transcriptRef: "subagent:agent-state",
-      }),
-      detail: null,
-      finalized: false,
-      turnActive: false,
-      followUps: [{ task: "Continue" }],
-      summary: {
-        id: SubagentId.make("agent-state"),
-        label: "State",
+        transcriptRef: "subagent:general:parent:agent-state",
+      });
+      worker.summary = { ...worker.summary, status: "completed" };
+      worker.followUps.push({ task: "Continue" });
+      expect(generalSubagentIsBusy(worker)).toBe(true);
+      expect(generalSubagentIdentity(worker)).toEqual({
+        agentId: "general:parent:agent-state",
         status: "completed",
-        statusMessage: null,
+        providerInstanceId: "codex-work",
+        providerDriver: "codex",
         model: "gpt-5.6-sol",
-        providerInstanceId: ProviderInstanceId.make("codex-work"),
-        providerDriver: ProviderDriverKind.make("codex"),
         reasoningEffort: null,
-        latestProgress: null,
-        startedAt: "2026-08-29T12:00:00.000Z",
-        updatedAt: "2026-08-29T12:01:00.000Z",
-      },
-    } as ActiveGeneralSubagent;
-
-    expect(generalSubagentIsBusy(worker)).toBe(true);
-    expect(generalSubagentIdentity(worker)).toEqual({
-      agentId: "agent-state",
-      status: "completed",
-      providerInstanceId: "codex-work",
-      providerDriver: "codex",
-      model: "gpt-5.6-sol",
-      reasoningEffort: null,
-    });
-    worker.followUps.length = 0;
-    expect(generalSubagentIsBusy(worker)).toBe(false);
-    expect(generalSubagentSnapshot(worker)).toMatchObject({
-      agentId: "agent-state",
-      result: {
-        outcome: "Finished the state inspection.",
-        transcriptRef: "subagent:agent-state",
-      },
-    });
-  });
+      });
+      worker.followUps.length = 0;
+      expect(generalSubagentIsBusy(worker)).toBe(false);
+      expect(generalSubagentSnapshot(worker)).toMatchObject({
+        agentId: "general:parent:agent-state",
+        result: {
+          outcome: "Finished the state inspection.",
+          transcriptRef: "subagent:general:parent:agent-state",
+        },
+      });
+    }),
+  );
 
   it("owns admission, nested-child fencing, direct-child limits, and settled retention", () => {
     const state = makeGeneralSubagentStateStore(1);

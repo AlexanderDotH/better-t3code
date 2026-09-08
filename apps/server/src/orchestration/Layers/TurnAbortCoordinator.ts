@@ -31,7 +31,7 @@ import {
   type TurnAbortCoordinatorShape,
 } from "../Services/TurnAbortCoordinator.ts";
 
-export const TURN_ABORT_FORCE_DELAY = Duration.seconds(5);
+const TURN_ABORT_FORCE_DELAY = Duration.seconds(5);
 
 interface AbortAttempt {
   readonly target: ProviderAbortTarget;

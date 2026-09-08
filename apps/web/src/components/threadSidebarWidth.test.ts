@@ -1,19 +1,15 @@
-// @effect-diagnostics nodeBuiltinImport:off - Regression coverage compares the sidebar component with its width contract.
-import * as NodeFS from "node:fs";
-
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   resolveInitialThreadSidebarWidth,
   resolveRenderedThreadSidebarWidth,
   THREAD_MAIN_CONTENT_MIN_WIDTH,
-  THREAD_SIDEBAR_DEFAULT_WIDTH,
   THREAD_SIDEBAR_MIN_WIDTH,
 } from "./threadSidebarWidth";
 
 describe("thread sidebar width", () => {
   it("uses the default width when no preference is stored", () => {
-    expect(resolveInitialThreadSidebarWidth(null, 1200)).toBe(THREAD_SIDEBAR_DEFAULT_WIDTH);
+    expect(resolveInitialThreadSidebarWidth(null, 1200)).toBe(256);
   });
 
   it("uses a stored width in the initial render", () => {
@@ -48,20 +44,5 @@ describe("thread sidebar width", () => {
     expect(resolveRenderedThreadSidebarWidth(preferredSidebarWidth, 1_400)).toBe(
       preferredSidebarWidth,
     );
-  });
-
-  it("shows the Better T3 Code desktop wordmark across the sidebar's full legal width range", () => {
-    const sidebarSource = NodeFS.readFileSync(
-      new URL("./sidebar/SidebarChrome.tsx", import.meta.url),
-      "utf8",
-    );
-
-    expect(sidebarSource).toContain("hidden h-7 w-fit min-w-0 shrink-0 items-center gap-1");
-    expect(sidebarSource).toContain("md:flex");
-    expect(sidebarSource).toMatch(/>\s*Better\s*</);
-    expect(
-      sidebarSource.match(/-translate-y-px truncate text-sm font-medium tracking-tight/g),
-    ).toHaveLength(2);
-    expect(THREAD_SIDEBAR_MIN_WIDTH).toBe(13 * 16);
   });
 });

@@ -11,12 +11,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import {
-  findThreadById,
-  listThreadsByProjectId,
-  requireThread,
-  requireThreadAbsent,
-} from "./commandInvariants.ts";
+import { listThreadsByProjectId, requireThread, requireThreadAbsent } from "./commandInvariants.ts";
 
 const now = "2026-01-01T00:00:00.000Z";
 
@@ -25,6 +20,9 @@ const readModel: OrchestrationReadModel = {
   updatedAt: now,
   projects: [
     {
+      coordinationClaims: [],
+      checkpointsEnabled: true,
+      autoPull: false,
       id: ProjectId.make("project-a"),
       title: "Project A",
       workspaceRoot: "/tmp/project-a",
@@ -38,6 +36,9 @@ const readModel: OrchestrationReadModel = {
       deletedAt: null,
     },
     {
+      coordinationClaims: [],
+      checkpointsEnabled: true,
+      autoPull: false,
       id: ProjectId.make("project-b"),
       title: "Project B",
       workspaceRoot: "/tmp/project-b",
@@ -53,6 +54,7 @@ const readModel: OrchestrationReadModel = {
   ],
   threads: [
     {
+      subagents: [],
       id: ThreadId.make("thread-1"),
       projectId: ProjectId.make("project-a"),
       title: "Thread A",
@@ -78,6 +80,7 @@ const readModel: OrchestrationReadModel = {
       deletedAt: null,
     },
     {
+      subagents: [],
       id: ThreadId.make("thread-2"),
       projectId: ProjectId.make("project-b"),
       title: "Thread B",
@@ -121,9 +124,7 @@ const messageSendCommand: OrchestrationCommand = {
 };
 
 describe("commandInvariants", () => {
-  it("finds threads by id and project", () => {
-    expect(findThreadById(readModel, ThreadId.make("thread-1"))?.projectId).toBe("project-a");
-    expect(findThreadById(readModel, ThreadId.make("missing"))).toBeUndefined();
+  it("lists threads by project", () => {
     expect(
       listThreadsByProjectId(readModel, ProjectId.make("project-b")).map((thread) => thread.id),
     ).toEqual([ThreadId.make("thread-2")]);

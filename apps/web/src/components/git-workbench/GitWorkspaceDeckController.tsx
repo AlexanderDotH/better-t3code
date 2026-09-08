@@ -3,10 +3,6 @@ import { useGitWorkspaceDeckController } from "./GitWorkspaceDeckController.orch
 import { GitWorkspaceDeckPresentation } from "./GitWorkspaceDeckController.presentation";
 
 export {
-  resolveGitDeckCardIds,
-  resolveScopedWorkspaceDeckActiveCard,
-  shouldLoadGitRepositoryInsights,
-  shouldLoadGitWorkbenchData,
   type GitDeckAvailabilityInput,
   type GitRepositoryInsightsVisibilityInput,
   type GitWorkbenchDataVisibilityInput,
@@ -19,6 +15,3 @@ export function ChatWorkspaceDeckController(props: GitWorkspaceDeckControllerPro
   const presentation = useGitWorkspaceDeckController(props);
   return <GitWorkspaceDeckPresentation {...presentation} />;
 }
-
-/** @deprecated Import the neutral ChatWorkspaceDeckController composition instead. */
-export const GitWorkspaceDeckController = ChatWorkspaceDeckController;

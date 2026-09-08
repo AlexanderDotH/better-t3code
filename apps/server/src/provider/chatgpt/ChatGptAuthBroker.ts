@@ -27,7 +27,7 @@ import type { ChatGptCredential } from "./ChatGptCredentialStore.ts";
 
 const DEVICE_CODE_EXPIRES_IN_MINUTES = 15;
 const DEVICE_CODE_POLL_INTERVAL_SECONDS = 5;
-export const CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+const CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const AUTH_CAPABILITIES = {
   flows: ["browser", "device-code"],
   canDisconnect: true,
@@ -45,7 +45,7 @@ const ChatGptIdentityClaims = Schema.fromJsonString(
 );
 const decodeChatGptIdentityClaims = Schema.decodeUnknownOption(ChatGptIdentityClaims);
 
-export class ChatGptAuthBrokerError extends Schema.TaggedErrorClass<ChatGptAuthBrokerError>()(
+export class ChatGptAuthBrokerError extends Schema.TaggedError<ChatGptAuthBrokerError>()(
   "ChatGptAuthBrokerError",
   {
     operation: Schema.Literals(["spawn", "initialize", "connect", "status", "refresh", "logout"]),
@@ -440,7 +440,7 @@ export interface CodexAppServerAuthClientFactoryOptions {
   readonly environment?: NodeJS.ProcessEnv;
 }
 
-export const makeCodexAppServerAuthClientFactory = Effect.fn("makeCodexAppServerAuthClientFactory")(
+const makeCodexAppServerAuthClientFactory = Effect.fn("makeCodexAppServerAuthClientFactory")(
   function* (
     options: CodexAppServerAuthClientFactoryOptions,
     credentialStore: ChatGptCredentialStore,

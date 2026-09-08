@@ -208,7 +208,7 @@ export const ChatGptDriver: ProviderDriver<ChatGptSettings, ChatGptDriverEnv> = 
       );
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<ChatGptSettings>>({
-        maintenanceCapabilities: MAINTENANCE,
+        resolveMaintenance: () => Effect.succeed(MAINTENANCE),
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,

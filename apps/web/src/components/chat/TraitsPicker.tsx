@@ -13,7 +13,6 @@ import {
 import {
   applyClaudePromptEffortPrefix,
   buildProviderOptionSelectionsFromDescriptors,
-  CODEX_CONTEXT_WINDOW_OPTION_ID,
   enableAutoReasoning,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
@@ -23,10 +22,9 @@ import {
   normalizeModelSlug,
   selectManualReasoningEffort,
 } from "@t3tools/shared/model";
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { ZapIcon } from "lucide-react";
-import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { buttonVariants } from "../ui/button";
 import {
   Menu,
@@ -41,7 +39,15 @@ import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
-import { ComposerControl, ComposerControlChevron, ComposerControlIcon } from "./ComposerControl";
+import {
+  ComposerControl,
+  ComposerControlChevron,
+  ComposerControlIcon,
+  type ComposerControlSize,
+} from "./ComposerControl";
+import { composerFloatingLayerProps } from "./composerEventScope";
+import { useComposerMenuState } from "./useComposerMenuState";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
@@ -49,7 +55,7 @@ const SAVED_OPTION_LABELS: Readonly<Record<string, string>> = {
   agent: "Agent",
   effort: "Effort",
   reasoningEffort: "Reasoning effort",
-  variant: "Variant",
+  variant: "Reasoning",
 };
 
 function savedOptionLabel(id: string): string {
@@ -95,13 +101,12 @@ type TraitsPersistence =
 const ULTRATHINK_PROMPT_PREFIX = "Ultrathink:\n";
 
 function DefaultBadge() {
-  const translate = useInterfaceTranslator().message;
   return (
     <Badge
       variant="outline"
       className="inline-flex h-4 w-fit min-w-0 items-center justify-center gap-0 border-border/70 bg-muted/60 px-1.5 py-0 font-semibold text-[10px] text-muted-foreground leading-none sm:h-4"
     >
-      {translate("chat.traits.default")}
+      Default
     </Badge>
   );
 }
@@ -161,6 +166,7 @@ function getSelectedTraits(
   modelOptions: ProviderOptions | null | undefined,
   allowPromptInjectedEffort: boolean,
   planModeEnabled: boolean,
+  hideContextWindow: boolean,
 ) {
   const caps = getProviderModelCapabilities(models, model, provider, planModeEnabled);
   const modelIsUnavailable =
@@ -176,27 +182,21 @@ function getSelectedTraits(
         caps,
         selections: modelOptions,
       });
-  const allSelectDescriptors = descriptors.filter(
+  // Keep hidden selections in descriptors so editing another trait preserves them.
+  const visibleDescriptors = hideContextWindow
+    ? descriptors.filter((descriptor) => descriptor.id !== "contextWindow")
+    : descriptors;
+  const selectDescriptors = visibleDescriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
       descriptor.type === "select",
   );
-  const booleanDescriptors = descriptors.filter(
+  const booleanDescriptors = visibleDescriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "boolean" }> =>
       descriptor.type === "boolean",
   );
-  const contextWindowDescriptor =
-    provider === "codex"
-      ? (allSelectDescriptors.find(
-          (descriptor) => descriptor.id === CODEX_CONTEXT_WINDOW_OPTION_ID,
-        ) ?? null)
-      : null;
-  const selectDescriptors =
-    provider === "codex"
-      ? allSelectDescriptors.filter(
-          (descriptor) => descriptor.id !== CODEX_CONTEXT_WINDOW_OPTION_ID,
-        )
-      : allSelectDescriptors;
   const primarySelectDescriptor = selectDescriptors[0] ?? null;
+  const contextWindowDescriptor =
+    selectDescriptors.find((descriptor) => descriptor.id === "contextWindow") ?? null;
   const agentDescriptor = selectDescriptors.find((descriptor) => descriptor.id === "agent") ?? null;
   const fastModeDescriptor =
     booleanDescriptors.find((descriptor) => descriptor.id === "fastMode") ?? null;
@@ -223,15 +223,18 @@ function getSelectedTraits(
   const selectedAgentLabel = agentDescriptor
     ? getProviderOptionCurrentLabel(agentDescriptor)
     : null;
-  const autoReasoningEnabled = isAutoReasoningEnabled({
-    instanceId: defaultInstanceIdForDriver(provider),
-    model: model?.trim() || "unknown",
-    ...(modelOptions ? { options: modelOptions } : {}),
-  });
+  const autoReasoningEnabled =
+    provider === "codex" &&
+    isAutoReasoningEnabled({
+      instanceId: defaultInstanceIdForDriver(provider),
+      model: model?.trim() || "unknown",
+      ...(modelOptions ? { options: modelOptions } : {}),
+    });
 
   return {
     caps,
     descriptors,
+    visibleDescriptors,
     selectDescriptors,
     booleanDescriptors,
     primarySelectDescriptor,
@@ -251,7 +254,7 @@ function getSelectedTraits(
   };
 }
 
-function getTraitsSectionVisibility(input: {
+export function getTraitsSectionVisibility(input: {
   provider: ProviderDriverKind;
   models: ReadonlyArray<ServerProviderModel>;
   model: string | null | undefined;
@@ -259,6 +262,7 @@ function getTraitsSectionVisibility(input: {
   modelOptions: ProviderOptions | null | undefined;
   allowPromptInjectedEffort?: boolean;
   planModeEnabled: boolean;
+  hideContextWindow?: boolean;
 }) {
   const selected = getSelectedTraits(
     input.provider,
@@ -268,6 +272,7 @@ function getTraitsSectionVisibility(input: {
     input.modelOptions,
     input.allowPromptInjectedEffort ?? true,
     input.planModeEnabled,
+    input.hideContextWindow ?? false,
   );
 
   const showEffort = selected.primarySelectDescriptor !== null;
@@ -287,8 +292,9 @@ function getTraitsSectionVisibility(input: {
       showEffort ||
       showThinking ||
       showFastMode ||
+      showContextWindow ||
       showAgent ||
-      (selected.modelIsUnavailable && selected.descriptors.length > 0),
+      (selected.modelIsUnavailable && selected.visibleDescriptors.length > 0),
   };
 }
 
@@ -300,6 +306,7 @@ export function shouldRenderTraitsControls(input: {
   modelOptions: ProviderOptions | null | undefined;
   allowPromptInjectedEffort?: boolean;
   planModeEnabled: boolean;
+  hideContextWindow?: boolean;
 }): boolean {
   return getTraitsSectionVisibility(input).hasAnyControls;
 }
@@ -314,9 +321,11 @@ export interface TraitsMenuContentProps {
   modelOptions?: ProviderOptions | null | undefined;
   allowPromptInjectedEffort?: boolean;
   planModeEnabled: boolean;
+  hideContextWindow?: boolean;
+  autoReasoningEffort?: string | null | undefined;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
-  autoReasoningEffort?: string | null | undefined;
+  isComposerOwned?: boolean;
 }
 
 export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
@@ -329,6 +338,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   modelOptions,
   allowPromptInjectedEffort = true,
   planModeEnabled,
+  hideContextWindow = false,
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
   const translate = useInterfaceTranslator().message;
@@ -353,6 +363,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   );
   const {
     descriptors,
+    visibleDescriptors,
     selectDescriptors,
     booleanDescriptors,
     primarySelectDescriptor,
@@ -369,20 +380,10 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     modelOptions,
     allowPromptInjectedEffort,
     planModeEnabled,
+    hideContextWindow,
   });
-  const selectionFromDescriptors = (
-    nextDescriptors: ReadonlyArray<ProviderOptionDescriptor>,
-  ): ModelSelection => {
-    const options = buildProviderOptionSelectionsFromDescriptors(nextDescriptors);
-    return {
-      instanceId: instanceId ?? defaultInstanceIdForDriver(provider),
-      model: model?.trim() || "unknown",
-      ...(options ? { options } : {}),
-    };
-  };
   const updateDescriptors = (nextDescriptors: ReadonlyArray<ProviderOptionDescriptor>) => {
-    const selection = selectionFromDescriptors(nextDescriptors);
-    updateModelOptions((autoReasoningEnabled ? enableAutoReasoning(selection) : selection).options);
+    updateModelOptions(buildProviderOptionSelectionsFromDescriptors(nextDescriptors, modelOptions));
   };
 
   const handleSelectChange = (
@@ -391,8 +392,16 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   ) => {
     if (!value) return;
     if (shouldOfferAutoReasoning(provider, descriptor)) {
+      const options = buildProviderOptionSelectionsFromDescriptors(descriptors, modelOptions);
       updateModelOptions(
-        applyReasoningChoice(selectionFromDescriptors(descriptors), value).options,
+        applyReasoningChoice(
+          {
+            instanceId: instanceId ?? defaultInstanceIdForDriver(provider),
+            model: model?.trim() || "unknown",
+            ...(options ? { options } : {}),
+          },
+          value,
+        ).options,
       );
       return;
     }
@@ -419,7 +428,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   if (modelIsUnavailable) {
     return (
       <>
-        {descriptors.map((descriptor, index) => {
+        {visibleDescriptors.map((descriptor, index) => {
           const value = getProviderOptionCurrentLabel(descriptor);
           if (!value) return null;
           return (
@@ -457,7 +466,8 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
               </div>
               {ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id ? (
                 <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
-                  {translate("chat.traits.ultrathinkLocked")}
+                  Your prompt contains &quot;ultrathink&quot; in the text. Remove it to change this
+                  option.
                 </div>
               ) : null}
               <MenuRadioGroup
@@ -564,9 +574,6 @@ export function buildTraitsTriggerDisplay(input: {
   let fastModeEnabled = false;
   const labels: Array<string> = [];
   for (const descriptor of input.descriptors) {
-    if (input.provider === "codex" && descriptor.id === CODEX_CONTEXT_WINDOW_OPTION_ID) {
-      continue;
-    }
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
       fastModeEnabled = descriptor.currentValue === true;
       fastModeFallbackLabel = fastModeEnabled ? "Fast" : "Normal";
@@ -589,14 +596,14 @@ export function buildTraitsTriggerDisplay(input: {
     }
     if (
       input.provider === "codex" &&
-      descriptor.id === CODEX_REASONING_EFFORT_OPTION_ID &&
       descriptor.type === "select" &&
+      descriptor.id === CODEX_REASONING_EFFORT_OPTION_ID &&
       input.autoReasoningEnabled
     ) {
       const autoLabel = input.autoLabel ?? "Auto";
-      const effortLabel = input.autoReasoningEffort
-        ? descriptor.options.find(({ id }) => id === input.autoReasoningEffort)?.label
-        : null;
+      const effortLabel = descriptor.options.find(
+        ({ id }) => id === input.autoReasoningEffort,
+      )?.label;
       labels.push(effortLabel ? `${autoLabel} · ${effortLabel}` : autoLabel);
       continue;
     }
@@ -630,23 +637,36 @@ export const TraitsPicker = memo(function TraitsPicker({
   modelOptions,
   allowPromptInjectedEffort = true,
   planModeEnabled,
+  hideContextWindow = false,
+  autoReasoningEffort,
   triggerVariant,
   triggerClassName,
-  autoReasoningEffort,
+  isComposerOwned,
+  size = "sm",
+  hidden = false,
   ...persistence
-}: TraitsMenuContentProps & TraitsPersistence) {
+}: TraitsMenuContentProps &
+  TraitsPersistence & {
+    size?: ComposerControlSize;
+    hidden?: boolean;
+  }) {
   const translate = useInterfaceTranslator().message;
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled, autoReasoningEnabled } =
-    getTraitsSectionVisibility({
-      provider,
-      models,
-      model,
-      prompt,
-      modelOptions,
-      allowPromptInjectedEffort,
-      planModeEnabled,
-    });
+  const [isMenuOpen, setIsMenuOpen] = useComposerMenuState(hidden);
+  const {
+    visibleDescriptors,
+    primarySelectDescriptor,
+    ultrathinkPromptControlled,
+    autoReasoningEnabled,
+  } = getTraitsSectionVisibility({
+    provider,
+    models,
+    model,
+    prompt,
+    modelOptions,
+    allowPromptInjectedEffort,
+    planModeEnabled,
+    hideContextWindow,
+  });
   if (
     !shouldRenderTraitsControls({
       provider,
@@ -656,6 +676,7 @@ export const TraitsPicker = memo(function TraitsPicker({
       modelOptions,
       allowPromptInjectedEffort,
       planModeEnabled,
+      hideContextWindow,
     })
   ) {
     return null;
@@ -663,7 +684,7 @@ export const TraitsPicker = memo(function TraitsPicker({
 
   const { label: triggerLabel, showFastModeIcon } = buildTraitsTriggerDisplay({
     provider,
-    descriptors,
+    descriptors: visibleDescriptors,
     primarySelectDescriptorId: primarySelectDescriptor?.id ?? null,
     ultrathinkPromptControlled,
     autoReasoningEnabled,
@@ -674,12 +695,17 @@ export const TraitsPicker = memo(function TraitsPicker({
     <>
       <ComposerControlIcon
         icon={ZapIcon}
+        size={size}
         className={cn(
           "fill-current opacity-80",
-          provider === "claudeAgent" ? "text-[#d97757]" : "text-foreground",
+          size === "xs"
+            ? "text-current"
+            : provider === "claudeAgent"
+              ? "text-[#d97757]"
+              : "text-foreground",
         )}
       />
-      <span className="sr-only">{translate("chat.composer.fastModeOn")}</span>
+      <span className="sr-only">Fast mode on</span>
     </>
   ) : null;
 
@@ -696,6 +722,7 @@ export const TraitsPicker = memo(function TraitsPicker({
         render={
           <ComposerControl
             variant={triggerVariant ?? "ghost"}
+            size={size}
             className={cn(
               isCodexStyle
                 ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap sm:max-w-48"
@@ -706,20 +733,24 @@ export const TraitsPicker = memo(function TraitsPicker({
         }
       >
         {isCodexStyle ? (
-          <span className="flex min-w-0 w-full items-center gap-1.5 overflow-hidden">
+          // The label truncates itself; clipping the wrapper too would cut off
+          // the chevron, whose negative end margin overhangs the wrapper edge.
+          <span
+            className={cn("flex min-w-0 w-full items-center", size === "xs" ? "gap-1" : "gap-1.5")}
+          >
             {fastModeIcon}
             <span className="min-w-0 truncate">{triggerLabel}</span>
-            <ComposerControlChevron />
+            <ComposerControlChevron size={size} />
           </span>
         ) : (
           <>
             {fastModeIcon}
             <span>{triggerLabel}</span>
-            <ComposerControlChevron />
+            <ComposerControlChevron size={size} />
           </>
         )}
       </MenuTrigger>
-      <MenuPopup align="start">
+      <MenuPopup align="start" {...(isComposerOwned ? composerFloatingLayerProps : {})}>
         <TraitsMenuContent
           provider={provider}
           {...(instanceId ? { instanceId } : {})}
@@ -730,6 +761,7 @@ export const TraitsPicker = memo(function TraitsPicker({
           modelOptions={modelOptions}
           allowPromptInjectedEffort={allowPromptInjectedEffort}
           planModeEnabled={planModeEnabled}
+          hideContextWindow={hideContextWindow}
           {...persistence}
         />
       </MenuPopup>

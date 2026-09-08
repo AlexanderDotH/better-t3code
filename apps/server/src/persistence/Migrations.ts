@@ -1,16 +1,19 @@
 /**
- * MigrationsLive - Migration runner with inline loader
+ * Migration runner with an inline loader.
  *
  * Uses Migrator.make with fromRecord to define migrations inline.
  * All migrations are statically imported - no dynamic file system loading.
  *
- * Migrations run automatically when the MigrationLayer is provided,
- * ensuring the database schema is always up-to-date before the application starts.
+ * `runMigrations` is called by the SQLite persistence layer at startup, so the
+ * schema is always up to date before the application starts.
  */
 
 import * as Migrator from "effect/unstable/sql/Migrator";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+
+import Migration0061 from "./Migrations/061_IndependentMigrationLedgers.ts";
+import { migrationManifest as legacyForkManifest } from "./Migrations/LegacyForkMigrations.ts";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -48,31 +51,20 @@ import Migration0032 from "./Migrations/032_AuthPairingProofKeyThumbprint.ts";
 import Migration0033 from "./Migrations/033_ProjectionThreadsSettled.ts";
 import Migration0034 from "./Migrations/034_ProjectionThreadsSnoozed.ts";
 import Migration0035 from "./Migrations/035_ProjectionThreadTitleRegeneration.ts";
-import Migration0036 from "./Migrations/036_ProjectSpeechProfilesCompatibility.ts";
-import Migration0037 from "./Migrations/037_ProjectionThreadSubagents.ts";
-import Migration0038 from "./Migrations/038_ProjectionThreadsSnoozedCompatibility.ts";
-import Migration0039 from "./Migrations/039_ProjectionThreadSessionAbortState.ts";
-import Migration0040 from "./Migrations/040_ProjectionCompatibility.ts";
-import Migration0041 from "./Migrations/041_ProjectionThreadSubagents.ts";
-import Migration0042 from "./Migrations/042_GitWorkbenchState.ts";
-import Migration0043 from "./Migrations/043_ProjectionThreadSubagentFetchMetadata.ts";
-import Migration0044 from "./Migrations/044_ProjectAgentCoordination.ts";
-import Migration0045 from "./Migrations/045_ForkSchemaConvergence.ts";
-import Migration0046 from "./Migrations/046_ProjectionThreadsPinnedCompatibility.ts";
-import Migration0047 from "./Migrations/047_ProjectionTurnsKeysetIndexCompatibility.ts";
-import Migration0048 from "./Migrations/048_ProjectionThreadsPinOrderKeyCompatibility.ts";
-import Migration0049 from "./Migrations/049_ProjectionProjectsDefaultThreadEnvModeCompatibility.ts";
-import Migration0050 from "./Migrations/050_ProjectionProjectFaviconPathCompatibility.ts";
-import Migration0051 from "./Migrations/051_ProjectionProjectCheckpointsEnabled.ts";
-import Migration0052 from "./Migrations/052_AuthSessionClientConnectionCompatibility.ts";
-import Migration0053 from "./Migrations/053_ProjectionThreadSubagentManagedOrigin.ts";
-import Migration0054 from "./Migrations/054_ProjectionHarnessChatSync.ts";
-import Migration0055 from "./Migrations/055_ProjectionThreadForks.ts";
-import Migration0056 from "./Migrations/056_ProjectionThreadLinkedPullRequest.ts";
-import Migration0057 from "./Migrations/057_ProjectionThreadsUnsettledAt.ts";
-import Migration0058 from "./Migrations/058_Upstream42And43SchemaConvergence.ts";
-import Migration0059 from "./Migrations/059_KnowledgeGraphDerivedData.ts";
-import Migration0060 from "./Migrations/060_ProjectionThreadSubagentServiceTier.ts";
+import Migration0036 from "./Migrations/036_ProjectionThreadsPinned.ts";
+import Migration0037 from "./Migrations/037_ProjectionTurnsKeysetIndex.ts";
+import Migration0038 from "./Migrations/038_ProjectionThreadsPinOrderKey.ts";
+import Migration0039 from "./Migrations/039_ProjectionProjectsDefaultThreadEnvMode.ts";
+import Migration0040 from "./Migrations/040_ProjectionProjectFaviconPath.ts";
+import Migration0041 from "./Migrations/041_AuthSessionClientConnection.ts";
+import Migration0042 from "./Migrations/042_ProjectionThreadLinkedPullRequest.ts";
+import Migration0043 from "./Migrations/043_ProjectionThreadsUnsettledAt.ts";
+import Migration0044 from "./Migrations/044_ClearAutomaticProjectModelDefaults.ts";
+import Migration0045 from "./Migrations/045_ProjectionProjectsAutoPull.ts";
+import Migration0046 from "./Migrations/046_RepairAutomaticSettlementTimestamps.ts";
+import Migration0047 from "./Migrations/047_ProjectionProjectIcon.ts";
+import Migration0048 from "./Migrations/048_ProjectionThreadBranchPullRequest.ts";
+import Migration0049 from "./Migrations/049_ProjectionThreadsActiveOrderKey.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -84,7 +76,7 @@ import Migration0060 from "./Migrations/060_ProjectionThreadSubagentServiceTier.
  * Uses Migrator.fromRecord which parses the key format and
  * returns migrations sorted by ID.
  */
-export const migrationEntries = [
+const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
   [3, "CheckpointDiffBlobs", Migration0003],
@@ -120,31 +112,20 @@ export const migrationEntries = [
   [33, "ProjectionThreadsSettled", Migration0033],
   [34, "ProjectionThreadsSnoozed", Migration0034],
   [35, "ProjectionThreadTitleRegeneration", Migration0035],
-  [36, "ProjectSpeechProfilesCompatibility", Migration0036],
-  [37, "ProjectionThreadSubagents", Migration0037],
-  [38, "ProjectionThreadsSnoozedCompatibility", Migration0038],
-  [39, "ProjectionThreadSessionAbortState", Migration0039],
-  [40, "ProjectionCompatibility", Migration0040],
-  [41, "ProjectionThreadSubagents", Migration0041],
-  [42, "GitWorkbenchState", Migration0042],
-  [43, "ProjectionThreadSubagentFetchMetadata", Migration0043],
-  [44, "ProjectAgentCoordination", Migration0044],
-  [45, "ForkSchemaConvergence", Migration0045],
-  [46, "ProjectionThreadsPinnedCompatibility", Migration0046],
-  [47, "ProjectionTurnsKeysetIndexCompatibility", Migration0047],
-  [48, "ProjectionThreadsPinOrderKeyCompatibility", Migration0048],
-  [49, "ProjectionProjectsDefaultThreadEnvModeCompatibility", Migration0049],
-  [50, "ProjectionProjectFaviconPathCompatibility", Migration0050],
-  [51, "ProjectionProjectCheckpointsEnabled", Migration0051],
-  [52, "AuthSessionClientConnectionCompatibility", Migration0052],
-  [53, "ProjectionThreadSubagentManagedOrigin", Migration0053],
-  [54, "ProjectionHarnessChatSync", Migration0054],
-  [55, "ProjectionThreadForks", Migration0055],
-  [56, "ProjectionThreadLinkedPullRequest", Migration0056],
-  [57, "ProjectionThreadsUnsettledAt", Migration0057],
-  [58, "Upstream42And43SchemaConvergence", Migration0058],
-  [59, "KnowledgeGraphDerivedData", Migration0059],
-  [60, "ProjectionThreadSubagentServiceTier", Migration0060],
+  [36, "ProjectionThreadsPinned", Migration0036],
+  [37, "ProjectionTurnsKeysetIndex", Migration0037],
+  [38, "ProjectionThreadsPinOrderKey", Migration0038],
+  [39, "ProjectionProjectsDefaultThreadEnvMode", Migration0039],
+  [40, "ProjectionProjectFaviconPath", Migration0040],
+  [41, "AuthSessionClientConnection", Migration0041],
+  [42, "ProjectionThreadLinkedPullRequest", Migration0042],
+  [43, "ProjectionThreadsUnsettledAt", Migration0043],
+  [44, "ClearAutomaticProjectModelDefaults", Migration0044],
+  [45, "ProjectionProjectsAutoPull", Migration0045],
+  [46, "RepairAutomaticSettlementTimestamps", Migration0046],
+  [47, "ProjectionProjectIcon", Migration0047],
+  [48, "ProjectionThreadBranchPullRequest", Migration0048],
+  [49, "ProjectionThreadsActiveOrderKey", Migration0049],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -164,6 +145,85 @@ export const makeMigrationLoader = (throughId?: number) =>
  */
 const run = Migrator.make({});
 
+export const upstreamMigrationTable = "effect_sql_upstream_migrations";
+export const forkMigrationTable = "effect_sql_fork_migrations";
+const upstreamBaseline = 49;
+const forkMigrationEntries = [[61, "IndependentMigrationLedgers", Migration0061]] as const;
+export const forkMigrationManifest = forkMigrationEntries.map(([id, name]) => [id, name] as const);
+
+const convergeLegacyDatabase = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const tables = yield* sql<{ readonly name: string }>`
+    SELECT name FROM sqlite_master
+    WHERE type = 'table' AND name IN (
+      'effect_sql_migrations', 'effect_sql_upstream_migrations', 'effect_sql_fork_migrations'
+    )
+  `;
+  const hasUpstream = tables.some(({ name }) => name === upstreamMigrationTable);
+  const hasFork = tables.some(({ name }) => name === forkMigrationTable);
+  if (hasUpstream && hasFork) return [];
+  if (hasUpstream || hasFork) {
+    return yield* new Migrator.MigrationError({
+      kind: "BadState",
+      message:
+        "Only one independent migration ledger exists; restore a consistent database backup.",
+    });
+  }
+
+  const legacy = tables.some(({ name }) => name === "effect_sql_migrations")
+    ? yield* sql<{ readonly migration_id: number; readonly name: string }>`
+        SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id
+      `
+    : [];
+  const knownMigrations = new Set(
+    [
+      ...migrationManifest,
+      ...legacyForkManifest,
+      [33, "ProjectSpeechProfiles"],
+      [34, "ProjectionThreadSubagents"],
+    ].map(([id, name]) => `${id}_${name}`),
+  );
+  if (legacy.some(({ migration_id, name }) => !knownMigrations.has(`${migration_id}_${name}`))) {
+    return yield* new Migrator.MigrationError({
+      kind: "BadState",
+      message: "The legacy migration ledger contains an unknown migration; use a compatible build.",
+    });
+  }
+
+  const upstreamNames = new Map<number, string>(migrationManifest);
+  const isFork = legacy.some(({ migration_id, name }) => upstreamNames.get(migration_id) !== name);
+  const latestLegacyId = legacy.at(-1)?.migration_id ?? 0;
+  const executed: Array<readonly [number, string]> = [];
+  for (const [id, name, migration] of migrationEntries) {
+    if (id > upstreamBaseline) continue;
+    if (id <= 32 && id <= latestLegacyId) continue;
+    if (legacy.some((row) => row.migration_id === id && row.name === name)) continue;
+    // Fork project creation can carry an explicit default. Upstream's cleanup
+    // cannot distinguish that choice from its own automatically seeded value.
+    if (isFork && id === 44) continue;
+    yield* migration;
+    executed.push([id, name]);
+  }
+  yield* Migration0061;
+  executed.push([61, "IndependentMigrationLedgers"]);
+
+  // Seed only after convergence succeeds, in the caller's transaction. The
+  // original ledger remains an immutable record of the database's history.
+  yield* run({ table: upstreamMigrationTable, loader: Migrator.fromRecord({}) });
+  yield* run({ table: forkMigrationTable, loader: Migrator.fromRecord({}) });
+  yield* sql`INSERT INTO ${sql(upstreamMigrationTable)} ${sql.insert(
+    migrationManifest
+      .filter(([id]) => id <= upstreamBaseline)
+      .map(([migration_id, name]) => ({ migration_id, name })),
+  )}`;
+  yield* sql`INSERT INTO ${sql(forkMigrationTable)} ${sql.insert(
+    forkMigrationEntries
+      .filter(([id]) => id <= 61)
+      .map(([migration_id, name]) => ({ migration_id, name })),
+  )}`;
+  return executed;
+});
+
 export interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
 }
@@ -171,39 +231,37 @@ export interface RunMigrationsOptions {
 /**
  * Run all pending migrations.
  *
- * Creates the migrations tracking table (effect_sql_migrations) if it doesn't exist,
- * then runs any migrations with ID greater than the latest recorded migration.
- *
- * Returns array of [id, name] tuples for migrations that were run.
- *
- * @returns Effect containing array of executed migrations
+ * Historical fixture runs retain upstream numbering. Normal startup converges
+ * legacy databases atomically, then tracks upstream and fork migrations separately.
  */
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
-  const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
+  if (toMigrationInclusive !== undefined) {
+    return yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
+  }
+  const sql = yield* SqlClient.SqlClient;
+  const executedMigrations = yield* sql.withTransaction(
+    Effect.gen(function* () {
+      const converged = yield* convergeLegacyDatabase;
+      const upstream = yield* run({
+        table: upstreamMigrationTable,
+        loader: makeMigrationLoader(),
+      });
+      const fork = yield* run({
+        table: forkMigrationTable,
+        loader: Migrator.fromRecord(
+          Object.fromEntries(
+            forkMigrationEntries.map(([id, name, migration]) => [`${id}_${name}`, migration]),
+          ),
+        ),
+      });
+      return [...converged, ...upstream, ...fork];
+    }),
+  );
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")
     : Effect.log("Migrations ran successfully").pipe(Effect.annotateLogs({ migrations }));
   return executedMigrations;
 });
-
-/**
- * Layer that runs migrations when the layer is built.
- *
- * Use this to ensure migrations run before your application starts.
- * Migrations are run automatically - no separate script is needed.
- *
- * @example
- * ```typescript
- * import { MigrationsLive } from "@acme/db/Migrations"
- * import * as SqliteClient from "@acme/db/SqliteClient"
- *
- * // Migrations run automatically when SqliteClient is provided
- * const AppLayer = MigrationsLive.pipe(
- *   Layer.provideMerge(SqliteClient.layer({ filename: "database.sqlite" }))
- * )
- * ```
- */
-export const MigrationsLive = Layer.effectDiscard(runMigrations());

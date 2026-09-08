@@ -1,9 +1,6 @@
 import { EnvironmentId, type ResourceProtectionSnapshot, ThreadId } from "@t3tools/contracts";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ComposerBannerStack } from "./chat/ComposerBannerStack.tsx";
 import { buildResourceProtectionBanner } from "./resourceProtectionBanner.ts";
 
 const environmentId = EnvironmentId.make("environment-resource");
@@ -84,30 +81,37 @@ describe("resourceProtectionBanner", () => {
     ).toBeNull();
   });
 
-  it("places the warning hook and ComposerBanner variables on the same attached surface", () => {
-    const resourceBanner = buildResourceProtectionBanner({
-      environmentId,
-      threadId,
-      snapshot: snapshot("throttled"),
-    });
-    expect(resourceBanner).not.toBeNull();
-    if (!resourceBanner) return;
-
-    const markup = renderToStaticMarkup(
-      createElement(ComposerBannerStack, {
-        items: [
-          {
-            ...resourceBanner,
-            icon: createElement("span", { "aria-hidden": true }),
-          },
-        ],
+  it("keeps unavailable telemetry visible while starts are still waiting", () => {
+    expect(
+      buildResourceProtectionBanner({
+        environmentId,
+        threadId,
+        snapshot: { ...snapshot("unavailable"), waitingStarts: 1 },
       }),
-    );
+    ).toMatchObject({ variant: "info", urgent: false });
+    expect(
+      buildResourceProtectionBanner({
+        environmentId,
+        threadId,
+        snapshot: snapshot("unavailable"),
+      }),
+    ).toMatchObject({ variant: "warning", urgent: true });
+  });
 
-    expect(markup).toContain('data-composer-banner-surface="attached"');
-    expect(markup).toContain('data-variant="warning"');
-    expect(markup).toContain("resource-protection-banner-surface");
-    expect(markup).toContain("[--chat-composer-attached-outline:");
-    expect(markup).toContain("[--chat-composer-attached-tint:");
+  it("keeps recovery warnings visible until the server returns to normal", () => {
+    expect(
+      buildResourceProtectionBanner({
+        environmentId,
+        threadId,
+        snapshot: snapshot("recovering"),
+      }),
+    ).toMatchObject({ variant: "warning", urgent: true });
+    expect(
+      buildResourceProtectionBanner({
+        environmentId,
+        threadId,
+        snapshot: snapshot("normal"),
+      }),
+    ).toBeNull();
   });
 });

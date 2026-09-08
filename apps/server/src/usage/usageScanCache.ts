@@ -14,19 +14,30 @@
  *
  * @module usageScanCache
  */
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodePath from "node:path";
+
 import type { UsageCallKind, UsageContextDiagnostics, UsageProviderKind } from "@t3tools/contracts";
 
-import type { UsageRecord } from "./usageTranscripts.ts";
+import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
+import type { CodexScanState, ClaudeScanState, UsageRecord } from "./usageTranscripts.ts";
 
-// v4 carries every optional context-size diagnostic. Older rows cannot
-// reconstruct those counters, so they must be scanned once more.
-export const USAGE_SCAN_CACHE_VERSION = 5 as const;
+// Reducer state and diagnostics must travel with incremental parse offsets.
+const USAGE_SCAN_CACHE_VERSION = 6 as const;
 
 export interface CachedFile {
   readonly size: number;
   readonly mtimeMs: number;
   readonly provider: UsageProviderKind;
+  /** Records from newline-terminated lines, up to `position.resumeOffset`. */
   readonly records: readonly UsageRecord[];
+  /**
+   * Records from a trailing segment the writer had not newline-terminated at
+   * parse time. Kept apart from `records` because an incremental parse
+   * re-reads that segment and would otherwise double count it.
+   */
+  readonly tailRecords: readonly UsageRecord[];
+  readonly position: TranscriptParsePosition;
 }
 
 export type ScanCache = Map<string, CachedFile>;
@@ -70,6 +81,19 @@ interface SerializedFile {
   readonly m: number;
   readonly p: UsageProviderKind;
   readonly r: readonly SerializedRecord[];
+  /** Tail records; see `CachedFile.tailRecords`. */
+  readonly t: readonly SerializedRecord[];
+  /** Parse position: resume offset, guard length, guard hash. */
+  readonly o: number;
+  readonly gl: number;
+  readonly gh: number;
+  /** Codex reducer state at `o`; `null` for stateless providers. */
+  readonly cs:
+    | (Omit<CodexScanState, "subagentToolCallIds"> & {
+        readonly subagentToolCallIds: readonly string[];
+      })
+    | null;
+  readonly cl?: ClaudeScanState;
 }
 
 interface SerializedCache {
@@ -95,40 +119,54 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
     return next;
   };
 
+  const serializeRecord = (record: UsageRecord): SerializedRecord => [
+    record.timestampMs,
+    intern(models, modelIndex, record.model),
+    intern(sessions, sessionIndex, record.sessionId),
+    record.totals.uncachedInputTokens,
+    record.totals.cachedInputTokens,
+    record.totals.cacheCreationTokens,
+    record.totals.outputTokens,
+    record.totals.reasoningTokens,
+    record.dedupeKey,
+    record.reportedCostUsd,
+    record.callKind ?? "unknown",
+    record.diagnostics === undefined
+      ? null
+      : [
+          record.diagnostics.nativeForks,
+          record.diagnostics.compactHandoffs,
+          record.diagnostics.totalHandoffChars,
+          record.diagnostics.compactionEvents,
+          record.diagnostics.maxContextTokens,
+          record.diagnostics.instructionChars ?? 0,
+          record.diagnostics.memoryInjectionChars ?? 0,
+          record.diagnostics.toolSchemaChars ?? 0,
+          record.diagnostics.subagentResultChars ?? 0,
+          record.diagnostics.toolDigestChars ?? 0,
+          record.diagnostics.autoRoutingChars ?? 0,
+        ],
+  ];
+
   const files: Record<string, SerializedFile> = {};
   for (const [path, entry] of cache) {
     files[path] = {
       s: entry.size,
       m: entry.mtimeMs,
       p: entry.provider,
-      r: entry.records.map((record) => [
-        record.timestampMs,
-        intern(models, modelIndex, record.model),
-        intern(sessions, sessionIndex, record.sessionId),
-        record.totals.uncachedInputTokens,
-        record.totals.cachedInputTokens,
-        record.totals.cacheCreationTokens,
-        record.totals.outputTokens,
-        record.totals.reasoningTokens,
-        record.dedupeKey,
-        record.reportedCostUsd,
-        record.callKind ?? "unknown",
-        record.diagnostics === undefined
+      r: entry.records.map(serializeRecord),
+      t: entry.tailRecords.map(serializeRecord),
+      o: entry.position.resumeOffset,
+      gl: entry.position.guardLength,
+      gh: entry.position.guardHash,
+      cs:
+        entry.position.codexState === null
           ? null
-          : [
-              record.diagnostics.nativeForks,
-              record.diagnostics.compactHandoffs,
-              record.diagnostics.totalHandoffChars,
-              record.diagnostics.compactionEvents,
-              record.diagnostics.maxContextTokens,
-              record.diagnostics.instructionChars ?? 0,
-              record.diagnostics.memoryInjectionChars ?? 0,
-              record.diagnostics.toolSchemaChars ?? 0,
-              record.diagnostics.subagentResultChars ?? 0,
-              record.diagnostics.toolDigestChars ?? 0,
-              record.diagnostics.autoRoutingChars ?? 0,
-            ],
-      ]),
+          : {
+              ...entry.position.codexState,
+              subagentToolCallIds: Array.from(entry.position.codexState.subagentToolCallIds ?? []),
+            },
+      ...(entry.position.claudeState ? { cl: entry.position.claudeState } : {}),
     };
   }
 
@@ -156,30 +194,22 @@ export function decodeScanCache(document: unknown): ScanCache {
 
   // The intern tables must be all strings: a numeric entry would pass the
   // undefined guard below, land in a record's model, and crash the aggregate
-  // at normalizeModelName. A corrupt table rejects the whole cache.
+  // at lookupRate. A corrupt table rejects the whole cache.
   if (!root.models.every((value) => typeof value === "string")) return cache;
   if (!root.sessions.every((value) => typeof value === "string")) return cache;
   const models = root.models as readonly string[];
   const sessions = root.sessions as readonly string[];
 
-  for (const [path, raw] of Object.entries(root.files)) {
-    if (typeof raw !== "object" || raw === null) continue;
-    const entry = raw as Partial<SerializedFile>;
-    if (typeof entry.s !== "number" || typeof entry.m !== "number") continue;
-    if (entry.p !== "claude" && entry.p !== "codex" && entry.p !== "grok") continue;
-    if (!isRecordArray(entry.r)) continue;
-
-    const provider: UsageProviderKind = entry.p;
+  // Any corrupt row disqualifies the whole entry. Keeping the survivors
+  // under the original (size, mtime) would read as a valid warm hit and the
+  // file would never be re-parsed, silently losing the dropped rows' usage.
+  const decodeRecords = (
+    rows: readonly unknown[],
+    provider: UsageProviderKind,
+  ): UsageRecord[] | null => {
     const records: UsageRecord[] = [];
-    // Any corrupt row disqualifies the whole entry. Keeping the survivors
-    // under the original (size, mtime) would read as a valid warm hit and the
-    // file would never be re-parsed, silently losing the dropped rows' usage.
-    let corrupt = false;
-    for (const row of entry.r) {
-      if (!isRecordArray(row) || row.length < 12) {
-        corrupt = true;
-        break;
-      }
+    for (const row of rows) {
+      if (!isRecordArray(row) || row.length < 12) return null;
       const [
         timestampMs,
         modelIndex,
@@ -211,8 +241,7 @@ export function decodeScanCache(document: unknown): ScanCache {
           callKind !== "auto-reasoning" &&
           callKind !== "unknown")
       ) {
-        corrupt = true;
-        break;
+        return null;
       }
 
       let diagnostics: UsageContextDiagnostics | undefined;
@@ -224,8 +253,7 @@ export function decodeScanCache(document: unknown): ScanCache {
             (value) => typeof value === "number" && Number.isFinite(value) && value >= 0,
           )
         ) {
-          corrupt = true;
-          break;
+          return null;
         }
         const [
           nativeForks,
@@ -273,12 +301,137 @@ export function decodeScanCache(document: unknown): ScanCache {
         dedupeKey: typeof dedupeKey === "string" ? dedupeKey : null,
       });
     }
+    return records;
+  };
 
-    if (corrupt) continue;
-    cache.set(path, { size: entry.s, mtimeMs: entry.m, provider, records });
+  for (const [path, raw] of Object.entries(root.files)) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const entry = raw as Partial<SerializedFile>;
+    if (typeof entry.s !== "number" || typeof entry.m !== "number") continue;
+    if (entry.p !== "claude" && entry.p !== "codex" && entry.p !== "grok") continue;
+    if (!isRecordArray(entry.r) || !isRecordArray(entry.t)) continue;
+    // Position fields feed byte offsets and a Buffer allocation in the reader,
+    // so anything outside their real ranges must reject the entry: a bogus
+    // guard length would otherwise fail every parse of the file, silently
+    // dropping its usage instead of costing the documented cold re-parse.
+    if (
+      typeof entry.o !== "number" ||
+      !Number.isSafeInteger(entry.o) ||
+      entry.o < 0 ||
+      typeof entry.gl !== "number" ||
+      !Number.isSafeInteger(entry.gl) ||
+      entry.gl < 0 ||
+      entry.gl > GUARD_LENGTH ||
+      entry.gl > entry.o ||
+      typeof entry.gh !== "number" ||
+      !Number.isFinite(entry.gh)
+    ) {
+      continue;
+    }
+    const codexState = decodeCodexState(entry.cs);
+    if (codexState === undefined) continue;
+
+    const claudeState = decodeClaudeState(entry.cl);
+    if (entry.cl !== undefined && claudeState === undefined) continue;
+    const provider: UsageProviderKind = entry.p;
+    const records = decodeRecords(entry.r, provider);
+    const tailRecords = decodeRecords(entry.t, provider);
+    if (records === null || tailRecords === null) continue;
+
+    cache.set(path, {
+      size: entry.s,
+      mtimeMs: entry.m,
+      provider,
+      records,
+      tailRecords,
+      position: {
+        resumeOffset: entry.o,
+        guardLength: entry.gl,
+        guardHash: entry.gh,
+        codexState,
+        ...(claudeState ? { claudeState } : {}),
+      },
+    });
   }
 
   return cache;
+}
+
+/**
+ * Validates a persisted Codex reducer state. Returns `undefined` for a corrupt
+ * value, which disqualifies the entry: resuming with a bad state would attach
+ * appended usage to the wrong model or replay fork-copied history.
+ */
+function decodeCodexState(value: unknown): CodexScanState | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== "object") return undefined;
+  const state = value as Partial<
+    Omit<CodexScanState, "subagentToolCallIds"> & { subagentToolCallIds: unknown }
+  >;
+  if (
+    typeof state.model !== "string" ||
+    typeof state.sessionId !== "string" ||
+    (state.lastUsageSignature !== null && typeof state.lastUsageSignature !== "string") ||
+    typeof state.sawSessionMeta !== "boolean" ||
+    typeof state.suppressingForkCopies !== "boolean" ||
+    typeof state.forkCopyAnchorMs !== "number" ||
+    !Number.isFinite(state.forkCopyAnchorMs) ||
+    !isCallKind(state.callKind) ||
+    !isCallKind(state.baseCallKind) ||
+    !isDiagnostics(state.pendingDiagnostics) ||
+    !Array.isArray(state.subagentToolCallIds) ||
+    !state.subagentToolCallIds.every((id) => typeof id === "string")
+  ) {
+    return undefined;
+  }
+  return {
+    model: state.model,
+    sessionId: state.sessionId,
+    lastUsageSignature: state.lastUsageSignature ?? null,
+    sawSessionMeta: state.sawSessionMeta,
+    suppressingForkCopies: state.suppressingForkCopies,
+    forkCopyAnchorMs: state.forkCopyAnchorMs,
+    callKind: state.callKind,
+    baseCallKind: state.baseCallKind,
+    pendingDiagnostics: state.pendingDiagnostics,
+    subagentToolCallIds: new Set(state.subagentToolCallIds),
+  };
+}
+
+const isCallKind = (value: unknown): value is UsageCallKind =>
+  value === "root" ||
+  value === "subagent" ||
+  value === "metadata" ||
+  value === "auto-reasoning" ||
+  value === "unknown";
+
+function isDiagnostics(value: unknown): value is ClaudeScanState["pendingDiagnostics"] {
+  if (typeof value !== "object" || value === null) return false;
+  const fields = [
+    "nativeForks",
+    "compactHandoffs",
+    "totalHandoffChars",
+    "compactionEvents",
+    "maxContextTokens",
+    "instructionChars",
+    "memoryInjectionChars",
+    "toolSchemaChars",
+    "subagentResultChars",
+    "toolDigestChars",
+    "autoRoutingChars",
+  ];
+  return fields.every((field) => {
+    const count = (value as Record<string, unknown>)[field];
+    return typeof count === "number" && Number.isFinite(count) && count >= 0;
+  });
+}
+
+function decodeClaudeState(value: unknown): ClaudeScanState | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const state = value as Partial<ClaudeScanState>;
+  return isCallKind(state.callKind) && isDiagnostics(state.pendingDiagnostics)
+    ? { callKind: state.callKind, pendingDiagnostics: state.pendingDiagnostics }
+    : undefined;
 }
 
 export interface PruneOptions {
@@ -310,7 +463,15 @@ export function pruneScanCache(cache: ScanCache, options: PruneOptions): number 
   let removed = 0;
   for (const [path, entry] of cache) {
     const agedOut = entry.mtimeMs < options.retentionCutoffMs;
-    const underWalkedRoot = options.walkedRoots.some((root) => path.startsWith(root));
+    const underWalkedRoot = options.walkedRoots.some((root) => {
+      const relative = NodePath.relative(root, path);
+      return (
+        relative === "" ||
+        (relative !== ".." &&
+          !relative.startsWith(`..${NodePath.sep}`) &&
+          !NodePath.isAbsolute(relative))
+      );
+    });
     const deleted =
       underWalkedRoot && entry.mtimeMs >= options.windowStartMs && !options.livePaths.has(path);
     if (agedOut || deleted) {
@@ -321,9 +482,17 @@ export function pruneScanCache(cache: ScanCache, options: PruneOptions): number 
   return removed;
 }
 
-/** Within-file de-duplication, applied before an entry is cached. */
-export function dedupeWithinFile(records: readonly UsageRecord[]): readonly UsageRecord[] {
-  const seen = new Set<string>();
+/**
+ * Within-file de-duplication, applied before an entry is cached.
+ *
+ * Callers stitching an incremental parse together pass one `seen` set across
+ * the line and tail record batches so the whole file stays deduplicated as a
+ * unit; the set is mutated in place.
+ */
+export function dedupeWithinFile(
+  records: readonly UsageRecord[],
+  seen: Set<string> = new Set(),
+): readonly UsageRecord[] {
   const kept: UsageRecord[] = [];
   for (const record of records) {
     if (record.dedupeKey !== null) {

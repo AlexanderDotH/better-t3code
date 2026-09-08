@@ -262,6 +262,8 @@ const betterT3SettingsCatalog = defineLocalizedInterfaceCatalog({
   "settings.betterT3.value.automatic": ["Automatic", "Automatisch", "Automatique"],
   "settings.betterT3.value.unavailable": ["Unavailable", "Nicht verfügbar", "Indisponible"],
   "settings.betterT3.value.current": ["Current", "Aktuell", "Actuel"],
+  "settings.betterT3.value.native": ["Native T3 Code", "Natives T3 Code", "T3 Code natif"],
+  "settings.betterT3.value.better-t3": ["Better T3", "Better T3", "Better T3"],
   "settings.betterT3.value.classic": ["Classic", "Klassisch", "Classique"],
   "settings.betterT3.value.updated": [
     "Recently updated",
@@ -517,6 +519,11 @@ const featureLabels = {
     "Visibilité du raisonnement",
   ],
   "agent.generalSubagents": ["General subagents", "Allgemeine Subagents", "Sous-agents généraux"],
+  "agent.nativeSubagentDisplay": [
+    "Native T3 Code subagent display",
+    "Native T3-Code-Subagent-Anzeige",
+    "Affichage natif des sous-agents T3 Code",
+  ],
   "agent.projectCoordination": [
     "Project-agent coordination",
     "Projekt-Agenten-Koordination",
@@ -534,6 +541,11 @@ const featureLabels = {
     "Animation du texte diffusé",
   ],
   "chat.presentation": ["Chat presentation", "Chat-Darstellung", "Présentation de la discussion"],
+  "chat.contextWindowSelector": [
+    "Context window selector",
+    "Kontextfenster-Auswahl",
+    "Sélecteur de fenêtre de contexte",
+  ],
   "chat.classicBubbleOnly": [
     "Plan only in the Classic bubble",
     "Plan nur in der klassischen Bubble",
@@ -650,6 +662,11 @@ const featureDescriptionOverrides: Partial<Record<BetterT3FeatureId, FeatureLabe
     "Erlaubt dem Agenten, fokussierte Aufgaben an parallele Subagents zu delegieren und ihren Fortschritt anzuzeigen.",
     "Permet à l’agent de déléguer des tâches ciblées à des sous-agents parallèles et d’afficher leur progression.",
   ],
+  "agent.nativeSubagentDisplay": [
+    "On: native T3 Code Agents panel and chat summaries. Off: Better T3 floating agent pills and transcript dialogs. Changes the display only, not delegation.",
+    "An: natives T3-Code-Agents-Panel und Chat-Zusammenfassungen. Aus: schwebende Better-T3-Agent-Anzeigen und Transkript-Dialoge. Ändert nur die Anzeige, nicht die Delegation.",
+    "Activé : panneau Agents et résumés natifs de T3 Code. Désactivé : pastilles flottantes et dialogues de transcription Better T3. Seul l’affichage change, pas la délégation.",
+  ],
   "agent.reasoningVisibility": [
     "Show the agent’s reasoning summary in chat while it works on the request.",
     "Zeigt während der Bearbeitung eine Zusammenfassung der Begründung direkt im Chat an.",
@@ -664,6 +681,11 @@ const featureDescriptionOverrides: Partial<Record<BetterT3FeatureId, FeatureLabe
     "Choose between the current grouped chat layout and the classic transcript view.",
     "Wechselt zwischen der aktuellen gruppierten Chatansicht und der klassischen Transkriptansicht.",
     "Choisit entre la présentation groupée actuelle et la vue classique de la transcription.",
+  ],
+  "chat.contextWindowSelector": [
+    "Use the native T3 Code menu or the Better T3 slider for Codex. Only one is shown; your selected context size is preserved.",
+    "Nutzt das native T3-Code-Menü oder den Better-T3-Regler für Codex. Nur eine Auswahl wird angezeigt; die gewählte Kontextgröße bleibt erhalten.",
+    "Utilise le menu natif de T3 Code ou le curseur Better T3 pour Codex. Un seul est affiché ; la taille de contexte choisie est conservée.",
   ],
   "chat.classicBubbleOnly": [
     "Hide the duplicate plan overview from the Classic transcript while keeping the blue composer bubble.",

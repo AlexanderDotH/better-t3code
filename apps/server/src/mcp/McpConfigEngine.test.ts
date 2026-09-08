@@ -379,11 +379,7 @@ effectIt.layer(NodeServices.layer)("McpConfigEngineLive", (it) => {
         enabled: false,
       });
       yield* engine.importCursorJson({
-        json: JSON.stringify({
-          mcpServers: {
-            imported: { url: "https://imported.example.com/mcp" },
-          },
-        }),
+        json: '{"mcpServers":{"imported":{"url":"https://imported.example.com/mcp"}}}',
         providerRouting: { mode: "all" },
         scope: "global",
         replace: false,

@@ -1,7 +1,7 @@
 import {
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
-  type ChatFileAttachment,
   type ChatImageAttachment,
+  type ChatFileAttachment,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -334,7 +334,7 @@ async function runUpload(job: UploadJob): Promise<void> {
 }
 
 function pumpUploads(): void {
-  for (let index = 0; index < queue.length; ) {
+  for (let index = 0; index < queue.length;) {
     const job = queue[index]!;
     const active = activeUploadsByEnvironment.get(job.environmentId) ?? 0;
     if (active >= MAX_UPLOADS_PER_ENVIRONMENT) {
@@ -446,7 +446,7 @@ export function startAttachmentUpload(input: {
  * persisted draft upload survives cancellation (an environment switch cancels
  * the old job, and the draft still references that server copy).
  */
-export function cancelAttachmentUpload(imageId: string): void {
+function cancelAttachmentUpload(imageId: string): void {
   const job = jobsByImageId.get(imageId);
   if (!job) {
     return;
@@ -551,30 +551,22 @@ export async function awaitAttachmentUploads(imageIds: ReadonlyArray<string>): P
 export function getUploadedAttachments(input: {
   readonly environmentId: EnvironmentId;
   readonly images: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>;
-}): Array<ChatImageAttachment | ChatFileAttachment> | null {
-  const attachments: Array<ChatImageAttachment | ChatFileAttachment> = [];
+}): (ChatImageAttachment | ChatFileAttachment)[] | null {
+  const attachments: (ChatImageAttachment | ChatFileAttachment)[] = [];
   for (const image of input.images) {
+    if (image.type !== "image" && image.type !== "file") return null;
     const upload = readAttachmentUpload(image.id);
     if (upload?.status !== "ready" || upload.environmentId !== input.environmentId) {
       return null;
     }
-    attachments.push(
-      image.type === "image"
-        ? {
-            type: "image",
-            id: upload.attachmentId,
-            name: image.name,
-            mimeType: image.mimeType,
-            sizeBytes: image.sizeBytes,
-          }
-        : {
-            type: "file",
-            id: upload.attachmentId,
-            name: image.name,
-            mimeType: image.mimeType,
-            sizeBytes: image.sizeBytes,
-          },
-    );
+    attachments.push({
+      type: image.type,
+      id: upload.attachmentId,
+      name: image.name,
+      mimeType: image.mimeType,
+      sizeBytes: image.sizeBytes,
+      ...(image.type === "image" && image.source ? { source: image.source } : {}),
+    });
   }
   return attachments;
 }

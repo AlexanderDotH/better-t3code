@@ -18,7 +18,7 @@ export interface AgentPromptEnhancementApplication {
   readonly outcome: AgentPromptEnhancementOutcome;
 }
 
-export function buildAgentPromptEnhancementPolicy(policy: AgentPromptEnhancementPolicy): string {
+function buildAgentPromptEnhancementPolicy(policy: AgentPromptEnhancementPolicy): string {
   const blocks = [
     ...(policy.deepThinking.enabled ? [buildDeepThinkingRequestAppendix(policy.deepThinking)] : []),
     ...(policy.cavemanMode === "off" ? [] : [buildCavemanPromptAppendix(policy.cavemanMode)]),

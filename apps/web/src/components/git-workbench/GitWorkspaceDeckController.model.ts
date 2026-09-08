@@ -30,7 +30,6 @@ export {
   mapInteractiveRebasePlan,
   mapOperation,
   mapQueue,
-  mapRebaseNode,
   mapSnapshot,
   mapUndo,
   repositoryState,

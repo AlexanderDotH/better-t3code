@@ -120,7 +120,7 @@ const isOutputTextPart = Schema.is(OutputTextPart);
 const isRefusalPart = Schema.is(RefusalPart);
 const isReasoningSummaryPart = Schema.is(ReasoningSummaryPart);
 
-export class OpenAiProtocolError extends Schema.TaggedErrorClass<OpenAiProtocolError>()(
+export class OpenAiProtocolError extends Schema.TaggedError<OpenAiProtocolError>()(
   "OpenAiProtocolError",
   { message: Schema.String },
 ) {}
