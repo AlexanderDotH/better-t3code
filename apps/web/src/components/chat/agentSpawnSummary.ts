@@ -3,6 +3,14 @@ import {
   isTerminalSubagentStatus,
   type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
+import type { WorkLogEntry } from "../../session-logic";
+
+export function selectAgentDisplayWorkLogEntries(
+  entries: ReadonlyArray<WorkLogEntry>,
+  nativeSubagentDisplay: boolean,
+): ReadonlyArray<WorkLogEntry> {
+  return nativeSubagentDisplay ? entries : entries.filter((entry) => !entry.agentSpawn);
+}
 
 /** Summarize observed states without treating idle or missing agents as completed. */
 export function deriveAgentSpawnSummary({

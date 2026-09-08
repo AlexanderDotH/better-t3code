@@ -2,6 +2,7 @@ import type {
   BetterT3FeatureControlStateV1,
   BetterT3FeatureId,
   ChatVisualMode,
+  ContextWindowSelector,
   SidebarPosition,
 } from "@t3tools/contracts";
 
@@ -22,6 +23,7 @@ export interface BetterT3ChatPreviewModel {
   readonly classicSidebar: boolean;
   readonly draftIndicators: boolean;
   readonly presentation: ChatVisualMode;
+  readonly contextWindowSelector: ContextWindowSelector;
   readonly sidebarPosition: SidebarPosition;
   readonly workspaceCardDeck: boolean;
 }
@@ -46,6 +48,7 @@ function animationKey(values: ReadonlyArray<boolean | string>): string {
 export function buildBetterT3SettingsPreviewModel(input: {
   readonly features: ReadonlyArray<BetterT3FeatureControlStateV1>;
   readonly chatVisualMode: ChatVisualMode;
+  readonly contextWindowSelector: ContextWindowSelector;
   readonly sidebarPosition: SidebarPosition;
 }): BetterT3SettingsPreviewModel {
   const agent = {
@@ -66,6 +69,7 @@ export function buildBetterT3SettingsPreviewModel(input: {
     classicSidebar: effectiveFeatureEnabled(input.features, "chat.classicSidebar"),
     draftIndicators: effectiveFeatureEnabled(input.features, "chat.draftIndicators"),
     presentation: input.chatVisualMode,
+    contextWindowSelector: input.contextWindowSelector,
     sidebarPosition: input.sidebarPosition,
   };
 

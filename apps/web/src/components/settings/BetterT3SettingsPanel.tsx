@@ -826,9 +826,10 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
       buildBetterT3SettingsPreviewModel({
         features,
         chatVisualMode,
+        contextWindowSelector: settings.contextWindowSelector,
         sidebarPosition: settings.sidebarPosition,
       }),
-    [chatVisualMode, features, settings.sidebarPosition],
+    [chatVisualMode, features, settings.contextWindowSelector, settings.sidebarPosition],
   );
   const sectionTitles = useMemo(
     () =>
@@ -861,6 +862,12 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
         if (value === "current" || value === "classic") setChatVisualMode(value);
         return;
       }
+      if (featureId === "chat.contextWindowSelector") {
+        if (value === "native" || value === "better-t3") {
+          updateSettings({ contextWindowSelector: value });
+        }
+        return;
+      }
       if (typeof value === "boolean") onSwitchChange(featureId, value);
     },
     [onSwitchChange, setChatVisualMode, updateSettings],
@@ -875,7 +882,9 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
           ? settings.sidebarPosition
           : featureId === "chat.presentation"
             ? chatVisualMode
-            : feature.value === true;
+            : featureId === "chat.contextWindowSelector"
+              ? settings.contextWindowSelector
+              : feature.value === true;
       choices[featureId] = (
         <BetterT3FeatureChoice
           disabled={feature.availability.state !== "available"}
@@ -894,6 +903,7 @@ function SelectedEnvironmentBetterT3SettingsPanel(props: {
     features,
     onVisualChoiceChange,
     previewModel,
+    settings.contextWindowSelector,
     settings.sidebarPosition,
     translate,
   ]);

@@ -8,6 +8,7 @@ import {
   resolvePlanImplementationReviewPresentation,
 } from "../../planImplementationActions";
 import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
 import type { ThreadAbortPresentation } from "@t3tools/client-runtime/state/thread-abort";
 import { memo, type PointerEventHandler } from "react";
 import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
@@ -58,17 +59,23 @@ const formatPendingPrimaryActionLabel = (input: {
   isLastQuestion: boolean;
   isResponding: boolean;
   questionIndex: number;
+  translate: InterfaceTranslator["message"];
 }) => {
+  const translate = input.translate;
   if (input.isResponding) {
-    return "Submitting...";
+    return translate("chat.composer.submitting");
   }
   if (input.compact) {
-    return input.isLastQuestion ? "Submit" : "Next";
+    return input.isLastQuestion
+      ? translate("chat.composer.submit")
+      : translate("chat.composer.next");
   }
   if (!input.isLastQuestion) {
-    return "Next question";
+    return translate("chat.composer.nextQuestion");
   }
-  return input.questionIndex > 0 ? "Submit answers" : "Submit answer";
+  return input.questionIndex > 0
+    ? translate("chat.composer.submitAnswers")
+    : translate("chat.composer.submitAnswer");
 };
 
 const preventPointerFocus: PointerEventHandler<HTMLElement> = (event) => {
@@ -136,7 +143,13 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       )}
       {...pointerFocusProps}
       onClick={onInterrupt}
-      aria-label={abortPresentation?.accessibilityLabel ?? "Stop generation"}
+      aria-label={
+        abortPresentation?.phase === "force-stopping"
+          ? translate("chat.composer.forceStoppingGeneration")
+          : abortPresentation?.phase === "interrupting"
+            ? translate("chat.composer.forceStopGeneration")
+            : translate("chat.composer.stopGeneration")
+      }
       disabled={abortPresentation?.disabled === true}
       aria-busy={abortPresentation?.phase === "force-stopping" || undefined}
     >
@@ -159,7 +172,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               {...pointerFocusProps}
               onClick={onPreviousPendingQuestion}
               disabled={pendingAction.isResponding}
-              aria-label="Previous question"
+              aria-label={translate("chat.composer.previousQuestion")}
             >
               <ChevronLeftIcon className="size-3.5" />
             </Button>
@@ -172,7 +185,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               onClick={onPreviousPendingQuestion}
               disabled={pendingAction.isResponding}
             >
-              Previous
+              {translate("chat.composer.previous")}
             </Button>
           )
         ) : null}
@@ -196,6 +209,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             isLastQuestion: pendingAction.isLastQuestion,
             isResponding: pendingAction.isResponding,
             questionIndex: pendingAction.questionIndex,
+            translate,
           })}
         </Button>
       </div>
@@ -216,7 +230,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           {...pointerFocusProps}
           disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
         >
-          {isConnecting || isSendBusy ? "Sending..." : "Refine"}
+          {isConnecting || isSendBusy
+            ? translate("chat.composer.sendingProgress")
+            : translate("chat.composer.refine")}
         </Button>
       );
     }
@@ -240,7 +256,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           disabled={planActionsDisabled}
         >
           {isConnecting || isSendBusy
-            ? "Sending..."
+            ? translate("chat.composer.sendingProgress")
             : (planReview.primaryLabel ?? planActions.primaryLabel)}
         </Button>
         <Menu>
@@ -250,7 +266,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                 size="sm"
                 variant="default"
                 className="h-9 rounded-l-none rounded-r-full border-l-message-action-foreground/20 bg-message-action px-2 text-message-action-foreground hover:bg-message-action-hover sm:h-8"
-                aria-label="Implementation actions"
+                aria-label={translate("chat.composer.implementationActions")}
                 {...pointerFocusProps}
                 disabled={planActionsDisabled}
               />
@@ -297,16 +313,16 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       }
       aria-label={
         isEnvironmentUnavailable
-          ? "Environment disconnected"
+          ? translate("chat.composer.environmentDisconnected")
           : sendDisabledReason
             ? sendDisabledReason
             : isConnecting
-              ? "Connecting"
+              ? translate("chat.composer.connecting")
               : isPreparingWorktree
-                ? "Preparing worktree"
+                ? translate("chat.composer.preparingWorktreeLabel")
                 : isSendBusy
-                  ? "Sending"
-                  : "Send message"
+                  ? translate("chat.composer.sending")
+                  : translate("chat.composer.sendMessage")
       }
     >
       {stageBackdropVariant ? (

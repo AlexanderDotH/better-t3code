@@ -1,4 +1,9 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
+import { formatModelContextWindowTokens } from "@t3tools/shared/model";
+import {
+  matchesOpenRouterModelFilters,
+  type OpenRouterModelFilter,
+} from "@t3tools/shared/modelCatalogFilters";
 import { memo } from "react";
 import { StarIcon } from "lucide-react";
 import {
@@ -14,6 +19,65 @@ import { Kbd } from "../ui/kbd";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { modelPickerModelKey } from "./modelPickerKeys";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+
+const FREE_MODEL_FILTER = new Set<OpenRouterModelFilter>(["free"]);
+const VISION_MODEL_FILTER = new Set<OpenRouterModelFilter>(["vision"]);
+const REASONING_MODEL_FILTER = new Set<OpenRouterModelFilter>(["reasoning"]);
+
+export function ModelCatalogMetadata(props: {
+  readonly model: ModelEsque;
+  readonly providerLabel: string;
+}) {
+  const translate = useInterfaceTranslator().message;
+  const contextTokens = props.model.capabilities?.contextWindow?.maxTokens;
+  const isFree = matchesOpenRouterModelFilters(props.model, FREE_MODEL_FILTER);
+  const supportsVision = matchesOpenRouterModelFilters(props.model, VISION_MODEL_FILTER);
+  const supportsReasoning = matchesOpenRouterModelFilters(props.model, REASONING_MODEL_FILTER);
+  const hasFeatureBadges = isFree || supportsVision || supportsReasoning;
+
+  return (
+    <div
+      className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden text-[10px] leading-none text-muted-foreground/70"
+      data-model-picker-catalog-metadata="true"
+    >
+      <span className="max-w-[38%] shrink-0 truncate font-medium text-muted-foreground">
+        {props.providerLabel}
+      </span>
+      {contextTokens ? (
+        <>
+          <span className="shrink-0 opacity-35" aria-hidden="true">
+            ·
+          </span>
+          <span className="shrink-0 tabular-nums">
+            {translate("chat.model.context", {
+              tokens: formatModelContextWindowTokens(contextTokens),
+            })}
+          </span>
+        </>
+      ) : null}
+      {hasFeatureBadges ? (
+        <span className="flex min-w-0 items-center gap-1 overflow-hidden">
+          {isFree ? (
+            <span className="shrink-0 rounded-[4px] bg-emerald-500/10 px-1 py-0.5 font-medium text-emerald-700 dark:text-emerald-300/90">
+              {translate("chat.model.free")}
+            </span>
+          ) : null}
+          {supportsVision ? (
+            <span className="shrink-0 rounded-[4px] bg-foreground/[0.045] px-1 py-0.5">
+              {translate("chat.model.vision")}
+            </span>
+          ) : null}
+          {supportsReasoning ? (
+            <span className="shrink-0 rounded-[4px] bg-foreground/[0.045] px-1 py-0.5">
+              {translate("chat.model.reasoning")}
+            </span>
+          ) : null}
+        </span>
+      ) : null}
+    </div>
+  );
+}
 
 export const ModelListRow = memo(function ModelListRow(props: {
   index: number;
@@ -38,11 +102,14 @@ export const ModelListRow = memo(function ModelListRow(props: {
   unavailable?: boolean;
   jumpLabel?: string | null;
   disabledReason?: string | null;
+  presentation?: "compact" | "catalog";
   onToggleFavorite: () => void;
 }) {
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
   const providerLabel = props.model.subProvider
-    ? `${props.providerDisplayName} · ${props.model.subProvider}`
+    ? props.presentation === "catalog"
+      ? props.model.subProvider
+      : `${props.providerDisplayName} · ${props.model.subProvider}`
     : props.providerDisplayName;
 
   const row = (
@@ -83,14 +150,16 @@ export const ModelListRow = memo(function ModelListRow(props: {
             </Badge>
           ) : null}
         </div>
-        {props.showProvider && (
+        {props.presentation === "catalog" ? (
+          <ModelCatalogMetadata model={props.model} providerLabel={providerLabel} />
+        ) : props.showProvider ? (
           <div className="mt-1 flex items-center gap-1.5">
             {ProviderIcon ? <ProviderIcon className="size-3 shrink-0" /> : null}
             <span className="truncate text-xs font-normal leading-snug text-muted-foreground/70">
               {providerLabel}
             </span>
           </div>
-        )}
+        ) : null}
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">

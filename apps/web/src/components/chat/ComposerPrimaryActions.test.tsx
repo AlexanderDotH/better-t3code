@@ -1,6 +1,8 @@
-import { createElement } from "react";
+import { act, createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { setInterfaceLocaleRuntime } from "../../interfaceLanguageRuntime";
 
 const stageArtworkState = vi.hoisted(() => ({
   mode: "none" as "artwork" | "none",
@@ -16,6 +18,7 @@ vi.mock("../SidebarStageBackdrop", () => ({
 }));
 
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 
 function renderPendingActions(isRunning: boolean) {
   return renderToStaticMarkup(
@@ -90,9 +93,76 @@ function renderSendButton(sendDisabledReason: string | null = null) {
 afterEach(() => {
   stageArtworkState.mode = "none";
   stageArtworkState.variant = null;
+  setInterfaceLocaleRuntime({ language: "en", locale: "en-US" });
 });
 
 describe("ComposerPrimaryActions", () => {
+  it("updates pending actions and the plan banner when the interface language changes", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          createElement(
+            Fragment,
+            null,
+            createElement(ComposerPlanFollowUpBanner, { planTitle: "Keep this title" }),
+            createElement(ComposerPrimaryActions, {
+              compact: false,
+              pendingAction: {
+                questionIndex: 1,
+                isLastQuestion: true,
+                canAdvance: true,
+                isResponding: false,
+                isComplete: true,
+              },
+              isRunning: true,
+              showPlanFollowUpPrompt: false,
+              promptHasText: false,
+              isSendBusy: false,
+              sendDisabledReason: null,
+              isConnecting: false,
+              isEnvironmentUnavailable: false,
+              isPreparingWorktree: false,
+              hasSendableContent: false,
+              onPreviousPendingQuestion: () => {},
+              onInterrupt: () => {},
+              onImplementPlanInNewThread: () => {},
+            }),
+          ),
+        );
+      });
+
+      const submitButton = renderer!.root.find(
+        (node) => node.type === "button" && node.props.type === "submit",
+      );
+      expect(submitButton.children).toEqual(["Submit answers"]);
+      expect(JSON.stringify(renderer!.toJSON())).toContain("Plan ready");
+
+      await act(async () => {
+        setInterfaceLocaleRuntime({ language: "de", locale: "de-DE" });
+      });
+      expect(
+        renderer!.root.find((node) => node.type === "button" && node.props.type === "submit"),
+      ).toBe(submitButton);
+      expect(submitButton.children).toEqual(["Antworten senden"]);
+      expect(JSON.stringify(renderer!.toJSON())).toContain("Plan bereit");
+      expect(renderer!.root.findAllByProps({ "aria-label": "Generierung stoppen" })).toHaveLength(
+        1,
+      );
+
+      await act(async () => {
+        setInterfaceLocaleRuntime({ language: "fr", locale: "fr-FR" });
+      });
+      expect(submitButton.children).toEqual(["Envoyer les réponses"]);
+      expect(JSON.stringify(renderer!.toJSON())).toContain("Plan prêt");
+      expect(JSON.stringify(renderer!.toJSON())).toContain("Keep this title");
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("disables and labels the send button while feedback is uploading", () => {
     const markup = renderSendButton("Sending feedback");
 

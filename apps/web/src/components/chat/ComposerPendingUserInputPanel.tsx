@@ -8,6 +8,7 @@ import {
 import { CheckIcon } from "lucide-react";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { ComposerBanner } from "./ComposerBanner";
 
 interface PendingUserInputPanelProps {
@@ -64,6 +65,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onAdvance: () => void;
   onDismiss: (requestId: ApprovalRequestId) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
   const autoAdvanceTimerRef = useRef<number | null>(null);
@@ -181,7 +183,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       <CollapsibleTrigger
         render={<ComposerBanner.Row render={<button type="button" />} />}
         title={
-          isCollapsed ? "Show the question and its options" : "Hide the question and its options"
+          isCollapsed
+            ? translate("chat.composer.userInput.showQuestionOptions")
+            : translate("chat.composer.userInput.hideQuestionOptions")
         }
         data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
       >
@@ -231,7 +235,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         <ComposerBanner.Body className="pe-1 pb-1">
           <p className="text-sm text-foreground/85">{activeQuestion.question}</p>
           {activeQuestion.multiSelect ? (
-            <p className="mt-1 text-secondary-label text-xs">Select one or more options.</p>
+            <p className="mt-1 text-secondary-label text-xs">
+              {translate("chat.composer.multiSelectHint")}
+            </p>
           ) : null}
           <div className="mt-2 space-y-0.5">
             {activeQuestion.options.map((option, index) => {

@@ -2,6 +2,7 @@ import {
   classifyTaskAgentKind,
   EventId,
   MessageId,
+  OrchestrationProposedPlanId,
   ThreadId,
   TurnId,
   type OrchestrationThreadActivity,
@@ -13,6 +14,7 @@ import {
   createMessageAttachmentPreviewProjector,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  deriveTurnPlans,
   deriveTimelineEntries,
   deriveTimelineEntriesWithState,
   deriveWorkLogEntries,
@@ -60,6 +62,136 @@ function makeActivity(overrides: {
     ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
   };
 }
+
+describe("retained fork plans and reasoning", () => {
+  const historyOrigin = {
+    sourceThreadId: ThreadId.make("source"),
+    sourceId: "source-plan",
+    ordinal: 1,
+  };
+  const nativeActivity = makeActivity({
+    kind: "turn.plan.updated",
+    turnId: "native-turn",
+    payload: { plan: [{ step: "Native task", status: "pending" }] },
+  });
+  const inheritedActivity = {
+    ...makeActivity({
+      kind: "turn.plan.updated",
+      turnId: "inherited-turn",
+      createdAt: "2026-02-23T00:00:01.000Z",
+      payload: { plan: [{ step: "Old task", status: "pending" }] },
+    }),
+    historyOrigin,
+  };
+
+  it("keeps inherited task plans in history but never selects them as live tasks", () => {
+    expect(
+      deriveActivePlanState([inheritedActivity], inheritedActivity.turnId ?? undefined),
+    ).toBeNull();
+    expect(
+      deriveActivePlanState(
+        [nativeActivity, inheritedActivity],
+        inheritedActivity.turnId ?? undefined,
+      )?.steps[0]?.step,
+    ).toBe("Native task");
+    const historical = deriveTurnPlans([inheritedActivity]);
+    expect(historical[0]).toMatchObject({ historyOrigin, plan: { steps: [{ step: "Old task" }] } });
+    expect(deriveTimelineEntries([], [], [], historical)[0]?.kind).toBe("turn-plan");
+  });
+
+  it("does not offer a frozen proposed plan for implementation, even when its turn matches", () => {
+    const inherited = {
+      id: OrchestrationProposedPlanId.make("inherited-plan"),
+      turnId: TurnId.make("inherited-turn"),
+      planMarkdown: "Old plan",
+      implementedAt: null,
+      implementationThreadId: null,
+      createdAt: "2026-02-23T00:00:01.000Z",
+      updatedAt: "2026-02-23T00:00:02.000Z",
+      historyOrigin,
+    };
+    const native = {
+      ...inherited,
+      id: OrchestrationProposedPlanId.make("native-plan"),
+      turnId: TurnId.make("native-turn"),
+      updatedAt: "2026-02-23T00:00:01.000Z",
+      historyOrigin: undefined,
+    };
+    expect(findLatestProposedPlan([inherited], inherited.turnId)).toBeNull();
+    expect(findLatestProposedPlan([native, inherited], inherited.turnId)?.id).toBe(native.id);
+    expect(hasActionableProposedPlan(inherited)).toBe(false);
+  });
+
+  it("keeps the first plan anchor, updates durations, and removes a cleared task list", () => {
+    const completed = {
+      ...nativeActivity,
+      id: EventId.make("completed"),
+      createdAt: "2026-02-23T00:00:05.000Z",
+      payload: { plan: [{ step: "Native task", status: "completed" }] },
+    };
+    const plans = deriveTurnPlans([nativeActivity, completed]);
+    expect(plans[0]).toMatchObject({
+      createdAt: nativeActivity.createdAt,
+      plan: { steps: [{ durationMs: 5000, status: "completed" }] },
+    });
+    const first = deriveTimelineEntriesWithState(
+      [],
+      [],
+      [],
+      null,
+      deriveTurnPlans([nativeActivity]),
+    );
+    const updated = deriveTimelineEntriesWithState([], [], [], first, plans);
+    expect(updated.entries).toEqual(deriveTimelineEntries([], [], [], plans));
+    expect(updated.entries).not.toBe(first.entries);
+    expect(
+      deriveTurnPlans([
+        nativeActivity,
+        completed,
+        { ...completed, createdAt: "2026-02-23T00:00:06.000Z", payload: { plan: [] } },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("preserves frozen ordinal ordering across work and messages, including incremental append", () => {
+    const message = {
+      id: MessageId.make("message"),
+      role: "assistant" as const,
+      turnId: null,
+      text: "Answer",
+      streaming: false,
+      createdAt: nativeActivity.createdAt,
+      updatedAt: nativeActivity.createdAt,
+      historyOrigin: { ...historyOrigin, ordinal: 2 },
+    };
+    const work = deriveWorkLogEntries([
+      {
+        ...makeActivity({ kind: "tool.completed", tone: "tool", payload: { status: "completed" } }),
+        historyOrigin,
+      },
+    ]);
+    const first = deriveTimelineEntriesWithState([message], [], []);
+    const appended = deriveTimelineEntriesWithState([message], [], work, first);
+    expect(appended.entries.map((entry) => entry.kind)).toEqual(["work", "message"]);
+    expect(appended.entries).toEqual(deriveTimelineEntries([message], [], work));
+  });
+
+  it("retains provider reasoning text instead of discarding the payload", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "reasoning.completed",
+        summary: "Reasoning",
+        tone: "info",
+        payload: { text: "A **provider-supplied** explanation." },
+      }),
+    ]);
+    expect(entries[0]).toMatchObject({
+      tone: "thinking",
+      detail: "A **provider-supplied** explanation.",
+      sourceActivityKind: "reasoning.completed",
+    });
+  });
+});
 
 describe("deriveActivePlanState", () => {
   it("returns the latest plan update for the active turn", () => {

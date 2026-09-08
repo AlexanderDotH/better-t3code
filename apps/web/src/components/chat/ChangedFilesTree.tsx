@@ -15,10 +15,16 @@ import {
   FolderClosedIcon,
 } from "lucide-react";
 import { cn } from "~/lib/utils";
+import { useInterfaceTranslator } from "~/hooks/useInterfaceTranslator";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import {
+  changedFileName,
+  selectChangedFilePreview,
+  summarizeChangedFileScopes,
+} from "./changedFilesPresentation";
 
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
 
@@ -29,6 +35,11 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   resolvedTheme: "light" | "dark";
   onToggleAllDirectories: () => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  classicPresentation?: {
+    expanded: boolean;
+    showCompactPreview: boolean;
+    onExpandedChange: (expanded: boolean) => void;
+  };
 }) {
   const {
     turnId,
@@ -40,6 +51,10 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   } = props;
   const summaryStat = useMemo(() => summarizeTurnDiffStats(files), [files]);
   const hasDirectories = files.some((file) => /[/\\]/.test(file.path));
+
+  if (props.classicPresentation) {
+    return <ClassicChangedFilesCard {...props} {...props.classicPresentation} />;
+  }
 
   return (
     <div
@@ -118,6 +133,191 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
         resolvedTheme={resolvedTheme}
         onOpenTurnDiff={onOpenTurnDiff}
       />
+    </div>
+  );
+});
+
+const ClassicChangedFilesCard = memo(function ClassicChangedFilesCard(props: {
+  turnId: TurnId;
+  files: ReadonlyArray<TurnDiffFileChange>;
+  expanded: boolean;
+  showCompactPreview: boolean;
+  allDirectoriesExpanded: boolean;
+  resolvedTheme: "light" | "dark";
+  onExpandedChange: (expanded: boolean) => void;
+  onToggleAllDirectories: () => void;
+  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+}) {
+  const translate = useInterfaceTranslator().message;
+  const {
+    turnId,
+    files,
+    expanded,
+    showCompactPreview,
+    allDirectoriesExpanded,
+    resolvedTheme,
+    onExpandedChange,
+    onToggleAllDirectories,
+    onOpenTurnDiff,
+  } = props;
+  const summaryStat = useMemo(() => summarizeTurnDiffStats(files), [files]);
+  const scopeSummary = useMemo(() => summarizeChangedFileScopes(files), [files]);
+  const previewFiles = useMemo(() => selectChangedFilePreview(files), [files]);
+  const compactPreviewVisible = showCompactPreview && !expanded;
+
+  return (
+    <div
+      className="@container/changed-files mt-4 rounded-2xl border border-border/70 bg-secondary p-2 dark:border-transparent dark:bg-input/32"
+      data-changed-files-state={
+        expanded ? "expanded" : compactPreviewVisible ? "preview" : "collapsed"
+      }
+    >
+      <div
+        data-changed-files-header=""
+        className={cn(
+          "flex items-center justify-between gap-2 rounded-xl",
+          expanded &&
+            "sticky top-2 z-10 mb-2 bg-secondary dark:bg-[color-mix(in_srgb,var(--contrast-foreground)_2.5%,var(--background))]",
+        )}
+      >
+        <button
+          type="button"
+          aria-expanded={expanded}
+          data-scroll-anchor-ignore
+          className="group flex min-w-0 flex-1 items-center rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => onExpandedChange(!expanded)}
+        >
+          <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+            <ChevronRightIcon
+              aria-hidden="true"
+              className={cn(
+                "size-3.5 shrink-0 text-muted-foreground transition-transform",
+                expanded && "rotate-90",
+              )}
+            />
+            <span className="flex shrink-0 items-center gap-1 whitespace-nowrap font-medium text-foreground text-xs leading-4">
+              <span>{translate("chat.changedFiles.count", { count: files.length })}</span>
+              {hasNonZeroStat(summaryStat) && (
+                <DiffStatLabel
+                  additions={summaryStat.additions}
+                  className="text-xs leading-4"
+                  deletions={summaryStat.deletions}
+                  layout="inline"
+                />
+              )}
+            </span>
+            <span className="ml-1 hidden min-w-0 flex-1 truncate text-[11px] text-muted-foreground group-hover:text-foreground/80 @[24rem]/changed-files:inline">
+              {expanded ? translate("chat.changedFiles.hide") : translate("chat.changedFiles.show")}
+            </span>
+          </span>
+        </button>
+        <div className="flex shrink-0 items-center gap-1.5 pr-1">
+          {expanded ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="outline"
+                    className="!size-[22px]"
+                    aria-label={
+                      allDirectoriesExpanded
+                        ? translate("chat.changedFiles.collapseFolders")
+                        : translate("chat.changedFiles.expandFolders")
+                    }
+                    data-scroll-anchor-ignore
+                    onClick={onToggleAllDirectories}
+                  />
+                }
+              >
+                {allDirectoriesExpanded ? (
+                  <ChevronsDownUpIcon className="size-3" />
+                ) : (
+                  <ChevronsUpDownIcon className="size-3" />
+                )}
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {allDirectoriesExpanded
+                  ? translate("chat.changedFiles.collapseFolders")
+                  : translate("chat.changedFiles.expandFolders")}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  aria-label={translate("chat.changedFiles.openDiff")}
+                  onClick={() => onOpenTurnDiff(turnId, files[0]?.path)}
+                />
+              }
+            >
+              <FileDiffIcon className="size-3" />
+              <span className="hidden @[24rem]/changed-files:inline">
+                {translate("chat.changedFiles.openDiff")}
+              </span>
+            </TooltipTrigger>
+            <TooltipPopup side="top">{translate("chat.changedFiles.openFullDiff")}</TooltipPopup>
+          </Tooltip>
+        </div>
+      </div>
+      {expanded ? (
+        <ChangedFilesTree
+          key={`changed-files-tree:${turnId}`}
+          turnId={turnId}
+          files={files}
+          allDirectoriesExpanded={allDirectoriesExpanded}
+          resolvedTheme={resolvedTheme}
+          onOpenTurnDiff={onOpenTurnDiff}
+        />
+      ) : compactPreviewVisible ? (
+        <div className="px-2 pb-1.5 pt-1">
+          <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-muted-foreground">
+            {scopeSummary.map((scope, index) => (
+              <span key={scope.label} className="inline-flex items-center gap-1">
+                {index > 0 ? <span aria-hidden="true">·</span> : null}
+                <span className="font-mono text-foreground/75">{scope.label}</span>
+                <span>{translate("chat.changedFiles.scopeCount", { count: scope.fileCount })}</span>
+              </span>
+            ))}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {previewFiles.map((file) => (
+              <Tooltip key={file.path}>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      className="inline-flex max-w-48 items-center gap-1 rounded-md border border-border/70 bg-background/45 px-1.5 py-1 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={() => onOpenTurnDiff(turnId, file.path)}
+                    />
+                  }
+                >
+                  <PierreEntryIcon
+                    pathValue={file.path}
+                    kind="file"
+                    theme={resolvedTheme}
+                    className="size-3 shrink-0 text-muted-foreground/70"
+                  />
+                  <span className="truncate">{changedFileName(file.path)}</span>
+                </TooltipTrigger>
+                <TooltipPopup side="top">{file.path}</TooltipPopup>
+              </Tooltip>
+            ))}
+            <button
+              type="button"
+              className="rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => onExpandedChange(true)}
+            >
+              {translate("chat.changedFiles.showAll", { count: files.length })}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 });

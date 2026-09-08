@@ -9,6 +9,7 @@ import { threadHasStarted } from "./ChatView.logic";
 import { ProjectSpeechSetup } from "./chat/ProjectSpeechSetup";
 import { resolvePromptForSend } from "@t3tools/client-runtime/prompt-improvement";
 import { ThreadSubagents } from "./ThreadSubagents";
+import { selectAgentDisplayWorkLogEntries } from "./chat/agentSpawnSummary";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import {
@@ -74,6 +75,7 @@ import {
 import {
   applyClaudePromptEffortPrefix,
   createModelSelection,
+  readAutoReasoningResolution,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import {
@@ -130,6 +132,7 @@ import {
   createMessageAttachmentPreviewProjector,
   derivePhase,
   deriveTimelineEntriesWithState,
+  deriveTurnPlans,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
   findLatestProposedPlan,
@@ -229,6 +232,7 @@ import {
   ChevronDownIcon,
   GitBranchIcon,
   Minimize2Icon,
+  RefreshCwIcon,
   PaperclipIcon,
   WifiOffIcon,
 } from "lucide-react";
@@ -315,6 +319,7 @@ import {
   serverEnvironment,
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
+import { agentSettingsEnvironment } from "../state/agentSettings";
 import { threadEnvironment, useEnvironmentThread } from "../state/threads";
 import {
   requestOlderThreadTurns,
@@ -344,6 +349,7 @@ import { ComposerFloatingBubble } from "./chat/ComposerFloatingBubble";
 import { resolveComposerFloatingBubbleLayout } from "./chat/composerFloatingBubble.logic";
 import { buildResourceProtectionBanner } from "./resourceProtectionBanner";
 import { useInterfaceLanguage } from "../interfaceLanguageSync";
+import { useInterfaceTranslator } from "../hooks/useInterfaceTranslator";
 import { ChatHeader } from "./chat/ChatHeader";
 import { ChatTranscriptCopyButton } from "./chat/ChatTranscriptCopyButton";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
@@ -422,6 +428,7 @@ import {
   resolveFileAttachmentUrl,
   reconcileMountedTerminalThreadIds,
   resolveBackgroundDraftWorkspaceOptions,
+  resolveActiveHarnessSession,
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
   resolveDraftHeroState,
@@ -1428,9 +1435,13 @@ export default function ChatView(props: ChatViewProps) {
   const [composerFloatingBubbleHost, setComposerFloatingBubbleHost] =
     useState<HTMLDivElement | null>(null);
   const interfaceLanguage = useInterfaceLanguage().language;
+  const translate = useInterfaceTranslator().message;
   const [nonChatWorkspaceCardActive, setNonChatWorkspaceCardActive] = useState(false);
   const [workspaceCardExpanded, setWorkspaceCardExpanded] = useState(false);
   const improvePrompt = useAtomCommand(serverEnvironment.improvePrompt, { reportFailure: false });
+  const refreshHarnessStatus = useAtomCommand(agentSettingsEnvironment.harnessChatSync.status, {
+    reportFailure: false,
+  });
   const updateProjectScriptSettings = useAtomCommand(serverEnvironment.updateSettings, {
     reportFailure: false,
   });
@@ -1527,6 +1538,11 @@ export default function ChatView(props: ChatViewProps) {
   }, [routeKind, routeThreadRef, routeThreadState]);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const settings = useEnvironmentSettings(environmentId);
+  const clientSettingsHydrated = useClientSettingsHydrated();
+  const nativeSubagentDisplay = resolveBetterT3FeatureFlag(
+    settings.betterT3Device,
+    "agent.nativeSubagentDisplay",
+  );
   const primaryServerSettings = useAtomValue(primaryServerSettingsAtom);
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
@@ -1907,6 +1923,11 @@ export default function ChatView(props: ChatViewProps) {
   );
   const forkSourceShell = useThreadShell(forkSourceRef);
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
+  const activeHarnessSync = resolveActiveHarnessSession(activeThread, activeThreadShell);
+  const isHarnessSessionActive = activeHarnessSync !== null;
+  const harnessSendDisabledReason = isHarnessSessionActive
+    ? translate("chat.harness.sendingPaused")
+    : null;
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
     readonly messageId: MessageId | null;
@@ -1922,6 +1943,16 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
   );
+  useEffect(() => {
+    if (
+      clientSettingsHydrated &&
+      !nativeSubagentDisplay &&
+      activeThreadRef &&
+      rightPanelState.surfaces.some((surface) => surface.kind === "agents")
+    ) {
+      useRightPanelStore.getState().closeSurface(activeThreadRef, "agents");
+    }
+  }, [activeThreadRef, clientSettingsHydrated, nativeSubagentDisplay, rightPanelState.surfaces]);
   const activeRightPanelSurface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
   );
@@ -2080,7 +2111,6 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectKey = activeProject
     ? `${activeProject.environmentId}:${activeProject.workspaceRoot}`
     : null;
-  const clientSettingsHydrated = useClientSettingsHydrated();
   const [pendingFileSurfaceIdsByProject, setPendingFileSurfaceIdsByProject] = useState<
     ReadonlyMap<string, ReadonlySet<string>>
   >(() => new Map());
@@ -2673,6 +2703,19 @@ export default function ChatView(props: ChatViewProps) {
     conversationProviderStatus.supportsConversationRollback !== false;
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
+  const liveThreadActivities = useMemo(
+    () => threadActivities.filter((activity) => activity.historyOrigin === undefined),
+    [threadActivities],
+  );
+  const liveSubagents = useMemo(
+    () => activeThread?.subagents.filter((subagent) => subagent.historyOrigin === undefined) ?? [],
+    [activeThread?.subagents],
+  );
+  const latestAutoReasoningEffort = useMemo(
+    () => readAutoReasoningResolution(liveThreadActivities)?.effectiveEffort ?? null,
+    [liveThreadActivities],
+  );
+  const turnPlans = useMemo(() => deriveTurnPlans(threadActivities), [threadActivities]);
   const latestCheckpointCompletedAt = activeThread?.checkpoints.at(-1)?.completedAt ?? null;
   const workspaceMutationId = useMemo(() => {
     const activityId = latestWorkspaceMutationId(threadActivities);
@@ -2684,7 +2727,14 @@ export default function ChatView(props: ChatViewProps) {
     () => deriveLatestContextWindowSnapshot(threadActivities),
     [threadActivities],
   );
-  const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
+  const workLogEntries = useMemo(
+    () =>
+      selectAgentDisplayWorkLogEntries(
+        deriveWorkLogEntries(threadActivities),
+        nativeSubagentDisplay,
+      ),
+    [nativeSubagentDisplay, threadActivities],
+  );
   // Native subagent fold: memoized by activity-list identity, shared by the
   // Agents surface, live strip, and workflow cards. v2Projection is null
   // until orchestration-v2 lands (source precedence lives in the derive).
@@ -2693,9 +2743,9 @@ export default function ChatView(props: ChatViewProps) {
   const agentPanelModel = useMemo(
     () =>
       deriveAgentPanelModel({
-        agents: foldSubagentActivities(threadActivities, { sessionLive: agentSessionLive }),
+        agents: foldSubagentActivities(liveThreadActivities, { sessionLive: agentSessionLive }),
       }),
-    [agentSessionLive, threadActivities],
+    [agentSessionLive, liveThreadActivities],
   );
   const { approvals: pendingApprovals, userInputs: pendingUserInputs } = useMemo(
     () => derivePendingRequests(threadActivities),
@@ -3279,6 +3329,7 @@ export default function ChatView(props: ChatViewProps) {
       activeThread?.proposedPlans ?? [],
       workLogEntries,
       previous?.threadKey === activeThreadKey ? previous.projection : null,
+      turnPlans,
     );
     timelineProjectionRef.current = { threadKey: activeThreadKey, projection };
     return projection.entries;
@@ -3288,6 +3339,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThread?.proposedPlans,
     timelineMessages,
     workLogEntries,
+    turnPlans,
   ]);
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
@@ -4183,9 +4235,9 @@ export default function ChatView(props: ChatViewProps) {
     useRightPanelStore.getState().open(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
   const addAgentsSurface = useCallback(() => {
-    if (!activeThreadRef) return;
+    if (!activeThreadRef || !nativeSubagentDisplay) return;
     useRightPanelStore.getState().open(activeThreadRef, "agents");
-  }, [activeThreadRef]);
+  }, [activeThreadRef, nativeSubagentDisplay]);
   const openFileSurface = useCallback(
     (relativePath: string, line?: number) => {
       if (!activeThreadRef || !activeProject) return;
@@ -5683,6 +5735,64 @@ export default function ChatView(props: ChatViewProps) {
     switchGitRef,
     updateThreadMetadata,
   ]);
+  const [refreshingHarnessThreadKey, setRefreshingHarnessThreadKey] = useState<string | null>(null);
+  const isRefreshingHarnessStatus =
+    activeThreadKey !== null && refreshingHarnessThreadKey === activeThreadKey;
+  const handleRefreshHarnessStatus = useCallback(async () => {
+    if (!activeThread || activeThreadKey === null || isRefreshingHarnessStatus) return;
+    const targetKey = activeThreadKey;
+    setRefreshingHarnessThreadKey(targetKey);
+    try {
+      const result = await refreshHarnessStatus({
+        environmentId: activeThread.environmentId,
+        input: { threadId: activeThread.id },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        setThreadError(activeThread.id, chatActionErrorMessage(squashAtomCommandFailure(result)));
+      }
+    } finally {
+      setRefreshingHarnessThreadKey((previous) => (previous === targetKey ? null : previous));
+    }
+  }, [
+    activeThread,
+    activeThreadKey,
+    isRefreshingHarnessStatus,
+    refreshHarnessStatus,
+    setThreadError,
+  ]);
+  const harnessActiveBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (!activeThread || activeHarnessSync === null) return null;
+    return {
+      id: `harness-active:${activeThread.id}`,
+      variant: "warning",
+      priority: "urgent",
+      icon: <RefreshCwIcon className={cn(isRefreshingHarnessStatus && "animate-spin")} />,
+      title: translate("chat.harness.activeElsewhere", {
+        provider: activeHarnessSync.providerLabel,
+      }),
+      description: harnessSendDisabledReason,
+      actions: (
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={isRefreshingHarnessStatus || activeEnvironmentUnavailable}
+          onClick={() => void handleRefreshHarnessStatus()}
+        >
+          {translate(
+            isRefreshingHarnessStatus ? "chat.harness.checking" : "chat.harness.checkAgain",
+          )}
+        </Button>
+      ),
+    };
+  }, [
+    activeThread,
+    activeHarnessSync,
+    activeEnvironmentUnavailable,
+    handleRefreshHarnessStatus,
+    harnessSendDisabledReason,
+    isRefreshingHarnessStatus,
+    translate,
+  ]);
   // Background work (subagent fleets, workflow runs, watch loops) can outlive
   // the turn; once it settles, the composer stop button is gone, so this
   // banner is the only visible stop affordance. Stop routes through the
@@ -5835,6 +5945,7 @@ export default function ChatView(props: ChatViewProps) {
     ) ?? false;
   const compactThreadUnavailable =
     !activeThread ||
+    isHarnessSessionActive ||
     !activeThreadHasCompactableConversation ||
     !activeProject ||
     !isServerThread ||
@@ -5849,13 +5960,14 @@ export default function ChatView(props: ChatViewProps) {
     showPlanFollowUpPrompt;
   const compactDisabled = compactThreadUnavailable || composerHasUnsentContent;
   const compactDisabledReason = compactDisabled
-    ? composerHasUnsentContent
-      ? "Send or clear your draft before compacting"
-      : !activeProject
-        ? "Choose a project before compacting"
-        : !manualCompactionProviderAvailable
-          ? "Compaction is unavailable for this provider"
-          : "Compacting is unavailable right now"
+    ? (harnessSendDisabledReason ??
+      (composerHasUnsentContent
+        ? "Send or clear your draft before compacting"
+        : !activeProject
+          ? "Choose a project before compacting"
+          : !manualCompactionProviderAvailable
+            ? "Compaction is unavailable for this provider"
+            : "Compacting is unavailable right now"))
     : null;
   const resumeCompactionBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (
@@ -5964,6 +6076,7 @@ export default function ChatView(props: ChatViewProps) {
     [environmentId, activeThread?.id, resourceProtectionQuery.data, interfaceLanguage],
   );
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
+    const harnessItems = harnessActiveBannerItem === null ? [] : [harnessActiveBannerItem];
     const resourceProtectionItems: ComposerBannerStackItem[] = resourceProtectionBanner
       ? [{ ...resourceProtectionBanner, icon: <span aria-hidden="true">●</span> }]
       : [];
@@ -5977,6 +6090,7 @@ export default function ChatView(props: ChatViewProps) {
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
+        ...harnessItems,
         ...feedbackBannerItems,
         ...resourceProtectionItems,
         ...usageLimitsItems,
@@ -5988,6 +6102,7 @@ export default function ChatView(props: ChatViewProps) {
       ];
     }
     return [
+      ...harnessItems,
       ...feedbackBannerItems,
       ...resourceProtectionItems,
       ...usageLimitsItems,
@@ -6037,6 +6152,7 @@ export default function ChatView(props: ChatViewProps) {
     ];
   }, [
     activeBranchMismatchKey,
+    harnessActiveBannerItem,
     backgroundLivenessBannerItem,
     feedbackBannerItems,
     resourceProtectionBanner,
@@ -6508,6 +6624,7 @@ export default function ChatView(props: ChatViewProps) {
       !activeThread ||
       isSendBusy ||
       isConnecting ||
+      isHarnessSessionActive ||
       !clientSettingsHydrated ||
       threadDetailLoading ||
       sendInFlightRef.current ||
@@ -7546,6 +7663,7 @@ export default function ChatView(props: ChatViewProps) {
       if (
         !activeThread ||
         !isServerThread ||
+        isHarnessSessionActive ||
         isSendBusy ||
         isConnecting ||
         activeEnvironmentUnavailable ||
@@ -7697,6 +7815,7 @@ export default function ChatView(props: ChatViewProps) {
       isSendBusy,
       isServerThread,
       localCheckoutBranchMismatch,
+      isHarnessSessionActive,
       persistThreadSettingsForNextTurn,
       resetLocalDispatch,
       runtimeMode,
@@ -7730,6 +7849,7 @@ export default function ChatView(props: ChatViewProps) {
         !activeProject ||
         !activeProposedPlan ||
         !isServerThread ||
+        isHarnessSessionActive ||
         isSendBusy ||
         isConnecting ||
         activeEnvironmentUnavailable ||
@@ -7890,6 +8010,7 @@ export default function ChatView(props: ChatViewProps) {
       isConnecting,
       isSendBusy,
       isServerThread,
+      isHarnessSessionActive,
       navigate,
       resetLocalDispatch,
       runtimeMode,
@@ -8059,6 +8180,7 @@ export default function ChatView(props: ChatViewProps) {
         !activeThread ||
         !isServerThread ||
         !supportsInterruptedTurnRetry ||
+        isHarnessSessionActive ||
         target === null ||
         target.messageId !== messageId ||
         retryDispatchInFlightRef.current
@@ -8119,6 +8241,7 @@ export default function ChatView(props: ChatViewProps) {
       interruptedTurnRetryTarget,
       isConnecting,
       isServerThread,
+      isHarnessSessionActive,
       resetLocalDispatch,
       retryThreadTurn,
       setThreadError,
@@ -8130,7 +8253,7 @@ export default function ChatView(props: ChatViewProps) {
     () =>
       isServerThread && supportsInterruptedTurnRetry && interruptedTurnRetryTarget
         ? {
-            available: !activeEnvironmentUnavailable && !isConnecting,
+            available: !activeEnvironmentUnavailable && !isConnecting && !isHarnessSessionActive,
             messageId: interruptedTurnRetryTarget.messageId,
             pending: retryingMessageId === interruptedTurnRetryTarget.messageId,
             onRetry: (targetMessageId: MessageId) => void onRetryInterruptedTurn(targetMessageId),
@@ -8142,6 +8265,7 @@ export default function ChatView(props: ChatViewProps) {
       isConnecting,
       isServerThread,
       onRetryInterruptedTurn,
+      isHarnessSessionActive,
       retryingMessageId,
       supportsInterruptedTurnRetry,
     ],
@@ -8301,7 +8425,9 @@ export default function ChatView(props: ChatViewProps) {
       // Suppressed while the Agents surface is visible: the roster itself is
       // on screen, so the toggle badge would be pointing at nothing.
       liveAgentCount={
-        rightPanelOpen && activeRightPanelSurface?.kind === "agents" ? 0 : agentPanelModel.liveCount
+        !nativeSubagentDisplay || (rightPanelOpen && activeRightPanelSurface?.kind === "agents")
+          ? 0
+          : agentPanelModel.liveCount
       }
       onToggleTerminal={toggleTerminalVisibility}
       onToggleRightPanel={toggleRightPanel}
@@ -8429,7 +8555,7 @@ export default function ChatView(props: ChatViewProps) {
           : { knowledgeGraphVersion: serverConfig.environment.capabilities.knowledgeGraphVersion })}
         onOpenSource={(path, line) => openFileSurface(path, line ?? undefined)}
       />
-    ) : renderedRightPanelSurface?.kind === "agents" ? (
+    ) : nativeSubagentDisplay && renderedRightPanelSurface?.kind === "agents" ? (
       <AgentsPanel
         model={agentPanelModel}
         environmentId={activeThreadRef?.environmentId ?? null}
@@ -8632,11 +8758,11 @@ export default function ChatView(props: ChatViewProps) {
             onDragLeave={workspaceFileDropHandlers.onDragLeave}
             onDrop={workspaceFileDropHandlers.onDrop}
           >
-            {activeThreadRef && activeThread.subagents.length > 0 ? (
+            {!nativeSubagentDisplay && activeThreadRef && liveSubagents.length > 0 ? (
               <ThreadSubagents
                 key={scopedThreadKey(activeThreadRef)}
                 threadRef={activeThreadRef}
-                subagents={activeThread.subagents}
+                subagents={liveSubagents}
                 timestampFormat={settings.timestampFormat}
                 streamingMotionEnabled={settings.enableLegacyTokenStreaming}
                 {...(gitCwd ? { markdownCwd: gitCwd } : {})}
@@ -8849,9 +8975,18 @@ export default function ChatView(props: ChatViewProps) {
                       renderChat={({ deckEnabled, gitAvailable }) => (
                         <ComposerSurface.Shell
                           contextStrip={showComposerContextStrip && (!deckEnabled || !gitAvailable)}
+                          className={cn("chat-composer-glass-shell", deckEnabled && "h-full")}
+                          data-chat-workspace-card-surface="true"
+                          data-workspace-card-compact-surface="true"
                         >
-                          <ComposerSurface.Host>
-                            <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10">
+                          <ComposerSurface.Host
+                            className={cn("chat-composer-glass-host", deckEnabled && "h-full")}
+                          >
+                            <div
+                              ref={attachDraftHeroComposerAnchorRef}
+                              className="workspace-card-deck__card-content relative z-10"
+                              data-workspace-card-compact-content="true"
+                            >
                               <ChatComposer
                                 composerRef={composerRef}
                                 composerDraftTarget={composerDraftTarget}
@@ -8879,11 +9014,12 @@ export default function ChatView(props: ChatViewProps) {
                                 isConnecting={isConnecting}
                                 isSendBusy={isSendBusy}
                                 sendDisabledReason={
-                                  feedbackUploading
+                                  harnessSendDisabledReason ??
+                                  (feedbackUploading
                                     ? "Sending feedback"
                                     : threadDetailLoading
                                       ? "Messages loading"
-                                      : null
+                                      : null)
                                 }
                                 isPreparingWorktree={isPreparingWorktree}
                                 bannerItems={composerBannerItems}
@@ -8924,6 +9060,7 @@ export default function ChatView(props: ChatViewProps) {
                                   activeProjectDefaultModelSelection
                                 }
                                 activeThreadModelSelection={activeThread?.modelSelection}
+                                autoReasoningEffort={latestAutoReasoningEffort}
                                 activeContextWindow={activeContextWindow}
                                 compactThreadUnavailable={compactThreadUnavailable}
                                 compactDisabled={compactDisabled}
@@ -9124,13 +9261,13 @@ export default function ChatView(props: ChatViewProps) {
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
-          agentsAvailable
+          agentsAvailable={nativeSubagentDisplay}
           knowledgeGraphAvailable={knowledgeGraphAvailable}
           onAddKnowledgeGraph={() => {
             if (activeThreadRef)
               useRightPanelStore.getState().open(activeThreadRef, "knowledge-graph");
           }}
-          liveAgentCount={agentPanelModel.liveCount}
+          liveAgentCount={nativeSubagentDisplay ? agentPanelModel.liveCount : 0}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -9179,13 +9316,13 @@ export default function ChatView(props: ChatViewProps) {
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}
-            agentsAvailable
+            agentsAvailable={nativeSubagentDisplay}
             knowledgeGraphAvailable={knowledgeGraphAvailable}
             onAddKnowledgeGraph={() => {
               if (activeThreadRef)
                 useRightPanelStore.getState().open(activeThreadRef, "knowledge-graph");
             }}
-            liveAgentCount={agentPanelModel.liveCount}
+            liveAgentCount={nativeSubagentDisplay ? agentPanelModel.liveCount : 0}
           >
             {rightPanelContent}
           </RightPanelTabs>

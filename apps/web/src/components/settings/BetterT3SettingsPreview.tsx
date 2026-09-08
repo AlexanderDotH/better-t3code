@@ -1,6 +1,18 @@
-import type { BetterT3FeatureId, ChatVisualMode, SidebarPosition } from "@t3tools/contracts";
+import type {
+  BetterT3FeatureId,
+  ChatVisualMode,
+  ContextWindowSelector,
+  SidebarPosition,
+} from "@t3tools/contracts";
 import type { InterfaceTranslator } from "@t3tools/shared/interfaceLanguage";
-import { BotIcon, CheckIcon, MessageSquareIcon, SparklesIcon, WorkflowIcon } from "lucide-react";
+import {
+  BotIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  MessageSquareIcon,
+  SparklesIcon,
+  WorkflowIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
@@ -20,6 +32,7 @@ export const BETTER_T3_VISUAL_FEATURE_IDS = [
   "agent.reasoningVisibility",
   "chat.sidebarPosition",
   "chat.presentation",
+  "chat.contextWindowSelector",
   "chat.workspaceCardDeck",
 ] as const satisfies ReadonlyArray<BetterT3FeatureId>;
 
@@ -325,13 +338,57 @@ function WorkspaceCardDeckPreview(props: {
   );
 }
 
-export type BetterT3VisualChoiceValue = boolean | ChatVisualMode | SidebarPosition;
+function ContextWindowSelectorPreview(props: {
+  readonly selector: ContextWindowSelector;
+  readonly translate: Translate;
+}) {
+  return (
+    <div className="flex h-full items-center justify-center p-2.5">
+      <div className="w-full max-w-56 rounded-lg border border-border/55 bg-card p-2 shadow-sm">
+        <div className="mb-2 flex min-w-0 items-center justify-between gap-2 text-[9px] font-medium text-muted-foreground">
+          <span className="truncate">{props.translate("chat.contextWindow.title")}</span>
+          <span className="inline-flex shrink-0 items-center gap-1 text-foreground">
+            272K <ChevronDownIcon className="size-2.5" />
+          </span>
+        </div>
+        {props.selector === "native" ? (
+          <div className="space-y-1 text-[9px] tabular-nums">
+            <div className="flex items-center justify-between rounded bg-primary/10 px-1.5 py-1 text-primary">
+              <span>272K</span>
+              <CheckIcon className="size-2.5" />
+            </div>
+            <div className="px-1.5 text-muted-foreground">1M</div>
+          </div>
+        ) : (
+          <div className="rounded-md border border-border/40 bg-muted/25 px-2 py-1.5">
+            <div className="mb-2 text-sm font-semibold tabular-nums text-foreground">272K</div>
+            <div className="relative h-1 rounded-full bg-muted">
+              <span className="absolute inset-y-0 left-0 w-1/4 rounded-full bg-primary" />
+              <span className="absolute left-1/4 top-1/2 size-2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary/40 bg-background shadow-sm" />
+            </div>
+            <div className="mt-1.5 flex justify-between text-[8px] tabular-nums text-muted-foreground">
+              <span>16K</span>
+              <span>1M</span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export type BetterT3VisualChoiceValue =
+  | boolean
+  | ChatVisualMode
+  | SidebarPosition
+  | ContextWindowSelector;
 
 function visualChoiceValues(
   featureId: BetterT3VisualFeatureId,
 ): ReadonlyArray<BetterT3VisualChoiceValue> {
   if (featureId === "chat.sidebarPosition") return ["left", "right"];
   if (featureId === "chat.presentation") return ["current", "classic"];
+  if (featureId === "chat.contextWindowSelector") return ["native", "better-t3"];
   return [false, true];
 }
 
@@ -350,6 +407,13 @@ function visualChoiceLabel(
   if (featureId === "chat.presentation") {
     return translate(
       value === "classic" ? "settings.betterT3.value.classic" : "settings.betterT3.value.current",
+    );
+  }
+  if (featureId === "chat.contextWindowSelector") {
+    return translate(
+      value === "better-t3"
+        ? "settings.betterT3.value.better-t3"
+        : "settings.betterT3.value.native",
     );
   }
   return translate(
@@ -383,6 +447,11 @@ function visualChoiceModel(
       };
     case "chat.workspaceCardDeck":
       return { ...model, chat: { ...model.chat, workspaceCardDeck: value === true } };
+    case "chat.contextWindowSelector":
+      return {
+        ...model,
+        chat: { ...model.chat, contextWindowSelector: value === "native" ? "native" : "better-t3" },
+      };
   }
 }
 
@@ -499,6 +568,18 @@ export function BetterT3FeatureVisual(props: {
           <div data-card-morphing={chat.cardMorphing} className="h-full">
             <WorkspaceCardDeckPreview model={chat} translate={props.translate} />
           </div>
+        </FeatureVisualFrame>
+      );
+    case "chat.contextWindowSelector":
+      return (
+        <FeatureVisualFrame
+          animationKey={`context-window:${chat.contextWindowSelector}`}
+          featureId={props.featureId}
+        >
+          <ContextWindowSelectorPreview
+            selector={chat.contextWindowSelector}
+            translate={props.translate}
+          />
         </FeatureVisualFrame>
       );
   }

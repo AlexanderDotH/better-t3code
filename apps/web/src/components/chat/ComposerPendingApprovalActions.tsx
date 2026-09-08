@@ -7,6 +7,7 @@ import { memo } from "react";
 import { TriangleAlertIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 interface ComposerPendingApprovalActionsProps {
   requestId: ApprovalRequestId;
@@ -19,22 +20,27 @@ interface ComposerPendingApprovalActionsProps {
 }
 
 const APPROVAL_ACTION_CLASS_NAME = "font-normal";
-const DEFAULT_APPROVAL_OPTIONS = [
-  { decision: "cancel", label: "Cancel" },
-  { decision: "decline", label: "Decline" },
-  { decision: "acceptForSession", label: "Always allow this session" },
-  { decision: "accept", label: "Approve" },
-] satisfies ReadonlyArray<ProviderApprovalOption>;
-
 export const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActions({
   requestId,
   isResponding,
-  options = DEFAULT_APPROVAL_OPTIONS,
+  options,
   onRespondToApproval,
 }: ComposerPendingApprovalActionsProps) {
+  const translate = useInterfaceTranslator().message;
+  const presentedOptions =
+    options ??
+    ([
+      { decision: "cancel", label: translate("chat.approval.cancel") },
+      { decision: "decline", label: translate("chat.approval.decline") },
+      {
+        decision: "acceptForSession",
+        label: translate("chat.approval.alwaysAllowSession"),
+      },
+      { decision: "accept", label: translate("chat.approval.approve") },
+    ] satisfies ReadonlyArray<ProviderApprovalOption>);
   return (
     <>
-      {options.map((option) => {
+      {presentedOptions.map((option) => {
         const button = (
           <Button
             key={option.decision}

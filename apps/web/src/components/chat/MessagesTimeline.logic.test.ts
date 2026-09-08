@@ -36,6 +36,8 @@ import {
   createMessageAttachmentPreviewProjector,
   deriveTimelineEntries,
   deriveTimelineEntriesWithState,
+  deriveTurnPlans,
+  deriveWorkLogEntries,
   type WorkLogEntry,
   type TimelineEntriesProjection,
 } from "../../session-logic";
@@ -74,9 +76,11 @@ describe("classic timeline grouping", () => {
       chatVisualMode: "classic",
       expandedWorkGroupIds: new Set(["work-group:entry-0"]),
     });
-    const work = expanded.find((row) => row.kind === "work");
-    expect(work?.groupedEntries.map((entry) => entry.id)).toEqual(["work-0", "work-1", "work-2"]);
-    expect(work?.isExpandedToolGroup).toBe(true);
+    const workRows = expanded.filter((row) => row.kind === "work");
+    expect(workRows.map((row) => row.id)).toEqual(["work-0", "work-1", "work-2"]);
+    expect(
+      workRows.every((row) => row.groupedEntries.length === 1 && !row.isExpandedToolGroup),
+    ).toBe(true);
     expect(deriveMessagesTimelineRows({ ...input, chatVisualMode: "classic" })).toEqual(collapsed);
   });
 
@@ -91,6 +95,83 @@ describe("classic timeline grouping", () => {
     expect(
       deriveMessagesTimelineRowsWithState({ ...input, chatVisualMode: "current" }, classic).rows,
     ).toEqual(current.rows);
+  });
+
+  it("reprojects provider reasoning immediately when its setting changes", () => {
+    const entries = deriveTimelineEntries(
+      [],
+      [],
+      deriveWorkLogEntries([
+        {
+          id: EventId.make("reasoning"),
+          createdAt: "2026-09-08T00:00:00Z",
+          turnId: null,
+          kind: "reasoning.completed",
+          tone: "info",
+          summary: "Reasoning",
+          payload: { text: "Explanation" },
+        },
+      ]),
+    );
+    for (const chatVisualMode of ["classic", "current"] as const) {
+      const hidden = deriveMessagesTimelineRowsWithState({
+        ...input,
+        timelineEntries: entries,
+        chatVisualMode,
+        showReasoning: false,
+      });
+      expect(hidden.rows).toEqual([]);
+      const visible = deriveMessagesTimelineRowsWithState(
+        { ...input, timelineEntries: entries, chatVisualMode, showReasoning: true },
+        hidden,
+      );
+      expect(visible.rows).toMatchObject([
+        { kind: "work", groupedEntries: [{ detail: "Explanation" }] },
+      ]);
+      expect(
+        deriveMessagesTimelineRowsWithState(
+          { ...input, timelineEntries: entries, chatVisualMode, showReasoning: false },
+          visible,
+        ).rows,
+      ).toEqual([]);
+    }
+  });
+
+  it("only suppresses historical task chips for Classic bubble-only mode", () => {
+    const turnPlans = deriveTurnPlans([
+      {
+        id: EventId.make("plan"),
+        createdAt: "2026-09-08T00:00:00Z",
+        turnId: TurnId.make("planned"),
+        kind: "turn.plan.updated",
+        tone: "info",
+        summary: "Plan",
+        payload: { plan: [{ step: "Done", status: "completed" }] },
+      },
+    ]);
+    const timelineEntries = deriveTimelineEntries([], [], [], turnPlans);
+    const hidden = deriveMessagesTimelineRowsWithState({
+      ...input,
+      timelineEntries,
+      chatVisualMode: "classic",
+      classicBubbleOnly: true,
+    });
+    expect(hidden.rows).toEqual([]);
+    const visible = deriveMessagesTimelineRowsWithState(
+      { ...input, timelineEntries, chatVisualMode: "classic", classicBubbleOnly: false },
+      hidden,
+    );
+    expect(visible.rows).toMatchObject([
+      { kind: "turn-plan", turnPlan: { plan: { steps: [{ step: "Done" }] } } },
+    ]);
+    expect(
+      deriveMessagesTimelineRows({
+        ...input,
+        timelineEntries,
+        chatVisualMode: "current",
+        classicBubbleOnly: true,
+      }),
+    ).toEqual(visible.rows);
   });
 
   it("keeps failures visible and filters neutral running tools in classic mode", () => {
@@ -137,6 +218,25 @@ describe("classic timeline grouping", () => {
       ),
     ).not.toContain("running");
     expect(rows.some((row) => row.kind === "working")).toBe(true);
+    expect(rows.some((row) => row.kind === "thinking")).toBe(false);
+  });
+
+  it("switches live indicators both ways without leaving the new Thinking row in Classic", () => {
+    const activeInput = { ...input, timelineEntries: [], isWorking: true };
+    const current = deriveMessagesTimelineRowsWithState({
+      ...activeInput,
+      chatVisualMode: "current",
+    });
+    const classic = deriveMessagesTimelineRowsWithState(
+      { ...activeInput, chatVisualMode: "classic" },
+      current,
+    );
+    expect(current.rows.map(({ kind }) => kind)).toEqual(["working", "thinking"]);
+    expect(classic.rows.map(({ kind }) => kind)).toEqual(["working"]);
+    expect(
+      deriveMessagesTimelineRowsWithState({ ...activeInput, chatVisualMode: "current" }, classic)
+        .rows,
+    ).toEqual(current.rows);
   });
 });
 
@@ -1577,6 +1677,17 @@ describe("deriveMessagesTimelineRows", () => {
       kind: "message",
       showAssistantMeta: false,
       showAssistantCopyButton: false,
+    });
+    const classicRows = deriveMessagesTimelineRows({
+      ...input,
+      timelineEntries,
+      chatVisualMode: "classic",
+    });
+    expect(classicRows.some(({ kind }) => kind === "assistant-meta")).toBe(false);
+    expect(classicRows.find((row) => row.id === "assistant-final-entry")).toMatchObject({
+      kind: "message",
+      showAssistantMeta: true,
+      showAssistantCopyButton: true,
     });
     expect(
       deriveMessagesTimelineRows({ ...input, timelineEntries: timelineEntries.slice(0, 3) }).map(

@@ -33,6 +33,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { PROJECT_GROUPING_MODE_LABELS } from "./ProjectSettingsPanel";
 import { ProjectDefaultActionsSettings } from "./ProjectDefaultActionsSettings";
+import { TranscriptPortabilitySettings } from "./TranscriptPortabilitySettings";
 import { searchableSetting } from "./settingsSearch";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
@@ -470,6 +471,7 @@ export function ProjectDefaultsSettings({
           }
         />
       </SettingsSection>
+      <TranscriptPortabilitySettings environmentId={environmentId} />
       <HarnessChatSyncSettings />
     </SettingsPageContainer>
   );

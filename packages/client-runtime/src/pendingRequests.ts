@@ -128,6 +128,7 @@ export function derivePendingRequests(activities: ReadonlyArray<OrchestrationThr
   // Request IDs are unique. A terminal event stays final even when provider
   // sequences and server-generated activities arrive in a different order.
   for (const activity of activities) {
+    if (activity.historyOrigin !== undefined) continue;
     if (!requestActivityKinds.has(activity.kind)) continue;
     const payload = Predicate.isObject(activity.payload) ? activity.payload : undefined;
     if (!payload || !isRequestId(payload.requestId)) continue;

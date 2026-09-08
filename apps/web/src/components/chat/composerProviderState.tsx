@@ -1,4 +1,5 @@
 import {
+  type ContextWindowSelector,
   type ModelCapabilities,
   type ProviderDriverKind,
   type ProviderInstanceId,
@@ -48,6 +49,7 @@ export type ComposerProviderState = {
 };
 
 type TraitsRenderInput = {
+  contextWindowSelector: ContextWindowSelector;
   provider: ProviderDriverKind;
   instanceId?: ProviderInstanceId;
   threadRef?: ScopedThreadRef;
@@ -58,6 +60,7 @@ type TraitsRenderInput = {
   prompt: string;
   onPromptChange: (prompt: string) => void;
   planModeEnabled: boolean;
+  autoReasoningEffort?: string | null | undefined;
   size?: ComposerControlSize;
   hidden?: boolean;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
@@ -181,6 +184,7 @@ function renderTraitsControl(
     prompt,
     onPromptChange,
     planModeEnabled,
+    autoReasoningEffort,
     size,
     hidden,
     triggerVariant,
@@ -188,6 +192,8 @@ function renderTraitsControl(
     isComposerOwned,
   } = input;
   const hasTarget = threadRef !== undefined || draftId !== undefined;
+  const hideContextWindow =
+    input.contextWindowSelector === "better-t3" && shouldRenderContextWindowControl(input);
   const { selections: resolvedModelOptions } = resolveComposerOptionSelections(
     models,
     model,
@@ -204,6 +210,7 @@ function renderTraitsControl(
       modelOptions: resolvedModelOptions,
       prompt,
       planModeEnabled,
+      hideContextWindow,
     })
   ) {
     return null;
@@ -220,6 +227,8 @@ function renderTraitsControl(
       prompt={prompt}
       onPromptChange={onPromptChange}
       planModeEnabled={planModeEnabled}
+      autoReasoningEffort={autoReasoningEffort}
+      hideContextWindow={hideContextWindow}
       {...(size !== undefined ? { size } : {})}
       {...(hidden !== undefined ? { hidden } : {})}
       {...(triggerVariant !== undefined ? { triggerVariant } : {})}
@@ -242,6 +251,7 @@ function renderContextWindowControl(
   input: Omit<TraitsRenderInput, "prompt" | "onPromptChange">,
 ): ReactNode {
   if (
+    input.contextWindowSelector === "native" ||
     (input.threadRef === undefined && input.draftId === undefined) ||
     !shouldRenderContextWindowControl(input)
   )

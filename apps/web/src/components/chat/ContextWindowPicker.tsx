@@ -172,7 +172,10 @@ function useContextWindowSelection(props: ContextWindowPickerProps): ContextWind
         return;
       }
       const nextDescriptors = withContextWindowValue(selected.descriptors, option.id);
-      const nextOptions = buildProviderOptionSelectionsFromDescriptors(nextDescriptors);
+      const nextOptions = buildProviderOptionSelectionsFromDescriptors(
+        nextDescriptors,
+        props.modelOptions,
+      );
       const instanceId = props.instanceId ?? defaultInstanceIdForDriver(props.provider);
       const model = props.model?.trim();
       if (!model) {

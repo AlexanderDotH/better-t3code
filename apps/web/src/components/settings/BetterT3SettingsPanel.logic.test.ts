@@ -208,6 +208,15 @@ describe("updateBetterT3FeatureFlag", () => {
 });
 
 describe("buildBetterT3SwitchSettingsPatch", () => {
+  it("changes the subagent display on this device without changing delegation settings", () => {
+    for (const enabled of [true, false]) {
+      expect(
+        buildBetterT3SwitchSettingsPatch("agent.nativeSubagentDisplay", enabled, "device"),
+      ).toEqual({
+        betterT3Device: { version: 1, flags: { "agent.nativeSubagentDisplay": enabled } },
+      });
+    }
+  });
   it("writes device registry flags and the existing Plan mode compatibility mirror together", () => {
     expect(buildBetterT3SwitchSettingsPatch("agent.planMode", true, "device")).toEqual({
       betterT3Device: { version: 1, flags: { "agent.planMode": true } },

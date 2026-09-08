@@ -24,6 +24,7 @@ import {
   type AssetResource,
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
+  type OrchestrationHistoryOrigin,
   type OrchestrationProposedPlanId,
   type ToolLifecycleItemType,
   type ThreadId,
@@ -53,6 +54,7 @@ export {
 } from "@t3tools/client-runtime/work-log/presentation";
 
 export interface WorkLogEntry {
+  historyOrigin?: OrchestrationHistoryOrigin;
   questionAnswer?: UserInputAttachmentAnswerPayload;
   id: string;
   createdAt: string;
@@ -146,6 +148,12 @@ export type TimelineEntry =
     }
   | {
       id: string;
+      kind: "turn-plan";
+      createdAt: string;
+      turnPlan: TurnPlanEntry;
+    }
+  | {
+      id: string;
       kind: "work";
       createdAt: string;
       entry: WorkLogEntry;
@@ -155,6 +163,7 @@ export interface TimelineEntriesProjection {
   readonly messages: ReadonlyArray<ChatMessage>;
   readonly proposedPlans: ReadonlyArray<ProposedPlan>;
   readonly workEntries: ReadonlyArray<WorkLogEntry>;
+  readonly turnPlans: ReadonlyArray<TurnPlanEntry>;
   readonly entries: TimelineEntry[];
 }
 
@@ -326,7 +335,9 @@ export function deriveActivePlanState(
   latestTurnId: TurnId | undefined,
 ): ActivePlanState | null {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
-  const allPlanActivities = ordered.filter((activity) => activity.kind === "turn.plan.updated");
+  const allPlanActivities = ordered.filter(
+    (activity) => activity.kind === "turn.plan.updated" && activity.historyOrigin === undefined,
+  );
   // Prefer plan from the current turn; fall back to the most recent plan from any turn
   // so that TodoWrite tasks persist across follow-up messages.
   const latest = Option.firstSomeOf([
@@ -349,12 +360,60 @@ export function deriveActivePlanState(
   return addPlanStepDurations(plan, matchingActivities.slice(latestClearIndex + 1));
 }
 
+export interface TurnPlanEntry {
+  id: string;
+  createdAt: string;
+  turnId: TurnId | null;
+  historyOrigin?: OrchestrationHistoryOrigin;
+  plan: ActivePlanState;
+}
+
+/** Keep each turn's latest task list where planning began, including read-only fork history. */
+export function deriveTurnPlans(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): TurnPlanEntry[] {
+  const byTurn = new Map<
+    string,
+    { activities: OrchestrationThreadActivity[]; entry: TurnPlanEntry }
+  >();
+  for (const activity of activities.toSorted(compareActivitiesByOrder)) {
+    if (activity.kind !== "turn.plan.updated") continue;
+    const plan = planStateFromActivity(activity);
+    const key = activity.turnId ?? "no-turn";
+    if (!plan) {
+      byTurn.delete(key);
+      continue;
+    }
+    const existing = byTurn.get(key);
+    if (existing) {
+      existing.entry.plan = plan;
+      existing.activities.push(activity);
+    } else {
+      byTurn.set(key, {
+        activities: [activity],
+        entry: {
+          id: `turn-plan:${key}`,
+          createdAt: activity.createdAt,
+          turnId: activity.turnId,
+          ...(activity.historyOrigin ? { historyOrigin: activity.historyOrigin } : {}),
+          plan,
+        },
+      });
+    }
+  }
+  return [...byTurn.values()].map(({ activities: planActivities, entry }) => ({
+    ...entry,
+    plan: addPlanStepDurations(entry.plan, planActivities),
+  }));
+}
+
 export function findLatestProposedPlan(
   proposedPlans: ReadonlyArray<ProposedPlan>,
   latestTurnId: TurnId | string | null | undefined,
 ): LatestProposedPlanState | null {
+  const nativeProposedPlans = proposedPlans.filter((plan) => plan.historyOrigin === undefined);
   if (latestTurnId) {
-    const matchingTurnPlan = [...proposedPlans]
+    const matchingTurnPlan = nativeProposedPlans
       .filter((proposedPlan) => proposedPlan.turnId === latestTurnId)
       .toSorted(
         (left, right) =>
@@ -366,7 +425,7 @@ export function findLatestProposedPlan(
     }
   }
 
-  const latestPlan = [...proposedPlans]
+  const latestPlan = nativeProposedPlans
     .toSorted(
       (left, right) =>
         left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id),
@@ -380,9 +439,19 @@ export function findLatestProposedPlan(
 }
 
 export function hasActionableProposedPlan(
-  proposedPlan: LatestProposedPlanState | Pick<ProposedPlan, "implementedAt"> | null,
+  proposedPlan:
+    | (Pick<ProposedPlan, "implementedAt" | "historyOrigin"> | LatestProposedPlanState)
+    | null,
 ): boolean {
-  return proposedPlan !== null && proposedPlan.implementedAt === null;
+  return (
+    proposedPlan !== null &&
+    proposedPlan.implementedAt === null &&
+    !("historyOrigin" in proposedPlan && proposedPlan.historyOrigin !== undefined)
+  );
+}
+
+export function workEntryIsProviderReasoning(entry: WorkLogEntry): boolean {
+  return entry.sourceActivityKind?.startsWith("reasoning.") === true;
 }
 
 /**
@@ -510,10 +579,12 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const changedFiles = extractChangedFiles(payload);
   const title = extractToolTitle(payload);
   const toolPresentation = extractToolActivityPresentation(payload);
+  const isReasoningActivity = activity.kind.startsWith("reasoning.");
   const isTaskActivity =
     activity.kind === "task.started" ||
     activity.kind === "task.progress" ||
-    activity.kind === "task.completed";
+    activity.kind === "task.completed" ||
+    isReasoningActivity;
   const taskSummary =
     isTaskActivity && typeof payload?.summary === "string" && payload.summary.length > 0
       ? payload.summary
@@ -526,22 +597,27 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       ? payload.detail
       : null;
   const taskLabel = taskSummary || taskDetailAsLabel;
-  const detail = isTaskActivity
-    ? !taskDetailAsLabel &&
-      payload &&
-      typeof payload.detail === "string" &&
-      payload.detail.length > 0
-      ? stripTrailingExitCode(payload.detail).output
+  const detail = isReasoningActivity
+    ? typeof payload?.text === "string" && payload.text.length > 0
+      ? payload.text
       : null
-    : extractToolDetail(payload, title ?? activity.summary);
+    : isTaskActivity
+      ? !taskDetailAsLabel &&
+        payload &&
+        typeof payload.detail === "string" &&
+        payload.detail.length > 0
+        ? stripTrailingExitCode(payload.detail).output
+        : null
+      : extractToolDetail(payload, title ?? activity.summary);
   const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
     turnId: activity.turnId,
+    ...(activity.historyOrigin ? { historyOrigin: activity.historyOrigin } : {}),
     label: taskLabel || activity.summary,
     tone:
-      activity.kind === "task.progress"
+      activity.kind === "task.progress" || isReasoningActivity
         ? "thinking"
         : activity.tone === "approval"
           ? "info"
@@ -1413,8 +1489,26 @@ function timelineEntryFromWork(workEntry: WorkLogEntry): TimelineEntry {
   };
 }
 
+function timelineEntryFromTurnPlan(turnPlan: TurnPlanEntry): TimelineEntry {
+  return { id: turnPlan.id, kind: "turn-plan", createdAt: turnPlan.createdAt, turnPlan };
+}
+
+function timelineEntryHistoryOrigin(entry: TimelineEntry): OrchestrationHistoryOrigin | undefined {
+  if (entry.kind === "message") return entry.message.historyOrigin;
+  if (entry.kind === "proposed-plan") return entry.proposedPlan.historyOrigin;
+  if (entry.kind === "turn-plan") return entry.turnPlan.historyOrigin;
+  return entry.entry.historyOrigin;
+}
+
 function compareTimelineEntriesByCreatedAt(left: TimelineEntry, right: TimelineEntry): number {
-  return left.createdAt.localeCompare(right.createdAt);
+  const timestampOrder = left.createdAt.localeCompare(right.createdAt);
+  if (timestampOrder !== 0) return timestampOrder;
+  const leftOrigin = timelineEntryHistoryOrigin(left);
+  const rightOrigin = timelineEntryHistoryOrigin(right);
+  if (leftOrigin && rightOrigin) return leftOrigin.ordinal - rightOrigin.ordinal;
+  if (leftOrigin) return -1;
+  if (rightOrigin) return 1;
+  return 0;
 }
 
 function timelineEntrySourceOrder(entry: TimelineEntry): number {
@@ -1423,8 +1517,10 @@ function timelineEntrySourceOrder(entry: TimelineEntry): number {
       return 0;
     case "proposed-plan":
       return 1;
-    case "work":
+    case "turn-plan":
       return 2;
+    case "work":
+      return 3;
   }
 }
 
@@ -1605,28 +1701,34 @@ function replaceStreamingTimelineMessages(
   });
 }
 
+const EMPTY_TURN_PLANS: ReadonlyArray<TurnPlanEntry> = [];
+
 /** Reuse ordered entries across immutable stream updates. Other changes keep the full sort. */
 export function deriveTimelineEntriesWithState(
   messages: ReadonlyArray<ChatMessage>,
   proposedPlans: ReadonlyArray<ProposedPlan>,
   workEntries: ReadonlyArray<WorkLogEntry>,
   previous: TimelineEntriesProjection | null = null,
+  turnPlans: ReadonlyArray<TurnPlanEntry> = EMPTY_TURN_PLANS,
 ): TimelineEntriesProjection {
   if (
     previous !== null &&
     previous.proposedPlans.length === proposedPlans.length &&
     previous.workEntries.length === workEntries.length &&
+    previous.turnPlans.length === turnPlans.length &&
     hasExactArrayPrefix(previous.proposedPlans, proposedPlans) &&
-    hasExactArrayPrefix(previous.workEntries, workEntries)
+    hasExactArrayPrefix(previous.workEntries, workEntries) &&
+    hasExactArrayPrefix(previous.turnPlans, turnPlans)
   ) {
     const entries = replaceStreamingTimelineMessages(messages, previous);
-    if (entries !== null) return { messages, proposedPlans, workEntries, entries };
+    if (entries !== null) return { messages, proposedPlans, workEntries, turnPlans, entries };
   }
   const canAppend =
     previous !== null &&
     hasExactArrayPrefix(previous.messages, messages) &&
     hasExactArrayPrefix(previous.proposedPlans, proposedPlans) &&
-    hasExactArrayPrefix(previous.workEntries, workEntries);
+    hasExactArrayPrefix(previous.workEntries, workEntries) &&
+    hasExactArrayPrefix(previous.turnPlans, turnPlans);
 
   if (canAppend) {
     const messageRows = messages.slice(previous.messages.length).map(timelineEntryFromMessage);
@@ -1634,13 +1736,15 @@ export function deriveTimelineEntriesWithState(
       .slice(previous.proposedPlans.length)
       .map(timelineEntryFromProposedPlan);
     const workRows = workEntries.slice(previous.workEntries.length).map(timelineEntryFromWork);
-    const suffix = [...messageRows, ...proposedPlanRows, ...workRows].toSorted(
+    const turnPlanRows = turnPlans.slice(previous.turnPlans.length).map(timelineEntryFromTurnPlan);
+    const suffix = [...messageRows, ...proposedPlanRows, ...turnPlanRows, ...workRows].toSorted(
       compareTimelineEntriesByCreatedAt,
     );
     return {
       messages,
       proposedPlans,
       workEntries,
+      turnPlans,
       entries: mergeTimelineEntrySuffix(previous.entries, suffix),
     };
   }
@@ -1648,11 +1752,13 @@ export function deriveTimelineEntriesWithState(
   const messageRows = messages.map(timelineEntryFromMessage);
   const proposedPlanRows = proposedPlans.map(timelineEntryFromProposedPlan);
   const workRows = workEntries.map(timelineEntryFromWork);
+  const turnPlanRows = turnPlans.map(timelineEntryFromTurnPlan);
   return {
     messages,
     proposedPlans,
     workEntries,
-    entries: [...messageRows, ...proposedPlanRows, ...workRows].toSorted(
+    turnPlans,
+    entries: [...messageRows, ...proposedPlanRows, ...turnPlanRows, ...workRows].toSorted(
       compareTimelineEntriesByCreatedAt,
     ),
   };
@@ -1662,8 +1768,10 @@ export function deriveTimelineEntries(
   messages: ReadonlyArray<ChatMessage>,
   proposedPlans: ReadonlyArray<ProposedPlan>,
   workEntries: ReadonlyArray<WorkLogEntry>,
+  turnPlans: ReadonlyArray<TurnPlanEntry> = EMPTY_TURN_PLANS,
 ): TimelineEntry[] {
-  return deriveTimelineEntriesWithState(messages, proposedPlans, workEntries).entries;
+  return deriveTimelineEntriesWithState(messages, proposedPlans, workEntries, null, turnPlans)
+    .entries;
 }
 
 export function inferCheckpointTurnCountByTurnId(

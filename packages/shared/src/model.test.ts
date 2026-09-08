@@ -140,6 +140,31 @@ describe("descriptor helpers", () => {
     ).toEqual([{ id: "fastMode", value: true }]);
   });
 
+  it("preserves reserved Auto reasoning when rebuilding provider options without retaining unknown options", () => {
+    const selections = [
+      { id: "t3AutoReasoning", value: true },
+      { id: "removedOption", value: "old" },
+    ];
+    const descriptors = getProviderOptionDescriptors({ caps: codexCaps, selections });
+
+    expect(buildProviderOptionSelectionsFromDescriptors(descriptors, selections)).toEqual([
+      { id: "reasoningEffort", value: "high" },
+      { id: "t3AutoReasoning", value: true },
+    ]);
+    expect(buildExplicitProviderOptionSelectionsFromDescriptors(descriptors, selections)).toEqual([
+      { id: "reasoningEffort", value: "high" },
+      { id: "t3AutoReasoning", value: true },
+    ]);
+    expect(buildExplicitProviderOptionSelectionsFromDescriptors([], selections)).toEqual([
+      { id: "t3AutoReasoning", value: true },
+    ]);
+    expect(
+      buildExplicitProviderOptionSelectionsFromDescriptors(descriptors, [
+        { id: "t3AutoReasoning", value: "true" },
+      ]),
+    ).toBeUndefined();
+  });
+
   it("stores option selection arrays in model selections", () => {
     expect(
       createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [

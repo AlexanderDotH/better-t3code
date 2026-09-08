@@ -47,6 +47,7 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveActiveHarnessSession,
   resolveBackgroundDraftWorkspaceOptions,
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
@@ -70,6 +71,27 @@ import {
   shouldWriteThreadErrorToCurrentServerThread,
   toolGroupConsumesUpwardNavigation,
 } from "./ChatView.logic";
+
+describe("external harness activity", () => {
+  it("blocks active sessions through loading and releases a cleared or inactive session", () => {
+    const sync = {
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerLabel: "Codex",
+      activity: "active" as const,
+      sourceUpdatedAt: null,
+      lastSyncedAt: "2026-09-08T00:00:00.000Z",
+    };
+    const shell = { harnessSync: sync };
+    expect(resolveActiveHarnessSession(null, shell)).toBe(sync);
+    expect(resolveActiveHarnessSession({}, shell)).toBe(sync);
+    expect(resolveActiveHarnessSession(shell, null)).toBe(sync);
+    expect(resolveActiveHarnessSession({ harnessSync: null }, shell)).toBeNull();
+    expect(
+      resolveActiveHarnessSession({ harnessSync: { ...sync, activity: "idle" } }, shell),
+    ).toBeNull();
+    expect(resolveActiveHarnessSession(null, null)).toBeNull();
+  });
+});
 
 describe("agent browser close confirmation", () => {
   const surfaces = [

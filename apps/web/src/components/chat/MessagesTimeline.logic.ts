@@ -23,9 +23,11 @@ import {
   workEntryDisplayIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
   workEntryIndicatesToolNeutralStatus,
+  workEntryIsProviderReasoning,
   workLogEntryIsToolLike,
   type TimelineEntry,
   type WorkLogEntry,
+  type TurnPlanEntry,
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import {
@@ -386,6 +388,12 @@ export type MessagesTimelineRow =
       proposedPlan: ProposedPlan;
     }
   | {
+      kind: "turn-plan";
+      id: string;
+      createdAt: string;
+      turnPlan: TurnPlanEntry;
+    }
+  | {
       kind: "working";
       id: string;
       createdAt: string | null;
@@ -530,6 +538,7 @@ function timelineEntryTurnId(entry: TimelineEntry): TurnId | null {
   if (entry.kind === "proposed-plan") {
     return entry.proposedPlan.turnId;
   }
+  if (entry.kind === "turn-plan") return entry.turnPlan.turnId;
   return entry.kind === "work" ? (entry.entry.turnId ?? null) : null;
 }
 
@@ -851,6 +860,8 @@ function buildRevertTurnCountByUserMessageId(input: {
 
 export function deriveMessagesTimelineRows(input: {
   chatVisualMode?: ChatVisualMode;
+  classicBubbleOnly?: boolean;
+  showReasoning?: boolean;
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestTurn?: TimelineLatestTurn | null;
   runningTurnId?: TurnId | null;
@@ -930,6 +941,7 @@ export function deriveMessagesTimelineRows(input: {
       !entryBelongsToActiveTurn(entry, index) ||
       entry.kind !== "work" ||
       entry.entry.agentSpawn !== undefined ||
+      workEntryIsProviderReasoning(entry.entry) ||
       entry.entry.sourceActivityKind === "context-compaction" ||
       entry.entry.tone === "error"
     ) {
@@ -1054,6 +1066,18 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     if (timelineEntry.kind === "work") {
+      if (workEntryIsProviderReasoning(timelineEntry.entry)) {
+        if (input.showReasoning && timelineEntry.entry.detail?.trim()) {
+          nextRows.push({
+            kind: "work",
+            id: timelineEntry.id,
+            createdAt: timelineEntry.createdAt,
+            groupedEntries: [timelineEntry.entry],
+            isExpandedToolGroup: false,
+          });
+        }
+        continue;
+      }
       if (timelineEntry.entry.agentSpawn !== undefined || timelineEntry.entry.tone === "error") {
         nextRows.push({
           kind: "work",
@@ -1072,6 +1096,7 @@ export function deriveMessagesTimelineRows(input: {
           !nextEntry ||
           nextEntry.kind !== "work" ||
           nextEntry.entry.agentSpawn !== undefined ||
+          workEntryIsProviderReasoning(nextEntry.entry) ||
           nextEntry.entry.sourceActivityKind === "context-compaction" ||
           nextEntry.entry.tone === "error" ||
           activeWorkEntryIds.has(nextEntry.id) ||
@@ -1094,9 +1119,15 @@ export function deriveMessagesTimelineRows(input: {
         const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
         const latestEntry = visibleGroupedEntries.at(-1)!;
         if (expanded && visibleGroupedEntries.length > 1) {
-          nextRows.push(
-            expandedWorkGroupRow(groupId, timelineEntry.createdAt, visibleGroupedEntries),
-          );
+          for (const entry of visibleGroupedEntries) {
+            nextRows.push({
+              kind: "work",
+              id: entry.id,
+              createdAt: entry.createdAt,
+              groupedEntries: [entry],
+              isExpandedToolGroup: false,
+            });
+          }
         } else {
           nextRows.push({
             kind: "work",
@@ -1223,6 +1254,13 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    if (timelineEntry.kind === "turn-plan") {
+      if (input.chatVisualMode !== "classic" || input.classicBubbleOnly !== true) {
+        nextRows.push(timelineEntry);
+      }
+      continue;
+    }
+
     if (timelineEntry.kind === "proposed-plan") {
       nextRows.push({
         kind: "proposed-plan",
@@ -1273,7 +1311,11 @@ export function deriveMessagesTimelineRows(input: {
   if (input.isWorking && activeTurnHeaderIndex === input.timelineEntries.length) {
     appendWorkingRow();
   }
-  if (input.isWorking && (!hasActivityRow || latestToolFailed)) {
+  if (
+    input.chatVisualMode !== "classic" &&
+    input.isWorking &&
+    (!hasActivityRow || latestToolFailed)
+  ) {
     nextRows.push({
       kind: "thinking",
       id: LIVE_ACTIVITY_ROW_ID,
@@ -1281,7 +1323,9 @@ export function deriveMessagesTimelineRows(input: {
     });
   }
 
-  return attachTrailingToolGroupsToAssistant(nextRows);
+  return input.chatVisualMode === "classic"
+    ? nextRows
+    : attachTrailingToolGroupsToAssistant(nextRows);
 }
 
 type MessagesTimelineRowsInput = Parameters<typeof deriveMessagesTimelineRows>[0];
@@ -1409,6 +1453,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
+
+    case "turn-plan":
+      return Equal.equals(a.turnPlan, (b as typeof a).turnPlan);
 
     case "work": {
       const bw = b as typeof a;

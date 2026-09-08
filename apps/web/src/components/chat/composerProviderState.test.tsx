@@ -7,11 +7,14 @@ import {
 } from "@t3tools/contracts";
 import { getProviderOptionDescriptors } from "@t3tools/shared/model";
 import { getProviderModelCapabilities } from "../../providerModels";
+import { DraftId } from "../../composerDraftStore";
 import {
   getComposerPromptInjectionState,
   getComposerProviderState,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
+  renderProviderContextWindowPicker,
+  renderProviderContextWindowMenuContent,
   withImplicitFastModeDefault,
 } from "./composerProviderState";
 
@@ -154,6 +157,45 @@ describe("getComposerProviderState", () => {
       promptEffort: null,
       modelOptionsForDispatch: selections(["thinking", false]),
     });
+  });
+
+  it("dispatches reserved Auto reasoning alongside explicit provider choices", () => {
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("reasoningEffort", [{ id: "high", label: "High", isDefault: true }]),
+        selectDescriptor("contextWindow", [
+          { id: "200k", label: "200k", isDefault: true },
+          { id: "1m", label: "1M" },
+        ]),
+      ]),
+      modelOptions: selections(["t3AutoReasoning", true], ["contextWindow", "1m"]),
+      planModeEnabled: true,
+    });
+
+    expect(state.modelOptionsForDispatch).toEqual(
+      selections(["reasoningEffort", "high"], ["contextWindow", "1m"], ["t3AutoReasoning", true]),
+    );
+  });
+
+  it.each([true, false])("adds only a reasoning fallback when Auto is %s", (enabled) => {
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("reasoningEffort", [{ id: "high", label: "High", isDefault: true }]),
+        selectDescriptor("contextWindow", [{ id: "200k", label: "200k", isDefault: true }]),
+      ]),
+      modelOptions: selections(["t3AutoReasoning", enabled]),
+      planModeEnabled: true,
+    });
+
+    expect(state.modelOptionsForDispatch).toEqual(
+      enabled
+        ? selections(["reasoningEffort", "high"], ["t3AutoReasoning", true])
+        : selections(["t3AutoReasoning", false]),
+    );
   });
 
   it("derives promptEffort from the first select descriptor and preserves all others for dispatch", () => {
@@ -477,6 +519,7 @@ describe("provider traits render guards", () => {
       selectDescriptor("effort", [{ id: "high", label: "High", isDefault: true }]),
     ]);
     const args = {
+      contextWindowSelector: "better-t3" as const,
       provider: PROVIDER,
       model: MODEL,
       models,
@@ -488,5 +531,49 @@ describe("provider traits render guards", () => {
 
     expect(renderProviderTraitsPicker(args)).toBeNull();
     expect(renderProviderTraitsMenuContent(args)).toBeNull();
+    expect(renderProviderContextWindowPicker(args)).toBeNull();
+    expect(renderProviderContextWindowMenuContent(args)).toBeNull();
   });
+
+  it.each(["native", "better-t3"] as const)(
+    "shows only the %s context selector in the composer and overflow menu",
+    (contextWindowSelector) => {
+      const args = {
+        contextWindowSelector,
+        provider: PROVIDER,
+        draftId: DraftId.make("context-selector-test"),
+        model: MODEL,
+        models: modelWith([
+          selectDescriptor("contextWindow", [
+            { id: "200k", label: "200K", isDefault: true },
+            { id: "1m", label: "1M" },
+          ]),
+        ]),
+        modelOptions: selections(["contextWindow", "1m"]),
+        prompt: "",
+        onPromptChange: () => {},
+        planModeEnabled: true,
+      };
+
+      for (const size of ["sm", "xs"] as const) {
+        const input = { ...args, size };
+        expect(renderProviderTraitsPicker(input) !== null).toBe(contextWindowSelector === "native");
+        expect(renderProviderTraitsMenuContent(input) !== null).toBe(
+          contextWindowSelector === "native",
+        );
+        expect(renderProviderContextWindowPicker(input) !== null).toBe(
+          contextWindowSelector === "better-t3",
+        );
+        expect(renderProviderContextWindowMenuContent(input) !== null).toBe(
+          contextWindowSelector === "better-t3",
+        );
+      }
+
+      const claudeInput = { ...args, provider: ProviderDriverKind.make("claudeAgent") };
+      expect(renderProviderTraitsPicker(claudeInput)).not.toBeNull();
+      expect(renderProviderTraitsMenuContent(claudeInput)).not.toBeNull();
+      expect(renderProviderContextWindowPicker(claudeInput)).toBeNull();
+      expect(renderProviderContextWindowMenuContent(claudeInput)).toBeNull();
+    },
+  );
 });

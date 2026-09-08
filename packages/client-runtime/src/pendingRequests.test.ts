@@ -1,4 +1,4 @@
-import { EventId, TurnId, type OrchestrationThreadActivity } from "@t3tools/contracts";
+import { EventId, ThreadId, TurnId, type OrchestrationThreadActivity } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { derivePendingRequests } from "./pendingRequests.ts";
 
@@ -25,6 +25,41 @@ function makeActivity(overrides: {
     ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
   };
 }
+
+describe("frozen fork requests", () => {
+  it.each(["approval", "user-input"])("ignores historical %s requests and resolutions", (kind) => {
+    const request = makeActivity({
+      kind: `${kind}.requested`,
+      payload: {
+        requestId: "shared-request-id",
+        requestKind: "command",
+        questions: [{ id: "q", header: "Question", question: "Continue?", options: [] }],
+      },
+    });
+    const historyOrigin = {
+      sourceThreadId: ThreadId.make("source-thread"),
+      sourceId: request.id,
+      ordinal: 0,
+    };
+    expect(derivePendingRequests([{ ...request, historyOrigin }])).toEqual({
+      approvals: [],
+      userInputs: [],
+    });
+
+    const historicalResolution = {
+      ...makeActivity({ kind: `${kind}.resolved`, payload: { requestId: "shared-request-id" } }),
+      historyOrigin,
+    };
+    for (const activities of [
+      [historicalResolution, request],
+      [request, historicalResolution],
+    ]) {
+      const result = derivePendingRequests(activities);
+      const requests = kind === "approval" ? result.approvals : result.userInputs;
+      expect(requests.map((entry) => entry.requestId)).toEqual(["shared-request-id"]);
+    }
+  });
+});
 
 describe("pending approvals", () => {
   it.each([{}, { requestType: "unknown" }])(

@@ -10,6 +10,7 @@ import {
   type CavemanMode,
   type ChatVisualMode,
   type ClientSettingsPatch,
+  type ContextWindowSelector,
   type EnvironmentId,
   type KnowledgeGraphStatusV1,
   type ModelSelection,
@@ -58,6 +59,7 @@ export const WEB_BETTER_T3_PREPARED_CONTROL_IDS = [
   "agent.parallelPlanReviewer",
   "agent.cavemanMode",
   "chat.presentation",
+  "chat.contextWindowSelector",
   "chat.previewCount",
   "chat.sorting",
   "chat.settling",
@@ -73,6 +75,7 @@ type WebBetterT3PreparedControlId = (typeof WEB_BETTER_T3_PREPARED_CONTROL_IDS)[
 
 type BetterT3ScalarControlUpdate =
   | { readonly id: "agent.cavemanMode"; readonly value: CavemanMode }
+  | { readonly id: "chat.contextWindowSelector"; readonly value: ContextWindowSelector }
   | { readonly id: "chat.sorting.projects"; readonly value: SidebarProjectSortOrder }
   | { readonly id: "chat.sorting.threads"; readonly value: SidebarThreadSortOrder }
   | { readonly id: "chat.settling.days"; readonly value: number | null }
@@ -100,6 +103,8 @@ export function buildBetterT3ScalarControlPatch(
   switch (update.id) {
     case "agent.cavemanMode":
       return { agentEnhancement: { cavemanMode: update.value } };
+    case "chat.contextWindowSelector":
+      return { contextWindowSelector: update.value };
     case "chat.sorting.projects":
       return { sidebarProjectSortOrder: update.value };
     case "chat.sorting.threads":
@@ -777,6 +782,22 @@ export function useBetterT3PreparedControls(input: {
         ariaLabel={input.translate("betterT3.chat.presentation.label")}
         disabled={scalarControlDisabled("chat.presentation")}
         onChange={setChatVisualMode}
+      />
+    ),
+    "chat.contextWindowSelector": (
+      <BetterT3SelectControl<ContextWindowSelector>
+        value={input.settings.contextWindowSelector}
+        options={(["native", "better-t3"] as const).map((value) => ({
+          value,
+          label: input.translate(`settings.betterT3.value.${value}`),
+        }))}
+        ariaLabel={input.translate("betterT3.chat.contextWindowSelector.label")}
+        disabled={scalarControlDisabled("chat.contextWindowSelector")}
+        onChange={(value) =>
+          input.updateSettings(
+            buildBetterT3ScalarControlPatch({ id: "chat.contextWindowSelector", value }),
+          )
+        }
       />
     ),
     "chat.previewCount": (

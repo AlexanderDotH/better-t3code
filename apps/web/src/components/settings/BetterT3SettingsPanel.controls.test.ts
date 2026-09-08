@@ -229,6 +229,11 @@ describe("Knowledge Graph owner routing", () => {
 
 describe("buildBetterT3ScalarControlPatch", () => {
   it("writes the exact compatibility field for scalar controls", () => {
+    for (const value of ["native", "better-t3"] as const) {
+      expect(buildBetterT3ScalarControlPatch({ id: "chat.contextWindowSelector", value })).toEqual({
+        contextWindowSelector: value,
+      });
+    }
     expect(buildBetterT3ScalarControlPatch({ id: "agent.cavemanMode", value: "full" })).toEqual({
       agentEnhancement: { cavemanMode: "full" },
     });

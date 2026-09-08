@@ -390,18 +390,26 @@ export function getProviderOptionCurrentLabel(
 
 export function buildProviderOptionSelectionsFromDescriptors(
   descriptors: ReadonlyArray<ProviderOptionDescriptor> | null | undefined,
+  selections?: ReadonlyArray<ProviderOptionSelection> | null,
 ): Array<ProviderOptionSelection> | undefined {
-  if (!descriptors || descriptors.length === 0) {
-    return undefined;
-  }
-
   const nextSelections: Array<ProviderOptionSelection> = [];
 
-  for (const descriptor of descriptors) {
+  for (const descriptor of descriptors ?? []) {
     const value = getProviderOptionCurrentValue(descriptor);
     if (typeof value === "string" || typeof value === "boolean") {
       nextSelections.push({ id: descriptor.id, value });
     }
+  }
+
+  // Auto belongs to T3, so provider capability descriptors cannot restore it.
+  const autoReasoning = selections?.find(
+    (selection) => selection.id === T3_AUTO_REASONING_OPTION_ID,
+  );
+  if (
+    typeof autoReasoning?.value === "boolean" &&
+    !nextSelections.some((selection) => selection.id === T3_AUTO_REASONING_OPTION_ID)
+  ) {
+    nextSelections.push(cloneSelection(autoReasoning));
   }
 
   return nextSelections.length > 0 ? nextSelections : undefined;
@@ -415,7 +423,11 @@ export function buildExplicitProviderOptionSelectionsFromDescriptors(
     return undefined;
   }
   const explicitIds = new Set(selections.map((selection) => selection.id));
-  const normalized = buildProviderOptionSelectionsFromDescriptors(descriptors)?.filter(
+  if (getRawSelectionValueById(selections, T3_AUTO_REASONING_OPTION_ID) === true) {
+    // Auto needs a concrete fallback before the server can evaluate the prompt.
+    explicitIds.add(CODEX_REASONING_EFFORT_OPTION_ID);
+  }
+  const normalized = buildProviderOptionSelectionsFromDescriptors(descriptors, selections)?.filter(
     (selection) => explicitIds.has(selection.id),
   );
   return normalized && normalized.length > 0 ? normalized : undefined;

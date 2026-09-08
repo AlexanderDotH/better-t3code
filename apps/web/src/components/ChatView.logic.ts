@@ -65,6 +65,14 @@ export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+export function resolveActiveHarnessSession(
+  thread: Pick<Thread, "harnessSync"> | null | undefined,
+  shell: Pick<ThreadShell, "harnessSync"> | null | undefined,
+) {
+  const sync = thread?.harnessSync === undefined ? shell?.harnessSync : thread.harnessSync;
+  return sync?.activity === "active" ? sync : null;
+}
+
 export function agentControlledBrowserCloseConfirmation(
   surfaces: readonly RightPanelSurface[],
   desktopByTabId: Readonly<Record<string, Pick<DesktopPreviewOverlay, "controller"> | undefined>>,

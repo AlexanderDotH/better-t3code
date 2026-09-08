@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderDriverKind, type ProviderOptionDescriptor } from "@t3tools/contracts";
-import { buildTraitsTriggerDisplay, buildUnavailableModelOptionDescriptors } from "./TraitsPicker";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ProviderOptionDescriptor,
+} from "@t3tools/contracts";
+import { buildProviderOptionSelectionsFromDescriptors } from "@t3tools/shared/model";
+import {
+  applyReasoningChoice,
+  buildTraitsTriggerDisplay,
+  buildUnavailableModelOptionDescriptors,
+  getTraitsSectionVisibility,
+  shouldOfferAutoReasoning,
+} from "./TraitsPicker";
 
 function selectDescriptor(
   id: string,
@@ -61,6 +72,80 @@ function display(descriptors: ReadonlyArray<ProviderOptionDescriptor>) {
 }
 
 describe("buildTraitsTriggerDisplay", () => {
+  it("offers Auto only for supported Codex reasoning controls and shows the resolved effort", () => {
+    expect(shouldOfferAutoReasoning(CODEX, EFFORT)).toBe(true);
+    expect(shouldOfferAutoReasoning(ProviderDriverKind.make("claudeAgent"), EFFORT)).toBe(false);
+    expect(shouldOfferAutoReasoning(CODEX, CONTEXT_WINDOW)).toBe(false);
+    expect(shouldOfferAutoReasoning(CODEX, { ...EFFORT, options: [] })).toBe(false);
+    expect(
+      buildTraitsTriggerDisplay({
+        provider: CODEX,
+        descriptors: [EFFORT, serviceTierDescriptor("priority")],
+        primarySelectDescriptorId: "reasoningEffort",
+        ultrathinkPromptControlled: false,
+        autoReasoningEnabled: true,
+        autoReasoningEffort: "max",
+      }),
+    ).toEqual({ label: "Auto · Max", showFastModeIcon: true });
+  });
+
+  it("retains other traits when enabling Auto and removes Auto when choosing manual reasoning", () => {
+    const selection = {
+      instanceId: ProviderInstanceId.make("codex-custom"),
+      model: "test-model",
+      options: [{ id: "contextWindow", value: "1m" }],
+    };
+    const autoSelection = applyReasoningChoice(selection, "t3AutoReasoning");
+    expect(autoSelection.options).toEqual([
+      { id: "contextWindow", value: "1m" },
+      { id: "t3AutoReasoning", value: true },
+    ]);
+    expect(applyReasoningChoice(autoSelection, "max")).toEqual({
+      ...selection,
+      options: [
+        { id: "contextWindow", value: "1m" },
+        { id: "reasoningEffort", value: "max" },
+      ],
+    });
+  });
+
+  it("hides only the native context control while retaining its value for other trait edits", () => {
+    for (const hideContextWindow of [true, false]) {
+      const traits = getTraitsSectionVisibility({
+        provider: CODEX,
+        models: [
+          {
+            slug: "test-model",
+            name: "Test model",
+            isCustom: false,
+            capabilities: { optionDescriptors: [EFFORT, CONTEXT_WINDOW] },
+          },
+        ],
+        model: "test-model",
+        prompt: "",
+        modelOptions: [{ id: "contextWindow", value: "1m" }],
+        planModeEnabled: true,
+        hideContextWindow,
+      });
+
+      expect(display(traits.visibleDescriptors).label).toBe(
+        hideContextWindow ? "High" : "High · 1M",
+      );
+      expect(traits.selectDescriptors.map(({ id }) => id)).toEqual(
+        hideContextWindow ? ["reasoningEffort"] : ["reasoningEffort", "contextWindow"],
+      );
+      const updated = traits.descriptors.map((descriptor) =>
+        descriptor.id === "reasoningEffort" && descriptor.type === "select"
+          ? { ...descriptor, currentValue: "max" }
+          : descriptor,
+      );
+      expect(buildProviderOptionSelectionsFromDescriptors(updated)).toEqual([
+        { id: "reasoningEffort", value: "max" },
+        { id: "contextWindow", value: "1m" },
+      ]);
+    }
+  });
+
   it("omits fast mode from the label entirely when it is off", () => {
     expect(display([EFFORT, fastModeDescriptor(false), CONTEXT_WINDOW])).toEqual({
       label: "High · 1M",

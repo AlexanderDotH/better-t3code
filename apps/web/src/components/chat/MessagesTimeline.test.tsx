@@ -1,5 +1,6 @@
 import {
   ApprovalRequestId,
+  DEFAULT_CLIENT_SETTINGS,
   CheckpointRef,
   EnvironmentId,
   MessageId,
@@ -322,6 +323,8 @@ it("switches visual grouping without remounting the existing user message", asyn
       .findByProps({ "data-timeline-row-kind": "work-toggle" })
       .findByType("button");
     await act(() => toggle.props.onClick());
+    expect(renderer!.root.findAllByProps({ "data-timeline-row-kind": "work" })).toHaveLength(3);
+    expect(renderer!.root.findAllByProps({ "data-testid": "legend-list" })).toHaveLength(1);
     expect(
       renderer!.root.findByProps({ "data-timeline-row-kind": "work-toggle" }).findByType("button")
         .props["aria-expanded"],
@@ -342,8 +345,128 @@ it("switches visual grouping without remounting the existing user message", asyn
         .flatMap((node) => node.children.filter((child) => typeof child === "string"))
         .join(""),
     ).not.toContain("Show fewer");
+    for (const mode of ["current", "classic", "current"] as const) {
+      visualPreference.mode = mode;
+      await act(() => {
+        renderer!.update(
+          <MessagesTimeline
+            {...props}
+            timelineEntries={[timelineEntries[0]!]}
+            isWorking
+            activeTurnStartedAt={MESSAGE_CREATED_AT}
+            timestampFormat={mode === "classic" ? "12-hour" : "24-hour"}
+          />,
+        );
+      });
+      expect(renderer!.root.findByProps({ "data-message-role": "user" })).toBe(user);
+      expect(renderer!.root.findAllByProps({ "data-timeline-row-kind": "working" })).toHaveLength(
+        1,
+      );
+      expect(renderer!.root.findAllByProps({ "data-timeline-row-kind": "thinking" })).toHaveLength(
+        mode === "classic" ? 0 : 1,
+      );
+    }
   } finally {
     await act(() => renderer?.unmount());
+    visualPreference.mode = "current";
+  }
+});
+
+it("updates reasoning and plan-bubble preferences while keeping audio playable in both message roles", async () => {
+  const { __setClientSettingsForTests, getClientSettings } =
+    await import("../../hooks/useSettings");
+  const originalSettings = getClientSettings();
+  const settings = {
+    ...DEFAULT_CLIENT_SETTINGS,
+    showReasoning: true,
+    betterT3Device: {
+      ...DEFAULT_CLIENT_SETTINGS.betterT3Device,
+      flags: { "chat.classicBubbleOnly": true },
+    },
+  };
+  __setClientSettingsForTests(settings);
+  visualPreference.mode = "classic";
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("requestAnimationFrame", () => 0);
+  vi.stubGlobal("cancelAnimationFrame", () => {});
+  const audio = {
+    type: "audio" as const,
+    id: "audio-1",
+    name: "voice.wav",
+    mimeType: "audio/wav",
+    sizeBytes: 12,
+    previewUrl: "data:audio/wav;base64,UklGRg==",
+  };
+  const user = buildUserTimelineEntry("A voice message");
+  const assistant = { ...buildAssistantTimelineEntry(""), id: "assistant-audio-entry" };
+  const plan = {
+    id: "turn-plan:historical",
+    createdAt: MESSAGE_CREATED_AT,
+    turnId: TurnId.make("historical"),
+    plan: {
+      createdAt: MESSAGE_CREATED_AT,
+      turnId: TurnId.make("historical"),
+      steps: [{ step: "Historical task", status: "completed" as const }],
+    },
+  };
+  const timelineEntries = [
+    { ...user, message: { ...user.message, attachments: [audio] } },
+    {
+      kind: "work" as const,
+      id: "reasoning",
+      createdAt: MESSAGE_CREATED_AT,
+      entry: {
+        id: "reasoning",
+        createdAt: MESSAGE_CREATED_AT,
+        tone: "thinking" as const,
+        label: "Reasoning",
+        sourceActivityKind: "reasoning.completed",
+        detail: "Visible provider explanation",
+      },
+    },
+    { kind: "turn-plan" as const, id: plan.id, createdAt: plan.createdAt, turnPlan: plan },
+    {
+      ...assistant,
+      message: {
+        ...assistant.message,
+        attachments: [{ ...audio, id: "audio-2", name: "reply.wav" }],
+      },
+    },
+  ];
+  let renderer: ReactTestRenderer | undefined;
+  try {
+    await act(() => {
+      renderer = create(<MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} />);
+    });
+    expect(renderer!.root.findAllByType("audio").map((node) => node.props["aria-label"])).toEqual([
+      "voice.wav",
+      "reply.wav",
+    ]);
+    const reasoning = renderer!.root.findByProps({ "data-reasoning-output": "true" });
+    expect(reasoning.findByType("button").props["aria-expanded"]).toBe(true);
+    await act(() => reasoning.findByType("button").props.onClick());
+    expect(reasoning.findByType("button").props["aria-expanded"]).toBe(false);
+    expect(renderer!.root.findAllByProps({ "data-turn-plan": "true" })).toHaveLength(0);
+    await act(() => {
+      __setClientSettingsForTests({
+        ...settings,
+        showReasoning: false,
+        betterT3Device: {
+          ...settings.betterT3Device,
+          flags: { ...settings.betterT3Device.flags, "chat.classicBubbleOnly": false },
+        },
+      });
+      renderer!.update(<MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} />);
+    });
+    expect(renderer!.root.findAllByProps({ "data-reasoning-output": "true" })).toHaveLength(0);
+    const planNode = renderer!.root.findByProps({ "data-turn-plan": "true" });
+    expect(planNode.findAllByType("li")).toHaveLength(0);
+    await act(() => planNode.findByType("button").props.onClick());
+    expect(planNode.findAllByType("li")).toHaveLength(1);
+    expect(renderer!.root.findAllByType("audio")).toHaveLength(2);
+  } finally {
+    await act(() => renderer?.unmount());
+    __setClientSettingsForTests(originalSettings);
     visualPreference.mode = "current";
   }
 });
@@ -1290,7 +1413,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain('aria-label="Copy link"');
+    expect(markup).toContain('aria-label="Copy to clipboard"');
     expect(markup).toContain('data-user-message-collapsed="true"');
     expect(markup).toContain('data-user-message-footer="true"');
   });

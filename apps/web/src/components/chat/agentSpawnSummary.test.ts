@@ -1,6 +1,39 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { RuntimeSubagent } from "@t3tools/client-runtime/state/subagentRuntime";
-import { deriveAgentSpawnSummary } from "./agentSpawnSummary";
+import type { WorkLogEntry } from "../../session-logic";
+import { deriveAgentSpawnSummary, selectAgentDisplayWorkLogEntries } from "./agentSpawnSummary";
+
+it("switches native launch summaries without losing work history or errors", () => {
+  const entries: WorkLogEntry[] = [
+    {
+      id: "spawn",
+      createdAt: "2026-09-08T00:00:00.000Z",
+      label: "Launched a subagent",
+      tone: "info",
+      agentSpawn: { workflowId: null, agentTaskIds: ["agent-1"] },
+    },
+    {
+      id: "work",
+      createdAt: "2026-09-08T00:00:01.000Z",
+      label: "Read a file",
+      tone: "tool",
+    },
+    {
+      id: "error",
+      createdAt: "2026-09-08T00:00:02.000Z",
+      label: "Tool failed",
+      tone: "error",
+    },
+  ];
+
+  expect(selectAgentDisplayWorkLogEntries(entries, true)).toBe(entries);
+  expect(selectAgentDisplayWorkLogEntries(entries, false)).toEqual(entries.slice(1));
+  expect(selectAgentDisplayWorkLogEntries(entries, true).map(({ id }) => id)).toEqual([
+    "spawn",
+    "work",
+    "error",
+  ]);
+});
 
 const batch = (status: RuntimeSubagent["status"]) => ({ kind: "subagent_batch" as const, status });
 const agent = (status: RuntimeSubagent["status"]) => ({ kind: "subagent" as const, status });

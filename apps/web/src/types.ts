@@ -1,4 +1,5 @@
 import type {
+  ChatAudioAttachment as ContractChatAudioAttachment,
   ChatFileAttachment as ContractChatFileAttachment,
   ChatImageAttachment as ContractChatImageAttachment,
   ChatUnknownAttachment as ContractChatUnknownAttachment,
@@ -40,6 +41,10 @@ export interface ChatImageAttachment extends ContractChatImageAttachment {
   readonly previewUrl?: string;
 }
 
+export interface ChatAudioAttachment extends ContractChatAudioAttachment {
+  readonly previewUrl?: string;
+}
+
 export interface ChatFileAttachment extends ContractChatFileAttachment {
   readonly previewUrl?: string;
   readonly downloadable?: boolean;
@@ -50,12 +55,20 @@ export interface ChatFileAttachment extends ContractChatFileAttachment {
 // older client.
 export type ChatUnknownAttachment = ContractChatUnknownAttachment;
 
-export type ChatAttachment = ChatImageAttachment | ChatFileAttachment | ChatUnknownAttachment;
+export type ChatAttachment =
+  | ChatImageAttachment
+  | ChatAudioAttachment
+  | ChatFileAttachment
+  | ChatUnknownAttachment;
 
 // The union has an open member (`type: string`), so a literal comparison does
 // not narrow. Use these guards wherever type-specific fields are read.
 export function isImageAttachment(attachment: ChatAttachment): attachment is ChatImageAttachment {
   return attachment.type === "image";
+}
+
+export function isAudioAttachment(attachment: ChatAttachment): attachment is ChatAudioAttachment {
+  return attachment.type === "audio";
 }
 
 export function isFileAttachment(attachment: ChatAttachment): attachment is ChatFileAttachment {

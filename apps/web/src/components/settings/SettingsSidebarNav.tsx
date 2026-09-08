@@ -19,6 +19,7 @@ import {
   KeyboardIcon,
   Link2Icon,
   PaletteIcon,
+  RocketIcon,
   SearchIcon,
   Settings2Icon,
   XIcon,
@@ -73,7 +74,7 @@ const T3ConnectSidebarAvatar = lazy(() =>
 const SETTINGS_SECTION_ICONS: Readonly<
   Record<SettingsPath, ComponentType<{ className?: string }>>
 > = {
-  "/settings/better-t3": Settings2Icon,
+  "/settings/better-t3": RocketIcon,
   "/settings/mcp": BlocksIcon,
   "/settings/skills": BlocksIcon,
   "/settings/import-chats": ArchiveIcon,

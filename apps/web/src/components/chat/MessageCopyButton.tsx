@@ -9,6 +9,7 @@ import {
   showAnchoredCopySuccessToast,
 } from "../ui/anchoredCopyToast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 
 export const MessageCopyButton = memo(function MessageCopyButton({
   text,
@@ -21,10 +22,12 @@ export const MessageCopyButton = memo(function MessageCopyButton({
   variant?: "outline" | "ghost";
   className?: string;
 }) {
+  const translate = useInterfaceTranslator().message;
   const ref = useRef<HTMLButtonElement>(null);
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>({
-    onCopy: () => showAnchoredCopySuccessToast(ref),
-    onError: (error: Error) => showAnchoredCopyErrorToast(ref, error),
+    onCopy: () => showAnchoredCopySuccessToast(ref, translate("chat.copy.copied")),
+    onError: (error: Error) =>
+      showAnchoredCopyErrorToast(ref, error, translate("chat.copy.failed")),
     timeout: ANCHORED_COPY_TOAST_TIMEOUT_MS,
   });
 
@@ -33,7 +36,7 @@ export const MessageCopyButton = memo(function MessageCopyButton({
       <TooltipTrigger
         render={
           <Button
-            aria-label="Copy link"
+            aria-label={translate("chat.composer.copyClipboard")}
             disabled={isCopied}
             onClick={() => copyToClipboard(text)}
             ref={ref}
@@ -47,7 +50,7 @@ export const MessageCopyButton = memo(function MessageCopyButton({
         {isCopied ? <CheckIcon className="size-3 text-primary" /> : <CopyIcon className="size-3" />}
       </TooltipTrigger>
       <TooltipPopup>
-        <p>Copy to clipboard</p>
+        <p>{translate("chat.composer.copyClipboard")}</p>
       </TooltipPopup>
     </Tooltip>
   );

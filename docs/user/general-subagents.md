@@ -10,8 +10,12 @@ execution remain on the project's environment, including when you connect remote
 delegation tools depend on the initiating provider; a provider that can run a worker does not
 necessarily offer tools to create more workers.
 
-Open **Agents** in the thread to inspect delegated work and its results. The main agent remains
-responsible for reviewing those results, integrating changes, and verifying the complete task.
+On web and desktop, choose your display in
+**Settings → Better T3 → Agents → Native T3 Code subagent display**.
+Turn it on to use the native **Agents** panel, or off to use Better T3's floating agent pills.
+Click a pill to inspect its transcript. This switch does not change delegation or agent history.
+
+The main agent remains responsible for reviewing those results, integrating changes, and verifying the complete task.
 A subagent that cannot proceed within its permissions reports the blocker to the main agent.
 
 Stopping the parent turn cancels its unfinished delegated work. Completed results remain in the

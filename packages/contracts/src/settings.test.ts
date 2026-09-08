@@ -770,6 +770,20 @@ describe("ClientSettings context window meter", () => {
   });
 });
 
+describe("ClientSettings context window selector", () => {
+  it("defaults to Better T3 and round-trips either selector without accepting invalid modes", () => {
+    expect(decodeClientSettings({}).contextWindowSelector).toBe("better-t3");
+    for (const contextWindowSelector of ["native", "better-t3"] as const) {
+      const patch = decodeClientSettingsPatch({ contextWindowSelector });
+      const encoded = encodeClientSettings(
+        decodeClientSettings({ ...DEFAULT_CLIENT_SETTINGS, ...patch }),
+      );
+      expect(decodeClientSettings(encoded).contextWindowSelector).toBe(contextWindowSelector);
+    }
+    expect(() => decodeClientSettingsPatch({ contextWindowSelector: "both" })).toThrow();
+  });
+});
+
 describe("ClientSettings composer collapse", () => {
   it("collapses on scroll by default and accepts opting out", () => {
     expect(decodeClientSettings({}).composerCollapseOnScroll).toBe(true);

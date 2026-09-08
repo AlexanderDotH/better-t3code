@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
 import { type PendingApproval } from "../../session-logic";
 import { cn } from "~/lib/utils";
 
@@ -13,22 +14,23 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
   pendingCount,
   className,
 }: ComposerPendingApprovalPanelProps) {
+  const translate = useInterfaceTranslator().message;
   const fallbackLabel =
     approval.requestKind === "mcp-elicitation"
-      ? "App access approval"
+      ? translate("chat.composer.approval.label.mcpElicitation")
       : approval.requestKind === "command"
-        ? "Command approval"
+        ? translate("chat.composer.approval.label.command")
         : approval.requestKind === "file-read"
-          ? "File read approval"
-          : "File change approval";
+          ? translate("chat.composer.approval.label.fileRead")
+          : translate("chat.composer.approval.label.fileChange");
   const detailAriaLabel =
     approval.requestKind === "mcp-elicitation"
-      ? "App access request"
+      ? translate("chat.composer.approval.detail.mcpElicitation")
       : approval.requestKind === "command"
-        ? "Command"
+        ? translate("chat.composer.approval.detail.command")
         : approval.requestKind === "file-read"
-          ? "File to read"
-          : "File change";
+          ? translate("chat.composer.approval.detail.fileRead")
+          : translate("chat.composer.approval.detail.fileChange");
 
   return (
     <span
