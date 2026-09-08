@@ -1191,6 +1191,8 @@ export interface ChatComposerHandle {
   openModelPicker: () => void;
   toggleModelPicker: () => void;
   isModelPickerOpen: () => boolean;
+  isVoiceRecordingActive: () => boolean;
+  dismissTransientUi: () => void;
   compactContext: () => void;
   readSnapshot: () => {
     value: string;
@@ -4813,6 +4815,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
       compactContext: compactThreadContext,
       isModelPickerOpen: () => isComposerModelPickerOpen,
+      isVoiceRecordingActive: () => voiceDictation.active,
+      dismissTransientUi: () => {
+        setIsComposerModelPickerOpen(false);
+        setIsStashMenuOpen(false);
+        setComposerHighlightedItemId(null);
+        setComposerTrigger(null);
+      },
       readSnapshot: () => {
         return readComposerSnapshot();
       },
@@ -4922,6 +4931,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       projectSelectionRequired,
       applyPromptReplacement,
       isComposerModelPickerOpen,
+      voiceDictation.active,
       openModelPicker,
       readComposerSnapshot,
       selectedModel,
