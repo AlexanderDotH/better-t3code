@@ -183,6 +183,22 @@ describe("attachmentUploadQueue", () => {
     vi.unstubAllGlobals();
   });
 
+  it("does not send an unsupported persisted draft attachment kind", () => {
+    const image = makeImage("future-attachment");
+    Object.defineProperty(image, "type", { value: "future-format" });
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        [image.id]: {
+          status: "ready",
+          environmentId: firstEnvironment,
+          attachmentId: "persisted-upload",
+        },
+      },
+    });
+
+    expect(getUploadedAttachments({ environmentId: firstEnvironment, images: [image] })).toBeNull();
+  });
+
   it("uploads images immediately and sends attachment references", async () => {
     const image = {
       ...makeImage("image-1"),
