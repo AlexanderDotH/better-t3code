@@ -14,6 +14,7 @@ import {
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
   setSidebarProjectScopeKey,
+  setSidebarOlderProjectsExpanded,
   setThreadChangedFilesExpanded,
   type UiState,
 } from "./uiStateStore";
@@ -22,6 +23,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
+    sidebarOlderProjectsExpanded: false,
     sidebarProjectScopeKey: null,
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
@@ -32,6 +34,15 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
 }
 
 describe("uiStateStore pure functions", () => {
+  it("retains older-project disclosure independently of the active scope", () => {
+    const initial = makeUiState({ sidebarProjectScopeKey: "selected-project" });
+    const opened = setSidebarOlderProjectsExpanded(initial, true);
+    expect(opened.sidebarProjectScopeKey).toBe("selected-project");
+    expect(parsePersistedState(opened).sidebarOlderProjectsExpanded).toBe(true);
+    expect(setSidebarOlderProjectsExpanded(opened, true)).toBe(opened);
+    expect(setSidebarOlderProjectsExpanded(opened, false).sidebarOlderProjectsExpanded).toBe(false);
+  });
+
   it("stores server timestamps without moving visit state backwards", () => {
     const threadId = ThreadId.make("thread-1");
     const initialState = makeUiState();
@@ -202,6 +213,7 @@ describe("parsePersistedState", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
+      sidebarOlderProjectsExpanded: false,
       pullRequestMergeMethod: "merge",
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -324,6 +336,7 @@ describe("uiStateStore persistence", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
+      sidebarOlderProjectsExpanded: false,
       threadChangedFilesExpansionVersion: 2,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
