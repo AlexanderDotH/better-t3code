@@ -1,3 +1,6 @@
+import { GitWorkbenchSection } from "./GitWorkbenchSection";
+import { useMobileGitWorkbenchAvailability } from "./use-mobile-git-workbench";
+import { mobileGitWorkbenchCanActivate } from "./mobile-git-workbench";
 import {
   type GitActionRequestInput,
   buildMenuItems,
@@ -66,6 +69,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
       : null,
   );
 
+  const gitWorkbenchAvailability = useMobileGitWorkbenchAvailability({ environmentId, threadId });
   const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
   const currentStatusSummary = statusSummary(gitStatus.data);
   const currentWorktreePath = selectedThreadWorktreePath;
@@ -286,6 +290,11 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
       </View>
 
       {currentWorktreePath ? <MetaCard label="Worktree" value={currentWorktreePath} /> : null}
+      <GitWorkbenchSection
+        enabled={mobileGitWorkbenchCanActivate(gitWorkbenchAvailability)}
+        environmentId={environmentId}
+        cwd={selectedThreadCwd}
+      />
     </ScrollView>
   );
 

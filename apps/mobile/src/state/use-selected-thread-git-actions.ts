@@ -25,6 +25,8 @@ import { useAtomCommand } from "./use-atom-command";
 import { showGitActionResult } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
 import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
+import { mobileGitWorkbenchCanActivate } from "../features/threads/git/mobile-git-workbench";
+import { useMobileGitWorkbenchAvailability } from "../features/threads/git/use-mobile-git-workbench";
 
 export function useSelectedThreadGitActions() {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
@@ -37,15 +39,22 @@ export function useSelectedThreadGitActions() {
   const pull = useAtomCommand(vcsEnvironment.pull, { reportFailure: false });
   const { selectedThread, selectedThreadProject } = useThreadSelection();
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  const gitWorkbenchAvailability = useMobileGitWorkbenchAvailability({
+    environmentId: selectedThread?.environmentId ?? null,
+    threadId: selectedThread?.id ?? null,
+  });
+  const gitWorkbenchEnabled = mobileGitWorkbenchCanActivate(gitWorkbenchAvailability);
   const runStackedAction = useAtomCommand(
     vcsActionManager.runStackedAction({
-      environmentId: selectedThread?.environmentId ?? null,
-      cwd: selectedThreadCwd,
+      environmentId: gitWorkbenchEnabled ? (selectedThread?.environmentId ?? null) : null,
+      cwd: gitWorkbenchEnabled ? selectedThreadCwd : null,
     }),
     { reportFailure: false },
   );
 
-  const selectedThreadGitRootCwd = selectedThreadProject?.workspaceRoot ?? null;
+  const selectedThreadGitRootCwd = gitWorkbenchEnabled
+    ? (selectedThreadProject?.workspaceRoot ?? null)
+    : null;
   const branchTarget = useMemo(
     () => ({
       environmentId: selectedThread?.environmentId ?? null,
@@ -77,7 +86,7 @@ export function useSelectedThreadGitActions() {
 
   const refreshSelectedThreadGitStatus = useCallback(
     async (options?: { readonly quiet?: boolean; readonly cwd?: string | null }) => {
-      if (!selectedThread || !selectedThreadProject) {
+      if (!gitWorkbenchEnabled || !selectedThread || !selectedThreadProject) {
         return null;
       }
 
@@ -112,15 +121,15 @@ export function useSelectedThreadGitActions() {
       setPendingConnectionError(null);
       return result.value;
     },
-    [refreshStatus, selectedThread, selectedThreadCwd, selectedThreadProject],
+    [gitWorkbenchEnabled, refreshStatus, selectedThread, selectedThreadCwd, selectedThreadProject],
   );
 
   useEffect(() => {
-    if (!selectedThread || !selectedThreadProject) {
+    if (!gitWorkbenchEnabled || !selectedThread || !selectedThreadProject) {
       return;
     }
     void refreshSelectedThreadGitStatus({ quiet: true });
-  }, [refreshSelectedThreadGitStatus, selectedThread, selectedThreadProject]);
+  }, [gitWorkbenchEnabled, refreshSelectedThreadGitStatus, selectedThread, selectedThreadProject]);
 
   const runSelectedThreadGitMutation = useCallback(
     async <T, E>(
@@ -133,7 +142,7 @@ export function useSelectedThreadGitActions() {
       }) => Promise<AtomCommandResult<T, E>>,
       options?: { readonly managedExternally?: boolean },
     ): Promise<T | null> => {
-      if (!selectedThread || !selectedThreadProject || !selectedThreadCwd) {
+      if (!gitWorkbenchEnabled || !selectedThread || !selectedThreadProject || !selectedThreadCwd) {
         return null;
       }
 
@@ -161,15 +170,16 @@ export function useSelectedThreadGitActions() {
       }
       return result.value;
     },
-    [selectedThread, selectedThreadCwd, selectedThreadProject],
+    [gitWorkbenchEnabled, selectedThread, selectedThreadCwd, selectedThreadProject],
   );
 
   const refreshSelectedThreadBranches = useCallback(async (): Promise<ReadonlyArray<VcsRef>> => {
+    if (!gitWorkbenchEnabled) return [];
     branchState.refresh();
     return dedupeRemoteBranchesWithLocalMatches(branchState.data?.refs ?? []).filter(
       (branch) => !branch.isRemote,
     );
-  }, [branchState]);
+  }, [branchState, gitWorkbenchEnabled]);
 
   const syncSelectedThreadBranchState = useCallback(
     async (input: {

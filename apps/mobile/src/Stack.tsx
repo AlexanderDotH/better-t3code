@@ -1,4 +1,16 @@
 import {
+  GuardedGitOverviewSheet,
+  GuardedGitBranchesSheet,
+  GuardedGitCommitSheet,
+  GuardedGitConfirmSheet,
+} from "./features/threads/git/MobileGitRouteGate";
+import { SettingsAgentEnvironmentsRouteScreen } from "./features/settings/SettingsAgentEnvironmentsRouteScreen";
+import { SettingsProjectsRouteScreen } from "./features/settings/SettingsProjectsRouteScreen";
+import { SettingsBetterT3RouteScreen } from "./features/settings/SettingsBetterT3RouteScreen";
+import { SettingsBetterT3ResourceDiagnosticsRouteScreen } from "./features/settings/SettingsBetterT3ResourceDiagnosticsRouteScreen";
+import { SettingsBetterT3TranscriptPortabilityRouteScreen } from "./features/settings/SettingsBetterT3TranscriptPortabilityRouteScreen";
+import { KnowledgeGraphRouteScreen } from "./features/knowledge-graph/KnowledgeGraphRouteScreen";
+import {
   createPathConfigForStaticNavigation,
   getPathFromState,
   NavigationState,
@@ -26,10 +38,6 @@ import { HardwareKeyboardCommandProvider } from "./features/keyboard/HardwareKey
 import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentComposerSheet";
 import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
-import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
-import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
-import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
-import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
 import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
@@ -171,6 +179,26 @@ const SettingsContentStack = createNativeStackNavigator({
       options: {
         title: "Archived Threads",
       },
+    }),
+    SettingsAgents: createNativeStackScreen({
+      screen: SettingsAgentEnvironmentsRouteScreen,
+      options: { title: "Agents" },
+    }),
+    SettingsProjects: createNativeStackScreen({
+      screen: SettingsProjectsRouteScreen,
+      options: { title: "Projects" },
+    }),
+    SettingsBetterT3: createNativeStackScreen({
+      screen: SettingsBetterT3RouteScreen,
+      options: { title: "BetterT3" },
+    }),
+    SettingsBetterT3ResourceDiagnostics: createNativeStackScreen({
+      screen: SettingsBetterT3ResourceDiagnosticsRouteScreen,
+      options: { title: "BetterT3ResourceDiagnostics" },
+    }),
+    SettingsBetterT3TranscriptPortability: createNativeStackScreen({
+      screen: SettingsBetterT3TranscriptPortabilityRouteScreen,
+      options: { title: "BetterT3TranscriptPortability" },
     }),
     SettingsAppearance: createNativeStackScreen({
       screen: SettingsAppearanceRouteScreen,
@@ -472,6 +500,10 @@ export const RootStack = createNativeStackNavigator({
       linking: THREAD_LINKING_PREFIX,
       options: GLASS_HEADER_OPTIONS,
     }),
+    KnowledgeGraph: createNativeStackScreen({
+      screen: KnowledgeGraphRouteScreen,
+      options: { ...SOLID_HEADER_OPTIONS, title: "Knowledge Graph" },
+    }),
     ThreadTerminal: createNativeStackScreen({
       screen: ThreadTerminalRouteScreen,
       linking: `${THREAD_LINKING_PREFIX}/terminal`,
@@ -523,7 +555,7 @@ export const RootStack = createNativeStackNavigator({
       },
     }),
     GitOverview: createNativeStackScreen({
-      screen: GitOverviewSheet,
+      screen: GuardedGitOverviewSheet,
       linking: `${THREAD_LINKING_PREFIX}/git`,
       options: {
         ...FORM_SHEET_PRESENTATION_OPTIONS,
@@ -532,7 +564,7 @@ export const RootStack = createNativeStackNavigator({
       },
     }),
     GitCommit: createNativeStackScreen({
-      screen: GitCommitSheet,
+      screen: GuardedGitCommitSheet,
       linking: `${THREAD_LINKING_PREFIX}/git/commit`,
       options: {
         ...FORM_SHEET_PRESENTATION_OPTIONS,
@@ -541,7 +573,7 @@ export const RootStack = createNativeStackNavigator({
       },
     }),
     GitBranches: createNativeStackScreen({
-      screen: GitBranchesSheet,
+      screen: GuardedGitBranchesSheet,
       linking: `${THREAD_LINKING_PREFIX}/git/branches`,
       options: {
         ...FORM_SHEET_PRESENTATION_OPTIONS,
@@ -550,7 +582,7 @@ export const RootStack = createNativeStackNavigator({
       },
     }),
     GitConfirm: createNativeStackScreen({
-      screen: GitConfirmSheet,
+      screen: GuardedGitConfirmSheet,
       linking: `${THREAD_LINKING_PREFIX}/git-confirm`,
       options: {
         ...FORM_SHEET_PRESENTATION_OPTIONS,
