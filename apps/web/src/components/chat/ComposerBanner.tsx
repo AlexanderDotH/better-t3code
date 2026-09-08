@@ -1,13 +1,30 @@
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { ChevronDownIcon, XIcon } from "lucide-react";
-import type { ComponentProps } from "react";
+import { createContext, useContext, type ComponentProps, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { Button, buttonVariants } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 
-export type ComposerBannerVariant = "default" | "error" | "info" | "success" | "warning";
+export type ComposerBannerVariant =
+  | "activity"
+  | "default"
+  | "error"
+  | "info"
+  | "success"
+  | "warning";
+
+type ComposerBannerPlacement = "attached" | "floating" | "grouped";
+const ComposerBannerPlacementContext = createContext<ComposerBannerPlacement>("attached");
+
+function FloatingGroup({ children }: { readonly children: ReactNode }) {
+  return (
+    <ComposerBannerPlacementContext.Provider value="grouped">
+      {children}
+    </ComposerBannerPlacementContext.Provider>
+  );
+}
 
 const surfaceColors = cn(
   "[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--card))]",
@@ -24,6 +41,8 @@ const neutralOutline = cn(
 );
 
 const variantColors: Record<ComposerBannerVariant, string> = {
+  activity:
+    "[--chat-composer-attached-outline:color-mix(in_srgb,var(--primary)_30%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--primary)_8%,transparent)]",
   default: neutralOutline,
   error:
     "[--chat-composer-attached-outline:color-mix(in_srgb,var(--error)_32%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--error)_8%,transparent)]",
@@ -40,7 +59,7 @@ function Surface({
   className,
   ...props
 }: ComponentProps<"div"> & {
-  placement?: "attached" | "floating";
+  placement?: ComposerBannerPlacement;
   variant?: ComposerBannerVariant;
 }) {
   return (
@@ -51,18 +70,22 @@ function Surface({
         surfaceColors,
         "relative isolate border-0 bg-transparent shadow-none [--chat-composer-attached-tint:transparent]",
         variantColors[variant],
-        placement === "attached"
-          ? "[--chat-composer-attachment-overlap:calc(1rem+1px)] before:rounded-t-[16px]"
-          : "[--chat-composer-attachment-overlap:0px] before:rounded-[1rem]",
-        "before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:border before:border-(--chat-composer-attached-outline)",
-        "before:bg-[color-mix(in_srgb,var(--chat-composer-attached-surface)_var(--glass-opacity),transparent)] before:bg-[linear-gradient(var(--chat-composer-attached-tint),var(--chat-composer-attached-tint))] before:backdrop-blur-(--glass-blur) before:backdrop-saturate-(--glass-saturation)",
-        // The mask cut-off bleeds one pixel past the seam: Chromium drops the last
-        // device-pixel row of a filtered backdrop when the cut-off lands off the
-        // device-pixel grid, and the composer's surface starts exactly there. The
-        // composer's own glass covers the extra row, so the overlap never shows.
-        "before:mask-[linear-gradient(to_top,transparent_0_calc(var(--chat-composer-attachment-overlap)-1px),black_calc(var(--chat-composer-attachment-overlap)-1px))] before:shadow-[0_12px_28px_-18px_rgb(0_0_0/40%)] dark:before:shadow-[0_14px_32px_-18px_rgb(0_0_0/75%)]",
-        "dark:supports-[(backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px))]:before:bg-[linear-gradient(var(--chat-composer-attached-tint),var(--chat-composer-attached-tint)),linear-gradient(to_top,transparent_0_var(--chat-composer-attachment-overlap),rgb(0_0_0/18%)_var(--chat-composer-attachment-overlap),transparent_calc(var(--chat-composer-attachment-overlap)+10px))]",
-        "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:before:bg-(--chat-composer-attached-surface)",
+        placement === "grouped"
+          ? "[--chat-composer-attachment-overlap:0px] before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:bg-[linear-gradient(var(--chat-composer-attached-tint),var(--chat-composer-attached-tint))]"
+          : [
+              placement === "attached"
+                ? "[--chat-composer-attachment-overlap:calc(1rem+1px)] before:rounded-t-[16px]"
+                : "[--chat-composer-attachment-overlap:0px] before:rounded-[1rem]",
+              "before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:border before:border-(--chat-composer-attached-outline)",
+              "before:bg-[color-mix(in_srgb,var(--chat-composer-attached-surface)_var(--glass-opacity),transparent)] before:bg-[linear-gradient(var(--chat-composer-attached-tint),var(--chat-composer-attached-tint))] before:backdrop-blur-(--glass-blur) before:backdrop-saturate-(--glass-saturation)",
+              // The mask cut-off bleeds one pixel past the seam: Chromium drops the last
+              // device-pixel row of a filtered backdrop when the cut-off lands off the
+              // device-pixel grid, and the composer's surface starts exactly there. The
+              // composer's own glass covers the extra row, so the overlap never shows.
+              "before:mask-[linear-gradient(to_top,transparent_0_calc(var(--chat-composer-attachment-overlap)-1px),black_calc(var(--chat-composer-attachment-overlap)-1px))] before:shadow-[0_12px_28px_-18px_rgb(0_0_0/40%)] dark:before:shadow-[0_14px_32px_-18px_rgb(0_0_0/75%)]",
+              "dark:supports-[(backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px))]:before:bg-[linear-gradient(var(--chat-composer-attached-tint),var(--chat-composer-attached-tint)),linear-gradient(to_top,transparent_0_var(--chat-composer-attachment-overlap),rgb(0_0_0/18%)_var(--chat-composer-attachment-overlap),transparent_calc(var(--chat-composer-attachment-overlap)+10px))]",
+              "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:before:bg-(--chat-composer-attached-surface)",
+            ],
         className,
       )}
       {...props}
@@ -72,6 +95,7 @@ function Surface({
 
 // A peeking notice uses the first hidden notice's severity, never the attached row's.
 const peekBorder: Record<ComposerBannerVariant, string> = {
+  activity: "border-primary/24",
   default: "border-(--chat-composer-attached-outline)",
   error: "border-destructive/24",
   info: "border-(--chat-composer-attached-outline)",
@@ -104,14 +128,19 @@ function Peek({
 }
 
 function Attachment({ className, ...props }: ComponentProps<"div">) {
+  const placement = useContext(ComposerBannerPlacementContext);
   return (
     <div
       data-slot="composer-banner-attachment"
       className={cn(
-        "mx-auto -mb-[calc(1rem+1px)] w-[calc(100%-2*var(--chat-composer-drawer-inset))]",
-        // Adjacent attachments share their outline, including notices outside the form.
-        "[&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:rounded-none [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:border-t-0",
-        "[&+:has([data-chat-composer-form])_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:rounded-none [&+:has([data-chat-composer-form])_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:border-t-0",
+        placement === "attached"
+          ? [
+              "mx-auto -mb-[calc(1rem+1px)] w-[calc(100%-2*var(--chat-composer-drawer-inset))]",
+              // Adjacent attachments share their outline, including notices outside the form.
+              "[&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:rounded-none [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:border-t-0",
+              "[&+:has([data-chat-composer-form])_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:rounded-none [&+:has([data-chat-composer-form])_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:border-t-0",
+            ]
+          : "w-full max-w-none",
         className,
       )}
       {...props}
@@ -120,10 +149,12 @@ function Attachment({ className, ...props }: ComponentProps<"div">) {
 }
 
 function Dock({ className, ...props }: ComponentProps<"div">) {
+  const placement = useContext(ComposerBannerPlacementContext);
   return (
     <Attachment
       className={cn(
-        "flex items-end gap-1 not-has-data-[composer-banner-surface=attached]:hidden",
+        "flex items-end gap-1",
+        placement === "attached" && "not-has-data-[composer-banner-surface=attached]:hidden",
         className,
       )}
       {...props}
@@ -148,26 +179,30 @@ function Column({ className, ...props }: ComponentProps<"div">) {
 function Root({
   className,
   density = "default",
-  placement = "attached",
+  placement,
   variant = "default",
   width = "fill",
   ...props
 }: ComponentProps<"div"> & {
   density?: "default" | "comfortable";
-  placement?: "attached" | "floating";
+  placement?: ComposerBannerPlacement;
   variant?: ComposerBannerVariant;
   width?: "fill" | "content";
 }) {
+  const defaultPlacement = useContext(ComposerBannerPlacementContext);
+  const resolvedPlacement = placement ?? defaultPlacement;
   return (
     <Surface
       className={cn(
         "min-w-0 px-1 pt-(--composer-banner-padding-block) pb-[calc(var(--chat-composer-attachment-overlap)+var(--composer-banner-padding-block))] text-xs/4 [--composer-banner-icon-column:--spacing(7)] [--composer-banner-padding-block:--spacing(1)] sm:[--composer-banner-icon-column:--spacing(6)]",
+        resolvedPlacement === "grouped" && "px-2.5 py-2",
         density === "comfortable" && "[--composer-banner-padding-block:--spacing(1.25)]",
         width === "content" ? "w-fit max-w-full flex-none" : "@container",
         className,
       )}
       data-slot="composer-banner"
-      placement={placement}
+      data-composer-banner-segment={resolvedPlacement === "grouped" ? "true" : undefined}
+      placement={resolvedPlacement}
       data-composer-banner-width={width}
       variant={variant}
       {...props}
@@ -341,6 +376,7 @@ function Dismiss({ className, children, ...props }: ComponentProps<typeof Button
 }
 
 export const ComposerBanner = {
+  FloatingGroup,
   Surface,
   Peek,
   Attachment,
