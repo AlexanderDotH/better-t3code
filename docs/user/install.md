@@ -8,7 +8,8 @@ desktop, web, or mobile app. Set up the machine where the agents will work first
 Command-line use, SSH hosts, and WSL backends need Node.js 22.16+ (22.x), 23.11+
 (23.x), or 24.10 and later. The native desktop app includes its server runtime.
 
-You need an installed, authenticated provider before starting a thread. You can
+You need an enabled, authenticated provider before starting a thread. CLI providers need their
+command-line tool installed; native API providers use credentials configured in T3 Code. You can
 launch T3 Code and configure providers afterwards.
 
 ## Run without installing
@@ -75,6 +76,10 @@ computer.
 | Grok Build  | Install [Grok Build CLI](https://x.ai/cli), then run `grok login`.                           |
 | OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                     |
 | Antigravity | Install and sign in with Google from T3 Code's provider settings.                            |
+| ChatGPT | Use the ChatGPT provider's sign-in action; Codex CLI is required for that login. |
+| OpenAI | Add an OpenAI API key in the provider's account settings. |
+| OpenRouter | Add an OpenRouter API key or use its sign-in action, then choose a default model. |
+| Gemini | Set `GOOGLE_API_KEY` or `GEMINI_API_KEY` in the provider instance's environment variables. |
 
 Provider CLIs must be on the server's `PATH`. If T3 Code cannot find one, set its
 **Binary path** in provider settings, especially when using a version manager.
@@ -94,13 +99,15 @@ base URL. Mark secret values as sensitive; after saving, T3 Code does not displa
 their original values.
 
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
-[Claude](./providers-claude.md), [OpenCode](./providers-opencode.md), and
-[Antigravity](./providers-antigravity.md).
+[Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
+[Antigravity](./providers-antigravity.md), and
+[ChatGPT, OpenAI, OpenRouter, and Gemini](./providers-native.md).
 
 ## Next steps
 
 - [Working with threads](./thread-sidebar.md): start tasks and organize parallel work.
 - [Permission modes](./permission-modes.md): choose when agents ask before acting.
+- [Better T3 settings](./better-t3.md): configure optional workflows and shared preferences.
 - [Remote access](./remote-access.md): connect from another device.
 - [Running in the background](./background-service.md): keep a Linux or macOS host available.
 - [Updating T3 Code](./updating.md): update the app and connected servers.
