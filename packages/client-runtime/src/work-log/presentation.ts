@@ -595,7 +595,7 @@ export function omitSupersededLifecycleMarkers<T>(
     }
   }
 
-  return reversedEntries.toReversed();
+  return reversedEntries.reverse();
 }
 
 export function toolGroupSummaryKind(
