@@ -40,6 +40,8 @@ import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
 import { applyAppearanceContrast } from "~/appearanceContrast";
 import { useClientSettings } from "../hooks/useSettings";
+import { InterfaceLanguageSyncCoordinator } from "../interfaceLanguageSync";
+import { ChatVisualModeSyncCoordinator } from "../chatVisualModeSync";
 import { PlanAgentSelectionHeal } from "../planAgentSelectionHeal";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -146,6 +148,8 @@ function RootRouteView() {
           <DocumentTitleSync />
           <ContrastAppearanceSync />
           <EnvironmentThemeSync />
+          <InterfaceLanguageSyncCoordinator />
+          <ChatVisualModeSyncCoordinator />
           <GlassAppearanceSync />
           <FontAppearanceSync />
           <CommandPalette>
@@ -185,6 +189,8 @@ function RootRouteView() {
         <DocumentTitleSync />
         <ContrastAppearanceSync />
         <EnvironmentThemeSync />
+        <InterfaceLanguageSyncCoordinator />
+        <ChatVisualModeSyncCoordinator />
         <GlassAppearanceSync />
         <FontAppearanceSync />
         <FirstRunGate
