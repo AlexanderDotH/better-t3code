@@ -1,7 +1,12 @@
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
-import { PanelLeftCloseIcon, PanelLeftIcon } from "lucide-react";
+import {
+  PanelLeftCloseIcon,
+  PanelLeftIcon,
+  PanelRightCloseIcon,
+  PanelRightIcon,
+} from "lucide-react";
 import * as React from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
@@ -91,6 +96,10 @@ function useSidebarVisibility() {
   return isMobile ? openMobile : open;
 }
 
+function useSidebarSide(): "left" | "right" {
+  return React.use(SidebarInstanceContext)?.side ?? "left";
+}
+
 function SidebarProvider({
   defaultOpen = true,
   open: openProp,
@@ -168,6 +177,8 @@ function SidebarProvider({
             "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
             "--workspace-titlebar-content-left":
               "calc(var(--workspace-controls-left) + var(--workspace-titlebar-control-size) + var(--workspace-titlebar-control-gap))",
+            "--workspace-titlebar-content-right":
+              "calc(var(--workspace-controls-right) + var(--workspace-titlebar-control-size) + var(--workspace-titlebar-control-gap))",
             ...style,
           } as React.CSSProperties
         }
@@ -320,7 +331,14 @@ function Sidebar({
   );
 }
 
-function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
+function SidebarTrigger({
+  className,
+  onClick,
+  side,
+  ...props
+}: React.ComponentProps<typeof Button> & { readonly side?: "left" | "right" }) {
+  const inheritedSide = useSidebarSide();
+  const resolvedSide = side ?? inheritedSide;
   const { toggleSidebar } = useSidebar();
   const isOpen = useSidebarVisibility();
 
@@ -341,7 +359,17 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       variant="ghost"
       {...props}
     >
-      {isOpen ? <PanelLeftCloseIcon /> : <PanelLeftIcon />}
+      {resolvedSide === "left" ? (
+        isOpen ? (
+          <PanelLeftCloseIcon />
+        ) : (
+          <PanelLeftIcon />
+        )
+      ) : isOpen ? (
+        <PanelRightCloseIcon />
+      ) : (
+        <PanelRightIcon />
+      )}
       <span className="sr-only">Toggle Sidebar</span>
     </Button>
   );
@@ -1017,4 +1045,5 @@ export {
   SidebarTrigger,
   useSidebar,
   useSidebarVisibility,
+  useSidebarSide,
 };
