@@ -28,7 +28,11 @@ type DispatchCommand<DispatchError> = (
 
 type BootstrapGitWorkflow = Pick<
   GitWorkflowService.GitWorkflowService["Service"],
-  "remoteExists" | "fetchRemote" | "resolveRemoteTrackingCommit" | "createWorktree"
+  | "remoteExists"
+  | "remoteBranchExists"
+  | "fetchRemote"
+  | "resolveRemoteTrackingCommit"
+  | "createWorktree"
 > &
   Partial<Pick<GitWorkflowService.GitWorkflowService["Service"], "removeWorktree">>;
 
@@ -244,12 +248,19 @@ export function makeOrchestrationCommandDispatcher<DispatchError, UuidError, Res
             cwd: project.workspaceRoot,
             remoteName: "origin",
           });
-          const resolvedRemoteBase = yield* dependencies.gitWorkflow.resolveRemoteTrackingCommit({
+          const remoteBaseExists = yield* dependencies.gitWorkflow.remoteBranchExists({
             cwd: project.workspaceRoot,
             refName: baseBranch,
-            fallbackRemoteName: "origin",
+            remoteName: "origin",
           });
-          worktreeBaseRef = resolvedRemoteBase.commitSha;
+          if (remoteBaseExists) {
+            const resolvedRemoteBase = yield* dependencies.gitWorkflow.resolveRemoteTrackingCommit({
+              cwd: project.workspaceRoot,
+              refName: baseBranch,
+              fallbackRemoteName: "origin",
+            });
+            worktreeBaseRef = resolvedRemoteBase.commitSha;
+          }
         }
         const uuid = yield* dependencies.randomUuid;
         const branch = buildTemporaryWorktreeBranchName(() => uuid);
@@ -544,12 +555,19 @@ export function makeOrchestrationCommandDispatcher<DispatchError, UuidError, Res
             cwd: bootstrap.prepareWorktree.projectCwd,
             remoteName: "origin",
           });
-          const resolvedRemoteBase = yield* dependencies.gitWorkflow.resolveRemoteTrackingCommit({
+          const remoteBaseExists = yield* dependencies.gitWorkflow.remoteBranchExists({
             cwd: bootstrap.prepareWorktree.projectCwd,
             refName: bootstrap.prepareWorktree.baseBranch,
-            fallbackRemoteName: "origin",
+            remoteName: "origin",
           });
-          worktreeBaseRef = resolvedRemoteBase.commitSha;
+          if (remoteBaseExists) {
+            const resolvedRemoteBase = yield* dependencies.gitWorkflow.resolveRemoteTrackingCommit({
+              cwd: bootstrap.prepareWorktree.projectCwd,
+              refName: bootstrap.prepareWorktree.baseBranch,
+              fallbackRemoteName: "origin",
+            });
+            worktreeBaseRef = resolvedRemoteBase.commitSha;
+          }
         }
         const worktree = yield* dependencies.gitWorkflow.createWorktree({
           cwd: bootstrap.prepareWorktree.projectCwd,

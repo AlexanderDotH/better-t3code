@@ -54,64 +54,77 @@ const bootstrapTurn = (): Extract<OrchestrationCommand, { type: "thread.turn.sta
 });
 
 describe("makeOrchestrationCommandDispatcher", () => {
-  effectIt.effect("prepares a bootstrapped worktree before dispatching a bootstrap-free turn", () =>
-    Effect.gen(function* () {
-      const commands: OrchestrationCommand[] = [];
-      const gitOperations: string[] = [];
-      const dispatch = vi.fn((command: OrchestrationCommand) => {
-        commands.push(command);
-        return Effect.succeed({ sequence: commands.length });
-      });
-      const dispatcher = makeOrchestrationCommandDispatcher({
-        dispatch,
-        randomUuid: Effect.succeed("00000000-0000-4000-8000-000000000001"),
-        nowIso: Effect.succeed("2026-08-24T00:00:01.000Z"),
-        gitWorkflow: {
-          remoteExists: () => Effect.sync(() => (gitOperations.push("remoteExists"), true)),
-          fetchRemote: () => Effect.sync(() => void gitOperations.push("fetchRemote")),
-          resolveRemoteTrackingCommit: () =>
-            Effect.sync(() => {
-              gitOperations.push("resolveRemoteTrackingCommit");
-              return { commitSha: "origin-main-sha", remoteRefName: "origin/main" };
-            }),
-          createWorktree: () =>
-            Effect.sync(() => {
-              gitOperations.push("createWorktree");
-              return {
-                worktree: {
-                  refName: "t3code/bootstrap",
-                  path: "/repo-worktree",
-                },
-              } as never;
-            }),
-        },
-        projectSetupScriptRunner: {
-          runForThread: () => Effect.succeed({ status: "no-script" }),
-        },
-        refreshGitStatus: () => Effect.void,
-      });
+  for (const hasRemoteBranch of [true, false]) {
+    effectIt.effect(
+      `bootstraps from ${hasRemoteBranch ? "origin" : "the local branch when origin lacks it"}`,
+      () =>
+        Effect.gen(function* () {
+          const commands: OrchestrationCommand[] = [];
+          const gitOperations: string[] = [];
+          let worktreeRef: string | undefined;
+          const dispatch = vi.fn((command: OrchestrationCommand) => {
+            commands.push(command);
+            return Effect.succeed({ sequence: commands.length });
+          });
+          const dispatcher = makeOrchestrationCommandDispatcher({
+            dispatch,
+            randomUuid: Effect.succeed("00000000-0000-4000-8000-000000000001"),
+            nowIso: Effect.succeed("2026-08-24T00:00:01.000Z"),
+            gitWorkflow: {
+              remoteExists: () => Effect.sync(() => (gitOperations.push("remoteExists"), true)),
+              remoteBranchExists: () =>
+                Effect.sync(() => {
+                  gitOperations.push("remoteBranchExists");
+                  return hasRemoteBranch;
+                }),
+              fetchRemote: () => Effect.sync(() => void gitOperations.push("fetchRemote")),
+              resolveRemoteTrackingCommit: () =>
+                Effect.sync(() => {
+                  gitOperations.push("resolveRemoteTrackingCommit");
+                  return { commitSha: "origin-main-sha", remoteRefName: "origin/main" };
+                }),
+              createWorktree: (input) =>
+                Effect.sync(() => {
+                  gitOperations.push("createWorktree");
+                  worktreeRef = input.refName;
+                  return {
+                    worktree: {
+                      refName: "t3code/bootstrap",
+                      path: "/repo-worktree",
+                    },
+                  } as never;
+                }),
+            },
+            projectSetupScriptRunner: {
+              runForThread: () => Effect.succeed({ status: "no-script" }),
+            },
+            refreshGitStatus: () => Effect.void,
+          });
 
-      const result = yield* dispatcher.dispatch(bootstrapTurn());
+          const result = yield* dispatcher.dispatch(bootstrapTurn());
 
-      expect(result.sequence).toBe(3);
-      expect(gitOperations).toEqual([
-        "remoteExists",
-        "fetchRemote",
-        "resolveRemoteTrackingCommit",
-        "createWorktree",
-      ]);
-      expect(commands.map((command) => command.type)).toEqual([
-        "thread.create",
-        "thread.meta.update",
-        "thread.turn.start",
-      ]);
-      const finalCommand = commands.at(-1);
-      expect(finalCommand?.type).toBe("thread.turn.start");
-      if (finalCommand?.type === "thread.turn.start") {
-        expect(finalCommand.bootstrap).toBeUndefined();
-      }
-    }),
-  );
+          expect(result.sequence).toBe(3);
+          expect(worktreeRef).toBe(hasRemoteBranch ? "origin-main-sha" : "main");
+          expect(gitOperations).toEqual([
+            "remoteExists",
+            "fetchRemote",
+            "remoteBranchExists",
+            ...(hasRemoteBranch ? ["resolveRemoteTrackingCommit"] : []),
+            "createWorktree",
+          ]);
+          expect(commands.map((command) => command.type)).toEqual([
+            "thread.create",
+            "thread.meta.update",
+            "thread.turn.start",
+          ]);
+          const finalCommand = commands.at(-1);
+          expect(finalCommand?.type).toBe("thread.turn.start");
+          if (finalCommand?.type === "thread.turn.start") {
+            expect(finalCommand.bootstrap).toBeUndefined();
+          }
+        }),
+    );
+  }
 
   effectIt.effect(
     "preserves an existing thread and does not append its user turn when workspace setup fails",
@@ -136,6 +149,7 @@ describe("makeOrchestrationCommandDispatcher", () => {
           nowIso: Effect.succeed("2026-08-24T00:00:01.000Z"),
           gitWorkflow: {
             remoteExists: () => Effect.succeed(false),
+            remoteBranchExists: () => Effect.succeed(false),
             fetchRemote: () => Effect.void,
             resolveRemoteTrackingCommit: () =>
               Effect.succeed({ commitSha: "origin-main-sha", remoteRefName: "origin/main" }),
@@ -155,107 +169,114 @@ describe("makeOrchestrationCommandDispatcher", () => {
       }),
   );
 
-  effectIt.effect(
-    "prepares a pending fork worktree before its first user message is appended",
-    () =>
-      Effect.gen(function* () {
-        const commands: OrchestrationCommand[] = [];
-        const commandWithBootstrap = bootstrapTurn();
-        const { bootstrap: _bootstrap, ...turnCommand } = commandWithBootstrap;
-        const dispatcher = makeOrchestrationCommandDispatcher({
-          dispatch: (command) =>
-            Effect.sync(() => {
-              commands.push(command);
-              return { sequence: commands.length };
-            }),
-          randomUuid: Effect.succeed("12345678-0000-4000-8000-000000000003"),
-          nowIso: Effect.succeed("2026-08-24T00:00:02.000Z"),
-          resolveThread: () =>
-            Effect.succeed({
-              id: turnCommand.threadId,
-              projectId: ProjectId.make("project-bootstrap"),
-              branch: null,
-              worktreePath: null,
-              activities: [],
-              fork: {
-                provenance: {
-                  sourceThreadId: ThreadId.make("source-thread"),
-                  sourceTitle: "Source",
-                  boundary: { kind: "message", messageId: MessageId.make("source-message") },
-                  forkedAt: "2026-08-24T00:00:00.000Z",
-                },
-                workspace: {
-                  spec: {
-                    mode: "worktree",
-                    baseBranch: "main",
-                    startFromOrigin: false,
-                    runSetupScript: false,
-                  },
-                  status: "pending",
-                  preparedAt: null,
-                  lastError: null,
-                },
-                handoff: {
-                  status: "pending",
-                  historyInputChars: 100,
-                  historyAttachmentCount: 0,
-                  remainingInputChars: 119_898,
-                  remainingAttachmentCount: 8,
-                  completedAt: null,
-                },
-              },
-            }),
-          resolveProject: () => Effect.succeed({ workspaceRoot: "/repo" }),
-          gitWorkflow: {
-            remoteExists: () => Effect.succeed(false),
-            fetchRemote: () => Effect.void,
-            resolveRemoteTrackingCommit: () =>
-              Effect.succeed({ commitSha: "origin-main-sha", remoteRefName: "origin/main" }),
-            createWorktree: () =>
+  for (const hasRemoteBranch of [true, false]) {
+    effectIt.effect(
+      `prepares a fork from ${hasRemoteBranch ? "origin" : "the local branch when origin lacks it"} before appending its turn`,
+      () =>
+        Effect.gen(function* () {
+          const commands: OrchestrationCommand[] = [];
+          let worktreeRef: string | undefined;
+          const commandWithBootstrap = bootstrapTurn();
+          const { bootstrap: _bootstrap, ...turnCommand } = commandWithBootstrap;
+          const dispatcher = makeOrchestrationCommandDispatcher({
+            dispatch: (command) =>
+              Effect.sync(() => {
+                commands.push(command);
+                return { sequence: commands.length };
+              }),
+            randomUuid: Effect.succeed("12345678-0000-4000-8000-000000000003"),
+            nowIso: Effect.succeed("2026-08-24T00:00:02.000Z"),
+            resolveThread: () =>
               Effect.succeed({
-                worktree: {
-                  refName: "t3code/12345678",
-                  path: "/repo-fork-worktree",
+                id: turnCommand.threadId,
+                projectId: ProjectId.make("project-bootstrap"),
+                branch: null,
+                worktreePath: null,
+                activities: [],
+                fork: {
+                  provenance: {
+                    sourceThreadId: ThreadId.make("source-thread"),
+                    sourceTitle: "Source",
+                    boundary: { kind: "message", messageId: MessageId.make("source-message") },
+                    forkedAt: "2026-08-24T00:00:00.000Z",
+                  },
+                  workspace: {
+                    spec: {
+                      mode: "worktree",
+                      baseBranch: "main",
+                      startFromOrigin: true,
+                      runSetupScript: false,
+                    },
+                    status: "pending",
+                    preparedAt: null,
+                    lastError: null,
+                  },
+                  handoff: {
+                    status: "pending",
+                    historyInputChars: 100,
+                    historyAttachmentCount: 0,
+                    remainingInputChars: 119_898,
+                    remainingAttachmentCount: 8,
+                    completedAt: null,
+                  },
                 },
-              } as never),
-          },
-          projectSetupScriptRunner: {
-            runForThread: () => Effect.succeed({ status: "no-script" }),
-          },
-          refreshGitStatus: () => Effect.void,
-        });
+              }),
+            resolveProject: () => Effect.succeed({ workspaceRoot: "/repo" }),
+            gitWorkflow: {
+              remoteExists: () => Effect.succeed(true),
+              remoteBranchExists: () => Effect.succeed(hasRemoteBranch),
+              fetchRemote: () => Effect.void,
+              resolveRemoteTrackingCommit: () =>
+                Effect.succeed({ commitSha: "origin-main-sha", remoteRefName: "origin/main" }),
+              createWorktree: (input) => {
+                worktreeRef = input.refName;
+                return Effect.succeed({
+                  worktree: {
+                    refName: "t3code/12345678",
+                    path: "/repo-fork-worktree",
+                  },
+                } as never);
+              },
+            },
+            projectSetupScriptRunner: {
+              runForThread: () => Effect.succeed({ status: "no-script" }),
+            },
+            refreshGitStatus: () => Effect.void,
+          });
 
-        const budgetFailure = yield* Effect.flip(
-          dispatcher.prepareTurnWorkspace({
-            commandId: turnCommand.commandId,
-            threadId: turnCommand.threadId,
-            messageText: "u".repeat(120_001),
-            attachmentCount: 0,
-          }),
-        );
-        expect(budgetFailure.message).toContain("provider input limit of 120000");
-        expect(commands).toEqual([]);
+          const budgetFailure = yield* Effect.flip(
+            dispatcher.prepareTurnWorkspace({
+              commandId: turnCommand.commandId,
+              threadId: turnCommand.threadId,
+              messageText: "u".repeat(120_001),
+              attachmentCount: 0,
+            }),
+          );
+          expect(budgetFailure.message).toContain("provider input limit of 120000");
+          expect(commands).toEqual([]);
 
-        yield* dispatcher.dispatch(turnCommand);
+          yield* dispatcher.dispatch(turnCommand);
 
-        expect(commands.map((command) => command.type)).toEqual([
-          "thread.meta.update",
-          "thread.fork.workspace.update",
-          "thread.turn.start",
-        ]);
-        expect(commands[0]).toMatchObject({
-          type: "thread.meta.update",
-          branch: "t3code/12345678",
-          worktreePath: "/repo-fork-worktree",
-        });
-        expect(commands[1]).toMatchObject({
-          type: "thread.fork.workspace.update",
-          status: "ready",
-          preparedAt: "2026-08-24T00:00:02.000Z",
-          lastError: null,
-        });
-      }),
-  );
+          expect(worktreeRef).toBe(hasRemoteBranch ? "origin-main-sha" : "main");
+          expect(commands.map((command) => command.type)).toEqual([
+            "thread.meta.update",
+            "thread.fork.workspace.update",
+            "thread.turn.start",
+          ]);
+          expect(commands[0]).toMatchObject({
+            type: "thread.meta.update",
+            branch: "t3code/12345678",
+            worktreePath: "/repo-fork-worktree",
+          });
+          expect(commands[1]).toMatchObject({
+            type: "thread.fork.workspace.update",
+            status: "ready",
+            preparedAt: "2026-08-24T00:00:02.000Z",
+            lastError: null,
+          });
+        }),
+    );
+  }
 
   effectIt.effect(
     "records an invalid pending worktree as an error without appending the user turn",
@@ -311,6 +332,7 @@ describe("makeOrchestrationCommandDispatcher", () => {
           resolveProject: () => Effect.succeed({ workspaceRoot: "/repo" }),
           gitWorkflow: {
             remoteExists: () => Effect.succeed(false),
+            remoteBranchExists: () => Effect.succeed(false),
             fetchRemote: () => Effect.void,
             resolveRemoteTrackingCommit: () =>
               Effect.succeed({ commitSha: "origin-main-sha", remoteRefName: "origin/main" }),
