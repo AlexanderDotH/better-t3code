@@ -84,6 +84,7 @@ import {
   resolveThreadOutboxDispatchStep,
   resolveThreadOutboxFailureAction,
   resolveQueuedThreadSettings,
+  resolveQueuedThreadTurnModelSelection,
   shouldRetryThreadOutboxDelivery,
   threadOutboxRetryDelayMs,
   type QueuedThreadMessage,
@@ -368,6 +369,11 @@ describe("thread outbox", () => {
       },
       runtimeMode: "approval-required",
       interactionMode: "plan",
+      turnModelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      },
     } satisfies QueuedThreadMessage;
 
     expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(selectedMessage))).toEqual(
@@ -384,6 +390,97 @@ describe("thread outbox", () => {
       runtimeMode: selectedMessage.runtimeMode,
       interactionMode: selectedMessage.interactionMode,
     });
+  });
+
+  it("persists Fetch for reconnect delivery while older queued messages remain valid", () => {
+    const legacyMessage = queuedMessage({
+      messageId: "message-legacy-fetch",
+      createdAt: "2026-06-08T10:00:01.000Z",
+    });
+    const fetchMessage = {
+      ...legacyMessage,
+      fetchMode: "repository-exploration",
+    } satisfies QueuedThreadMessage;
+
+    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(fetchMessage))).toEqual(
+      fetchMessage,
+    );
+    expect(
+      decodeQueuedThreadMessage({ schemaVersion: 4, ...legacyMessage }).fetchMode,
+    ).toBeUndefined();
+  });
+
+  it("persists deferred prompt improvement for offline delivery", () => {
+    const deferredMessage = {
+      ...queuedMessage({
+        messageId: "message-improve",
+        createdAt: "2026-06-08T10:00:01.000Z",
+      }),
+      improvePromptBeforeSend: true,
+    } satisfies QueuedThreadMessage;
+
+    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(deferredMessage))).toEqual(
+      deferredMessage,
+    );
+    expect(
+      decodeQueuedThreadMessage({
+        schemaVersion: 6,
+        ...queuedMessage({
+          messageId: "message-before-improvement",
+          createdAt: "2026-06-08T10:00:01.000Z",
+        }),
+      }).improvePromptBeforeSend,
+    ).toBeUndefined();
+  });
+
+  it("persists the proposed-plan source used to mark implementation", () => {
+    const planMessage = {
+      ...queuedMessage({
+        messageId: "message-plan",
+        createdAt: "2026-06-08T10:00:01.000Z",
+      }),
+      sourceProposedPlan: {
+        threadId: ThreadId.make("thread-1"),
+        planId: "plan-1",
+      },
+    } satisfies QueuedThreadMessage;
+
+    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(planMessage))).toEqual(planMessage);
+  });
+
+  it("keeps the durable selector separate from a one-turn override", () => {
+    const durable = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.6-sol",
+      options: [{ id: "reasoningEffort", value: "max" }],
+    } as const;
+    const turn = {
+      ...durable,
+      options: [{ id: "reasoningEffort", value: "high" }],
+    } as const;
+    const message = {
+      ...queuedMessage({
+        messageId: "message-transient",
+        createdAt: "2026-06-08T10:00:01.000Z",
+      }),
+      modelSelection: durable,
+      turnModelSelection: turn,
+    } satisfies QueuedThreadMessage;
+
+    expect(
+      resolveQueuedThreadSettings(message, {
+        modelSelection: durable,
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+      }).modelSelection,
+    ).toEqual(durable);
+    expect(
+      resolveQueuedThreadTurnModelSelection(message, {
+        modelSelection: durable,
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+      }),
+    ).toEqual(turn);
   });
 
   it("compares model options as part of the queued settings change", () => {
@@ -1395,6 +1492,35 @@ describe("thread outbox", () => {
       false,
     );
     expect(isQueuedThreadCreationSendable(base)).toBe(false);
+  });
+
+  it("preserves the queued model selection snapshot for turn delivery", () => {
+    const thread = {
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+      },
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+    };
+    const queuedSelection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "agent",
+      options: [{ id: "agent", value: "plan" }],
+    };
+
+    expect(
+      resolveQueuedThreadSettings(
+        {
+          ...queuedMessage({
+            messageId: "message-selection",
+            createdAt: "2026-06-08T10:00:02.000Z",
+          }),
+          modelSelection: queuedSelection,
+        },
+        thread,
+      ).modelSelection,
+    ).toEqual(queuedSelection);
   });
 
   it("retries transport failures but drops deterministic command failures", () => {

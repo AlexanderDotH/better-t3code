@@ -50,6 +50,7 @@ import {
   resolveThreadOutboxFailureAction,
   resolveQueuedThreadSettings,
   shouldRetryThreadOutboxDelivery,
+  resolveQueuedThreadTurnModelSelection,
   threadOutboxRetryDelayMs,
   type QueuedThreadCreation,
   type QueuedThreadMessage,
@@ -69,6 +70,7 @@ import {
   updateComposerDraftSettings,
   waitForComposerDraftsLoaded,
 } from "./use-composer-drafts";
+import { prepareQueuedPromptForDelivery } from "./thread-outbox-prompt-improvement";
 import { useAtomCommand } from "./use-atom-command";
 import {
   dispatchingQueuedMessageIdAtom,
@@ -538,10 +540,11 @@ async function preserveUploadedAttachmentsForEditor(
 
 export function useThreadOutboxDrain(): void {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
-  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+  const improvePrompt = useAtomCommand(serverEnvironment.improvePrompt, { reportFailure: false });
+  const setThreadRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, {
     reportFailure: false,
   });
-  const setThreadRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, {
+  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
   const setThreadInteractionMode = useAtomCommand(threadEnvironment.setInteractionMode, {
@@ -682,13 +685,60 @@ export function useThreadOutboxDrain(): void {
     return { reportFailure };
   }, []);
 
+  const improveQueuedPrompt = useCallback(
+    async (queuedMessage: QueuedThreadMessage, projectId: QueuedThreadCreation["projectId"]) => {
+      const revision = threadOutboxRevision(queuedMessage.messageId);
+      return prepareQueuedPromptForDelivery({
+        message: queuedMessage,
+        projectId,
+        improve: async (text, targetProjectId) => {
+          const result = await improvePrompt({
+            environmentId: queuedMessage.environmentId,
+            input: { projectId: targetProjectId, text },
+          });
+          if (AsyncResult.isFailure(result)) throw Cause.squash(result.cause);
+          return result.value.text;
+        },
+        persist: (message) => updateThreadOutboxMessage(message, revision),
+        onError: (stage, error) =>
+          console.warn("[thread-outbox] deferred prompt improvement failed", {
+            environmentId: queuedMessage.environmentId,
+            threadId: queuedMessage.threadId,
+            messageId: queuedMessage.messageId,
+            stage,
+            error,
+          }),
+      });
+    },
+    [improvePrompt],
+  );
+
   const sendQueuedMessage = useCallback(
-    async (queuedMessage: QueuedThreadMessage, thread: EnvironmentThreadShell) => {
+    async (originalMessage: QueuedThreadMessage, thread: EnvironmentThreadShell) => {
+      const preparation = await improveQueuedPrompt(originalMessage, thread.projectId);
+      if (preparation._tag !== "ready") return preparation._tag === "removed";
+      const queuedMessage = preparation.message;
+      if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) return true;
+      const currentThread = findThread(
+        appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
+        queuedMessage,
+      );
+      if (
+        currentThread === undefined ||
+        currentThread.session?.status === "running" ||
+        currentThread.session?.status === "starting"
+      ) {
+        return true;
+      }
       const serverConfig = appAtomRegistry.get(
         serverEnvironment.configValueAtom(queuedMessage.environmentId),
       );
       if (!serverConfig) return false;
-      const settings = resolveQueuedThreadSettings(queuedMessage, thread, serverConfig.providers);
+      const settings = resolveQueuedThreadSettings(
+        queuedMessage,
+        currentThread,
+        serverConfig.providers,
+      );
       if (isModelSelectionUnavailable(serverConfig, settings.modelSelection)) {
         return restoreQueuedMessage(
           queuedMessage,
@@ -697,8 +747,8 @@ export function useThreadOutboxDrain(): void {
       }
       const { reportFailure } = makeDeliveryHelpers(queuedMessage);
 
-      if (!modelSelectionsEqual(settings.modelSelection, thread.modelSelection)) {
-        const updateResult = await updateThreadMetadata({
+      if (!modelSelectionsEqual(settings.modelSelection, currentThread.modelSelection)) {
+        const metadataResult = await updateThreadMetadata({
           environmentId: queuedMessage.environmentId,
           input: {
             commandId: settingsCommandId(queuedMessage, "model-selection"),
@@ -706,13 +756,13 @@ export function useThreadOutboxDrain(): void {
             modelSelection: settings.modelSelection,
           },
         });
-        if (AsyncResult.isFailure(updateResult)) {
-          reportFailure(updateResult, "settings-sync");
+        if (AsyncResult.isFailure(metadataResult)) {
+          reportFailure(metadataResult, "settings-sync");
           return false;
         }
       }
 
-      if (settings.runtimeMode !== thread.runtimeMode) {
+      if (settings.runtimeMode !== currentThread.runtimeMode) {
         const runtimeResult = await setThreadRuntimeMode({
           environmentId: queuedMessage.environmentId,
           input: {
@@ -728,7 +778,7 @@ export function useThreadOutboxDrain(): void {
         }
       }
 
-      if (settings.interactionMode !== thread.interactionMode) {
+      if (settings.interactionMode !== currentThread.interactionMode) {
         const interactionResult = await setThreadInteractionMode({
           environmentId: queuedMessage.environmentId,
           input: {
@@ -804,9 +854,13 @@ export function useThreadOutboxDrain(): void {
             text: queuedMessage.text,
             attachments: prepared.attachments,
           },
-          modelSelection: sendSettings.modelSelection,
+          modelSelection: resolveQueuedThreadTurnModelSelection(queuedMessage, sendSettings),
           runtimeMode: sendSettings.runtimeMode,
           interactionMode: sendSettings.interactionMode,
+          ...(queuedMessage.fetchMode === undefined ? {} : { fetchMode: queuedMessage.fetchMode }),
+          ...(queuedMessage.sourceProposedPlan === undefined
+            ? {}
+            : { sourceProposedPlan: queuedMessage.sourceProposedPlan }),
           createdAt: queuedMessage.createdAt,
         },
       });
@@ -827,6 +881,7 @@ export function useThreadOutboxDrain(): void {
     },
     [
       makeDeliveryHelpers,
+      improveQueuedPrompt,
       setThreadInteractionMode,
       setThreadRuntimeMode,
       startTurn,
@@ -837,10 +892,19 @@ export function useThreadOutboxDrain(): void {
 
   const sendQueuedCreation = useCallback(
     async (
-      queuedMessage: QueuedThreadMessage,
+      originalMessage: QueuedThreadMessage,
       creation: QueuedThreadCreation,
       projectCwd: string,
     ) => {
+      const preparation = await improveQueuedPrompt(originalMessage, creation.projectId);
+      if (preparation._tag !== "ready") return preparation._tag === "removed";
+      const queuedMessage = preparation.message;
+      if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) return true;
+      if (
+        findThread(appAtomRegistry.get(environmentThreadShells.threadShellsAtom), queuedMessage)
+      ) {
+        return true;
+      }
       const modelSelection = queuedMessage.modelSelection;
       if (modelSelection === undefined) {
         return false;
@@ -927,6 +991,10 @@ export function useThreadOutboxDrain(): void {
           modelSelection: sendSettings.modelSelection,
           runtimeMode: sendSettings.runtimeMode,
           interactionMode: sendSettings.interactionMode,
+          ...(queuedMessage.turnModelSelection === undefined
+            ? {}
+            : { turnModelSelection: queuedMessage.turnModelSelection }),
+          ...(queuedMessage.fetchMode === undefined ? {} : { fetchMode: queuedMessage.fetchMode }),
           workspaceMode: creation.workspaceMode,
           branch: creation.branch,
           worktreePath: creation.worktreePath,
@@ -959,7 +1027,7 @@ export function useThreadOutboxDrain(): void {
       }
       return outcome === "removed";
     },
-    [makeDeliveryHelpers, restoreQueuedMessage, startTurn],
+    [improveQueuedPrompt, makeDeliveryHelpers, restoreQueuedMessage, startTurn],
   );
 
   // A creation outcome bridges setup until the server's shell has a turn.

@@ -80,6 +80,7 @@ import {
 } from "../../state/use-remote-environment-registry";
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
+import { resolveOpenRouterBootstrapModelPatch } from "@t3tools/client-runtime/openrouter-model-selection";
 import {
   buildHomeProjectScopes,
   sortHomeProjectScopes,
@@ -90,6 +91,8 @@ import {
   resolvePendingTaskInteractionMode,
   resolveProviderInteractionMode,
 } from "./legacy-plan-mode";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 import {
   resolveNewTaskBranchWorktreePath,
@@ -158,6 +161,7 @@ type NewTaskFlowContextValue = {
   readonly currentCheckoutBranchName: string | null;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  readonly fetchMode: "repository-exploration" | undefined;
   readonly planModeEnabled: boolean;
   readonly expandedProvider: string | null;
   readonly environments: ReadonlyArray<{
@@ -209,6 +213,7 @@ type NewTaskFlowContextValue = {
   readonly loadMoreBranches: () => void;
   readonly setRuntimeMode: (value: RuntimeMode) => void;
   readonly setInteractionMode: (value: ProviderInteractionMode) => void;
+  readonly setFetchMode: (value: "repository-exploration" | undefined) => void;
   readonly setSelectedModelOptions: (
     value: ReadonlyArray<ProviderOptionSelection> | undefined,
   ) => void;
@@ -224,6 +229,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const groupingSettings = useMobileProjectGroupingSettings();
   const { enabled: legacyPlanModeEnabled, loaded: planModePreferenceLoaded } =
     useLegacyPlanModeState();
+  const updateServerSettings = useAtomCommand(
+    serverEnvironment.updateSettings,
+    "OpenRouter default model",
+  );
   const projectScopes = useMemo(
     () =>
       sortHomeProjectScopes({
@@ -308,6 +317,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       // fabricated path.
       workspaceRoot: creation.projectCwd ?? "",
       repositoryIdentity: null,
+      checkpointsEnabled: true,
       defaultModelSelection: editingPendingTask.modelSelection ?? null,
       scripts: [],
       createdAt: editingPendingTask.createdAt,
@@ -453,6 +463,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedEnvironmentServerConfig?.settings.newWorktreesStartFromOrigin ??
     true;
   const runtimeMode = selectedProjectDraft.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+  const fetchMode = selectedProjectDraft.fetchMode;
 
   // Antigravity keeps unavailable selections so sign-out or a catalog change
   // cannot switch the user's model. Other providers retain their fallback
@@ -532,6 +543,20 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       const provider = selectedEnvironmentServerConfig?.providers.find(
         (candidate) => candidate.instanceId === selection.instanceId,
       );
+      const openRouterBootstrapPatch =
+        provider && selectedEnvironmentServerConfig
+          ? resolveOpenRouterBootstrapModelPatch({
+              settings: selectedEnvironmentServerConfig.settings,
+              provider,
+              model: option.selection.model,
+            })
+          : null;
+      if (openRouterBootstrapPatch && selectedProject) {
+        void updateServerSettings({
+          environmentId: selectedProject.environmentId,
+          input: { patch: openRouterBootstrapPatch },
+        });
+      }
       updateComposerDraftSettings(selectedProjectDraftKey, {
         modelSelection: selection,
         ...(provider?.showInteractionModeToggle === false
@@ -540,7 +565,13 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       });
       setStickyComposerModelSelection(selection);
     },
-    [modelOptions, selectedEnvironmentServerConfig, selectedProjectDraftKey],
+    [
+      modelOptions,
+      selectedEnvironmentServerConfig,
+      selectedProjectDraftKey,
+      selectedProject,
+      updateServerSettings,
+    ],
   );
   const setSelectedModelOptions = useCallback(
     (options: ReadonlyArray<ProviderOptionSelection> | undefined) => {
@@ -888,6 +919,14 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     },
     [selectedProjectDraftKey, selectedProviderStatus],
   );
+  const setFetchMode = useCallback(
+    (value: "repository-exploration" | undefined) => {
+      if (selectedProjectDraftKey) {
+        updateComposerDraftSettings(selectedProjectDraftKey, { fetchMode: value });
+      }
+    },
+    [selectedProjectDraftKey],
+  );
 
   const beginEditingPendingTask = useCallback((messageId: string): boolean => {
     const message = findQueuedPendingTask(messageId);
@@ -903,6 +942,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         modelSelection: message.modelSelection,
         runtimeMode: message.runtimeMode,
         interactionMode: message.interactionMode,
+        fetchMode: message.fetchMode,
         workspaceSelection: {
           mode: message.creation.workspaceMode,
           branch: message.creation.branch,
@@ -975,6 +1015,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
             (candidate) => candidate.instanceId === draftModelSelection.instanceId,
           ),
         }),
+        ...(draft.fetchMode === undefined ? {} : { fetchMode: draft.fetchMode }),
+        ...(editingPendingTask?.improvePromptBeforeSend === true
+          ? { improvePromptBeforeSend: true }
+          : {}),
         creation: {
           projectId: selectedProject.id,
           ...(projectTitle !== undefined ? { projectTitle } : {}),
@@ -1140,6 +1184,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       currentCheckoutBranchName,
       runtimeMode,
       interactionMode,
+      fetchMode,
       planModeEnabled,
       expandedProvider,
       environments,
@@ -1173,6 +1218,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       loadMoreBranches,
       setRuntimeMode,
       setInteractionMode,
+      setFetchMode,
       setSelectedModelOptions,
       setExpandedProvider,
     }),
@@ -1193,6 +1239,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       filteredBranches,
       finishEditingPendingTask,
       interactionMode,
+      fetchMode,
       planModeEnabled,
       loadBranches,
       loadMoreBranches,
@@ -1220,6 +1267,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectBranch,
       selectEnvironment,
       setInteractionMode,
+      setFetchMode,
       setPrompt,
       setRuntimeMode,
       setSelectedModelKey,

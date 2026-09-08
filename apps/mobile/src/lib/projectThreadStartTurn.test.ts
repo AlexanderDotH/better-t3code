@@ -52,6 +52,8 @@ describe("project thread title", () => {
       text,
       uploadedAttachments: [],
       modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+      turnModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-luna" },
+      fetchMode: "repository-exploration",
       runtimeMode: "full-access",
       interactionMode: "default",
       workspaceMode: "local",
@@ -61,6 +63,9 @@ describe("project thread title", () => {
       worktreeBranchName: "unused",
     });
 
+    expect(input.modelSelection.model).toBe("gpt-5.6-luna");
+    expect(input.bootstrap.createThread.modelSelection.model).toBe("gpt-5.6-sol");
+    expect(input.fetchMode).toBe("repository-exploration");
     expect(input.titleSeed).toBe(title);
     expect(input.bootstrap.createThread.title).toBe(input.titleSeed);
     expect(input.message.text).toBe(text);

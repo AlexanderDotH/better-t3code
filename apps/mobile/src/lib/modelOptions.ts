@@ -1,11 +1,15 @@
-import type {
-  ModelCapabilities,
-  ModelSelection,
-  ServerConfig as T3ServerConfig,
+import {
+  ProviderDriverKind,
+  type ModelCapabilities,
+  type ModelSelection,
+  type ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
+import { normalizeClientModelSelection } from "@t3tools/client-runtime/model-options";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
+  enableAutoReasoning,
   getProviderOptionDescriptors,
+  isAutoReasoningEnabled,
 } from "@t3tools/shared/model";
 
 export type ModelOption = {
@@ -18,6 +22,10 @@ export type ModelOption = {
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
   readonly isUnavailable?: boolean;
+  readonly isSelectable: boolean;
+  readonly unavailableReason: string | null;
+  readonly continuationGroupKey: string | null;
+  readonly requiresNewThreadForModelChange: boolean;
   readonly capabilities: ModelCapabilities | null;
   readonly selection: ModelSelection;
 };
@@ -42,23 +50,31 @@ function providerDisplayLabel(provider: {
 function normalizeSelectionOptions(
   selection: ModelSelection,
   capabilities: ModelCapabilities | null,
+  provider: ProviderDriverKind,
 ): ModelSelection {
-  if (!capabilities) {
-    return selection;
-  }
+  const normalizedSelection = normalizeClientModelSelection({
+    provider,
+    selection,
+    capabilities,
+  });
+  if (!capabilities) return normalizedSelection;
+
   const options = buildExplicitProviderOptionSelectionsFromDescriptors(
     getProviderOptionDescriptors({
       caps: capabilities,
-      selections: selection.options,
+      selections: normalizedSelection.options,
     }),
-    selection.options,
+    normalizedSelection.options,
   );
-  return options
-    ? { ...selection, options }
+  const descriptorSelection = options
+    ? { ...normalizedSelection, options }
     : {
-        instanceId: selection.instanceId,
-        model: selection.model,
+        instanceId: normalizedSelection.instanceId,
+        model: normalizedSelection.model,
       };
+  return isAutoReasoningEnabled(normalizedSelection)
+    ? enableAutoReasoning(descriptorSelection)
+    : descriptorSelection;
 }
 
 /** Whether a known Antigravity selection needs setup or a different model. */
@@ -105,10 +121,12 @@ export function resolveSelectableModelSelection(
   if (driver === "antigravity") {
     return selection;
   }
+  const model = provider?.models.find((candidate) => candidate.slug === selection.model);
   return provider &&
     provider.enabled &&
     provider.installed &&
-    provider.auth.status !== "unauthenticated"
+    provider.auth.status !== "unauthenticated" &&
+    model?.isSelectable !== false
     ? selection
     : null;
 }
@@ -175,6 +193,10 @@ export function buildModelOptions(
         providerDriver: provider.driver,
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
+        isSelectable: model.isSelectable !== false,
+        unavailableReason: model.unavailableReason ?? null,
+        continuationGroupKey: provider.continuation?.groupKey ?? null,
+        requiresNewThreadForModelChange: provider.requiresNewThreadForModelChange === true,
         capabilities: model.capabilities,
         selection: normalizeSelectionOptions(
           {
@@ -182,6 +204,7 @@ export function buildModelOptions(
             model: model.slug,
           },
           model.capabilities,
+          provider.driver,
         ),
       });
     }
@@ -196,7 +219,11 @@ export function buildModelOptions(
         selection:
           existing.providerDriver === "antigravity"
             ? fallbackModelSelection
-            : normalizeSelectionOptions(fallbackModelSelection, existing.capabilities),
+            : normalizeSelectionOptions(
+                fallbackModelSelection,
+                existing.capabilities,
+                ProviderDriverKind.make(existing.providerDriver),
+              ),
       });
     } else {
       const provider = config?.providers.find(
@@ -222,6 +249,10 @@ export function buildModelOptions(
         providerDriver,
         isDefault: false,
         isLegacy: model?.isLegacy === true,
+        isSelectable: model?.isSelectable !== false,
+        unavailableReason: model?.unavailableReason ?? null,
+        continuationGroupKey: provider?.continuation?.groupKey ?? null,
+        requiresNewThreadForModelChange: provider?.requiresNewThreadForModelChange === true,
         ...(isModelSelectionUnavailable(config, fallbackModelSelection)
           ? { isUnavailable: true }
           : {}),
@@ -253,4 +284,49 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     providerLabel: group.providerLabel,
     models: group.models,
   }));
+}
+
+export function filterStartedThreadModelOptions(input: {
+  readonly options: ReadonlyArray<ModelOption>;
+  readonly currentSelection: ModelSelection;
+  readonly currentProviderInstanceId?: ModelSelection["instanceId"] | null;
+  readonly hasStarted: boolean;
+  readonly allowMidChatProviderSwitching: boolean;
+}): ReadonlyArray<ModelOption> {
+  if (!input.hasStarted || input.allowMidChatProviderSwitching) {
+    return input.options;
+  }
+
+  const currentInstanceId = input.currentProviderInstanceId ?? input.currentSelection.instanceId;
+  const current = input.options.find(
+    (option) =>
+      option.selection.instanceId === currentInstanceId &&
+      option.selection.model === input.currentSelection.model,
+  );
+  if (!current) {
+    return input.options.filter(
+      (option) =>
+        option.selection.instanceId === input.currentSelection.instanceId &&
+        option.selection.model === input.currentSelection.model,
+    );
+  }
+
+  return input.options.filter((option) => {
+    if (option.providerDriver !== current.providerDriver) return false;
+    if (
+      current.continuationGroupKey !== null &&
+      option.continuationGroupKey !== null &&
+      option.continuationGroupKey !== current.continuationGroupKey
+    ) {
+      return false;
+    }
+    if (
+      (current.requiresNewThreadForModelChange || option.requiresNewThreadForModelChange) &&
+      (option.selection.instanceId !== current.selection.instanceId ||
+        option.selection.model !== current.selection.model)
+    ) {
+      return false;
+    }
+    return true;
+  });
 }
