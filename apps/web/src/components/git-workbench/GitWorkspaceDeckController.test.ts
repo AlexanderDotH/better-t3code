@@ -1,0 +1,129 @@
+import { describe, expect, it } from "vite-plus/test";
+
+import {
+  resolveGitDeckCardIds,
+  resolveScopedWorkspaceDeckActiveCard,
+  shouldLoadGitRepositoryInsights,
+  shouldLoadGitWorkbenchData,
+} from "./GitWorkspaceDeckController.model";
+
+describe("workspace deck controller policy", () => {
+  it("does not render the previous chat's workspace card while the next chat loads", () => {
+    expect(
+      resolveScopedWorkspaceDeckActiveCard({
+        availableCardIds: ["chat", "git", "mcp"],
+        currentSelection: { card: "mcp", scopeKey: "environment:/repo:thread-a" },
+        rememberedCard: null,
+        scopeKey: "environment:/repo:thread-b",
+      }),
+    ).toBe("chat");
+  });
+
+  it("registers Git between Chat and MCP only after repository capability is confirmed", () => {
+    expect(
+      resolveGitDeckCardIds({
+        cwd: "/repo",
+        isRepository: true,
+        workbenchSupported: true,
+      }),
+    ).toEqual(["chat", "git", "mcp"]);
+
+    expect(
+      resolveGitDeckCardIds({
+        cwd: "/repo",
+        isRepository: null,
+        workbenchSupported: true,
+      }),
+    ).toEqual(["chat", "mcp"]);
+    expect(
+      resolveGitDeckCardIds({
+        cwd: "/repo",
+        isRepository: false,
+        workbenchSupported: true,
+      }),
+    ).toEqual(["chat", "mcp"]);
+    expect(
+      resolveGitDeckCardIds({
+        cwd: "/repo",
+        isRepository: true,
+        workbenchSupported: false,
+      }),
+    ).toEqual(["chat", "mcp"]);
+    expect(
+      resolveGitDeckCardIds({
+        cwd: null,
+        isRepository: true,
+        workbenchSupported: true,
+      }),
+    ).toEqual(["chat", "mcp"]);
+  });
+
+  it("loads detailed Git data only while the available Git card is active or expanded", () => {
+    expect(
+      shouldLoadGitWorkbenchData({
+        activeCard: "git",
+        expandedCard: null,
+        gitAvailable: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldLoadGitWorkbenchData({
+        activeCard: "chat",
+        expandedCard: "git",
+        gitAvailable: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldLoadGitWorkbenchData({
+        activeCard: "mcp",
+        expandedCard: "mcp",
+        gitAvailable: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldLoadGitWorkbenchData({
+        activeCard: "git",
+        expandedCard: "git",
+        gitAvailable: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("loads repository insights only for the expanded Overview tab", () => {
+    expect(
+      shouldLoadGitRepositoryInsights({
+        activeTab: "overview",
+        expandedCard: null,
+        gitAvailable: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldLoadGitRepositoryInsights({
+        activeTab: "overview",
+        expandedCard: "git",
+        gitAvailable: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldLoadGitRepositoryInsights({
+        activeTab: "changes",
+        expandedCard: "git",
+        gitAvailable: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldLoadGitRepositoryInsights({
+        activeTab: "overview",
+        expandedCard: "mcp",
+        gitAvailable: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldLoadGitRepositoryInsights({
+        activeTab: "overview",
+        expandedCard: "git",
+        gitAvailable: false,
+      }),
+    ).toBe(false);
+  });
+});
