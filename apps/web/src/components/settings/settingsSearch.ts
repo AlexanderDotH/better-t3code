@@ -2,6 +2,10 @@ import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
 
 export type SettingsPath =
+  | "/settings/better-t3"
+  | "/settings/mcp"
+  | "/settings/skills"
+  | "/settings/import-chats"
   | "/settings/projects"
   | "/settings/general"
   | "/settings/appearance"
@@ -49,7 +53,11 @@ export interface SettingsSearchAvailability {
  * subtitles both render from this record, so each label exists once.
  */
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
+  "/settings/better-t3": "Better T3",
   "/settings/general": "General",
+  "/settings/mcp": "MCP Servers",
+  "/settings/skills": "Skills",
+  "/settings/import-chats": "Import Chats",
   "/settings/appearance": "Appearance",
   "/settings/projects": "Projects",
   "/settings/keybindings": "Keybindings",
@@ -67,6 +75,48 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
  * that may not be mounted point at their nearest stable section instead.
  */
 export const SETTINGS_SEARCH_ITEMS = [
+  {
+    id: "better-t3",
+    title: "Better T3",
+    to: "/settings/better-t3",
+    searchTerms: ["features presets workflow chat visual workspace cards provider switching"],
+  },
+  {
+    id: "macos-window-transparency",
+    title: "macOS window transparency",
+    to: "/settings/better-t3",
+    targetId: "macos-window-transparency",
+    searchTerms: ["vibrancy glass translucent background"],
+    desktopOnly: true,
+    macOnly: true,
+  },
+  {
+    id: "harness-chat-sync",
+    title: "Harness chat synchronization",
+    to: "/settings/projects",
+    targetId: "harness-chat-sync",
+    searchTerms: ["Codex Claude Cursor sessions import history sync"],
+    primaryOnly: true,
+  },
+  {
+    id: "mcp-servers",
+    title: "MCP Servers",
+    to: "/settings/mcp",
+    searchTerms: ["tools permissions authorization workspace servers"],
+  },
+  {
+    id: "skills",
+    title: "Skills",
+    to: "/settings/skills",
+    searchTerms: ["install skill workspace instructions"],
+  },
+  {
+    id: "import-chats",
+    title: "Import Chats",
+    to: "/settings/import-chats",
+    searchTerms: ["conversation history migration"],
+  },
+
   {
     id: "voice-input",
     title: "Voice input",
