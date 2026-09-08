@@ -53,7 +53,7 @@ describe("OpenAiKeyValidation", () => {
             request,
             new Response("secret validation body", {
               status,
-              headers: status === 429 ? { "retry-after": "11" } : undefined,
+              ...(status === 429 ? { headers: { "retry-after": "11" } } : {}),
             }),
           ),
         );

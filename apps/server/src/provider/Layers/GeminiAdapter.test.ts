@@ -1,6 +1,10 @@
-import type { GenerateContentParameters, GenerateContentResponse } from "@google/genai";
+import {
+  FinishReason,
+  GenerateContentResponse,
+  type GenerateContentParameters,
+} from "@google/genai";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import {
   ApprovalRequestId,
   ProviderDriverKind,
@@ -32,7 +36,7 @@ function response(input: {
     readonly args: Record<string, unknown>;
   };
 }): GenerateContentResponse {
-  return {
+  return Object.assign(new GenerateContentResponse(), {
     candidates: [
       {
         content: {
@@ -42,7 +46,7 @@ function response(input: {
             ...(input.functionCall ? [{ functionCall: input.functionCall }] : []),
           ],
         },
-        finishReason: input.functionCall ? "STOP" : "STOP",
+        finishReason: FinishReason.STOP,
       },
     ],
     usageMetadata: {
@@ -50,7 +54,7 @@ function response(input: {
       candidatesTokenCount: 4,
       totalTokenCount: 14,
     },
-  } as GenerateContentResponse;
+  });
 }
 
 function fakeClient(input: {
@@ -351,7 +355,8 @@ describe("GeminiAdapter", () => {
           .pipe(Effect.forkChild);
         const opened = yield* Fiber.join(requestFiber);
         expect(Option.isSome(opened)).toBe(true);
-        if (Option.isNone(opened) || opened.value.type !== "request.opened") return;
+        assert.isOk(Option.isSome(opened) && opened.value.type === "request.opened");
+        assert.isDefined(opened.value.requestId);
         expect(executed).toEqual([]);
         yield* adapter.respondToRequest(
           threadId,
@@ -408,9 +413,14 @@ describe("GeminiAdapter", () => {
         yield* adapter.sendTurn({ threadId, input: "Try an unavailable command." });
 
         expect(executed).toEqual([]);
-        expect(
-          requests[0]?.config?.tools?.[0]?.functionDeclarations?.map(({ name }) => name),
-        ).toEqual(["workspace_find", "workspace_read", "workspace_context"]);
+        const tool = requests[0]?.config?.tools?.[0];
+        assert.isDefined(tool);
+        assert.isOk("functionDeclarations" in tool);
+        expect(tool.functionDeclarations?.map(({ name }) => name)).toEqual([
+          "workspace_find",
+          "workspace_read",
+          "workspace_context",
+        ]);
         expect(requests[0]?.config?.systemInstruction).toContain("workspace_find");
         expect(requests[0]?.config?.systemInstruction).toContain("workspace_read");
         expect(requests[0]?.config?.systemInstruction).toContain("workspace_context");
@@ -453,6 +463,8 @@ describe("GeminiAdapter", () => {
           _tag: "ProviderAdapterRequestError",
           method: "session/resume",
         });
+        if (failure._tag !== "ProviderAdapterRequestError")
+          throw new Error(`Unexpected error: ${failure._tag}`);
         expect(failure.detail).toContain("no longer available");
       }),
     ).pipe(Effect.provide(testLayer)),

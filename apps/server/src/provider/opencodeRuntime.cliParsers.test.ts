@@ -176,6 +176,7 @@ describe("parseModelsCliOutput", () => {
     NodeAssert.equal(Object.keys(provider.models).length, 2);
     NodeAssert.ok(provider.models["gemini-2.5-flash"]);
     NodeAssert.equal(provider.models["gemini-2.5-flash"].name, "Gemini 2.5 Flash");
+    NodeAssert.ok(provider.models["gemini-2.5-pro"]);
     NodeAssert.equal(provider.models["gemini-2.5-pro"].id, "gemini-2.5-pro");
   });
 

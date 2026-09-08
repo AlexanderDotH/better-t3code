@@ -69,6 +69,9 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   public readonly setModelCalls: Array<string | undefined> = [];
   public readonly setPermissionModeCalls: Array<string> = [];
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
+  public readonly mcpServerStatus = async () => [];
+  public readonly reconnectMcpServer = async (_serverName: string) => {};
+  public readonly setMcpServers = async () => ({ added: [], removed: [], errors: {} });
   public closeCalls = 0;
   public closeError: unknown | undefined;
 

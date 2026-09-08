@@ -766,11 +766,11 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
 
   readonly options: CodexSessionRuntimeOptions;
 
-  constructor(
-    options: CodexSessionRuntimeOptions,
-    private readonly eventStreamStarted: Deferred.Deferred<void>,
-  ) {
+  private readonly eventStreamStarted: Deferred.Deferred<void>;
+
+  constructor(options: CodexSessionRuntimeOptions, eventStreamStarted: Deferred.Deferred<void>) {
     this.options = options;
+    this.eventStreamStarted = eventStreamStarted;
   }
 
   start() {
@@ -1811,7 +1811,8 @@ describe("CodexAdapter MCP runtime", () => {
         ],
       );
 
-      const details = yield* mcpRuntime.getServerDetails?.({
+      NodeAssert.ok(mcpRuntime.getServerDetails);
+      const details = yield* mcpRuntime.getServerDetails({
         ...target,
         providerKey: McpRuntimeServerKey.make("notion"),
       });

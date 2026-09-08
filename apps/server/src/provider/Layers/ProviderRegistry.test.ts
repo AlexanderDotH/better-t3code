@@ -1,6 +1,5 @@
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import type { ClaudeDiscoveredModel } from "../Drivers/ClaudeDiscoveredModels.ts";
-import type { ClaudeGatewayCatalog } from "../Drivers/ClaudeGatewayCatalog.ts";
 import * as WorkspaceContext from "../../workspace/WorkspaceContext.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -1900,6 +1899,14 @@ it.layer(
             displayName: undefined,
             enabled: true,
             snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: codexDriver,
+                    packageName: null,
+                  }),
+                ),
+              applyUsageLimits: () => Effect.void,
               getSnapshot: Effect.succeed(codexProvider),
               refresh: Ref.update(codexRefreshCalls, (count) => count + 1).pipe(
                 Effect.as(codexProvider),
@@ -1919,6 +1926,14 @@ it.layer(
             displayName: undefined,
             enabled: true,
             snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: openCodeDriver,
+                    packageName: null,
+                  }),
+                ),
+              applyUsageLimits: () => Effect.void,
               getSnapshot: Effect.succeed(failedOpenCodeProvider),
               refresh: Ref.update(openCodeRefreshCalls, (count) => count + 1).pipe(
                 Effect.andThen(Ref.get(catalogSnapshot)),

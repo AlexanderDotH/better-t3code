@@ -43,7 +43,7 @@ describe("ChatGptCredentialStore", () => {
       yield* fileSystem.chmod(store.authFilePath, 0o644);
       const credential = yield* store.read;
 
-      assert.isTrue(Option.isSome(credential));
+      assert.isOk(Option.isSome(credential));
       expect(Redacted.value(credential.value.accessToken)).toBe("access-secret");
       expect(Redacted.value(credential.value.refreshToken)).toBe("refresh-secret");
       expect(credential.value.accountId).toBe("account-123");
@@ -77,7 +77,7 @@ describe("ChatGptCredentialStore", () => {
       );
 
       const decoded = yield* store.read;
-      assert.isTrue(Option.isSome(decoded));
+      assert.isOk(Option.isSome(decoded));
       expect(decoded.value.accountId).toBe("account-123");
       expect(Redacted.value(decoded.value.accessToken)).toBe("access-secret");
     }).pipe(Effect.provide(makeLayer())),

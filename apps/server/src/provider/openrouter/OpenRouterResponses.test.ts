@@ -266,7 +266,7 @@ describe("OpenRouter Responses beta", () => {
               toolCalls: [{ id: "call-1", name: "status", arguments: "{}" }],
               opaque: {
                 protocol: "responses",
-                outputItems: frames[3]!.response.output,
+                outputItems: frames[3]!.response?.output,
               },
             },
           ],
