@@ -249,6 +249,66 @@ describe("projectActivityPayload", () => {
     expect(JSON.stringify(projected.payload).length).toBeLessThan(500);
   });
 
+  it("keeps canonical provider payloads in persistence but off the client wire", () => {
+    const source = activity({
+      itemType: "mcp_tool_call",
+      provider: "codex",
+      providerRefs: { itemId: "item-1" },
+      canonicalPayload: {
+        item: {
+          result: {
+            content: [{ type: "text", text: "x".repeat(900_000) }],
+          },
+        },
+      },
+      data: {
+        item: {
+          type: "mcpToolCall",
+          id: "item-1",
+          tool: "inspect_transfer_log",
+          server: "fixture-history",
+          status: "completed",
+          arguments: { turn: 1 },
+          result: { content: [{ type: "text", text: "summary\n" + "y".repeat(5_000) }] },
+        },
+      },
+    });
+
+    const projected = projectActivityPayload(source);
+    const payload = projected.payload as Record<string, unknown>;
+    expect(payload.canonicalPayload).toBeUndefined();
+    expect(payload.provider).toBe("codex");
+    expect(payload.providerRefs).toEqual({ itemId: "item-1" });
+    expect(JSON.stringify(projected).length).toBeLessThan(1_000);
+    expect(
+      ((source.payload as Record<string, unknown>).canonicalPayload as Record<string, unknown>)
+        .item,
+    ).toBeDefined();
+  });
+
+  it("keeps a failed item failed while removing its canonical provider payload", () => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "command_execution",
+        status: "completed",
+        canonicalPayload: { raw: "provider-only" },
+        data: {
+          item: {
+            command: "vp test run",
+            status: "failed",
+          },
+        },
+      }),
+    );
+
+    expect(projected.payload).toMatchObject({
+      itemType: "command_execution",
+      status: "failed",
+      data: { item: { command: "vp test run" } },
+    });
+    expect((projected.payload as Record<string, unknown>).canonicalPayload).toBeUndefined();
+  });
+
   it("passes task lifecycle payloads (no data field) through untouched", () => {
     const source = activity({
       taskId: "task-9",
