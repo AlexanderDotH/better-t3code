@@ -73,6 +73,10 @@ const T3ConnectSidebarAvatar = lazy(() =>
 const SETTINGS_SECTION_ICONS: Readonly<
   Record<SettingsPath, ComponentType<{ className?: string }>>
 > = {
+  "/settings/better-t3": Settings2Icon,
+  "/settings/mcp": BlocksIcon,
+  "/settings/skills": BlocksIcon,
+  "/settings/import-chats": ArchiveIcon,
   "/settings/general": Settings2Icon,
   "/settings/appearance": PaletteIcon,
   "/settings/projects": PanelsTopLeftIcon,

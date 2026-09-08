@@ -1,3 +1,4 @@
+import type { ServerSettingsPatch } from "@t3tools/contracts";
 import type {
   BackgroundActivityProfile,
   BackgroundActivitySettings,
@@ -259,7 +260,7 @@ export function buildProviderInstanceUpdatePatch(input: {
   readonly textGenerationModelSelection?:
     | ServerSettings["textGenerationModelSelection"]
     | undefined;
-}): Partial<UnifiedSettings> {
+}): ServerSettingsPatch {
   type LegacyProviderSettings = ServerSettings["providers"][keyof ServerSettings["providers"]];
   const legacyProviderDefaults = DEFAULT_UNIFIED_SETTINGS.providers as Record<
     string,
