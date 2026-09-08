@@ -1774,3 +1774,57 @@ describe("applyThreadDetailEvent", () => {
     });
   });
 });
+
+describe("cooperative abort projection", () => {
+  it("keeps partial output while cancellation is only requested", () => {
+    const thread = makeAbortingThread();
+    expect(
+      applyThreadDetailEvent(thread, {
+        ...baseEventFields,
+        sequence: 1,
+        occurredAt: "2026-04-01T07:00:04.000Z",
+        aggregateKind: "thread",
+        aggregateId: thread.id,
+        type: "thread.turn-interrupt-requested",
+        payload: {
+          threadId: thread.id,
+          turnId: TurnId.make("turn-1"),
+          createdAt: "2026-04-01T07:00:04.000Z",
+        },
+      }),
+    ).toEqual({ kind: "unchanged" });
+    expect(thread.messages[0]?.text).toBe("Partial output remains visible.");
+  });
+
+  it("ignores an older runtime settlement and clears only the matching abort", () => {
+    const thread = makeAbortingThread();
+    const settle = (runtimeSessionId: RuntimeSessionId) =>
+      applyThreadDetailEvent(thread, {
+        ...baseEventFields,
+        sequence: 2,
+        occurredAt: "2026-04-01T07:00:05.000Z",
+        aggregateKind: "thread",
+        aggregateId: thread.id,
+        type: "thread.turn-abort-settled",
+        payload: {
+          threadId: thread.id,
+          runtimeSessionId,
+          turnId: TurnId.make("turn-1"),
+          outcome: "cooperative",
+          settledAt: "2026-04-01T07:00:05.000Z",
+        },
+      });
+    expect(settle(RUNTIME_TWO)).toEqual({ kind: "unchanged" });
+    const result = settle(RUNTIME_ONE);
+    expect(result.kind).toBe("updated");
+    if (result.kind !== "updated") throw new Error("Expected matching abort settlement");
+    expect(result.thread.session).toMatchObject({
+      status: "ready",
+      abortState: null,
+      runtimeSessionId: RUNTIME_ONE,
+      activeTurnId: null,
+    });
+    expect(result.thread.latestTurn?.state).toBe("interrupted");
+    expect(result.thread.messages).toBe(thread.messages);
+  });
+});
