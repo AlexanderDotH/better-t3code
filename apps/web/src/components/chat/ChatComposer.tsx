@@ -1,3 +1,22 @@
+import {
+  resolvePlanImplementationSuggestion,
+  type PlanImplementationStrategy,
+  type PlanImplementationSuggestion,
+  type PlanParallelismReviewStatus,
+} from "@t3tools/client-runtime/plan-implementation";
+import { useInterfaceTranslator } from "../../hooks/useInterfaceTranslator";
+import { usePlanParallelismReview } from "../../hooks/usePlanParallelismReview";
+import { resolveFirstTurnForkBudget } from "@t3tools/client-runtime/thread-fork";
+import {
+  resolveThreadAbortPresentation,
+  type ThreadAbortPresentation,
+} from "@t3tools/client-runtime/state/thread-abort";
+import { useAtomValue } from "@effect/atom-react";
+import { resolveBetterT3FeatureFlag } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { useAssemblyAiDictation } from "../../hooks/useAssemblyAiDictation";
+import { VoiceDictationControl } from "./VoiceDictationControl";
+import { resolveAssemblyAiVoiceInputAvailability } from "./voiceInputAvailability";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   questionAttachmentDraftId,
@@ -998,14 +1017,15 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
+  const translate = useInterfaceTranslator().message;
   const size = props.size ?? "sm";
   const [open, setOpen] = useComposerMenuState(props.hidden);
   const runtimeModeOption = runtimeModeConfig[props.runtimeMode];
   const RuntimeModeIcon = runtimeModeOption.icon;
   const interactionModeTooltip =
     props.interactionMode === "plan"
-      ? "Plan mode — click to return to normal build mode"
-      : "Default mode — click to enter plan mode";
+      ? translate("chat.composer.interaction.planDescription")
+      : translate("chat.composer.interaction.buildDescription");
 
   const interactionModeToggle = props.showInteractionModeToggle ? (
     <>
@@ -1043,7 +1063,9 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
             />
           )}
           <span className="sr-only sm:not-sr-only">
-            {props.interactionMode === "plan" ? "Plan" : "Build"}
+            {props.interactionMode === "plan"
+              ? translate("chat.composer.mode.plan")
+              : translate("chat.composer.interaction.build")}
           </span>
         </TooltipTrigger>
         <TooltipPopup side="top">{interactionModeTooltip}</TooltipPopup>
@@ -1117,6 +1139,9 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
     isComplete: boolean;
   } | null;
   isRunning: boolean;
+  abortPresentation: ThreadAbortPresentation;
+  planImplementationSuggestion: PlanImplementationSuggestion | null;
+  planParallelismReviewStatus: PlanParallelismReviewStatus;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -1128,7 +1153,8 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   showSendWhileRunning?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
-  onImplementPlanInNewThread: () => void;
+  onImplementPlan: (strategy: PlanImplementationStrategy) => void;
+  onImplementPlanInNewThread: (strategy: PlanImplementationStrategy) => void;
   onCompactContext?: (() => void) | undefined;
   compactDisabled: boolean;
   compactDisabledReason: string | null;
@@ -1145,6 +1171,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         />
       ) : null}
       <ComposerPrimaryActions
+        abortPresentation={props.abortPresentation}
         compact={props.compact}
         pendingAction={props.pendingAction}
         isRunning={props.isRunning}
@@ -1160,6 +1187,9 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         showSendWhileRunning={props.showSendWhileRunning ?? false}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
+        planImplementationSuggestion={props.planImplementationSuggestion}
+        planParallelismReviewStatus={props.planParallelismReviewStatus}
+        onImplementPlan={props.onImplementPlan}
         onImplementPlanInNewThread={props.onImplementPlanInNewThread}
       />
     </>
@@ -1185,6 +1215,8 @@ export interface ChatComposerHandle {
   openModelPicker: () => void;
   toggleModelPicker: () => void;
   isModelPickerOpen: () => boolean;
+  isVoiceRecordingActive: () => boolean;
+  dismissTransientUi: () => void;
   compactContext: () => void;
   readSnapshot: () => {
     value: string;
@@ -1218,6 +1250,8 @@ export interface ChatComposerHandle {
     selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
     interactionMode: ProviderInteractionMode;
     interactionModeEnabled: boolean;
+    planImplementationSuggestion: PlanImplementationSuggestion | null;
+    planParallelismReviewStatus: PlanParallelismReviewStatus;
   };
   /** Validate the fully composed text immediately before a provider turn starts. */
   validateProviderInput: (providerInput: string) => boolean;
@@ -1341,7 +1375,8 @@ export interface ChatComposerProps {
   // Callbacks
   onSend: (e?: { preventDefault: () => void }, intent?: ComposerSubmissionIntent) => void;
   onInterrupt: () => void;
-  onImplementPlanInNewThread: () => void;
+  onImplementPlan: (strategy: PlanImplementationStrategy) => void;
+  onImplementPlanInNewThread: (strategy: PlanImplementationStrategy) => void;
   onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -1368,6 +1403,7 @@ export interface ChatComposerProps {
   focusComposer: () => void;
   scheduleComposerFocus: () => void;
   setThreadError: (threadId: ThreadId | null, error: string | null) => void;
+  onVoiceRecordingActiveChange?: (active: boolean) => void;
   onExpandImage: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
 }
@@ -1446,6 +1482,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onPageScrollRelease,
     onSend,
     onInterrupt,
+    onImplementPlan,
     onImplementPlanInNewThread,
     onRespondToApproval,
     onSelectActivePendingUserInputOption,
@@ -1462,6 +1499,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     focusComposer,
     scheduleComposerFocus,
     setThreadError,
+    onVoiceRecordingActiveChange,
     onExpandImage,
     onFileOpen,
   } = props;
@@ -1748,6 +1786,44 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedProviderStatus = useMemo(
     () => selectedProviderEntry?.snapshot ?? null,
     [selectedProviderEntry],
+  );
+  const planServerConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const parallelPlanEnabled =
+    resolveBetterT3FeatureFlag(settings.betterT3Device, "agent.parallelPlanImplementation") &&
+    (planServerConfig?.environment.capabilities.agentWorkflowVersion ?? 0) >= 1;
+  const planReviewerSelection = settings.parallelPlanReviewModelSelection;
+  const planReviewerProvider = useMemo(
+    () =>
+      providerStatuses.find(
+        (provider) => provider.instanceId === planReviewerSelection.instanceId,
+      ) ?? null,
+    [providerStatuses, planReviewerSelection.instanceId],
+  );
+  const planParallelismReview = usePlanParallelismReview({
+    enabled: parallelPlanEnabled && showPlanFollowUpPrompt && environmentUnavailable === null,
+    environmentId,
+    threadId: activeThreadId,
+    plan: activeProposedPlan,
+    implementationProvider: selectedProviderStatus,
+    reviewerProvider: planReviewerProvider,
+    reviewerSelection: planReviewerSelection,
+  });
+  const planImplementationSuggestion = useMemo(
+    () =>
+      activeProposedPlan
+        ? resolvePlanImplementationSuggestion({
+            featureEnabled: parallelPlanEnabled,
+            planMarkdown: activeProposedPlan.planMarkdown,
+            provider: selectedProviderStatus,
+            reviewedSubagentCount: planParallelismReview.reviewedSubagentCount,
+          })
+        : null,
+    [
+      activeProposedPlan,
+      parallelPlanEnabled,
+      selectedProviderStatus,
+      planParallelismReview.reviewedSubagentCount,
+    ],
   );
   const compactCommandAvailable = providerSupportsManualCompaction(selectedProviderEntry);
   const selectedProviderSkills = selectedProviderStatus
@@ -2993,9 +3069,81 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     showPlanFollowUpPrompt,
   ]);
 
+  const abortPresentation = resolveThreadAbortPresentation(activeThread?.session ?? null);
+  const voiceServerConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const voiceApiKey = settings.speechTranscription.assemblyAi.apiKey;
+  const voiceInputConfigured = resolveAssemblyAiVoiceInputAvailability({
+    featureEnabled: resolveBetterT3FeatureFlag(settings.betterT3Environment, "voice.assemblyAi"),
+    environmentSettingsVersion:
+      voiceServerConfig?.environment.capabilities.environmentSettingsVersion,
+    apiKeyConfigured: voiceApiKey.value.trim().length > 0 || voiceApiKey.valueRedacted === true,
+  }).configured;
+  const createVoiceToken = useAtomCommand(serverEnvironment.createAssemblyAiStreamingToken, {
+    reportFailure: false,
+  });
+  const translateVoiceTranscript = useAtomCommand(serverEnvironment.translateSpeechTranscript, {
+    reportFailure: false,
+  });
+  const voiceDictation = useAssemblyAiDictation({
+    configured: voiceInputConfigured,
+    lifecycleKey:
+      typeof composerDraftTarget === "string"
+        ? `draft:${composerDraftTarget}`
+        : `thread:${composerDraftTarget.environmentId}:${composerDraftTarget.threadId}`,
+    getDraftSnapshot: () => ({ text: promptRef.current, cursor: composerCursor }),
+    applyDraftSnapshot: ({ text, cursor }) => {
+      const nextCursor = clampCollapsedComposerCursor(text, cursor);
+      onPromptChange(
+        text,
+        nextCursor,
+        expandCollapsedComposerCursor(text, nextCursor),
+        false,
+        composerTerminalContextsRef.current.map((context) => context.id),
+      );
+    },
+    onNotice: ({ title, error }) => {
+      toastManager.add({ type: "error", title, description: error.message });
+    },
+    createToken: async () => {
+      if (!activeThread) throw new Error("Project context is unavailable for voice input.");
+      const result = await createVoiceToken({
+        environmentId,
+        input: { projectId: activeThread.projectId },
+      });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      return result.value;
+    },
+    ...(settings.voiceInputOutputLanguage === "english"
+      ? {
+          transformTranscript: async (text: string) => {
+            if (!activeThread)
+              throw new Error("Project context is unavailable for voice translation.");
+            const result = await translateVoiceTranscript({
+              environmentId,
+              input: { projectId: activeThread.projectId, text },
+            });
+            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+            return result.value.text;
+          },
+        }
+      : {}),
+  });
+
+  useEffect(() => {
+    onVoiceRecordingActiveChange?.(voiceDictation.active);
+  }, [onVoiceRecordingActiveChange, voiceDictation.active]);
+
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }, intent: ComposerSubmissionIntent = "foreground") => {
-      if (noProviderAvailable || isSendDisabled) {
+      if (noProviderAvailable || isSendDisabled || voiceDictation.active) {
+        event?.preventDefault();
+        return;
+      }
+      if (
+        planParallelismReview.status === "reviewing" &&
+        showPlanFollowUpPrompt &&
+        promptRef.current.trim().length === 0
+      ) {
         event?.preventDefault();
         return;
       }
@@ -3040,6 +3188,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       blurMobileComposerAfterSend,
       isSendDisabled,
       noProviderAvailable,
+      voiceDictation.active,
+      planParallelismReview.status,
+      showPlanFollowUpPrompt,
       onSend,
       promptRef,
       shouldBlurMobileComposerOnSubmit,
@@ -4635,11 +4786,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return () => window.removeEventListener("dragend", onWindowDragEnd);
   }, [isDragOverComposer]);
   const handleInterruptPrimaryAction = useCallback(() => {
-    void onInterrupt();
-  }, [onInterrupt]);
-  const handleImplementPlanInNewThreadPrimaryAction = useCallback(() => {
-    void onImplementPlanInNewThread();
-  }, [onImplementPlanInNewThread]);
+    if (!abortPresentation.disabled) void onInterrupt();
+  }, [abortPresentation.disabled, onInterrupt]);
+  const handleImplementPlanPrimaryAction = useCallback(
+    (strategy: PlanImplementationStrategy) => {
+      if (planParallelismReview.status !== "reviewing") void onImplementPlan(strategy);
+    },
+    [onImplementPlan, planParallelismReview.status],
+  );
+  const handleImplementPlanInNewThreadPrimaryAction = useCallback(
+    (strategy: PlanImplementationStrategy) => {
+      if (planParallelismReview.status !== "reviewing") void onImplementPlanInNewThread(strategy);
+    },
+    [onImplementPlanInNewThread, planParallelismReview.status],
+  );
   // The phone composer collapses when the editor loses focus. Desktop only
   // rests on a timeline scroll, so losing focus there changes nothing.
   const scheduleComposerCollapseCheck = useCallback(() => {
@@ -4747,6 +4907,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
       compactContext: compactThreadContext,
       isModelPickerOpen: () => isComposerModelPickerOpen,
+      isVoiceRecordingActive: () => voiceDictation.active,
+      dismissTransientUi: () => {
+        setIsComposerModelPickerOpen(false);
+        setIsStashMenuOpen(false);
+        setComposerHighlightedItemId(null);
+        setComposerTrigger(null);
+      },
       readSnapshot: () => {
         return readComposerSnapshot();
       },
@@ -4820,12 +4987,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedProviderModels,
         interactionMode,
         interactionModeEnabled: planModeUiEnabled,
+        planImplementationSuggestion,
+        planParallelismReviewStatus: planParallelismReview.status,
       }),
       validateProviderInput: (providerInput: string) => {
+        const forkBudget = resolveFirstTurnForkBudget(activeThread?.fork?.handoff);
         const validationMessage = getComposerSubmissionValidationMessage({
           prompt: promptRef.current,
           providerInput,
           submissionTarget: "provider-turn",
+          ...(forkBudget ? { maxInputChars: forkBudget.remainingInputChars } : {}),
         });
         providerInputRejectedRef.current = validationMessage !== null;
         setProviderInputSubmissionError(validationMessage);
@@ -4856,6 +5027,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       projectSelectionRequired,
       applyPromptReplacement,
       isComposerModelPickerOpen,
+      voiceDictation.active,
       openModelPicker,
       readComposerSnapshot,
       selectedModel,
@@ -4868,6 +5040,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedProviderModels,
       interactionMode,
       planModeUiEnabled,
+      planImplementationSuggestion,
+      planParallelismReview.status,
       compactThreadContext,
       restoreAfterTimelineReachedEnd,
       getTimelineScrollableNode,
@@ -5071,6 +5245,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           ) : null}
                           {activePendingProgress?.activeQuestion?.multiSelect ? (
                             <ComposerPrimaryActions
+                              abortPresentation={abortPresentation}
                               compact
                               pendingAction={pendingPrimaryAction}
                               isRunning={false}
@@ -5089,6 +5264,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               preserveComposerFocusOnPointerDown
                               onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                               onInterrupt={handleInterruptPrimaryAction}
+                              planImplementationSuggestion={planImplementationSuggestion}
+                              planParallelismReviewStatus={planParallelismReview.status}
+                              onImplementPlan={handleImplementPlanPrimaryAction}
                               onImplementPlanInNewThread={
                                 handleImplementPlanInNewThreadPrimaryAction
                               }
@@ -5706,6 +5884,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     className="absolute bottom-0 right-0 flex items-center justify-end gap-1"
                   >
                     <ComposerPrimaryActions
+                      abortPresentation={abortPresentation}
                       compact
                       pendingAction={pendingPrimaryAction}
                       isRunning={false}
@@ -5724,6 +5903,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       preserveComposerFocusOnPointerDown
                       onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                       onInterrupt={handleInterruptPrimaryAction}
+                      planImplementationSuggestion={planImplementationSuggestion}
+                      planParallelismReviewStatus={planParallelismReview.status}
+                      onImplementPlan={handleImplementPlanPrimaryAction}
                       onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
                     />
                   </div>
@@ -5803,7 +5985,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       </Tooltip>
                     </>
                   ) : null}
+                  {voiceInputConfigured || voiceDictation.active ? (
+                    <VoiceDictationControl
+                      state={voiceDictation.state}
+                      audioWaveform={voiceDictation.audioWaveform}
+                      disabled={
+                        isConnecting ||
+                        isSendBusy ||
+                        isSendDisabled ||
+                        noProviderAvailable ||
+                        projectSelectionRequired ||
+                        phase === "running" ||
+                        environmentUnavailable !== null ||
+                        pendingUserInputs.length > 0
+                      }
+                      onStart={voiceDictation.start}
+                      onStop={voiceDictation.stop}
+                    />
+                  ) : null}
                   <ComposerFooterPrimaryActions
+                    abortPresentation={abortPresentation}
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
                     activeContextWindow={
                       settings.contextWindowMeterEnabled ? activeContextWindow : null
@@ -5815,7 +6016,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       pendingUserInputs.length === 0 && showPlanFollowUpPrompt
                     }
                     promptHasText={prompt.trim().length > 0}
-                    isSendBusy={isSendBusy}
+                    isSendBusy={isSendBusy || voiceDictation.active}
                     sendDisabledReason={sendDisabledReason}
                     isConnecting={isConnecting}
                     isEnvironmentUnavailable={
@@ -5829,6 +6030,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     showSendWhileRunning={isMobileViewport}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
+                    planImplementationSuggestion={planImplementationSuggestion}
+                    planParallelismReviewStatus={planParallelismReview.status}
+                    onImplementPlan={handleImplementPlanPrimaryAction}
                     onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
                     compactDisabled={
                       compactDisabled || noProviderAvailable || isSendBusy || isConnecting
