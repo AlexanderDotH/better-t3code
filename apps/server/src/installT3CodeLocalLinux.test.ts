@@ -15,6 +15,8 @@ const buildScriptPath = NodePath.resolve(
 );
 const projectRoot = NodePath.resolve(import.meta.dirname, "../../..");
 const temporaryDirectories: string[] = [];
+// oxlint-disable-next-line t3code/no-global-process-runtime -- These subprocess tests require the real host shell and filesystem semantics.
+const linuxHost = NodeOS.platform() === "linux";
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
@@ -71,7 +73,7 @@ function runInstaller(input: {
 }
 
 describe("install-t3code-local-linux", () => {
-  it.runIf(NodeOS.platform() !== "linux")("rejects unsupported hosts before installing", () => {
+  it.runIf(!linuxHost)("rejects unsupported hosts before installing", () => {
     const home = makeHome();
     const appImage = NodePath.join(home, "fake.AppImage");
     writeFakeAppImage(appImage, "exit 0");
@@ -80,7 +82,7 @@ describe("install-t3code-local-linux", () => {
     NodeAssert.match(result.stderr, /only supported on Linux/);
     NodeAssert.equal(NodeFS.existsSync(NodePath.join(home, ".local/bin/t3code-local")), false);
   });
-  it.runIf(NodeOS.platform() === "linux")(
+  it.runIf(linuxHost)(
     "installs the production Linux icon at its native hicolor size",
     () => {
       const home = makeHome();
@@ -155,7 +157,7 @@ describe("install-t3code-local-linux", () => {
     NodeAssert.equal(NodeFS.existsSync(NodePath.join(home, "data", "t3code-local")), false);
   });
 
-  it.runIf(NodeOS.platform() === "linux")(
+  it.runIf(linuxHost)(
     "atomically rotates the previous AppImage and preserves the selected profile",
     () => {
       const home = makeHome();
@@ -190,7 +192,7 @@ describe("install-t3code-local-linux", () => {
     },
   );
 
-  it.runIf(NodeOS.platform() === "linux")(
+  it.runIf(linuxHost)(
     "rolls back the AppImage and profile when a later local target commit fails",
     () => {
       const home = makeHome();
@@ -249,7 +251,7 @@ describe("install-t3code-local-linux", () => {
     },
   );
 
-  it.runIf(NodeOS.platform() === "linux")(
+  it.runIf(linuxHost)(
     "refuses to start the shared profile while the system package is running",
     () => {
       const home = makeHome();
@@ -285,7 +287,7 @@ describe("install-t3code-local-linux", () => {
     },
   );
 
-  it.runIf(NodeOS.platform() === "linux")(
+  it.runIf(linuxHost)(
     "backs up and reuses the shared backend and Electron profile on first launch",
     () => {
       const home = makeHome();
