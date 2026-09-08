@@ -22,6 +22,16 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import * as PreviewManager from "./Manager.ts";
 
+describe("buildPreviewPictureInPictureDataUrl", () => {
+  it("uses the selected interface language for the live preview alternative text", () => {
+    const url = PreviewManager.buildPreviewPictureInPictureDataUrl("fr");
+    const html = decodeURIComponent(url.slice("data:text/html;charset=utf-8,".length));
+
+    expect(html).toContain('alt="Aperçu du navigateur en direct"');
+    expect(html).not.toContain('alt="Live browser preview"');
+  });
+});
+
 describe("fitPictureInPictureContentSize", () => {
   it("preserves the PiP content area across aspect-ratio changes", () => {
     expect(PreviewManager.fitPictureInPictureContentSize([480, 320], 16 / 9)).toEqual([523, 294]);
@@ -658,6 +668,19 @@ describe("PreviewManager", () => {
       }),
     ),
   );
+  it("releases closed-tab lifecycle generations without reusing stale tokens", () => {
+    const generations = new PreviewManager.PreviewTabLifecycleGenerations();
+    const first = generations.create("tab-memory");
+
+    expect(generations.current("tab-memory")).toBe(first);
+    expect(generations.size).toBe(1);
+    generations.close("tab-memory");
+    expect(generations.current("tab-memory")).toBeUndefined();
+    expect(generations.size).toBe(0);
+
+    const second = generations.create("tab-memory");
+    expect(second).toBeGreaterThan(first);
+  });
 
   effectIt.effect("reports an unregistered webview as temporarily unavailable", () =>
     withManager((manager) =>
