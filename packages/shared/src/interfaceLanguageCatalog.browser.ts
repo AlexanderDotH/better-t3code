@@ -1,0 +1,601 @@
+import { defineLocalizedInterfaceCatalog } from "./interfaceLanguageCatalog.types.ts";
+
+export const browserInterfaceCatalog = defineLocalizedInterfaceCatalog({
+  "browser.device.responsive": ["Responsive", "Responsiv", "Adaptatif"],
+  "browser.device.dimensions": ["Dimensions", "Abmessungen", "Dimensions"],
+  "browser.device.toolbar": [
+    "Browser device toolbar",
+    "Browser-Geräteleiste",
+    "Barre d’appareil du navigateur",
+  ],
+  "browser.device.preset": [
+    "Browser device preset",
+    "Browser-Gerätevoreinstellung",
+    "Préréglage d’appareil du navigateur",
+  ],
+  "browser.device.standard": ["Standard", "Standard", "Standard"],
+  "browser.device.viewportDimensions": [
+    "Viewport dimensions",
+    "Viewport-Abmessungen",
+    "Dimensions de la zone d’affichage",
+  ],
+  "browser.device.viewportWidth": [
+    "Viewport width",
+    "Viewport-Breite",
+    "Largeur de la zone d’affichage",
+  ],
+  "browser.device.viewportHeight": [
+    "Viewport height",
+    "Viewport-Höhe",
+    "Hauteur de la zone d’affichage",
+  ],
+  "browser.device.lockAspectRatio": [
+    "Lock aspect ratio",
+    "Seitenverhältnis sperren",
+    "Verrouiller les proportions",
+  ],
+  "browser.device.unlockAspectRatio": [
+    "Unlock aspect ratio",
+    "Seitenverhältnis entsperren",
+    "Déverrouiller les proportions",
+  ],
+  "browser.device.lockViewportAspectRatio": [
+    "Lock viewport aspect ratio",
+    "Viewport-Seitenverhältnis sperren",
+    "Verrouiller les proportions de la zone d’affichage",
+  ],
+  "browser.device.unlockViewportAspectRatio": [
+    "Unlock viewport aspect ratio",
+    "Viewport-Seitenverhältnis entsperren",
+    "Déverrouiller les proportions de la zone d’affichage",
+  ],
+  "browser.device.rotate": ["Rotate viewport", "Viewport drehen", "Faire pivoter l’affichage"],
+  "browser.device.closeToolbar": [
+    "Close device toolbar",
+    "Geräteleiste schließen",
+    "Fermer la barre d’appareil",
+  ],
+  "browser.device.resizeLeft": [
+    "Resize browser viewport from left edge",
+    "Browser-Viewport am linken Rand skalieren",
+    "Redimensionner l’affichage depuis le bord gauche",
+  ],
+  "browser.device.resizeRight": [
+    "Resize browser viewport from right edge",
+    "Browser-Viewport am rechten Rand skalieren",
+    "Redimensionner l’affichage depuis le bord droit",
+  ],
+  "browser.device.resizeBottom": [
+    "Resize browser viewport from bottom edge",
+    "Browser-Viewport am unteren Rand skalieren",
+    "Redimensionner l’affichage depuis le bord inférieur",
+  ],
+  "browser.device.resizeBottomLeft": [
+    "Resize browser viewport from bottom-left corner",
+    "Browser-Viewport an der linken unteren Ecke skalieren",
+    "Redimensionner l’affichage depuis le coin inférieur gauche",
+  ],
+  "browser.device.resizeBottomRight": [
+    "Resize browser viewport from bottom-right corner",
+    "Browser-Viewport an der rechten unteren Ecke skalieren",
+    "Redimensionner l’affichage depuis le coin inférieur droit",
+  ],
+  "browser.device.resizeInstructions": [
+    "{{label}}. Use arrow keys to resize.",
+    "{{label}}. Mit den Pfeiltasten die Größe ändern.",
+    "{{label}}. Utilisez les touches fléchées pour redimensionner.",
+  ],
+
+  "browser.files.refreshWorkspace": [
+    "Refresh workspace files",
+    "Workspace-Dateien aktualisieren",
+    "Actualiser les fichiers de l’espace de travail",
+  ],
+  "browser.files.refreshing": ["Refreshing…", "Wird aktualisiert…", "Actualisation…"],
+  "browser.files.refresh": ["Refresh files", "Dateien aktualisieren", "Actualiser les fichiers"],
+  "browser.files.search": ["Search files", "Dateien suchen", "Rechercher des fichiers"],
+  "browser.files.copyMention": ["Copy mention", "Erwähnung kopieren", "Copier la mention"],
+  "browser.files.addToChat": ["Add to chat", "Zum Chat hinzufügen", "Ajouter à la discussion"],
+  "browser.files.mentionCopied": ["Mention copied", "Erwähnung kopiert", "Mention copiée"],
+  "browser.files.copyMentionFailed": [
+    "Failed to copy mention",
+    "Erwähnung konnte nicht kopiert werden",
+    "Impossible de copier la mention",
+  ],
+  "browser.files.errorOccurred": [
+    "An error occurred.",
+    "Ein Fehler ist aufgetreten.",
+    "Une erreur s’est produite.",
+  ],
+  "browser.files.unableToAddToChat": [
+    "Unable to add to chat",
+    "Hinzufügen zum Chat nicht möglich",
+    "Impossible d’ajouter à la discussion",
+  ],
+  "browser.files.openChatFirst": [
+    "Open a chat for this project and try again.",
+    "Einen Chat für dieses Projekt öffnen und erneut versuchen.",
+    "Ouvrez une discussion pour ce projet, puis réessayez.",
+  ],
+  "browser.files.chatNotReady": [
+    "The chat isn't ready to accept input right now.",
+    "Der Chat kann derzeit keine Eingabe annehmen.",
+    "La discussion ne peut pas recevoir de saisie pour le moment.",
+  ],
+  "browser.files.searchProject": [
+    "Search {{project}} files",
+    "Dateien in {{project}} suchen",
+    "Rechercher dans les fichiers de {{project}}",
+  ],
+  "browser.files.projectFiles": [
+    "{{project}} files",
+    "Dateien in {{project}}",
+    "Fichiers de {{project}}",
+  ],
+  "browser.files.picker": ["File picker", "Dateiauswahl", "Sélecteur de fichiers"],
+  "browser.files.back": ["Back", "Zurück", "Retour"],
+  "browser.files.openFile": ["Open file", "Datei öffnen", "Ouvrir le fichier"],
+  "browser.files.searchEllipsis": ["Search files…", "Dateien suchen…", "Rechercher des fichiers…"],
+  "browser.files.openProjectToSearch": [
+    "Open a project to search its files.",
+    "Ein Projekt öffnen, um dessen Dateien zu durchsuchen.",
+    "Ouvrez un projet pour rechercher dans ses fichiers.",
+  ],
+  "browser.files.searchingWorkspace": [
+    "Searching workspace files…",
+    "Workspace-Dateien werden durchsucht…",
+    "Recherche dans les fichiers de l’espace de travail…",
+  ],
+  "browser.files.indexingWorkspace": [
+    "Indexing workspace files…",
+    "Workspace-Dateien werden indiziert…",
+    "Indexation des fichiers de l’espace de travail…",
+  ],
+  "browser.files.noMatching": [
+    "No matching files.",
+    "Keine passenden Dateien.",
+    "Aucun fichier correspondant.",
+  ],
+  "browser.files.noneFound": [
+    "No files found.",
+    "Keine Dateien gefunden.",
+    "Aucun fichier trouvé.",
+  ],
+  "browser.files.edit": ["Edit {{path}}", "{{path}} bearbeiten", "Modifier {{path}}"],
+  "browser.files.imageLoadFailed": [
+    "Unable to load workspace image.",
+    "Workspace-Bild konnte nicht geladen werden.",
+    "Impossible de charger l’image de l’espace de travail.",
+  ],
+  "browser.files.openInPreviewFailed": [
+    "Unable to open file in browser",
+    "Datei konnte nicht im Browser geöffnet werden",
+    "Impossible d’ouvrir le fichier dans le navigateur",
+  ],
+  "browser.files.showMarkdownSource": [
+    "Show markdown source",
+    "Markdown-Quelltext anzeigen",
+    "Afficher la source Markdown",
+  ],
+  "browser.files.showRenderedMarkdown": [
+    "Show rendered markdown",
+    "Gerendertes Markdown anzeigen",
+    "Afficher le rendu Markdown",
+  ],
+  "browser.files.openInPreview": [
+    "Open file in preview browser",
+    "Datei im Vorschau-Browser öffnen",
+    "Ouvrir le fichier dans le navigateur d’aperçu",
+  ],
+  "browser.files.hideExplorer": [
+    "Hide file explorer",
+    "Datei-Explorer ausblenden",
+    "Masquer l’explorateur de fichiers",
+  ],
+  "browser.files.showExplorer": [
+    "Show file explorer",
+    "Datei-Explorer anzeigen",
+    "Afficher l’explorateur de fichiers",
+  ],
+  "browser.files.previewTruncated": [
+    "Preview limited to the first 1 MB of a {{bytes}} byte file.",
+    "Die Vorschau ist auf das erste 1 MB einer {{bytes}} Byte großen Datei begrenzt.",
+    "L’aperçu est limité au premier Mo d’un fichier de {{bytes}} octets.",
+  ],
+  "browser.files.revealFinder": ["Reveal in Finder", "Im Finder zeigen", "Afficher dans Finder"],
+  "browser.files.revealFileExplorer": [
+    "Reveal in File Explorer",
+    "Im Datei-Explorer zeigen",
+    "Afficher dans l’Explorateur de fichiers",
+  ],
+  "browser.files.revealFiles": ["Reveal in Files", "In Dateien zeigen", "Afficher dans Fichiers"],
+
+  "browser.preview.emptyTitle": ["No preview yet", "Noch keine Vorschau", "Aucun aperçu"],
+  "browser.preview.emptyDescription": [
+    "Type a URL above, or run a dev script. Browser-ready localhost servers will show up here automatically.",
+    "Oben eine URL eingeben oder ein Entwicklungsskript ausführen. Browserfähige Localhost-Server erscheinen hier automatisch.",
+    "Saisissez une URL ci-dessus ou lancez un script de développement. Les serveurs localhost accessibles au navigateur apparaîtront ici automatiquement.",
+  ],
+  "browser.preview.recentlyUsed": ["Recently used", "Zuletzt verwendet", "Utilisés récemment"],
+  "browser.preview.localServers": ["Local servers", "Lokale Server", "Serveurs locaux"],
+  "browser.preview.selectLocalServer": [
+    "Select a live local server to open it in this browser tab.",
+    "Einen aktiven lokalen Server auswählen, um ihn in diesem Browser-Tab zu öffnen.",
+    "Sélectionnez un serveur local actif pour l’ouvrir dans cet onglet.",
+  ],
+  "browser.preview.listening": ["Listening", "Lauscht", "En écoute"],
+  "browser.preview.removeHistory": [
+    "Remove {{label}} from history",
+    "{{label}} aus dem Verlauf entfernen",
+    "Retirer {{label}} de l’historique",
+  ],
+  "browser.preview.desktopOnly": [
+    "Preview is only available in the T3 Code desktop app.",
+    "Die Vorschau ist nur in der T3 Code Desktop-App verfügbar.",
+    "L’aperçu est disponible uniquement dans l’application de bureau T3 Code.",
+  ],
+  "browser.preview.resizePanel": [
+    "Resize preview panel",
+    "Vorschaufenster skalieren",
+    "Redimensionner le panneau d’aperçu",
+  ],
+  "browser.preview.openInPreview": [
+    "Open in preview",
+    "In Vorschau öffnen",
+    "Ouvrir dans l’aperçu",
+  ],
+  "browser.preview.openInBrowser": [
+    "Open in browser",
+    "Im Browser öffnen",
+    "Ouvrir dans le navigateur",
+  ],
+  "browser.preview.unreachableTitle": [
+    "This site can't be reached",
+    "Diese Website ist nicht erreichbar",
+    "Ce site est inaccessible",
+  ],
+  "browser.preview.try": ["Try:", "Versuchen:", "Essayez :"],
+  "browser.preview.checkConnection": [
+    "Checking your connection",
+    "Verbindung überprüfen",
+    "Vérifier votre connexion",
+  ],
+  "browser.preview.confirmServer": [
+    "Confirming the dev server is running",
+    "Prüfen, ob der Entwicklungsserver läuft",
+    "Vérifier que le serveur de développement fonctionne",
+  ],
+  "browser.preview.checkProxyFirewall": [
+    "Checking the proxy and the firewall",
+    "Proxy und Firewall überprüfen",
+    "Vérifier le proxy et le pare-feu",
+  ],
+  "browser.preview.hideDetails": ["Hide details", "Details ausblenden", "Masquer les détails"],
+  "browser.preview.details": ["Details", "Details", "Détails"],
+  "browser.preview.reload": ["Reload", "Neu laden", "Recharger"],
+  "browser.preview.error.dns": [
+    "DNS address could not be found",
+    "DNS-Adresse wurde nicht gefunden",
+    "Adresse DNS introuvable",
+  ],
+  "browser.preview.error.connectionRefused": [
+    "Connection refused",
+    "Verbindung abgelehnt",
+    "Connexion refusée",
+  ],
+  "browser.preview.error.connectionReset": [
+    "Connection was reset",
+    "Verbindung wurde zurückgesetzt",
+    "La connexion a été réinitialisée",
+  ],
+  "browser.preview.error.connectionClosed": [
+    "Connection was closed",
+    "Verbindung wurde geschlossen",
+    "La connexion a été fermée",
+  ],
+  "browser.preview.error.connectionTimedOut": [
+    "Connection timed out",
+    "Zeitüberschreitung der Verbindung",
+    "Délai de connexion dépassé",
+  ],
+  "browser.preview.error.offline": [
+    "No internet connection",
+    "Keine Internetverbindung",
+    "Aucune connexion Internet",
+  ],
+  "browser.preview.error.certificateAuthority": [
+    "Certificate authority is not trusted",
+    "Zertifizierungsstelle ist nicht vertrauenswürdig",
+    "L’autorité de certification n’est pas approuvée",
+  ],
+  "browser.preview.error.certificateHostname": [
+    "Certificate hostname mismatch",
+    "Hostname des Zertifikats stimmt nicht überein",
+    "Le nom d’hôte du certificat ne correspond pas",
+  ],
+  "browser.preview.error.certificateDate": [
+    "Certificate is expired or not yet valid",
+    "Zertifikat ist abgelaufen oder noch nicht gültig",
+    "Le certificat a expiré ou n’est pas encore valide",
+  ],
+  "browser.preview.error.redirects": [
+    "Too many redirects",
+    "Zu viele Weiterleitungen",
+    "Trop de redirections",
+  ],
+  "browser.preview.error.network": ["Network error", "Netzwerkfehler", "Erreur réseau"],
+
+  "browser.menu.label": ["Preview menu", "Vorschaumenü", "Menu d’aperçu"],
+  "browser.menu.more": ["More", "Mehr", "Plus"],
+  "browser.menu.hardReload": ["Hard reload", "Vollständig neu laden", "Rechargement forcé"],
+  "browser.menu.openDevTools": ["Open DevTools", "Entwicklertools öffnen", "Ouvrir les DevTools"],
+  "browser.menu.closeSeparateWindow": [
+    "Close separate preview window",
+    "Separates Vorschaufenster schließen",
+    "Fermer la fenêtre d’aperçu séparée",
+  ],
+  "browser.menu.openSeparateWindow": [
+    "Open separate preview window",
+    "Separates Vorschaufenster öffnen",
+    "Ouvrir une fenêtre d’aperçu séparée",
+  ],
+  "browser.menu.hideDeviceToolbar": [
+    "Hide device toolbar",
+    "Geräteleiste ausblenden",
+    "Masquer la barre d’appareil",
+  ],
+  "browser.menu.showDeviceToolbar": [
+    "Show device toolbar",
+    "Geräteleiste anzeigen",
+    "Afficher la barre d’appareil",
+  ],
+  "browser.menu.appearance": ["Appearance", "Darstellung", "Apparence"],
+  "browser.menu.system": ["System", "System", "Système"],
+  "browser.menu.light": ["Light", "Hell", "Clair"],
+  "browser.menu.dark": ["Dark", "Dunkel", "Sombre"],
+  "browser.menu.zoom": ["Zoom", "Zoom", "Zoom"],
+  "browser.menu.zoomOut": ["Zoom out", "Verkleinern", "Zoom arrière"],
+  "browser.menu.zoomIn": ["Zoom in", "Vergrößern", "Zoom avant"],
+  "browser.menu.resetZoom": ["Reset zoom", "Zoom zurücksetzen", "Réinitialiser le zoom"],
+  "browser.menu.clearCookies": ["Clear cookies", "Cookies löschen", "Effacer les cookies"],
+  "browser.menu.clearCache": ["Clear cache", "Cache leeren", "Vider le cache"],
+
+  "browser.chrome.navigation": ["Navigation", "Navigation", "Navigation"],
+  "browser.chrome.back": ["Back", "Zurück", "Retour"],
+  "browser.chrome.forward": ["Forward", "Vor", "Suivant"],
+  "browser.chrome.stop": ["Stop", "Stopp", "Arrêter"],
+  "browser.chrome.refresh": ["Refresh", "Aktualisieren", "Actualiser"],
+  "browser.chrome.loading": ["Loading…", "Wird geladen…", "Chargement…"],
+  "browser.chrome.addressPlaceholder": [
+    "Search or enter URL",
+    "Suchen oder URL eingeben",
+    "Rechercher ou saisir une URL",
+  ],
+  "browser.chrome.openSystemBrowser": [
+    "Open in system browser",
+    "Im Systembrowser öffnen",
+    "Ouvrir dans le navigateur système",
+  ],
+  "browser.chrome.cancelAnnotation": [
+    "Cancel annotation",
+    "Annotation abbrechen",
+    "Annuler l’annotation",
+  ],
+  "browser.chrome.annotate": ["Annotate preview", "Vorschau annotieren", "Annoter l’aperçu"],
+  "browser.chrome.cancelAnnotationShortcut": [
+    "Cancel annotation (Esc)",
+    "Annotation abbrechen (Esc)",
+    "Annuler l’annotation (Échap)",
+  ],
+  "browser.chrome.annotateDescription": [
+    "Annotate elements, regions, and drawings",
+    "Elemente, Bereiche und Zeichnungen annotieren",
+    "Annoter des éléments, des zones et des dessins",
+  ],
+  "browser.chrome.stopRecording": [
+    "Stop recording",
+    "Aufnahme beenden",
+    "Arrêter l’enregistrement",
+  ],
+  "browser.chrome.captureScreenshot": [
+    "Capture screenshot",
+    "Screenshot aufnehmen",
+    "Capturer une image",
+  ],
+  "browser.chrome.screenshotRecordHint": [
+    "Screenshot · Shift-click to record",
+    "Screenshot · Umschalt-Klick zum Aufnehmen",
+    "Capture · Maj-clic pour enregistrer",
+  ],
+  "browser.chrome.closeFloating": [
+    "Close floating preview",
+    "Schwebende Vorschau schließen",
+    "Fermer l’aperçu flottant",
+  ],
+  "browser.chrome.floatOverChat": [
+    "Float preview over chat",
+    "Vorschau über dem Chat anzeigen",
+    "Faire flotter l’aperçu au-dessus de la discussion",
+  ],
+
+  "browser.toast.resizeFailed": [
+    "Unable to resize browser viewport",
+    "Browser-Viewport konnte nicht skaliert werden",
+    "Impossible de redimensionner l’affichage du navigateur",
+  ],
+  "browser.toast.updatePopoutFailed": [
+    "Unable to update popped-out preview",
+    "Separate Vorschau konnte nicht aktualisiert werden",
+    "Impossible de mettre à jour l’aperçu détaché",
+  ],
+  "browser.toast.copyRecordingPathFailed": [
+    "Unable to copy recording path",
+    "Aufnahmepfad konnte nicht kopiert werden",
+    "Impossible de copier le chemin de l’enregistrement",
+  ],
+  "browser.toast.clipboardUnavailable": [
+    "Clipboard API unavailable.",
+    "Zwischenablage-API nicht verfügbar.",
+    "API du presse-papiers indisponible.",
+  ],
+  "browser.toast.recordingSaved": [
+    "Recording saved",
+    "Aufnahme gespeichert",
+    "Enregistrement sauvegardé",
+  ],
+  "browser.toast.copied": ["Copied!", "Kopiert!", "Copié !"],
+  "browser.toast.copyPath": ["Copy path", "Pfad kopieren", "Copier le chemin"],
+  "browser.toast.stopRecordingFailed": [
+    "Unable to stop recording",
+    "Aufnahme konnte nicht beendet werden",
+    "Impossible d’arrêter l’enregistrement",
+  ],
+  "browser.toast.startRecordingFailed": [
+    "Unable to start recording",
+    "Aufnahme konnte nicht gestartet werden",
+    "Impossible de démarrer l’enregistrement",
+  ],
+  "browser.toast.screenshotSaved": [
+    "Screenshot saved",
+    "Screenshot gespeichert",
+    "Capture sauvegardée",
+  ],
+  "browser.toast.copyImage": ["Copy image", "Bild kopieren", "Copier l’image"],
+  "browser.toast.copyScreenshotPathFailed": [
+    "Unable to copy screenshot path",
+    "Screenshot-Pfad konnte nicht kopiert werden",
+    "Impossible de copier le chemin de la capture",
+  ],
+  "browser.toast.copyScreenshotFailed": [
+    "Unable to copy screenshot",
+    "Screenshot konnte nicht kopiert werden",
+    "Impossible de copier la capture",
+  ],
+  "browser.toast.captureFailed": [
+    "Unable to capture screenshot",
+    "Screenshot konnte nicht aufgenommen werden",
+    "Impossible de capturer l’écran",
+  ],
+  "browser.preview.pickUnavailable": [
+    "Page didn't load: picking is unavailable until the page renders",
+    "Die Seite wurde nicht geladen: Die Auswahl ist erst nach dem Rendern verfügbar",
+    "La page ne s’est pas chargée : la sélection sera disponible après son rendu",
+  ],
+  "browser.preview.agentControl": [
+    "Agent controlling browser",
+    "Agent steuert den Browser",
+    "L’agent contrôle le navigateur",
+  ],
+  "browser.preview.humanControl": ["Human control", "Menschliche Steuerung", "Contrôle humain"],
+
+  "browser.mini.floating": [
+    "Floating browser preview",
+    "Schwebende Browser-Vorschau",
+    "Aperçu flottant du navigateur",
+  ],
+  "browser.mini.openPanel": [
+    "Open preview in right panel",
+    "Vorschau im rechten Panel öffnen",
+    "Ouvrir l’aperçu dans le panneau droit",
+  ],
+  "browser.mini.openPanelShort": [
+    "Open in right panel",
+    "Im rechten Panel öffnen",
+    "Ouvrir dans le panneau droit",
+  ],
+  "browser.mini.closePopout": [
+    "Close popped-out preview",
+    "Separate Vorschau schließen",
+    "Fermer l’aperçu détaché",
+  ],
+  "browser.mini.openPopout": [
+    "Pop preview into separate window",
+    "Vorschau in separates Fenster verschieben",
+    "Détacher l’aperçu dans une fenêtre séparée",
+  ],
+  "browser.mini.closeWindow": [
+    "Close separate window",
+    "Separates Fenster schließen",
+    "Fermer la fenêtre séparée",
+  ],
+  "browser.mini.openWindow": [
+    "Pop into separate window",
+    "In separates Fenster verschieben",
+    "Détacher dans une fenêtre séparée",
+  ],
+  "browser.mini.reconnecting": [
+    "Reconnecting preview…",
+    "Vorschau wird neu verbunden…",
+    "Reconnexion de l’aperçu…",
+  ],
+  "browser.mini.resize": [
+    "Resize floating preview",
+    "Schwebende Vorschau skalieren",
+    "Redimensionner l’aperçu flottant",
+  ],
+
+  "browser.search.label": [
+    "Search project contents",
+    "Projektinhalte durchsuchen",
+    "Rechercher dans le contenu du projet",
+  ],
+  "browser.search.projectLabel": [
+    "Search file contents in {{project}}",
+    "Dateiinhalte in {{project}} durchsuchen",
+    "Rechercher dans le contenu des fichiers de {{project}}",
+  ],
+  "browser.search.placeholder": [
+    "Search project contents…",
+    "Projektinhalte durchsuchen…",
+    "Rechercher dans le contenu du projet…",
+  ],
+  "browser.search.projectPlaceholder": [
+    "Search in {{project}}",
+    "In {{project}} suchen",
+    "Rechercher dans {{project}}",
+  ],
+  "browser.search.matchCase": ["Match case", "Groß-/Kleinschreibung", "Respecter la casse"],
+  "browser.search.matchCaseToken": ["Aa", "Aa", "Aa"],
+  "browser.search.wholeWord": ["Match whole word", "Ganzes Wort abgleichen", "Mot entier"],
+  "browser.search.wholeWordToken": ["ab", "ab", "ab"],
+  "browser.search.regex": [
+    "Use regular expression",
+    "Regulären Ausdruck verwenden",
+    "Utiliser une expression régulière",
+  ],
+  "browser.search.searching": ["Searching…", "Suche läuft…", "Recherche…"],
+  "browser.search.invalidRegex": [
+    "Invalid regular expression",
+    "Ungültiger regulärer Ausdruck",
+    "Expression régulière non valide",
+  ],
+  "browser.search.resultCount": [
+    { one: "{{displayCount}} result", other: "{{displayCount}} results" },
+    { one: "{{displayCount}} Ergebnis", other: "{{displayCount}} Ergebnisse" },
+    { one: "{{displayCount}} résultat", other: "{{displayCount}} résultats" },
+  ],
+  "browser.search.fileCount": [
+    { one: "{{displayCount}} file", other: "{{displayCount}} files" },
+    { one: "{{displayCount}} Datei", other: "{{displayCount}} Dateien" },
+    { one: "{{displayCount}} fichier", other: "{{displayCount}} fichiers" },
+  ],
+  "browser.search.resultsInFiles": [
+    "{{results}} in {{files}}",
+    "{{results}} in {{files}}",
+    "{{results}} dans {{files}}",
+  ],
+  "browser.search.noResults": [
+    "No results found.",
+    "Keine Ergebnisse gefunden.",
+    "Aucun résultat trouvé.",
+  ],
+  "browser.search.typeToSearch": [
+    "Type to search across your project.",
+    "Eingeben, um das Projekt zu durchsuchen.",
+    "Saisissez du texte pour rechercher dans votre projet.",
+  ],
+  "browser.script.exampleName": ["Test", "Test", "Test"],
+  "browser.script.exampleCommand": ["bun test", "bun test", "bun test"],
+});
+
+export type BrowserInterfaceMessageKey = (typeof browserInterfaceCatalog.keys)[number];

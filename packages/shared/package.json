@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./fetchMode": {
+      "types": "./src/fetchMode.ts",
+      "import": "./src/fetchMode.ts"
+    },
     "./themePalettes": {
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"
@@ -262,6 +266,14 @@
     "./desktopAppControl": {
       "types": "./src/desktopAppControl.ts",
       "import": "./src/desktopAppControl.ts"
+    },
+    "./interfaceLanguage": {
+      "types": "./src/interfaceLanguage.ts",
+      "import": "./src/interfaceLanguage.ts"
+    },
+    "./modelCatalogFilters": {
+      "types": "./src/modelCatalogFilters.ts",
+      "import": "./src/modelCatalogFilters.ts"
     },
     "./claudeCompaction": {
       "types": "./src/claudeCompaction.ts",
