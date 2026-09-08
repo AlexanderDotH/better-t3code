@@ -109,7 +109,9 @@ function makeReadModel(
       hasActionableProposedPlan: false,
       latestTurn: null,
       messages: [],
-      session: thread.session,
+      session: thread.session
+        ? { ...thread.session, runtimeSessionId: null, abortState: null }
+        : null,
       backgroundLiveness: thread.backgroundLiveness ?? null,
       activities: [],
       proposedPlans: [],
@@ -190,6 +192,13 @@ describe("ProviderSessionReaper", () => {
 
     const providerService: ProviderServiceShape = {
       startSession: () => unsupported(),
+      forkSession: () => unsupported(),
+      startTransientSession: () => unsupported(),
+      stopTransientSession: () => unsupported(),
+      resolveAbortTarget: () => unsupported(),
+      interruptAbortTarget: () => unsupported(),
+      forceStopAbortTarget: () => unsupported(),
+      isAbortTargetCurrent: () => unsupported(),
       sendTurn: () => unsupported(),
       compactThread: () => unsupported(),
       interruptTurn: () => unsupported(),
@@ -251,9 +260,9 @@ describe("ProviderSessionReaper", () => {
           getTurnStartMessage: () => Effect.die("unused"),
           getThreadShellById: (threadId) =>
             Effect.succeed(
-              input.readModel.threads.find((thread) => thread.id === threadId)
-                ? Option.some(input.readModel.threads.find((thread) => thread.id === threadId)!)
-                : Option.none(),
+              Option.fromUndefinedOr(
+                input.readModel.threads.find((thread) => thread.id === threadId),
+              ),
             ),
           getThreadDetailById: () => Effect.die("unused"),
           getThreadDetailSnapshot: () => Effect.die("unused"),

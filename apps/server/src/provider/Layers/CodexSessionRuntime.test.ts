@@ -11,7 +11,7 @@ import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
-import { DEFAULT_MODEL, McpServerDefinition, SubagentId, ThreadId } from "@t3tools/contracts";
+import { DEFAULT_MODEL, SubagentId, ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
@@ -30,7 +30,6 @@ import {
   toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
-const decodeMcpServerDefinition = Schema.decodeSync(McpServerDefinition);
 
 describe("CodexSessionRuntimeIdentifierGenerationError", () => {
   it("retains identifier purpose and the random source failure", () => {
@@ -964,17 +963,16 @@ describe("codexSessionAppServerArgs", () => {
       profile: "workspace-only" | "workspace-no-preview" | "workspace-only-no-memory",
     ) => `mcp_servers.t3-code.url=http://127.0.0.1/mcp/${profile}`;
 
-    NodeAssert.deepStrictEqual(codexSessionAppServerArgs(["-c", profileArg("workspace-only")]), [
-      "app-server",
-      "-c",
-      profileArg("workspace-only"),
-    ]);
     NodeAssert.deepStrictEqual(
-      codexSessionAppServerArgs(["-c", profileArg("workspace-no-preview")]),
+      codexSessionAppServerArgs(["-c", profileArg("workspace-only")], undefined),
+      ["app-server", "-c", profileArg("workspace-only")],
+    );
+    NodeAssert.deepStrictEqual(
+      codexSessionAppServerArgs(["-c", profileArg("workspace-no-preview")], undefined),
       ["app-server", "-c", profileArg("workspace-no-preview")],
     );
     NodeAssert.deepStrictEqual(
-      codexSessionAppServerArgs(["-c", profileArg("workspace-only-no-memory")]),
+      codexSessionAppServerArgs(["-c", profileArg("workspace-only-no-memory")], undefined),
       ["app-server", "-c", profileArg("workspace-only-no-memory")],
     );
   });

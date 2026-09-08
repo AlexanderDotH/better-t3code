@@ -20,10 +20,10 @@ import { createModelSelection } from "@t3tools/shared/model";
 import {
   ApprovalRequestId,
   CursorSettings,
+  McpRuntimeServerKey,
   EnvironmentId,
   ProviderDriverKind,
   type ProviderRuntimeEvent,
-  RuntimeSessionId,
   ThreadId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -36,7 +36,6 @@ import { makeCursorAdapter } from "./CursorAdapter.ts";
 import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
-const FORCE_STOP_RUNTIME_SESSION_ID = RuntimeSessionId.make("cursor-force-stop-runtime");
 
 // Test-local service tag so the rest of the file can keep using `yield* CursorAdapter`.
 class CursorAdapter extends Context.Service<CursorAdapter, CursorAdapterShape>()(
@@ -1620,6 +1619,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
 
       const mcpRuntime = adapter.mcpRuntime;
       assert.isDefined(mcpRuntime);
+      assert.isDefined(session.runtimeSessionId);
       const snapshot = yield* mcpRuntime.getSnapshot({
         providerInstanceId: ProviderInstanceId.make("cursor"),
         threadId,
@@ -1635,21 +1635,21 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         })),
         [
           {
-            providerKey: "docs",
+            providerKey: McpRuntimeServerKey.make("docs"),
             source: "t3-managed",
             state: "unknown",
             statusSource: "configuration",
             actions: [],
           },
           {
-            providerKey: "t3-managed:t3-code",
+            providerKey: McpRuntimeServerKey.make("t3-managed:t3-code"),
             source: "t3-managed",
             state: "unknown",
             statusSource: "configuration",
             actions: [],
           },
           {
-            providerKey: "t3-code",
+            providerKey: McpRuntimeServerKey.make("t3-code"),
             source: "t3-built-in",
             state: "unknown",
             statusSource: "configuration",

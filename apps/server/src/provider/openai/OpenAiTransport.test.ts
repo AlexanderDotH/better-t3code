@@ -123,7 +123,7 @@ describe("OpenAI transport", () => {
             request,
             new Response("secret upstream body", {
               status,
-              headers: status === 429 ? { "retry-after": "17" } : undefined,
+              ...(status === 429 ? { headers: { "retry-after": "17" } } : {}),
             }),
           ),
         );

@@ -201,6 +201,7 @@ const makeHarness = Effect.fn("makeAntigravityAdapterHarness")(function* (option
           ),
         );
       }),
+    forceClose: Effect.void,
     cancel: Effect.gen(function* () {
       const prompt = active;
       if (!prompt) return;

@@ -154,7 +154,7 @@ describe("OpenRouter transport", () => {
             request,
             new Response("secret response body", {
               status,
-              headers: status === 429 ? { "retry-after": "17" } : undefined,
+              ...(status === 429 ? { headers: { "retry-after": "17" } } : {}),
             }),
           ),
         );

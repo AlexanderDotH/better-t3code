@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import {
   ApprovalRequestId,
   ChatAttachment,
@@ -26,6 +26,7 @@ import {
   type ChatGptHarness,
   type ChatGptAdapterResponseRequest,
   type ChatGptAdapterTransport,
+  type ChatGptAdapterStreamEvent,
 } from "./ChatGptAdapter.ts";
 
 const testLayer = ServerConfig.layerTest(process.cwd(), {
@@ -251,7 +252,7 @@ describe("ChatGptAdapter", () => {
           ]),
           streamResponse: (request) => {
             requests.push(request);
-            return Stream.fromIterable(rounds.shift() ?? []);
+            return Stream.fromIterable<ChatGptAdapterStreamEvent>(rounds.shift() ?? []);
           },
           compact: () => Effect.die("Compaction is not expected in this test."),
         };
@@ -371,7 +372,7 @@ describe("ChatGptAdapter", () => {
               ...fakeTransport({ requests }),
               streamResponse: (request) => {
                 requests.push(request);
-                return Stream.fromIterable(rounds.shift() ?? []);
+                return Stream.fromIterable<ChatGptAdapterStreamEvent>(rounds.shift() ?? []);
               },
             },
             harness: {
@@ -474,7 +475,8 @@ describe("ChatGptAdapter", () => {
                   reasoningEfforts: ["medium"],
                 },
               ]),
-              streamResponse: () => Stream.fromIterable(rounds.shift() ?? []),
+              streamResponse: () =>
+                Stream.fromIterable<ChatGptAdapterStreamEvent>(rounds.shift() ?? []),
               compact: () => Effect.die("Compaction is not expected in this test."),
             },
             harness: {
@@ -522,7 +524,8 @@ describe("ChatGptAdapter", () => {
           .pipe(Effect.forkChild);
         const opened = yield* Fiber.join(requestFiber);
         expect(Option.isSome(opened)).toBe(true);
-        if (Option.isNone(opened) || opened.value.type !== "request.opened") return;
+        assert.isOk(Option.isSome(opened) && opened.value.type === "request.opened");
+        assert.isDefined(opened.value.requestId);
         expect(executed).toEqual([]);
 
         yield* adapter.respondToRequest(
@@ -577,6 +580,8 @@ describe("ChatGptAdapter", () => {
           _tag: "ProviderAdapterRequestError",
           method: "session/start",
         });
+        if (failure._tag !== "ProviderAdapterRequestError")
+          throw new Error(`Unexpected error: ${failure._tag}`);
         expect(failure.detail).toContain("at most 40 managed sessions");
       }),
     ).pipe(Effect.provide(testLayer)),
@@ -630,6 +635,8 @@ describe("ChatGptAdapter", () => {
           _tag: "ProviderAdapterRequestError",
           method: "session/prompt",
         });
+        if (failure._tag !== "ProviderAdapterRequestError")
+          throw new Error(`Unexpected error: ${failure._tag}`);
         expect(failure.detail).toContain("91 tools");
         expect(failure.detail).toContain("90-definition limit");
       }),
@@ -732,6 +739,8 @@ describe("ChatGptAdapter", () => {
           _tag: "ProviderAdapterRequestError",
           method: "responses/compact",
         });
+        if (failure._tag !== "ProviderAdapterRequestError")
+          throw new Error(`Unexpected error: ${failure._tag}`);
         expect(failure.detail).toContain("protocol drift");
       }),
     ).pipe(Effect.provide(testLayer)),
@@ -751,8 +760,10 @@ describe("ChatGptAdapter", () => {
           sizeBytes: 4,
         });
         yield* fileSystem.makeDirectory(config.attachmentsDir, { recursive: true });
+        const relativePath = attachmentRelativePath(attachment);
+        assert.isNotNull(relativePath);
         yield* fileSystem.writeFile(
-          path.join(config.attachmentsDir, attachmentRelativePath(attachment)),
+          path.join(config.attachmentsDir, relativePath),
           new Uint8Array([1, 2, 3, 4]),
         );
 
@@ -908,6 +919,7 @@ describe("ChatGptAdapter", () => {
         const runtime = adapter.mcpRuntime;
         expect(runtime).toBeDefined();
         if (!runtime) return;
+        assert.isDefined(session.runtimeSessionId);
         const servers = yield* runtime.getSnapshot({
           providerInstanceId: instanceId,
           threadId,
