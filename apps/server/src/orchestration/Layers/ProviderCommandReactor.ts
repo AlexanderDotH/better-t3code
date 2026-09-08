@@ -1,11 +1,18 @@
 import {
   type ChatAttachment,
+  CODEX_REASONING_EFFORT_OPTION_ID,
   CommandId,
   EventId,
   type ModelSelection,
   type OrchestrationEvent,
+  type OrchestrationMessage,
+  type OrchestrationReadModel,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderDriverKind,
+  resolveBetterT3FeatureFlag,
   type ProjectId,
+  type ProjectMemoryMode,
+  DEFAULT_PROJECT_MEMORY_CONTEXT_WINDOW_TOKENS,
   type OrchestrationSession,
   ThreadId,
   type ProviderSession,
@@ -14,13 +21,25 @@ import {
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
+import { resolveFetchLunaFallback, resolveFetchModelSelection } from "@t3tools/shared/fetchMode";
+import {
+  getModelSelectionStringOptionValue,
+  isAutoReasoningEnabled,
+  readAutoReasoningResolution,
+  resolveCodexContextWindowTokens,
+  selectManualReasoningEffort,
+  stripAutoReasoning,
+} from "@t3tools/shared/model";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -29,6 +48,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
+import { ProjectionThreadSubagentRepository } from "../../persistence/Services/ProjectionThreadSubagents.ts";
+import { ProjectionThreadSubagentRepositoryLive } from "../../persistence/Layers/ProjectionThreadSubagents.ts";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import {
@@ -37,7 +58,10 @@ import {
   ProviderWorkspaceMissingError,
 } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
-import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
+import {
+  type AutoReasoningGenerationResult,
+  TextGeneration,
+} from "../../textGeneration/TextGeneration.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
@@ -47,14 +71,30 @@ import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
 } from "../Services/ProviderCommandReactor.ts";
+import { TurnAbortCoordinator } from "../Services/TurnAbortCoordinator.ts";
 import { forkParked, ServerActivation } from "../../serverActivation.ts";
 import { canReplaceThreadTitle, DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
 import {
   resolveSourceControlWriterModelSelection,
   ServerSettingsService,
 } from "../../serverSettings.ts";
+import { SkillEngine } from "../../skills/Services/SkillEngine.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { buildProviderTranscriptHandoff } from "../providerTranscriptHandoff.ts";
+import { normalizeCodexModelSelectionServiceTier } from "../../codexModelOptions.ts";
+import { isActiveSubagentStatus, settleSubagentAfterRuntimeLoss } from "../subagentLifecycle.ts";
+import {
+  FETCH_CONTEXT_MAX_CHARS,
+  FetchWorkerCoordinator,
+} from "../../fetch/FetchWorkerCoordinator.ts";
+import { applyProjectAgentInstructionsToProviderInput } from "../../projectAgent/ProjectAgentInstructions.ts";
+import { applyAgentEnhancementsToProviderInput } from "../../provider/enhancements/index.ts";
+import { ProjectMemoryStore } from "../../projectMemory/ProjectMemoryStore.ts";
+import {
+  findOpenPendingInteractions,
+  type OpenPendingInteraction,
+} from "../pendingInteractionLifecycle.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderAdapterValidationError = Schema.is(ProviderAdapterValidationError);
 const isProviderWorkspaceMissingError = Schema.is(ProviderWorkspaceMissingError);
@@ -112,7 +152,143 @@ const MAX_REGENERATION_ATTACHMENTS = 4;
 const MAX_THREAD_TITLE_CONTEXT_CHARS = 8_000;
 const MAX_FIRST_USER_TITLE_CONTEXT_CHARS = 2_000;
 const THREAD_TITLE_CONTEXT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
+
+function lowEffortMetadataSelection(selection: ModelSelection): ModelSelection {
+  return {
+    ...selection,
+    options: [
+      ...(selection.options ?? []).filter((option) => option.id !== "reasoningEffort"),
+      { id: "reasoningEffort", value: "low" },
+    ],
+  };
+}
+const FETCH_CONTEXT_TRUNCATION_MARKER = "\n[T3 Fetch context truncated]";
 const FIRST_USER_CONTEXT_TRUNCATION_MARKER = "\n[First user message truncated]";
+const STARTUP_PENDING_INTERACTION_ID_PREFIX = "startup-pending-interaction";
+const STARTUP_PENDING_INTERACTION_REASON = "provider-runtime-unavailable-after-startup";
+const AUTO_REASONING_TIMEOUT = Duration.seconds(15);
+const AUTO_REASONING_CONVERSATION_MESSAGE_LIMIT = 3;
+
+interface AutoReasoningDiagnostic {
+  readonly routerModel: {
+    readonly instanceId: string;
+    readonly model: string;
+  } | null;
+  readonly effort: string;
+  readonly durationMs: number;
+  readonly fallback: boolean;
+  readonly usage?: AutoReasoningGenerationResult["usage"];
+}
+
+function collectAutoReasoningConversation(
+  messages: ReadonlyArray<OrchestrationMessage>,
+  boundaryMessageId: OrchestrationMessage["id"],
+) {
+  const boundaryIndex = messages.findIndex((message) => message.id === boundaryMessageId);
+  return (boundaryIndex >= 0 ? messages.slice(0, boundaryIndex) : messages)
+    .filter(
+      (message): message is OrchestrationMessage & { readonly role: "user" | "assistant" } =>
+        message.role === "user" || message.role === "assistant",
+    )
+    .slice(-AUTO_REASONING_CONVERSATION_MESSAGE_LIMIT)
+    .map((message) => ({ role: message.role, text: message.text }));
+}
+
+function reuseAutoReasoningForRetry(input: {
+  readonly selection: ModelSelection;
+  readonly activities: OrchestrationReadModel["threads"][number]["activities"];
+  readonly retryOfTurnId?: TurnId;
+}):
+  | {
+      readonly effectiveSelection: ModelSelection;
+      readonly diagnostic?: AutoReasoningDiagnostic;
+    }
+  | undefined {
+  if (!isAutoReasoningEnabled(input.selection)) return undefined;
+
+  const previous =
+    input.retryOfTurnId === undefined
+      ? null
+      : readAutoReasoningResolution(input.activities, input.retryOfTurnId);
+  const effort =
+    previous?.effectiveEffort ??
+    getModelSelectionStringOptionValue(input.selection, CODEX_REASONING_EFFORT_OPTION_ID);
+  if (!effort) return { effectiveSelection: stripAutoReasoning(input.selection) };
+
+  return {
+    effectiveSelection: selectManualReasoningEffort(input.selection, effort),
+    diagnostic: {
+      routerModel: null,
+      effort,
+      durationMs: 0,
+      fallback: previous?.fallback ?? true,
+    } satisfies AutoReasoningDiagnostic,
+  };
+}
+
+export function requiresProviderSessionRestartForModelSelectionChange(input: {
+  readonly provider: ProviderDriverKind;
+  readonly previous: ModelSelection | undefined;
+  readonly next: ModelSelection;
+  readonly explicitlyRequested: boolean;
+}): boolean {
+  if (input.provider === "claudeAgent") {
+    return input.explicitlyRequested && !Equal.equals(input.previous, input.next);
+  }
+  if (input.provider !== "codex") {
+    return false;
+  }
+  return (
+    resolveCodexContextWindowTokens(input.previous) !== resolveCodexContextWindowTokens(input.next)
+  );
+}
+
+export function applyFetchContextToProviderInput(input: {
+  readonly providerInput?: string;
+  readonly fetchContext?: string;
+}): {
+  readonly providerInput?: string;
+  readonly outcome: "not-requested" | "included" | "truncated" | "omitted";
+} {
+  const fetchContext = input.fetchContext?.trim();
+  if (!fetchContext) {
+    return {
+      ...(input.providerInput !== undefined ? { providerInput: input.providerInput } : {}),
+      outcome: "not-requested",
+    };
+  }
+
+  const providerInput = input.providerInput ?? "";
+  const separator = providerInput.length > 0 ? "\n\n" : "";
+  const available = PROVIDER_SEND_TURN_MAX_INPUT_CHARS - providerInput.length - separator.length;
+  if (available <= FETCH_CONTEXT_TRUNCATION_MARKER.length) {
+    return {
+      ...(input.providerInput !== undefined ? { providerInput: input.providerInput } : {}),
+      outcome: "omitted",
+    };
+  }
+  if (fetchContext.length <= available) {
+    return {
+      providerInput: `${providerInput}${separator}${fetchContext}`,
+      outcome: "included",
+    };
+  }
+
+  const retainedContext = fetchContext.slice(0, available - FETCH_CONTEXT_TRUNCATION_MARKER.length);
+  return {
+    providerInput: `${providerInput}${separator}${retainedContext}${FETCH_CONTEXT_TRUNCATION_MARKER}`,
+    outcome: "truncated",
+  };
+}
+
+export function remainingFetchContextChars(providerInput: string | undefined): number {
+  const inputLength = providerInput?.length ?? 0;
+  const separatorLength = inputLength > 0 ? 2 : 0;
+  return Math.min(
+    FETCH_CONTEXT_MAX_CHARS,
+    Math.max(0, PROVIDER_SEND_TURN_MAX_INPUT_CHARS - inputLength - separatorLength),
+  );
+}
 
 type ThreadTitleMessage = {
   readonly role: "user" | "assistant" | "system";
@@ -317,17 +493,23 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
 }
 
 const make = Effect.gen(function* () {
+  const subagentRepository = yield* ProjectionThreadSubagentRepository;
+  const pendingTurnStarts = new Set<Deferred.Deferred<void>>();
   const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerAuthService = yield* ProviderAuthService;
   const providerService = yield* ProviderService;
+  const fetchWorkerCoordinator = yield* FetchWorkerCoordinator;
+  const turnAbortCoordinator = yield* TurnAbortCoordinator;
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
   const fileSystem = yield* FileSystem.FileSystem;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const skillEngine = yield* SkillEngine;
+  const projectMemory = yield* ProjectMemoryStore;
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -347,6 +529,9 @@ const make = Effect.gen(function* () {
   const threadModelSelections = new Map<string, ModelSelection>();
   const compactingThreadIds = new Set<ThreadId>();
   const stoppingThreadIds = new Set<ThreadId>();
+  const threadProjectMemoryModes = new Map<string, ProjectMemoryMode>();
+  const completedForkHandoffs = new Set<ThreadId>();
+  const forkHandoffsInFlight = new Set<ThreadId>();
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -388,6 +573,214 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const appendFetchWarningActivity = (input: {
+    readonly threadId: ThreadId;
+    readonly summary: string;
+    readonly detail: string;
+    readonly createdAt: string;
+  }) =>
+    Effect.all({
+      commandId: serverCommandId("fetch-warning-activity"),
+      eventId: serverEventId(),
+    }).pipe(
+      Effect.flatMap(({ commandId, eventId }) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId: input.threadId,
+          activity: {
+            id: eventId,
+            tone: "error",
+            kind: "fetch.warning",
+            summary: input.summary,
+            payload: { detail: input.detail },
+            turnId: null,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        }),
+      ),
+    );
+
+  const appendCoordinationWarningActivity = (input: {
+    readonly threadId: ThreadId;
+    readonly createdAt: string;
+  }) =>
+    Effect.all({
+      commandId: serverCommandId("coordination-warning-activity"),
+      eventId: serverEventId(),
+    }).pipe(
+      Effect.flatMap(({ commandId, eventId }) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId: input.threadId,
+          activity: {
+            id: eventId,
+            tone: "info",
+            kind: "coordination.warning",
+            summary: "Project-agent coordination instructions omitted",
+            payload: {
+              detail:
+                "The user request and required transcript handoff consumed the provider input limit, so T3 could not include the project-agent coordination contract for this turn.",
+            },
+            turnId: null,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        }),
+      ),
+    );
+
+  const appendAutoReasoningActivity = (input: {
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+    readonly diagnostic: AutoReasoningDiagnostic;
+    readonly createdAt: string;
+  }) =>
+    Effect.all({
+      commandId: serverCommandId("auto-reasoning-activity"),
+      eventId: serverEventId(),
+    }).pipe(
+      Effect.flatMap(({ commandId, eventId }) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId: input.threadId,
+          activity: {
+            id: eventId,
+            tone: "info",
+            kind: "auto-reasoning.resolved",
+            summary: "Auto reasoning resolved",
+            payload: {
+              autoReasoningEffort: input.diagnostic.effort,
+              autoReasoningFallback: input.diagnostic.fallback,
+              autoReasoningRouterModel: input.diagnostic.routerModel,
+              autoReasoningDurationMs: input.diagnostic.durationMs,
+              autoReasoningUsage: input.diagnostic.usage ?? null,
+            },
+            turnId: input.turnId,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        }),
+      ),
+    );
+
+  const resolveAutoReasoning = Effect.fn("ProviderCommandReactor.resolveAutoReasoning")(
+    function* (input: {
+      readonly selection: ModelSelection;
+      readonly cwd: string;
+      readonly userPrompt: string;
+      readonly interactionMode: "default" | "plan";
+      readonly attachments: ReadonlyArray<ChatAttachment>;
+      readonly conversation: ReadonlyArray<{
+        readonly role: "user" | "assistant";
+        readonly text: string;
+      }>;
+    }) {
+      if (!isAutoReasoningEnabled(input.selection)) return undefined;
+
+      const providers = yield* providerRegistry.getProviders;
+      const provider = providers.find(
+        (candidate) => candidate.instanceId === input.selection.instanceId,
+      );
+      if (provider?.driver !== ProviderDriverKind.make("codex")) return undefined;
+
+      const model = provider.models.find(
+        (candidate) => candidate.slug === input.selection.model && candidate.isSelectable !== false,
+      );
+      const descriptor = model?.capabilities?.optionDescriptors?.find(
+        (candidate) =>
+          candidate.id === CODEX_REASONING_EFFORT_OPTION_ID && candidate.type === "select",
+      );
+      const live =
+        provider.enabled &&
+        provider.installed &&
+        provider.availability !== "unavailable" &&
+        provider.status !== "error" &&
+        provider.status !== "disabled" &&
+        provider.auth.status !== "unauthenticated";
+      const allowedEfforts =
+        live && descriptor?.type === "select" ? descriptor.options.map((option) => option.id) : [];
+      const concreteFallback = getModelSelectionStringOptionValue(
+        input.selection,
+        CODEX_REASONING_EFFORT_OPTION_ID,
+      );
+      const effectiveFallback = stripAutoReasoning(input.selection);
+      if (!concreteFallback) {
+        yield* Effect.logInfo("auto reasoning resolved", {
+          routerModel: null,
+          chosenEffort: null,
+          durationMs: 0,
+          fallback: true,
+          usage: null,
+        });
+        return { effectiveSelection: effectiveFallback };
+      }
+
+      const settings = yield* serverSettingsService.getSettings;
+      const routerSelection = stripAutoReasoning(
+        settings.autoReasoningModelSelection ?? settings.textGenerationModelSelection,
+      );
+      const routerModel = {
+        instanceId: String(routerSelection.instanceId),
+        model: routerSelection.model,
+      };
+      const startedAt = yield* Clock.currentTimeMillis;
+      const decisionExit =
+        allowedEfforts.length === 0
+          ? undefined
+          : yield* Effect.exit(
+              textGeneration
+                .decideAutoReasoning({
+                  cwd: input.cwd,
+                  userPrompt: input.userPrompt,
+                  interactionMode: input.interactionMode,
+                  attachments: input.attachments,
+                  allowedEfforts,
+                  conversation: input.conversation,
+                  modelSelection: routerSelection,
+                })
+                .pipe(Effect.timeoutOption(AUTO_REASONING_TIMEOUT)),
+            );
+      if (
+        decisionExit !== undefined &&
+        Exit.isFailure(decisionExit) &&
+        Cause.hasInterruptsOnly(decisionExit.cause)
+      ) {
+        return yield* Effect.failCause(decisionExit.cause);
+      }
+      const decision =
+        decisionExit !== undefined &&
+        Exit.isSuccess(decisionExit) &&
+        Option.isSome(decisionExit.value) &&
+        allowedEfforts.includes(decisionExit.value.value.effort)
+          ? decisionExit.value.value
+          : undefined;
+      const effort = decision?.effort ?? concreteFallback;
+      const durationMs = Math.max(0, (yield* Clock.currentTimeMillis) - startedAt);
+      const diagnostic: AutoReasoningDiagnostic = {
+        routerModel,
+        effort,
+        durationMs,
+        fallback: decision === undefined,
+        ...(decision?.usage !== undefined ? { usage: decision.usage } : {}),
+      };
+      yield* Effect.logInfo("auto reasoning resolved", {
+        routerModel,
+        chosenEffort: diagnostic.effort,
+        durationMs: diagnostic.durationMs,
+        fallback: diagnostic.fallback,
+        usage: diagnostic.usage ?? null,
+      });
+      return {
+        effectiveSelection: selectManualReasoningEffort(effectiveFallback, effort),
+        diagnostic,
+      };
+    },
+  );
+
   const formatFailureDetail = (cause: Cause.Cause<unknown>): string => {
     const failReason = cause.reasons.find(Cause.isFailReason);
     if (isProviderAdapterRequestError(failReason?.error)) {
@@ -419,6 +812,34 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const settleActiveSubagents = Effect.fn("settleActiveSubagents")(function* (
+    thread: Pick<OrchestrationReadModel["threads"][number], "id" | "subagents">,
+    settledAt: string,
+    commandTag: string,
+  ) {
+    yield* Effect.forEach(
+      thread.subagents,
+      (subagent) => {
+        if (!isActiveSubagentStatus(subagent.status)) {
+          return Effect.void;
+        }
+        const settled = settleSubagentAfterRuntimeLoss(subagent, settledAt);
+        return serverCommandId(commandTag).pipe(
+          Effect.flatMap((commandId) =>
+            orchestrationEngine.dispatch({
+              type: "thread.subagent.upsert",
+              commandId,
+              threadId: thread.id,
+              subagent: settled,
+              createdAt: settledAt,
+            }),
+          ),
+        );
+      },
+      { concurrency: 1, discard: true },
+    );
+  });
+
   const setThreadSessionErrorOnTurnStartFailure = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly detail: string;
@@ -436,7 +857,9 @@ const make = Effect.gen(function* () {
           threadId: input.threadId,
           providerName: null,
           providerInstanceId: thread.modelSelection.instanceId,
+          runtimeSessionId: null,
           runtimeMode: thread.runtimeMode,
+          abortState: null,
         }),
         status: session?.status === "stopped" ? "stopped" : "error",
         activeTurnId: null,
@@ -538,41 +961,11 @@ const make = Effect.gen(function* () {
 
   const resolveThreadDetail = Effect.fnUntraced(function* (threadId: ThreadId) {
     return yield* projectionSnapshotQuery
-      .getThreadDetailById(threadId, { activityKinds: [] })
+      .getThreadDetailById(threadId)
       .pipe(Effect.map(Option.getOrUndefined));
   });
 
-  const rejectStartedThreadModelChangeIfRequired = Effect.fnUntraced(function* (input: {
-    readonly threadId: ThreadId;
-    readonly currentModelSelection: ModelSelection;
-    readonly requestedModelSelection: ModelSelection | undefined;
-  }) {
-    const requestedModelSelection = input.requestedModelSelection;
-    if (
-      requestedModelSelection === undefined ||
-      (input.currentModelSelection.instanceId === requestedModelSelection.instanceId &&
-        input.currentModelSelection.model === requestedModelSelection.model)
-    ) {
-      return;
-    }
-    const providers = yield* providerRegistry.getProviders;
-    const requiresNewThread =
-      providers.find((snapshot) => snapshot.instanceId === input.currentModelSelection.instanceId)
-        ?.requiresNewThreadForModelChange === true ||
-      providers.find((snapshot) => snapshot.instanceId === requestedModelSelection.instanceId)
-        ?.requiresNewThreadForModelChange === true;
-    if (!requiresNewThread) {
-      return;
-    }
-    return yield* new ProviderAdapterRequestError({
-      provider: providerErrorLabelFromInstanceHint({
-        instanceId: String(requestedModelSelection.instanceId),
-        modelSelectionInstanceId: String(input.currentModelSelection.instanceId),
-      }),
-      method: "thread.turn.start",
-      detail: `Thread '${input.threadId}' cannot switch models after the conversation has started. Start a new thread to use '${requestedModelSelection.model}'.`,
-    });
-  });
+  const resolveThread = resolveThreadDetail;
 
   const ensureSessionForThread = Effect.fn("ensureSessionForThread")(function* (
     threadId: ThreadId,
@@ -580,6 +973,13 @@ const make = Effect.gen(function* () {
     options?: {
       readonly modelSelection?: ModelSelection;
       readonly pendingTurnStart?: boolean;
+      readonly forceFreshSession?: boolean;
+      readonly projectMemoryMode?: ProjectMemoryMode;
+      readonly nativeFork?: {
+        readonly sourceThreadId: ThreadId;
+        readonly providerThreadId: string;
+        readonly providerTurnId: string;
+      };
     },
   ) {
     const thread = yield* resolveThreadShell(threadId);
@@ -589,6 +989,18 @@ const make = Effect.gen(function* () {
 
     const desiredRuntimeMode = thread.runtimeMode;
     const requestedModelSelection = options?.modelSelection;
+    const forceFreshSession = options?.forceFreshSession === true;
+    const projectMemoryMode = options?.projectMemoryMode;
+    const previousProjectMemoryMode = threadProjectMemoryModes.get(threadId);
+    const projectMemoryModeChanged =
+      projectMemoryMode !== undefined &&
+      previousProjectMemoryMode !== undefined &&
+      projectMemoryMode !== previousProjectMemoryMode;
+    const prepared = <A>(value: A): A => {
+      if (projectMemoryMode !== undefined)
+        threadProjectMemoryModes.set(threadId, projectMemoryMode);
+      return value;
+    };
     const resolveActiveSession = (threadId: ThreadId) =>
       providerService
         .listSessions()
@@ -617,8 +1029,8 @@ const make = Effect.gen(function* () {
       activeSession.providerInstanceId !== undefined
         ? activeSession.providerInstanceId
         : thread.modelSelection.instanceId;
-    const desiredModelSelection = requestedModelSelection ?? thread.modelSelection;
-    const desiredInstanceId = desiredModelSelection.instanceId;
+    const unnormalizedDesiredModelSelection = requestedModelSelection ?? thread.modelSelection;
+    const desiredInstanceId = unnormalizedDesiredModelSelection.instanceId;
     const currentInfo = yield* providerService.getInstanceInfo(currentInstanceId).pipe(
       Effect.mapError(
         () =>
@@ -638,7 +1050,7 @@ const make = Effect.gen(function* () {
         () =>
           new ProviderAdapterRequestError({
             provider: providerErrorLabelFromInstanceHint({
-              instanceId: String(desiredModelSelection.instanceId),
+              instanceId: String(unnormalizedDesiredModelSelection.instanceId),
             }),
             method: "thread.turn.start",
             detail: `Requested provider instance '${desiredInstanceId}' is not configured in this build.`,
@@ -655,58 +1067,67 @@ const make = Effect.gen(function* () {
     }
     const preferredProvider: ProviderDriverKind = desiredDriverKind;
     if (options?.pendingTurnStart === true && thread.session?.status !== "running") {
+      // Clear the previous runtime generation so pre-bind events from a
+      // replacement lease can be adopted while status is "starting". Pinning
+      // the old runtimeSessionId hard-drops those events until bind lands.
+      const pendingProviderName =
+        requestedModelSelection !== undefined
+          ? preferredProvider
+          : (activeSession?.provider ?? preferredProvider);
+      const pendingProviderInstanceId =
+        requestedModelSelection !== undefined
+          ? desiredInstanceId
+          : (activeSession?.providerInstanceId ?? desiredInstanceId);
       yield* setThreadSession({
         threadId,
         session: {
           threadId,
           status: "starting",
-          providerName: activeSession?.provider ?? preferredProvider,
-          providerInstanceId: activeSession?.providerInstanceId ?? desiredInstanceId,
+          providerName: pendingProviderName,
+          providerInstanceId: pendingProviderInstanceId,
+          runtimeSessionId: null,
           runtimeMode: desiredRuntimeMode,
           activeTurnId: null,
+          abortState: null,
           lastError: null,
           updatedAt: createdAt,
         },
         createdAt,
       });
     }
-    if (thread.session !== null) {
-      yield* rejectStartedThreadModelChangeIfRequired({
-        threadId,
-        currentModelSelection:
-          activeSession?.model !== undefined
-            ? {
-                ...thread.modelSelection,
-                instanceId: currentInstanceId,
-                model: activeSession.model,
-              }
-            : thread.modelSelection,
-        requestedModelSelection,
-      });
-    }
-    if (
+    const providerSnapshots = yield* providerRegistry.getProviders;
+    const desiredProviderSnapshot = providerSnapshots.find(
+      (snapshot) => snapshot.instanceId === desiredInstanceId,
+    );
+    const selectedCatalogModel = desiredProviderSnapshot?.models?.find(
+      (model) => model.slug === unnormalizedDesiredModelSelection.model,
+    );
+    const desiredModelSelection =
+      desiredDriverKind === ProviderDriverKind.make("codex")
+        ? normalizeCodexModelSelectionServiceTier(
+            unnormalizedDesiredModelSelection,
+            selectedCatalogModel?.capabilities,
+          )
+        : unnormalizedDesiredModelSelection;
+    const currentModel = activeSession?.model ?? thread.modelSelection.model;
+    const modelChanged =
+      requestedModelSelection !== undefined && requestedModelSelection.model !== currentModel;
+    const requiresFreshSessionForModelChange =
+      thread.session !== null &&
+      modelChanged &&
+      (providerSnapshots.find((snapshot) => snapshot.instanceId === currentInstanceId)
+        ?.requiresNewThreadForModelChange === true ||
+        providerSnapshots.find((snapshot) => snapshot.instanceId === desiredInstanceId)
+          ?.requiresNewThreadForModelChange === true);
+    const instanceChanged =
       thread.session !== null &&
       requestedModelSelection !== undefined &&
-      requestedModelSelection.instanceId !== currentInstanceId
-    ) {
-      if (currentInfo.driverKind !== desiredInfo.driverKind) {
-        return yield* new ProviderAdapterRequestError({
-          provider: preferredProvider,
-          method: "thread.turn.start",
-          detail: `Thread '${threadId}' is bound to driver '${currentInfo.driverKind}' and cannot switch to '${desiredInfo.driverKind}'.`,
-        });
-      }
-      if (
+      requestedModelSelection.instanceId !== currentInstanceId;
+    const continuationIncompatible =
+      instanceChanged &&
+      (currentInfo.driverKind !== desiredInfo.driverKind ||
         currentInfo.continuationIdentity.continuationKey !==
-        desiredInfo.continuationIdentity.continuationKey
-      ) {
-        return yield* new ProviderAdapterRequestError({
-          provider: preferredProvider,
-          method: "thread.turn.start",
-          detail: `Thread '${threadId}' cannot switch from instance '${currentInstanceId}' to '${desiredInstanceId}' because their provider resume state is incompatible.`,
-        });
-      }
-    }
+          desiredInfo.continuationIdentity.continuationKey);
     const project = yield* resolveProject(thread.projectId);
     const effectiveCwd = resolveThreadWorkspaceCwd({
       thread,
@@ -718,22 +1139,26 @@ const make = Effect.gen(function* () {
           .pipe(Effect.forkDetach)
       : Effect.void;
 
+    const providerSessionInput = (input?: {
+      readonly resumeCursor?: unknown;
+      readonly freshSession?: boolean;
+    }) => ({
+      threadId,
+      ...(preferredProvider ? { provider: preferredProvider } : {}),
+      providerInstanceId: desiredInstanceId,
+      ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+      ...(thread.title ? { title: thread.title } : {}),
+      modelSelection: desiredModelSelection,
+      ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
+      ...(input?.freshSession === true ? { freshSession: true } : {}),
+      ...(projectMemoryMode !== undefined ? { projectMemoryMode } : {}),
+      runtimeMode: desiredRuntimeMode,
+    });
     const startProviderSession = (input?: {
       readonly resumeCursor?: unknown;
       readonly provider?: ProviderDriverKind;
-    }) =>
-      providerService
-        .startSession(threadId, {
-          threadId,
-          ...(preferredProvider ? { provider: preferredProvider } : {}),
-          providerInstanceId: desiredInstanceId,
-          ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
-          ...(thread.title ? { title: thread.title } : {}),
-          modelSelection: desiredModelSelection,
-          ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
-          runtimeMode: desiredRuntimeMode,
-        })
-        .pipe(Effect.tap(() => refreshWorkspaceSnapshot));
+      readonly freshSession?: boolean;
+    }) => providerService.startSession(threadId, providerSessionInput(input)).pipe(Effect.tap(() => refreshWorkspaceSnapshot));
 
     const bindSessionToThread = (session: ProviderSession) =>
       Effect.gen(function* () {
@@ -754,9 +1179,11 @@ const make = Effect.gen(function* () {
                 : mapProviderSessionStatusToOrchestrationStatus(session.status),
             providerName: session.provider,
             providerInstanceId: session.providerInstanceId,
+            runtimeSessionId: session.runtimeSessionId ?? null,
             runtimeMode: desiredRuntimeMode,
             // Provider turn ids are not orchestration turn ids.
             activeTurnId: null,
+            abortState: null,
             lastError: session.lastError ?? null,
             updatedAt: session.updatedAt,
           },
@@ -771,31 +1198,43 @@ const make = Effect.gen(function* () {
       const cwdChanged = effectiveCwd !== activeSession?.cwd;
       const sessionModelSwitch = (yield* providerService.getCapabilities(desiredInstanceId))
         .sessionModelSwitch;
-      const modelChanged =
-        requestedModelSelection !== undefined &&
-        requestedModelSelection.model !== activeSession?.model;
-      const instanceChanged =
-        requestedModelSelection !== undefined &&
-        activeSession?.providerInstanceId !== requestedModelSelection.instanceId;
       const shouldRestartForModelChange = modelChanged && sessionModelSwitch === "unsupported";
+      const shouldStartFresh =
+        forceFreshSession ||
+        projectMemoryModeChanged ||
+        continuationIncompatible ||
+        shouldRestartForModelChange ||
+        requiresFreshSessionForModelChange;
       const previousModelSelection = threadModelSelections.get(threadId);
       const shouldRestartForModelSelectionChange =
-        preferredProvider === "claudeAgent" &&
-        requestedModelSelection !== undefined &&
-        !Equal.equals(previousModelSelection, requestedModelSelection);
+        requiresProviderSessionRestartForModelSelectionChange({
+          provider: preferredProvider,
+          previous: previousModelSelection,
+          next: desiredModelSelection,
+          explicitlyRequested: requestedModelSelection !== undefined,
+        });
 
       if (
         !runtimeModeChanged &&
         !cwdChanged &&
         !instanceChanged &&
+        !forceFreshSession &&
+        !projectMemoryModeChanged &&
         !shouldRestartForModelChange &&
+        !requiresFreshSessionForModelChange &&
         !shouldRestartForModelSelectionChange
       ) {
         yield* refreshWorkspaceSnapshot;
-        return existingSessionThreadId;
+        return prepared({
+          sessionThreadId: existingSessionThreadId,
+          transcriptHandoffRequired: false,
+          forkStrategy: undefined,
+          modelSelection: desiredModelSelection,
+          newSession: false,
+        });
       }
 
-      const resumeCursor = shouldRestartForModelChange
+      const resumeCursor = shouldStartFresh
         ? undefined
         : (activeSession?.resumeCursor ?? undefined);
       yield* Effect.logInfo("provider command reactor restarting provider session", {
@@ -814,11 +1253,19 @@ const make = Effect.gen(function* () {
         modelChanged,
         instanceChanged,
         shouldRestartForModelChange,
+        requiresFreshSessionForModelChange,
+        continuationIncompatible,
+        projectMemoryModeChanged,
         shouldRestartForModelSelectionChange,
+        forceFreshSession,
         hasResumeCursor: resumeCursor !== undefined,
       });
       const restartedSession = yield* startProviderSession(
-        resumeCursor !== undefined ? { resumeCursor } : undefined,
+        shouldStartFresh
+          ? { freshSession: true }
+          : resumeCursor !== undefined
+            ? { resumeCursor }
+            : undefined,
       );
       yield* Effect.logInfo("provider command reactor restarted provider session", {
         threadId,
@@ -829,20 +1276,73 @@ const make = Effect.gen(function* () {
         cwd: restartedSession.cwd,
       });
       yield* bindSessionToThread(restartedSession);
-      return restartedSession.threadId;
+      return prepared({
+        sessionThreadId: restartedSession.threadId,
+        transcriptHandoffRequired: shouldStartFresh,
+        forkStrategy: undefined,
+        modelSelection: desiredModelSelection,
+        newSession: true,
+      });
     }
 
-    const startedSession = yield* startProviderSession(undefined);
+    const shouldStartFresh =
+      forceFreshSession ||
+      projectMemoryModeChanged ||
+      continuationIncompatible ||
+      requiresFreshSessionForModelChange;
+    if (options?.nativeFork !== undefined) {
+      const nativeForkSession = yield* providerService
+        .forkSession({
+          sourceThreadId: options.nativeFork.sourceThreadId,
+          destinationThreadId: threadId,
+          sourceProviderThreadId: options.nativeFork.providerThreadId,
+          lastProviderTurnId: options.nativeFork.providerTurnId,
+          session: providerSessionInput(),
+        })
+        .pipe(
+          Effect.map(Option.some),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("provider native fork failed; using compact handoff", {
+              threadId,
+              sourceThreadId: options.nativeFork?.sourceThreadId,
+              provider: preferredProvider,
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.as(Option.none<ProviderSession>())),
+          ),
+        );
+      if (Option.isSome(nativeForkSession)) {
+        yield* bindSessionToThread(nativeForkSession.value);
+        return prepared({
+          sessionThreadId: nativeForkSession.value.threadId,
+          transcriptHandoffRequired: false,
+          forkStrategy: "provider-native" as const,
+          modelSelection: desiredModelSelection,
+          newSession: true,
+        });
+      }
+    }
+    const startedSession = yield* startProviderSession(
+      shouldStartFresh ? { freshSession: true } : undefined,
+    );
     yield* bindSessionToThread(startedSession);
-    return startedSession.threadId;
+    return prepared({
+      sessionThreadId: startedSession.threadId,
+      transcriptHandoffRequired: shouldStartFresh,
+      forkStrategy: options?.nativeFork === undefined ? undefined : ("compact-handoff" as const),
+      modelSelection: desiredModelSelection,
+      newSession: true,
+    });
   });
 
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly messageText: string;
+    readonly boundaryMessageId: OrchestrationMessage["id"];
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
     readonly interactionMode?: "default" | "plan";
+    readonly resultOnly?: boolean;
+    readonly retryOfTurnId?: TurnId;
     readonly createdAt: string;
   }) {
     const thread = yield* resolveThreadShell(input.threadId);
@@ -851,20 +1351,174 @@ const make = Effect.gen(function* () {
         new Error(`Thread '${input.threadId}' was not found in read model.`),
       );
     }
-    yield* ensureSessionForThread(input.threadId, input.createdAt, {
-      ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
-      pendingTurnStart: true,
-    });
-    if (input.modelSelection !== undefined) {
-      threadModelSelections.set(input.threadId, input.modelSelection);
+    const forkHandoffRequired =
+      thread.fork?.handoff.status === "pending" && !completedForkHandoffs.has(input.threadId);
+    const failedTurnHandoffRequired =
+      thread.session?.status === "error" || thread.session?.status === "interrupted";
+    if (forkHandoffRequired) {
+      yield* projectionSnapshotQuery.getThreadForkHistory(input.threadId).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () =>
+              new ProviderAdapterRequestError({
+                provider: providerErrorLabelFromInstanceHint({
+                  instanceId: String(
+                    input.modelSelection?.instanceId ?? thread.modelSelection.instanceId,
+                  ),
+                }),
+                method: "thread.turn.start",
+                detail: `Frozen fork history for thread '${input.threadId}' was not found.`,
+              }),
+            onSome: Effect.succeed,
+          }),
+        ),
+      );
     }
-    const normalizedInput = toNonEmptyProviderInput(input.messageText);
-    const normalizedAttachments = input.attachments ?? [];
+    const project = yield* resolveProject(thread.projectId);
+    const durableModelSelection = input.modelSelection ?? thread.modelSelection;
+    const effectiveCwd =
+      resolveThreadWorkspaceCwd({
+        thread,
+        projects: project ? [project] : [],
+      }) ??
+      project?.workspaceRoot ??
+      process.cwd();
+    const reasoningHistory = isAutoReasoningEnabled(durableModelSelection)
+      ? yield* projectionSnapshotQuery.getThreadDetailById(input.threadId).pipe(Effect.map(Option.getOrUndefined))
+      : undefined;
+    const autoReasoning =
+      input.resultOnly === true
+        ? reuseAutoReasoningForRetry({
+            selection: durableModelSelection,
+            activities: reasoningHistory?.activities ?? [],
+            ...(input.retryOfTurnId !== undefined ? { retryOfTurnId: input.retryOfTurnId } : {}),
+          })
+        : yield* resolveAutoReasoning({
+            selection: durableModelSelection,
+            cwd: effectiveCwd,
+            userPrompt: input.messageText,
+            interactionMode: input.interactionMode ?? "default",
+            attachments: input.attachments ?? [],
+            conversation: collectAutoReasoningConversation(
+              reasoningHistory?.messages ?? [],
+              input.boundaryMessageId,
+            ),
+          });
+    const effectiveInputModelSelection = autoReasoning?.effectiveSelection ?? input.modelSelection;
+    const memoryModelSelection = autoReasoning?.effectiveSelection ?? durableModelSelection;
+    const projectMemoryRead = project
+      ? yield* projectMemory
+          .read(
+            {
+              projectId: thread.projectId,
+              workspaceRoot: project.workspaceRoot,
+              threadId: input.threadId,
+              actor: "root",
+            },
+            {
+              projectId: thread.projectId,
+              query: input.messageText,
+              contextWindowTokens:
+                resolveCodexContextWindowTokens(memoryModelSelection) ??
+                DEFAULT_PROJECT_MEMORY_CONTEXT_WINDOW_TOKENS,
+            },
+          )
+          .pipe(
+            Effect.map(Option.some),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("provider command reactor could not load project memory", {
+                threadId: input.threadId,
+                projectId: thread.projectId,
+                cause: Cause.pretty(cause),
+              }).pipe(Effect.as(Option.none())),
+            ),
+          )
+      : Option.none();
+    const sessionPreparation = yield* ensureSessionForThread(input.threadId, input.createdAt, {
+      ...(effectiveInputModelSelection !== undefined
+        ? { modelSelection: effectiveInputModelSelection }
+        : {}),
+      pendingTurnStart: true,
+      forceFreshSession: forkHandoffRequired || failedTurnHandoffRequired,
+      ...(Option.isSome(projectMemoryRead)
+        ? { projectMemoryMode: projectMemoryRead.value.mode }
+        : {}),
+      ...(forkHandoffRequired && thread.fork?.providerForkCursor !== undefined
+        ? {
+            nativeFork: {
+              sourceThreadId: thread.fork.provenance.sourceThreadId,
+              providerThreadId: thread.fork.providerForkCursor.providerThreadId,
+              providerTurnId: thread.fork.providerForkCursor.providerTurnId,
+            },
+          }
+        : {}),
+    });
+    threadModelSelections.set(input.threadId, sessionPreparation.modelSelection);
     const activeSession = yield* providerService
       .listSessions()
       .pipe(
         Effect.map((sessions) => sessions.find((session) => session.threadId === input.threadId)),
       );
+    const providerMessageText =
+      activeSession?.providerInstanceId === undefined
+        ? input.messageText
+        : yield* skillEngine.rewritePromptForProvider({
+            providerInstanceId: activeSession.providerInstanceId,
+            ...(project ? { projectCwd: project.workspaceRoot } : {}),
+            prompt: input.messageText,
+          });
+    const needsTranscriptHandoff = (forkHandoffRequired && sessionPreparation.forkStrategy !== "provider-native") || sessionPreparation.transcriptHandoffRequired;
+    const transcriptHistory = needsTranscriptHandoff ? yield* resolveThreadDetail(input.threadId) : undefined;
+    const compactHandoff =
+      (forkHandoffRequired && sessionPreparation.forkStrategy !== "provider-native") ||
+      sessionPreparation.transcriptHandoffRequired
+        ? buildProviderTranscriptHandoff({
+            messages: transcriptHistory?.messages ?? [],
+            boundaryMessageId: input.boundaryMessageId,
+            ...(thread.latestTurn?.state !== undefined
+              ? { latestTurnState: thread.latestTurn.state }
+              : {}),
+            checkpoints: transcriptHistory?.checkpoints ?? [],
+          })
+        : undefined;
+    const projectMemoryContext =
+      sessionPreparation.newSession &&
+      Option.isSome(projectMemoryRead) &&
+      projectMemoryRead.value.entries.length > 0
+        ? `<t3code_project_memory>\n${projectMemoryRead.value.markdown.trim()}\n</t3code_project_memory>`
+        : undefined;
+    const transcriptContext = [projectMemoryContext, compactHandoff?.handoff]
+      .filter((value): value is string => value !== undefined)
+      .join("\n\n");
+    const transcriptHandoff = transcriptContext
+      ? {
+          text: transcriptContext,
+          ...(compactHandoff !== undefined && compactHandoff.attachments.length > 0
+            ? { attachments: compactHandoff.attachments }
+            : {}),
+        }
+      : undefined;
+    let providerInput = providerMessageText;
+    if (yield* projectionSnapshotQuery.hasActiveProjectAgentPeer(input.threadId)) {
+      const coordinationApplication = applyProjectAgentInstructionsToProviderInput({
+        providerInput,
+      });
+      providerInput = coordinationApplication.providerInput ?? "";
+      if (coordinationApplication.outcome === "omitted") {
+        yield* appendCoordinationWarningActivity({
+          threadId: input.threadId,
+          createdAt: input.createdAt,
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("provider command reactor failed to append coordination warning", {
+              threadId: input.threadId,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
+      }
+    }
+    const normalizedInput = toNonEmptyProviderInput(providerInput);
     const sessionModelSwitch =
       activeSession === undefined
         ? "in-session"
@@ -876,25 +1530,90 @@ const make = Effect.gen(function* () {
             })
           : (yield* providerService.getCapabilities(activeSession.providerInstanceId))
               .sessionModelSwitch;
-    const requestedModelSelection =
-      input.modelSelection ?? threadModelSelections.get(input.threadId) ?? thread.modelSelection;
+    const modelSelectionWasRequested = effectiveInputModelSelection !== undefined;
+    const requestedModelSelection = modelSelectionWasRequested
+      ? sessionPreparation.modelSelection
+      : (threadModelSelections.get(input.threadId) ?? thread.modelSelection);
     const modelForTurn =
-      sessionModelSwitch === "unsupported" && input.modelSelection === undefined
+      sessionModelSwitch === "unsupported" && !modelSelectionWasRequested
         ? activeSession?.model !== undefined
           ? {
               ...requestedModelSelection,
               model: activeSession.model,
             }
           : requestedModelSelection
-        : input.modelSelection;
+        : modelSelectionWasRequested
+          ? requestedModelSelection
+          : undefined;
+
+    if (input.modelSelection !== undefined) {
+      yield* orchestrationEngine.dispatch({
+        type: "thread.meta.update",
+        commandId: yield* serverCommandId("model-selection-commit"),
+        threadId: input.threadId,
+        modelSelection: autoReasoning ? input.modelSelection : sessionPreparation.modelSelection,
+      });
+      threadModelSelections.set(input.threadId, sessionPreparation.modelSelection);
+    }
 
     return {
       threadId: input.threadId,
       ...(normalizedInput ? { input: normalizedInput } : {}),
-      ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
+      ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
+      ...(transcriptHandoff !== undefined ? { transcriptHandoff } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      ...(autoReasoning?.diagnostic !== undefined
+        ? { autoReasoning: autoReasoning.diagnostic }
+        : {}),
     };
+  });
+
+  const applyGeneratedWorktreeBranch = Effect.fn("applyGeneratedWorktreeBranch")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly oldBranch: string;
+    readonly cwd: string;
+    readonly generatedBranch: string;
+  }) {
+    const targetBranch = buildGeneratedWorktreeBranchName(input.generatedBranch);
+    if (targetBranch === input.oldBranch) return;
+
+    const renamed = yield* gitWorkflow.renameBranch({
+      cwd: input.cwd,
+      oldBranch: input.oldBranch,
+      newBranch: targetBranch,
+    });
+    yield* orchestrationEngine.dispatch({
+      type: "thread.meta.update",
+      commandId: yield* serverCommandId("worktree-branch-rename"),
+      threadId: input.threadId,
+      branch: renamed.branch,
+      worktreePath: input.cwd,
+    });
+    yield* vcsStatusBroadcaster.refreshStatus(input.cwd).pipe(Effect.ignoreCause({ log: true }));
+  });
+
+  const applyGeneratedThreadTitle = Effect.fn("applyGeneratedThreadTitle")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly generatedTitle: string;
+    readonly titleSeed?: string;
+    readonly replaceableTitle?: string;
+  }) {
+    const thread = yield* resolveThread(input.threadId);
+    if (!thread) return;
+    if (
+      !canReplaceThreadTitle(thread.title, input.titleSeed) &&
+      thread.title !== input.replaceableTitle
+    ) {
+      return;
+    }
+
+    yield* orchestrationEngine.dispatch({
+      type: "thread.meta.update",
+      commandId: yield* serverCommandId("thread-title-rename"),
+      threadId: input.threadId,
+      title: input.generatedTitle,
+    });
   });
 
   const maybeGenerateAndRenameWorktreeBranchForFirstTurn = Effect.fn(
@@ -906,12 +1625,7 @@ const make = Effect.gen(function* () {
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
   }) {
-    if (!input.branch || !input.worktreePath) {
-      return;
-    }
-    if (!isTemporaryWorktreeBranch(input.branch)) {
-      return;
-    }
+    if (!input.branch || !input.worktreePath || !isTemporaryWorktreeBranch(input.branch)) return;
 
     const oldBranch = input.branch;
     const cwd = input.worktreePath;
@@ -925,27 +1639,18 @@ const make = Effect.gen(function* () {
               settings,
               yield* providerRegistry.getProviders,
             );
-
       const generated = yield* textGeneration.generateBranchName({
         cwd,
         message: input.messageText,
         ...(attachments.length > 0 ? { attachments } : {}),
         modelSelection,
       });
-      if (!generated) return;
-
-      const targetBranch = buildGeneratedWorktreeBranchName(generated.branch);
-      if (targetBranch === oldBranch) return;
-
-      const renamed = yield* gitWorkflow.renameBranch({ cwd, oldBranch, newBranch: targetBranch });
-      yield* orchestrationEngine.dispatch({
-        type: "thread.meta.update",
-        commandId: yield* serverCommandId("worktree-branch-rename"),
+      yield* applyGeneratedWorktreeBranch({
         threadId: input.threadId,
-        branch: renamed.branch,
-        worktreePath: cwd,
+        oldBranch,
+        cwd,
+        generatedBranch: generated.branch,
       });
-      yield* vcsStatusBroadcaster.refreshStatus(cwd).pipe(Effect.ignoreCause({ log: true }));
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("provider command reactor failed to generate or rename worktree branch", {
@@ -965,6 +1670,7 @@ const make = Effect.gen(function* () {
       readonly messageText: string;
       readonly attachments?: ReadonlyArray<ChatAttachment>;
       readonly titleSeed?: string;
+      readonly replaceableTitle?: string;
     }) {
       const attachments = input.attachments ?? [];
       yield* Effect.gen(function* () {
@@ -986,23 +1692,78 @@ const make = Effect.gen(function* () {
           );
         if (!generated) return;
 
-        const thread = yield* resolveThreadShell(input.threadId);
-        if (!thread) return;
-        if (!canReplaceThreadTitle(thread.title, input.titleSeed)) {
-          return;
-        }
-
-        yield* orchestrationEngine.dispatch({
-          type: "thread.meta.update",
-          commandId: yield* serverCommandId("thread-title-rename"),
+        yield* applyGeneratedThreadTitle({
           threadId: input.threadId,
-          title: generated.title,
+          generatedTitle: generated.title,
+          ...(input.titleSeed !== undefined ? { titleSeed: input.titleSeed } : {}),
+          ...(input.replaceableTitle !== undefined
+            ? { replaceableTitle: input.replaceableTitle }
+            : {}),
         });
       }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("provider command reactor failed to generate or rename thread title", {
             threadId: input.threadId,
             cwd: input.cwd,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
+    },
+  );
+
+  const maybeGenerateFirstTurnMetadata = Effect.fn("maybeGenerateFirstTurnMetadata")(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly branch: string;
+      readonly worktreePath: string;
+      readonly messageText: string;
+      readonly attachments?: ReadonlyArray<ChatAttachment>;
+      readonly titleSeed?: string;
+      readonly replaceableTitle?: string;
+    }) {
+      const attachments = input.attachments ?? [];
+      yield* Effect.gen(function* () {
+        const { textGenerationModelSelection: modelSelection } =
+          yield* serverSettingsService.getSettings;
+        const generated = yield* textGeneration
+          .generateThreadMetadata({
+            cwd: input.worktreePath,
+            message: input.messageText,
+            ...(attachments.length > 0 ? { attachments } : {}),
+            modelSelection: lowEffortMetadataSelection(modelSelection),
+          })
+          .pipe(
+            Effect.retry({
+              times: 2,
+              schedule: Schedule.exponential("2 seconds"),
+            }),
+          );
+
+        yield* Effect.all(
+          [
+            applyGeneratedWorktreeBranch({
+              threadId: input.threadId,
+              oldBranch: input.branch,
+              cwd: input.worktreePath,
+              generatedBranch: generated.branch,
+            }),
+            applyGeneratedThreadTitle({
+              threadId: input.threadId,
+              generatedTitle: generated.title,
+              ...(input.titleSeed !== undefined ? { titleSeed: input.titleSeed } : {}),
+              ...(input.replaceableTitle !== undefined
+                ? { replaceableTitle: input.replaceableTitle }
+                : {}),
+            }),
+          ],
+          { concurrency: 2, discard: true },
+        );
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("provider command reactor failed to generate thread metadata", {
+            threadId: input.threadId,
+            cwd: input.worktreePath,
             cause: Cause.pretty(cause),
           }),
         ),
@@ -1077,6 +1838,198 @@ const make = Effect.gen(function* () {
       ...(input.title !== undefined ? { title: input.title } : {}),
     });
   });
+  const reconcileOrphanedSessionAtStartup = Effect.fn("reconcileOrphanedSessionAtStartup")(
+    function* (thread: OrchestrationReadModel["threads"][number], reconciledAt: string) {
+      const session = thread.session;
+      if (session === null) {
+        return;
+      }
+
+      yield* setThreadSession({
+        threadId: thread.id,
+        session: {
+          ...session,
+          status: "interrupted",
+          runtimeSessionId: null,
+          activeTurnId: null,
+          abortState: null,
+          lastError: null,
+          updatedAt: reconciledAt,
+        },
+        createdAt: reconciledAt,
+      });
+
+      const threadDetail = yield* resolveThread(thread.id);
+      if (!threadDetail) {
+        return;
+      }
+      yield* Effect.forEach(
+        threadDetail.messages.filter(
+          (message) => message.role === "assistant" && message.streaming,
+        ),
+        (message) =>
+          serverCommandId("startup-assistant-message-complete").pipe(
+            Effect.flatMap((commandId) =>
+              orchestrationEngine.dispatch({
+                type: "thread.message.assistant.complete",
+                commandId,
+                threadId: thread.id,
+                messageId: message.id,
+                ...(message.turnId !== null ? { turnId: message.turnId } : {}),
+                createdAt: reconciledAt,
+              }),
+            ),
+          ),
+        { concurrency: 1, discard: true },
+      );
+    },
+  );
+  const appendStartupPendingInteractionResolution = Effect.fn(
+    "appendStartupPendingInteractionResolution",
+  )(function* (input: {
+    readonly threadId: ThreadId;
+    readonly interactionKind: "approval" | "user-input";
+    readonly interaction: OpenPendingInteraction;
+    readonly repairedAt: string;
+  }) {
+    // The request activity ID is a prefix so this resolution sorts after the
+    // request even when both intentionally preserve the same thread timestamp.
+    const repairId = `${input.interaction.requestActivityId}:${STARTUP_PENDING_INTERACTION_ID_PREFIX}:${input.interactionKind}`;
+    yield* orchestrationEngine.dispatch({
+      type: "thread.activity.append",
+      commandId: CommandId.make(`server:${repairId}`),
+      threadId: input.threadId,
+      activity: {
+        id: EventId.make(repairId),
+        tone: "approval",
+        kind: input.interactionKind === "approval" ? "approval.resolved" : "user-input.resolved",
+        summary:
+          input.interactionKind === "approval"
+            ? "Approval cancelled because the provider runtime was unavailable after startup."
+            : "Question cancelled because the provider runtime was unavailable after startup.",
+        payload:
+          input.interactionKind === "approval"
+            ? {
+                requestId: input.interaction.requestId,
+                decision: "cancel",
+                reason: STARTUP_PENDING_INTERACTION_REASON,
+              }
+            : {
+                requestId: input.interaction.requestId,
+                answers: {},
+                reason: STARTUP_PENDING_INTERACTION_REASON,
+              },
+        turnId: input.interaction.turnId,
+        createdAt: input.repairedAt,
+      },
+      createdAt: input.repairedAt,
+    });
+  });
+  const reconcileOrphanedPendingInteractionsAtStartup = Effect.fn(
+    "reconcileOrphanedPendingInteractionsAtStartup",
+  )(function* (threadId: ThreadId, inFlightRepairedAt?: string) {
+    const thread = yield* resolveThread(threadId);
+    if (!thread) {
+      return;
+    }
+    const repairedAt = inFlightRepairedAt ?? thread.updatedAt;
+    const pending = findOpenPendingInteractions({ activities: thread.activities });
+    yield* Effect.forEach(
+      pending.approvals,
+      (interaction) =>
+        appendStartupPendingInteractionResolution({
+          threadId,
+          interactionKind: "approval",
+          interaction,
+          repairedAt,
+        }),
+      { concurrency: 1, discard: true },
+    );
+    yield* Effect.forEach(
+      pending.userInputs,
+      (interaction) =>
+        appendStartupPendingInteractionResolution({
+          threadId,
+          interactionKind: "user-input",
+          interaction,
+          repairedAt,
+        }),
+      { concurrency: 1, discard: true },
+    );
+  });
+  const reconcileOrphanedSessionsAtStartup = Effect.fn("reconcileOrphanedSessionsAtStartup")(
+    function* (readModel: OrchestrationReadModel) {
+      const projectedInFlightThreads = readModel.threads.filter(
+        (thread) =>
+          thread.deletedAt === null &&
+          (thread.session?.status === "starting" || thread.session?.status === "running"),
+      );
+      const liveSessions = yield* providerService.listSessions();
+      const liveThreadIds = new Set(liveSessions.map((session) => session.threadId));
+      const shellSnapshot = yield* projectionSnapshotQuery.getShellSnapshot();
+      const pendingInteractionThreadIds = new Set(
+        shellSnapshot.threads
+          .filter((thread) => thread.hasPendingApprovals || thread.hasPendingUserInput)
+          .map((thread) => thread.id),
+      );
+      const projectedInFlightThreadIds = new Set(
+        projectedInFlightThreads.map((thread) => thread.id),
+      );
+      const orphanedThreads = readModel.threads.filter(
+        (thread) =>
+          thread.deletedAt === null &&
+          !liveThreadIds.has(thread.id) &&
+          (projectedInFlightThreadIds.has(thread.id) ||
+            pendingInteractionThreadIds.has(thread.id) ||
+            thread.subagents.some((subagent) => isActiveSubagentStatus(subagent.status))),
+      );
+      const reconciledAt = DateTime.formatIso(yield* DateTime.now);
+      const outcomes = yield* Effect.forEach(
+        orphanedThreads,
+        (thread) =>
+          Effect.gen(function* () {
+            if (projectedInFlightThreadIds.has(thread.id)) {
+              yield* reconcileOrphanedSessionAtStartup(thread, reconciledAt);
+            }
+            if (pendingInteractionThreadIds.has(thread.id)) {
+              // Repairing an already-terminal thread must not make old work look recent.
+              yield* reconcileOrphanedPendingInteractionsAtStartup(
+                thread.id,
+                projectedInFlightThreadIds.has(thread.id) ? reconciledAt : undefined,
+              );
+            }
+            yield* settleActiveSubagents(
+              thread,
+              reconciledAt,
+              "startup-subagent-runtime-loss-upsert",
+            );
+          }).pipe(
+            Effect.as(true),
+            Effect.catchCause((cause) => {
+              if (Cause.hasInterruptsOnly(cause)) {
+                return Effect.interrupt;
+              }
+              return Effect.logWarning(
+                "provider command reactor failed to reconcile orphaned startup session",
+                {
+                  threadId: thread.id,
+                  cause: Cause.pretty(cause),
+                },
+              ).pipe(Effect.as(false));
+            }),
+          ),
+        { concurrency: 1 },
+      );
+
+      yield* Effect.logInfo("provider command reactor reconciled startup sessions", {
+        projectedInFlightSessionCount: projectedInFlightThreads.length,
+        liveProviderSessionCount: liveSessions.length,
+        orphanedSessionCount: orphanedThreads.length,
+        pendingInteractionThreadCount: pendingInteractionThreadIds.size,
+        reconciledSessionCount: outcomes.filter(Boolean).length,
+      });
+    },
+  );
   const findInterruptedThreadTitleRegenerations = Effect.fn(
     "findInterruptedThreadTitleRegenerations",
   )(function* () {
@@ -1268,6 +2221,8 @@ const make = Effect.gen(function* () {
         session: {
           threadId: thread.id,
           status: "stopped",
+          runtimeSessionId: null,
+          abortState: null,
           providerName: instanceInfo.driverKind,
           providerInstanceId: instanceId,
           runtimeMode: thread.runtimeMode,
@@ -1298,10 +2253,28 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    const shouldReserveForkHandoff =
+      thread.fork?.handoff.status === "pending" &&
+      !completedForkHandoffs.has(event.payload.threadId);
+    if (shouldReserveForkHandoff && forkHandoffsInFlight.has(event.payload.threadId)) {
+      yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.turn.start.failed",
+        summary: "Provider turn start failed",
+        detail: "The fork history handoff is already being sent by another turn.",
+        turnId: null,
+        createdAt: event.payload.createdAt,
+      });
+      return;
+    }
+    if (shouldReserveForkHandoff) {
+      forkHandoffsInFlight.add(event.payload.threadId);
+    }
     yield* ensureThreadWorktree(thread);
 
+    const isFirstUserMessageTurn = !hasOtherUserMessages;
     const isCompactCommand = isCompactCommandMessage(message);
-    if (!hasOtherUserMessages && !isCompactCommand) {
+    if (isFirstUserMessageTurn && !isCompactCommand && event.payload.resultOnly !== true) {
       const project = yield* resolveProject(thread.projectId);
       const generationCwd =
         resolveThreadWorkspaceCwd({
@@ -1314,18 +2287,41 @@ const make = Effect.gen(function* () {
         ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
       };
 
-      yield* maybeGenerateAndRenameWorktreeBranchForFirstTurn({
-        threadId: event.payload.threadId,
-        branch: thread.branch,
-        worktreePath: thread.worktreePath,
-        ...generationInput,
-      }).pipe(Effect.forkScoped);
-
-      if (canReplaceThreadTitle(thread.title, event.payload.titleSeed)) {
+      const isUnrenamedForkTitle =
+        thread.fork !== undefined &&
+        thread.title === `${thread.fork.provenance.sourceTitle} (fork)`;
+      const shouldGenerateBranch =
+        thread.branch !== null &&
+        thread.worktreePath !== null &&
+        isTemporaryWorktreeBranch(thread.branch);
+      const shouldGenerateTitle =
+        canReplaceThreadTitle(thread.title, event.payload.titleSeed) || isUnrenamedForkTitle;
+      if (
+        shouldGenerateBranch &&
+        shouldGenerateTitle &&
+        thread.branch !== null &&
+        thread.worktreePath !== null
+      ) {
+        yield* maybeGenerateFirstTurnMetadata({
+          threadId: event.payload.threadId,
+          branch: thread.branch,
+          worktreePath: thread.worktreePath,
+          ...generationInput,
+          ...(isUnrenamedForkTitle ? { replaceableTitle: thread.title } : {}),
+        }).pipe(Effect.forkScoped);
+      } else if (shouldGenerateBranch) {
+        yield* maybeGenerateAndRenameWorktreeBranchForFirstTurn({
+          threadId: event.payload.threadId,
+          branch: thread.branch,
+          worktreePath: thread.worktreePath,
+          ...generationInput,
+        }).pipe(Effect.forkScoped);
+      } else if (shouldGenerateTitle) {
         yield* maybeGenerateThreadTitleForFirstTurn({
           threadId: event.payload.threadId,
           cwd: generationCwd,
           ...generationInput,
+          ...(isUnrenamedForkTitle ? { replaceableTitle: thread.title } : {}),
         }).pipe(Effect.forkScoped);
       }
     }
@@ -1422,27 +2418,257 @@ const make = Effect.gen(function* () {
         "Wait for context compaction to finish before sending another message.",
       );
     }
-    const sendTurnRequest = yield* buildSendTurnRequestForThread({
-      threadId: event.payload.threadId,
-      messageText: message.text,
-      ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
-      ...(event.payload.modelSelection !== undefined
-        ? { modelSelection: event.payload.modelSelection }
-        : {}),
-      interactionMode: event.payload.interactionMode,
-      createdAt: event.payload.createdAt,
-    }).pipe(
-      Effect.map(Option.some),
-      Effect.catchCause((cause) => handleTurnStartFailure(cause).pipe(Effect.as(Option.none()))),
+
+    const startProviderTurn = Effect.gen(function* () {
+      const sendTurnRequest = yield* buildSendTurnRequestForThread({
+        threadId: event.payload.threadId,
+        messageText: message.text,
+        boundaryMessageId: message.id,
+        ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+        ...(event.payload.modelSelection !== undefined
+          ? { modelSelection: event.payload.modelSelection }
+          : {}),
+        interactionMode: event.payload.interactionMode,
+        ...(event.payload.resultOnly !== undefined ? { resultOnly: event.payload.resultOnly } : {}),
+        ...(event.payload.retryOfTurnId !== undefined
+          ? { retryOfTurnId: event.payload.retryOfTurnId }
+          : {}),
+        createdAt: event.payload.createdAt,
+      }).pipe(
+        Effect.map(Option.some),
+        Effect.catchCause((cause) => handleTurnStartFailure(cause).pipe(Effect.as(Option.none()))),
+      );
+
+      if (Option.isNone(sendTurnRequest)) {
+        return;
+      }
+
+      const completePendingForkHandoff = Effect.fn("completePendingForkHandoff")(function* () {
+        if (thread.fork?.handoff.status !== "pending") {
+          return;
+        }
+        completedForkHandoffs.add(event.payload.threadId);
+        const completedAt = DateTime.formatIso(yield* DateTime.now);
+        yield* orchestrationEngine
+          .dispatch({
+            type: "thread.fork.handoff.complete",
+            commandId: CommandId.make(
+              `server:fork-handoff-complete:${event.commandId ?? event.eventId}`,
+            ),
+            threadId: event.payload.threadId,
+            completedAt,
+          })
+          .pipe(
+            Effect.retry({ times: 1 }),
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                "provider command reactor failed to persist fork handoff completion",
+                {
+                  threadId: event.payload.threadId,
+                  cause: Cause.pretty(cause),
+                },
+              ),
+            ),
+          );
+      });
+
+      const sendMainTurn = (request: typeof sendTurnRequest.value) =>
+        Effect.gen(function* () {
+          const settings = yield* serverSettingsService.getSettings;
+          const enhancementApplication = applyAgentEnhancementsToProviderInput({
+            ...(request.input !== undefined ? { providerInput: request.input } : {}),
+            cavemanMode: settings.agentEnhancement.cavemanMode,
+            deepThinking: {
+              ...settings.agentEnhancement.deepThinking,
+              enabled: resolveBetterT3FeatureFlag(
+                settings.betterT3Environment,
+                "agent.deepThinking",
+              ),
+            },
+          });
+          const enhancedRequest =
+            enhancementApplication.providerInput === request.input
+              ? request
+              : {
+                  ...request,
+                  ...(enhancementApplication.providerInput !== undefined
+                    ? { input: enhancementApplication.providerInput }
+                    : {}),
+                };
+          const { autoReasoning, ...providerRequest } = enhancedRequest;
+          const started = yield* providerService.sendTurn(providerRequest);
+          if (autoReasoning !== undefined) {
+            yield* appendAutoReasoningActivity({
+              threadId: event.payload.threadId,
+              turnId: started.turnId,
+              diagnostic: autoReasoning,
+              createdAt: event.payload.createdAt,
+            }).pipe(
+              Effect.catchCause(() =>
+                Effect.logWarning("failed to persist auto reasoning activity", {
+                  routerModel: autoReasoning.routerModel,
+                  chosenEffort: autoReasoning.effort,
+                  durationMs: autoReasoning.durationMs,
+                  fallback: autoReasoning.fallback,
+                  usage: autoReasoning.usage ?? null,
+                }),
+              ),
+            );
+          }
+          return started;
+        }).pipe(
+          Effect.tap(() => completePendingForkHandoff()),
+          Effect.catchCause(recoverTurnStartFailure),
+        );
+
+      if (event.payload.fetchMode === undefined) {
+        yield* sendMainTurn(sendTurnRequest.value);
+        return;
+      }
+
+      const settings = yield* serverSettingsService.getSettings;
+      const providers = yield* providerRegistry.getProviders;
+      const resolution = resolveFetchModelSelection({
+        providers,
+        fetchModelSelection: settings.fetchModelSelection,
+        textGenerationModelSelection: settings.textGenerationModelSelection,
+      });
+      if (resolution.status === "unavailable") {
+        const requested = resolution.requestedSelection;
+        const detail =
+          resolution.source === "manual" && requested !== null
+            ? `The configured Fetch model '${requested.instanceId}/${requested.model}' is unavailable. T3 did not substitute another model.`
+            : "No enabled and available provider model can run Fetch workers in this environment.";
+        yield* appendFetchWarningActivity({
+          threadId: event.payload.threadId,
+          summary: "Fetch unavailable",
+          detail,
+          createdAt: event.payload.createdAt,
+        });
+        yield* sendMainTurn(sendTurnRequest.value);
+        return;
+      }
+
+      const fetchWorkers = resolution.provider.fetchWorkers;
+      if (fetchWorkers === undefined) {
+        yield* appendFetchWarningActivity({
+          threadId: event.payload.threadId,
+          summary: "Fetch unavailable",
+          detail: `Provider '${resolution.provider.instanceId}' does not advertise Fetch worker support.`,
+          createdAt: event.payload.createdAt,
+        });
+        yield* sendMainTurn(sendTurnRequest.value);
+        return;
+      }
+
+      const project = yield* resolveProject(thread.projectId);
+      const cwd =
+        resolveThreadWorkspaceCwd({
+          thread,
+          projects: project ? [project] : [],
+        }) ??
+        project?.workspaceRoot ??
+        process.cwd();
+      const lunaFallback =
+        resolution.source === "auto-spark" ? resolveFetchLunaFallback(providers) : undefined;
+      const contextMaxChars = remainingFetchContextChars(sendTurnRequest.value.input);
+      const fetchResult = yield* fetchWorkerCoordinator.run({
+        threadId: event.payload.threadId,
+        cwd,
+        userRequest: message.text,
+        modelSelection: resolution.selection,
+        providerDriver: resolution.provider.driver,
+        maxRecommendedWorkers: fetchWorkers.maxRecommendedWorkers,
+        commandExecutionPolicy: fetchWorkers.commandExecutionPolicy,
+        contextMaxChars,
+        ...(lunaFallback?.status === "resolved" && lunaFallback.provider.fetchWorkers !== undefined
+          ? {
+              lunaFallback: {
+                modelSelection: lunaFallback.selection,
+                providerDriver: lunaFallback.provider.driver,
+                maxRecommendedWorkers: lunaFallback.provider.fetchWorkers.maxRecommendedWorkers,
+                commandExecutionPolicy: lunaFallback.provider.fetchWorkers.commandExecutionPolicy,
+              },
+            }
+          : {}),
+      });
+
+      yield* Effect.forEach(
+        fetchResult.warnings,
+        (warning) =>
+          appendFetchWarningActivity({
+            threadId: event.payload.threadId,
+            summary: "Fetch warning",
+            detail: warning,
+            createdAt: event.payload.createdAt,
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("provider command reactor failed to append Fetch warning", {
+                threadId: event.payload.threadId,
+                warning,
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          ),
+        { concurrency: 1, discard: true },
+      );
+
+      const contextApplication = applyFetchContextToProviderInput({
+        ...(sendTurnRequest.value.input !== undefined
+          ? { providerInput: sendTurnRequest.value.input }
+          : {}),
+        ...(fetchResult.context !== undefined ? { fetchContext: fetchResult.context } : {}),
+      });
+      if (
+        contextApplication.outcome === "omitted" ||
+        (fetchResult.successfulWorkers > 0 && fetchResult.context === undefined)
+      ) {
+        yield* appendFetchWarningActivity({
+          threadId: event.payload.threadId,
+          summary: "Fetch context omitted",
+          detail:
+            "The main request and required transcript handoff consumed the provider input limit, so collected Fetch evidence was not sent to the main provider.",
+          createdAt: event.payload.createdAt,
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("provider command reactor failed to append Fetch context warning", {
+              threadId: event.payload.threadId,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
+      }
+      const requestWithFetchContext =
+        contextApplication.providerInput === sendTurnRequest.value.input
+          ? sendTurnRequest.value
+          : {
+              ...sendTurnRequest.value,
+              ...(contextApplication.providerInput !== undefined
+                ? { input: contextApplication.providerInput }
+                : {}),
+            };
+
+      yield* fetchWorkerCoordinator.handoffToMain(
+        {
+          threadId: event.payload.threadId,
+          runId: fetchResult.runId,
+        },
+        sendMainTurn(requestWithFetchContext),
+      );
+    });
+
+    const turnStartDone = yield* Deferred.make<void>();
+    pendingTurnStarts.add(turnStartDone);
+    yield* startProviderTurn.pipe(
+      Effect.catchCause(recoverTurnStartFailure),
+      Effect.ensuring(
+        Effect.sync(() => {
+          forkHandoffsInFlight.delete(event.payload.threadId);
+          pendingTurnStarts.delete(turnStartDone);
+        }).pipe(Effect.andThen(Deferred.succeed(turnStartDone, undefined))),
+      ),
+      Effect.forkScoped,
     );
-
-    if (Option.isNone(sendTurnRequest)) {
-      return;
-    }
-
-    yield* providerService
-      .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.asVoid, Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
@@ -1452,92 +2678,34 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
-    const session = thread.session;
-    if (!session || session.status === "stopped") {
-      return yield* appendProviderFailureActivity({
-        threadId: event.payload.threadId,
-        kind: "provider.turn.interrupt.failed",
-        summary: "Provider turn interrupt failed",
-        detail: "No active provider session is bound to this thread.",
-        turnId: event.payload.turnId ?? null,
-        createdAt: event.payload.createdAt,
-      });
-    }
-
-    const recoverInterruptFailure = (cause: Cause.Cause<unknown>) => {
-      if (Cause.hasInterruptsOnly(cause)) {
-        return Effect.interrupt;
-      }
-
-      const detail = formatFailureDetail(cause);
-      return Effect.gen(function* () {
-        const latestThread = yield* resolveThreadShell(event.payload.threadId);
-        const latestSession = latestThread?.session;
-        if (
-          !latestSession ||
-          latestSession.status === "stopped" ||
-          latestSession.status === "ready" ||
-          (event.payload.turnId !== undefined &&
-            latestSession.activeTurnId !== null &&
-            latestSession.activeTurnId !== event.payload.turnId)
-        ) {
-          return;
-        }
-
-        yield* providerService.stopSession({ threadId: event.payload.threadId }).pipe(
-          Effect.catchCause((stopCause) => {
-            if (Cause.hasInterruptsOnly(stopCause)) {
-              return Effect.interrupt;
-            }
-            return Effect.logWarning(
-              "provider command reactor failed to stop session after interrupt failure",
-              {
-                threadId: event.payload.threadId,
-                cause: Cause.pretty(stopCause),
-                originalCause: Cause.pretty(cause),
-              },
-            );
-          }),
-        );
-        const stoppedThread = yield* resolveThreadShell(event.payload.threadId);
-        const stoppedSession = stoppedThread?.session;
-        if (
-          !stoppedSession ||
-          stoppedSession.status === "stopped" ||
-          stoppedSession.status === "ready" ||
-          (event.payload.turnId !== undefined &&
-            stoppedSession.activeTurnId !== null &&
-            stoppedSession.activeTurnId !== event.payload.turnId)
-        ) {
-          return;
-        }
-
-        yield* setThreadSession({
+    const abortRequest = {
+      threadId: event.payload.threadId,
+      ...(event.payload.turnId !== undefined ? { turnId: event.payload.turnId } : {}),
+      requestedAt: event.payload.createdAt,
+    };
+    const handledByFetch = yield* fetchWorkerCoordinator.requestInterrupt(abortRequest).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider command reactor failed to interrupt Fetch preflight", {
           threadId: event.payload.threadId,
-          session: {
-            ...stoppedSession,
-            status: "stopped",
-            activeTurnId: null,
-            lastError: detail,
-            updatedAt: event.payload.createdAt,
-          },
-          createdAt: event.payload.createdAt,
-        });
-        yield* appendProviderFailureActivity({
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as(false)),
+      ),
+    );
+    if (handledByFetch) {
+      return;
+    }
+    yield* turnAbortCoordinator.requestAbort(abortRequest).pipe(
+      Effect.catchCause((cause) =>
+        appendProviderFailureActivity({
           threadId: event.payload.threadId,
           kind: "provider.turn.interrupt.failed",
           summary: "Provider turn interrupt failed",
-          detail,
+          detail: formatFailureDetail(cause),
           turnId: event.payload.turnId ?? null,
           createdAt: event.payload.createdAt,
-        });
-      });
-    };
-
-    // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService
-      .interruptTurn({ threadId: event.payload.threadId })
-      .pipe(Effect.catchCause(recoverInterruptFailure));
+        }),
+      ),
+    );
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
@@ -1674,7 +2842,7 @@ const make = Effect.gen(function* () {
           );
         },
         onSuccess: () =>
-          setThreadSession({
+          subagentRepository.listByThreadId({ threadId: thread.id }).pipe(Effect.flatMap((subagents) => settleActiveSubagents({ id: thread.id, subagents }, now, "session-stop-subagent-runtime-loss-upsert"))).pipe(Effect.andThen(setThreadSession({
             threadId: thread.id,
             session: {
               threadId: thread.id,
@@ -1684,12 +2852,14 @@ const make = Effect.gen(function* () {
                 ? { providerInstanceId: thread.session.providerInstanceId }
                 : {}),
               runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+              runtimeSessionId: null,
+              abortState: null,
               activeTurnId: null,
               lastError: thread.session?.lastError ?? null,
               updatedAt: now,
             },
             createdAt: now,
-          }),
+          }))),
       }),
       Effect.ensuring(clearStopping),
     );
@@ -1805,6 +2975,38 @@ const make = Effect.gen(function* () {
     const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
     yield* forkParked(Stream.runForEach(domainEvents, processEvent));
 
+    const startupReadModel = yield* projectionSnapshotQuery.getCommandReadModel().pipe(
+      Effect.map(Option.some),
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.interrupt;
+        }
+        return Effect.logWarning(
+          "provider command reactor failed to load startup reconciliation state",
+          {
+            cause: Cause.pretty(cause),
+          },
+        ).pipe(Effect.as(Option.none<OrchestrationReadModel>()));
+      }),
+    );
+    if (Option.isNone(startupReadModel)) {
+      return;
+    }
+
+    yield* reconcileOrphanedSessionsAtStartup(startupReadModel.value).pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.interrupt;
+        }
+        return Effect.logWarning(
+          "provider command reactor failed to reconcile orphaned startup sessions",
+          {
+            cause: Cause.pretty(cause),
+          },
+        );
+      }),
+    );
+
     // The domain event stream is hot, so work pending before this reactor
     // starts cannot be resumed. Correlated completions only clear the request
     // captured here, leaving any newer request untouched.
@@ -1835,9 +3037,10 @@ const make = Effect.gen(function* () {
     start,
     drain: Effect.gen(function* () {
       yield* worker.drain;
+      yield* Effect.forEach([...pendingTurnStarts], Deferred.await, { discard: true });
       yield* threadTitleRegenerationWorker.drain;
     }),
   } satisfies ProviderCommandReactorShape;
 });
 
-export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make);
+export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make).pipe(Layer.provide(ProjectionThreadSubagentRepositoryLive));
