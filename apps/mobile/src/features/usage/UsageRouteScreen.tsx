@@ -35,6 +35,8 @@ import { ControlPillMenu } from "../../components/ControlPill";
 import { SymbolView } from "../../components/AppSymbol";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors } from "./usageProviders";
+import { useMobileInterfaceTranslator } from "../../localization/useMobileInterfaceTranslator";
+import { mobileUsageCallMessageKey, visibleMobileContextDiagnostics } from "./usage-presentation";
 
 type UsageTab = "usage" | "limits";
 const TAB_OPTIONS = [
@@ -307,6 +309,8 @@ export function UsageRouteScreen() {
                   />
                   <ProviderSection merged={merged} metric={metric} />
                   <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
+                  <CallsSection merged={merged} />
+                  <ContextDiagnosticsSection merged={merged} />
                   <ModelsSection merged={merged} />
                 </>
               )}
@@ -571,14 +575,59 @@ function TotalsSection(props: { readonly merged: MergedUsage; readonly isPast24H
 function MetricCell(props: {
   readonly label: string;
   readonly value: string;
-  readonly detail: string;
+  readonly detail?: string;
 }) {
   return (
     <View className="w-1/2 gap-0.5 p-4">
       <Text className="text-sm text-foreground-muted">{props.label}</Text>
       <Text className="text-xl font-t3-medium tabular-nums text-foreground">{props.value}</Text>
-      <Text className="text-xs text-foreground-tertiary">{props.detail}</Text>
+      {props.detail ? (
+        <Text className="text-xs text-foreground-tertiary">{props.detail}</Text>
+      ) : null}
     </View>
+  );
+}
+
+function CallsSection(props: { readonly merged: MergedUsage }) {
+  const translator = useMobileInterfaceTranslator();
+  const calls = props.merged.calls.filter(
+    (call) => call.kind !== "unknown" || call.records > 0 || call.totalTokens > 0,
+  );
+  if (!calls.some((call) => call.records > 0 || call.totalTokens > 0)) return null;
+
+  return (
+    <SettingsSection title={translator.message("mobile.usage.calls")} card>
+      <View className="flex-row flex-wrap">
+        {calls.map((call) => (
+          <MetricCell
+            key={call.kind}
+            label={translator.message(mobileUsageCallMessageKey(call.kind))}
+            value={formatTokens(call.totalTokens)}
+            detail={translator.message("mobile.usage.callCount", { count: call.records })}
+          />
+        ))}
+      </View>
+    </SettingsSection>
+  );
+}
+
+function ContextDiagnosticsSection(props: { readonly merged: MergedUsage }) {
+  const translator = useMobileInterfaceTranslator();
+  const diagnostics = props.merged.contextDiagnostics;
+  if (!Object.values(diagnostics).some((value) => value > 0)) return null;
+
+  return (
+    <SettingsSection title={translator.message("mobile.usage.contextDiagnostics")} card>
+      <View className="flex-row flex-wrap">
+        {visibleMobileContextDiagnostics(diagnostics).map((row) => (
+          <MetricCell
+            key={row.key}
+            label={translator.message(row.messageKey)}
+            value={row.tokens ? formatTokens(row.value) : translator.number(row.value)}
+          />
+        ))}
+      </View>
+    </SettingsSection>
   );
 }
 
