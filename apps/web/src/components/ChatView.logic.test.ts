@@ -721,6 +721,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     session: null,
     messages: [],
     proposedPlans: [],
+    subagents: [],
     activities: [],
     checkpoints: [],
     createdAt: now,
@@ -746,6 +747,8 @@ const completedTurn = {
 };
 
 const readySession = {
+  runtimeSessionId: null,
+  abortState: null,
   threadId,
   status: "ready" as const,
   providerName: "codex",

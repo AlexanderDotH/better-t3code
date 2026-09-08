@@ -1,3 +1,4 @@
+import { mergeClientSettingsPatch } from "@t3tools/client-runtime/client-settings";
 /**
  * Environment-scoped settings hooks.
  *
@@ -183,7 +184,7 @@ export function persistClientSettingsPatch(
   if (deferPatch) {
     deferredClientSettingsPatchCount += 1;
   } else {
-    replaceClientSettingsSnapshot({ ...getClientSettingsSnapshot(), ...patch });
+    replaceClientSettingsSnapshot(mergeClientSettingsPatch(getClientSettingsSnapshot(), patch));
   }
   return enqueueClientSettingsPersistence(async () => {
     if (deferPatch) {
@@ -191,7 +192,7 @@ export function persistClientSettingsPatch(
         if (clientSettingsHydrationStatus !== "ready") {
           await hydrateClientSettings();
         }
-        replaceClientSettingsSnapshot({ ...getClientSettingsSnapshot(), ...patch });
+        replaceClientSettingsSnapshot(mergeClientSettingsPatch(getClientSettingsSnapshot(), patch));
       } finally {
         deferredClientSettingsPatchCount -= 1;
       }
