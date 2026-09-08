@@ -57,6 +57,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -126,7 +127,12 @@ import {
   type ComposerTaskStep,
   type ComposerTasksProgress,
 } from "./ComposerTasksBadge";
-import { ComposerActivityRow } from "./ComposerActivityStatus";
+import {
+  ComposerActivityRow,
+  composerActivityVariant,
+  resolveComposerActivityTokenUsage,
+  type ComposerActivityStatus,
+} from "./ComposerActivityStatus";
 import type { ThreadSyncPhase } from "../../threadSync";
 import { ComposerBanner } from "./ComposerBanner";
 import { ComposerSurface } from "./ComposerSurface";
@@ -215,6 +221,8 @@ import {
   getComposerPromptInjectionState,
   getComposerProviderState,
   renderProviderTraitsMenuContent,
+  renderProviderContextWindowPicker,
+  renderProviderContextWindowMenuContent,
   renderProviderTraitsPicker,
 } from "./composerProviderState";
 import { ContextWindowMeter } from "./ContextWindowMeter";
@@ -1126,7 +1134,27 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   );
 });
 
+function ComposerFloatingBannerPortal({
+  host,
+  children,
+}: {
+  host: HTMLElement | null;
+  children: ReactNode;
+}) {
+  return host
+    ? createPortal(
+        <ComposerBanner.FloatingGroup>
+          <div className="contents" {...composerFloatingLayerProps}>
+            {children}
+          </div>
+        </ComposerBanner.FloatingGroup>,
+        host,
+      )
+    : children;
+}
+
 const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
+  formId: string;
   compact: boolean;
   activeContextWindow: ContextWindowSnapshot | null;
   activeThreadModelDisplayName: string | null;
@@ -1171,6 +1199,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         />
       ) : null}
       <ComposerPrimaryActions
+        formId={props.formId}
         abortPresentation={props.abortPresentation}
         compact={props.compact}
         pendingAction={props.pendingAction}
@@ -1324,6 +1353,9 @@ export interface ChatComposerProps {
   activeTasksProgress: ComposerTasksProgress | null;
   activeTaskSteps: readonly ComposerTaskStep[] | null;
   threadSyncPhase: ThreadSyncPhase | null;
+  isWorking?: boolean;
+  activeWorkStartedAt?: string | null;
+  floatingBubbleHost?: HTMLElement | null;
 
   // Mode
   runtimeMode: RuntimeMode;
@@ -1503,6 +1535,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onExpandImage,
     onFileOpen,
   } = props;
+  const activeWorkStartedAt =
+    props.activeWorkStartedAt !== undefined
+      ? props.activeWorkStartedAt
+      : (activeThread?.latestTurn?.startedAt ?? null);
+  const activityStatus: ComposerActivityStatus | undefined = props.threadSyncPhase
+    ? { kind: "sync", phase: props.threadSyncPhase }
+    : (props.isWorking ?? phase === "running")
+      ? {
+          kind: "working",
+          startedAt: activeWorkStartedAt,
+          ...resolveComposerActivityTokenUsage({
+            activeWorkStartedAt,
+            snapshot: activeContextWindow,
+          }),
+        }
+      : undefined;
   const activeTasksProgress = props.threadSyncPhase === null ? props.activeTasksProgress : null;
   const activeTaskSteps = props.threadSyncPhase === null ? props.activeTaskSteps : null;
   // ------------------------------------------------------------------
@@ -2014,6 +2062,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const composerFormId = useId();
   const composerFormRef = useRef<HTMLFormElement>(null);
   const composerFooterControlsRef = useRef<HTMLDivElement>(null);
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
@@ -2292,7 +2341,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [composerDraftTarget, promptRef, scheduleComposerFocus, setComposerDraftPrompt],
   );
 
-  const providerTraitsMenuContent = renderProviderTraitsMenuContent({
+  const providerContextWindowInput = {
     provider: selectedProvider,
     instanceId: selectedInstanceId,
     ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
@@ -2300,24 +2349,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     model: selectedModel,
     models: selectedProviderModels,
     modelOptions: composerModelOptions?.[selectedInstanceId],
-    prompt,
-    onPromptChange: setPromptFromTraits,
-    planModeEnabled: settings.planModeEnabled,
-  });
-  const providerTraitsPickerInput = {
-    provider: selectedProvider,
-    instanceId: selectedInstanceId,
-    ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
-    ...(routeKind === "draft" && draftId ? { draftId } : {}),
-    model: selectedModel,
-    models: selectedProviderModels,
-    modelOptions: composerModelOptions?.[selectedInstanceId],
-    prompt,
-    onPromptChange: setPromptFromTraits,
     planModeEnabled: settings.planModeEnabled,
     isComposerOwned: true,
+  };
+  const providerTraitsPickerInput = {
+    ...providerContextWindowInput,
+    prompt,
+    onPromptChange: setPromptFromTraits,
   } satisfies Parameters<typeof renderProviderTraitsPicker>[0];
   const providerTraitsPicker = renderProviderTraitsPicker(providerTraitsPickerInput);
+  const providerContextWindowPicker = renderProviderContextWindowPicker(providerContextWindowInput);
+  const providerTraitsMenu = renderProviderTraitsMenuContent(providerTraitsPickerInput);
+  const providerContextWindowMenu = renderProviderContextWindowMenuContent(
+    providerContextWindowInput,
+  );
+  const providerTraitsMenuContent =
+    providerTraitsMenu || providerContextWindowMenu ? (
+      <>
+        {providerTraitsMenu}
+        {providerContextWindowMenu}
+      </>
+    ) : undefined;
   const {
     controlsRef: restingComposerControlsRef,
     hiddenBlockCount: restingControlsHiddenBlockCount,
@@ -3967,6 +4019,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (hasBannerItems || showComposerTopDrawer || isComposerCollapsedMobile);
   const inlineTasksBadge = showInlineTasksBadge ? (
     <ComposerTasksBadge
+      activityStatus={activityStatus}
       expanded={false}
       onToggle={toggleTasksDrawer}
       placement="inline"
@@ -4202,13 +4255,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const restingHiddenBlockCount = composerControlsInStrip ? restingControlsHiddenBlockCount : 0;
   const composerControlsCompact = !composerControlsInStrip && isComposerFooterCompact;
-  const restingProviderTraitsPicker = renderProviderTraitsPicker({
+  const restingProviderTraitsPickerInput = {
     ...providerTraitsPickerInput,
+    size: "xs" as const,
+    hidden: composerControlsHidden || restingHiddenBlockCount > 1,
+  };
+  const restingProviderTraitsPicker = renderProviderTraitsPicker(restingProviderTraitsPickerInput);
+  const restingProviderContextWindowPicker = renderProviderContextWindowPicker({
+    ...providerContextWindowInput,
     size: "xs",
     hidden: composerControlsHidden || restingHiddenBlockCount > 1,
   });
   const restingBlockDefs = [
-    ...(providerTraitsPicker
+    ...(providerTraitsPicker || providerContextWindowPicker
       ? [
           {
             id: "traits",
@@ -4216,6 +4275,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               <>
                 <ComposerControlSeparator size={composerControlsInStrip ? "xs" : "sm"} />
                 {composerControlsInStrip ? restingProviderTraitsPicker : providerTraitsPicker}
+                {composerControlsInStrip
+                  ? restingProviderContextWindowPicker
+                  : providerContextWindowPicker}
               </>
             ),
           },
@@ -4373,21 +4435,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeTaskSteps !== null &&
     activeTasksProgress.totalSteps > 0;
   const activityStackContent = hasBannerItems ? (
-    props.threadSyncPhase ? (
-      <ComposerActivityRow phase={props.threadSyncPhase} />
+    activityStatus?.kind === "sync" ? (
+      <ComposerActivityRow status={activityStatus} />
     ) : !hasBlockingComposerTopDrawer && activeTasksProgress && activeTaskSteps ? (
       <ComposerTasksContent
+        activityStatus={activityStatus}
         expanded={isTasksDrawerOpen}
         onToggle={toggleTasksDrawer}
         progress={activeTasksProgress}
         steps={activeTaskSteps}
       />
+    ) : activityStatus ? (
+      <ComposerActivityRow status={activityStatus} />
     ) : null
   ) : null;
   const activityStackItem: ComposerBannerStackContent | null = activityStackContent
     ? {
         id: "composer-activity",
-        variant: "default",
+        variant: activityStatus ? composerActivityVariant(activityStatus) : "default",
         priority: "activity",
         content: activityStackContent,
       }
@@ -5054,6 +5119,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   return (
     <form
+      id={composerFormId}
       ref={composerFormRef}
       onSubmit={submitComposer}
       onPointerDownCapture={(event) => {
@@ -5135,74 +5201,57 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             restingControlsHost,
           )
         : null}
-      <ComposerBanner.Dock>
-        <ComposerBanner.Column>
-          <ComposerBannerStack
-            key={activeThreadId}
-            className="relative z-0"
-            items={bannerStackItems}
-          />
-          {!activityStackItem && (props.threadSyncPhase || inlineTasksBadge) ? (
-            <ComposerBanner.Attachment>
-              <ComposerBanner.Root data-chat-composer-activity-strip="true">
-                {props.threadSyncPhase ? (
-                  <ComposerActivityRow phase={props.threadSyncPhase} />
-                ) : (
-                  inlineTasksBadge
-                )}
-              </ComposerBanner.Root>
-            </ComposerBanner.Attachment>
-          ) : null}
-          {showComposerTopDrawer && (!isTasksDrawerOpen || hasBlockingComposerTopDrawer) ? (
-            <ComposerBanner.Attachment>
-              <ComposerBanner.Root
-                data-chat-composer-top-drawer="true"
-                variant={activePendingApproval ? "warning" : "info"}
-              >
-                {activePendingApproval ? (
-                  <ComposerBanner.Row
-                    layout="wrap-actions"
-                    data-chat-composer-collapsed-controls="true"
-                  >
-                    <ComposerBanner.Icon />
-                    <ComposerBanner.Content>
-                      <ComposerPendingApprovalPanel
-                        approval={activePendingApproval}
-                        pendingCount={pendingApprovals.length}
-                      />
-                    </ComposerBanner.Content>
-                    <ComposerBanner.Actions>
-                      <ComposerPendingApprovalActions
-                        requestId={activePendingApproval.requestId}
-                        isResponding={respondingRequestIds.includes(
-                          activePendingApproval.requestId,
-                        )}
-                        options={activePendingApproval.options}
-                        onRespondToApproval={onRespondToApproval}
-                      />
-                    </ComposerBanner.Actions>
-                  </ComposerBanner.Row>
-                ) : !isComposerCollapsedMobile && pendingUserInputs.length > 0 ? (
-                  <ComposerPendingUserInputPanel
-                    pendingUserInputs={pendingUserInputs}
-                    respondingRequestIds={
-                      activePendingIsResponding && activePendingUserInput
-                        ? [...respondingRequestIds, activePendingUserInput.requestId]
-                        : respondingRequestIds
-                    }
-                    answers={activePendingDraftAnswers}
-                    questionIndex={activePendingQuestionIndex}
-                    onToggleOption={onSelectActivePendingUserInputOption}
-                    onAdvance={onAdvanceActivePendingUserInput}
-                    onDismiss={onDismissActivePendingUserInput}
-                  />
-                ) : !isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan ? (
-                  <ComposerPlanFollowUpBanner
-                    key={activeProposedPlan.id}
-                    planTitle={proposedPlanTitle(activeProposedPlan.planMarkdown) ?? null}
-                  />
-                ) : isComposerCollapsedMobile && pendingUserInputs.length > 0 ? (
-                  <div data-chat-composer-collapsed-controls="true">
+      <ComposerFloatingBannerPortal host={props.floatingBubbleHost ?? null}>
+        <ComposerBanner.Dock>
+          <ComposerBanner.Column>
+            <ComposerBannerStack
+              key={activeThreadId}
+              className="relative z-0"
+              items={bannerStackItems}
+              placement={props.floatingBubbleHost ? "floating" : "attached"}
+            />
+            {!activityStackItem &&
+            (inlineTasksBadge || (activityStatus && !showTasksTab && !isTasksDrawerOpen)) ? (
+              <ComposerBanner.Attachment>
+                <ComposerBanner.Root
+                  data-chat-composer-activity-strip="true"
+                  variant={activityStatus ? composerActivityVariant(activityStatus) : "default"}
+                >
+                  {inlineTasksBadge ??
+                    (activityStatus ? <ComposerActivityRow status={activityStatus} /> : null)}
+                </ComposerBanner.Root>
+              </ComposerBanner.Attachment>
+            ) : null}
+            {showComposerTopDrawer && (!isTasksDrawerOpen || hasBlockingComposerTopDrawer) ? (
+              <ComposerBanner.Attachment>
+                <ComposerBanner.Root
+                  data-chat-composer-top-drawer="true"
+                  variant={activePendingApproval ? "warning" : "info"}
+                >
+                  {activePendingApproval ? (
+                    <ComposerBanner.Row
+                      layout="wrap-actions"
+                      data-chat-composer-collapsed-controls="true"
+                    >
+                      <ComposerBanner.Icon />
+                      <ComposerBanner.Content>
+                        <ComposerPendingApprovalPanel
+                          approval={activePendingApproval}
+                          pendingCount={pendingApprovals.length}
+                        />
+                      </ComposerBanner.Content>
+                      <ComposerBanner.Actions>
+                        <ComposerPendingApprovalActions
+                          requestId={activePendingApproval.requestId}
+                          isResponding={respondingRequestIds.includes(
+                            activePendingApproval.requestId,
+                          )}
+                          options={activePendingApproval.options}
+                          onRespondToApproval={onRespondToApproval}
+                        />
+                      </ComposerBanner.Actions>
+                    </ComposerBanner.Row>
+                  ) : !isComposerCollapsedMobile && pendingUserInputs.length > 0 ? (
                     <ComposerPendingUserInputPanel
                       pendingUserInputs={pendingUserInputs}
                       respondingRequestIds={
@@ -5216,102 +5265,127 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       onAdvance={onAdvanceActivePendingUserInput}
                       onDismiss={onDismissActivePendingUserInput}
                     />
-                    {!isChoiceOnlyPendingQuestion ||
-                    activePendingProgress?.activeQuestion?.multiSelect ? (
-                      <ComposerBanner.Body>
-                        <div
-                          data-chat-composer-mobile-pending-compact="true"
-                          className={cn(
-                            "flex min-w-0 items-center gap-2 rounded-lg border border-border/55 bg-background/55 p-1.5 pl-3 transition-colors hover:bg-background/80",
-                            !activePendingProgress?.activeQuestion?.multiSelect && "p-0",
-                          )}
-                        >
-                          {!isChoiceOnlyPendingQuestion ? (
-                            <button
-                              type="button"
-                              className={cn(
-                                "min-w-0 flex-1 truncate bg-transparent py-1.5 text-left text-sm",
-                                activePendingProgress?.customAnswer
-                                  ? "text-foreground"
-                                  : "text-placeholder",
-                                !activePendingProgress?.activeQuestion?.multiSelect && "px-3 py-2",
-                              )}
-                              onPointerDown={(event) => event.preventDefault()}
-                              onClick={expandMobileComposer}
-                              aria-label="Write custom answer"
-                            >
-                              {activePendingProgress?.customAnswer || "Write custom answer"}
-                            </button>
-                          ) : null}
-                          {activePendingProgress?.activeQuestion?.multiSelect ? (
-                            <ComposerPrimaryActions
-                              abortPresentation={abortPresentation}
-                              compact
-                              pendingAction={pendingPrimaryAction}
-                              isRunning={false}
-                              showPlanFollowUpPrompt={false}
-                              promptHasText={false}
-                              isSendBusy={isSendBusy}
-                              sendDisabledReason={sendDisabledReason}
-                              isConnecting={isConnecting}
-                              isEnvironmentUnavailable={
-                                environmentUnavailable !== null ||
-                                noProviderAvailable ||
-                                projectSelectionRequired
-                              }
-                              isPreparingWorktree={false}
-                              hasSendableContent={false}
-                              preserveComposerFocusOnPointerDown
-                              onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
-                              onInterrupt={handleInterruptPrimaryAction}
-                              planImplementationSuggestion={planImplementationSuggestion}
-                              planParallelismReviewStatus={planParallelismReview.status}
-                              onImplementPlan={handleImplementPlanPrimaryAction}
-                              onImplementPlanInNewThread={
-                                handleImplementPlanInNewThreadPrimaryAction
-                              }
-                            />
-                          ) : null}
-                        </div>
-                      </ComposerBanner.Body>
-                    ) : null}
-                  </div>
-                ) : null}
-              </ComposerBanner.Root>
-            </ComposerBanner.Attachment>
-          ) : null}
-          {!activityStackItem &&
-          isTasksDrawerOpen &&
-          !hasBlockingComposerTopDrawer &&
-          activeTasksProgress &&
-          activeTaskSteps ? (
-            <ComposerTasksDrawer
-              onCollapse={toggleTasksDrawer}
-              progress={activeTasksProgress}
-              steps={activeTaskSteps}
-            />
-          ) : null}
-          {showTasksTab ? (
-            <ComposerBanner.Attachment>
-              <ComposerTasksBadge
-                expanded={false}
-                onToggle={toggleTasksDrawer}
+                  ) : !isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan ? (
+                    <ComposerPlanFollowUpBanner
+                      key={activeProposedPlan.id}
+                      planTitle={proposedPlanTitle(activeProposedPlan.planMarkdown) ?? null}
+                    />
+                  ) : isComposerCollapsedMobile && pendingUserInputs.length > 0 ? (
+                    <div data-chat-composer-collapsed-controls="true">
+                      <ComposerPendingUserInputPanel
+                        pendingUserInputs={pendingUserInputs}
+                        respondingRequestIds={
+                          activePendingIsResponding && activePendingUserInput
+                            ? [...respondingRequestIds, activePendingUserInput.requestId]
+                            : respondingRequestIds
+                        }
+                        answers={activePendingDraftAnswers}
+                        questionIndex={activePendingQuestionIndex}
+                        onToggleOption={onSelectActivePendingUserInputOption}
+                        onAdvance={onAdvanceActivePendingUserInput}
+                        onDismiss={onDismissActivePendingUserInput}
+                      />
+                      {!isChoiceOnlyPendingQuestion ||
+                      activePendingProgress?.activeQuestion?.multiSelect ? (
+                        <ComposerBanner.Body>
+                          <div
+                            data-chat-composer-mobile-pending-compact="true"
+                            className={cn(
+                              "flex min-w-0 items-center gap-2 rounded-lg border border-border/55 bg-background/55 p-1.5 pl-3 transition-colors hover:bg-background/80",
+                              !activePendingProgress?.activeQuestion?.multiSelect && "p-0",
+                            )}
+                          >
+                            {!isChoiceOnlyPendingQuestion ? (
+                              <button
+                                type="button"
+                                className={cn(
+                                  "min-w-0 flex-1 truncate bg-transparent py-1.5 text-left text-sm",
+                                  activePendingProgress?.customAnswer
+                                    ? "text-foreground"
+                                    : "text-placeholder",
+                                  !activePendingProgress?.activeQuestion?.multiSelect &&
+                                    "px-3 py-2",
+                                )}
+                                onPointerDown={(event) => event.preventDefault()}
+                                onClick={expandMobileComposer}
+                                aria-label="Write custom answer"
+                              >
+                                {activePendingProgress?.customAnswer || "Write custom answer"}
+                              </button>
+                            ) : null}
+                            {activePendingProgress?.activeQuestion?.multiSelect ? (
+                              <ComposerPrimaryActions
+                                formId={composerFormId}
+                                abortPresentation={abortPresentation}
+                                compact
+                                pendingAction={pendingPrimaryAction}
+                                isRunning={false}
+                                showPlanFollowUpPrompt={false}
+                                promptHasText={false}
+                                isSendBusy={isSendBusy}
+                                sendDisabledReason={sendDisabledReason}
+                                isConnecting={isConnecting}
+                                isEnvironmentUnavailable={
+                                  environmentUnavailable !== null ||
+                                  noProviderAvailable ||
+                                  projectSelectionRequired
+                                }
+                                isPreparingWorktree={false}
+                                hasSendableContent={false}
+                                preserveComposerFocusOnPointerDown
+                                onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
+                                onInterrupt={handleInterruptPrimaryAction}
+                                planImplementationSuggestion={planImplementationSuggestion}
+                                planParallelismReviewStatus={planParallelismReview.status}
+                                onImplementPlan={handleImplementPlanPrimaryAction}
+                                onImplementPlanInNewThread={
+                                  handleImplementPlanInNewThreadPrimaryAction
+                                }
+                              />
+                            ) : null}
+                          </div>
+                        </ComposerBanner.Body>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </ComposerBanner.Root>
+              </ComposerBanner.Attachment>
+            ) : null}
+            {!activityStackItem &&
+            isTasksDrawerOpen &&
+            !hasBlockingComposerTopDrawer &&
+            activeTasksProgress &&
+            activeTaskSteps ? (
+              <ComposerTasksDrawer
+                activityStatus={activityStatus}
+                onCollapse={toggleTasksDrawer}
                 progress={activeTasksProgress}
                 steps={activeTaskSteps}
               />
-            </ComposerBanner.Attachment>
+            ) : null}
+            {showTasksTab ? (
+              <ComposerBanner.Attachment>
+                <ComposerTasksBadge
+                  activityStatus={activityStatus}
+                  expanded={false}
+                  onToggle={toggleTasksDrawer}
+                  progress={activeTasksProgress}
+                  steps={activeTaskSteps}
+                />
+              </ComposerBanner.Attachment>
+            ) : null}
+          </ComposerBanner.Column>
+          {!isComposerApprovalState ? (
+            <ComposerStashBadge
+              count={stashQueue.length}
+              menuOpen={isStashMenuOpen}
+              pulseKey={stashPulse.key}
+              pulsing={stashPulse.active}
+              onToggleMenu={toggleStashMenu}
+            />
           ) : null}
-        </ComposerBanner.Column>
-        {!isComposerApprovalState ? (
-          <ComposerStashBadge
-            count={stashQueue.length}
-            menuOpen={isStashMenuOpen}
-            pulseKey={stashPulse.key}
-            pulsing={stashPulse.active}
-            onToggleMenu={toggleStashMenu}
-          />
-        ) : null}
-      </ComposerBanner.Dock>
+        </ComposerBanner.Dock>
+      </ComposerFloatingBannerPortal>
       <div className="relative">
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
@@ -5884,6 +5958,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     className="absolute bottom-0 right-0 flex items-center justify-end gap-1"
                   >
                     <ComposerPrimaryActions
+                      formId={composerFormId}
                       abortPresentation={abortPresentation}
                       compact
                       pendingAction={pendingPrimaryAction}
@@ -6004,6 +6079,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     />
                   ) : null}
                   <ComposerFooterPrimaryActions
+                    formId={composerFormId}
                     abortPresentation={abortPresentation}
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
                     activeContextWindow={

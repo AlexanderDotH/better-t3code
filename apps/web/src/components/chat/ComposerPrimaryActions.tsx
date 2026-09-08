@@ -28,6 +28,7 @@ interface PendingActionState {
 }
 
 interface ComposerPrimaryActionsProps {
+  formId?: string;
   compact: boolean;
   pendingAction: PendingActionState | null;
   isRunning: boolean;
@@ -75,6 +76,7 @@ const preventPointerFocus: PointerEventHandler<HTMLElement> = (event) => {
 };
 
 export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
+  formId,
   compact,
   pendingAction,
   isRunning,
@@ -176,6 +178,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         ) : null}
         <Button
           type="submit"
+          form={formId}
           size="sm"
           className={cn(
             "rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover",
@@ -204,6 +207,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       return (
         <Button
           type="submit"
+          form={formId}
           size="sm"
           className={cn(
             "rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover",
@@ -221,6 +225,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       <div data-chat-composer-implement-actions="true" className="flex items-center justify-end">
         <Button
           type={onImplementPlan ? "button" : "submit"}
+          form={formId}
           size="sm"
           className="h-9 rounded-l-full rounded-r-none bg-message-action px-4 text-message-action-foreground hover:bg-message-action-hover sm:h-8"
           {...pointerFocusProps}
@@ -275,6 +280,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const sendButton = (
     <button
       type="submit"
+      form={formId}
       className={cn(
         "relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8",
         stageBackdropVariant
